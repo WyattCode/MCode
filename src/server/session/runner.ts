@@ -264,7 +264,7 @@ const MAX_STEPS_PROMPT = [
  * subagent has no plan to put to anyone - MiMo denies it to every agent but
  * its two primary ones for the same reason.
  */
-const SUBAGENT_WITHHELD = new Set(["actor", "contacts", "talk_to_session", "create_session", "update_session", "automation_update", "plan_exit"])
+const SUBAGENT_WITHHELD = new Set(["actor", "contacts", "talk_to_session", "create_session", "update_session", "automation_update", "plan_exit", "question"])
 
 /** plan: the tools whose behaviour depends on whether the conversation is planning. */
 const PLAN_AWARE = new Set(["write", "edit", "multiedit", "notebook_edit", "plan_exit"])
@@ -574,9 +574,9 @@ export class SessionRunner {
     const { file, folders } = await this.planFor(session)
     const began = this.turnAgents.get(session.id) ?? session.agent
     return {
-      // The turn's own mode, not the conversation's: approval mid-turn does not lift that turn's promise.
+      // The step's own mode, not the conversation's: approval lifts planning from the next step, not within the step that asked.
       agent: began,
-      // Approved while this turn was running: what it refuses, it refuses only until the turn ends.
+      // Approved during this step: what it refuses, it refuses only until the step ends.
       switched: began === "plan" && session.agent !== "plan",
       file,
       writable: (target) => planWritable(target, folders),
@@ -2040,10 +2040,12 @@ export class SessionRunner {
 
   private async run(sessionID: string, apiKey: string, controller: AbortController, resumed = false, lead?: Lead): Promise<void> {
     let session = await this.store.require(sessionID)
+    // plan: the conversation's own mode as the turn begins; approving a plan changes it mid-turn.
+    const planning = session.agent === "plan"
     // A slash command's own agent and model hold for this turn; the conversation keeps its own.
     session = this.withCommandTurn(session, this.turnOverrides.get(sessionID))
     this.turnOverrides.delete(sessionID)
-    // plan: what this turn is judged by, however the conversation changes while it runs.
+    // plan: what this step is judged by; a plan approved during the turn moves it to build from the next step.
     this.turnAgents.set(sessionID, session.agent)
     // The project's servers are connected (or have failed) before the turn is offered their tools, as MiMo's instance waits for them.
     await this.mcp?.ready(session.directory)
@@ -2060,7 +2062,7 @@ export class SessionRunner {
     if (definition.kind === "chatgpt" && !tokens) throw new CodedError(`The ${definition.name} sign-in has expired`, "auth.expired", { name: definition.name })
     const config = this.config.get()
     // MiMo's prefix snapshot, with the skills and a subagent's notes; memory rides after it (see systemFor).
-    const { system, systemTail } = await this.systemFor(session)
+    let { system, systemTail } = await this.systemFor(session)
     // subagents: a subagent asked for structured output returns it through its tool.
     const outputSchema = session.subagent?.outputSchema
 
@@ -2144,6 +2146,20 @@ export class SessionRunner {
        */
       await this.steering.get(sessionID)?.written
       await this.deliverWorktreeNotice(sessionID)
+      /*
+       * plan: MiMo picks each step's agent from the latest user message, so a
+       * plan approved in the last step - which wrote the approval as a message
+       * from the build agent - is carried out from this step on, in the same
+       * run: build's prompt, build's tools, and writes no longer refused.
+       */
+      if (planning && session.agent === "plan") {
+        const now = await this.store.get(sessionID)
+        if (now && now.agent !== "plan") {
+          session = { ...session, agent: now.agent }
+          ;({ system, systemTail } = await this.systemFor(session))
+          this.turnAgents.set(sessionID, session.agent)
+        }
+      }
       const stored = await this.store.messages(sessionID)
       this.markDelivered(sessionID, stored)
       // session chat: a message from another conversation says so, in the request only; automation: a scheduled task's run says so too.
@@ -2828,6 +2844,7 @@ export class SessionRunner {
         snapshot: (target) => this.record(owner, target),
         shell: this.config.get().shell,
         toolOutputs: this.toolOutputs,
+        subagent: this.workers.has(input.session.id),
         // session chat: a conversation's own calls only; a subagent has no contacts.
         chat: this.workers.has(input.session.id) ? undefined : this.chat,
         // subagents: offered to a conversation's own calls; a subagent's calls get none, so there is no nesting.
@@ -3379,7 +3396,8 @@ export class SessionRunner {
       const note = "The subagent did not finish in the time allowed and is still working. Check on it with status or wait, or cancel it."
       return { output: noted(subagentOutput(name, note, "timeout")), title: child.title, metadata }
     }
-    // Stopped some other way than by this turn's Stop: a result that says so, not a failure, as MiMo's run returns it.
+    // Stopped with this turn: the call is cut off with it. Stopped some other way: a result that says so, as MiMo's run returns it.
+    if (outcome.kind === "cancelled" && call.signal.aborted) throw new ToolError("The subagent was stopped before it finished.")
     if (outcome.kind === "cancelled") {
       return { output: noted(subagentOutput(name, "The subagent was stopped before it finished.", "cancelled")), title: child.title, metadata: { ...metadata, cancelled: true } }
     }

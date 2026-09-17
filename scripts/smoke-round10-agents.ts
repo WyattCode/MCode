@@ -22,6 +22,13 @@ import { SessionStore } from "../src/server/session/store"
 import { SessionRunner } from "../src/server/session/runner"
 import { noticeText, subagentOutput } from "../src/shared/subagent"
 import { pillStatus, subagentItems } from "../src/renderer/src/lib/subagents"
+import { AutomationService } from "../src/server/automation/service"
+import { nextOccurrence, parseRRule, scheduleLabel } from "../src/server/automation/rrule"
+import { ToolError } from "../src/server/tool/types"
+import { planApprovedRefusal } from "../src/server/session/plan"
+import { QuestionTool } from "../src/server/tool/question"
+import { confirmQueue } from "../src/renderer/src/lib/confirm-queue"
+import type { QuestionRequest } from "../src/shared/protocol"
 
 type Section = (name: string) => void
 
@@ -135,6 +142,7 @@ async function harness(root: string, child: (seen: Seen) => Reply | Promise<Repl
     childRequests,
     parentRequests,
     conversation,
+    script: (steps: Reply[]) => void parentSteps.splice(0, parentSteps.length, ...steps),
     settled,
     toolParts,
     childrenOf,
@@ -272,6 +280,60 @@ async function agentChecks(check: Check, section: Section, root: string): Promis
       parentOf = undefined
     }
 
+    section("Round 10 (T10-15): a subagent cannot ask the user questions")
+    {
+      const asked = h.childRequests.filter((seen) => seen.tools.length)
+      check("no subagent request offers the question tool", asked.length > 0 && asked.every((seen) => !seen.tools.includes("question")), asked.map((seen) => seen.tools))
+      check("while the conversation's own requests do", h.parentRequests.some((seen) => seen.tools.includes("question")))
+      const refused = await QuestionTool.execute(
+        { questions: [{ question: "Which?", header: "Pick", options: [{ label: "A", description: "" }] }] },
+        { sessionID: "s", messageID: "m", callID: "c", directory: h.project, subagent: true } as never,
+      ).then(
+        () => "",
+        (failure: unknown) => (failure instanceof ToolError ? failure.message : String(failure)),
+      )
+      check("a question call that reaches a subagent anyway is refused before anyone is asked", /A subagent cannot ask the user questions/.test(refused), refused)
+      const question = (sessionID: string, loop?: { tool: string }): QuestionRequest => ({ id: `q-${sessionID}-${loop ? "loop" : "tool"}`, sessionID, questions: [], time: 1, ...(loop ? { loop } : {}) })
+      const queue = confirmQueue("parent", [], [question("parent"), question("child"), question("child", { tool: "bash" })], (id) => id === "parent" || id === "child")
+      check(
+        "the dock shows the conversation's own questions and a subagent's repeated-call check, but no subagent question",
+        queue.map((item) => item.id).join() === "q-parent-tool,q-child-loop",
+        queue.map((item) => item.id),
+      )
+    }
+
+    section("Round 10 (T10-14): an approved plan is carried out in the same run")
+    {
+      const unsubscribe = h.bus.subscribe((event) => {
+        if (event.type === "question.asked" && event.request.questions[0]?.header === "Plan") runner.questions.reply(event.request.id, [["Yes"]])
+        // Build mode asks before writing, as it always does; plan mode would have refused without asking.
+        if (event.type === "permission.requested") h.permissions.respond(event.request.id, "once")
+      })
+      const target = path.join(h.project, "built.txt")
+      h.parentRequests.length = 0
+      h.script([
+        { calls: [{ name: "plan_exit", input: {} }] },
+        { calls: [{ name: "write", input: { file_path: target, content: "built" } }] },
+        { text: "carried out" },
+      ])
+      const planned = await store.create({ directory: h.project, model: h.model, agent: "plan" })
+      await runner.prompt({ sessionID: planned.id, text: "plan it, then build it" })
+      await h.settled(planned.id)
+      unsubscribe()
+      const messages = await store.messages(planned.id)
+      const replies = messages.filter((message) => message.role === "assistant")
+      const typed = messages.filter((message) => message.role === "user" && !message.synthetic)
+      const [exitPart] = await toolParts(planned.id, "plan_exit")
+      const [writePart] = await toolParts(planned.id, "write")
+      check("the approval tells the model to carry the plan out now", exitPart?.status === "completed" && /carry the plan out, starting with its first step/.test(exitPart.output ?? ""), exitPart?.output)
+      check("the next step runs as build without the user saying anything more", typed.length === 1 && replies.length === 3 && replies[0]?.agent === "plan" && replies[1]?.agent === "build" && replies[2]?.agent === "build", replies.map((message) => message.role === "assistant" && message.agent))
+      check("and its write goes through", writePart?.status === "completed" && (await fs.readFile(target, "utf8").catch(() => "")) === "built", writePart)
+      check("the conversation is left in build mode", (await store.get(planned.id))?.agent === "build")
+      const systems = h.parentRequests.map((seen) => seen.system)
+      check("the step after approval is asked with build's system prompt", systems.length === 3 && systems[0] !== systems[1] && systems[1] === systems[2], systems.map((text) => text.length))
+      check("the plan-mode refusal names the step, not the turn", /Refused for this step only/.test(planApprovedRefusal("a.ts")) && !/next turn/.test(planApprovedRefusal("a.ts")))
+    }
+
     section("Round 10 (T10-44): what the actor tool hands back, in MiMo's shapes")
     {
       const plain = await conversation([actor({ action: "run", description: "Plain", prompt: "PLAIN", subagent_type: "general" })])
@@ -332,4 +394,178 @@ async function agentChecks(check: Check, section: Section, root: string): Promis
   } finally {
     await h.close()
   }
+  await automationChecks(check, section, root)
+}
+
+async function automationChecks(check: Check, section: Section, root: string): Promise<void> {
+  const data = path.join(root, "automation")
+  const storage = new Storage(path.join(data, "storage"))
+  const store = new SessionStore(storage, new Bus())
+  const model = { provider: "fake", model: "m" }
+  const project = path.join(root, "project")
+  const home = await store.create({ directory: project, model, title: "Home" })
+  const other = await store.create({ directory: project, model, title: "Other" })
+  const archived = await store.create({ directory: project, model, title: "Put away" })
+  await store.update(archived.id, { archived: true, archivedAt: 1 })
+  const child = await store.create({ directory: project, model, title: "general-1", parentID: home.id, subagent: { type: "general", id: "general-1" } })
+  let clock = new Date(2026, 0, 2, 10, 0).getTime()
+  let locale = "en"
+  const prompts: string[] = []
+  const service = new AutomationService({
+    file: path.join(data, "automations.json"),
+    now: () => clock,
+    sessions: store,
+    prompt: async (input) => void prompts.push(input.sessionID),
+    busy: () => false,
+    models: () => [
+      { provider: "fake", id: "m", name: "Fake M" },
+      { provider: "fake", id: "claude-opus-4-6", name: "Claude Opus 4.6" },
+    ],
+    agent: () => "build",
+    effort: () => "high",
+    scratch: async () => path.join(data, "scratch"),
+    publish: () => undefined,
+    locale: () => locale,
+  })
+  await service.start({ interval: false })
+  const call = async (input: Record<string, unknown>, sessionID = home.id) => JSON.parse(await service.handle(input, { sessionID })) as Record<string, any>
+  const refusal = (input: Record<string, unknown>, sessionID = home.id) =>
+    service.handle(input, { sessionID }).then(
+      () => "",
+      (failure: unknown) => (failure instanceof ToolError ? failure.message : `not a ToolError: ${String(failure)}`),
+    )
+  const daily = "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0"
+
+  section("Round 10 (T10-20): automation_update refuses the notification pairings MiMo refuses")
+  {
+    const newImportant = await refusal({ mode: "create", title: "A", prompt: "p", rrule: daily, notification: "important-updates" })
+    check("a new conversation per run with important updates only is refused", /does not go with runMode "new-task"/.test(newImportant) && /all-runs or failed-runs/.test(newImportant), newImportant)
+    const existingAll = await refusal({ mode: "create", title: "A", prompt: "p", rrule: daily, runMode: "existing-task", notification: "all-runs" })
+    check("an existing conversation with every run notified is refused", /does not go with runMode "existing-task"/.test(existingAll), existingAll)
+    check("nothing was created by either", service.list().length === 0)
+    const made = await call({ mode: "create", title: "Digest", prompt: "Summarise", rrule: daily })
+    const id = made.automation.id as string
+    const moved = await refusal({ mode: "update", id, runMode: "existing-task", notification: "all-runs" })
+    check("an update whose merged result clashes is refused", /does not go with/.test(moved), moved)
+    check("and leaves the task as it was", service.list()[0]?.runMode === "new-task" && service.list()[0]?.notification === "all-runs", service.list()[0])
+    const flipped = await refusal({ mode: "update", id, notification: "important-updates" })
+    check("so is changing only the notification into a clash", /does not go with/.test(flipped), flipped)
+    await call({ mode: "delete", id })
+  }
+
+  section("Round 10 (T10-21): a task asked for again is found after it has run, however its rule is written")
+  {
+    const first = await call({ mode: "create", title: "Digest", prompt: "Summarise", rrule: daily, scheduleLabel: "Morning" })
+    clock = new Date(2026, 0, 3, 9, 0, 1).getTime()
+    await service.tick()
+    const ran = service.list()[0]
+    check("the task has run once", prompts.length === 1 && (ran?.runHistory?.length ?? 0) === 1 && ran?.lastFiredAt === clock, ran)
+    const again = await call({ mode: "create", title: "Digest", prompt: "Summarise", rrule: "RRULE:FREQ=DAILY;BYMINUTE=0;BYHOUR=9" })
+    check("the same task with its rule's keys in another order and no label is kept once", again.deduplicated === true && again.automation.id === first.automation.id && service.list().length === 1, again)
+    const custom = "RRULE:FREQ=DAILY;INTERVAL=2;BYHOUR=9;BYMINUTE=0"
+    await call({ mode: "create", title: "Other", prompt: "p", rrule: custom, scheduleLabel: "Every other day" })
+    const labelled = await call({ mode: "create", title: "Other", prompt: "p", rrule: custom, scheduleLabel: "Alternate days" })
+    check("a custom rule with another label is a different task, as MiMo compares it", labelled.deduplicated !== true && service.list().length === 3, labelled)
+    const moved = await call({ mode: "update", id: first.automation.id, runMode: "existing-task" })
+    const copy = await call({ mode: "create", title: "Digest", prompt: "Summarise", rrule: daily, runMode: "existing-task", targetThreadId: home.id })
+    check("a task moved into a conversation is found again, whatever order its fields were set in", moved.automation.targetThreadId === home.id && copy.deduplicated === true, copy)
+    const different = await call({ mode: "create", title: "Digest", prompt: "Summarise differently", rrule: daily })
+    check("a different prompt is a different task", different.deduplicated !== true)
+    for (const task of service.list()) await call({ mode: "delete", id: task.id })
+  }
+
+  section("Round 10 (T10-22): an existing-task target is this conversation or one in the side column; a lost one is a skipped run")
+  {
+    const base = { mode: "create", title: "T", prompt: "p", rrule: daily, runMode: "existing-task" }
+    for (const [what, target] of [
+      ["an archived conversation", archived.id],
+      ["a subagent's conversation", child.id],
+      ["an id nothing has", "ses_nowhere"],
+    ] as const) {
+      const refused = await refusal({ ...base, title: `T ${what}`, targetThreadId: target })
+      check(`${what} is refused`, /targetThreadId must be this conversation or another conversation in the side column/.test(refused), refused)
+    }
+    const elsewhere = await call({ ...base, targetThreadId: other.id })
+    check("another conversation in the side column is accepted", elsewhere.automation.targetThreadId === other.id, elsewhere)
+    const here = await call({ ...base, title: "Here", targetThreadId: home.id })
+    check("so is this conversation", here.automation.targetThreadId === home.id)
+    const retarget = await refusal({ mode: "update", id: here.automation.id, targetThreadId: archived.id })
+    check("an update to an archived one is refused too", /targetThreadId must be/.test(retarget) && service.list().find((task) => task.id === here.automation.id)?.targetThreadId === home.id, retarget)
+    await store.update(other.id, { archived: true, archivedAt: 2 })
+    const before = prompts.length
+    clock = new Date(2026, 0, 4, 9, 0, 1).getTime()
+    await service.tick()
+    const skipped = service.list().find((task) => task.id === elsewhere.automation.id)
+    const record = skipped?.runHistory?.at(-1)
+    check("a run whose conversation was put away does not run", prompts.filter((id) => id === other.id).length === 0 && prompts.length === before + 1, prompts.slice(before))
+    check("but is recorded as a skipped run", record?.status === "skipped" && record.resultThreadId === other.id && typeof record.error === "string" && record.finishedAt === clock, record)
+    check("and the schedule moves on", service.dueAt(elsewhere.automation.id) === new Date(2026, 0, 5, 9, 0).getTime())
+    for (const task of service.list()) await call({ mode: "delete", id: task.id })
+  }
+
+  section("Round 10 (T10-51): recurrence rules as MiMo reads them")
+  {
+    const friday = new Date(2026, 0, 2, 10, 0).getTime()
+    const next = (rule: string, after = friday) => {
+      const parsed = parseRRule(rule)
+      return parsed ? nextOccurrence(parsed, after) : "refused"
+    }
+    check("every fourth Monday counts weeks from the week of 1 January 1970", next("RRULE:FREQ=WEEKLY;INTERVAL=4;BYDAY=MO;BYHOUR=9;BYMINUTE=0") === new Date(2026, 0, 12, 9, 0).getTime())
+    check("every fifth month counts from January 1970", next("RRULE:FREQ=MONTHLY;INTERVAL=5;BYMONTHDAY=1;BYHOUR=9;BYMINUTE=0") === new Date(2026, 3, 1, 9, 0).getTime())
+    check("every seventh hour counts from midnight on 1 January 1970", next("RRULE:FREQ=HOURLY;INTERVAL=7;BYMINUTE=0") === new Date(2026, 0, 2, 11, 0).getTime())
+    check("a DTSTART still sets the phase", next("DTSTART:20260103T0900\nRRULE:FREQ=DAILY;INTERVAL=3") === new Date(2026, 0, 3, 9, 0).getTime() && next("DTSTART:20260103T0900\nRRULE:FREQ=DAILY;INTERVAL=3", new Date(2026, 0, 3, 9, 0).getTime()) === new Date(2026, 0, 6, 9, 0).getTime())
+    check("a rule every ten years is found, past five years", next("RRULE:FREQ=YEARLY;INTERVAL=10;BYMONTH=1;BYMONTHDAY=1;BYHOUR=9;BYMINUTE=0") === new Date(2030, 0, 1, 9, 0).getTime())
+    check("a leap day every four years from a DTSTART is found four years on", next("DTSTART:20240229T0900\nRRULE:FREQ=YEARLY;INTERVAL=4;BYMONTH=2;BYMONTHDAY=29", new Date(2028, 2, 1).getTime()) === new Date(2032, 1, 29, 9, 0).getTime())
+    // Counted from 1970, every fourth year is 1970, 1974, ... - never a leap year - so without DTSTART it never runs.
+    check("and without one it never runs, the search ending after a 400-year cycle", next("RRULE:FREQ=YEARLY;INTERVAL=4;BYMONTH=2;BYMONTHDAY=29;BYHOUR=9;BYMINUTE=0") === undefined)
+    check("a rule that can never run ends the search", next("RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29;BYDAY=XX") === "refused" && next("RRULE:FREQ=MONTHLY;BYMONTHDAY=31;BYMONTH=4") === "refused")
+    check("DTSTART in UTC is refused", next("DTSTART:20260103T0900Z\nRRULE:FREQ=DAILY") === "refused")
+    check("DTSTART with seconds other than 00 is refused, and :00 is accepted", next("DTSTART:20260103T090030\nRRULE:FREQ=DAILY") === "refused" && next("DTSTART:20260103T090000\nRRULE:FREQ=DAILY") !== "refused")
+    check("UNTIL without a time is refused", next("RRULE:FREQ=DAILY;UNTIL=20260301") === "refused")
+    check("UNTIL with a time, in UTC or local, is accepted", next("RRULE:FREQ=DAILY;UNTIL=20260301T0000Z") !== "refused" && next("RRULE:FREQ=DAILY;UNTIL=20260301T0930") !== "refused")
+    check("UNTIL without seconds lasts to the end of its minute", next("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0;UNTIL=20260103T0900") === new Date(2026, 0, 3, 9, 0).getTime())
+  }
+
+  section("Round 10 (T10-52): a task view's schedule is written in the interface language")
+  {
+    check(
+      "the named schedules in English drop the hour's leading zero",
+      scheduleLabel(daily) === "Every day 9:00" && scheduleLabel("RRULE:FREQ=WEEKLY;BYDAY=TU;BYHOUR=18;BYMINUTE=30") === "Tuesday (time: 18:30)",
+    )
+    check(
+      "and in Chinese",
+      scheduleLabel(daily, undefined, true) === "每天 9:00" &&
+        scheduleLabel("RRULE:FREQ=HOURLY;BYMINUTE=0", undefined, true) === "每小时" &&
+        scheduleLabel("RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=8;BYMINUTE=5", undefined, true) === "工作日 8:05" &&
+        scheduleLabel("RRULE:FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0", undefined, true) === "每周一 9:00" &&
+        scheduleLabel("RRULE:FREQ=DAILY;INTERVAL=2", undefined, true) === "每 2 天",
+    )
+    const custom = "RRULE:FREQ=MONTHLY;BYMONTHDAY=1"
+    check("a label is used only in its own language", scheduleLabel(custom, "月初", true) === "月初" && scheduleLabel(custom, "月初") === "Every 1 month" && scheduleLabel(custom, "Start of month", true) === "每月")
+    check("and a label that only says custom is not used", scheduleLabel(custom, "自定义", true) === "每月" && scheduleLabel(custom, "Custom") === "Every 1 month")
+    locale = "zh-CN"
+    const made = await call({ mode: "create", title: "日报", prompt: "总结", rrule: daily })
+    check("the tool's view follows the interface language", made.automation.schedule === "每天 9:00", made.automation)
+    locale = "en"
+    check("and changes with it", (await call({ mode: "view", id: made.automation.id })).automation.schedule === "Every day 9:00")
+    await call({ mode: "delete", id: made.automation.id })
+  }
+
+  section("Round 10 (T10-53): reasoning must be one the model offers, and an update cannot blank a title")
+  {
+    const tooHigh = await refusal({ mode: "create", title: "R", prompt: "p", rrule: daily, model: "fake/claude-opus-4-6", reasoning: "xhigh" })
+    check("a level the model does not offer is refused, naming the ones it does", /not supported by model "fake\/claude-opus-4-6"/.test(tooHigh) && /low, medium, high, max/.test(tooHigh), tooHigh)
+    const none = await refusal({ mode: "create", title: "R", prompt: "p", rrule: daily, reasoning: "high" })
+    check("a model that offers none refuses any", /takes no reasoning level/.test(none), none)
+    const fine = await call({ mode: "create", title: "R", prompt: "p", rrule: daily, model: "fake/claude-opus-4-6", reasoning: "max" })
+    check("a level it offers is kept", fine.automation.reasoning === "max", fine.automation)
+    const byDefault = await call({ mode: "create", title: "R2", prompt: "p", rrule: daily, model: "fake/claude-opus-4-6" })
+    check("left out, the app's level is used where the model offers it", byDefault.automation.reasoning === "high", byDefault.automation)
+    const switched = await call({ mode: "update", id: fine.automation.id, model: "fake/m" })
+    check("moving to a model that offers none drops the level", switched.automation.reasoning === undefined, switched.automation)
+    const blank = await refusal({ mode: "update", id: fine.automation.id, title: "  " })
+    check("an update with an empty title is refused", /title cannot be empty/.test(blank) && service.list().find((task) => task.id === fine.automation.id)?.title === "R", blank)
+    check("so is an empty prompt", /prompt cannot be empty/.test(await refusal({ mode: "update", id: fine.automation.id, prompt: "" })))
+  }
+  await service.stop()
 }

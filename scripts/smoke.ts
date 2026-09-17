@@ -8555,7 +8555,8 @@ async function subagentChecks(root: string) {
   await runner.prompt({ sessionID: eighteen.id, text: "tasks" })
   await settled(eighteen.id)
   const registered = (await store.get(eighteen.id))?.tasks ?? []
-  check("a task created in a conversation is kept on its record", registered.some((task) => task.id === "T1" && task.summary === "Parent work" && task.owner === "main"), registered)
+  // Round 10 (T10-16): the subagent started for T1 takes it and starts it, as MiMo's actor does.
+  check("a task created in a conversation is kept on its record, taken by the subagent started for it", registered.some((task) => task.id === "T1" && task.summary === "Parent work" && task.owner === "general-1" && task.status === "in_progress"), registered)
   check("a subagent's task goes into its parent's registry, under the parent's task, held by the subagent", registered.some((task) => task.id === "T1.1" && task.parentID === "T1" && task.owner === "general-1"), registered)
   const children = await childrenOf(eighteen.id)
   check("task_id naming a task binds the subagent to it", children.find((session) => session.title === "Bound")?.subagent?.taskID === "T1", children.map((session) => session.subagent))
@@ -9646,18 +9647,19 @@ async function automationChecks(root: string, project: string) {
   ]
   check("and everything outside it is refused", refused.every((rule) => parseRRule(rule) === undefined), refused.filter((rule) => parseRRule(rule)))
   const friday = new Date(2026, 0, 2, 10, 0).getTime()
-  const next = (rule: string, after = friday, anchor = friday) => nextOccurrence(parseRRule(rule)!, after, anchor)
+  const next = (rule: string, after = friday) => nextOccurrence(parseRRule(rule)!, after)
   check("every day at 09:00, after 10:00, is tomorrow at 09:00", next("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0") === new Date(2026, 0, 3, 9, 0).getTime())
   check("weekdays after a Friday morning is Monday", next("RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0") === new Date(2026, 0, 5, 9, 0).getTime())
-  check("an interval counts from the anchor", next("RRULE:FREQ=DAILY;INTERVAL=3;BYHOUR=9;BYMINUTE=0") === new Date(2026, 0, 5, 9, 0).getTime())
+  // Round 10 (T10-51): without DTSTART an interval counts from 1970, as MiMo counts it. 2026-01-04 is day 20457, the first multiple of three after Friday the 2nd.
+  check("an interval without DTSTART counts from 1970", next("RRULE:FREQ=DAILY;INTERVAL=3;BYHOUR=9;BYMINUTE=0") === new Date(2026, 0, 4, 9, 0).getTime())
   check("hourly at half past is the next half hour", next("RRULE:FREQ=HOURLY;BYMINUTE=30") === new Date(2026, 0, 2, 10, 30).getTime())
   check("COUNT stops after that many runs", next("DTSTART:20260101T0800\nRRULE:FREQ=DAILY;COUNT=2") === undefined && next("DTSTART:20260101T0800\nRRULE:FREQ=DAILY;COUNT=3") === new Date(2026, 0, 3, 8, 0).getTime())
-  check("UNTIL stops at its date", next("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0;UNTIL=20260102") === undefined)
+  check("UNTIL stops at its date", next("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0;UNTIL=20260102T2359") === undefined)
   check(
     "schedules read the way MiMo names them",
-    scheduleLabel("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=5") === "Every day 09:05" &&
-      scheduleLabel("RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0") === "Weekdays 09:00" &&
-      scheduleLabel("RRULE:FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0") === "Monday (time: 09:00)" &&
+    scheduleLabel("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=5") === "Every day 9:05" &&
+      scheduleLabel("RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0") === "Weekdays 9:00" &&
+      scheduleLabel("RRULE:FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0") === "Monday (time: 9:00)" &&
       scheduleLabel("RRULE:FREQ=HOURLY;BYMINUTE=0") === "Hourly" &&
       scheduleLabel("RRULE:FREQ=DAILY;INTERVAL=2") === "Every 2 days" &&
       scheduleLabel("RRULE:FREQ=MONTHLY;BYMONTHDAY=1", "First of the month") === "First of the month",
@@ -9730,9 +9732,10 @@ async function automationChecks(root: string, project: string) {
       created.automation.notification === "all-runs" &&
       created.automation.model.id === "fake/m" &&
       created.automation.model.name === "Fake M" &&
-      created.automation.reasoning === "high" &&
+      // Round 10 (T10-53): a model that offers no reasoning level is given none.
+      created.automation.reasoning === undefined &&
       created.automation.project === path.basename(project) &&
-      created.automation.schedule === "Every day 09:00",
+      created.automation.schedule === "Every day 9:00",
     created,
   )
   check("its first run is the next 09:00", service.dueAt("auto-1") === new Date(2026, 0, 3, 9, 0).getTime())
@@ -9778,7 +9781,10 @@ async function automationChecks(root: string, project: string) {
     Boolean(opened) && opened?.model.model === "big" && opened?.scratch === true && opened?.directory === path.join(root, "automation-scratch") && prompts.at(-1)?.sessionID === opened?.id,
     opened,
   )
-  await call({ mode: "update", id: "auto-1", runMode: "existing-task", targetThreadId: "ses_gone" })
+  // Round 10 (T10-22): the target has to be a conversation in the side column; one deleted later is a skipped run.
+  const doomed = await store.create({ directory: project, model, title: "Soon gone" })
+  await call({ mode: "update", id: "auto-1", runMode: "existing-task", targetThreadId: doomed.id })
+  await store.delete(doomed.id)
   const before = prompts.length
   clock = new Date(2026, 0, 5, 9, 0, 1).getTime()
   await service.tick()
@@ -9791,7 +9797,7 @@ async function automationChecks(root: string, project: string) {
   clock = new Date(2026, 0, 9, 12, 0).getTime()
   const reopened = new AutomationService(deps)
   await reopened.start({ interval: false })
-  check("after a restart the next run is counted from the last one, so a missed run is due at once", (reopened.dueAt("auto-1") ?? Infinity) <= clock && reopened.list()[0]?.targetThreadId === "ses_gone")
+  check("after a restart the next run is counted from the last one, so a missed run is due at once", (reopened.dueAt("auto-1") ?? Infinity) <= clock && reopened.list()[0]?.targetThreadId === doomed.id)
   check("delete removes the task", (await JSON.parse(await reopened.handle({ mode: "delete", id: "auto-1" }, { sessionID: home.id }))).ok === true && reopened.list().length === 0)
   await reopened.stop()
 }

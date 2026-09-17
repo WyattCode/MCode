@@ -46,6 +46,8 @@ export interface ToolContext {
    * Absent inside a subagent, which cannot start or manage subagents of its own.
    */
   subagents?: SubagentControl
+  /** subagents: set when the call comes from a subagent's conversation. */
+  subagent?: boolean
   /** session chat: messaging the other conversations. Absent inside a subagent. */
   chat?: SessionChat
   /** Where outputs the shared cap cut are saved; a tool may read those wherever the project is. */

@@ -27,7 +27,9 @@ export function confirmQueue(
     if (belongs(request.sessionID)) items.push({ kind: "permission", id: request.id, time: request.time, request })
   }
   for (const request of questions) {
-    if (belongs(request.sessionID)) items.push({ kind: "question", id: request.id, time: request.time ?? 0, request })
+    // A subagent asks nothing of the user, as MiMo's cannot; only the runner's repeated-call check reaches the dock from one.
+    const own = request.sessionID === sessionID || Boolean(request.loop)
+    if (own && belongs(request.sessionID)) items.push({ kind: "question", id: request.id, time: request.time ?? 0, request })
   }
   // A stable sort, so two requests stamped in the same millisecond keep their arrival order.
   return items.sort((a, b) => a.time - b.time)
