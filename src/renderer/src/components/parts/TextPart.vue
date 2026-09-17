@@ -3,6 +3,7 @@ import "katex/dist/katex.min.css"
 import { computed, getCurrentInstance, h, nextTick, onBeforeUnmount, onMounted, ref, render, watch } from "vue"
 import type { TextPart } from "@shared/protocol"
 import { renderReply, type ReplyBlock } from "../../lib/markdown"
+import { cleanLiveReply, cleanReply } from "@shared/reply-clean"
 import { cachedHighlight, highlight, languageOf } from "../../lib/highlight"
 import { openImagePreview, openVideoPreview } from "../../lib/image-preview"
 import { useApp } from "../../stores/app"
@@ -80,7 +81,9 @@ function colourCode(html: string, liveBlock: boolean): string {
 const rendered = computed<ReplyBlock[]>(() => {
   void colourRound.value
   const isLive = live.value
-  const list = renderReply(props.part.text, {
+  // MiMo takes leaked tool-call and thinking markup out first, and holds back a tag still arriving.
+  const text = isLive ? cleanLiveReply(props.part.text) : cleanReply(props.part.text)
+  const list = renderReply(text, {
     codeActions: { copy: t("code.copy"), copied: t("code.copied"), label: t("code.copyLabel") },
     tableActions: { label: t("table.actions"), preview: t("table.preview"), copy: t("table.copy") },
     videoCards: { tip: t("markdown.previewAnnotateTip"), fallback: t("markdown.videoFallbackLabel") },
@@ -385,6 +388,7 @@ function onError(event: Event) {
     ref="root"
     class="text"
     :class="{ streaming: live }"
+    :data-text-part="part.id"
     data-annotate="answer"
     @click="onClick"
     @keydown="onKeydown"

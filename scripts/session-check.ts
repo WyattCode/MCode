@@ -1112,10 +1112,11 @@ async function main(): Promise<void> {
 
   {
     /*
-     * A turn that answered more than one message, because the user typed again
-     * while it was running. There is no state on disk between those messages,
-     * so a rollback aimed at the second has to take the whole turn back and say
-     * so by moving the boundary to where it really went.
+     * A message typed while a turn was running. Once the model takes it, MiMo
+     * 26.914 settles the work so far as a turn of its own and the steer opens
+     * the next one, so the undo recording is split at that step: a rollback
+     * aimed at the steer takes back only what came after it, and one aimed at
+     * the question before it takes the rest.
      */
     const steered = await sessions.create({ directory: rollback, model: { provider: "fake", model: "m" } })
     await turnWriting(steered.id, "settle the ground", "ground.txt", "ground")
@@ -1136,16 +1137,24 @@ async function main(): Promise<void> {
     await stopped(steered.id)
     onRequest = undefined
     check("the steered message joined the turn", joined.startsWith("msg_"), joined)
+    const filed = (await sessions.peekSnapshot(steered.id, "undo"))?.messages ?? []
+    check("the work before the steer was taken is filed under the question alone", filed.join() === opening, filed.join())
 
     const rolled = (await handle(runtime, { type: "session.revert", sessionID: steered.id, messageID: joined })) as {
       session: { revert?: { messageID: string } }
     }
     check(
-      "rolling back to a steered message takes the whole turn that answered it",
-      rolled.session.revert?.messageID === opening,
-      `${rolled.session.revert?.messageID} rather than ${opening}`,
+      "rolling back to a steer stops at the steer (it opened a turn of its own)",
+      rolled.session.revert?.messageID === joined,
+      `${rolled.session.revert?.messageID} rather than ${joined}`,
     )
-    check("the file that turn wrote is gone", (await held("steered.txt")) === "(absent)")
+    check("the file written before the steer was taken stays", (await held("steered.txt")) === "steered")
+
+    const further = (await handle(runtime, { type: "session.revert", sessionID: steered.id, messageID: opening })) as {
+      session: { revert?: { messageID: string } }
+    }
+    check("rolling back to the question before it reaches the boundary asked for", further.session.revert?.messageID === opening, further.session.revert?.messageID)
+    check("and takes back the file that turn wrote", (await held("steered.txt")) === "(absent)")
     check("and the turn before it is untouched", (await held("ground.txt")) === "ground")
   }
 

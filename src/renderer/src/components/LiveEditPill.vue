@@ -21,7 +21,7 @@ const rp = useRightPanel()
 /* The diff tab's source, which App.vue also reads to say whether the tab is on show. */
 const LIVE_EDIT = "live-edit"
 
-const latest = computed(() => latestTurnParts(app.visible))
+const latest = computed(() => latestTurnParts(app.visible, !app.busy))
 
 const changes = computed(() => editedFiles(latest.value, app.current?.directory))
 

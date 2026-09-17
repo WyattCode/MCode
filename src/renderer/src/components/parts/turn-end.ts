@@ -1,4 +1,5 @@
 import type { AssistantPart, Message } from "@shared/protocol"
+import { turnOpeners } from "@shared/steer"
 
 /*
  * How a turn ends on screen, as MiMo draws it, kept apart from the components
@@ -68,13 +69,17 @@ export function stickState(scrollHeight: number, scrollTop: number, clientHeight
   return { atEnd: distance <= STICK, jump: scrollHeight > clientHeight && distance > STICK }
 }
 
-/* The latest turn's parts: everything after the last question, with a message sent into the running turn kept inside it. */
-export function latestTurnParts(messages: readonly Message[]): AssistantPart[] {
+/*
+ * The latest turn's parts: everything after the message that opened it. A steer
+ * the model has taken opens a turn (MiMo 26.914); one still waiting does not.
+ */
+export function latestTurnParts(messages: readonly Message[], settled: boolean): AssistantPart[] {
+  const openers = turnOpeners(messages, settled)
   const parts: AssistantPart[] = []
   for (let at = messages.length - 1; at >= 0; at--) {
     const message = messages[at]!
     if (message.role === "assistant") parts.unshift(...message.parts)
-    else if (!message.steered) break
+    else if (openers.has(message.id)) break
   }
   return parts
 }

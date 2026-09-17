@@ -30,17 +30,19 @@ const props = withDefaults(
      * reader has opened or closed it, which sticks.
      */
     defaultOpen?: boolean
+    /** subagents: a group of subagent calls - one pill row, or its calls flat, never folded behind a summary. */
+    actor?: boolean
   }>(),
-  { defaultOpen: false },
+  { defaultOpen: false, actor: false },
 )
 
-const single = computed(() => singleTool(props.items))
-/* subagents: a run of task calls that are all working or done is one pill list, with no summary line, as MiMo merges them. */
+/* subagents: subagent calls that are all working or done are one pill list, with no summary line, as MiMo merges them. */
 const pills = computed(() =>
-  props.items.length > 1 && props.items.every((item) => item.kind === "tool" && isPill(item.part))
+  props.actor && props.items.every((item) => item.kind === "tool" && isPill(item.part))
     ? props.items.flatMap((item) => (item.kind === "tool" ? [item.part] : []))
     : undefined,
 )
+const single = computed(() => (props.actor ? undefined : singleTool(props.items)))
 const firstTool = computed(() => props.items.find((item) => item.kind === "tool"))
 const icon = computed(() => toolIcon(firstTool.value?.kind === "tool" ? firstTool.value.part.name : ""))
 const running = computed(() => props.items.some((item) => item.kind === "tool" && stepState(item.part) === "running"))
@@ -78,6 +80,14 @@ function toggle() {
 
 <template>
   <SubagentActivity v-if="pills" :parts="pills" />
+  <!-- subagents: any other run of subagent calls is drawn call by call, flush with the column, as MiMo's flushToolLeft rows. -->
+  <div v-else-if="actor" class="hs-actor-group" data-actor-group>
+    <template v-for="item in items" :key="item.id">
+      <ToolPart v-if="item.kind === 'tool'" :part="item.part" />
+      <PermissionRow v-else-if="item.kind === 'permission'" :part="item.part" :record="item.record" />
+      <ErrorStep v-else :error="item.error" />
+    </template>
+  </div>
   <ToolPart v-else-if="single" :part="single" summary :title-max="SINGLE_TITLE_MAX" />
   <div v-else class="hs-group" data-step-group>
     <button type="button" class="hs-h hs-summary" :aria-expanded="open" data-group-head @click="toggle">

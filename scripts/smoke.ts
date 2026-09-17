@@ -294,6 +294,7 @@ import { roundNineProviderChecks } from "./smoke-round9-providers"
 import { roundNineWindowsChecks } from "./smoke-round9-windows"
 import { roundNineMcpChecks } from "./smoke-round9-mcp"
 import { roundNineSettingsChecks } from "./smoke-round9-settings"
+import { roundTenStepsChecks } from "./smoke-round10-steps"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
@@ -4799,9 +4800,12 @@ async function main() {
     const question = (id: string, steered = false) =>
       ({ id, sessionID: "s", role: "user", text: id, attachments: [], time: { created: 1 }, ...(steered ? { steered: true } : {}) }) as Message
     const thread = [question("q1"), reply("a1", "x"), question("q2"), reply("a2", "y"), question("s1", true), reply("a3", "z")]
-    const latest = latestTurnParts(thread).map((part) => part.id)
-    check("the pill counts the latest turn only, steers included", latest.join() === "y,z", latest)
-    check("and a new question empties it", latestTurnParts([...thread, question("q3")]).length === 0)
+    const latest = latestTurnParts(thread, false).map((part) => part.id)
+    check("a steer the model took opens the turn the pill counts (26.914)", latest.join() === "z", latest)
+    const waiting = latestTurnParts([question("q2"), reply("a2", "y"), question("s2", true)], false).map((part) => part.id)
+    check("a steer still waiting stays inside the running turn", waiting.join() === "y", waiting)
+    check("with nothing running it is a question of its own", latestTurnParts([question("q2"), reply("a2", "y"), question("s2", true)], true).length === 0)
+    check("and a new question empties it", latestTurnParts([...thread, question("q3")], false).length === 0)
   }
 
   section("Steering")
@@ -6940,6 +6944,7 @@ async function main() {
   await roundNineWindowsChecks(check, section)
   await roundNineMcpChecks(check, section)
   await roundNineSettingsChecks(check, section)
+  await roundTenStepsChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()
   await storageChecks(check, section)

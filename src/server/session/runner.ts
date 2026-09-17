@@ -846,15 +846,10 @@ export class SessionRunner {
    * since; a file the turn did change is put back even if the user has edited
    * it since, which is what "undo my last turn" has to mean to be useful.
    *
-   * Since a turn can now be steered, "the last turn" may answer more than one
-   * message: everything from the prompt that set the model working until it
-   * stopped is one turn and one entry here. That keeps the promise the interface
-   * makes - the files go back to how the turn found them - because the recording
-   * still opens at the moment the model started and closes when it stopped. It
-   * does mean an undo after steering takes back work the model did in answer to
-   * several things the user said, which is the only coherent reading: the later
-   * messages were answered on top of the earlier ones, so there is no state in
-   * between to return to.
+   * A steered message the model has taken starts a turn of its own, as MiMo
+   * 26.914 shows it: the recording up to that step is filed as the turn before,
+   * and a new one opens for the steer. So "the last turn" is what the model did
+   * after the last thing the user said, and an undo takes back only that.
    */
   async undo(sessionID: string): Promise<number> {
     /*
@@ -1513,12 +1508,12 @@ export class SessionRunner {
     }
     steering.waiting.push(user.id)
     /*
-     * Counted as part of the turn that is running, because that is the turn
-     * whose recording will cover whatever it causes. A rollback aimed at this
-     * message therefore takes the whole turn back, which is the only state on
-     * disk that ever existed either side of it.
+     * News of subagents stays inside the turn it reached, so the running turn's
+     * recording covers it. Anything the user typed opens a turn of its own once
+     * the model takes it (see `openSteeredTurn`); until then it belongs to no
+     * recording, since nothing has been done in answer to it.
      */
-    this.turn(input.sessionID).messages.push(user.id)
+    if (extra.notices?.length) this.turn(input.sessionID).messages.push(user.id)
 
     const written = steering.written.then(async () => {
       // Settled in the same chain, so messages still reach the transcript in the order they were typed.
@@ -1574,11 +1569,39 @@ export class SessionRunner {
    * Comparing ids answers that exactly, so nothing is marked delivered before
    * the model has actually been given it.
    */
-  private markDelivered(sessionID: string, history: Message[]): void {
+  private markDelivered(sessionID: string, history: Message[]): string[] {
     const steering = this.steering.get(sessionID)
-    if (!steering || steering.waiting.length === 0) return
+    if (!steering || steering.waiting.length === 0) return []
     const carried = new Set(history.map((message) => message.id))
+    const delivered = steering.waiting.filter((id) => carried.has(id))
     steering.waiting = steering.waiting.filter((id) => !carried.has(id))
+    return delivered
+  }
+
+  /**
+   * MiMo 26.914's steer: once the model takes what the user typed mid-turn, the
+   * work so far is settled as a turn of its own - filed for undo and rollback -
+   * and the steered messages open the next one, photographed afresh. News of
+   * subagents does not split a turn; it was already counted in the running one.
+   */
+  private async openSteeredTurn(sessionID: string, directory: string, delivered: string[], history: Message[]): Promise<void> {
+    const byID = new Map(history.map((message) => [message.id, message]))
+    const typed = delivered.filter((id) => {
+      const message = byID.get(id)
+      return message?.role === "user" && !message.notices?.length
+    })
+    // A turn started for these very messages (the release's resume) is already theirs.
+    const running = this.pending.get(sessionID)
+    if (!typed.length || (running && typed.every((id) => running.messages.includes(id)))) return
+    try {
+      await this.commitSnapshot(sessionID)
+    } catch (cause) {
+      this.bus.publish({ type: "session.error", sessionID, error: `Could not record this turn for undo: ${(cause as Error).message}` })
+    }
+    const next = this.turn(sessionID)
+    next.messages = typed
+    next.directory = directory
+    next.watching = this.snapshots.begin(directory)
   }
 
   /** The setup a claimed session goes through before its turn is launched. */
@@ -2129,7 +2152,8 @@ export class SessionRunner {
       await this.steering.get(sessionID)?.written
       await this.deliverWorktreeNotice(sessionID)
       const stored = await this.store.messages(sessionID)
-      this.markDelivered(sessionID, stored)
+      const delivered = this.markDelivered(sessionID, stored)
+      if (delivered.length) await this.openSteeredTurn(sessionID, session.directory, delivered, stored)
       // session chat: a message from another conversation says so, in the request only; automation: a scheduled task's run says so too.
       // MiMo's pruning comes first, so the older tool output is already trimmed before anything is framed around it.
       const chatted = withAutomationNotes(withChatHeaders(prunedHistory(this.contextFor(session, stored), pruneLevel)))
@@ -3619,9 +3643,10 @@ interface Turn {
   /**
    * The user messages this turn is answering, in the order they were sent.
    *
-   * More than one when the turn was steered. Recorded so that rolling the
-   * conversation back to a message can find the turn that message belongs to,
-   * and know how much of the transcript that turn's recording accounts for.
+   * More than one when several were steered in at once, or when news of
+   * subagents reached the turn. Recorded so that rolling the conversation back
+   * to a message can find the turn that message belongs to, and know how much
+   * of the transcript that turn's recording accounts for.
    */
   messages: string[]
 }
