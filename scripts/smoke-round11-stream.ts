@@ -86,7 +86,7 @@ const baseRequest = {
   history: [] as Message[],
   tools: [],
   effort: "",
-  variants: [] as string[],
+  variants: [] as string[] | undefined,
 }
 
 const assistant = (parts: AssistantMessage["parts"], model = { provider: "codex", model: "gpt-5.5" }): AssistantMessage =>
@@ -412,12 +412,13 @@ export async function roundElevenStreamChecks(check: Check, section: (name: stri
     )
     const events: TurnEvent[] = []
     await ChatGPTSubscription.stream(
-      { ...baseRequest, model: { provider: "codex", model: "gpt-5.5" }, signal: new AbortController().signal, baseURL: `http://127.0.0.1:${provider.port}` },
+      // `variants` unset is "nobody worked the list out", which is what sends the reasoning block.
+      { ...baseRequest, variants: undefined, effort: "high", model: { provider: "codex", model: "gpt-5.5" }, signal: new AbortController().signal, baseURL: `http://127.0.0.1:${provider.port}` },
       (event: TurnEvent) => events.push(event),
     )
     await provider.close()
     check("the request asks for it", JSON.stringify(provider.bodies[0]?.include) === JSON.stringify(["reasoning.encrypted_content"]), provider.bodies[0]?.include)
-    check("the summary is still asked for as auto", provider.bodies[0]?.reasoning === undefined || provider.bodies[0]?.reasoning?.summary === "auto", provider.bodies[0]?.reasoning)
+    check("the summary is asked for as auto", provider.bodies[0]?.reasoning?.summary === "auto", provider.bodies[0]?.reasoning)
     const signed = events.find((event) => event.type === "reasoning.signature")
     check(
       "the ciphertext and the item's id reach the reasoning part",
