@@ -318,7 +318,6 @@
   - 截断提示改为用 actor 工具开 explore 子智能体，且只在本轮确实提供 actor 时这样说；调用不存在的工具时列出本次请求提供的工具名。
   - webfetch：turndown（MiMo 的选项，移到 devDependencies，由主进程构建打包，不再随 node_modules 重复打包）；图片（SVG 与 fastbidsheet 除外）作为附件交给模型；发生跳转时输出第一行写明最终地址；描述去掉「不抓本机」。
   - 验证：`scripts/smoke-round10-bash.ts`（44 条，接在 smoke.ts 里）；草稿区 `r10b-mutate.cjs` 逐项改坏确认会失败；探针 `mcode-round10-bash.cjs`（B1～B6：实时中文、刷新频率、删除卡片、停止后交出输出、图片附件、无报错）。
-- 进行中：工具（文件与桌面 / bash 与网页 / 智能体类）三路、git 一路、步骤绘制一路构建；另开两个只读角度：**记忆、历史搜索与技能**（`round10-memory.md`）、**macOS / Linux 代码分支静态对照**（`round10-platforms.md`，逐项标明「代码可确定」或「需实机确认」）。
 - **第十轮·文件工具与桌面工具包（A、D 两部分）已完成**（smoke 3390 全过，探针 `mcode-round10-files.cjs` 9 项全过，改坏的构建跑出 F1–F8 失败）：
   - 删除：multiedit（工具、描述、权限、`tool.multiedit` 18 张表、界面映射、检查）与 MCode 独有的 list 工具（explore 只剩 read/glob/grep/bash/webfetch）；渲染层保留 MiMo 自己的 list 文案和 list 权限桶。
   - glob / grep 改走随包 ripgrep（`MCODE_RIPGREP_PATH`；没有时退回 `ignore.ts` 的遍历，规则尽量一致）：Rust 正则、UTF-16/二进制处理、`--glob` 压过 .gitignore（grep include 也照 MiMo 放开）；路径不存在报错；停止时报错而不是返回半截；读不了的路径注明；匹配行去掉换行、非 UTF-8 行解码显示；任何层级都排除 `.git`。
@@ -342,7 +341,6 @@
   - **归组规则改了（G10-8）**：新请求 `git.repoRoots`（`server/repo-roots.ts`，5 分钟缓存，存 `storage/repo-roots-cache.json`，过期先用旧值后台刷新，报告已不存在的目录）；渲染层 `lib/session-project.ts` 的 `projectOf` 按「标签 → 目录本身是已列出项目 → 主仓库 → 目录已不存在则无项目」归组，已不存在的项目不显示；新会话收养主仓库为项目（「移动至项目」仍按所选目录）。一次性迁移 `projects-by-repository`：已列出的链接工作树项目移出列表（连同置顶与排序），改列其主仓库；子目录项目保留。
   - 验证：13 项检查、build、smoke **3327 全过**（新 `scripts/smoke-round10-git.ts` 75 条，全部在一次性仓库和本地裸仓库上跑；snapshotcheck 加三条）；每条新检查都改坏对应代码确认会失败。探针 `mcode-round10-git.cjs` 12 项全过、0 报错，在 v2.0 基线（897ee3c）构建上 10 项核心检查全部失败（基线的「推送」确实把 fix 写进了 origin/main）；回归探针 round3-files 37、round4-projects 10、round2-info 23、branch-picker 8（`mcode-branch-picker-r10.cjs` 只是把 ROOT 改成读 `MCODE_ROOT`）全过。
   - 未改：`git diff` 本身会顺手刷新 index（与设置无关，MiMo 的差异请求同样如此），只保证 status 不写 index；撤销时 MCode 仍保留「补丁回不去就 `git checkout --`」的兜底（MiMo 26.914 只靠补丁）。
-- 进行中：工具（文件与桌面 / bash 与网页 / 智能体类）三路、步骤绘制一路构建；另开两个只读角度：**记忆、历史搜索与技能**（`round10-memory.md`）、**macOS / Linux 代码分支静态对照**（`round10-platforms.md`，逐项标明「代码可确定」或「需实机确认」）。
 - **步骤绘制这一路已完成**（`round10-steps.md` K10-1 … K10-16，K10-10 按用户决定跳过——multiedit 由工具一路删除；worktree 分支 9f5ab4d、9e6b033、03a8b6e、8f44b60）：
   - K10-1 已完成回合照 MiMo 分「段」（`lib/step-rows.ts` `stagesOf`）：只有正常结束、且最后一段以文字 / 提问收尾的回合，回合头才是折叠按钮，收起范围是最后一段文字之前的全部（中间说明、较早的提问也收）；停止 / 失败 / 以工具或子智能体收尾的回合头部是纯文字、全部摊开，最后一段没说话时它的工具组默认展开。查找的「未展开 N」也数被收起的文字。
   - K10-2 插话照 26.914（`shared/steer.ts`）：模型接收后插话成为下一回合的普通提问（时间、复制、编辑），上一回合按完成结算（有操作行、不显示「中断」），新回合计时重开；未接收的插话放在回合最底部、工作指示之后，带「已插话 · 会尽快处理」；没有回合在跑时，未接收的插话按普通提问显示。子智能体通知仍留在回合内。runner 在接收插话的那一步把撤销记录一分为二（`openSteeredTurn`），回滚到插话只撤它之后的改动；实时改动胶囊、信息卡任务计数用同一边界；旧记录照常读取（旧快照的多消息记录仍由 revert 的 restoredTo 逻辑处理）。
@@ -354,6 +352,9 @@
   - K10-14 阿拉伯语：步骤、分组、提问卡与回合头的收起箭头镜像；标题 `dir="auto"`，`+N -M`（步骤、改动文件卡、实时胶囊）固定 LTR 隔离，命令 / 输出框按段落自判方向。K10-15 `buildWorkDisplay.*_two/_zero` 进 18 张表（ar 用双数 / 零的说法，其余照抄 `_other`），`tn()` 认 zero / two，缺形式时回落 `_other`。K10-16 实测：MiMo 的 `tc-out` 只有 pre-wrap、祖先也无 overflow-wrap，长串横向滚动；MCode 改为 `overflow-wrap: normal`（改前 / 改后截图 `scratchpad/mcode-round10-steps-long-before.png` / `-after.png`）。
   - 顺带修正：改动文件卡此前对没有改文件的回合也画「已编辑 0 个文件」，现在照 MiMo 只在有文件时画。因此 round8-a11y 的 M 项（基准录的是带空卡的回合高度 260.9 → 169.8）会报差异；另有 5 项宽度差 1.7px 和 `dbListLine` textAlign left→start 在去掉本改动时同样出现，不是本路引起。
   - 验证（合并 v2.0 897ee3c 后）：十三项检查全过，build 通过，smoke **3308 全过**（新 `scripts/smoke-round10-steps.ts` 48 条；`session-check` 插话回滚改为新边界；smoke 里 locate 图标与直播文本两条旧预期随之更新）。探针 `mcode-round10-steps.cjs` 中文 30 项、阿拉伯语 35 项全过、0 报错；一次性改坏全部修复后分别 25 / 30 项失败，smoke 新增 23 条失败，sessioncheck 插话 3 条失败。回归：round3-stream 34、round3-reply 29（copyFeedback 一次偶发，重跑通过）、round6-visual 24 全过；round8-a11y 19/20（见上）。
+- **第十轮第一批已合并四路**（bash 与网页、文件工具与桌面工具包、git、步骤绘制；合并冲突只在 smoke.ts / HANDOFF / bash.ts 的 import，两边都保留，typecheck 与 i18ncheck 通过）。智能体类工具那一路与文件工具那一路都做了定时任务（T10-20/21/22/51/52/53）和跨对话中文文案（T10-49/55），合并冲突落在 automation 与 session-chat 代码里，已交回该路在自己分支上合并最新 v2.0、每项只留一套实现。T10-50：审计称 MiMo 发起方停止时**不**撤回排队消息，MCode 目前撤回，待问用户。
+- **用户 2026-09-17 第十轮第二批决定**：斜杠菜单照 MiMo 列出并实现 `/init`、`/review`、`/dream`、`/distill`、`/rebuild`（文字自写）；记忆完全照 MiMo 按仓库分份、非 git 文件夹共用一份（迁移时合并、不删、留备份）；技能详情弹窗与「卸载」照 MiMo；macOS 留边距图标与 Linux 图标同步照做。**暂不做**：M10-7 Mac 签名 / 公证 / 架构、M10-8 Mac 自动更新、M10-21 Mac / Linux 随包运行时、M10-22 deb、M10-27（Linux 无托盘时保持 MiMo 行为）。
+- 进行中：记忆 / 技能 / 斜杠命令一路；macOS / Linux 一路（M10-1 登录网址经 shell 打开的注入问题优先）。
 - **第十轮·智能体类工具（`r10-part-C.md` 与对应 T10 项）已完成**，检查在 `scripts/smoke-round10-agents.ts`（每项都在改坏代码后确认会失败）：
   - T10-16：带有效 `task_id` 启动的子智能体先把该任务开始并归到自己名下；general 子智能体结束时若手里还有未开始 / 进行中的任务，用隐藏提醒（`synthetic`）最多再跑 2 轮；仍持有未完成任务时状态降为 partial（只剩 blocked 时为 blocked），答复末尾列出「**Unfinished tasks**」，闸门那一轮出错时保留之前的答复并降为 partial。子智能体记录新增 `subagent.reported`。
   - T10-44：`<actor_result>` 总带 status（无状态头为 unknown）和 summary 属性；被外部停止的 run 返回 cancelled 结果（随父回合 Stop 的仍是中断）；失败带 Partial result；status / wait 字段改为 `agent / turnCount / lastTurnTime / lastOutcome / time`，wait 带 `reportedStatus / reportedSummary`；failed / blocked 的通知写「finished and reported …」。子智能体的 worker 在结果落盘后才释放（修掉 wait 偶发读不到 lastOutcome）。
