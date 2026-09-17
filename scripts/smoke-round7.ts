@@ -786,7 +786,6 @@ export async function roundSevenModelChecks(check: Check, section: (name: string
           history: [],
           tools: [],
           effort: "",
-          showReasoning: false,
           signal: controller.signal,
           baseURL: `http://127.0.0.1:${p.port}/v1`,
           extra: providerExtras("openrouter", false, "ses_wire"),

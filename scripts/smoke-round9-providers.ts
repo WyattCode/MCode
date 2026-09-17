@@ -596,7 +596,7 @@ export async function roundNineProviderChecks(check: Check, section: (name: stri
       required: ["level", "missing"],
     }
     const tool = { name: "probe", description: "d", parameters: awkward, execute: async () => ({ output: "" }) }
-    const base = { apiKey: "k", system: "s", history: [], tools: [tool], showReasoning: false, signal: new AbortController().signal }
+    const base = { apiKey: "k", system: "s", history: [], tools: [tool], signal: new AbortController().signal }
 
     const gemini = messagesRequest({ ...base, effort: "high", model: { provider: "vertex-proxy", model: "gemini-2.5-pro" } }).tools?.[0] as any
     const shaped = gemini?.input_schema
