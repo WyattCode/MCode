@@ -2879,12 +2879,10 @@ export class SessionRunner {
        * the step quietly, as MiMo does. Marked interrupted too, as MiMo marks
        * it: a call that had already printed something (a command's output on
        * its card) is then handed to the model as that output, so it knows how
-       * far the command got; one that had printed nothing reads as aborted.
+       * far the command got; one that had printed nothing keeps its own
+       * account of the stop.
        */
-      if (input.signal.aborted) {
-        part.error = ABORTED_TOOL
-        part.metadata = { ...(part.metadata ?? {}), aborted: true, interrupted: true }
-      }
+      if (input.signal.aborted) part.metadata = { ...(part.metadata ?? {}), aborted: true, interrupted: true }
       if (err instanceof PermissionDenied && err.byUser) refusedByUser = true
     } finally {
       stopListening()

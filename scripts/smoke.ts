@@ -1309,7 +1309,8 @@ async function main() {
       markdown.includes("# Title") &&
         markdown.includes("**bold**") &&
         markdown.includes("[a link](http://example.com/)") &&
-        markdown.includes("- one") &&
+        // turndown pads a list marker as MiMo's output has it: "-   one".
+        /^-\s+one$/m.test(markdown) &&
         markdown.includes("```\nlet x = 1 < 2\n```") &&
         !markdown.includes("secret()") &&
         !markdown.includes("<p>"),
