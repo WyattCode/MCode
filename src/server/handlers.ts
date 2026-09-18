@@ -47,7 +47,6 @@ import { applyMcpImports, importItem, scanMcpImports } from "./mcp-import"
 import { runImport, scanImports } from "./import"
 import { mergeMcpSecrets } from "./mcp-save"
 import { agentsState, deleteAgents, ensureAgents, globalAgentsPath, setAgentsEnabled } from "./global-agents"
-import { revertTurnFiles } from "./session/turn-revert"
 import { turnFileDiffs } from "./session/turn-diff"
 import type { ShellOwner } from "./shell"
 
@@ -1163,13 +1162,12 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     }
 
     case "session.revertTurn": {
-      if (runtime.runner.isRunning(request.sessionID)) throw new Error("Wait for the current turn to finish")
-      const session = await runtime.sessions.require(request.sessionID)
       const chosen = (await runtime.sessions.messages(request.sessionID)).filter(
         (message) => message.role === "assistant" && request.messageIDs.includes(message.id),
       )
       if (!chosen.length) throw new Error("That turn is no longer in the conversation")
-      const result = await revertTurnFiles(session.directory, chosen)
+      // Busy, other conversations' later work and the project's lock are the runner's to check (N11-13, N11-15).
+      const result = await runtime.runner.revertTurn(request.sessionID, chosen)
       /*
        * The card remembers it on the turn's last message, and only when a file
        * actually moved: a revert that touched nothing leaves the card offering

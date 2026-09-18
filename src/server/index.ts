@@ -19,6 +19,7 @@ import { stopBashCommands } from "./tool/bash"
 import { McpServers } from "./mcp"
 import { createSampler } from "./mcp-sampling"
 import { handle } from "./handlers"
+import { onGitWaiting } from "./git-queue"
 import { bindDesktopSettings } from "./tool/desktop-settings"
 import { bindMemoryWrites, startHistory, stopHistory } from "./history/service"
 import { migrateMemoryLayout } from "./memory/migrate"
@@ -220,6 +221,8 @@ export async function startBackend(dataDirectory: string, options: BackendOption
     handleProtocols: (protocols) => (protocols.has(SOCKET_PROTOCOL) ? SOCKET_PROTOCOL : false),
   })
   const clients = new Set<WebSocket>()
+  // A git write queued behind another on the same repository says so, and the window shows it waiting (N11-14).
+  onGitWaiting((directory, waiting) => bus.publish({ type: "git.waiting", directory, waiting }))
 
   /**
    * Which conversations each window is drawing, as it last said (N11-4).

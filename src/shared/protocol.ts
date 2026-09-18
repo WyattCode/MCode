@@ -2356,6 +2356,8 @@ export type ServerEvent =
    * itself is always announced with `message.updated` first.
    */
   | { type: "message.part.updated"; sessionID: string; messageID: string; part: AssistantPart }
+  /** A git write for this folder is queued behind another one on the same repository, or has stopped waiting (N11-14). */
+  | { type: "git.waiting"; directory: string; waiting: boolean }
   | { type: "permission.requested"; request: PermissionRequest }
   | { type: "permission.resolved"; requestID: string; decided?: PermissionDecision; reason?: string }
   /**

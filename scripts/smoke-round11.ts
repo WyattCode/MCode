@@ -25,6 +25,9 @@ import { cutLiveStreams, liveStreams, stallGuard } from "../src/server/provider/
 import { failureCode } from "../src/server/session/error-map"
 import { ProviderHttpError } from "../src/server/provider/types"
 import { Semaphore, STEP_TOOL_LIMIT, SUBAGENT_LIMIT } from "../src/server/session/semaphore"
+import { onGitWaiting, queuedWrites, serialisedWrite } from "../src/server/git-queue"
+import { checkoutFile, commit as gitCommit } from "../src/server/git"
+import { withProjectLock } from "../src/server/session/snapshot"
 import type { Message, ModelRef, ServerEvent, SessionInfo, ToolPart } from "@shared/protocol"
 import { narrowcastSession } from "@shared/protocol"
 
@@ -457,6 +460,105 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
       "a deleted conversation's per-conversation state goes with it",
       ["turnPrune", "turnAgents", "prefixes", "taskQueues", "numbering"].every((field) => forget.includes(`this.${field}`)) && /runtime\.runner\.forgetSession\(request\.sessionID\)/.test(handlers),
     )
+  }
+
+  section("Round 11 (N11-14): git writes on one repository take turns")
+  {
+    const temp = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r11-git-"))
+    const said: string[] = []
+    onGitWaiting((directory, waiting) => said.push(`${path.basename(directory)}:${waiting}`))
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    const order: string[] = []
+    const first = serialisedWrite(temp, path.join(temp, "a"), async () => {
+      await held
+      order.push("first")
+    })
+    const second = serialisedWrite(temp, path.join(temp, "b"), async () => {
+      order.push("second")
+    })
+    const elsewhere = serialisedWrite(path.join(temp, "other"), path.join(temp, "c"), async () => {
+      order.push("elsewhere")
+    })
+    await elsewhere
+    check("a write to another repository does not wait", order.join() === "elsewhere" && queuedWrites(temp) === 2)
+    check("one queued behind another says it is waiting", said.includes("b:true") && !said.includes("a:true"), said)
+    release()
+    await Promise.all([first, second])
+    check("and they run one after the other, then say so", order.join() === "elsewhere,first,second" && said.includes("b:false") && queuedWrites(temp) === 0, { order, said })
+    onGitWaiting(undefined)
+
+    // A commit that sweeps in unstaged work waits for a write already under way on that repository.
+    const repo = path.join(temp, "repo")
+    await fs.mkdir(repo)
+    const g = (...args: string[]) => execFileSync("git", args, { cwd: repo, windowsHide: true })
+    g("init", "-q")
+    g("config", "user.email", "t@example.com")
+    g("config", "user.name", "t")
+    g("config", "commit.gpgsign", "false")
+    await fs.writeFile(path.join(repo, "a.txt"), "one\n", "utf8")
+    g("add", "-A")
+    g("commit", "-q", "-m", "first")
+    let letGo!: () => void
+    const busy = serialisedWrite(repo, repo, () => new Promise<void>((resolve) => (letGo = resolve)))
+    await fs.writeFile(path.join(repo, "a.txt"), "two\n", "utf8")
+    let committed = false
+    const committing = gitCommit(repo, "second", true).then((result) => {
+      committed = true
+      return result
+    })
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    check("a commit waits while another write on the repository is under way", committed === false)
+    letGo()
+    await busy
+    check("and goes through once it is done", (await committing).ok === true)
+
+    // Someone else's git holding index.lock is waited out rather than counted as a failure (N11-13).
+    await fs.writeFile(path.join(repo, "a.txt"), "three\n", "utf8")
+    const lock = path.join(repo, ".git", "index.lock")
+    await fs.writeFile(lock, "", "utf8")
+    const restoring = checkoutFile(repo, path.join(repo, "a.txt"))
+    setTimeout(() => void fs.rm(lock, { force: true }), 300)
+    check("a file put back through git waits out another git's index.lock", (await restoring) === true && (await fs.readFile(path.join(repo, "a.txt"), "utf8")).replace(/\r/g, "") === "two\n")
+    await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined)
+  }
+
+  section("Round 11 (N11-13/N11-15): restores and photographs do not overlap")
+  {
+    const temp = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r11-lock-"))
+    const project = path.join(temp, "project")
+    await fs.mkdir(project)
+    execFileSync("git", ["init", "-q"], { cwd: project, windowsHide: true })
+    await fs.writeFile(path.join(project, "a.txt"), "one", "utf8")
+    const snapshots = new Snapshots(path.join(temp, "store"))
+    // Warmed up first, so the store exists and a photograph is quick; what is measured is only the wait.
+    const warm = snapshots.begin(project)
+    await warm.ready()
+    await warm.finish()
+    let letGo!: () => void
+    const restoring = withProjectLock(project, () => new Promise<void>((resolve) => (letGo = resolve)))
+    const recording = snapshots.begin(project)
+    let opened = false
+    void recording.ready().then(() => (opened = true))
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    check("a turn's opening photograph waits for a restore in progress", opened === false)
+    letGo()
+    await restoring
+    await recording.ready()
+    check("and is taken once it is over", opened === true)
+    await recording.finish()
+    await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined)
+
+    const runner = await read("src/server/session/runner.ts")
+    const revert = runner.slice(runner.indexOf("async revertTurn("), runner.indexOf("async revertTurn(") + 1200)
+    check(
+      "a turn's 撤销 refuses to take another conversation's later work, and writes under the project's lock",
+      /await this\.guardOthers\(/.test(revert) && /withProjectLock\(session\.directory, \(\) => revertTurnFiles/.test(revert) && /this\.noteRestore\(/.test(revert) && /"error\.sessionBusy"/.test(revert),
+    )
+    check("undo and redo write under it too", /return directory \? withProjectLock\(directory, \(\) => this\.writeNow\(files, directory\)\)/.test(runner))
+    const card = await read("src/renderer/src/components/InfoCommitCard.vue")
+    const i18n = await read("src/renderer/src/lib/i18n.ts")
+    check("the commit card says when it is waiting its turn", /app\.gitWaiting\.has\(props\.directory\)/.test(card) && i18n.split('"info.gitWaiting":').length - 1 === 18)
   }
 
   section("Round 11 (N11-3): the four kinds of task notification")

@@ -26,6 +26,7 @@ import {
   type PorcelainEntry,
 } from "./git-process"
 import { hasGithubRemote } from "./pull-request"
+import { serialisedWrite } from "./git-queue"
 
 /**
  * Just enough git to review what a turn did.
@@ -79,9 +80,30 @@ export async function isTracked(root: string, file: string): Promise<boolean> {
   return (await tryGit(root, ["ls-files", "--error-unmatch", "--", file])).ok
 }
 
-/** `git checkout -- <file>`: MiMo's last resort when a patch will not go back on. */
+/** How often a write that met another's index.lock is tried again, and how long apart. */
+const LOCK_RETRIES = 4
+const LOCK_PAUSE_MS = 250
+
+/**
+ * `git checkout -- <file>`: MiMo's last resort when a patch will not go back on.
+ *
+ * In the repository's write queue (N11-14), and a failure that is only
+ * another git holding index.lock - a terminal, an editor, a hook - is waited
+ * out a few times rather than counted as a file that could not be put back
+ * (N11-13).
+ */
 export async function checkoutFile(root: string, file: string): Promise<boolean> {
-  return (await tryGit(root, ["checkout", "--", file])).ok
+  return serialisedWrite(root, root, async () => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await git(root, ["checkout", "--", file])
+        return true
+      } catch (err) {
+        if (attempt >= LOCK_RETRIES || !/index\.lock/i.test(outputOf(err))) return false
+        await new Promise((resolve) => setTimeout(resolve, LOCK_PAUSE_MS * (attempt + 1)))
+      }
+    }
+  })
 }
 
 /**
@@ -92,6 +114,10 @@ export async function checkoutFile(root: string, file: string): Promise<boolean>
  * through an editor.
  */
 export async function applyPatch(root: string, patch: string, reverse: boolean): Promise<boolean> {
+  return serialisedWrite(root, root, () => applyPatchNow(root, patch, reverse))
+}
+
+async function applyPatchNow(root: string, patch: string, reverse: boolean): Promise<boolean> {
   const file = path.join(os.tmpdir(), `mcode-revert-${Date.now()}-${Math.random().toString(36).slice(2)}.patch`)
   try {
     await fs.writeFile(file, patch, "utf8")
@@ -485,6 +511,16 @@ export async function checkout(
   branch: string,
   options: { force?: boolean; create?: boolean } = {},
 ): Promise<CheckoutResult> {
+  // In the repository's write queue (N11-14); a folder that is not in one has nothing to queue behind.
+  const root = await toplevel(directory).catch(() => directory)
+  return serialisedWrite(root, directory, () => checkoutNow(directory, branch, options))
+}
+
+async function checkoutNow(
+  directory: string,
+  branch: string,
+  options: { force?: boolean; create?: boolean },
+): Promise<CheckoutResult> {
   const name = branch.trim()
   const state = await branchState(directory)
   if (!state.repo) return { ok: false, error: "not a git repository" }
@@ -742,6 +778,15 @@ export async function commit(directory: string, message: string, includeUnstaged
   } catch (err) {
     return { ok: false, error: errorText(err) }
   }
+  /*
+   * In the repository's write queue (N11-14): `add -A` stages whatever is on
+   * disk at that moment, so it must not run while a patch is being taken back
+   * or a branch switched under it.
+   */
+  return serialisedWrite(root, directory, () => commitNow(root, text, includeUnstaged))
+}
+
+async function commitNow(root: string, text: string, includeUnstaged: boolean): Promise<CommitResult> {
   if (includeUnstaged) {
     try {
       await git(root, ["add", "-A"])
@@ -786,6 +831,11 @@ export function pushFailure(err: unknown): PushResult {
  * push that needs one fails and says so instead of hanging.
  */
 export async function push(directory: string): Promise<PushResult> {
+  const root = await toplevel(directory).catch(() => directory)
+  return serialisedWrite(root, directory, () => pushNow(directory))
+}
+
+async function pushNow(directory: string): Promise<PushResult> {
   try {
     const root = await toplevel(directory)
     const branch = (await git(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "")).trim()

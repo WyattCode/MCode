@@ -131,6 +131,36 @@ export const SNAPSHOT_QUEUE_TIMEOUT_MS = 90_000
 /** What a turn that gave up waiting for the queue is told. */
 const QUEUE_GAVE_UP = "the project's snapshot queue did not free up"
 
+/**
+ * One lock per project for the work that writes its files outside a turn's
+ * tools - an undo, a redo, a turn's 撤销 - and for the photographs that mark
+ * where each turn begins and ends (N11-15).
+ *
+ * The photographs already queue on the shadow repository's git lock, but a
+ * restore writes files one by one with plain fs calls and took no lock at
+ * all, so another conversation's turn could open or close half way through
+ * it and count the restored files as its own work. Held outside the git lock
+ * everywhere - a restore still reads its bodies through that lock - so the
+ * order is always this one first and the two can never wait on each other.
+ */
+const projectLocks = new Map<string, Promise<unknown>>()
+
+function projectKey(directory: string): string {
+  const resolved = path.resolve(directory)
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved
+}
+
+export function withProjectLock<T>(directory: string, work: () => Promise<T>): Promise<T> {
+  const key = projectKey(directory)
+  const run = (projectLocks.get(key) ?? Promise.resolve()).catch(() => undefined).then(work)
+  const settled = run.catch(() => undefined)
+  projectLocks.set(key, settled)
+  void settled.then(() => {
+    if (projectLocks.get(key) === settled) projectLocks.delete(key)
+  })
+  return run
+}
+
 /** What a call made after its repository was collected is told. */
 const REPO_RETIRED = "this project's snapshot store has been removed"
 
@@ -425,6 +455,11 @@ class Repo {
    * so end up with a stretch nobody marked as shared.
    */
   join(recording: Recording): Promise<string> {
+    // Never in the middle of a restore (N11-15): its files would read as this turn's starting point half put back.
+    return withProjectLock(this.directory, () => this.joinNow(recording))
+  }
+
+  private joinNow(recording: Recording): Promise<string> {
     return this.raceLock(SNAPSHOT_QUEUE_TIMEOUT_MS, async (abandoned) => {
       // Nothing was added to the live set yet, so an abandoned join has nothing to undo.
       if (abandoned()) throw new Error(QUEUE_GAVE_UP)
@@ -442,6 +477,11 @@ class Repo {
 
   /** Photographs the project as one turn closes, ending a stretch for everyone here. */
   leave(recording: Recording): Promise<string> {
+    // Nor at its end (N11-15), or half a restore would be counted as this turn's work.
+    return withProjectLock(this.directory, () => this.leaveNow(recording))
+  }
+
+  private leaveNow(recording: Recording): Promise<string> {
     return this.raceLock(SNAPSHOT_QUEUE_TIMEOUT_MS, async (abandoned) => {
       // The caller has stopped waiting, but this turn must still stop counting as live.
       if (abandoned()) {

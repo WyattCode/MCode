@@ -50,7 +50,8 @@ import { failureCode, failureDetail } from "./error-map"
 import type { SessionStore, Snapshot, SnapshotFile } from "./store"
 import { emptyUsage } from "./store"
 import type { Recording } from "./snapshot"
-import { Snapshots, keepSnapshotFile, snapshotBytes } from "./snapshot"
+import { Snapshots, keepSnapshotFile, snapshotBytes, withProjectLock } from "./snapshot"
+import { revertTurnFiles, turnFilePaths } from "./turn-revert"
 import { isOverflowByCount, isOverflowError, maxOutputTokens, underPressure } from "./overflow"
 // MiMo's pruning: what a turn re-sends of its older tool output once the prompt cache has gone cold.
 import { pruneLevelFor, prunedHistory, type PruneLevel } from "./prune"
@@ -1179,6 +1180,11 @@ export class SessionRunner {
    * copies of every file.
    */
   private async write(files: SnapshotFile[], directory?: string): Promise<SnapshotFile[]> {
+    // Under the project's lock, so no turn's photograph lands half way through (N11-15).
+    return directory ? withProjectLock(directory, () => this.writeNow(files, directory)) : this.writeNow(files, directory)
+  }
+
+  private async writeNow(files: SnapshotFile[], directory?: string): Promise<SnapshotFile[]> {
     const swapped: SnapshotFile[] = []
     for (const file of files) {
       swapped.push(await keepSnapshotFile(this.snapshots, directory, file.path))
@@ -1227,6 +1233,27 @@ export class SessionRunner {
     if (!clashes.length) return
     const rest = clashes.length > 1 ? ` (and ${clashes.length - 1} more)` : ""
     throw new Error(`Another conversation has changed ${clashes[0]}${rest} since this turn, so taking it back would undo that work too`)
+  }
+
+  /**
+   * A turn's 撤销 from the "edited N files" card (N11-13).
+   *
+   * It checked only that its own conversation was idle. Undo and redo also
+   * refuse to take another conversation's later work with them, and record the
+   * restore so the next one to look sees it; this did neither, so it could put
+   * back a file another conversation had changed since. It now does both, and
+   * does its writing under the project's lock as they do (N11-15).
+   */
+  async revertTurn(sessionID: string, messages: Message[]): Promise<Awaited<ReturnType<typeof revertTurnFiles>>> {
+    if (this.isRunning(sessionID)) throw new CodedError("Wait for the current turn to finish", "error.sessionBusy")
+    const session = await this.store.require(sessionID)
+    const paths = turnFilePaths(session.directory, messages)
+    const since = Math.min(...messages.map((message) => message.time.created))
+    const files = paths.map((path) => ({ path }) as SnapshotFile)
+    await this.guardOthers(sessionID, Number.isFinite(since) ? since : Date.now(), files)
+    const result = await withProjectLock(session.directory, () => revertTurnFiles(session.directory, messages))
+    if (result.restored + result.removed > 0) await this.noteRestore(sessionID, files)
+    return result
   }
 
   /** A restore is a write like any other, so the next conversation to look sees it. */

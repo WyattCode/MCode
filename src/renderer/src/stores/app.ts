@@ -99,6 +99,8 @@ export const useApp = defineStore("app", () => {
    * finishing, and MiMo says so in its own words (N11-3).
    */
   const answeredAnother = new Set<string>()
+  /* N11-14: folders whose git write is queued behind another one on the same repository. */
+  const gitWaiting = ref(new Set<string>())
   /**
    * Bumped whenever the window comes back into focus, as MiMo's shell bumps its
    * `fsNonce`.
@@ -609,6 +611,13 @@ export const useApp = defineStore("app", () => {
         if (index === -1) messages.value.push(event.message)
         else messages.value[index] = event.message
         reindex(event.message)
+        break
+      }
+      case "git.waiting": {
+        const next = new Set(gitWaiting.value)
+        if (event.waiting) next.add(event.directory)
+        else next.delete(event.directory)
+        gitWaiting.value = next
         break
       }
       case "message.part.updated": {
@@ -2189,6 +2198,7 @@ export const useApp = defineStore("app", () => {
     automationRuns,
     automationNotice,
     answeredAnother,
+    gitWaiting,
     clearPermission,
     recent,
     forkFrom,
