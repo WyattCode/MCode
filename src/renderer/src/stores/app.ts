@@ -17,6 +17,8 @@ import type { Attachment, AgentName,
   SessionInfo,
 } from "@shared/protocol"
 import { Client } from "../lib/client"
+import { drafts, scheduleDraftSave } from "../lib/composer-drafts"
+import { useAnnotations } from "./annotations"
 import { setChordPlatform } from "../lib/keys"
 import { language, sessionTitle, t } from "../lib/i18n"
 import { mcpNeedsSignIn } from "../lib/mcp-status"
@@ -388,6 +390,7 @@ export const useApp = defineStore("app", () => {
    */
   function forgetSession(sessionID: string) {
     held.delete(sessionID)
+    forgetDrafts(sessionID)
 
     if (running.value.delete(sessionID)) running.value = new Set(running.value)
     turnStarted.delete(sessionID)
@@ -514,6 +517,7 @@ export const useApp = defineStore("app", () => {
           subagentSessions.value = subagentSessions.value.filter((session) => session.id !== event.sessionID)
           if (running.value.delete(event.sessionID)) running.value = new Set(running.value)
           forgetSideTranscript(event.sessionID)
+          forgetDrafts(event.sessionID)
           break
         }
         if (sideSessions.value.some((session) => session.id === event.sessionID)) {
@@ -989,6 +993,25 @@ export const useApp = defineStore("app", () => {
 
     // No session is opened on boot: the launcher is the entry point, and a
     // project is chosen there. Auto-creating one would skip past it.
+  }
+
+  /**
+   * A deleted conversation's waiting words and annotations go with it (N11-24),
+   * as MiMo drops a conversation's draft and composer state on deletion. They
+   * stayed for the life of the profile, and every one of them was written out
+   * again with every keystroke anywhere, since the draft file is saved whole.
+   */
+  function forgetDrafts(sessionID: string): void {
+    const annotations = useAnnotations()
+    let changed = false
+    for (const key of [`main:${sessionID}`, `side:${sessionID}`]) {
+      if (drafts.delete(key)) changed = true
+      if (annotations.list(key).length) {
+        annotations.put(key, [])
+        changed = true
+      }
+    }
+    if (changed) scheduleDraftSave()
   }
 
   /** What session.list said about the turns that are waiting between attempts. */

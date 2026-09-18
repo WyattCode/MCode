@@ -30,6 +30,8 @@ import { checkoutFile, commit as gitCommit } from "../src/server/git"
 import { withProjectLock } from "../src/server/session/snapshot"
 import { authOnce } from "../src/server/mcp-oauth"
 import { Shells } from "../src/server/shell"
+import { Config } from "../src/server/config"
+import { MAX_FRAME_BYTES } from "../src/server/index"
 import type { Message, ModelRef, ServerEvent, SessionInfo, ToolPart } from "@shared/protocol"
 import { narrowcastSession } from "@shared/protocol"
 
@@ -626,6 +628,46 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     const drawerSource = await read("src/renderer/src/components/TerminalDrawer.vue")
     const panelSource = await read("src/renderer/src/components/right/RpTerminal.vue")
     check("and each terminal says which it is", /surface: "drawer"/.test(drawerSource) && /surface="drawer"/.test(drawerSource) && /surface="panel"/.test(panelSource))
+  }
+
+  section("Round 11 (N11-34): a failed save does not take another save with it")
+  {
+    const temp = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r11-config-"))
+    const storage = new Storage(path.join(temp, "storage"))
+    const config = new Config(storage, new Bus(), path.join(temp, "credentials.json"))
+    await storage.write("config", {})
+    await config.load()
+    let failNext = true
+    const realWriteText = storage.writeText.bind(storage)
+    storage.writeText = async (key, render) => {
+      if (key === "config" && failNext) {
+        failNext = false
+        await new Promise((resolve) => setTimeout(resolve, 200))
+        throw new Error("ENOSPC")
+      }
+      return realWriteText(key, render)
+    }
+    const failing = config.set({ language: "fr" }).then(() => "saved", () => "failed")
+    const other = config.set({ taskDoneSound: "off" } as never).then(() => "saved", () => "failed")
+    check("the save that failed fails, the one beside it lands", (await failing) === "failed" && (await other) === "saved")
+    check("and what was held in memory kept the second change, without the first", config.get().language !== "fr" && (config.get() as { taskDoneSound?: string }).taskDoneSound === "off", { language: config.get().language })
+    await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined)
+  }
+
+  section("Round 11 (N11-23/N11-24/N11-25/N11-38/N11-39/N11-40/N11-41): smaller ends")
+  {
+    const palette = await read("src/renderer/src/components/CommandPalette.vue")
+    check("the file picker searches the project as the query changes, newest answer only", /type: "file\.search", directory, query: needle/.test(palette) && /ticket !== searchTicket/.test(palette))
+    const handlers = await read("src/server/handlers.ts")
+    check("file.list stops after a budget of entries, and the search budget is MiMo's", /visits < LIST_VISITS/.test(handlers) && /const SEARCH_VISITS = 4000/.test(handlers))
+    const store = await read("src/renderer/src/stores/app.ts")
+    check("a deleted conversation's draft and annotations go with it", /for \(const key of \[`main:\$\{sessionID\}`, `side:\$\{sessionID\}`\]\)/.test(store) && /forgetDrafts\(sessionID\)/.test(store))
+    const sidebar = await read("src/renderer/src/components/Sidebar.vue")
+    check("the collapsed side column's list is paged like the column's own", /v-for="session in recent"\s/.test(sidebar) && /data-quick-more/.test(sidebar))
+    check("the socket states its frame limit", MAX_FRAME_BYTES === 100 * 1024 * 1024 && /maxPayload: MAX_FRAME_BYTES/.test(await read("src/server/index.ts")))
+    check("the search index gives space back after a full rebuild", /this\.db\.exec\("VACUUM"\)/.test(await read("src/server/history/index.ts")))
+    const preload = await read("src/preload/index.ts")
+    check("file-change events use one listener however many views watch", /if \(!fileChangeHandlers\.size\) ipcRenderer\.on\("mcode:file-changed", relayFileChange\)/.test(preload))
   }
 
   section("Round 11 (N11-3): the four kinds of task notification")

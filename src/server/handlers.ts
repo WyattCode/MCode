@@ -1670,8 +1670,14 @@ export async function searchTree(directory: string, query: string): Promise<Hand
 }
 
 const SEARCH_LIMIT = 50
-/* A walk this long is a huge tree; what was found by then is what is shown. */
-const SEARCH_VISITS = 20_000
+/*
+ * A walk this long is a huge tree; what was found by then is what is shown.
+ * MiMo's `searchFiles` budget, 4,000 (N11-39): this was five times that, which
+ * cost about five times MiMo's time per keystroke on a large project for a
+ * slightly better hit rate, and the command palette now searches through it on
+ * every keystroke too.
+ */
+const SEARCH_VISITS = 4000
 /*
  * As deep as the files tab's own search goes, and MiMo's `searchFiles` with it.
  *
@@ -1728,17 +1734,27 @@ export async function searchFolder(directory: string, query: string, sub?: strin
   return { entries: ranked.slice(0, cap), truncated: overflow || ranked.length > cap }
 }
 
+/** How many entries one file.list may look at before it answers with what it has (N11-23). */
+const LIST_VISITS = 20_000
+
 async function listFiles(directory: string, query?: string): Promise<FileEntry[]> {
   const root = path.resolve(directory)
   const needle = query?.toLowerCase()
   const results: FileEntry[] = []
   const shielded = protectedFilter(root)
   const queue = [root]
+  /*
+   * A budget on what is looked at, not only on what is kept (N11-23). With a
+   * query that matches little, filling MAX_FILES meant walking the whole tree -
+   * a hundred thousand entries on a large project.
+   */
+  let visits = 0
 
-  while (queue.length && results.length < MAX_FILES) {
+  while (queue.length && results.length < MAX_FILES && visits < LIST_VISITS) {
     const dir = queue.shift()!
     const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => [])
     for (const entry of entries) {
+      visits += 1
       if (entry.name.startsWith(".") || IGNORED.has(entry.name)) continue
       const absolute = path.join(dir, entry.name)
       const rel = path.relative(root, absolute).split(path.sep).join("/")

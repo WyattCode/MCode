@@ -96,6 +96,13 @@ export class HistoryIndex {
         this.db.exec("DELETE FROM history_session")
       })
       this.database.setMeta("history_content", CONTENT_VERSION)
+      /*
+       * The file does not shrink on its own (N11-40): a full rebuild emptied
+       * every table and the pages stayed allocated, so each content change left
+       * the index its previous size again on top of the new one. It is the one
+       * store here with no other way of giving space back.
+       */
+      this.db.exec("VACUUM")
     }
     for (const row of this.db.prepare("SELECT session_id, project FROM history_session").all() as { session_id: string; project: string }[]) {
       this.projects.set(row.session_id, row.project)

@@ -53,6 +53,9 @@ export interface Backend {
   close(): Promise<void>
 }
 
+/** The largest frame a window may send (N11-38): well above any attachment the tools take, below a size that would stall the thread parsing it. */
+export const MAX_FRAME_BYTES = 100 * 1024 * 1024
+
 export interface BackendOptions {
   /** Browser origins allowed to connect: the renderer page's own. None means only non-browser clients. */
   origins?: readonly string[]
@@ -220,6 +223,13 @@ export async function startBackend(dataDirectory: string, options: BackendOption
     },
     // The plain name is chosen, so the one carrying the secret is never sent back.
     handleProtocols: (protocols) => (protocols.has(SOCKET_PROTOCOL) ? SOCKET_PROTOCOL : false),
+    /*
+     * Stated rather than left to the library's default (N11-38). A frame from
+     * the window past this - a request carrying attachments far beyond what
+     * any tool accepts - closes the socket with 1009, and that is logged with
+     * its reason below instead of being an unexplained reconnect.
+     */
+    maxPayload: MAX_FRAME_BYTES,
   })
   const clients = new Set<WebSocket>()
   // A git write queued behind another on the same repository says so, and the window shows it waiting (N11-14).
@@ -262,6 +272,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
 
   server.on("connection", (socket) => {
     clients.add(socket)
+    socket.on("error", (error) => console.warn(`[socket] a window's connection failed: ${error.message}`))
     socket.on("close", () => {
       clients.delete(socket)
       watching.delete(socket)

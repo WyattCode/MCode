@@ -20,6 +20,12 @@ export interface UpdateStatus {
  * agent - travels over the WebSocket, which keeps the privileged bridge small
  * enough to audit at a glance.
  */
+/* The document views watching for changes, behind the one listener onFileChanged keeps (N11-41). */
+const fileChangeHandlers = new Set<(target: string) => void>()
+const relayFileChange = (_event: unknown, target: string) => {
+  for (const handler of [...fileChangeHandlers]) handler(target)
+}
+
 const api = {
   bootstrap: (): Promise<{ port: number; secret: string; platform: string; home: string; version: string }> =>
     ipcRenderer.invoke("mcode:bootstrap"),
@@ -325,10 +331,18 @@ const api = {
   /** Watches an open document so its view can reload when it changes on disk. */
   watchFile: (target: string): Promise<boolean> => ipcRenderer.invoke("mcode:watch-file", target),
   unwatchFile: (target: string): Promise<void> => ipcRenderer.invoke("mcode:unwatch-file", target),
+  /*
+   * One listener on the channel however many views watch (N11-41): each
+   * document view subscribed on its own, and a handful of open previews put the
+   * channel within reach of the ten-listener warning.
+   */
   onFileChanged: (handler: (target: string) => void): (() => void) => {
-    const listener = (_event: unknown, target: string) => handler(target)
-    ipcRenderer.on("mcode:file-changed", listener)
-    return () => ipcRenderer.off("mcode:file-changed", listener)
+    if (!fileChangeHandlers.size) ipcRenderer.on("mcode:file-changed", relayFileChange)
+    fileChangeHandlers.add(handler)
+    return () => {
+      fileChangeHandlers.delete(handler)
+      if (!fileChangeHandlers.size) ipcRenderer.off("mcode:file-changed", relayFileChange)
+    }
   },
   onBrowserState: (handler: (state: unknown) => void): (() => void) => {
     const listener = (_event: unknown, state: unknown) => handler(state)
