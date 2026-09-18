@@ -28,6 +28,7 @@ import { Semaphore, STEP_TOOL_LIMIT, SUBAGENT_LIMIT } from "../src/server/sessio
 import { onGitWaiting, queuedWrites, serialisedWrite } from "../src/server/git-queue"
 import { checkoutFile, commit as gitCommit } from "../src/server/git"
 import { withProjectLock } from "../src/server/session/snapshot"
+import { authOnce } from "../src/server/mcp-oauth"
 import type { Message, ModelRef, ServerEvent, SessionInfo, ToolPart } from "@shared/protocol"
 import { narrowcastSession } from "@shared/protocol"
 
@@ -559,6 +560,46 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     const card = await read("src/renderer/src/components/InfoCommitCard.vue")
     const i18n = await read("src/renderer/src/lib/i18n.ts")
     check("the commit card says when it is waiting its turn", /app\.gitWaiting\.has\(props\.directory\)/.test(card) && i18n.split('"info.gitWaiting":').length - 1 === 18)
+  }
+
+  section("Round 11 (N11-10/N11-11/N11-26/N11-27/N11-35/N11-36): MCP under several conversations")
+  {
+    let renewals = 0
+    let finish!: (value: "AUTHORIZED") => void
+    const work = () => {
+      renewals++
+      return new Promise<"AUTHORIZED">((resolve) => (finish = resolve))
+    }
+    const first = authOnce("r11-server", work)
+    const second = authOnce("r11-server", work)
+    const other = authOnce("r11-elsewhere", async () => "AUTHORIZED")
+    finish("AUTHORIZED")
+    // Bounded, so a broken dedupe - whose first renewal is then never settled - fails here instead of hanging the run.
+    const settled = <T,>(promise: Promise<T>) => Promise.race([promise, new Promise<string>((resolve) => setTimeout(() => resolve("timed out"), 2000))])
+    check(
+      "two 401s on one server renew once, and the second uses what the first got",
+      (await settled(first)) === "AUTHORIZED" && (await settled(second)) === "AUTHORIZED" && renewals === 1 && (await other) === "AUTHORIZED",
+      { renewals },
+    )
+    check("and a later one renews again", (await authOnce("r11-server", async () => "AUTHORIZED")) === "AUTHORIZED")
+
+    const mcp = await read("src/server/mcp.ts")
+    check(
+      "a sampling request is asked in the conversation with a call in flight, and refused when that is not exactly one",
+      !/activeSession/.test(mcp) && /sessionID: this\.askingSession/.test(mcp) && /this\.calling\.size === 1/.test(mcp) && /connection\.callingFrom\(context\.sessionID/.test(mcp),
+    )
+    const handlers = await read("src/server/handlers.ts")
+    check("a deleted conversation's open questions are refused rather than left for ever", /runtime\.permissions\.rejectAll\(request\.sessionID\)/.test(handlers))
+    check("a sign-in never reconnects a connection that is serving a call", /if \(connection\.busy\(\)\) return\s+await connection\.stop\(\)/.test(mcp))
+    check("only the newest tools/list_changed refetch may set the list", /generation !== this\.toolsGeneration/.test(mcp) && /const generation = \+\+this\.toolsGeneration/.test(mcp))
+    check("a folder with a turn running keeps its servers however long ago they were used", /working\.has\(key\)/.test(mcp) && /mcp\.useBusyDirectories\(\(\) => runner\.busyDirectories\(\)\)/.test(await read("src/server/index.ts")))
+    const settings = await read("src/renderer/src/components/SettingsDialog.vue")
+    const i18n = await read("src/renderer/src/lib/i18n.ts")
+    check(
+      "the MCP page says a saved change is waiting, offers to apply it now, and says why it cannot while a turn runs",
+      /data-mcp-apply-now/.test(settings) && /type: "mcp\.applyNow"/.test(settings) && ["set.mcp.unapplied", "set.mcp.applyNow", "set.mcp.applyDoing", "set.mcp.applyDone", "set.mcp.applyBusy", "set.mcp.applyFailed"].every((key) => i18n.split(`"${key}":`).length - 1 === 18),
+    )
+    check("and apply-now keeps the rule: nothing is reconnected under a running turn", /if \(this\.busy\(\)\) return "busy"/.test(mcp))
   }
 
   section("Round 11 (N11-3): the four kinds of task notification")

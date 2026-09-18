@@ -515,6 +515,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        */
       // Anything remembered for this conversation alone goes with it; a project's rules stay.
       await runtime.permissions.forgetSession(request.sessionID)
+      // And any question still open in it - an MCP server's sampling request among them - is refused rather than left pending for ever (N11-10).
+      runtime.permissions.rejectAll(request.sessionID)
       /*
        * The files it produced are not deleted with it. They are still on disk,
        * and losing the only record of where they came from was the thing the
@@ -1458,7 +1460,12 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return { worktrees: await git.worktrees(request.directory) } satisfies Handled<"workspace.list">
 
     case "mcp.list":
-      return { servers: runtime.mcp.list() } satisfies Handled<"mcp.list">
+      return { servers: runtime.mcp.list(), unapplied: runtime.mcp.unapplied } satisfies Handled<"mcp.list">
+
+    case "mcp.applyNow": {
+      const outcome = await runtime.mcp.applyNow()
+      return { outcome, servers: runtime.mcp.list() } satisfies Handled<"mcp.applyNow">
+    }
 
     case "mcp.toggle": {
       await runtime.mcp.toggle(request.name)

@@ -309,6 +309,28 @@ export interface AuthOptions {
   resourceMetadataUrl?: URL
 }
 
+/**
+ * One renewal per server at a time (N11-26).
+ *
+ * Two calls on one server that meet a 401 together each started a refresh
+ * with the same refresh token. With rotating refresh tokens the loser's
+ * invalid_grant then invalidated the tokens - including the ones the winner
+ * had just stored - and the reader was sent back to sign in in the browser. A
+ * second caller now waits for the first and takes its answer. Keyed by server
+ * name, since the stored credentials are, across every project that has it.
+ */
+const renewing = new Map<string, Promise<AuthResult>>()
+
+export function authOnce(server: string, work: () => Promise<AuthResult>): Promise<AuthResult> {
+  const running = renewing.get(server)
+  if (running) return running
+  const started = work().finally(() => {
+    if (renewing.get(server) === started) renewing.delete(server)
+  })
+  renewing.set(server, started)
+  return started
+}
+
 /** Signs in, renews, or sends the reader to the authorization page; retried once on a stale client or grant. */
 export async function auth(provider: McpOAuthProvider, options: AuthOptions): Promise<AuthResult> {
   try {

@@ -2056,6 +2056,8 @@ export type Request =
   | { type: "shell.attach"; shellID: string }
   | { type: "workspace.list"; directory: string }
   | { type: "mcp.list" }
+  /** N11-27: apply a saved MCP change now rather than at the next conversation, when nothing is running. */
+  | { type: "mcp.applyNow" }
   | { type: "mcp.toggle"; name: string }
   | { type: "mcp.tools"; name: string }
   /* 授权: the browser sign-in for a remote server that answered 401; resolves when it has finished. */
@@ -2270,7 +2272,9 @@ export interface ResponseMap {
   /* `edit` is 智能编辑's validated answer when a draft was sent; without it the window types `text` in. */
   "voice.transcribe": { text: string; heard: string; edit?: VoiceEdit }
   "workspace.list": { worktrees: Worktree[] }
-  "mcp.list": { servers: McpServerState[] }
+  /** `unapplied`: a saved change is still waiting for the next conversation (N11-27). */
+  "mcp.list": { servers: McpServerState[]; unapplied?: boolean }
+  "mcp.applyNow": { outcome: "done" | "busy" | "failed" | "nothing"; servers: McpServerState[] }
   "mcp.toggle": { servers: McpServerState[] }
   /** A connected server's tools, or why there are none to list (a status name or the server's error). */
   "mcp.tools": { tools?: McpToolInfo[]; error?: string }

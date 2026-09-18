@@ -12,6 +12,7 @@ import {
   McpOAuthProvider,
   UnauthorizedError,
   auth,
+  authOnce,
   ensureCallbackServer,
   openInBrowser,
   waitForCallback,
@@ -320,8 +321,39 @@ class Connection {
   status: McpStatus = "disabled"
   error?: string
   tools: McpTool[] = []
-  /** The conversation whose tool call last reached this server; sampling asks there, as MiMo's does. */
-  activeSession?: string
+  /**
+   * The conversations with a tool call on this server right now, and how many
+   * each has (N11-10).
+   *
+   * MiMo keeps "the conversation whose call last reached the server", and so
+   * did this: with two conversations on one project's server, a sampling
+   * request from A's call was asked in B, Stop in B refused it, Stop in A could
+   * not reach it, and the field was never cleared, so a deleted conversation
+   * could be asked forever. The user chose to fix all three rather than keep
+   * MiMo's behaviour.
+   */
+  private readonly calling = new Map<string, number>()
+
+  /** A call from this conversation is under way for as long as `work` runs. */
+  async callingFrom<T>(sessionID: string, work: () => Promise<T>): Promise<T> {
+    this.calling.set(sessionID, (this.calling.get(sessionID) ?? 0) + 1)
+    try {
+      return await work()
+    } finally {
+      const left = (this.calling.get(sessionID) ?? 1) - 1
+      if (left > 0) this.calling.set(sessionID, left)
+      else this.calling.delete(sessionID)
+    }
+  }
+
+  /**
+   * The conversation a request the server sent belongs to: the one with a call
+   * in flight, when there is exactly one. With none, or with calls from more
+   * than one, nobody can honestly be asked, and the request is refused.
+   */
+  get askingSession(): string | undefined {
+    return this.calling.size === 1 ? [...this.calling.keys()][0] : undefined
+  }
   /*
    * What the handshake said the server can do. Kept because prompts are asked
    * for only when they were advertised: the reference guards its own listing
@@ -339,6 +371,8 @@ class Connection {
   private exit?: { code: number | null; signal: NodeJS.Signals | null }
   private nextID = 1
   private readonly pending = new Map<number, Pending>()
+  /** Which tools/list_changed refetch is the newest; an older one's answer is dropped. */
+  private toolsGeneration = 0
   private closed = false
   /** How a remote server is spoken to: Streamable HTTP, or the older HTTP+SSE once that failed. */
   private transport: "stdio" | "http" | "sse" = "stdio"
@@ -712,9 +746,14 @@ class Connection {
     // MiMo refetches a server's tools when it says they changed, and the next request offers the new list.
     if (method === "notifications/tools/list_changed") {
       if (this.status !== "connected") return
+      /*
+       * Numbered (N11-35): two notices close together start two fetches, and
+       * the one sent first may answer last. Only the newest may set the list.
+       */
+      const generation = ++this.toolsGeneration
       void this.listTools().then(
         (tools) => {
-          if (this.status !== "connected") return
+          if (this.status !== "connected" || generation !== this.toolsGeneration) return
           this.tools = tools
           this.hooks.toolsChanged?.()
         },
@@ -736,7 +775,7 @@ class Connection {
       let result: unknown
       if (method === "ping") result = {}
       else if (method === "sampling/createMessage" && this.hooks.sample) {
-        result = await this.hooks.sample({ server: this.name, params, sessionID: this.activeSession, signal: controller.signal })
+        result = await this.hooks.sample({ server: this.name, params, sessionID: this.askingSession, signal: controller.signal })
       } else throw new McpRequestError(METHOD_NOT_FOUND, "Method not found")
       await this.send({ jsonrpc: "2.0", id, result })
     } catch (err) {
@@ -894,11 +933,15 @@ class Connection {
         this.resourceMetadataUrl = named.resourceMetadataUrl
         this.scope = named.scope
         // Renews with the refresh token when there is one, or leaves the authorization address for 授权.
-        const result = await auth(this.provider, {
-          serverUrl: this.config.url!,
-          resourceMetadataUrl: this.resourceMetadataUrl,
-          scope: this.scope,
-        })
+        // One renewal per server at a time (N11-26); a second 401 waits for the first and uses what it got.
+        const provider = this.provider
+        const result = await authOnce(this.name, () =>
+          auth(provider, {
+            serverUrl: this.config.url!,
+            resourceMetadataUrl: this.resourceMetadataUrl,
+            scope: this.scope,
+          }),
+        )
         if (result !== "AUTHORIZED") throw new UnauthorizedError()
         this.signedIn = true
         return this.open(url, method, base, body, timeout)
@@ -1002,6 +1045,8 @@ export class McpServers {
   private dirty = false
   private pending = false
   private busy: () => boolean = () => false
+  /** The folders a turn is running in right now; their servers are never swept (N11-36). */
+  private busyIn: () => readonly string[] = () => []
 
   private readonly oauth?: McpAuthStore
   /** Servers whose sign-in is under way, so a second press does not start another. */
@@ -1035,6 +1080,11 @@ export class McpServers {
     this.busy = busy
   }
 
+  /** Where turns are running, so a long turn that has not called a tool lately keeps its servers. */
+  useBusyDirectories(busyIn: () => readonly string[]): void {
+    this.busyIn = busyIn
+  }
+
   /**
    * A new conversation is starting: a configuration saved since the last one
    * is applied to every project's servers, now if nothing is running, else as
@@ -1051,6 +1101,31 @@ export class McpServers {
     if (!this.pending || this.busy()) return
     this.pending = false
     await this.refresh()
+  }
+
+  /** Whether a saved change is still waiting to be applied, for the settings page (N11-27). */
+  get unapplied(): boolean {
+    return this.dirty || this.pending
+  }
+
+  /**
+   * The settings page's apply-now (N11-27). The rule is unchanged - nothing
+   * is reconnected under a running turn - but the page can now ask, and is
+   * told why when it cannot: with background work running the change could
+   * otherwise stay unapplied indefinitely with nothing on screen saying so.
+   */
+  async applyNow(): Promise<"done" | "busy" | "failed" | "nothing"> {
+    if (!this.unapplied) return "nothing"
+    if (this.busy()) return "busy"
+    this.dirty = false
+    this.pending = false
+    try {
+      await this.refresh()
+      return "done"
+    } catch {
+      this.dirty = true
+      return "failed"
+    }
   }
 
   /**
@@ -1191,8 +1266,9 @@ export class McpServers {
   private sweep(): void {
     const view = directoryKey(this.viewDirectory())
     const cutoff = Date.now() - IDLE_GROUP_MS
+    const working = new Set(this.busyIn().map((directory) => directoryKey(directory)))
     for (const [key, group] of [...this.groups]) {
-      if (key === view || group.lastUsed > cutoff) continue
+      if (key === view || group.lastUsed > cutoff || working.has(key)) continue
       if ([...group.connections.values()].some((connection) => connection.busy())) continue
       for (const connection of group.connections.values()) void connection.stop()
       this.groups.delete(key)
@@ -1279,6 +1355,8 @@ export class McpServers {
       [...this.groups.values()].map(async (group) => {
         const connection = group.connections.get(name)
         if (!connection || connection.status === "connected" || connection.status === "disabled") return
+        // Never from under a call in flight (N11-11): stop() rejects every pending request with "connection closed".
+        if (connection.busy()) return
         await connection.stop()
         this.publish()
         await connection.connect()
@@ -1383,7 +1461,6 @@ export class McpServers {
           permission: "mcp",
           server: name,
           execute: async (input, context) => {
-            connection.activeSession = context.sessionID
             // A tool its rules allow is not asked about, unless MCP calls are refused altogether.
             if (rule !== "allow" || context.permissions.action("mcp") === "deny") {
               await context.permissions.ask({
@@ -1400,7 +1477,8 @@ export class McpServers {
                 ...(rule === "ask" ? { patternAsks: true } : {}),
               })
             }
-            const { output, attachments } = await connection.call(tool.name, input, context.signal)
+            // Counted as this conversation's for as long as it runs, so a sampling request is asked in the right place.
+            const { output, attachments } = await connection.callingFrom(context.sessionID, () => connection.call(tool.name, input, context.signal))
             // MiMo hands a server's pictures and sounds to the model on the result itself.
             return { output, title: `${name}: ${tool.name}`, ...(attachments.length ? { attachments } : {}) }
           },

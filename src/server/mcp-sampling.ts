@@ -13,9 +13,11 @@ import type { ProviderAdapter } from "./provider/types"
  * (`sampling/createMessage`), decided the way MiMo's engine decides it.
  *
  * Each server has a policy in its config - deny, ask or allow, ask when unset.
- * Asking needs a conversation to ask in, which is the one whose tool call last
- * reached that server; with none, the request is refused rather than left
- * waiting. "Always" is remembered per server. The answer comes from the app's
+ * Asking needs a conversation to ask in: the one with a tool call on that
+ * server right now, when there is exactly one (N11-10 - MiMo asks wherever the
+ * last call came from, which the user chose not to keep). With none, or with
+ * calls from several, the request is refused rather than asked in the wrong
+ * place. "Always" is remembered per server. The answer comes from the app's
  * model, with no tools and no reasoning setting.
  */
 

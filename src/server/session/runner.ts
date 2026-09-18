@@ -287,6 +287,8 @@ const PLAN_AWARE = new Set(["write", "edit", "notebook_edit", "plan_exit"])
 
 export class SessionRunner {
   private readonly running = new Map<string, AbortController>()
+  /** Where each running turn works, so the MCP servers of a folder with a turn in it are never swept (N11-36). */
+  private readonly workingIn = new Map<string, string>()
   /** N11-20: every subagent in the process shares these permits; top-level conversations do not take one. */
   readonly subagentGate = new Semaphore(SUBAGENT_LIMIT)
   /**
@@ -702,6 +704,11 @@ export class SessionRunner {
    */
   compactingSessions(): string[] {
     return [...this.summarising]
+  }
+
+  /** The folders turns are running in right now (N11-36). */
+  busyDirectories(): string[] {
+    return [...new Set(this.workingIn.values())]
   }
 
   /** The turns waiting between attempts, for a window that reconnected into one (N11-17). */
@@ -2145,6 +2152,7 @@ export class SessionRunner {
         }
         this.running.delete(sessionID)
         this.retrying.delete(sessionID)
+        this.workingIn.delete(sessionID)
 
         /*
          * The last read of the waiting list, and the only one that can see a
@@ -2180,6 +2188,7 @@ export class SessionRunner {
     // plan: what this step is judged by; a plan approved during the turn moves it to build from the next step.
     this.turnAgents.set(sessionID, session.agent)
     // The project's servers are connected (or have failed) before the turn is offered their tools, as MiMo's instance waits for them.
+    this.workingIn.set(sessionID, session.directory)
     await this.mcp?.ready(session.directory)
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new CodedError(`No provider called ${session.model.provider} is set up`, "error.noModel")
@@ -2731,7 +2740,8 @@ export class SessionRunner {
          * countdown and the same way out.
          */
         const held = cooldownLeft(assistant.model.provider)
-        if (held > 0) {
+        // Under a second is the tail of a wait this request has just sat out itself, not a reason for another row.
+        if (held >= 1000) {
           const retry = { attempt, message: "The provider asked every request to wait", next: Date.now() + held, kind: "rate_limit" }
           this.retrying.set(assistant.sessionID, { messageID: assistant.id, ...retry })
           this.bus.publish({ type: "message.updated", message: { ...structuredClone(assistant), retry } })
@@ -3416,6 +3426,7 @@ export class SessionRunner {
       this.steering.delete(child.id)
       if (!this.owners.has(child.id)) await this.commitSnapshot(child.id).catch(() => undefined)
       this.running.delete(child.id)
+      this.workingIn.delete(child.id)
       this.owners.delete(child.id)
       this.bus.publish({ type: "session.idle", sessionID: child.id })
     }
