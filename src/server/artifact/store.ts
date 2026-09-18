@@ -1,7 +1,7 @@
 import fs from "node:fs"
 import fsp from "node:fs/promises"
 import path from "node:path"
-import { DatabaseSync } from "node:sqlite"
+import { SqlDatabase, STORE_PRAGMAS, type Sql } from "../sql-worker"
 import type { ArtifactFile, Message, SessionArtifacts, SessionInfo } from "@shared/protocol"
 import { sessionArtifacts } from "@shared/session-files"
 
@@ -172,7 +172,8 @@ export class ArtifactStore {
   private readonly dirty = new Map<string, number>()
 
   private constructor(
-    private readonly db: DatabaseSync,
+    /** The store's file, open in a worker of its own (N11-12). */
+    private readonly db: SqlDatabase,
     /** False when the file was written by a later build: read it, never write it. */
     readonly writable: boolean,
   ) {}
@@ -181,25 +182,26 @@ export class ArtifactStore {
    * Opens the store, making it if it is not there. Never throws: without it the
    * app still runs and the page falls back to reading the transcripts.
    */
-  static open(file: string): ArtifactStore | undefined {
-    let db: DatabaseSync | undefined
+  static async open(file: string): Promise<ArtifactStore | undefined> {
+    let db: SqlDatabase | undefined
     try {
       fs.mkdirSync(path.dirname(file), { recursive: true })
-      db = new DatabaseSync(file)
-      const check = db.prepare("PRAGMA quick_check").get() as Record<string, unknown> | undefined
+      db = await SqlDatabase.open(file)
+      const check = await db.get("PRAGMA quick_check")
       if (check && Object.values(check)[0] !== "ok") throw new Error("the artifact store failed its integrity check")
-      db.exec("PRAGMA journal_mode = WAL")
-      db.exec("PRAGMA foreign_keys = ON")
-      db.exec(SCHEMA_V1)
-      const latest = (db.prepare("SELECT max(version) AS v FROM schema_migrations").get() as { v: number | null } | undefined)?.v ?? 0
+      // MiMo's pragmas (N11-12), and foreign keys as before.
+      for (const pragma of STORE_PRAGMAS) await db.exec(pragma)
+      await db.exec("PRAGMA foreign_keys = ON")
+      await db.exec(SCHEMA_V1)
+      const latest = (await db.get<{ v: number | null }>("SELECT max(version) AS v FROM schema_migrations"))?.v ?? 0
       if (latest > ARTIFACT_SCHEMA_VERSION) {
         // A newer build wrote this. Everything it holds is still readable; nothing here may write over it.
         return new ArtifactStore(db, false)
       }
-      if (latest < 2) ArtifactStore.migrateToV2(db)
+      if (latest < 2) await ArtifactStore.migrateToV2(db)
       return new ArtifactStore(db, true)
     } catch {
-      db?.close()
+      await db?.close()
       return undefined
     }
   }
@@ -211,31 +213,34 @@ export class ArtifactStore {
    * (a row whose conversation was already gone keeps that title, unlinked), and
    * its title is filled in so the search index covers it from the start.
    */
-  private static migrateToV2(db: DatabaseSync): void {
-    db.exec("BEGIN IMMEDIATE")
-    try {
-      db.exec(SCHEMA_V2)
-      const rows = db
-        .prepare("SELECT id, identity_key, session_id, session_title, directory, path, role, kind, produced_at FROM artifact")
-        .all() as unknown as (SourceRow & { id: number; identity_key: string })[]
-      const title = db.prepare("UPDATE artifact SET title = ?, title_search = ? WHERE id = ?")
-      const source = db.prepare(
-        `INSERT OR IGNORE INTO artifact_source (source_key, artifact_id, session_id, session_title, directory, path, role, kind, produced_at, observed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  private static migrateToV2(db: SqlDatabase): Promise<void> {
+    return db.transaction(async (tx) => {
+      await tx.exec(SCHEMA_V2)
+      const rows = await tx.all<SourceRow & { id: number; identity_key: string }>(
+        "SELECT id, identity_key, session_id, session_title, directory, path, role, kind, produced_at FROM artifact",
       )
       const now = Date.now()
       for (const row of rows) {
         const name = titleOf(row.path)
-        title.run(name, searchable(name), row.id)
+        await tx.run("UPDATE artifact SET title = ?, title_search = ? WHERE id = ?", name, searchable(name), row.id)
         const key = row.session_id ? sourceKey(row.identity_key, row.session_id) : JSON.stringify([row.identity_key, "", row.session_title])
-        source.run(key, row.id, row.session_id, row.session_title, row.directory, row.path, row.role, row.kind, row.produced_at, now)
+        await tx.run(
+          `INSERT OR IGNORE INTO artifact_source (source_key, artifact_id, session_id, session_title, directory, path, role, kind, produced_at, observed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          key,
+          row.id,
+          row.session_id,
+          row.session_title,
+          row.directory,
+          row.path,
+          row.role,
+          row.kind,
+          row.produced_at,
+          now,
+        )
       }
-      db.prepare("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(2, now)
-      db.exec("COMMIT")
-    } catch (error) {
-      db.exec("ROLLBACK")
-      throw error
-    }
+      await tx.run("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)", 2, now)
+    })
   }
 
   /**
@@ -255,13 +260,12 @@ export class ArtifactStore {
   }
 
   private async pass(sessions: readonly SessionInfo[], messagesOf: (sessionID: string) => Promise<Message[]>): Promise<void> {
-    const checkpoint = this.db.prepare("SELECT fingerprint FROM artifact_reconcile WHERE session_id = ?")
     for (const session of sessions) {
       // subagents: a subagent's work belongs to its parent, not to a conversation of its own.
       if (session.parentID) continue
       const fingerprint = fingerprintOf(session)
       const writes = this.dirty.get(session.id)
-      if (writes === undefined && (checkpoint.get(session.id) as { fingerprint?: string } | undefined)?.fingerprint === fingerprint) continue
+      if (writes === undefined && (await this.db.get<{ fingerprint?: string }>("SELECT fingerprint FROM artifact_reconcile WHERE session_id = ?", session.id))?.fingerprint === fingerprint) continue
       let messages: Message[]
       try {
         messages = await messagesOf(session.id)
@@ -272,7 +276,7 @@ export class ArtifactStore {
       // A write that landed during the read leaves the conversation marked, and without a checkpoint.
       const settled = this.dirty.get(session.id) === writes
       if (settled) this.dirty.delete(session.id)
-      this.reconcileSession(session, messages, settled ? fingerprint : undefined)
+      await this.reconcileSession(session, messages, settled ? fingerprint : undefined)
     }
     await this.recheck()
   }
@@ -286,7 +290,7 @@ export class ArtifactStore {
     if (!this.writable) return
     const writes = this.dirty.get(sessionID)
     this.dirty.set(sessionID, (writes ?? 0) + 1)
-    if (writes === undefined) this.db.prepare("DELETE FROM artifact_reconcile WHERE session_id = ?").run(sessionID)
+    if (writes === undefined) void this.db.run("DELETE FROM artifact_reconcile WHERE session_id = ?", sessionID).catch(() => undefined)
   }
 
   /**
@@ -296,55 +300,72 @@ export class ArtifactStore {
    * claims - the message was edited away - loses this conversation's source, and
    * a file left with no source at all goes, as MiMo's reconcile removes it.
    */
-  private reconcileSession(session: SessionInfo, messages: readonly Message[], fingerprint: string | undefined): void {
-    if (this.purged(session.id)) return
+  private async reconcileSession(session: SessionInfo, messages: readonly Message[], fingerprint: string | undefined): Promise<void> {
     const now = Date.now()
-    this.transaction(() => {
+    await this.db.transaction(async (tx) => {
+      // Checked inside the transaction, so a detach cannot land between the check and the writes.
+      if (await tx.get("SELECT 1 AS x FROM artifact_purged_session WHERE session_id = ?", session.id)) return
       const claimed = new Set<string>()
       const touched = new Set<number>()
       for (const artifact of sessionArtifacts(messages, session.directory)) {
         const absolute = path.resolve(session.directory, artifact.path)
         const identity = identityKey(absolute)
         const name = titleOf(artifact.path)
-        this.db
-          .prepare(
-            `INSERT INTO artifact (identity_key, session_id, session_title, directory, path, absolute, role, kind, produced_at, updated_at, title, title_search)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(identity_key) DO NOTHING`,
-          )
-          .run(identity, session.id, session.title, session.directory, artifact.path, absolute, artifact.role, artifact.kind, artifact.at, now, name, searchable(name))
-        const id = (this.db.prepare("SELECT id FROM artifact WHERE identity_key = ?").get(identity) as { id: number }).id
+        await tx.run(
+          `INSERT INTO artifact (identity_key, session_id, session_title, directory, path, absolute, role, kind, produced_at, updated_at, title, title_search)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(identity_key) DO NOTHING`,
+          identity,
+          session.id,
+          session.title,
+          session.directory,
+          artifact.path,
+          absolute,
+          artifact.role,
+          artifact.kind,
+          artifact.at,
+          now,
+          name,
+          searchable(name),
+        )
+        const id = (await tx.get<{ id: number }>("SELECT id FROM artifact WHERE identity_key = ?", identity))!.id
         const key = sourceKey(identity, session.id)
         claimed.add(key)
         touched.add(id)
-        this.db
-          .prepare(
-            `INSERT INTO artifact_source (source_key, artifact_id, session_id, session_title, directory, path, role, kind, produced_at, observed_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(source_key) DO UPDATE SET
-               session_id = excluded.session_id, session_title = excluded.session_title, directory = excluded.directory, path = excluded.path,
-               role = excluded.role, kind = excluded.kind, produced_at = excluded.produced_at, observed_at = excluded.observed_at`,
-          )
-          .run(key, id, session.id, session.title, session.directory, artifact.path, artifact.role, artifact.kind, artifact.at, now)
+        await tx.run(
+          `INSERT INTO artifact_source (source_key, artifact_id, session_id, session_title, directory, path, role, kind, produced_at, observed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(source_key) DO UPDATE SET
+             session_id = excluded.session_id, session_title = excluded.session_title, directory = excluded.directory, path = excluded.path,
+             role = excluded.role, kind = excluded.kind, produced_at = excluded.produced_at, observed_at = excluded.observed_at`,
+          key,
+          id,
+          session.id,
+          session.title,
+          session.directory,
+          artifact.path,
+          artifact.role,
+          artifact.kind,
+          artifact.at,
+          now,
+        )
       }
-      const stale = (
-        this.db.prepare("SELECT source_key, artifact_id FROM artifact_source WHERE session_id = ?").all(session.id) as unknown as {
-          source_key: string
-          artifact_id: number
-        }[]
-      ).filter((row) => !claimed.has(row.source_key))
+      const stale = (await tx.all<{ source_key: string; artifact_id: number }>("SELECT source_key, artifact_id FROM artifact_source WHERE session_id = ?", session.id)).filter(
+        (row) => !claimed.has(row.source_key),
+      )
       for (const row of stale) {
-        this.db.prepare("DELETE FROM artifact_source WHERE source_key = ?").run(row.source_key)
+        await tx.run("DELETE FROM artifact_source WHERE source_key = ?", row.source_key)
         touched.add(row.artifact_id)
       }
-      for (const id of touched) this.settle(id, now)
+      for (const id of touched) await ArtifactStore.settle(tx, id, now)
       if (fingerprint === undefined) return
-      this.db
-        .prepare(
-          `INSERT INTO artifact_reconcile (session_id, fingerprint, updated_at) VALUES (?, ?, ?)
-           ON CONFLICT(session_id) DO UPDATE SET fingerprint = excluded.fingerprint, updated_at = excluded.updated_at`,
-        )
-        .run(session.id, fingerprint, now)
+      await tx.run(
+        `INSERT INTO artifact_reconcile (session_id, fingerprint, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(session_id) DO UPDATE SET fingerprint = excluded.fingerprint, updated_at = excluded.updated_at`,
+        session.id,
+        fingerprint,
+        now,
+      )
     })
   }
 
@@ -355,27 +376,36 @@ export class ArtifactStore {
    * The newest conversation that still exists wins; a file only gone
    * conversations wrote is shown under the newest of those. Which one must not
    * depend on the order the passes ran in, so it is decided from the sources
-   * alone, with the key as the last tie-break.
+   * alone, with the key as the last tie-break. Always inside the caller's
+   * transaction, which is why it takes the transaction's handle.
    */
-  private settle(id: number, now: number): void {
-    const best = this.db
-      .prepare(
-        `SELECT * FROM artifact_source WHERE artifact_id = ?
-         ORDER BY (session_id <> '') DESC, produced_at DESC, source_key ASC LIMIT 1`,
-      )
-      .get(id) as SourceRow | undefined
+  private static async settle(tx: Sql, id: number, now: number): Promise<void> {
+    const best = await tx.get<SourceRow>(
+      `SELECT * FROM artifact_source WHERE artifact_id = ?
+       ORDER BY (session_id <> '') DESC, produced_at DESC, source_key ASC LIMIT 1`,
+      id,
+    )
     if (!best) {
-      this.db.prepare("DELETE FROM artifact WHERE id = ?").run(id)
+      await tx.run("DELETE FROM artifact WHERE id = ?", id)
       return
     }
-    const newest = (this.db.prepare("SELECT max(produced_at) AS at FROM artifact_source WHERE artifact_id = ?").get(id) as { at: number }).at
+    const newest = (await tx.get<{ at: number }>("SELECT max(produced_at) AS at FROM artifact_source WHERE artifact_id = ?", id))!.at
     const name = titleOf(best.path)
-    this.db
-      .prepare(
-        `UPDATE artifact SET session_id = ?, session_title = ?, directory = ?, path = ?, role = ?, kind = ?,
-           produced_at = ?, title = ?, title_search = ?, updated_at = ? WHERE id = ?`,
-      )
-      .run(best.session_id, best.session_title, best.directory, best.path, best.role, best.kind, newest, name, searchable(name), now, id)
+    await tx.run(
+      `UPDATE artifact SET session_id = ?, session_title = ?, directory = ?, path = ?, role = ?, kind = ?,
+         produced_at = ?, title = ?, title_search = ?, updated_at = ? WHERE id = ?`,
+      best.session_id,
+      best.session_title,
+      best.directory,
+      best.path,
+      best.role,
+      best.kind,
+      newest,
+      name,
+      searchable(name),
+      now,
+      id,
+    )
   }
 
   /**
@@ -385,18 +415,33 @@ export class ArtifactStore {
    * still there: it may have been deleted, moved, or changed since by something
    * other than this app. MiMo re-checks the same way and keeps the answer in
    * `availability` with `last_checked_at`.
+   *
+   * The disk is asked first and the answers written in one transaction (N11-12):
+   * one UPDATE per file, each its own commit, was a flush per file.
    */
   async recheck(): Promise<void> {
     if (!this.writable) return
-    const rows = this.db.prepare("SELECT id, absolute FROM artifact").all() as { id: number; absolute: string }[]
+    const rows = await this.db.all<{ id: number; absolute: string }>("SELECT id, absolute FROM artifact")
     const now = Date.now()
+    const answers: { id: number; there: boolean; size: number | null; modified: number | null }[] = []
     for (const row of rows) {
       const stats = await fsp.stat(row.absolute).catch(() => undefined)
       const there = Boolean(stats?.isFile())
-      this.db
-        .prepare("UPDATE artifact SET availability = ?, size_bytes = ?, modified_at = ?, last_checked_at = ? WHERE id = ?")
-        .run(there ? "available" : "missing", there ? (stats?.size ?? null) : null, there ? (stats?.mtimeMs ?? null) : null, now, row.id)
+      answers.push({ id: row.id, there, size: there ? (stats?.size ?? null) : null, modified: there ? (stats?.mtimeMs ?? null) : null })
     }
+    if (!answers.length) return
+    await this.db.transaction(async (tx) => {
+      for (const answer of answers) {
+        await tx.run(
+          "UPDATE artifact SET availability = ?, size_bytes = ?, modified_at = ?, last_checked_at = ? WHERE id = ?",
+          answer.there ? "available" : "missing",
+          answer.size,
+          answer.modified,
+          now,
+          answer.id,
+        )
+      }
+    })
   }
 
   /**
@@ -411,19 +456,16 @@ export class ArtifactStore {
    * through the trigram index as one quoted phrase; shorter ones, which a
    * trigram index cannot answer, are a plain substring test.
    */
-  list(query = ""): SessionArtifacts[] {
+  async list(query = ""): Promise<SessionArtifacts[]> {
     const words = searchable(query.trim())
-    const rows = (
-      !words
-        ? this.db.prepare("SELECT * FROM artifact ORDER BY produced_at DESC").all()
-        : words.length >= 3
-          ? this.db
-              .prepare(
-                "SELECT * FROM artifact WHERE id IN (SELECT artifact_id FROM artifact_fts WHERE artifact_fts MATCH ?) ORDER BY produced_at DESC",
-              )
-              .all(`"${words.replace(/"/g, '""')}"`)
-          : this.db.prepare("SELECT * FROM artifact WHERE instr(title_search, ?) > 0 ORDER BY produced_at DESC").all(words)
-    ) as unknown as Row[]
+    const rows = !words
+      ? await this.db.all<Row>("SELECT * FROM artifact ORDER BY produced_at DESC")
+      : words.length >= 3
+        ? await this.db.all<Row>(
+            "SELECT * FROM artifact WHERE id IN (SELECT artifact_id FROM artifact_fts WHERE artifact_fts MATCH ?) ORDER BY produced_at DESC",
+            `"${words.replace(/"/g, '""')}"`,
+          )
+        : await this.db.all<Row>("SELECT * FROM artifact WHERE instr(title_search, ?) > 0 ORDER BY produced_at DESC", words)
     const groups = new Map<string, SessionArtifacts>()
     for (const row of rows) {
       const key = row.session_id || `gone:${row.session_title}`
@@ -457,58 +499,36 @@ export class ArtifactStore {
    * `artifact_purged_session` is, so a pass already under way cannot link it
    * back.
    */
-  detach(sessionID: string): void {
+  async detach(sessionID: string): Promise<void> {
     if (!this.writable || !sessionID) return
     const now = Date.now()
-    this.transaction(() => {
-      this.db
-        .prepare("INSERT OR IGNORE INTO artifact_purged_session (session_id, purged_at) VALUES (?, ?)")
-        .run(sessionID, now)
-      this.db.prepare("DELETE FROM artifact_reconcile WHERE session_id = ?").run(sessionID)
-      const touched = this.db.prepare("SELECT DISTINCT artifact_id FROM artifact_source WHERE session_id = ?").all(sessionID) as unknown as {
-        artifact_id: number
-      }[]
-      this.db.prepare("UPDATE artifact_source SET session_id = '' WHERE session_id = ?").run(sessionID)
-      for (const row of touched) this.settle(row.artifact_id, now)
+    await this.db.transaction(async (tx) => {
+      await tx.run("INSERT OR IGNORE INTO artifact_purged_session (session_id, purged_at) VALUES (?, ?)", sessionID, now)
+      await tx.run("DELETE FROM artifact_reconcile WHERE session_id = ?", sessionID)
+      const touched = await tx.all<{ artifact_id: number }>("SELECT DISTINCT artifact_id FROM artifact_source WHERE session_id = ?", sessionID)
+      await tx.run("UPDATE artifact_source SET session_id = '' WHERE session_id = ?", sessionID)
+      for (const row of touched) await ArtifactStore.settle(tx, row.artifact_id, now)
     })
   }
 
   /** The conversations each file's sources name, for the checks. */
-  sourcesOf(absolute: string): { sessionID: string; title: string }[] {
-    const rows = this.db
-      .prepare(
-        `SELECT s.session_id, s.session_title FROM artifact_source s JOIN artifact a ON a.id = s.artifact_id
-         WHERE a.identity_key = ? ORDER BY s.produced_at DESC, s.source_key ASC`,
-      )
-      .all(identityKey(absolute)) as { session_id: string; session_title: string }[]
+  async sourcesOf(absolute: string): Promise<{ sessionID: string; title: string }[]> {
+    const rows = await this.db.all<{ session_id: string; session_title: string }>(
+      `SELECT s.session_id, s.session_title FROM artifact_source s JOIN artifact a ON a.id = s.artifact_id
+       WHERE a.identity_key = ? ORDER BY s.produced_at DESC, s.source_key ASC`,
+      identityKey(absolute),
+    )
     return rows.map((row) => ({ sessionID: row.session_id, title: row.session_title }))
   }
 
   /** How many rows it holds, for the checks. */
-  count(): number {
-    return Number((this.db.prepare("SELECT count(*) AS n FROM artifact").get() as { n: number }).n)
+  async count(): Promise<number> {
+    return Number((await this.db.get<{ n: number }>("SELECT count(*) AS n FROM artifact"))!.n)
   }
 
-  close(): void {
-    try {
-      this.db.close()
-    } catch {
-      // Closing twice, or after a failure, changes nothing worth reporting.
-    }
+  /** Closing twice, or after a failure, changes nothing worth reporting. */
+  close(): Promise<void> {
+    return this.db.close()
   }
 
-  private purged(sessionID: string): boolean {
-    return Boolean(this.db.prepare("SELECT 1 AS x FROM artifact_purged_session WHERE session_id = ?").get(sessionID))
-  }
-
-  private transaction(work: () => void): void {
-    this.db.exec("BEGIN IMMEDIATE")
-    try {
-      work()
-      this.db.exec("COMMIT")
-    } catch (error) {
-      this.db.exec("ROLLBACK")
-      throw error
-    }
-  }
 }

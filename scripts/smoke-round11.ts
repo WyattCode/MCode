@@ -32,6 +32,7 @@ import { authOnce } from "../src/server/mcp-oauth"
 import { Shells } from "../src/server/shell"
 import { Config } from "../src/server/config"
 import { MAX_FRAME_BYTES } from "../src/server/index"
+import { SqlDatabase, SQL_REQUEST_TIMEOUT_MS, STORE_PRAGMAS } from "../src/server/sql-worker"
 import type { Message, ModelRef, ServerEvent, SessionInfo, ToolPart } from "@shared/protocol"
 import { narrowcastSession } from "@shared/protocol"
 
@@ -665,7 +666,7 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     const sidebar = await read("src/renderer/src/components/Sidebar.vue")
     check("the collapsed side column's list is paged like the column's own", /v-for="session in recent"\s/.test(sidebar) && /data-quick-more/.test(sidebar))
     check("the socket states its frame limit", MAX_FRAME_BYTES === 100 * 1024 * 1024 && /maxPayload: MAX_FRAME_BYTES/.test(await read("src/server/index.ts")))
-    check("the search index gives space back after a full rebuild", /this\.db\.exec\("VACUUM"\)/.test(await read("src/server/history/index.ts")))
+    check("the search index gives space back after a full rebuild", /this\.db\.exec\("VACUUM"/.test(await read("src/server/history/index.ts")))
     const preload = await read("src/preload/index.ts")
     check("file-change events use one listener however many views watch", /if \(!fileChangeHandlers\.size\) ipcRenderer\.on\("mcode:file-changed", relayFileChange\)/.test(preload))
   }
@@ -692,5 +693,75 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
       "a failed run is announced as a failure, and a conversation answering another one as a reply",
       /kind: notice\.failed \? "failed" : "done"/.test(app) && /kind: app\.answeredAnother\.has\(turn\.sessionID\) \? "chat" : "done"/.test(app),
     )
+  }
+
+  section("Round 11 (N11-12): SQLite on a thread of its own")
+  {
+    check(
+      "MiMo's pragmas, and its whole set of them",
+      STORE_PRAGMAS.join("; ") === "PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY",
+      STORE_PRAGMAS,
+    )
+    check("a request gives up after MiMo's fifteen seconds", SQL_REQUEST_TIMEOUT_MS === 15_000)
+    // The stores are rebuilt on this; each one opens through it and none keeps `node:sqlite` on the main thread.
+    const history = await read("src/server/history/database.ts")
+    const artifact = await read("src/server/artifact/store.ts")
+    check(
+      "both stores open through the worker and take the pragmas",
+      /await SqlDatabase\.open\(/.test(history) && /STORE_PRAGMAS/.test(history) && /await SqlDatabase\.open\(/.test(artifact) && /for \(const pragma of STORE_PRAGMAS\)/.test(artifact),
+    )
+    check("the history search's transaction guards its statements through tx", /transaction<T>\(work: \(tx: Sql\)/.test(history))
+
+    /*
+     * A real database, in a real worker: statements land, a transaction's
+     * statements wait for it, and closing ends the worker rather than leaving
+     * a thread behind. The file lives in a folder of this run's own.
+     */
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r11-sql-"))
+    const database = await SqlDatabase.open(path.join(dir, "sql.db"))
+    try {
+      for (const pragma of STORE_PRAGMAS) await database.exec(pragma)
+      const busy = await database.get<{ timeout: number }>("PRAGMA busy_timeout")
+      const sync = await database.get<{ synchronous: number }>("PRAGMA synchronous")
+      check("the pragmas reach the file", Number(Object.values(busy ?? {})[0]) === 5000 && Number(Object.values(sync ?? {})[0]) === 1, { busy, sync })
+      await database.exec("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL, n INTEGER NOT NULL)")
+      await database.run("INSERT INTO notes (body, n) VALUES (?, ?)", "first", 1)
+      check("a write answers with what SQLite changed", (await database.all<{ body: string }>("SELECT body FROM notes")).length === 1)
+      // A transaction holds the database; a plain statement sent meanwhile waits its turn rather than interleaving.
+      const held = await database.transaction(async (tx) => {
+        await tx.run("INSERT INTO notes (body, n) VALUES (?, ?)", "inside", 2)
+        await tx.run("INSERT INTO notes (body, n) VALUES (?, ?)", "inside2", 3)
+        return (await tx.all<{ n: number }>("SELECT n FROM notes ORDER BY n")).length
+      })
+      await database.run("INSERT INTO notes (body, n) VALUES (?, ?)", "after", 4)
+      const rows = await database.all<{ body: string }>("SELECT body FROM notes ORDER BY n")
+      check("a transaction's work lands as one, and later statements queue behind it", held === 3 && rows.map((row) => row.body).join() === "first,inside,inside2,after", rows.map((row) => row.body))
+      // A statement that fails rolls its transaction back and leaves no half of it.
+      const before = await database.all<{ n: number }>("SELECT n FROM notes")
+      const rolled = await database
+        .transaction(async (tx) => {
+          await tx.run("INSERT INTO notes (body, n) VALUES (?, ?)", "doomed", 5)
+          throw new Error("no")
+        })
+        .then(() => false, () => true)
+      check("a transaction that fails is rolled back whole", rolled && (await database.all<{ n: number }>("SELECT n FROM notes")).length === before.length)
+
+      /*
+       * The reason for the worker (N11-12): a statement that takes its time
+       * must not hold the thread that streams turns and answers windows. A
+       * recursive count runs in the worker while a one-millisecond timer on
+       * this thread keeps ticking; synchronous SQLite here would stop it.
+       */
+      let ticks = 0
+      const ticker = setInterval(() => ticks++, 1)
+      const counted = await database.get<{ n: number }>(
+        "WITH RECURSIVE count(n) AS (SELECT 0 UNION ALL SELECT n + 1 FROM count WHERE n < 4000000) SELECT count(*) AS n FROM count",
+      )
+      clearInterval(ticker)
+      check("a long statement leaves this thread free to run", counted?.n === 4000001 && ticks > 5, { n: counted?.n, ticks })
+    } finally {
+      await database.close()
+      await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined)
+    }
   }
 }

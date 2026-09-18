@@ -112,7 +112,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
    * is still in the old shape, the second only removes what nothing names.
    */
   // Produced files, kept in a store of their own so they outlive their conversations.
-  const artifacts = ArtifactStore.open(path.join(dataDirectory, "storage", "artifacts.db"))
+  const artifacts = await ArtifactStore.open(path.join(dataDirectory, "storage", "artifacts.db"))
   // A written or removed message may change what its conversation produced; the next listing reads it again.
   const unwatchArtifacts = sessions.watch((change) => {
     if (change.type === "message") artifacts?.touched(change.message.sessionID)
@@ -144,7 +144,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
     }
   })()
   // history: the search index beside the store, filled in the background.
-  const history = startHistory(dataDirectory, sessions, storage, bus)
+  const history = await startHistory(dataDirectory, sessions, storage, bus)
   // skills: a SKILL.md that will not parse is said in the window, once per file, as MiMo reports one.
   watchSkillProblems((problem) => bus.publish({ type: "skill.problem", path: problem.path, message: problem.message }))
   // memory: config's memory.disableWrite, read at every write so a hand edit takes effect at once.
@@ -338,10 +338,10 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       await mcp.close()
       await scheduler.stop()
       await automations.stop()
-      stopHistory(history)
+      await stopHistory(history)
       watchSkillProblems(undefined)
       unwatchArtifacts()
-      artifacts?.close()
+      await artifacts?.close()
       for (const client of clients) client.terminate()
       await new Promise<void>((resolve) => server.close(() => resolve()))
     },

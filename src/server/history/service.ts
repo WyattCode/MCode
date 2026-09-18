@@ -65,10 +65,11 @@ export function indexFile(dataDirectory: string): string {
  * Opens the index and starts filling it. Never throws: without SQLite the app
  * still runs, and only history and memory search are missing.
  */
-export function startHistory(dataDirectory: string, store: SessionStore, storage: Storage, bus: Bus): HistoryService | undefined {
+export async function startHistory(dataDirectory: string, store: SessionStore, storage: Storage, bus: Bus): Promise<HistoryService | undefined> {
   try {
-    const database = IndexDatabase.open(indexFile(dataDirectory))
+    const database = await IndexDatabase.open(indexFile(dataDirectory))
     const index = new HistoryIndex(database, store, storage, bus)
+    // Tracked, never rejects: a start that fails leaves history missing, and close() waits it out (N11-12).
     void index.start()
     const memoryRoot = path.join(dataDirectory, "memory")
     const service = { database, index, memory: new MemoryIndex(database, memoryRoot), store, storage, memoryRoot }
@@ -79,9 +80,9 @@ export function startHistory(dataDirectory: string, store: SessionStore, storage
   }
 }
 
-export function stopHistory(service: HistoryService | undefined): void {
+export async function stopHistory(service: HistoryService | undefined): Promise<void> {
   if (!service) return
-  service.index.close()
-  service.database.close()
   if (bound === service) bindHistory(undefined)
+  await service.index.close()
+  await service.database.close()
 }

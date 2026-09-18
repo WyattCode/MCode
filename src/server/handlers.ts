@@ -337,7 +337,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         try {
           // Conversations that changed since the last pass are read again first, so a file written since launch is there.
           await runtime.artifacts.reconcile(sessions, (id) => runtime.sessions.messages(id))
-          return { artifacts: runtime.artifacts.list(query) } satisfies Handled<"artifact.list">
+          return { artifacts: await runtime.artifacts.list(query) } satisfies Handled<"artifact.list">
         } catch {
           // A store that cannot answer (a newer build's shape, a failed write) leaves the walk below.
         }
@@ -430,10 +430,10 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * search falls back to a capped scan.
        */
       const history = historyService()
-      const narrow = (query: string): readonly string[] | undefined => {
+      const narrow = async (query: string): Promise<readonly string[] | undefined> => {
         if (!history || history.index.building) return undefined
         const found = new Set<string>()
-        for (const hit of history.index.search({ query, limit: SEARCH_HARD_CAP })) found.add(hit.session_id)
+        for (const hit of await history.index.search({ query, limit: SEARCH_HARD_CAP })) found.add(hit.session_id)
         return [...found]
       }
       const hits = await searchMessages(sessions, (id) => runtime.sessions.messages(id), request.query, limit, narrow)
@@ -523,7 +523,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * artifact store was built to stop; the rows keep the title this
        * conversation had.
        */
-      runtime.artifacts?.detach(request.sessionID)
+      await runtime.artifacts?.detach(request.sessionID).catch(() => undefined)
       if (worked) {
         const place = (directory: string) => {
           const resolved = path.resolve(directory)

@@ -68,11 +68,11 @@ export async function searchMessages(
   load: (sessionID: string) => Promise<Message[]>,
   query: string,
   limit = 50,
-  narrow?: (query: string) => readonly string[] | undefined,
+  narrow?: (query: string) => Promise<readonly string[] | undefined> | readonly string[] | undefined,
 ): Promise<MessageHit[]> {
   if (!query.trim()) return []
   const eligible = sessions.filter((session) => !session.archived && !session.sideOf && !session.parentID)
-  const named = narrow?.(query)
+  const named = await narrow?.(query)
   const candidates = named ? eligible.filter((session) => named.includes(session.id)) : eligible.slice(0, SCAN_LIMIT)
   const hits: (MessageHit & { updated: number })[] = []
   for (const session of candidates) {

@@ -233,15 +233,15 @@ export async function roundSevenChecks(check: Check, section: (name: string) => 
     const file = path.join(folder, "history.db")
     await fs.writeFile(file, "this is emphatically not a database")
 
-    const database = IndexDatabase.open(file)
+    const database = await IndexDatabase.open(file)
     check("a file that is not a database is started over", database.openedAs === "recreated", database.openedAs)
-    database.close()
+    await database.close()
     const kept = (await namesIn(folder)).filter((name) => name.includes(".corrupt-"))
     check("...and the unreadable one is kept rather than deleted", kept.length === 1, await namesIn(folder))
 
-    const again = IndexDatabase.open(file)
+    const again = await IndexDatabase.open(file)
     check("the index that replaced it works", again.openedAs === "existing" || again.openedAs === "recreated")
-    again.close()
+    await again.close()
   }
 
   // ------------------------------------------------------- F31, F32, F34
