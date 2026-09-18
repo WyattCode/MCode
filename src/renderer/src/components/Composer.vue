@@ -129,6 +129,12 @@ const sideMessages = computed<Message[]>(() =>
 const sessionID = computed(() => (props.fresh ? undefined : props.side ? sideKey.value : app.currentID))
 const session = computed(() => (props.fresh ? undefined : props.side ? sideSession.value : app.current))
 const busyHere = computed(() => (props.side ? sideBusy.value : app.busy))
+/*
+ * MiMo's `pv(conv)`: a review took a turn from this conversation, so it will
+ * not be continued. Its box says so in place of the usual invitation and
+ * refuses to take a message at all - the same two things MiMo's box does.
+ */
+const restrictedHere = computed(() => session.value?.reviewRestricted === true)
 /* MiMo's annotations wait in the box they were made for, kept per conversation - the side chat's apart from the main one's. */
 const annotations = useAnnotations()
 const annotationScope = computed(() => sessionID.value ?? (props.side ? SIDE_SCOPE : HOME_SCOPE))
@@ -379,6 +385,15 @@ watch(() => props.resizable, () => void nextTick(resize))
 onMounted(() => {
   window.addEventListener(DOCK_HEIGHT_EVENT, followDockHeight)
   watchWidth()
+  /*
+   * MiMo's: a box that comes back with a draft in it takes the keyboard, its
+   * caret at the end of what was kept. MCode has more than one box, but no two
+   * are ever on screen together - the home box and the conversation's, the side
+   * chat and the floated one each mount with their own view - so the one that
+   * has just mounted with a draft is the one that should have the focus. An
+   * empty box is left alone, which is what the reference does too.
+   */
+  if (text.value) void nextTick(focus)
 })
 onBeforeUnmount(() => window.removeEventListener(DOCK_HEIGHT_EVENT, followDockHeight))
 
@@ -749,8 +764,9 @@ function addDroppedMentions(paths: { rel: string; file: boolean }[]) {
  */
 const placeholder = computed(() => {
   if (mode.value === "shell") return t("composer.shellPlaceholder")
-  // MiMo's order: a running compaction, then the mode's own line, then the everyday one. Attachments do not blank it.
+  // MiMo's order: a running compaction, then a restricted conversation, then the mode's own line, then the everyday one. Attachments do not blank it.
   if (compactingHere.value) return t("composer.compact.starting")
+  if (restrictedHere.value) return t("composer.reviewRestricted")
   if (!props.side && agent.value === "plan") return t("composer.placeholderPlan")
   if (!props.side && staged.value) return t("composer.stagedSub")
   return t("composer.placeholder")
@@ -1112,6 +1128,8 @@ let probingAudio = false
 
 async function submit() {
   const value = text.value.trim()
+  // MiMo's restricted conversation takes nothing at all: the review that took its turn said it may not be continued.
+  if (restrictedHere.value) return
   if (mode.value === "shell") {
     if (!value) return
     text.value = ""
@@ -3103,7 +3121,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           rows="1"
           spellcheck="false"
           :placeholder="placeholder"
-          :disabled="compactingHere"
+          :disabled="compactingHere || restrictedHere"
           :aria-busy="compactingHere || undefined"
           @keydown="onKeydown"
           @blur="onInputBlur"
@@ -3591,6 +3609,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             class="send"
             type="button"
             :class="{ empty: !stopping && !hasContent, ready: !stopping && hasContent, stop: stopping }"
+            :disabled="restrictedHere"
             :aria-label="stopping ? t('composer.stop') : t('composer.send')"
             v-tip="{ label: stopping ? t('composer.stop') : t('composer.send') }"
             @click="stopping ? app.abort(sessionID) : submit()"

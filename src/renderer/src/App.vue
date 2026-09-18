@@ -1373,6 +1373,12 @@ const SESSION_MENU: MenuRow[] = [
   },
   { id: "row.batch", label: "menu.batch", icon: "M2.4 4.4h1.6M6.6 4.4h7M2.4 8h1.6M6.6 8h7M2.4 11.6h1.6M6.6 11.6h7" },
   { id: "row.reveal", label: "menu.revealIn", icon: FOLDER_ICON, divided: true },
+  /* MCode's own: MiMo reaches this state from its review service, which MCode does not have. */
+  {
+    id: "row.reviewRestricted",
+    label: "menu.restrictConversation",
+    icon: "M8 2.4 13.6 4v4.2c0 3.2-2.2 5.2-5.6 6.2-3.4-1-5.6-3-5.6-6.2V4zM6 7.8 7.4 9.2 10.2 6.4",
+  },
   { id: "row.copyDirectory", label: "menu.copyDirectory", icon: COPY_ICON },
   { id: "session.export", label: "menu.export", icon: "M8 2.6v7.2M5.2 7.2 8 10l2.8-2.8M2.8 12.2h10.4" },
   /* The same conversation as a file this app can read back, rather than as a transcript. */
@@ -1408,6 +1414,12 @@ const HEADER_MENU: MenuRow[] = [
   { id: "row.pin", label: "menu.pin", icon: "M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4", hint: "Ctrl+Alt+P" },
   { id: "session.rename", label: "menu.renameConversation", icon: "M11.2 2.6 13.4 4.8 5.6 12.6 2.8 13.2 3.4 10.4z", hint: "Ctrl+Alt+R" },
   { id: "session.archive", label: "menu.archive", icon: "M2.2 3h11.6v2.6H2.2zM3.2 5.6h9.6V13H3.2zM6.4 8.2h3.2", hint: "Ctrl+Alt+A" },
+  /* MCode's own: MiMo reaches this state from its review service, which MCode does not have. */
+  {
+    id: "row.reviewRestricted",
+    label: "menu.restrictConversation",
+    icon: "M8 2.4 13.6 4v4.2c0 3.2-2.2 5.2-5.6 6.2-3.4-1-5.6-3-5.6-6.2V4zM6 7.8 7.4 9.2 10.2 6.4",
+  },
   { id: "session.side", label: "menu.openSideChat", icon: "M2.4 3h11.2v10H2.4zM9.6 3v10", hint: "Ctrl+Alt+S", divided: true },
   {
     id: "row.copy",
@@ -1521,6 +1533,22 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
     }
     await revealFolder(target.directory)
   },
+  /*
+   * MCode's own way in to MiMo's `reviewRestricted`: MiMo's own review service
+   * reports a filtered turn, and MCode has none, so the state would otherwise be
+   * unreachable. Marks the conversation as one that cannot be continued, or
+   * lifts that when it already is.
+   */
+  "row.reviewRestricted": async (sessionID) => {
+    const target = app.sessions.find((entry) => entry.id === sessionID)
+    if (!target) return
+    try {
+      await app.client?.request({ type: "session.reviewRestricted", sessionID, restricted: !target.reviewRestricted })
+      notify(t(target.reviewRestricted ? "menu.allowContinue" : "menu.restrictConversation"))
+    } catch (failure) {
+      notifyFailure(t("menu.restrictConversation"), reasonOf(failure))
+    }
+  },
 }
 
 /*
@@ -1572,7 +1600,9 @@ function menuRow(entry: MenuRow): MenuItem | undefined {
           ? t(target && showsUnread(target.id) ? "menu.markRead" : "menu.markUnread")
           : entry.id === "row.reveal"
             ? revealLabel()
-            : t(entry.label)
+            : entry.id === "row.reviewRestricted"
+              ? t(target?.reviewRestricted ? "menu.allowContinue" : "menu.restrictConversation")
+              : t(entry.label)
     return { ...base, label, enabled: Boolean(target) }
   }
   const command = bindableCommands.value.find((item) => item.id === entry.id)

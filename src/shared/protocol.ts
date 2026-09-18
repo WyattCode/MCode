@@ -146,6 +146,19 @@ export interface SessionInfo {
   revert?: { messageID: string; at: number }
   /** session chat: what this conversation is for, as a tool recorded it for other conversations to read. */
   chat?: { purpose?: string; task?: string; taskStatus?: ChatTaskStatus }
+  /**
+   * A review took this conversation's turn away, and it may not be continued:
+   * MiMo's `reviewRestricted`.
+   *
+   * MiMo's content review reports a filtered turn (`mimo:turnFiltered`), and
+   * when the review itself is what took it - not the user - it marks the
+   * conversation so, after which its box invites a new conversation rather than
+   * a message and refuses to send one. MCode has no review service of its own,
+   * so nothing sets this on its own; the state, the wording and the refusal are
+   * nonetheless MiMo's, so the moment a review source exists it has somewhere
+   * to land. Absent is every conversation that was never restricted.
+   */
+  reviewRestricted?: boolean
 }
 
 export interface Usage {
@@ -1869,6 +1882,12 @@ export type Request =
   | { type: "session.agent"; sessionID: string; agent: AgentName }
   | { type: "session.access"; sessionID: string; access: "ask" | "auto" | "full" }
   | { type: "session.staged"; sessionID: string; staged: boolean }
+  /*
+   * A review restricted this conversation, or lifted it. MiMo's own review
+   * reports it from the engine; here it is whatever stands in for that, and
+   * the conversation then refuses to be continued until it is lifted.
+   */
+  | { type: "session.reviewRestricted"; sessionID: string; restricted: boolean }
   | { type: "session.archive"; sessionID: string; archived: boolean }
   | { type: "session.rename"; sessionID: string; title: string }
   /* Which project the side column files a conversation under; the folder it works in is untouched. */
@@ -2188,6 +2207,7 @@ export interface ResponseMap {
   "session.agent": { session: SessionInfo }
   "session.access": { session: SessionInfo }
   "session.staged": { session: SessionInfo }
+  "session.reviewRestricted": { session: SessionInfo }
   "session.delete": Record<string, never>
   "session.compact": { session: SessionInfo }
   "session.undo": { files: number; history: HistoryDepth }

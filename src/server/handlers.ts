@@ -602,7 +602,18 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "session.staged":
       return { session: await runtime.sessions.update(request.sessionID, { staged: request.staged }) }
 
+    case "session.reviewRestricted":
+      return { session: await runtime.sessions.setReviewRestricted(request.sessionID, request.restricted) }
+
     case "session.prompt": {
+      /*
+       * MiMo's box is disabled while a conversation is review-restricted, and
+       * this is the same refusal on the side that would actually run the turn:
+       * a window cannot be the only thing standing between a restricted
+       * conversation and a new message.
+       */
+      const restricting = await runtime.sessions.get(request.sessionID)
+      if (restricting?.reviewRestricted) throw new Error("this conversation can't be continued - start a new one")
       const messageID = await runtime.runner.prompt({
         sessionID: request.sessionID,
         text: request.text,

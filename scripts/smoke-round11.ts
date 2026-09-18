@@ -764,4 +764,61 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
       await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined)
     }
   }
+
+  section("Round 11 (C11-15): a conversation a review took can't be continued")
+  {
+    const temp = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r11-rr-"))
+    const storage = new Storage(path.join(temp, "storage"))
+    const store = new SessionStore(storage, new Bus())
+    const model = { provider: "fake", model: "m" }
+    const session = await store.create({ directory: temp, model, title: "restricted" })
+    check("a conversation starts unrestricted", session.reviewRestricted !== true)
+
+    const before = session.updated
+    const restricted = await store.setReviewRestricted(session.id, true)
+    check("the mark lands and reads back", restricted.reviewRestricted === true && (await store.get(session.id))?.reviewRestricted === true)
+    // Choosing the state is not activity, so the conversation must not climb the column, exactly as `setAccess` behaves.
+    check("and it did not count as activity", restricted.updated === before, { before, after: restricted.updated })
+
+    const lifted = await store.setReviewRestricted(session.id, false)
+    check("lifting it deletes the field rather than writing false", lifted.reviewRestricted === undefined && !("reviewRestricted" in lifted))
+
+    // An absent field has to read as unrestricted for every conversation stored before this existed.
+    const fresh = await store.create({ directory: temp, model, title: "older" })
+    const raw = await store.get(fresh.id)
+    check("a conversation that never had the field is not restricted", raw?.reviewRestricted === undefined)
+
+    // The request and its answer are part of the wire protocol, so a window can ask and a server can answer.
+    const protocol = await fs.readFile(path.join(process.cwd(), "src/shared/protocol.ts"), "utf8")
+    check("the request is on the wire", /type: "session\.reviewRestricted"; sessionID: string; restricted: boolean/.test(protocol))
+    check("and it is answered with the conversation", /"session\.reviewRestricted": \{ session: SessionInfo \}/.test(protocol))
+
+    // The server refuses a prompt into a restricted conversation, not the window alone.
+    const handlers = await fs.readFile(path.join(process.cwd(), "src/server/handlers.ts"), "utf8")
+    const prompt = handlers.slice(handlers.indexOf('case "session.prompt"'), handlers.indexOf('case "session.subtask"'))
+    check(
+      "asking a restricted conversation to continue is refused on the server",
+      /reviewRestricted/.test(prompt) && /can't be continued/.test(prompt) && prompt.indexOf("reviewRestricted") < prompt.indexOf("runtime.runner.prompt"),
+      prompt.slice(0, 200),
+    )
+
+    await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined)
+  }
+
+section("Round 11 (C11-13): a box that comes back with a draft takes the keyboard")
+  {
+    const composer = await fs.readFile(path.join(process.cwd(), "src/renderer/src/components/Composer.vue"), "utf8")
+    // MiMo focuses the box and puts the caret at the end of what was kept; MCode had only the caret half, applied on restore.
+    const at = composer.indexOf("onMounted(() => {")
+    const mounted = composer.slice(at, at + 700)
+    check("mounting focuses the box when there is a draft", /if \(text\.value\) void nextTick\(focus\)/.test(mounted), mounted.slice(0, 220))
+    check("an empty box is left alone", !/nextTick\(focus\)/.test(mounted.replace("if (text.value) void nextTick(focus)", "")))
+    const focusAt = composer.indexOf("function focus() {")
+    const focusBody = composer.slice(focusAt, focusAt + 220)
+    check(
+      "the focus it takes puts the caret at the end",
+      /box\.focus\(\{ preventScroll: true \}\)/.test(focusBody) && /setSelectionRange\(text\.value\.length, text\.value\.length\)/.test(focusBody),
+      focusBody,
+    )
+  }
 }

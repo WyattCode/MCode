@@ -364,6 +364,25 @@ export class SessionStore {
     )
   }
 
+  /*
+   * MiMo's `reviewRestricted`: a review took this conversation's turn, and it
+   * may not be continued. Written without touching `updated`, for the same
+   * reason `setAccess` is: the conversation did not do anything, so it must not
+   * climb the side column. Lifting it deletes the field rather than writing
+   * false, so a conversation that was never restricted and one that was and was
+   * let go read the same.
+   */
+  async setReviewRestricted(sessionID: string, restricted: boolean): Promise<SessionInfo> {
+    return this.exclusive(this.infoKey(sessionID), () =>
+      this.writeInfo(sessionID, (session) => {
+        const next: SessionInfo = { ...session }
+        if (restricted) next.reviewRestricted = true
+        else delete next.reviewRestricted
+        return next
+      }),
+    )
+  }
+
   /** Turning off full access puts every conversation that was at it back on the default, as MiMo does. */
   async dropFullAccess(): Promise<void> {
     for (const session of await this.list()) {

@@ -475,7 +475,7 @@
 
 ## 第十一轮：输入框全链路（2026-09-18）
 
-只读审计在 `scratchpad/round11-composer.md`（C11-1…C11-52，分卷稿 `r11-part-A.md`…`r11-part-D.md`）。除上面「故意不同」里列的十一项外全部按 MiMo 做了，另有两项没做（见末尾）。
+只读审计在 `scratchpad/round11-composer.md`（C11-1…C11-52，分卷稿 `r11-part-A.md`…`r11-part-D.md`）。除上面「故意不同」里列的十一项外全部按 MiMo 做了；当时没做的两项（C11-15、C11-13）已于 2026-09-18 补齐（见本节末尾）。
 
 **附件怎么到模型那里（C11-30/31/32/33/24，用户定「完全照 MiMo」）**
 - `lib/attach.ts`：只要文件在磁盘上就一律 `{path: 绝对路径, byPath: true}`；8 MiB 以内的图片 / 视频另外读一份 base64**只给缩略图**。以前「够小能画缩略图」被当成「不用留路径」，加号菜单选的、拖进来的图片会丢路径、整份 base64 进消息、还写进草稿文件（正好抵消 L6）。
@@ -517,9 +517,10 @@
 - 录音改成全应用一份 + `voiceOwner`：三个输入框同时挂载，以前各自 `new VoiceRecorder()` 能开出两路 `getUserMedia`；现在换一个框按麦克风会先停掉上一个。
 - MiMo 的 `visionAutoSwitch` 是死文案（19 张表里有、全包无调用），不照抄；改为模型读不了图片时在界面上直说（新键 `attach.noImageInput` × 18 张表）。
 
-**没做的两项**
-- C11-15「这个对话无法继续」（`reviewRestricted`）：MiMo 有这一档占位符和禁用态，但 MCode 没有这个会话状态，要新引入一个后端字段才能接；等用户拍板。
-- C11-13 的「挂载时若草稿非空就聚焦」：MiMo 只有一个输入框实例，MCode 同时挂着停靠栏 / 侧边 / 首页三个，谁后挂载谁抢键盘，所以只做了「聚焦时光标置尾」和「切会话后光标同步」两半。
+**C11-15 / C11-13（2026-09-18 补齐，用户「全干」）**
+- **C11-15 已接上**：协议 `SessionInfo.reviewRestricted?: boolean`（缺省即未限制，旧记录照旧）；请求 `session.reviewRestricted {sessionID, restricted}`，应答 `{ session: SessionInfo }`；`SessionStore.setReviewRestricted()` 不动 `updated`（照 `setAccess`，选状态不算活动），解除时删掉字段而不写 `false`；`handlers.ts` 的 `session.prompt` 在调 `runner.prompt` 之前先查，限制住就报「this conversation can't be continued」；Composer 的 `restrictedHere` 接管占位符（排在 compaction 之后、模式行之前，照 MiMo 的顺序）与 `:disabled`（textarea 和发送钮），`submit()` 里再一道退路。文案 `composer.reviewRestricted` × 18 张表：简体/繁体/英/日/韩/俄/德/法/西/葡/丹/挚麦/波/土/阿/阿拉伯用 MiMo 原文（`reviewRestricted:"…"`，逐条从 MiMo composer 分包取出），bs / th / uk 自译。**MCode 没有审核后端，所以新增一个可触发入口**（用户选的完整机制 + 可触发）：会话菜单里的 `row.reviewRestricted`（列表行与头部菜单都有，`menu.restrictConversation` / `menu.allowContinue` × 18），再报请求开关。新 smoke 检查 8 条（初始未限制、标记落盘与读回、不算活动、解除删字段、旧会话不限制、请求与应答在线、服务端拒绝）；改坏 `setReviewRestricted` 或拆掉报拒都会报失败。
+- **C11-13 已补齐**：`Composer` 的 `onMounted` 在 `text.value` 非空时`void nextTick(focus)`——MiMo 恢复草稿后真的把键盘拿过去，光标置尾；MCode 的三个输入框不同时在屏（首页与会话、侧边与浮动各自随视图挂载），空草稿不抢键盘。新 smoke 检查 3 条（有草稿就聚焦、空草稿不聚焦、聚焦把光标置尾）；删掉那一行会报失败。
+注："没做的两项"从此清空，下方那段「C11-13 的 `focus()` 那一半没有探针」仍然成立（DOM 焦点在探针窗口里测不到），所以新增的检查放在 smoke 里而不是探针里。
 
 探针 `scratchpad/mcode-round11-composer.cjs`（12 段，截图 4 张）。每段都在故意改坏的构建上跑过一次并给出不同读数（`mcode-round11-composer.broken*.json`）。**C11-13 的 `focus()` 那一半没有探针**：探针窗口即使被 OS 激活，`document.activeElement` 也落不到 textarea 上，任何读数都只是 DOM 原来的位置——宁可不写，也不留一条不会失败的检查。
 
@@ -776,8 +777,6 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
 
 ## 下一步建议
 
-**第十一轮三路（输入路径、并发与长期运行、回复解析）已全部完成并合并入 `v2.0`。** 第十一轮遗留的两小项：
+**第十一轮四路（输入路径、并发与长期运行、回复解析，加 C11-15 / C11-13 两项）已全部完成并合并入 `v2.0`。** 第十一轮清单已清空，下一步：
 
-1. C11-15「这个对话无法继续」（`reviewRestricted`）：MiMo 有这一档占位符和禁用态，但 MCode 没有这个会话状态，要新引入一个后端字段才能接；等用户拍板。
-2. C11-13 的「挂载时若草稿非空就聚焦」半题：MCode 同时挂着停靠栏 / 侧边 / 首页三个输入框，谁后挂载谁抢键盘；现在只做了「聚焦时光标置尾」和「切会话后光标同步」两半。
-3. 另按「待办：清单之外的只读审计结果」里没标 [已完成] 的条目逐条做，先小后大（项目行 git 分支名、MCP 表单、分支选择器等）；新页面（钩子、CLI 插件、SSH 连接）用户决定不做。
+1. 按「待办：清单之外的只读审计结果」里没标 [已完成] 的条目逐条做，先小后大（项目行 git 分支名、MCP 表单、分支选择器等）；新页面（钩子、CLI 插件、SSH 连接）用户决定不做。
