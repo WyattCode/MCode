@@ -189,13 +189,13 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
     check("another model keeps a smaller ceiling of its own", maxOutputTokens({ provider: "lmstudio", model: "qwen3" }, { maxOutput: 16_000 }) === 16_000)
     check("but no more than 32k", maxOutputTokens({ provider: "lmstudio", model: "qwen3" }, { maxOutput: 100_000 }) === OUTPUT_TOKEN_MAX)
     check("and 32k when its ceiling is unknown", maxOutputTokens({ provider: "lmstudio", model: "qwen3" }, { maxOutput: 0 }) === OUTPUT_TOKEN_MAX)
-    const budgeted = anthropicReasoning("claude-haiku-4-5", "max", ["high", "max"], false, 20_000, 64_000)
+    const budgeted = anthropicReasoning("claude-haiku-4-5", "max", ["high", "max"], 20_000, 64_000)
     check(
       "a thinking budget is cut from the model's own limit and kept under max_tokens",
       budgeted.thinking?.type === "enabled" && budgeted.thinking.budget_tokens === 19_999,
       budgeted,
     )
-    const high = anthropicReasoning("claude-haiku-4-5", "high", ["high", "max"], false, 64_000, 64_000)
+    const high = anthropicReasoning("claude-haiku-4-5", "high", ["high", "max"], 64_000, 64_000)
     check("high is min(16000, limit / 2 - 1)", high.thinking?.type === "enabled" && high.thinking.budget_tokens === 16_000, high)
   }
 
@@ -715,7 +715,7 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
     try {
       const signal = new AbortController().signal
       await OpenAICompatible.stream(
-        { apiKey: "k", model: { provider: "zhipu", model: "glm-4.7" }, system: "s", history: [], tools: [], effort: "high", showReasoning: false, signal, baseURL: `http://127.0.0.1:${e.port}/v1`, sampling: { temperature: 1, topP: 0.9, topK: 20 }, extra: providerExtras("zhipu", true) },
+        { apiKey: "k", model: { provider: "zhipu", model: "glm-4.7" }, system: "s", history: [], tools: [], effort: "high", signal, baseURL: `http://127.0.0.1:${e.port}/v1`, sampling: { temperature: 1, topP: 0.9, topK: 20 }, extra: providerExtras("zhipu", true) },
         () => {},
       )
       const body = e.bodies.at(-1)
@@ -773,7 +773,6 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       system: "SYSTEM",
       tools: TOOLS.slice(0, 3),
       effort: "high",
-      showReasoning: false,
       signal: new AbortController().signal,
     }
     const body = messagesRequest({ ...base, history: [user("u1", "one"), user("u2", "two"), user("u3", "three")] }) as unknown as Record<string, any>
@@ -1056,7 +1055,6 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
           history: [{ id: "u", sessionID: "s", role: "user", text: "hi", attachments: [], time: { created: 1 } }],
           tools: [],
           effort: "high",
-          showReasoning: false,
           signal: new AbortController().signal,
           baseURL: `http://127.0.0.1:${e.port}/v1/`,
           headers: { "x-route": "claude" },

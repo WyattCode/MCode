@@ -91,6 +91,33 @@ const NETWORK =
 const STREAM = /stream_read_error|upstream_error|sse read timed? ?out|stream (?:read )?time(?:d)? ?out/i
 const SERVER_CODE = /exhausted|unavailable/i
 
+/**
+ * The codes an error frame inside a 200 stream carries for "try again".
+ *
+ * MiMo's `parseStreamError` sorts such a frame by `error.code || error.type`
+ * and marks exactly these retryable (`stream_read_error` is in its list too and
+ * is read as a stream failure a few lines below, which is the kind it belongs
+ * to). None of them arrives with an HTTP status - the response was a 200 and
+ * the failure came down the stream - so without naming them here `retryKind`
+ * fell through every branch and returned undefined, and Anthropic's
+ * `overloaded_error`, which is the ordinary way that API sheds load once a
+ * stream is open, failed the turn on the first try where MiMo would have tried
+ * it eight times over a quarter of an hour.
+ */
+const SERVER_WIRE_CODES = new Set(["overloaded_error", "server_is_overloaded", "server_error"])
+
+/**
+ * The codes MiMo marks explicitly not retryable: a spent quota, a plan that
+ * does not include this model, and a prompt the provider refuses to take. Each
+ * fails the same way every time, so waiting only delays saying so.
+ *
+ * A guard rather than the only thing making them terminal - none of them
+ * matches a branch below either, as removing this line and watching the checks
+ * still pass shows. It is here so that widening the branches below cannot
+ * quietly start retrying a failure MiMo names as final.
+ */
+const TERMINAL_WIRE_CODES = new Set(["insufficient_quota", "usage_not_included", "invalid_prompt"])
+
 /** Everything an error says about itself, its causes included: a dropped socket hides in `cause`. */
 function textOf(err: unknown): string {
   const pieces: string[] = []
@@ -164,7 +191,10 @@ export function retryKind(err: unknown): RetryKind | undefined {
    */
   if (status === 404) return err instanceof ProviderHttpError ? "unknown" : undefined
   if (/usage[_ ]?limit/i.test(wire.code ?? "")) return undefined
+  if (TERMINAL_WIRE_CODES.has(wire.code ?? "") || TERMINAL_WIRE_CODES.has(wire.type ?? "")) return undefined
   if (wire.code === "stream_read_error" || wire.type === "upstream_error") return "stream"
+  // MiMo's retryable stream-error codes, which carry no status of their own.
+  if (SERVER_WIRE_CODES.has(wire.code ?? "") || SERVER_WIRE_CODES.has(wire.type ?? "")) return "server"
   if (NETWORK.test(text)) return "network"
   if (STREAM.test(text)) return "stream"
   if (wire.type === "too_many_requests" || /rate_limit/.test(`${wire.type ?? ""} ${wire.code ?? ""}`) || wire.code === "429" || RATE_LIMITED.test(text)) {
@@ -223,10 +253,26 @@ export interface RetryDecision {
  * @param attempt the attempt that just failed, from 1.
  * @param elapsed how long ago the first failure of this request was.
  */
-export function retryDecision(err: unknown, attempt: number, elapsed: number, random = Math.random()): RetryDecision | undefined {
+export function retryDecision(
+  err: unknown,
+  attempt: number,
+  elapsed: number,
+  random = Math.random(),
+  phase: "request" | "stream" = "stream",
+): RetryDecision | undefined {
   const kind = retryKind(err)
   if (!kind) return undefined
-  const budget = RETRY_BUDGETS[kind]
+  /*
+   * MiMo retries in two phases, and picks the budget by the phase before it
+   * looks at the kind (`budgetFor(..., phase === "request")`). A request that
+   * has not produced a single event has failed before the model said anything,
+   * so it is tried again quickly - 200ms, doubling - rather than on the two
+   * seconds a stream failure waits. How many attempts it gets, and for how
+   * long, still belong to the kind of failure it was: a dropped connection is
+   * still waited out for as long as it takes.
+   */
+  const curve = phase === "request" ? RETRY_BUDGETS.request : RETRY_BUDGETS[kind]
+  const budget = { ...RETRY_BUDGETS[kind], initial: curve.initial, max: Math.min(RETRY_BUDGETS[kind].max, curve.max) }
   /*
    * MiMo's `isGptServerOverloadedError` reads the parsed body rather than the
    * words: type "service_unavailable_error" together with code
