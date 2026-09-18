@@ -12,14 +12,24 @@ import type { ModelEntry } from "../provider/catalog"
  */
 export function costOf(
   usage: Pick<Usage, "input" | "output" | "reasoning" | "cacheRead" | "cacheWrite">,
-  entry: Pick<ModelEntry, "input" | "output" | "cacheRead" | "cacheWrite"> | undefined,
+  entry: Pick<ModelEntry, "input" | "output" | "cacheRead" | "cacheWrite" | "over200K"> | undefined,
 ): number {
   if (!entry) return 0
+  /*
+   * MiMo's `getUsage`: once the prompt this step was billed for - fresh input
+   * plus what was read from the cache - is past 200k, the whole step is priced
+   * at the model's long-context rates. A model whose catalog entry has no such
+   * tier keeps one set of prices, as it always did.
+   */
+  const rates = entry.over200K && usage.input + usage.cacheRead > OVER_200K ? entry.over200K : entry
   const spent =
-    usage.input * entry.input +
-    usage.output * entry.output +
-    usage.cacheRead * (entry.cacheRead ?? 0) +
-    usage.cacheWrite * (entry.cacheWrite ?? 0) +
-    usage.reasoning * entry.output
+    usage.input * rates.input +
+    usage.output * rates.output +
+    usage.cacheRead * (rates.cacheRead ?? 0) +
+    usage.cacheWrite * (rates.cacheWrite ?? 0) +
+    usage.reasoning * rates.output
   return spent / 1_000_000
 }
+
+/** Where MiMo switches to the long-context prices. */
+const OVER_200K = 200_000

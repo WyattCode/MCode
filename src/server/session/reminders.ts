@@ -199,6 +199,9 @@ export const EMPTY_NOTE = "Your previous reply had no answer and no tool call. A
 /** Tool-call markup a model wrote as prose, as MiMo spots it. */
 const TEXT_TOOL_CALL = /<invoke name=|<parameter name=|<\/invoke>|<function_calls>/
 
+/** The finish reasons that mean "this step ended on a tool call", as MiMo's tables map them. */
+const TOOL_FINISH = new Set(["tool_calls", "tool_use", "function_call"])
+
 export type Continuation = { note?: string; error?: { message: string; code?: string } }
 
 /**
@@ -226,7 +229,9 @@ export function continuationFor(
     counts.length += 1
     return { note: LENGTH_NOTE }
   }
-  if ((finishReason === "tool_calls" || finishReason === "tool_use") && TEXT_TOOL_CALL.test(text)) {
+  // MiMo's finish-reason tables fold the older `function_call` in with `tool_calls`;
+  // self-hosted gateways and older vLLM/FastChat builds still end a turn with it.
+  if (TOOL_FINISH.has(finishReason ?? "") && TEXT_TOOL_CALL.test(text)) {
     const error = { message: "The model wrote a tool call as text instead of making the call." }
     if (counts.textTool >= CONTINUATION_LIMITS.textTool) return { error }
     counts.textTool += 1

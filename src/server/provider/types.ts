@@ -16,8 +16,12 @@ export type TurnEvent =
   | { type: "reasoning.start"; index: number }
   | { type: "reasoning.delta"; index: number; text: string }
   | { type: "block.end"; index: number }
-  /** Anthropic's signature over a thinking block, sent once the block is complete. */
-  | { type: "reasoning.signature"; index: number; signature: string }
+  /**
+   * What lets this thinking be sent back to the model that wrote it, once the
+   * block is complete: Anthropic's signature, or the Responses API's
+   * `encrypted_content` and the id of the item it came in.
+   */
+  | { type: "reasoning.signature"; index: number; signature: string; itemID?: string }
   /** A tool the model wants to run, announced as soon as its name is known. */
   | { type: "tool"; callID: string; name: string }
 
@@ -52,7 +56,6 @@ export interface TurnRequest {
   history: Message[]
   tools: ToolDefinition[]
   effort: string
-  showReasoning: boolean
   signal: AbortSignal
   /** Base URL for OpenAI-compatible providers. */
   baseURL?: string

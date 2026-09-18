@@ -311,6 +311,8 @@ import { roundTenPlatformChecks } from "./smoke-round10-platforms"
 import { roundTenMemoryChecks } from "./smoke-round10-memory"
 // round 10: the agent-type tools (subagents, tasks, questions, plans, automations, cross-chat, history, skills).
 import { roundTenAgentChecks } from "./smoke-round10-agents"
+// Round 11: how a model's answer is read - SSE, stop reasons, in-stream errors, thinking, usage, abort (S11-1 … S11-17).
+import { roundElevenStreamChecks } from "./smoke-round11-stream"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
@@ -1675,7 +1677,7 @@ async function main() {
     const giveUp = new AbortController()
     const stopWaiting = setTimeout(() => giveUp.abort(new Error("the stall never fired")), 5000)
     const stalled = await OpenAICompatible.stream(
-      { apiKey: "k", model: { provider: "x", model: "m" }, system: "", history: [], tools: [], effort: "", variants: [], showReasoning: false, signal: giveUp.signal, baseURL: `http://127.0.0.1:${quietPort}/v1` },
+      { apiKey: "k", model: { provider: "x", model: "m" }, system: "", history: [], tools: [], effort: "", variants: [], signal: giveUp.signal, baseURL: `http://127.0.0.1:${quietPort}/v1` },
       () => {},
     ).then(() => undefined, (error: unknown) => error)
     clearTimeout(stopWaiting)
@@ -2885,7 +2887,6 @@ async function main() {
       system: "",
       history: [],
       tools: [],
-      showReasoning: false,
       signal: new AbortController().signal,
       baseURL: "http://127.0.0.1:8791",
     }
@@ -2986,7 +2987,6 @@ async function main() {
           history: [],
           tools: [],
           effort: "medium",
-          showReasoning: true,
           signal: new AbortController().signal,
           baseURL: "http://127.0.0.1:8794/v1",
         },
@@ -5549,7 +5549,6 @@ async function main() {
       ],
       tools: TOOLS,
       effort: "high",
-      showReasoning: true,
       signal: new AbortController().signal,
       baseURL: `http://127.0.0.1:${codexPort}`,
     },
@@ -5624,7 +5623,6 @@ async function main() {
       history: interrupted as any,
       tools: TOOLS,
       effort: "high",
-      showReasoning: false,
       signal: new AbortController().signal,
       baseURL: `http://127.0.0.1:${codexPort}`,
     },
@@ -5668,7 +5666,6 @@ async function main() {
           history: [],
           tools: [],
           effort: "medium",
-          showReasoning: true,
           signal: new AbortController().signal,
           baseURL: `http://127.0.0.1:${brokenPort}`,
         },
@@ -6935,6 +6932,7 @@ async function main() {
   await roundTenPlatformChecks(check, section)
   await roundTenAgentChecks(check, section)
   await roundTenMemoryChecks(check, section)
+  await roundElevenStreamChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()
   await storageChecks(check, section)

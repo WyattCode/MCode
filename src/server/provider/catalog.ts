@@ -29,6 +29,13 @@ export interface ModelEntry {
   /** USD per million cached tokens read and written; absent prices count as nothing, as MiMo's do. */
   cacheRead?: number
   cacheWrite?: number
+  /**
+   * The dearer prices past 200k of context, where the catalog states them
+   * (`cost.context_over_200k`, which MiMo carries as `experimentalOver200K`).
+   * A Claude model's rates double over that line, so a long conversation's cost
+   * was reported systematically low without it.
+   */
+  over200K?: { input: number; output: number; cacheRead?: number; cacheWrite?: number }
   /** MiMo's `cachePromptTTL`: a model that asks for the hour-long prompt cache. */
   cacheTTL?: "5m" | "1h"
   /** MiMo's `interleaved.field`: where an OpenAI-compatible model reads its earlier reasoning back from. */

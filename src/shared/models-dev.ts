@@ -18,7 +18,14 @@ export interface CatalogModel {
   interleaved?: unknown
   modalities?: { input?: string[] }
   limit?: { context?: number; output?: number }
-  cost?: { input?: number; output?: number; cache_read?: number; cache_write?: number }
+  cost?: {
+    input?: number
+    output?: number
+    cache_read?: number
+    cache_write?: number
+    /** models.dev's dearer tier past 200k of context, which MiMo reads as `experimentalOver200K`. */
+    context_over_200k?: { input?: number; output?: number; cache_read?: number; cache_write?: number }
+  }
 }
 
 export interface CatalogProvider {
@@ -39,12 +46,22 @@ function pick<T extends object>(entries: [string, unknown][]): T {
 
 function trimModel(id: string, raw: Record<string, unknown>): CatalogModel {
   const limit = object(raw.limit) ? pick<NonNullable<CatalogModel["limit"]>>([["context", numberOr(raw.limit.context)], ["output", numberOr(raw.limit.output)]]) : undefined
+  const over = object(raw.cost) && object(raw.cost.context_over_200k) ? raw.cost.context_over_200k : undefined
+  const over200k = over
+    ? pick<NonNullable<NonNullable<CatalogModel["cost"]>["context_over_200k"]>>([
+        ["input", numberOr(over.input)],
+        ["output", numberOr(over.output)],
+        ["cache_read", numberOr(over.cache_read)],
+        ["cache_write", numberOr(over.cache_write)],
+      ])
+    : undefined
   const cost = object(raw.cost)
     ? pick<NonNullable<CatalogModel["cost"]>>([
         ["input", numberOr(raw.cost.input)],
         ["output", numberOr(raw.cost.output)],
         ["cache_read", numberOr(raw.cost.cache_read)],
         ["cache_write", numberOr(raw.cost.cache_write)],
+        ["context_over_200k", over200k && Object.keys(over200k).length ? over200k : undefined],
       ])
     : undefined
   const input = object(raw.modalities) && Array.isArray(raw.modalities.input) ? raw.modalities.input.filter((entry): entry is string => typeof entry === "string") : undefined

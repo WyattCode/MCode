@@ -7,6 +7,8 @@ import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "
 import { ProviderError, ProviderHttpError, headersOf, isHtmlBody, systemText, wireOfBody } from "./types"
 import { requestHistory } from "./history"
 import { guarded, stallGuard } from "./stall"
+import { readData } from "./sse"
+import { parseToolArguments } from "../tool/repair"
 
 /**
  * Adapter for OpenAI-compatible chat completions.
@@ -39,17 +41,28 @@ interface ChunkUsage {
 
 /**
  * A chat-completions usage frame in MiMo's terms: fresh input apart from the
- * cached tokens `prompt_tokens` includes. OpenRouter, which MiMo reaches with
- * its own SDK, also reports cache writes and reasoning, and its output is then
- * counted without the reasoning; every other server gets the plain split.
+ * cached tokens `prompt_tokens` includes, and output apart from the reasoning
+ * `completion_tokens` includes.
+ *
+ * MiMo's `convertOpenAICompatibleChatUsage` reads
+ * `prompt_tokens_details.cached_tokens` and
+ * `completion_tokens_details.reasoning_tokens` for **every** server that speaks
+ * this format, not only for OpenRouter. This used to zero the reasoning
+ * everywhere else and leave those tokens inside `output`, which every
+ * chat-completions reasoning model reports - DeepSeek, GLM, Qwen, MiniMax. The
+ * cost came out the same either way (reasoning is billed at the output price),
+ * but the context card's "reasoning is not counted" rule then did nothing for
+ * exactly the models it was written for.
+ *
+ * Cache writes stay OpenRouter's alone: it is the only server here that reports
+ * them, and subtracting an absent field from the input would be a guess.
  */
 export function usageOf(reported: ChunkUsage, provider: string): Omit<Usage, "cost"> {
   const prompt = reported.prompt_tokens ?? 0
   const completion = reported.completion_tokens ?? 0
   const cacheRead = reported.prompt_tokens_details?.cached_tokens ?? 0
-  if (provider !== "openrouter") return { input: prompt - cacheRead, output: completion, reasoning: 0, cacheRead, cacheWrite: 0 }
-  const cacheWrite = reported.prompt_tokens_details?.cache_write_tokens ?? 0
   const reasoning = reported.completion_tokens_details?.reasoning_tokens ?? 0
+  const cacheWrite = provider === "openrouter" ? (reported.prompt_tokens_details?.cache_write_tokens ?? 0) : 0
   return { input: prompt - cacheRead - cacheWrite, output: completion - reasoning, reasoning, cacheRead, cacheWrite }
 }
 
@@ -291,8 +304,13 @@ export const OpenAICompatible: ProviderAdapter = {
     let finish: string | null = null
     let usage: Omit<Usage, "cost"> = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
 
-    for await (const data of guarded(sse(response.body, request.signal), guard)) {
+    // `onRead` keeps the stall timer on the bytes themselves, so a comment or a
+    // keep-alive counts as the provider being alive, as MiMo's chunk timeout does.
+    for await (const frame of guarded(readData(response.body, { signal: request.signal, onRead: guard.alive }), guard)) {
+      // Compared after trimming, as MiMo does: some servers pad the sentinel.
+      const data = frame.trim()
       if (data === "[DONE]") break
+      if (!data) continue
       let chunk: Chunk
       try {
         chunk = JSON.parse(data)
@@ -312,8 +330,13 @@ export const OpenAICompatible: ProviderAdapter = {
       if (!delta) continue
 
       const reasoning = delta.reasoning_content ?? delta.reasoning
-      // Kept when it is shown, or when the model reads it back later (interleaved).
-      if (reasoning && (request.showReasoning || request.interleaved)) {
+      /*
+       * Always kept, as MiMo's processor keeps it: it is what tells a step that
+       * thought and then said nothing from a step that produced nothing at all,
+       * and a model with an `interleaved` field reads it back on the next step.
+       * The interface still draws none of it.
+       */
+      if (reasoning) {
         if (!reasoningOpen) {
           reasoningOpen = true
           emit({ type: "reasoning.start", index: 1 })
@@ -350,6 +373,14 @@ export const OpenAICompatible: ProviderAdapter = {
       }
     }
 
+    /*
+     * The reader returns rather than throwing when the signal falls between two
+     * reads, so without this a cut stream came back as a finished turn and the
+     * half-assembled tool call below was handed to the turn loop to run. The
+     * Anthropic adapter has always checked here; this is the same two lines.
+     */
+    if (request.signal.aborted) throw new DOMException("Aborted", "AbortError")
+
     if (reasoningOpen) emit({ type: "block.end", index: 1 })
     if (textOpen) emit({ type: "block.end", index: 0 })
 
@@ -370,7 +401,7 @@ export const OpenAICompatible: ProviderAdapter = {
         // Arguments arrive as a JSON string in fragments; a provider that
         // truncates mid-object should surface as an empty input rather than
         // taking down the turn, with the reason kept so the call can be refused.
-        ...parseArguments(slot.args),
+        ...parseToolArguments(slot.args),
       }))
 
     return {
@@ -381,18 +412,6 @@ export const OpenAICompatible: ProviderAdapter = {
       ...(finish ? { finishReason: finish } : {}),
     }
   },
-}
-
-function parseArguments(raw: string): { input: Record<string, unknown>; inputError?: string } {
-  if (!raw.trim()) return { input: {} }
-  try {
-    const parsed: unknown = JSON.parse(raw)
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-      ? { input: parsed as Record<string, unknown> }
-      : { input: {}, inputError: "the arguments were not a JSON object" }
-  } catch (err) {
-    return { input: {}, inputError: `the arguments were not valid JSON (${(err as Error).message})` }
-  }
 }
 
 /**
@@ -462,29 +481,4 @@ export function describeHttp(status: number, detail: string): string {
   if (status >= 500) return `The provider returned ${status}. This is usually transient.`
   if (html) return `A gateway or proxy answered this request with a web page (${status}) rather than a reply.`
   return `Request failed (${status}). ${trimmed}`
-}
-
-/** Minimal SSE reader: yields the payload of each `data:` line. */
-async function* sse(body: ReadableStream<Uint8Array>, signal: AbortSignal): AsyncGenerator<string> {
-  const reader = body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ""
-
-  try {
-    while (true) {
-      if (signal.aborted) return
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-
-      let newline: number
-      while ((newline = buffer.indexOf("\n")) !== -1) {
-        const line = buffer.slice(0, newline).trim()
-        buffer = buffer.slice(newline + 1)
-        if (line.startsWith("data:")) yield line.slice(5).trim()
-      }
-    }
-  } finally {
-    reader.cancel().catch(() => {})
-  }
 }

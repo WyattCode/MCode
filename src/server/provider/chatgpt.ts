@@ -1,4 +1,4 @@
-import type { Message, ModelModalities } from "@shared/protocol"
+import type { Message, ModelModalities, ModelRef } from "@shared/protocol"
 import { TOOL_MEDIA_NOTE, attachmentParts, type WirePart } from "./attachment-parts"
 import { userText } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
@@ -6,7 +6,9 @@ import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "
 import { ProviderError, ProviderHttpError, headersOf, isHtmlBody, systemText, wireOfBody } from "./types"
 import { requestHistory } from "./history"
 import { USER_AGENT } from "../auth/oauth"
-import { stallGuard } from "./stall"
+import { guarded, stallGuard } from "./stall"
+import { readData } from "./sse"
+import { parseToolArguments } from "../tool/repair"
 
 /**
  * Adapter for a ChatGPT subscription, served by the Codex backend.
@@ -29,6 +31,9 @@ interface StreamEvent {
     name?: string
     call_id?: string
     arguments?: string
+    /** A reasoning item's own id, and the ciphertext `include` asked for. */
+    id?: string
+    encrypted_content?: string
   }
   /** Present on `error` frames; `response.failed` nests it under `response`. */
   message?: string
@@ -36,6 +41,8 @@ interface StreamEvent {
   error?: { message?: string; code?: string; type?: string }
   response?: {
     error?: { message?: string }
+    /** Why a response came back incomplete: the output ceiling, or the content filter. */
+    incomplete_details?: { reason?: string }
     usage?: {
       input_tokens?: number
       output_tokens?: number
@@ -73,7 +80,7 @@ function responsesMedia(part: WirePart): Record<string, unknown>[] {
       : []
 }
 
-function toInput(history: Message[], inputs?: Partial<ModelModalities>): Record<string, unknown>[] {
+export function toInput(history: Message[], inputs?: Partial<ModelModalities>, model?: ModelRef): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = []
 
   for (const message of requestHistory(history)) {
@@ -87,6 +94,27 @@ function toInput(history: Message[], inputs?: Partial<ModelModalities>): Record<
       ]
       if (content.length) out.push({ type: "message", role: "user", content })
       continue
+    }
+
+    /*
+     * The thinking, handed back before the words and the calls it led to,
+     * which is the order the model produced them in.
+     *
+     * Two filters, both MiMo's. It only returns thinking to the model that
+     * wrote it, as the Anthropic path does. And because nothing is stored
+     * server-side (`store: false`), a reasoning item is only sendable with its
+     * `encrypted_content`: MiMo drops every reasoning item without one rather
+     * than sending a summary the backend cannot verify.
+     */
+    const sameModel = Boolean(model && message.model.provider === model.provider && message.model.model === model.model)
+    for (const part of message.parts) {
+      if (part.type !== "reasoning" || !sameModel || !part.signature) continue
+      out.push({
+        type: "reasoning",
+        ...(part.itemID ? { id: part.itemID } : {}),
+        encrypted_content: part.signature,
+        summary: part.text.trim() ? [{ type: "summary_text", text: part.text }] : [],
+      })
     }
 
     const text = message.parts
@@ -144,20 +172,6 @@ function toInput(history: Message[], inputs?: Partial<ModelModalities>): Record<
   return out
 }
 
-/** Arguments can arrive truncated when a turn is cut short. */
-function parseArguments(raw: string | undefined): { input: Record<string, unknown>; inputError?: string } {
-  if (!raw) return { input: {} }
-  try {
-    const parsed: unknown = JSON.parse(raw)
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-      ? { input: parsed as Record<string, unknown> }
-      : { input: {}, inputError: "the arguments were not a JSON object" }
-  } catch (err) {
-    // Kept, so the call is refused with the reason rather than run on nothing.
-    return { input: {}, inputError: `the arguments were not valid JSON (${(err as Error).message})` }
-  }
-}
-
 /**
  * The reasoning block of a Responses request, or nothing.
  *
@@ -175,17 +189,29 @@ function parseArguments(raw: string | undefined): { input: Record<string, unknow
  * effort nor the summary request. That also matters at the wire: the Responses
  * API rejects a `reasoning` block on a model that does not reason at all.
  *
- * `summary` is this app's own use of its "Show reasoning" setting; the
- * reference always asks for `auto`.
+ * `summary` is `auto`, as the reference asks for it on every such request. This
+ * app draws no thinking, but it has to have the thinking to know a step
+ * produced nothing else (the think-only card), and to apply the rule that a
+ * GPT model's reasoning-only reply is final.
  */
 export function reasoningRequest(
   effort: string,
   variants: readonly string[] | undefined,
-  showReasoning: boolean,
-): { reasoning?: { effort: string; summary: "auto" | "concise" } } {
+): { reasoning?: { effort: string; summary: "auto" } } {
   if (variants && !variants.includes(effort)) return {}
-  return { reasoning: { effort, summary: showReasoning ? "auto" : "concise" } }
+  return { reasoning: { effort, summary: "auto" } }
 }
+
+/**
+ * The reference's `INCLUDE_ENCRYPTED_REASONING`.
+ *
+ * Nothing is kept server-side here (`store: false`), so a later step of the
+ * same turn can only see the earlier steps' thinking if this request asks for
+ * it and the next one sends it back. Without it a multi-step tool chain forgets
+ * its own reasoning between steps, which is the one case OpenAI asks for these
+ * items to be returned.
+ */
+const INCLUDE_ENCRYPTED_REASONING = ["reasoning.encrypted_content"]
 
 /** Whether a model keeps its default verbosity: anything but a GPT-5.x that is not codex or chat. */
 export function verbose(modelID: string): boolean {
@@ -217,7 +243,8 @@ export const ChatGPTSubscription: ProviderAdapter = {
       body: JSON.stringify({
         model: request.model.model,
         instructions: systemText(request),
-        input: toInput(request.history, request.inputs),
+        input: toInput(request.history, request.inputs, request.model),
+        include: INCLUDE_ENCRYPTED_REASONING,
         tools: toolSchemas(request.tools),
         tool_choice: "auto",
         parallel_tool_calls: false,
@@ -226,7 +253,7 @@ export const ChatGPTSubscription: ProviderAdapter = {
         stream: true,
         // MiMo's prompt cache key for OpenAI: the conversation's id, so its prefix is found again.
         ...(request.sessionID ? { prompt_cache_key: request.sessionID } : {}),
-        ...reasoningRequest(request.effort, request.variants, request.showReasoning),
+        ...reasoningRequest(request.effort, request.variants),
         // MiMo asks GPT-5.x for terse text, except the codex and chat models.
         ...(verbose(request.model.model) ? {} : { text: { verbosity: "low" } }),
       }),
@@ -248,6 +275,9 @@ export const ChatGPTSubscription: ProviderAdapter = {
     const toolCalls: ToolCall[] = []
     const usage = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }
     let stop: TurnOutcome["stop"] = "end_turn"
+    /** The response's own status, and why it was incomplete when it was. */
+    let status: string | undefined
+    let incomplete: string | undefined
     /** Whether the provider said how the response ended. */
     let settled = false
     /**
@@ -264,57 +294,67 @@ export const ChatGPTSubscription: ProviderAdapter = {
     let reasoningOpen = false
     let index = 0
 
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ""
-
+    /*
+     * The shared reader (see sse.ts): an event is dispatched on its blank line
+     * rather than per `data:` line, comments and keep-alives refresh the stall
+     * timer through `onRead`, and a provider that omits the final newline no
+     * longer loses the frame that carries its usage. `guarded` turns a stall
+     * into the stall's own error and disposes the timer.
+     */
     guard.alive()
-    while (true) {
-      const { done, value } = await reader.read().catch((err: unknown) => {
-        guard.dispose()
-        throw guard.failure(err)
-      })
-      if (done) {
-        guard.dispose()
-        break
+    for await (const frame of guarded(readData(response.body, { signal: request.signal, onRead: guard.alive }), guard)) {
+      const payload = frame.trim()
+      if (!payload || payload === "[DONE]") continue
+
+      let event: StreamEvent
+      try {
+        event = JSON.parse(payload)
+      } catch {
+        continue
       }
-      guard.alive()
-      buffer += decoder.decode(value, { stream: true })
 
-      const lines = buffer.split("\n")
-      buffer = lines.pop() ?? ""
-
-      for (const line of lines) {
-        if (!line.startsWith("data:")) continue
-        const payload = line.slice(5).trim()
-        if (!payload || payload === "[DONE]") continue
-
-        let event: StreamEvent
-        try {
-          event = JSON.parse(payload)
-        } catch {
-          continue
+      switch (event.type) {
+        case "response.output_text.delta": {
+          if (!textOpen) {
+            if (reasoningOpen) {
+              emit({ type: "block.end", index })
+              reasoningOpen = false
+              index += 1
+            }
+            emit({ type: "text.start", index })
+            textOpen = true
+            produced = true
+          }
+          if (event.delta) emit({ type: "text.delta", index, text: event.delta })
+          break
         }
 
-        switch (event.type) {
-          case "response.output_text.delta": {
-            if (!textOpen) {
-              if (reasoningOpen) {
-                emit({ type: "block.end", index })
-                reasoningOpen = false
-                index += 1
-              }
-              emit({ type: "text.start", index })
-              textOpen = true
-              produced = true
+        case "response.reasoning_summary_text.delta":
+        case "response.reasoning_text.delta": {
+          if (!reasoningOpen) {
+            if (textOpen) {
+              emit({ type: "block.end", index })
+              textOpen = false
+              index += 1
             }
-            if (event.delta) emit({ type: "text.delta", index, text: event.delta })
-            break
+            emit({ type: "reasoning.start", index })
+            reasoningOpen = true
+            produced = true
           }
+          if (event.delta) emit({ type: "reasoning.delta", index, text: event.delta })
+          break
+        }
 
-          case "response.reasoning_summary_text.delta":
-          case "response.reasoning_text.delta": {
-            if (!request.showReasoning) break
+        case "response.output_item.done": {
+          if (event.item?.type === "reasoning") {
+            /*
+             * The ciphertext `include` asked for, kept on the reasoning part so
+             * `toInput` can hand it back on the later steps of this turn. A
+             * reasoning item that carried no summary text opened no block, so
+             * one is opened here to hold it: the part stays empty, which is
+             * what `thinkOnly` looks at, and nothing is drawn for it either way.
+             */
+            if (!event.item.encrypted_content) break
             if (!reasoningOpen) {
               if (textOpen) {
                 emit({ type: "block.end", index })
@@ -323,55 +363,71 @@ export const ChatGPTSubscription: ProviderAdapter = {
               }
               emit({ type: "reasoning.start", index })
               reasoningOpen = true
-              produced = true
             }
-            if (event.delta) emit({ type: "reasoning.delta", index, text: event.delta })
+            emit({ type: "reasoning.signature", index, signature: event.item.encrypted_content, ...(event.item.id ? { itemID: event.item.id } : {}) })
+            emit({ type: "block.end", index })
+            reasoningOpen = false
+            index += 1
             break
           }
-
-          case "response.output_item.done": {
-            if (event.item?.type !== "function_call") break
-            const callID = event.item.call_id ?? ""
-            emit({ type: "tool", callID, name: event.item.name ?? "" })
-            toolCalls.push({
-              callID,
-              name: event.item.name ?? "",
-              ...parseArguments(event.item.arguments),
-            })
-            stop = "tool_use"
-            break
-          }
-
-          case "response.completed":
-          case "response.incomplete": {
-            // MiMo's split: input without the cached tokens it includes, output without the reasoning.
-            const reported = event.response?.usage
-            usage.cacheRead = reported?.input_tokens_details?.cached_tokens ?? 0
-            usage.reasoning = reported?.output_tokens_details?.reasoning_tokens ?? 0
-            usage.input = (reported?.input_tokens ?? 0) - usage.cacheRead
-            usage.output = (reported?.output_tokens ?? 0) - usage.reasoning
-            if (event.type === "response.incomplete") stop = "max_tokens"
-            settled = true
-            break
-          }
-
-          case "response.failed":
-          case "error":
-            // The reason is the only useful part of this frame; a fixed
-            // sentence in its place leaves nothing to act on.
-            throw new ProviderError(
-              event.response?.error?.message ??
-                event.error?.message ??
-                event.message ??
-                "ChatGPT stream failed without saying why.",
-              undefined,
-              undefined,
-              // The code decides the retry: GPT's overload answer is tried at once, three times at most.
-              { ...(event.code ? { code: event.code } : {}), ...(event.error?.code ? { code: event.error.code } : {}), ...(event.error?.type ? { type: event.error.type } : {}) },
-            )
+          if (event.item?.type !== "function_call") break
+          const callID = event.item.call_id ?? ""
+          emit({ type: "tool", callID, name: event.item.name ?? "" })
+          toolCalls.push({
+            callID,
+            name: event.item.name ?? "",
+            ...parseToolArguments(event.item.arguments),
+          })
+          stop = "tool_use"
+          break
         }
+
+        case "response.completed":
+        case "response.incomplete": {
+          // MiMo's split: input without the cached tokens it includes, output without the reasoning.
+          const reported = event.response?.usage
+          usage.cacheRead = reported?.input_tokens_details?.cached_tokens ?? 0
+          usage.reasoning = reported?.output_tokens_details?.reasoning_tokens ?? 0
+          usage.input = (reported?.input_tokens ?? 0) - usage.cacheRead
+          usage.output = (reported?.output_tokens ?? 0) - usage.reasoning
+          if (event.type === "response.incomplete") {
+            /*
+             * MiMo's `mapOpenAIResponseFinishReason` reads
+             * `incomplete_details.reason`, not the event name: only
+             * `max_output_tokens` is the output ceiling, and `content_filter`
+             * is a refusal. Taking every incomplete response for the ceiling
+             * put an "output too long" card on a filtered reply and then had
+             * `continuationFor` ask the model to carry on from exactly the
+             * passage it had been stopped on.
+             */
+            const why = event.response?.incomplete_details?.reason
+            stop = why === "content_filter" ? "refusal" : "max_tokens"
+            if (why) incomplete = why
+          }
+          status = event.response?.status ?? status
+          settled = true
+          break
+        }
+
+        case "response.failed":
+        case "error":
+          // The reason is the only useful part of this frame; a fixed
+          // sentence in its place leaves nothing to act on.
+          throw new ProviderError(
+            event.response?.error?.message ??
+              event.error?.message ??
+              event.message ??
+              "ChatGPT stream failed without saying why.",
+            undefined,
+            undefined,
+            // The code decides the retry: GPT's overload answer is tried at once, three times at most.
+            { ...(event.code ? { code: event.code } : {}), ...(event.error?.code ? { code: event.error.code } : {}), ...(event.error?.type ? { type: event.error.type } : {}) },
+          )
       }
     }
+
+    // A stream cut between reads is a cut stream, not a reply: see the same two lines in openai.ts.
+    if (request.signal.aborted) throw new DOMException("Aborted", "AbortError")
 
     if (textOpen || reasoningOpen) emit({ type: "block.end", index })
 
@@ -381,6 +437,16 @@ export const ChatGPTSubscription: ProviderAdapter = {
       throw new ProviderError("The connection closed before ChatGPT sent a reply.", "error.noReply")
     }
 
-    return { stop, toolCalls, usage }
+    /*
+     * MiMo's `mapOpenAIResponseFinishReason`, as the word the rest of the app
+     * reads: the incomplete reason where there is one, `tool_calls` when the
+     * response carried calls, otherwise the response's own status. Without it
+     * this path returned no `finishReason` at all, so the continuation that
+     * answers a tool call written out as prose (reminders.ts) could never fire
+     * here, and neither could the content-filter wording on the failure card.
+     */
+    const finishReason = incomplete ?? (toolCalls.length ? "tool_calls" : status)
+
+    return { stop, toolCalls, usage, ...(finishReason ? { finishReason } : {}) }
   },
 }

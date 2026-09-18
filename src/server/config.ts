@@ -404,6 +404,17 @@ export function withCatalog(entry: ModelEntry, listed: CatalogModel | undefined,
     output: listed.cost?.output ?? entry.output,
     ...(listed.cost?.cache_read !== undefined ? { cacheRead: listed.cost.cache_read } : {}),
     ...(listed.cost?.cache_write !== undefined ? { cacheWrite: listed.cost.cache_write } : {}),
+    // The dearer tier past 200k, where the catalog gives both halves of it; see `costOf`.
+    ...(listed.cost?.context_over_200k?.input !== undefined && listed.cost.context_over_200k.output !== undefined
+      ? {
+          over200K: {
+            input: listed.cost.context_over_200k.input,
+            output: listed.cost.context_over_200k.output,
+            ...(listed.cost.context_over_200k.cache_read !== undefined ? { cacheRead: listed.cost.context_over_200k.cache_read } : {}),
+            ...(listed.cost.context_over_200k.cache_write !== undefined ? { cacheWrite: listed.cost.context_over_200k.cache_write } : {}),
+          },
+        }
+      : {}),
     reasoning: listed.reasoning ?? entry.reasoning,
     attachment: listed.attachment ?? entry.attachment,
     toolCall: listed.tool_call ?? entry.toolCall,

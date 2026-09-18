@@ -182,18 +182,26 @@ async function main(): Promise<void> {
   {
     const five = ["low", "medium", "high", "xhigh", "max"]
 
-    const modern = anthropicReasoning("claude-opus-5", "xhigh", five, true, MAX_TOKENS)
+    const modern = anthropicReasoning("claude-opus-5", "xhigh", five, MAX_TOKENS)
     note(
       "a modern Claude gets adaptive thinking and the level in output_config",
       modern.thinking?.type === "adaptive" && modern.output_config?.effort === "xhigh",
       modern,
     )
+    /*
+     * S11-10. Every caller used to pass showReasoning: false and this asked
+     * for `omitted`, so the server sent no thinking at all - and a step that
+     * thought and said nothing then looked exactly like a step that produced
+     * nothing. The reference asks for the summary on every such request; the
+     * interface still draws none of it.
+     */
     note(
-      "Show reasoning off asks for the thinking to be omitted",
-      anthropicReasoning("claude-opus-5", "high", five, false, MAX_TOKENS).thinking?.display === "omitted",
+      "the thinking is always asked for, summarized",
+      anthropicReasoning("claude-opus-5", "high", five, MAX_TOKENS).thinking?.display === "summarized" &&
+        anthropicReasoning("claude-haiku-4-5", "high", ["high", "max"], MAX_TOKENS).thinking?.display === "summarized",
     )
 
-    const four6 = anthropicReasoning("claude-sonnet-4-6", "max", ["low", "medium", "high", "max"], true, MAX_TOKENS)
+    const four6 = anthropicReasoning("claude-sonnet-4-6", "max", ["low", "medium", "high", "max"], MAX_TOKENS)
     note("4.6 is adaptive too", four6.thinking?.type === "adaptive" && four6.output_config?.effort === "max", four6)
 
     /*
@@ -201,8 +209,8 @@ async function main(): Promise<void> {
      * and `Math.min(31999, output - 1)` for max, against the 64k this app
      * sends - the reference's own arithmetic at @22216297.
      */
-    const budgetHigh = anthropicReasoning("claude-haiku-4-5", "high", ["high", "max"], true, MAX_TOKENS)
-    const budgetMax = anthropicReasoning("claude-haiku-4-5", "max", ["high", "max"], true, MAX_TOKENS)
+    const budgetHigh = anthropicReasoning("claude-haiku-4-5", "high", ["high", "max"], MAX_TOKENS)
+    const budgetMax = anthropicReasoning("claude-haiku-4-5", "max", ["high", "max"], MAX_TOKENS)
     note(
       "an older Claude gets a thinking budget and no effort field",
       budgetHigh.thinking?.type === "enabled" &&
@@ -218,16 +226,16 @@ async function main(): Promise<void> {
 
     note(
       "a level the model does not accept is sent as nothing at all",
-      Object.keys(anthropicReasoning("claude-opus-4-6", "xhigh", ["low", "medium", "high", "max"], true, MAX_TOKENS))
+      Object.keys(anthropicReasoning("claude-opus-4-6", "xhigh", ["low", "medium", "high", "max"], MAX_TOKENS))
         .length === 0,
     )
     note(
       "a model with no effort control gets no thinking either",
-      Object.keys(anthropicReasoning("some-chat-model", "high", [], true, MAX_TOKENS)).length === 0,
+      Object.keys(anthropicReasoning("some-chat-model", "high", [], MAX_TOKENS)).length === 0,
     )
     note(
       "a caller that says nothing about the model still sends the level",
-      anthropicReasoning("claude-opus-5", "high", undefined, true, MAX_TOKENS).output_config?.effort === "high",
+      anthropicReasoning("claude-opus-5", "high", undefined, MAX_TOKENS).output_config?.effort === "high",
     )
   }
 
@@ -236,18 +244,19 @@ async function main(): Promise<void> {
     const five = ["none", "low", "medium", "high", "xhigh"]
     note(
       "an accepted level is sent",
-      codexReasoning("high", five, true).reasoning?.effort === "high",
-      codexReasoning("high", five, true),
+      codexReasoning("high", five).reasoning?.effort === "high",
+      codexReasoning("high", five),
     )
-    note("none is a level, not an absence", codexReasoning("none", five, true).reasoning?.effort === "none")
-    note("Show reasoning off asks for a concise summary", codexReasoning("high", five, false).reasoning?.summary === "concise")
+    note("none is a level, not an absence", codexReasoning("none", five).reasoning?.effort === "none")
+    // S11-10: the reference asks for `auto` on every such request, whatever the interface draws.
+    note("the summary is always asked for", codexReasoning("high", five).reasoning?.summary === "auto")
     note(
       "a level the model does not accept withholds the whole block",
-      codexReasoning("max", five, true).reasoning === undefined,
-      codexReasoning("max", five, true),
+      codexReasoning("max", five).reasoning === undefined,
+      codexReasoning("max", five),
     )
-    note("a model with no effort control gets no reasoning block", codexReasoning("high", [], true).reasoning === undefined)
-    note("a caller that says nothing still sends it", codexReasoning("high", undefined, true).reasoning?.effort === "high")
+    note("a model with no effort control gets no reasoning block", codexReasoning("high", []).reasoning === undefined)
+    note("a caller that says nothing still sends it", codexReasoning("high", undefined).reasoning?.effort === "high")
   }
 
   console.log("")

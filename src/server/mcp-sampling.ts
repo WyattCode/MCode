@@ -136,7 +136,6 @@ export function createSampler(deps: { config: Config; auth: AuthManager; permiss
           effort: "",
           // An empty list is how an adapter is told to send no reasoning setting at all.
           variants: [],
-          showReasoning: false,
           signal,
           baseURL: definition.baseURL,
           headers: definition.headers,

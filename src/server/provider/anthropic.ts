@@ -189,7 +189,6 @@ export function reasoningRequest(
   model: string,
   effort: string,
   variants: readonly string[] | undefined,
-  showReasoning: boolean,
   maxTokens: number,
   outputLimit = maxTokens,
 ): AnthropicReasoning {
@@ -204,14 +203,19 @@ export function reasoningRequest(
     return kimi ? { thinking: { type: "enabled", budget_tokens: budget("high", outputLimit, maxTokens) } } : {}
   }
   /*
-   * The reference sets `display: "summarized"` on 4.7-and-later and leaves the
-   * field off 4.6, where the API's own default is summarized anyway. Setting it
-   * on both is a deliberate difference: this app has a "Show reasoning"
-   * setting, `omitted` is the value the API offers for turning it off, and
-   * leaving the field unset on 4.6 would quietly make that setting do nothing
-   * for two of the models in the catalog.
+   * `summarized`, as the reference asks for it (it sets the field on
+   * 4.7-and-later and leaves it off 4.6, where the API's own default is
+   * summarized anyway - the same request either way, said twice).
+   *
+   * This used to be `omitted`, because every caller passed showReasoning:
+   * false - the interface draws no thinking, so it asked for none. That also
+   * meant the server sent no thinking blocks at all, and a step that thought
+   * and then said nothing was indistinguishable from a step that produced
+   * nothing: the think-only card had nothing to recognise, and neither did the
+   * rule that takes a GPT model's reasoning-only reply as final. The thinking
+   * is kept now and still not drawn.
    */
-  const display = showReasoning ? "summarized" : "omitted"
+  const display = "summarized" as const
 
   if (anthropicAdaptive(id)) {
     const level = OUTPUT_EFFORTS.find((entry) => entry === effort)
@@ -274,12 +278,42 @@ export function messagesRequest(request: TurnRequest): MessagesBody {
     system: [{ type: "text", text: request.system, cache_control: mark }, ...(request.systemTail ? [{ type: "text" as const, text: request.systemTail }] : [])],
     tools,
     messages,
-    ...reasoningRequest(request.model.model, request.effort, request.variants, request.showReasoning, maxTokens, limit ?? wanted),
+    ...reasoningRequest(request.model.model, request.effort, request.variants, maxTokens, limit ?? wanted),
     // MiMo's family sampling: none for Claude, set for another family reached over this protocol.
     ...(request.sampling?.temperature !== undefined ? { temperature: request.sampling.temperature } : {}),
     ...(request.sampling?.topP !== undefined ? { top_p: request.sampling.topP } : {}),
     ...(request.sampling?.topK !== undefined ? { top_k: request.sampling.topK } : {}),
   }
+}
+
+/**
+ * What a Messages `stop_reason` means for the turn, with the calls it carried.
+ *
+ * MiMo's `mapAnthropicStopReason` keeps the two apart: `max_tokens` and
+ * `model_context_window_exceeded` both become its `length`, `tool_use` becomes
+ * `tool-calls`, and neither overwrites the other, because the tool calls were
+ * already announced as their own events and the finish is only this step's
+ * label. Its `autoContinueOutputLength` then refuses to continue a message that
+ * carries tool parts - the calls are run instead, truncated arguments and all.
+ *
+ * So the calls are asked about first. Written the other way round - the limit
+ * before the calls - a reply that hit the ceiling while still writing a tool
+ * call reported `max_tokens`, the turn loop took the "nothing to run" branch,
+ * `continuationFor` declined to continue a message that has tool parts, and the
+ * announced call was left `pending` for ever with a bare "output too long"
+ * card: the model was never told anything it could correct. The limit is still
+ * visible, because `finishReason` carries the provider's own word for it.
+ *
+ * `model_context_window_exceeded` is a stop reason, not an error body, so none
+ * of the overflow patterns in session/overflow.ts can reach it; without this it
+ * landed on `end_turn` and a reply the server had cut short for want of room
+ * read as a model that had finished speaking.
+ */
+export function anthropicStop(reason: string | null | undefined, calls: number): TurnOutcome["stop"] {
+  if (reason === "refusal") return "refusal"
+  if (calls) return "tool_use"
+  if (reason === "max_tokens" || reason === "model_context_window_exceeded") return "max_tokens"
+  return "end_turn"
 }
 
 export const AnthropicAdapter: ProviderAdapter = {
@@ -335,16 +369,12 @@ export const AnthropicAdapter: ProviderAdapter = {
         input: block.input as Record<string, unknown>,
       }))
 
-    const stop: TurnOutcome["stop"] =
-      final.stop_reason === "refusal"
-        ? "refusal"
-        : final.stop_reason === "max_tokens"
-          ? "max_tokens"
-          : toolCalls.length
-            ? "tool_use"
-            : "end_turn"
-
-    return { stop, toolCalls, usage: usageFrom(final.usage), ...(final.stop_reason ? { finishReason: final.stop_reason } : {}) }
+    return {
+      stop: anthropicStop(final.stop_reason, toolCalls.length),
+      toolCalls,
+      usage: usageFrom(final.usage),
+      ...(final.stop_reason ? { finishReason: final.stop_reason } : {}),
+    }
   },
 }
 

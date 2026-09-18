@@ -1227,7 +1227,6 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
             ],
             tools: [],
             effort: "low",
-            showReasoning: false,
             signal: controller.signal,
             baseURL: definition.baseURL,
             headers: definition.headers,
