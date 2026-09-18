@@ -1622,18 +1622,81 @@ const SEARCH_VISITS = 20_000
  */
 const SEARCH_DEPTH = 16
 
-/*
- * Files under a folder whose path from that folder holds the query. A hit in
- * the file's own name ranks ahead of one further up its path, then shorter
- * paths first.
+/**
+ * How MiMo scores one file against what was typed in the @ menu.
+ *
+ * A query with no slash is about the file's own name: as typed scores 1000, a
+ * name starting with it 900, a name holding it 800, and a long path is docked
+ * a fiftieth of a point per character up to 200.
+ *
+ * A query with slashes is a path: 500 to start, then each piece has to be found
+ * in order along the folders, with the last piece in the file's own name. The
+ * last piece is worth 200 exact, 150 leading, 100 anywhere; an earlier piece 40,
+ * 30, 20. A piece that is nowhere is no match at all.
+ */
+export function rankFileHit(rel: string, query: string): number | undefined {
+  const needle = query.toLowerCase()
+  const segments = rel.toLowerCase().split("/")
+  const name = segments.at(-1) ?? ""
+  const penalty = Math.min(rel.length, 200) * 0.02
+  if (!needle.includes("/")) {
+    if (name === needle) return 1000 - penalty
+    if (name.startsWith(needle)) return 900 - penalty
+    if (name.includes(needle)) return 800 - penalty
+    return undefined
+  }
+  const wanted = needle.split("/").filter(Boolean)
+  if (!wanted.length) return undefined
+  const last = wanted.at(-1)!
+  const folders = segments.slice(0, -1)
+  let score = 500
+  let at = 0
+  for (const piece of wanted.slice(0, -1)) {
+    let found = -1
+    for (let index = at; index < folders.length; index++) {
+      const folder = folders[index]!
+      if (folder === piece) {
+        score += 40
+        found = index
+        break
+      }
+      if (folder.startsWith(piece)) {
+        score += 30
+        found = index
+        break
+      }
+      if (folder.includes(piece)) {
+        score += 20
+        found = index
+        break
+      }
+    }
+    if (found < 0) return undefined
+    at = found + 1
+  }
+  if (name === last) score += 200
+  else if (name.startsWith(last)) score += 150
+  else if (name.includes(last)) score += 100
+  else return undefined
+  return score - penalty
+}
+
+/**
+ * MiMo's `searchFiles`, which the @ menu asks on every pause in typing: a
+ * breadth-first walk under the folder being browsed, scored by `rankFileHit`,
+ * the best 50 returned with the folder each file sits in.
+ *
+ * Folders are never in the answer - the menu is picking a file - and the same
+ * hard-coded list the files tab leaves out is left out here, .gitignore and
+ * hidden entries included as MiMo includes them.
  */
 export async function searchFolder(directory: string, query: string, sub?: string, limit?: number): Promise<Handled<"file.search">> {
   const { root, target } = await insideProject(directory, sub)
   const needle = query.trim().toLowerCase()
   const cap = Math.max(1, Math.min(200, limit ?? SEARCH_LIMIT))
-  const hits: Handled<"file.search">["entries"] = []
-  if (!needle) return { entries: hits, truncated: false }
+  if (!needle) return { entries: [], truncated: false }
   const shielded = protectedFilter(root)
+  const scored: { entry: Handled<"file.search">["entries"][number]; score: number }[] = []
   const queue = [{ dir: target, depth: 0 }]
   let visits = 0
   let overflow = false
@@ -1642,30 +1705,28 @@ export async function searchFolder(directory: string, query: string, sub?: strin
     const listed = await fs.readdir(folder.dir, { withFileTypes: true }).catch(() => [])
     for (const entry of listed) {
       visits += 1
-      if (entry.name.startsWith(".") || IGNORED.has(entry.name)) continue
+      if (TREE_IGNORED.has(entry.name)) continue
       const absolute = path.join(folder.dir, entry.name)
       if (entry.isDirectory()) {
         if (folder.depth < SEARCH_DEPTH && !shielded(absolute)) queue.push({ dir: absolute, depth: folder.depth + 1 })
         continue
       }
+      // Scored on the path from the folder being browsed, which is what was typed against.
       const within = path.relative(target, absolute).split(path.sep).join("/")
-      if (!within.toLowerCase().includes(needle)) continue
+      const score = rankFileHit(within, needle)
+      if (score === undefined) continue
       const rel = path.relative(root, absolute).split(path.sep).join("/")
       const cut = rel.lastIndexOf("/")
-      hits.push({ name: entry.name, rel, dir: cut < 0 ? "" : rel.slice(0, cut) })
+      scored.push({ entry: { name: entry.name, rel, dir: cut < 0 ? "" : rel.slice(0, cut) }, score })
       // Enough gathered to rank; more would only be cut off.
-      if (hits.length > cap * 4) {
+      if (scored.length > cap * 4) {
         overflow = true
         break
       }
     }
   }
-  const ranked = hits.sort(
-    (a, b) =>
-      Number(!a.name.toLowerCase().includes(needle)) - Number(!b.name.toLowerCase().includes(needle)) ||
-      a.rel.length - b.rel.length,
-  )
-  return { entries: ranked.slice(0, cap), truncated: overflow || ranked.length > cap }
+  scored.sort((a, b) => b.score - a.score || (a.entry.rel < b.entry.rel ? -1 : a.entry.rel > b.entry.rel ? 1 : 0))
+  return { entries: scored.slice(0, cap).map((hit) => hit.entry), truncated: overflow || scored.length > cap }
 }
 
 async function listFiles(directory: string, query?: string): Promise<FileEntry[]> {

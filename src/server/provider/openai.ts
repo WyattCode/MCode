@@ -101,8 +101,8 @@ export function toMessages(system: string, history: Message[], inputs?: Partial<
 
   for (const message of requestHistory(history)) {
     if (message.role === "user") {
-      // MiMo's parts: media the model reads go natively, anything else as text or a note.
-      const parts = attachmentParts(message.attachments ?? [], inputs, "chat")
+      // MiMo's parts: a picture the model reads goes natively; every other attachment is named by path in the turn's blocks.
+      const parts = attachmentParts(message.attachments ?? [], inputs, "chat", "user")
       const media = parts.filter((part) => part.kind !== "text")
       const text = [...parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])), userText(message)].filter(Boolean).join("\n\n")
 

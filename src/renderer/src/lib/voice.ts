@@ -13,10 +13,24 @@
  * whichever model the reader has pointed the feature at.
  */
 
+import { ref } from "vue"
 import type { VoiceDraft, VoiceEdit } from "@shared/protocol"
 
-/** The longest single recording. A minute of speech is already a long message. */
-const MAX_MS = 60_000
+/**
+ * Where one stretch of speech ends: this long without a voice in it.
+ *
+ * MiMo has no ceiling on a recording at all. It cuts on silence instead and
+ * writes each piece down while the microphone stays open, so a long dictation
+ * appears in the box as it is spoken. This used to record whole and stop itself
+ * after a minute, which cut a long message off in the middle of a sentence.
+ */
+const SILENCE_MS = 1_200
+/* Above this the microphone is hearing a voice rather than the room. */
+const SPEECH_LEVEL = 0.06
+/* How often the level is read while looking for the end of a stretch. */
+const WATCH_MS = 50
+/* No cut is made before this much has been recorded: a container needs a moment of audio to be readable. */
+const MIN_SEGMENT_MS = 700
 
 /**
  * What the recorder is doing, for a button that has to say so: pressed and
@@ -56,14 +70,32 @@ export class VoiceRecorder {
   private stream?: MediaStream
   private chunks: Blob[] = []
   private startedAt = 0
-  private timer?: number
+  private watch?: number
   private audio?: AudioContext
   private analyser?: AnalyserNode
   private samples?: Uint8Array<ArrayBuffer>
   private smoothed = 0
+  /** The container every stretch of this session is recorded in, chosen once. */
+  private mime?: string
+  /** Set for as long as the microphone is open, across the cuts between stretches. */
+  private active = false
+  /** Whether this stretch has heard a voice at all - silence alone is not worth writing down. */
+  private spoke = false
+  private quietSince = 0
+  /** True while a cut is being made, so the watcher does not start a second one on top of it. */
+  private cutting = false
+
+  /**
+   * Each stretch of speech, as soon as the silence after it ends it.
+   *
+   * The microphone stays open: the caller writes this one down while the next
+   * is still being spoken, which is what lets a long dictation appear in the
+   * box as it is said rather than all at once at the end.
+   */
+  onSegment?: (recording: Recording) => void
 
   get running(): boolean {
-    return this.recorder?.state === "recording"
+    return this.active
   }
 
   /**
@@ -73,18 +105,24 @@ export class VoiceRecorder {
    * nothing is recording, or when the machine offers no audio analysis.
    */
   get level(): number {
+    const rms = this.rms()
+    if (rms === undefined) return 0
+    this.smoothed = this.smoothed * LEVEL_SMOOTHING + Math.min(1, rms * LEVEL_GAIN) * (1 - LEVEL_SMOOTHING)
+    return this.smoothed
+  }
+
+  /** The unsmoothed loudness, which is what deciding where a stretch ends has to read. */
+  private rms(): number | undefined {
     const analyser = this.analyser
     const samples = this.samples
-    if (!analyser || !samples || !this.running) return 0
+    if (!analyser || !samples || !this.active) return undefined
     analyser.getByteTimeDomainData(samples)
     let sum = 0
     for (const sample of samples) {
       const centred = (sample - 128) / 128
       sum += centred * centred
     }
-    const rms = Math.sqrt(sum / samples.length)
-    this.smoothed = this.smoothed * LEVEL_SMOOTHING + Math.min(1, rms * LEVEL_GAIN) * (1 - LEVEL_SMOOTHING)
-    return this.smoothed
+    return Math.sqrt(sum / samples.length)
   }
 
   /**
@@ -100,18 +138,78 @@ export class VoiceRecorder {
     if (!mime) throw new Error("voice.noRecorder")
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
     this.stream = stream
+    this.mime = mime
+    this.active = true
+    this.listen(stream)
+    this.begin()
+    this.watch = window.setInterval(() => this.tick(), WATCH_MS)
+  }
+
+  /** One stretch: its own recorder run, so every piece handed out is a whole, readable file. */
+  private begin() {
+    const stream = this.stream
+    if (!stream || !this.mime) return
     this.chunks = []
     this.startedAt = Date.now()
-    const recorder = new MediaRecorder(stream, { mimeType: mime })
+    this.spoke = false
+    this.quietSince = 0
+    const recorder = new MediaRecorder(stream, { mimeType: this.mime })
     recorder.ondataavailable = (event) => {
       if (event.data.size) this.chunks.push(event.data)
     }
     recorder.start()
     this.recorder = recorder
-    this.listen(stream)
-    /* A recording nobody stopped stops itself, rather than holding the
-       microphone open for as long as the window is left alone. */
-    this.timer = window.setTimeout(() => void this.stop().catch(() => {}), MAX_MS)
+  }
+
+  /** Watches for the silence that ends a stretch, and cuts there. */
+  private tick() {
+    if (!this.active || this.cutting) return
+    const rms = this.rms()
+    if (rms === undefined) return
+    const now = Date.now()
+    if (rms >= SPEECH_LEVEL) {
+      this.spoke = true
+      this.quietSince = 0
+      return
+    }
+    if (!this.spoke) return
+    if (!this.quietSince) {
+      this.quietSince = now
+      return
+    }
+    if (now - this.quietSince < SILENCE_MS || now - this.startedAt < MIN_SEGMENT_MS) return
+    void this.cut()
+  }
+
+  private async cut() {
+    this.cutting = true
+    try {
+      const spoke = this.spoke
+      const recording = await this.finish()
+      if (!this.active) return
+      if (recording && spoke) this.onSegment?.(recording)
+      this.begin()
+    } finally {
+      this.cutting = false
+    }
+  }
+
+  /** Closes the current run and returns what it caught; the microphone is left open. */
+  private async finish(): Promise<Recording | undefined> {
+    const recorder = this.recorder
+    if (!recorder) return undefined
+    this.recorder = undefined
+    const ms = Date.now() - this.startedAt
+    if (recorder.state !== "inactive") {
+      await new Promise<void>((resolve) => {
+        recorder.onstop = () => resolve()
+        recorder.stop()
+      })
+    }
+    const blob = new Blob(this.chunks, { type: recorder.mimeType })
+    this.chunks = []
+    if (!blob.size) return undefined
+    return { audio: await base64Of(blob), mime: recorder.mimeType, ms }
   }
 
   /* The level meter; a machine without Web Audio still records, with a flat waveform. */
@@ -132,36 +230,28 @@ export class VoiceRecorder {
     }
   }
 
-  /** Stops, releases the microphone, and hands back what was heard. */
+  /** Stops, releases the microphone, and hands back the last stretch - the earlier ones already went to `onSegment`. */
   async stop(): Promise<Recording | undefined> {
-    const recorder = this.recorder
-    if (!recorder) return undefined
-    if (this.timer) window.clearTimeout(this.timer)
-    this.timer = undefined
-    const ms = Date.now() - this.startedAt
-
-    const finished = new Promise<void>((resolve) => {
-      recorder.onstop = () => resolve()
-    })
-    if (recorder.state !== "inactive") recorder.stop()
-    await finished
+    if (!this.active) return undefined
+    this.active = false
+    if (this.watch) window.clearInterval(this.watch)
+    this.watch = undefined
+    const recording = await this.finish()
     this.release()
-
-    const blob = new Blob(this.chunks, { type: recorder.mimeType })
-    this.chunks = []
-    if (!blob.size) return undefined
-    return { audio: await base64Of(blob), mime: recorder.mimeType, ms }
+    return recording
   }
 
   /** Throws the recording away and shuts the microphone. */
   cancel(): void {
-    if (this.timer) window.clearTimeout(this.timer)
-    this.timer = undefined
+    this.active = false
+    if (this.watch) window.clearInterval(this.watch)
+    this.watch = undefined
     const recorder = this.recorder
     if (recorder && recorder.state !== "inactive") {
       recorder.onstop = null
       recorder.stop()
     }
+    this.recorder = undefined
     this.chunks = []
     this.release()
   }
@@ -170,6 +260,9 @@ export class VoiceRecorder {
     for (const track of this.stream?.getTracks() ?? []) track.stop()
     this.stream = undefined
     this.recorder = undefined
+    this.mime = undefined
+    this.spoke = false
+    this.quietSince = 0
     void this.audio?.close().catch(() => {})
     this.audio = undefined
     this.analyser = undefined
@@ -350,5 +443,43 @@ export function speak(text: string, language: string): boolean {
   } catch {
     return false
   }
+}
+
+/**
+ * The one microphone, and which box has it.
+ *
+ * Several boxes are mounted at once - the dock's, the side panel's chat, the
+ * home screen's - and each used to hold a recorder of its own, so pressing the
+ * microphone in one and then in another opened two captures of the same device.
+ * MiMo keeps the recording in one place with an owner beside it: pressing in
+ * the box that owns it stops it, pressing in another stops that one first and
+ * starts here.
+ */
+export const recorder = new VoiceRecorder()
+
+/** The box holding the microphone, by the id its component was given; nothing when it is free. */
+export const voiceOwner = ref<string | undefined>(undefined)
+
+let boxes = 0
+
+/** One id per mounted box, so ownership can be compared without the components knowing each other. */
+export function nextVoiceBox(): string {
+  boxes += 1
+  return `composer-${boxes}`
+}
+
+/** What the microphone is doing. Only the owner draws it. */
+export const voiceState = ref<VoiceState>("idle")
+
+/** Bumped whenever a recording is abandoned, so a transcription already on its way lands nowhere. */
+export const voiceRun = ref(0)
+
+/** Drops whatever is being recorded or written down, wherever it is. */
+export function dropVoice(): void {
+  voiceRun.value += 1
+  recorder.onSegment = undefined
+  recorder.cancel()
+  voiceState.value = "idle"
+  voiceOwner.value = undefined
 }
 

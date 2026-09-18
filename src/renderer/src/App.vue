@@ -23,6 +23,7 @@ import SettingsDialog from "./components/SettingsDialog.vue"
 import ProjectDialog from "./components/ProjectDialog.vue"
 import ImagePreview from "./components/ImagePreview.vue"
 import LiveEditPill from "./components/LiveEditPill.vue"
+import { acceptsDrop, outsideWindow } from "./lib/attach"
 import { fileRequest, reviewRequest } from "./lib/review-request"
 import { foldedMatches } from "./lib/find-folded"
 import { deliveryShown, setDeliveryView } from "./lib/delivered"
@@ -272,15 +273,22 @@ const drawerHeight = ref(0)
 const fileDrag = ref(false)
 
 function trackDrag(event: DragEvent) {
-  const types = [...(event.dataTransfer?.types ?? [])].map((type) => type.toLowerCase())
-  if (!types.includes("files") && !types.includes("text/uri-list")) return
-  const overMain = event.target instanceof Element && Boolean(event.target.closest(".main"))
-  fileDrag.value = overMain && !document.querySelector(".scrim, .overlay")
+  if (!acceptsDrop(event.dataTransfer?.types)) return
+  /*
+   * The box takes the drag for itself. MiMo stops the event there, so the
+   * column behind never learns of it and shows only the box's own ring; a
+   * listener on the window cannot be stopped, so the box is recognised by its
+   * element instead.
+   */
+  const target = event.target instanceof Element ? event.target : undefined
+  const overBox = Boolean(target?.closest(".composer-wrap, .box"))
+  const overMain = Boolean(target?.closest(".main"))
+  fileDrag.value = overMain && !overBox && !document.querySelector(".scrim, .overlay")
 }
 
 function leaveDrag(event: DragEvent) {
   // Leaving one element for another inside the window is not leaving the window.
-  if (!event.relatedTarget) fileDrag.value = false
+  if (outsideWindow(event)) fileDrag.value = false
 }
 
 function endDrag() {
@@ -2979,9 +2987,15 @@ const modalOpen = computed(
 const annotationScope = computed(() => (isHome.value || !app.currentID ? HOME_SCOPE : app.currentID))
 watch(annotationScope, (scope) => (mainAnnotationScope.value = scope), { immediate: true })
 
-/** Stops the browser opening a file the user let go of by accident. */
+/**
+ * Stops the browser opening a file the user let go of by accident.
+ *
+ * Only a file: a drag carrying words is left to the browser, so dropping a
+ * phrase from a page into the box - or moving a selection inside it - inserts
+ * it the way it does anywhere else. Swallowing every drop made both do nothing.
+ */
 function swallowDrop(event: DragEvent) {
-  event.preventDefault()
+  if (acceptsDrop(event.dataTransfer?.types)) event.preventDefault()
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -3585,6 +3599,8 @@ onMounted(async () => {
   window.addEventListener("dragleave", leaveDrag)
   window.addEventListener("drop", endDrag)
   window.addEventListener("dragend", endDrag)
+  // A drag the system took over never sends `dragend`; the next press is when the app knows it is over.
+  window.addEventListener("pointerdown", endDrag, true)
   window.addEventListener("keydown", onKeydown)
   window.addEventListener("keyup", endRecentWalk)
   window.addEventListener("blur", forgetRecentWalk)
@@ -3688,6 +3704,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("dragleave", leaveDrag)
   window.removeEventListener("drop", endDrag)
   window.removeEventListener("dragend", endDrag)
+  window.removeEventListener("pointerdown", endDrag, true)
   window.removeEventListener("drop", swallowDrop)
   window.removeEventListener("keydown", onKeydown)
   window.removeEventListener("keyup", endRecentWalk)
@@ -4352,6 +4369,15 @@ onBeforeUnmount(() => {
   border: 2px dashed color-mix(in srgb, #ff6a2b 55%, transparent);
   border-radius: inherit;
   pointer-events: none;
+}
+
+/*
+ * The information panel is inset into this same column rather than being a
+ * column of its own, so an overlay at `inset: 0` covered it too. It stops where
+ * the conversation stops, as MiMo's does.
+ */
+.main.info-open .drop-overlay {
+  inset-inline-end: v-bind(infoInset);
 }
 
 .drop-card {

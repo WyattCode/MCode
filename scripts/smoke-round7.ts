@@ -33,7 +33,7 @@ import type { ToolContext } from "../src/server/tool/types"
 import { push } from "../src/server/git"
 import { isHtmlBody } from "../src/server/provider/types"
 import { describeHttp } from "../src/server/provider/openai"
-import { MEDIA_LIMIT, readPreview, searchFolder } from "../src/server/handlers"
+import { MEDIA_LIMIT, rankFileHit, readPreview, searchFolder } from "../src/server/handlers"
 import { SKILL_BODY_MAX, discoverSkills } from "../src/server/skill"
 import { MAX_BYTES, THUMBNAIL_MAX } from "../src/renderer/src/lib/attach"
 import { RETRY_BUDGETS, withRequestRetry } from "../src/server/session/retry"
@@ -367,6 +367,39 @@ export async function roundSevenChecks(check: Check, section: (name: string) => 
     check("files within the depth are found", found.entries.length > 0, found.entries.length)
     check("...and nothing deeper than sixteen folders is walked into", Math.max(...depths) <= 16, depths)
     check("a shallow file is still found first", found.entries[0]?.rel.includes("level0"), found.entries[0])
+  }
+
+  // ----------------------------------------------------------------- C11-38
+  section("Round 11 (C11-38): the @ picker searches the whole project, ranked as MiMo ranks it")
+  {
+    const rank = (rel: string, query: string) => rankFileHit(rel, query)
+    check("a name typed whole beats one that starts with it, which beats one that merely holds it", (rank("a/x.ts", "x.ts") ?? 0) > (rank("a/x.tsx", "x.ts") ?? 0) && (rank("a/x.tsx", "x.ts") ?? 0) > (rank("a/ax.tsx", "x.ts") ?? 0))
+    check("a longer path is docked a little", (rank("x.ts", "x.ts") ?? 0) > (rank("a/b/c/d/e/x.ts", "x.ts") ?? 0))
+    check("a name that does not hold the query is no match", rank("a/y.ts", "x.ts") === undefined)
+    check("a query with a slash is matched along the folders", (rank("src/components/Composer.vue", "comp/composer") ?? 0) > 500)
+    check("...in order, so a folder named after the file does not count backwards", rank("components/src/Composer.vue", "src/composer") !== undefined && rank("src/components/Composer.vue", "components/src") === undefined)
+    check("...and every piece has to be somewhere", rank("src/components/Composer.vue", "lib/composer") === undefined)
+
+    const project = path.join(root, "at-search")
+    await fs.mkdir(path.join(project, "src", "renderer", "components"), { recursive: true })
+    await fs.mkdir(path.join(project, "node_modules", "pkg"), { recursive: true })
+    await fs.writeFile(path.join(project, "src", "renderer", "components", "Composer.vue"), "x")
+    await fs.writeFile(path.join(project, "src", "composer-text.ts"), "x")
+    await fs.writeFile(path.join(project, "node_modules", "pkg", "Composer.vue"), "x")
+    await fs.writeFile(path.join(project, ".gitignore"), "x")
+    await fs.writeFile(path.join(project, "a-compo.ts"), "x")
+    const hits = await searchFolder(project, "Compo")
+    check("a name that starts with the query outranks one that merely holds it, however the two sort", hits.entries.at(-1)?.rel === "a-compo.ts" && hits.entries.length === 3, hits.entries.map((entry) => entry.rel))
+    const slashed = await searchFolder(project, "src/composer")
+    check("a query with a slash is matched along the folders, not as a substring of the path", slashed.entries.some((entry) => entry.rel === "src/renderer/components/Composer.vue"), slashed.entries)
+    check("a file folders deep is found from the project root", hits.entries.some((entry) => entry.rel === "src/renderer/components/Composer.vue"), hits.entries)
+    check("each row carries the folder it sits in", hits.entries.find((entry) => entry.name === "Composer.vue")?.dir === "src/renderer/components")
+    check("node_modules is left out", !hits.entries.some((entry) => entry.rel.startsWith("node_modules/")), hits.entries)
+    check("nothing but files comes back", hits.entries.every((entry) => !entry.rel.endsWith("/")))
+    // MiMo leaves hidden entries in: a project is made of .gitignore and .github as much as of src.
+    check("a hidden file is findable", (await searchFolder(project, "gitignore")).entries.some((entry) => entry.name === ".gitignore"))
+    const inSub = await searchFolder(project, "Compo", "src")
+    check("searching inside a folder still names each file from the project root", inSub.entries.every((entry) => entry.rel.startsWith("src/")) && inSub.entries.length > 0, inSub.entries)
   }
 
   // ------------------------------------------------------------------ F39

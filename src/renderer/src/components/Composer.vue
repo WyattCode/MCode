@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
-import { VoiceRecorder, applyVoiceResult, editCue, isClearCommand, micFailure, transcribeFailure, type VoiceCue, type VoiceFailure, type VoiceState } from "../lib/voice"
+import { applyVoiceResult, dropVoice, editCue, isClearCommand, micFailure, nextVoiceBox, recorder, transcribeFailure, voiceOwner, voiceRun, voiceState, type Recording, type VoiceCue, type VoiceFailure, type VoiceState } from "../lib/voice"
 import type { Ref } from "vue"
-import type { Attachment, CommandInfo, DirEntry, Effort, Message, ModelInfo, SessionInfo } from "@shared/protocol"
+import type { Attachment, CommandInfo, DirEntry, Effort, FileHit, Message, ModelInfo, SessionInfo } from "@shared/protocol"
 import { interruptedTurn } from "@shared/resume"
+import { textualName } from "@shared/attachment-kind"
+import { commandTitle } from "../lib/skill-display"
+import { normalizeChord } from "@shared/chord"
+import { chordOf } from "../lib/keys"
 import { detectCodeLanguage, insertFence } from "../lib/paste-code"
 import { appendMentions, mentionBackspace, projectRelative, promptHistory, slashAt } from "../lib/composer-text"
 import { matchingNames, wordMatch } from "../lib/word-match"
@@ -11,12 +15,12 @@ import { draftTouched, drafts, homeFilled, scheduleDraftSave } from "../lib/comp
 import SlashPill from "./SlashPill.vue"
 import { accessPatch } from "../lib/confirm-queue"
 import { expandTemplate, splitCommandLine } from "@shared/command"
-import { mentionable, preview, readFiles, videoUrl, MAX_BYTES } from "../lib/attach"
+import { acceptsDrop, mentionable, outsideWindow, preview, readFiles, uriListPaths, videoUrl, MAX_LABEL, MENTION_MAX } from "../lib/attach"
 import { audioVerdict, isAudioFile, limitMinutes, probeAudio } from "../lib/audio-check"
 import { ACCESS_LEVELS, defaultAccess, sessionAccess, type Access } from "@shared/access"
 import { openImagePreview, openVideoPreview } from "../lib/image-preview"
 import type { Draft } from "../lib/draft"
-import { badgeStyle, fileBadge } from "../lib/filetype"
+import { fileCategory } from "../lib/files-tab"
 import { clampEffort, effortLabelKey, findModel, withoutLatest } from "../lib/model"
 import {
   fileName,
@@ -174,6 +178,18 @@ const historyStash = ref("")
 let walkingHistory = false
 
 /**
+ * Set for one write the app made rather than the user, which closes both menus
+ * - MiMo's `wn()` before every programmatic rewrite. Cleared by the watcher
+ * that reads it, so the next keystroke behaves as typing again.
+ */
+let rewriting = false
+
+function rewrite(value: string) {
+  rewriting = true
+  text.value = value
+}
+
+/**
  * The picker lists display names, so the pill has to as well - showing the raw
  * slug there made the same model read two different ways on one screen.
  */
@@ -208,6 +224,10 @@ const RESIZE_MIN = 44
 const RESIZE_MAX = 480
 const RESIZE_SHARE = 0.5
 const RESIZE_SLOP = 6
+/* MiMo's pause after a width change before the box is measured again. */
+const RESIZE_DEBOUNCE = 60
+/* Below this the box is not laid out yet, and measuring it would give a wrong answer. */
+const MEASURE_MIN_WIDTH = 28
 const PINNED_HEIGHT = 200
 const PINNED_CHARS = 3000
 const PINNED_LINES = 30
@@ -261,9 +281,53 @@ function resize() {
     element.style.height = `${PINNED_HEIGHT}px`
     return
   }
+  /*
+   * Too narrow to measure against: the box is hidden, has not been laid out, or
+   * is halfway through being moved between docks. MiMo skips the measurement
+   * below that width and keeps the height it had; measuring anyway collapses a
+   * three-line draft to one line for as long as the move lasts.
+   */
+  if (!Number.isFinite(element.clientWidth) || element.clientWidth <= MEASURE_MIN_WIDTH) return
   element.style.height = "auto"
   element.style.height = `${element.scrollHeight}px`
 }
+
+/**
+ * The box is measured again when it changes width, not only when it changes
+ * text.
+ *
+ * Narrowing the window or opening the right-hand panel rewraps what is written
+ * without touching it, so a draft that already filled three lines stayed two
+ * lines tall with its last line scrolled out of sight. MiMo watches the
+ * textarea and remeasures 60ms after the width settles; a manual height is
+ * clamped again at the same moment, because the ceiling is half the window.
+ */
+let widthSeen = 0
+let widthTimer: ReturnType<typeof setTimeout> | undefined
+let widthWatch: ResizeObserver | undefined
+
+function watchWidth() {
+  const element = input.value
+  if (!element || typeof ResizeObserver === "undefined") return
+  widthSeen = element.clientWidth
+  widthWatch = new ResizeObserver(() => {
+    const now = input.value?.clientWidth ?? 0
+    if (now === widthSeen) return
+    widthSeen = now
+    clearTimeout(widthTimer)
+    widthTimer = setTimeout(() => {
+      if (manualHeight.value !== null) manualHeight.value = clampHeight(manualHeight.value)
+      resize()
+    }, RESIZE_DEBOUNCE)
+  })
+  widthWatch.observe(element)
+}
+
+onBeforeUnmount(() => {
+  widthWatch?.disconnect()
+  widthWatch = undefined
+  clearTimeout(widthTimer)
+})
 
 let drag: { y: number; height: number; before: number | null; moved: boolean } | null = null
 
@@ -312,7 +376,10 @@ function followDockHeight() {
 watch(manualHeight, () => void nextTick(resize))
 /* A18: carried into the floating dock (or back), the box refits there rather than keeping the main dock's height. */
 watch(() => props.resizable, () => void nextTick(resize))
-onMounted(() => window.addEventListener(DOCK_HEIGHT_EVENT, followDockHeight))
+onMounted(() => {
+  window.addEventListener(DOCK_HEIGHT_EVENT, followDockHeight)
+  watchWidth()
+})
 onBeforeUnmount(() => window.removeEventListener(DOCK_HEIGHT_EVENT, followDockHeight))
 
 /**
@@ -358,8 +425,14 @@ watch(text, (value) => {
    * Whatever the box says now is what the menus answer to. A menu closed with
    * Escape comes back as soon as anything is typed, which is the reference's
    * rule and the only one that keeps Escape from being a trapdoor.
+   *
+   * A rewrite the app made is not typing, and closes both menus instead - MiMo
+   * clears their state before every one of them. Walking back to an old `/word`
+   * question used to throw the slash menu open over it, and deleting a whole
+   * mention could open the @ menu on whatever `@` was left in front of it.
    */
-  dismissed.value = false
+  dismissed.value = rewriting
+  rewriting = false
   // A mention edited out of the draft stops being a mention: the file must not
   // travel with the message because its path was once typed here.
   if (!mentioned.value.size) return
@@ -398,9 +471,26 @@ async function take(files: readonly File[]) {
   const { attachments: taken, rejected } = await readFiles(files)
   attachments.value = [...attachments.value, ...taken]
   if (taken.length) notify(t("toast.attachmentsAdded", { count: taken.length }))
+  sayIfUnreadable(taken)
   for (const item of rejected) {
-    notifyFailure(t(item.reason === "too-large" ? "attach.tooLarge" : "attach.unreadable"), item.name)
+    notifyFailure(item.reason === "too-large" ? t("attach.tooLarge", { size: MAX_LABEL }) : t("attach.unreadable"), item.name)
   }
+}
+
+/**
+ * Says so when the model cannot look at a picture that was just attached.
+ *
+ * A picture is the only thing that travels inside the message; everything else
+ * goes by path and any model can open it with a tool. MiMo has a line for this
+ * in all nineteen of its tables and never shows it - nothing in the app reads
+ * the key - so a picture attached to a model without vision simply went
+ * nowhere. This is MCode's own notice, in the box where it happened.
+ */
+function sayIfUnreadable(added: readonly Attachment[]) {
+  const model = currentModel.value
+  if (!model || model.inputs.image) return
+  if (!added.some((file) => file.mime.startsWith("image/"))) return
+  notify(t("attach.noImageInput", { model: model.name || model.id }))
 }
 
 function pick() {
@@ -428,13 +518,26 @@ async function onPaste(event: ClipboardEvent) {
     await take(files)
     return
   }
+  const uris = uriListPaths(event.clipboardData?.getData("text/uri-list") ?? "")
+  if (uris.length) {
+    // Copied from another application, which names the files rather than handing them over.
+    event.preventDefault()
+    await attachPaths(uris)
+    return
+  }
   /*
    * MiMo's fallback: the clipboard says it holds a picture but hands the page
    * no File item (a screenshot from some tools), so the main process reads the
-   * bitmap itself and the picture is attached by path.
+   * bitmap itself and the picture is attached by path. Three ways of telling,
+   * in MiMo's order: the clipboard's own formats, the types on the event, and
+   * a paste that carries no plain text at all.
    */
-  const types = [...(event.clipboardData?.types ?? [])]
-  if (types.some((type) => type.startsWith("image/"))) {
+  const types = [...(event.clipboardData?.types ?? [])].map((type) => type.toLowerCase())
+  const looksLikeImage =
+    (await window.mcode.clipboardHasImage().catch(() => false)) ||
+    types.some((type) => type.startsWith("image/") || type.includes("bitmap")) ||
+    (!types.includes("text/plain") && types.includes("files"))
+  if (looksLikeImage) {
     event.preventDefault()
     const saved = await window.mcode.saveClipboardImage().catch(() => ({ ok: false as const, error: "" }))
     if (!saved.ok) {
@@ -443,8 +546,10 @@ async function onPaste(event: ClipboardEvent) {
       return
     }
     const data = saved.dataUrl?.split(",")[1] ?? ""
-    attachments.value = [...attachments.value, { path: saved.path, mime: "image/png", data, byPath: true }]
+    const pasted: Attachment = { path: saved.path, mime: "image/png", data, byPath: true }
+    attachments.value = [...attachments.value, pasted]
     notify(t("toast.attachmentsAdded", { count: 1 }))
+    sayIfUnreadable([pasted])
     return
   }
   const pasted = event.clipboardData?.getData("text/plain") ?? ""
@@ -475,13 +580,22 @@ async function onPaste(event: ClipboardEvent) {
     notify(t("composer.pasteAttached"))
     return
   }
-  const name = `mcode-paste-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`
-  if (new Blob([pasted]).size > MAX_BYTES) {
-    notifyFailure(t("attach.tooLarge"), name)
-    return
-  }
-  attachments.value = [...attachments.value, { path: name, mime: "text/plain", data: pasted }]
-  notify(t("composer.pasteAttached"))
+  /*
+   * The write failed, so the paste goes into the box after all - replacing the
+   * selection, as a plain paste would. What the user copied is never turned
+   * away: refusing it left them with an empty box and a notice, and the text
+   * was gone from everywhere but the clipboard.
+   */
+  const box = input.value
+  const start = box?.selectionStart ?? text.value.length
+  const end = box?.selectionEnd ?? start
+  text.value = text.value.slice(0, start) + pasted + text.value.slice(end)
+  const at = start + pasted.length
+  caret.value = at
+  await nextTick()
+  resize()
+  box?.focus({ preventScroll: true })
+  box?.setSelectionRange(at, at)
 }
 
 /**
@@ -518,8 +632,8 @@ function onDragOver(event: DragEvent) {
     dragging.value = false
     return
   }
-  const types = event.dataTransfer?.types
-  if (!types?.includes("Files") && !types?.includes("text/plain")) return
+  // Files and named files only: text dragged into the box is the browser's to insert.
+  if (!acceptsDrop(event.dataTransfer?.types)) return
   // Without this the window navigates to the dropped file instead.
   event.preventDefault()
   dragging.value = true
@@ -527,7 +641,8 @@ function onDragOver(event: DragEvent) {
 
 function onDragLeave(event: DragEvent) {
   if (dialogOpen()) return
-  if (!event.relatedTarget) dragging.value = false
+  // Chromium leaves `relatedTarget` null inside the window too; the pointer being outside it is the real test.
+  if (outsideWindow(event)) dragging.value = false
 }
 
 async function onDrop(event: DragEvent) {
@@ -535,45 +650,25 @@ async function onDrop(event: DragEvent) {
   dragging.value = false
   // Anywhere else the window's own guard stops the browser opening the file, and nothing is added.
   if (!inDropZone(event)) return
+  // Text dragged into the box - a word from a page, or a selection moved within the box - is the browser's to insert.
+  if (!acceptsDrop(event.dataTransfer?.types)) return
   event.preventDefault()
 
-  /*
-   * A path dragged as text becomes a mention rather than a copy of the file:
-   * the reference reads `file:` off the plain text and inserts `@path`, which
-   * keeps a file that is already in the project referred to rather than sent.
-   */
-  const root = projectRoot.value
-  const dropped = event.dataTransfer?.getData("text/plain") ?? ""
-  if (dropped.startsWith("file:")) {
-    const path = decodeURI(dropped.slice("file:".length).replace(/^\/{2,3}/, ""))
-    if (path) {
-      // Inside the project it is named from the project root, as MiMo names it.
-      const rel = root ? projectRelative(root, path) : undefined
-      addDroppedMentions(rel ? [{ rel, file: true }] : [{ rel: path, file: true }])
-      return
-    }
-  }
-
-  /*
-   * MiMo's drop: a file inside the project (not a picture or a video) becomes
-   * an @mention from the project root, appended to the draft; everything else
-   * is attached. A folder is named but not carried, as a folder picked in the
-   * @ menu is.
-   */
   /*
    * MiMo only turns a text file into an @mention: the main process fills in a
    * dropped file's text for text-like names under 256KB, and the drop splits on
    * that - a text file inside the project becomes a mention, and everything
    * else (a PDF, a spreadsheet, an archive, a huge log, a folder) becomes a
-   * real attachment by path. MCode read only "not a picture or a video", so a
-   * PDF in the project reached the model as a bare path.
+   * real attachment by path.
    */
   const files = [...(event.dataTransfer?.files ?? [])]
   const inside: { rel: string; absolute: string }[] = []
   const attach: File[] = []
+  const carried = new Set<string>()
   for (const file of files) {
     const absolute = window.mcode.pathForFile(file)
-    const rel = root && mentionable(file) ? projectRelative(root, absolute) : undefined
+    if (absolute) carried.add(absolute)
+    const rel = projectRoot.value && mentionable(file) ? projectRelative(projectRoot.value, absolute) : undefined
     if (rel) inside.push({ rel, absolute })
     else attach.push(file)
   }
@@ -582,6 +677,43 @@ async function onDrop(event: DragEvent) {
     addDroppedMentions(inside.map((entry) => ({ rel: entry.rel, file: !folders.has(entry.absolute) })))
   }
   if (attach.length) await take(attach)
+
+  /*
+   * A drag from an application that names its files instead of handing them
+   * over. MiMo reads these from `text/uri-list` and puts them through the same
+   * split, after asking the main process which of them exist - so a stale path
+   * from another window never becomes a mention of a file that is not there.
+   */
+  const named = uriListPaths(event.dataTransfer?.getData("text/uri-list") ?? "").filter((target) => !carried.has(target))
+  if (named.length) await attachPaths(named)
+}
+
+/**
+ * Files named by path rather than handed over: the uri-list half of a drop, and
+ * a paste from an application that copies names.
+ *
+ * The same split as a dropped file - a text file inside the project becomes an
+ * @mention, everything else an attachment by path - except that there is no
+ * `File` to read, so a picture arrives without the bytes its thumbnail would be
+ * drawn from and shows as a capsule with its name.
+ */
+async function attachPaths(paths: readonly string[]) {
+  const found = await window.mcode.describeFiles([...paths]).catch(() => [])
+  if (!found.length) return
+  const root = projectRoot.value
+  const mentions: { rel: string; file: boolean }[] = []
+  const attach: Attachment[] = []
+  for (const entry of found) {
+    const textual = !entry.directory && textualName(entry.name) && entry.size < MENTION_MAX
+    const rel = root && textual ? projectRelative(root, entry.path) : undefined
+    if (rel) mentions.push({ rel, file: true })
+    else attach.push({ path: entry.path, mime: "", data: "", byPath: true })
+  }
+  if (mentions.length) addDroppedMentions(mentions)
+  if (attach.length) {
+    attachments.value = [...attachments.value, ...attach]
+    notify(t("toast.attachmentsAdded", { count: attach.length }))
+  }
 }
 
 /* The project a mention is named from: the conversation's folder, or the one the home screen will start in. */
@@ -695,17 +827,16 @@ function setMode(next: "normal" | "shell") {
 /*
  * Speaking instead of typing.
  *
- * The recorder is held for the life of the box so a second press finds the
- * same one; it opens the microphone on the first press and closes it on the
- * second, and `cancel` on unmount makes sure a window closed mid-recording
- * does not leave the device open.
+ * The recorder is the app's one recorder, not this box's: several boxes are
+ * mounted at once and each holding its own opened two captures of the same
+ * microphone. `voiceOwner` says which box has it, so only that one draws the
+ * capsule, and pressing the button in another stops this one first.
  */
-const recorder = new VoiceRecorder()
-const voice = ref<VoiceState>("idle")
+const boxID = nextVoiceBox()
+const mine = computed(() => voiceOwner.value === boxID)
+const voice = computed<VoiceState>(() => (mine.value ? voiceState.value : "idle"))
 /* The microphone's level for the capsule's waveform, read once a frame while recording. */
 const voiceLevel = ref(0)
-/* Bumped by × so a transcription already on its way lands nowhere. */
-let voiceRun = 0
 
 const voiceConfigured = computed(() => Boolean(app.config?.voiceModel?.model))
 
@@ -714,7 +845,7 @@ let levelFrame = 0
 function followLevel() {
   cancelAnimationFrame(levelFrame)
   const step = () => {
-    if (voice.value !== "recording") {
+    if (!mine.value || voiceState.value !== "recording") {
       voiceLevel.value = 0
       return
     }
@@ -726,7 +857,8 @@ function followLevel() {
 
 onBeforeUnmount(() => {
   cancelAnimationFrame(levelFrame)
-  recorder.cancel()
+  // Only what this box started: another box's recording outlives this one being taken off screen.
+  if (mine.value) dropVoice()
 })
 
 /* MiMo's five bars: 4px at rest and up to 16 at full level, the middle one the tallest. */
@@ -752,61 +884,88 @@ function showCue(cue: VoiceCue) {
 
 onBeforeUnmount(() => clearTimeout(cueTimer))
 
+/**
+ * One stretch of speech, written down while the next is still being spoken.
+ *
+ * The stretches are handled strictly in turn: each reads the box as it stands
+ * when its own answer comes back, so two of them cannot both edit the draft
+ * they each saw at the start and undo one another.
+ */
+let voiceQueue: Promise<void> = Promise.resolve()
+
+function queueSegment(recording: Recording, run: number) {
+  voiceQueue = voiceQueue.then(() => hearSegment(recording, run)).catch(() => undefined)
+}
+
+async function hearSegment(recording: Recording, run: number) {
+  /* A press and an immediate second press is a slip, not a message. */
+  if (recording.ms < 350 || run !== voiceRun.value) return
+  /* The box and its caret go along, so 智能编辑 can edit them; lib/voice decides what lands. */
+  const draft = {
+    text: text.value,
+    selectionStart: input.value?.selectionStart ?? text.value.length,
+    selectionEnd: input.value?.selectionEnd ?? text.value.length,
+  }
+  try {
+    const result = await app.client?.request({
+      type: "voice.transcribe",
+      audio: recording.audio,
+      mime: recording.mime,
+      language: language.value,
+      draft,
+    })
+    // Cancelled while it was being written down.
+    if (run !== voiceRun.value) return
+    if (!result) return
+    const quick = (app.config?.voiceMode ?? "smart") === "fast"
+    /* MiMo's quick input: an utterance that is only a clear word empties the box instead of being typed. */
+    if (quick && isClearCommand(result.text)) {
+      rewrite("")
+      await nextTick(resize)
+      // The user pressed a button to start this, so the keyboard is on the button: the box is given it back.
+      input.value?.focus({ preventScroll: true })
+      input.value?.setSelectionRange(0, 0)
+      showCue("cleared")
+      return
+    }
+    const next = applyVoiceResult(draft, result)
+    const edited = editCue(draft.text, next.text, Boolean(result.edit))
+    if (next.text !== text.value) {
+      rewrite(next.text)
+      await nextTick(resize)
+    }
+    input.value?.focus({ preventScroll: true })
+    input.value?.setSelectionRange(next.selectionStart, next.selectionEnd)
+    /* As in MiMo, the spoken "send" belongs to the considered mode only; quick input just types. */
+    const sendsByVoice = (app.config?.voiceSend ?? false) && !quick
+    if (next.send && sendsByVoice && text.value.trim()) {
+      dropVoice()
+      // MiMo sends at once and then says so; a send is named over a rewrite heard in the same breath.
+      await submit()
+      showCue("sent")
+      return
+    }
+    if (edited) showCue(edited)
+  } catch (err) {
+    if (run === voiceRun.value) showVoiceFailure(transcribeFailure(err))
+  }
+}
+
 async function toggleVoice() {
-  if (voice.value === "working" || voice.value === "starting") return
-  if (voice.value === "recording") {
-    voice.value = "working"
-    const run = ++voiceRun
+  if (mine.value && (voice.value === "working" || voice.value === "starting")) return
+  if (mine.value && voice.value === "recording") {
+    voiceState.value = "working"
+    const run = voiceRun.value
     try {
-      const recording = await recorder.stop()
-      /* A press and an immediate second press is a slip, not a message. */
-      if (!recording || recording.ms < 350) return
-      /* The box and its caret go along, so 智能编辑 can edit them; lib/voice decides what lands. */
-      const draft = {
-        text: text.value,
-        selectionStart: input.value?.selectionStart ?? text.value.length,
-        selectionEnd: input.value?.selectionEnd ?? text.value.length,
-      }
-      const result = await app.client?.request({
-        type: "voice.transcribe",
-        audio: recording.audio,
-        mime: recording.mime,
-        language: language.value,
-        draft,
-      })
-      // Cancelled while it was being written down.
-      if (run !== voiceRun) return
-      if (!result) return
-      const quick = (app.config?.voiceMode ?? "smart") === "fast"
-      /* MiMo's quick input: an utterance that is only a clear word empties the box instead of being typed. */
-      if (quick && isClearCommand(result.text)) {
-        text.value = ""
-        await nextTick(resize)
-        input.value?.setSelectionRange(0, 0)
-        showCue("cleared")
-        return
-      }
-      const next = applyVoiceResult(draft, result)
-      const edited = editCue(draft.text, next.text, Boolean(result.edit))
-      if (next.text !== text.value) {
-        text.value = next.text
-        await nextTick(resize)
-      }
-      input.value?.setSelectionRange(next.selectionStart, next.selectionEnd)
-      /* As in MiMo, the spoken "send" belongs to the considered mode only; quick input just types. */
-      const sendsByVoice = (app.config?.voiceSend ?? false) && !quick
-      if (next.send && sendsByVoice && text.value.trim()) {
-        voice.value = "idle"
-        // MiMo sends at once and then says so; a send is named over a rewrite heard in the same breath.
-        await submit()
-        showCue("sent")
-        return
-      }
-      if (edited) showCue(edited)
-    } catch (err) {
-      if (run === voiceRun) showVoiceFailure(transcribeFailure(err))
+      // Whatever is left since the last cut is the last stretch; the earlier ones are already in the queue.
+      const last = await recorder.stop()
+      if (last) queueSegment(last, run)
+      await voiceQueue
     } finally {
-      if (run === voiceRun) voice.value = "idle"
+      if (run === voiceRun.value) {
+        voiceState.value = "idle"
+        voiceOwner.value = undefined
+      }
     }
     return
   }
@@ -815,25 +974,32 @@ async function toggleVoice() {
     notifyFailure(t("voice.notConfigured"))
     return
   }
+  /* MiMo's rule when another box has the microphone: that one stops, and this one starts. */
+  if (voiceOwner.value && voiceOwner.value !== boxID) dropVoice()
   // MiMo's starting capsule, between the press and the microphone answering.
-  voice.value = "starting"
+  voiceOwner.value = boxID
+  voiceState.value = "starting"
+  const run = voiceRun.value
   try {
     // MiMo's micAccess before capture: a refusal from the OS is a denial like getUserMedia's.
     if (!(await window.mcode.micAccess())) throw new DOMException("", "NotAllowedError")
+    recorder.onSegment = (recording) => queueSegment(recording, run)
     await recorder.start()
-    voice.value = "recording"
+    if (run !== voiceRun.value) return
+    voiceState.value = "recording"
     followLevel()
   } catch (err) {
-    voice.value = "idle"
+    if (run === voiceRun.value) {
+      voiceState.value = "idle"
+      voiceOwner.value = undefined
+    }
     showVoiceFailure(micFailure(err))
   }
 }
 
 /* MiMo's ×: the recording, or the transcription on its way, is thrown away and nothing is typed. */
 function cancelVoice() {
-  voiceRun += 1
-  recorder.cancel()
-  voice.value = "idle"
+  dropVoice()
   cueOn.value = false
 }
 
@@ -925,6 +1091,11 @@ const skillRows = computed(() => {
   )
 })
 const hasSkills = computed(() => app.commands.some((command) => command.source === "skill"))
+
+/* A chip is named after the skill it stands for, translated as the plugins page translates it. */
+function skillChipName(trigger: string): string {
+  return commandTitle(serverCommand(trigger), trigger, language.value)
+}
 
 async function openSkillMenu(event: Event) {
   const row = (event.currentTarget as HTMLElement).getBoundingClientRect()
@@ -1056,6 +1227,14 @@ async function submit() {
 
   const named = await mentionAttachments(value, carried, target)
   const filled = await fillCommand(value, target)
+  /*
+   * Files with nothing written beside them still make a message that reads as
+   * one: MiMo puts a fixed short phrase in the body, so the bubble in the
+   * transcript is not an empty square and the model is told plainly that the
+   * files are the message. A skill chip already stands in the body, so it is
+   * left to speak for itself.
+   */
+  const body = filled && !filled.text.trim() && sent.length && !chips.length ? t("composer.seeAttachments") : (filled?.text ?? "")
   // A file the command names that was also mentioned goes once.
   const commandFiles = filled ? filled.attachments.filter((file) => !named.some((entry) => entry.path === file.path)) : []
 
@@ -1066,7 +1245,7 @@ async function submit() {
     ? false
     : subtask
       ? await app.subtask(value, subtask)
-      : await app.send(withSkills(filled.text, chips), [...sent, ...named, ...commandFiles], target, pointed, filled.command)
+      : await app.send(withSkills(body, chips), [...sent, ...named, ...commandFiles], target, pointed, filled.command)
   if (!accepted) {
     text.value = value
     attachments.value = sent
@@ -1232,13 +1411,25 @@ async function mentionAttachments(value: string, chosen: Set<string>, to?: strin
  * An empty query lists one level - a folder opens, a file goes into the draft;
  * a query searches the files under the current folder after a short pause.
  * With no project there is nothing to list, and one line says so.
+ *
+ * The search is the backend's, and has to be: browsing lists one folder, so
+ * filtering that list finds nothing that is not in it. Typing `@Compo` at the
+ * project root found no `src/renderer/src/components/Composer.vue` at all, and
+ * the header above the list said "搜索文件" over results that were never
+ * searched for.
  */
 const atSub = ref("")
 const atEntries = ref<DirEntry[]>([])
-const atStatus = ref<"idle" | "loading" | "ready" | "dirFailed">("idle")
+const atHits = ref<FileHit[]>([])
+const atTruncated = ref(false)
+const atStatus = ref<"idle" | "loading" | "ready" | "dirFailed" | "searchFailed">("idle")
 const atIndex = ref(0)
 /* Answers are matched to the latest ask, so a slow one cannot overwrite a newer one. */
 let atAsk = 0
+/* MiMo's pause before a keystroke becomes a request. */
+const AT_SEARCH_DEBOUNCE = 150
+const AT_SEARCH_RESULTS = 50
+let atTimer: ReturnType<typeof setTimeout> | undefined
 
 /** The mention the caret is standing in, if it is standing in one. */
 const atSpan = computed(() => (mode.value === "shell" ? undefined : mentionSpan(text.value, caret.value)))
@@ -1252,13 +1443,21 @@ interface AtRow {
 
 const joinRel = (folder: string, name: string) => (folder ? `${folder}/${name}` : name)
 
+/** Whether the menu is searching the project rather than browsing a folder. */
+const atSearching = computed(() => Boolean(atSpan.value?.query.trim()))
+
 const atRows = computed<AtRow[]>(() => {
   const span = atSpan.value
   if (!span || !projectRoot.value) return []
   /*
-   * MiMo narrows what this folder already listed, with the matcher its settings
-   * search uses, rather than asking the backend again for every keystroke.
+   * Searching: the backend's hits, which are files only and carry the folder
+   * each sits in. Browsing: this folder's own entries, narrowed with the
+   * matcher the settings search uses, so the first keystrokes cost nothing
+   * while the request is still out.
    */
+  if (atSearching.value) {
+    return atHits.value.map((hit) => ({ kind: "file" as const, name: hit.name, rel: hit.rel, dir: hit.dir }))
+  }
   return matchingNames(atEntries.value, span.query).map((entry) => ({
     kind: entry.type,
     name: entry.name,
@@ -1291,20 +1490,73 @@ function loadAt() {
     })
 }
 
-/* The folder is listed once, when the menu opens on it; what is typed after that only filters it. */
+/**
+ * The search itself, after MiMo's pause.
+ *
+ * Only the last ask's answer is taken, and the timer is restarted on every
+ * keystroke, so a long search for two letters cannot land on top of the results
+ * for five.
+ */
+function searchAt(query: string) {
+  const root = projectRoot.value
+  const client = app.client
+  if (!root || !client) return
+  const ask = ++atAsk
+  const sub = atSub.value
+  atStatus.value = "loading"
+  client
+    .request({ type: "file.search", directory: root, query, sub, limit: AT_SEARCH_RESULTS })
+    .then((result) => {
+      if (ask !== atAsk) return
+      atHits.value = result.entries
+      atTruncated.value = result.truncated
+      atStatus.value = "ready"
+    })
+    .catch(() => {
+      if (ask !== atAsk) return
+      atHits.value = []
+      atTruncated.value = false
+      atStatus.value = "searchFailed"
+    })
+}
+
+function stopAtTimer() {
+  if (atTimer === undefined) return
+  clearTimeout(atTimer)
+  atTimer = undefined
+}
+
+/*
+ * The folder is listed once, when the menu opens on it; a query sends a search
+ * instead, restarted 150ms after the last keystroke.
+ */
 watch(
-  () => [atSpan.value !== undefined, atSub.value, projectRoot.value] as const,
-  ([open]) => {
-    if (open) {
+  () => [atSpan.value?.query, atSub.value, projectRoot.value] as const,
+  ([query]) => {
+    stopAtTimer()
+    if (query === undefined) {
+      // Closed: the next @ starts from the project root again.
+      atAsk += 1
+      atSub.value = ""
+      atHits.value = []
+      atTruncated.value = false
+      atStatus.value = "idle"
+      return
+    }
+    if (!query.trim()) {
+      atHits.value = []
+      atTruncated.value = false
       loadAt()
       return
     }
-    // Closed: the next @ starts from the project root again.
-    atAsk += 1
-    atSub.value = ""
-    atStatus.value = "idle"
+    atTimer = setTimeout(() => {
+      atTimer = undefined
+      searchAt(query)
+    }, AT_SEARCH_DEBOUNCE)
   },
 )
+
+onBeforeUnmount(stopAtTimer)
 
 /*
  * Open while it has something to show: rows, a loading or failure line, or
@@ -1314,7 +1566,7 @@ watch(
 const atOpen = computed(() => {
   if (!atSpan.value || dismissed.value) return false
   if (!projectRoot.value) return true
-  return atRows.value.length > 0 || ["loading", "dirFailed"].includes(atStatus.value)
+  return atRows.value.length > 0 || ["loading", "dirFailed", "searchFailed"].includes(atStatus.value)
 })
 
 watch(atRows, (rows) => {
@@ -1362,8 +1614,9 @@ async function insertMention(path: string, file: boolean) {
   caret.value = next.cursor
 }
 
+/* MiMo writes `@rel ` for a folder, with no trailing slash - the same shape a file gets. */
 function referenceFolder(rel: string) {
-  void insertMention(`${rel}/`, false)
+  void insertMention(rel, false)
 }
 
 /**
@@ -1436,7 +1689,16 @@ watch(
     attachments.value = kept?.attachments ?? []
     mentioned.value = new Set(kept?.mentioned ?? [])
     skills.value = kept?.skills ?? []
+    /*
+     * The caret goes to the end of the restored draft, in the box as well as in
+     * this component's own idea of it. Writing only the number left the two
+     * disagreeing until the first keystroke, and the @ and slash menus are both
+     * questions about the characters before it.
+     */
     caret.value = text.value.length
+    void nextTick(() => {
+      if (document.activeElement === input.value) input.value?.setSelectionRange(caret.value, caret.value)
+    })
     // The folder being browsed belonged to the project that conversation was in.
     atSub.value = ""
   },
@@ -1509,13 +1771,19 @@ const SOURCE_BADGE: Record<CommandInfo["source"], string> = {
   skill: "composer.slashSkill",
 }
 
-/** The project's own commands, its MCP prompts and its skills, badged by source; a skill shipped with the app says so. */
+/**
+ * The project's own commands, its MCP prompts and its skills, badged by source.
+ *
+ * Three badges, as MiMo has three: a skill that ships with the app is still a
+ * skill, and calling it out as a fourth kind said something about where it came
+ * from that the user has no use for while picking one.
+ */
 const serverEntries = computed<SlashEntry[]>(() =>
   app.commands.map((entry) => ({
     id: `custom.${entry.name}`,
     trigger: entry.name,
     description: entry.description,
-    badge: entry.source === "skill" && entry.builtin ? t("composer.slashBuiltinSkill") : t(SOURCE_BADGE[entry.source]),
+    badge: t(SOURCE_BADGE[entry.source]),
   })),
 )
 
@@ -1525,7 +1793,7 @@ const serverEntries = computed<SlashEntry[]>(() =>
  */
 const sessionEntries = computed<SlashEntry[]>(() => {
   const id = sessionID.value
-  if (!id || serverCommand("compact")) return []
+  if (!id) return []
   return [
     { id: "session.compact", trigger: "compact", description: t("composer.compactDesc"), run: () => void compactFromBox("/compact") },
   ]
@@ -1548,7 +1816,19 @@ const slashQuery = computed(() => slashSpan.value?.query)
 const slashMatches = computed(() => {
   const query = slashQuery.value
   if (query === undefined) return []
-  return [...sessionEntries.value, ...serverEntries.value].filter((entry) => wordMatch(entry.trigger, query))
+  /*
+   * The session's own command wins a name it shares with the project's, which
+   * is MiMo's order: it walks its session commands first and keeps the first of
+   * each name. It used to be the other way round, and on the home screen - where
+   * there is no conversation to compact - a project command called `compact`
+   * was listed although MiMo hides exactly that one there.
+   */
+  const session = sessionEntries.value
+  const taken = new Set(session.map((entry) => entry.trigger))
+  const server = sessionID.value
+    ? serverEntries.value.filter((entry) => !taken.has(entry.trigger))
+    : serverEntries.value.filter((entry) => entry.trigger !== "compact")
+  return [...session, ...server].filter((entry) => wordMatch(entry.trigger, query))
 })
 
 /*
@@ -1601,7 +1881,8 @@ async function runSlash(at: number) {
    */
   const skill = serverCommand(command.trigger)?.source === "skill"
   if (command.run || skill) {
-    text.value = before + after.replace(/^ /, "")
+    // Only the `/query` goes. MiMo leaves whatever followed it exactly as it was, space included.
+    rewrite(before + after)
     await nextTick(resize)
     if (skill) addSkill(command.trigger)
     else command.run?.()
@@ -1610,7 +1891,7 @@ async function runSlash(at: number) {
     return
   }
   const named = `/${command.trigger} `
-  text.value = before + named + after
+  rewrite(before + named + after)
   await nextTick(resize)
   // After the tick, because the text watcher clears this on every change.
   dismissed.value = true
@@ -1638,10 +1919,59 @@ function moveMenu(event: KeyboardEvent, count: number, index: Ref<number>): bool
   return true
 }
 
-/** Enter and Tab both take the highlighted row, as they do in the reference. */
+/**
+ * Enter and Tab both take the highlighted row, as they do in the reference.
+ *
+ * Modifiers are not looked at for Enter: MiMo's own test is the key and the
+ * absence of Shift, so Ctrl+Enter over an open menu picks the row rather than
+ * slipping past it and typing a newline.
+ */
 function takesRow(event: KeyboardEvent): boolean {
-  if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false
-  return event.key === "Enter" || event.key === "Tab"
+  if (event.key === "Enter") return !event.shiftKey
+  if (event.key !== "Tab") return false
+  return !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+}
+
+/**
+ * The chord the user has bound "send message" to, when it is an Enter of some
+ * kind.
+ *
+ * MiMo reads the binding before deciding between a newline and a send: a
+ * binding on an Enter combination is matched exactly and takes Ctrl+Enter's
+ * newline away with it, and anything else leaves the default alone - Enter
+ * sends, Ctrl+Enter breaks the line, Alt+Enter sends. Nothing read the binding
+ * here at all, so rebinding the send key did nothing in the box and, worse, the
+ * window's own dispatcher then sent the newline the box had just typed.
+ */
+const sendChord = computed(() => {
+  const bound = app.config?.keybinds?.["composer.send"]
+  const chord = typeof bound === "string" && bound ? normalizeChord(bound) : ""
+  return /(^|\+)Enter$/i.test(chord) ? chord : ""
+})
+
+function sendsMessage(event: KeyboardEvent): boolean {
+  if (event.key !== "Enter") return false
+  if (sendChord.value) return chordOf(event, app.platform) === sendChord.value
+  return !event.shiftKey && !event.metaKey && !event.ctrlKey
+}
+
+/** Ctrl+Enter breaks the line only while no Enter combination is bound to sending. */
+function breaksLine(event: KeyboardEvent): boolean {
+  if (event.key !== "Enter" || event.shiftKey || event.altKey || sendChord.value) return false
+  return event.ctrlKey || event.metaKey
+}
+
+/**
+ * A key the box has answered for itself, and which must not travel on.
+ *
+ * The window's shortcut dispatcher listens on `window` in the bubble phase, so
+ * a key left to bubble is acted on twice: with Ctrl+Enter bound to sending,
+ * the box typed a newline and the dispatcher then sent the draft with the
+ * newline in it.
+ */
+function handled(event: KeyboardEvent) {
+  event.preventDefault()
+  event.stopPropagation()
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -1707,12 +2037,12 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   // MiMo's Ctrl+Enter (Cmd+Enter): a newline at the caret, in place of any selection.
-  if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey) {
+  if (breaksLine(event)) {
     const box = input.value
     if (!box) return
-    event.preventDefault()
+    handled(event)
     const start = box.selectionStart
-    text.value = `${text.value.slice(0, start)}\n${text.value.slice(box.selectionEnd)}`
+    rewrite(`${text.value.slice(0, start)}\n${text.value.slice(box.selectionEnd)}`)
     void nextTick(() => {
       resize()
       box.setSelectionRange(start + 1, start + 1)
@@ -1728,8 +2058,8 @@ function onKeydown(event: KeyboardEvent) {
       const known = [...new Set([...[...recentMentions].reverse(), ...mentioned.value])]
       const next = mentionBackspace(text.value, box.selectionStart, known)
       if (next) {
-        event.preventDefault()
-        text.value = next.text
+        handled(event)
+        rewrite(next.text)
         void nextTick(() => {
           resize()
           box.setSelectionRange(next.caret, next.caret)
@@ -1741,8 +2071,8 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   // Enter sends; Shift+Enter is a newline. This is a chat surface, not an editor.
-  if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
-    event.preventDefault()
+  if (sendsMessage(event)) {
+    handled(event)
     // Held down, it sends once. The reference guards the same way, after its
     // preventDefault so the repeats do not fall through and type newlines.
     if (event.repeat) return
@@ -1761,10 +2091,17 @@ function onKeydown(event: KeyboardEvent) {
     const selected = box ? box.selectionStart !== box.selectionEnd : false
     const copy = (event.key === "c" || event.key === "C") && event.ctrlKey && !selected
     if (escape || copy) {
-      event.preventDefault()
+      handled(event)
       void app.abort(sessionID.value)
       return
     }
+  }
+
+  // MiMo's shell mode leaves on Escape - after the input-method guard above, not before it.
+  if (event.key === "Escape" && mode.value === "shell") {
+    handled(event)
+    setMode("normal")
+    return
   }
 
   /*
@@ -1778,13 +2115,13 @@ function onKeydown(event: KeyboardEvent) {
   const walking = historyIndex.value !== null
   if (event.key === "ArrowUp" && history.value.length) {
     if (!walking && !(collapsed && element.selectionStart === 0 && !text.value.includes("\n"))) return
-    event.preventDefault()
+    handled(event)
     if (historyIndex.value === null) {
       historyStash.value = text.value
       showHistory(history.value.length - 1)
     } else showHistory(Math.max(0, historyIndex.value - 1))
   } else if (event.key === "ArrowDown" && walking) {
-    event.preventDefault()
+    handled(event)
     const next = (historyIndex.value ?? 0) + 1
     showHistory(next >= history.value.length ? null : next)
   }
@@ -1795,7 +2132,7 @@ function showHistory(at: number | null) {
   walkingHistory = true
   historyIndex.value = at
   const value = at === null ? historyStash.value : (history.value[at] ?? "")
-  text.value = value
+  rewrite(value)
   void nextTick(() => {
     walkingHistory = false
     resize()
@@ -2449,6 +2786,8 @@ function onPointerDown(event: MouseEvent) {
 onMounted(() => {
   window.addEventListener("mousedown", onPointerDown, true)
   window.addEventListener("dragend", endDrag)
+  // A drag the system took over never sends `dragend`; the next press is when the app knows it is over.
+  window.addEventListener("pointerdown", endDrag, true)
   document.addEventListener("dragover", onDragOver)
   document.addEventListener("dragleave", onDragLeave)
   document.addEventListener("drop", onDrop)
@@ -2456,13 +2795,25 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener("mousedown", onPointerDown, true)
   window.removeEventListener("dragend", endDrag)
+  window.removeEventListener("pointerdown", endDrag, true)
   document.removeEventListener("dragover", onDragOver)
   document.removeEventListener("dragleave", onDragLeave)
   document.removeEventListener("drop", onDrop)
 })
 
+/**
+ * Puts the keyboard in the box, with the caret at the end of whatever is there.
+ *
+ * Chromium leaves the caret at position 0 when a textarea that already holds
+ * text is focused for the first time, so a restored draft was typed into from
+ * the front. MiMo puts it at the end in both places it focuses the box.
+ */
 function focus() {
-  input.value?.focus()
+  const box = input.value
+  if (!box) return
+  box.focus({ preventScroll: true })
+  box.setSelectionRange(text.value.length, text.value.length)
+  caret.value = text.value.length
 }
 
 /**
@@ -2617,9 +2968,22 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               @click="onTileClick(item, $event)"
               @keydown.enter.space.self.prevent="onTileClick(item, $event)"
             >
-              <span class="badge att-badge" :style="badgeStyle(fileBadge(fileName(item.path)))">
-                {{ fileBadge(fileName(item.path)).label }}
-              </span>
+              <!-- The tree's file-page glyph in the tree's colours, so one file reads the same way in both places. -->
+              <svg
+                class="att-ic"
+                :class="`cat-${fileCategory(fileName(item.path))}`"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M13 2v7h7" />
+              </svg>
               <span class="att-name">{{ fileName(item.path) }}</span>
               <button
                 class="att-x inline"
@@ -2628,9 +2992,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 v-tip="{ label: t('attach.remove'), placement: 'top' }"
                 @click.stop="remove(at)"
               >
-                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-                  <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-                </svg>
+                ✕
               </button>
             </div>
           </template>
@@ -2640,7 +3002,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             <span class="cchip-ic" aria-hidden="true">
               <svg viewBox="0 0 12 12" fill="none"><path d="M6.2 2.5h2.3a1 1 0 0 1 1 1v1.2a1.3 1.3 0 1 1 0 2.6v1.2a1 1 0 0 1-1 1H7.3a1.3 1.3 0 1 0-2.6 0H3.5a1 1 0 0 1-1-1V7.3a1.3 1.3 0 1 0 0-2.6V3.5a1 1 0 0 1 1-1z" /></svg>
             </span>
-            <span class="cchip-name">{{ name }}</span>
+            <span class="cchip-name">{{ skillChipName(name) }}</span>
             <button
               class="cchip-rm"
               type="button"
@@ -2667,7 +3029,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             <div v-else-if="atSpan?.query && atSub" class="slash-head">{{ t("composer.at.searchLabel", { path: atCrumbs }) }}</div>
             <div v-else-if="atSpan?.query" class="slash-head">{{ t("composer.at.searchFiles") }}</div>
             <div v-else class="slash-head">{{ t("composer.at.filesGroup") }}</div>
-            <div v-if="atStatus === 'dirFailed'" class="at-note">{{ t("composer.at.cannotReadDir") }}</div>
+            <div v-if="atStatus === 'searchFailed'" class="at-note">{{ t("composer.at.searchFailed") }}</div>
+            <div v-else-if="atStatus === 'dirFailed'" class="at-note">{{ t("composer.at.cannotReadDir") }}</div>
             <div v-else-if="atStatus === 'loading' && !atRows.length" class="at-note">{{ t("composer.at.loading") }}</div>
             <div
               v-for="(row, at) in atRows"
@@ -2694,17 +3057,12 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 <button class="at-ref" type="button" data-at-ref @mousedown.prevent.stop="referenceFolder(row.rel)">
                   {{ t("composer.at.refFolder") }}
                 </button>
-                <button
-                  class="at-enter"
-                  type="button"
-                  :aria-label="t('composer.at.enterFolder')"
-                  v-tip="{ label: t('composer.at.enterFolder'), placement: 'top' }"
-                  @mousedown.prevent.stop="enterFolder(row.rel)"
-                >
-                  ›
-                </button>
+                <!-- Not a button: the whole row already opens the folder, and MiMo draws this as a plain mark. -->
+                <span class="at-enter" aria-hidden="true">›</span>
               </span>
             </div>
+            <!-- MiMo's last line when there was more than the search would show. -->
+            <div v-if="atTruncated && atSearching" class="at-note">{{ t("composer.at.truncated", { count: atRows.length }) }}</div>
           </template>
         </div>
 
@@ -2747,7 +3105,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           :placeholder="placeholder"
           :disabled="compactingHere"
           :aria-busy="compactingHere || undefined"
-          @keydown.escape="mode === 'shell' && setMode('normal')"
           @keydown="onKeydown"
           @blur="onInputBlur"
           @keyup="syncCaret"
@@ -3380,15 +3737,16 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   stroke-linejoin: round;
 }
 
+/* The name is kept whole and the folder behind it gives way, as MiMo cuts a search row. */
 .at-name {
-  min-width: 0;
+  flex: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .at-sub {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   color: var(--text-weaker);
@@ -3405,10 +3763,11 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   margin-inline-start: auto;
 }
 
+/* MiMo's capsule: no fill of its own until the pointer is on it. */
 .at-ref {
   padding: 2px 6px;
-  color: var(--text-base);
-  background: color-mix(in srgb, var(--text-strong) 8%, transparent);
+  color: var(--text-weak);
+  background: none;
   border: 0;
   border-radius: 6px;
   font-size: calc(11px * var(--ui-font-scale, 1));
@@ -3417,25 +3776,17 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
 .at-ref:hover {
   color: var(--text-strong);
+  background: color-mix(in srgb, var(--text-strong) 8%, transparent);
 }
 
+/* A mark, not a control: the row itself opens the folder. */
 .at-enter {
   display: grid;
   place-items: center;
   width: 20px;
   height: 20px;
-  padding: 0;
   color: var(--text-weak);
-  background: none;
-  border: 0;
-  border-radius: 6px;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  cursor: pointer;
-}
-
-.at-enter:hover {
-  color: var(--text-strong);
-  background: var(--surface-hover);
 }
 
 /* The breadcrumb head: dim, and the text colour under the pointer. */
@@ -3459,24 +3810,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   padding: 7px 10px;
   color: var(--text-weaker);
   font-size: calc(13px * var(--ui-font-scale, 1));
-}
-
-/*
- * The type mark a file row leads with, the same one the palette and the tree
- * use - a file should not read as a different kind of thing depending on which
- * list it is being offered from.
- */
-.badge {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 17px;
-  height: 15px;
-  border-radius: 3px;
-  font-family: var(--font-mono);
-  font-size: calc(8.5px * var(--ui-font-scale, 1));
-  font-weight: 530;
 }
 
 .slash-title {
@@ -3649,9 +3982,15 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   display: none;
 }
 
-/* A dropped file has to look like it will land somewhere: MiMo's 2px ring of the accent at 35%. */
+/*
+ * A dropped file has to look like it will land somewhere: MiMo's 2px ring of
+ * the accent at 35%, and the edge in the accent with it. The card's own shadow
+ * is written back into the same declaration, which otherwise replaces it and
+ * flattens the box against the page for as long as the drag lasts.
+ */
 .box.dropping {
-  box-shadow: 0 0 0 2px color-mix(in srgb, #ff6a2b 35%, transparent);
+  border-color: #ff6a2b;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4), 0 0 0 2px color-mix(in srgb, #ff6a2b 35%, transparent);
 }
 
 /* Annotations waiting to be sent, under the attachments and skill chips. */
@@ -3731,8 +4070,41 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   cursor: pointer;
 }
 
-.att-badge {
+.att-ic {
   flex: none;
+  color: var(--text-weak);
+}
+
+.att-ic.cat-dir {
+  color: var(--ft-dir);
+}
+
+.att-ic.cat-code {
+  color: var(--ft-code);
+}
+
+.att-ic.cat-web {
+  color: var(--ft-web);
+}
+
+.att-ic.cat-data {
+  color: var(--ft-data);
+}
+
+.att-ic.cat-doc {
+  color: var(--ft-doc);
+}
+
+.att-ic.cat-media {
+  color: var(--ft-media);
+}
+
+.att-ic.cat-shell {
+  color: var(--ft-shell);
+}
+
+.att-ic.cat-archive {
+  color: var(--ft-archive);
 }
 
 .att-name {
@@ -3749,6 +4121,9 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   color: var(--text-weak);
   background: transparent;
   border-radius: 6px;
+  /* MiMo's mark is the character at 13px, not a drawing. */
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  line-height: 1;
 }
 
 .att-x.inline:hover {
@@ -4835,7 +5210,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 }
 
 .box.dropping {
-  box-shadow: 0 0 0 2px color-mix(in srgb, #ff6a2b 35%, transparent);
+  border-color: #ff6a2b;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4), 0 0 0 2px color-mix(in srgb, #ff6a2b 35%, transparent);
 }
 
 /*

@@ -1,3 +1,4 @@
+import { textualName } from "@shared/attachment-kind"
 import type { Attachment } from "@shared/protocol"
 
 /**
@@ -22,14 +23,71 @@ import type { Attachment } from "@shared/protocol"
 export const MAX_BYTES = 50 * 1024 * 1024
 
 /**
+ * The cap as the notice names it.
+ *
+ * Written from the constant rather than into eighteen language tables: they
+ * said 8 MB for as long as the cap was 50, because the number had been copied
+ * in by hand and the constant moved without them.
+ */
+export const MAX_LABEL = `${Math.round(MAX_BYTES / (1024 * 1024))} MB`
+
+/**
  * The most a file on disk may weigh and still have its bytes carried too.
  *
- * MiMo's desktop picker inlines a picture under 8 MB as a data URL and passes
- * anything larger by path alone. Here the bytes are only ever for the
- * thumbnail beside the box - the model is served from the path either way - so
- * a large picture keeps its path and loses nothing but the preview.
+ * MiMo's desktop picker reads a picture under 8 MB into a data URL beside the
+ * path and passes anything larger by path alone. Here the bytes are only ever
+ * for the thumbnail beside the box - the model is served from the path either
+ * way - so a large picture keeps its path and loses nothing but the preview.
  */
 export const THUMBNAIL_MAX = 8 * 1024 * 1024
+
+/**
+ * Whether a drag carries something to attach.
+ *
+ * Files and a `text/uri-list` only, as MiMo reads a drag: plain text dragged
+ * into the box is the browser's business, not this app's. The window's overlay
+ * and the box's own ring asked two different questions before this, so dragging
+ * a word lit one and not the other.
+ */
+export function acceptsDrop(types: readonly string[] | DOMStringList | undefined): boolean {
+  const list = types ? [...types].map((type) => type.toLowerCase()) : []
+  return list.includes("files") || list.includes("text/uri-list")
+}
+
+/**
+ * Whether a drag event's pointer has left the window.
+ *
+ * `dragleave` fires with a null `relatedTarget` inside the window as well in
+ * Chromium, so the clean-up it drove ran while the drag was still going and
+ * only a following `dragover` put the indicator back.
+ */
+export function outsideWindow(event: { clientX: number; clientY: number }): boolean {
+  return event.clientX <= 0 || event.clientY <= 0 || event.clientX >= window.innerWidth || event.clientY >= window.innerHeight
+}
+
+/**
+ * The files a `text/uri-list` names, as absolute paths.
+ *
+ * One URI per line, `#` comments skipped. Windows arrives as `file:///C:/x`,
+ * whose path part keeps a leading slash that has to come off before it names a
+ * real file - MiMo leaves it on, and the path it builds exists nowhere.
+ */
+export function uriListPaths(list: string): string[] {
+  const out: string[] = []
+  for (const line of list.split(/\r?\n/)) {
+    const uri = line.trim()
+    if (!uri || uri.startsWith("#") || !/^file:/i.test(uri)) continue
+    let target = uri.replace(/^file:\/{2,3}/i, "")
+    try {
+      target = decodeURIComponent(target)
+    } catch {
+      // A name with a stray % is taken as written rather than dropped.
+    }
+    if (/^\/[a-z]:/i.test(target)) target = target.slice(1)
+    if (target) out.push(target)
+  }
+  return out
+}
 
 /** Where a file lives on disk, or empty for one that does not (pasted, or outside the app). */
 function diskPath(file: File): string {
@@ -39,9 +97,6 @@ function diskPath(file: File): string {
     return ""
   }
 }
-
-/** Extensions worth reading as text even when the OS reports nothing useful. */
-const TEXTUAL = /\.(txt|md|markdown|json|ya?ml|toml|ini|cfg|conf|csv|tsv|log|xml|html?|css|scss|jsx?|tsx?|vue|svelte|py|rb|go|rs|java|kt|swift|c|h|cpp|hpp|cs|php|sh|bash|zsh|ps1|sql|env|gitignore|dockerfile|makefile)$/i
 
 /**
  * The most a dropped file may weigh and still be named rather than sent.
@@ -54,17 +109,21 @@ export const MENTION_MAX = 256 * 1024
 
 /**
  * Whether a dropped file is one MiMo would turn into an @mention rather than
- * attach: a text file, with something in it, under the cap.
+ * attach: a text file under the cap.
+ *
+ * An empty file counts. MiMo fills in a dropped file's `text` from whatever it
+ * read, and an empty string is still text, so a freshly created file in the
+ * project becomes a mention there rather than a nameless attachment.
  */
 export function mentionable(file: File): boolean {
-  return isTextual(file) && file.size > 0 && file.size < MENTION_MAX
+  return isTextual(file) && file.size < MENTION_MAX
 }
 
 export function isTextual(file: File): boolean {
   if (file.type.startsWith("text/")) return true
   if (/^application\/(json|xml|x-yaml|toml)$/.test(file.type)) return true
   // A file the OS has no opinion about is read as text if its name suggests it.
-  return !file.type && TEXTUAL.test(file.name)
+  return !file.type && textualName(file.name)
 }
 
 async function base64(file: File): Promise<string> {
@@ -100,10 +159,23 @@ export async function readFiles(files: readonly File[]): Promise<Taken> {
 
   for (const file of files) {
     const absolute = diskPath(file)
-    const thumbnailed = (file.type.startsWith("image/") || file.type.startsWith("video/")) && file.size <= THUMBNAIL_MAX
-    if (absolute && !thumbnailed) {
-      // MiMo's attachment by path: no copy in the message, no size cap.
-      attachments.push({ path: absolute, mime: file.type, data: "", byPath: true })
+    if (absolute) {
+      /*
+       * MiMo's attachment by path: no copy in the message, no size cap. A
+       * picture or a video small enough to preview also carries its bytes, but
+       * only so the box can draw a thumbnail - `byPath` keeps the model served
+       * from the path, and the draft on disk drops the bytes again.
+       */
+      const thumbnailed = (file.type.startsWith("image/") || file.type.startsWith("video/")) && file.size <= THUMBNAIL_MAX
+      let data = ""
+      if (thumbnailed) {
+        try {
+          data = await base64(file)
+        } catch {
+          // A thumbnail is worth nothing next to the path; attach it without one.
+        }
+      }
+      attachments.push({ path: absolute, mime: file.type, data, byPath: true })
       continue
     }
     /*
@@ -113,7 +185,7 @@ export async function readFiles(files: readonly File[]): Promise<Taken> {
      * rather than a made-up one, and no cap applies to it. Its bytes are kept
      * beside the path for the thumbnail.
      */
-    if (!absolute && file.type.startsWith("image/")) {
+    if (file.type.startsWith("image/")) {
       try {
         const data = await base64(file)
         const saved = await window.mcode.savePastedImage(`data:${file.type};base64,${data}`)

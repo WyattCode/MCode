@@ -4561,9 +4561,10 @@ async function main() {
       parts.some((part) => part.type === "image_url" && part.image_url.url.startsWith("data:image/png;base64,")),
       parts,
     )
+    // round 11 (C11-32): the text file is not copied in beside it - the turn's blocks name its path.
     check(
-      "and the text file still rides along with the words",
-      parts.some((part) => part.type === "text" && part.text.includes("notes.txt") && part.text.includes("what is in this")),
+      "the words go with it, and the text file does not",
+      parts.some((part) => part.type === "text" && part.text.includes("what is in this")) && !parts.some((part) => part.type === "text" && part.text.includes("hello from a file")),
       parts,
     )
 

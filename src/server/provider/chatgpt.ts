@@ -85,8 +85,8 @@ export function toInput(history: Message[], inputs?: Partial<ModelModalities>, m
 
   for (const message of requestHistory(history)) {
     if (message.role === "user") {
-      // MiMo's parts: images and PDFs the model reads go natively, anything else as text or a note.
-      const parts = attachmentParts(message.attachments ?? [], inputs, "responses")
+      // MiMo's parts: a picture the model reads goes natively; every other attachment is named by path in the turn's blocks.
+      const parts = attachmentParts(message.attachments ?? [], inputs, "responses", "user")
       const text = [...parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])), userText(message)].filter(Boolean).join("\n\n")
       const content = [
         ...(text ? [{ type: "input_text", text }] : []),

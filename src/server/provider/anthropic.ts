@@ -53,8 +53,8 @@ export function toProviderMessages(messages: Message[], inputs?: Partial<ModelMo
   for (const message of requestHistory(messages)) {
     if (message.role === "user") {
       const content: Anthropic.ContentBlockParam[] = []
-      // MiMo's parts: images and PDFs the model reads go natively, anything else as text or a note.
-      for (const part of attachmentParts(message.attachments ?? [], inputs, "anthropic")) {
+      // MiMo's parts: a picture the model reads goes natively; every other attachment is named by path in the turn's blocks.
+      for (const part of attachmentParts(message.attachments ?? [], inputs, "anthropic", "user")) {
         if (part.kind === "text") content.push({ type: "text", text: part.text })
         else if (part.kind === "image") content.push({ type: "image", source: { type: "base64", media_type: part.mime as "image/png", data: part.data } })
         else if (part.kind === "pdf") content.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: part.data }, title: part.name })

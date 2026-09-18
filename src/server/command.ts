@@ -356,6 +356,8 @@ async function skillCommands(directory: string, storageDirectory?: string, disab
     description: skill.description || undefined,
     source: "skill" as const,
     ...(skill.builtin ? { builtin: true } : {}),
+    // The window labels a skill chip from these, as MiMo labels one from the skill rather than the command.
+    ...(skill.localizations ? { localizations: skill.localizations } : {}),
     template: skill.content,
     hints: [],
   }))
