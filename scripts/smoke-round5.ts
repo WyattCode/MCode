@@ -239,9 +239,11 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
     check("its retry-after seconds are the wait", retryDecision(limited, 1, 0)?.wait === 12_000, retryDecision(limited, 1, 0))
     check("retry-after-ms wins over it", retryHint(new ProviderHttpError("x", 429, { "retry-after-ms": "250.4", "retry-after": "9" })) === 251)
     check("a wait named in words is honoured", retryHint(new Error("Rate limit reached, please try again in 20s")) === 20_000)
-    check("a named wait past five minutes is held there", retryHint(new Error("try again in 2 hours")) === 5 * 60_000)
+    // N11-19: a named wait is now read up to half an hour, which is as long as the user chose to let a turn wait.
+    check("a named wait past half an hour is held there", retryHint(new Error("try again in 2 hours")) === 30 * 60_000)
     check("a server error's hint is held to thirty seconds", retryDecision(new ProviderHttpError("busy", 503, { "retry-after": "600" }), 1, 0)?.wait === 30_000)
-    check("a rate limit may wait up to five minutes", retryDecision(new ProviderHttpError("slow", 429, { "retry-after": "600" }), 1, 0)?.wait === 5 * 60_000)
+    check("a rate limit's named ten-minute wait is waited out whole (N11-19)", retryDecision(new ProviderHttpError("slow", 429, { "retry-after": "600" }), 1, 0)?.wait === 10 * 60_000)
+    check("and one of two hours is held to half an hour", retryDecision(new ProviderHttpError("slow", 429, { "retry-after": "7200" }), 1, 0)?.wait === 30 * 60_000)
     const server = new ProviderHttpError("busy", 500, {})
     const first = retryDecision(server, 1, 0, 0.5)
     check("a server error first waits two seconds, give or take a tenth", first?.wait === 2000 && retryDecision(server, 1, 0, 1)?.wait === 2200 && retryDecision(server, 1, 0, 0)?.wait === 1800, [first, retryDecision(server, 1, 0, 1), retryDecision(server, 1, 0, 0)])

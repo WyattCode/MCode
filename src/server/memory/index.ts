@@ -65,19 +65,16 @@ export class MemoryIndex {
   async reconcile(): Promise<{ indexed: number; pruned: number }> {
     const files = await markdownFiles(this.root)
     const onDisk = new Set(files)
-    const known = new Map((this.db.prepare("SELECT path, fingerprint FROM memory_doc").all() as { path: string; fingerprint: string }[]).map((row) => [row.path, row.fingerprint]))
+    const known = new Map((await this.db.all<{ path: string; fingerprint: string }>("SELECT path, fingerprint FROM memory_doc")).map((row) => [row.path, row.fingerprint]))
     let pruned = 0
-    const drop = this.db.prepare("DELETE FROM memory_doc WHERE path = ?")
     for (const file of known.keys()) {
       if (onDisk.has(file)) continue
-      drop.run(file)
+      await this.db.run("DELETE FROM memory_doc WHERE path = ?", file)
       pruned++
     }
     let indexed = 0
-    const upsert = this.db.prepare(
-      `INSERT INTO memory_doc (path, scope, scope_id, type, body, fingerprint, indexed_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(path) DO UPDATE SET scope = excluded.scope, scope_id = excluded.scope_id, type = excluded.type, body = excluded.body, fingerprint = excluded.fingerprint, indexed_at = excluded.indexed_at`,
-    )
+    const upsert = `INSERT INTO memory_doc (path, scope, scope_id, type, body, fingerprint, indexed_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(path) DO UPDATE SET scope = excluded.scope, scope_id = excluded.scope_id, type = excluded.type, body = excluded.body, fingerprint = excluded.fingerprint, indexed_at = excluded.indexed_at`
     for (const file of files) {
       const location = memoryLocation(this.root, file)
       if (!location) continue
@@ -87,7 +84,7 @@ export class MemoryIndex {
       if (known.get(file) === fingerprint) continue
       const body = await fs.readFile(file, "utf8").catch(() => undefined)
       if (body === undefined) continue
-      upsert.run(file, location.scope, location.scope_id, location.type, body, fingerprint, Date.now())
+      await this.db.run(upsert, file, location.scope, location.scope_id, location.type, body, fingerprint, Date.now())
       indexed++
     }
     return { indexed, pruned }
@@ -113,14 +110,13 @@ export class MemoryIndex {
       params.push(input.type)
     }
     params.push(Math.min(limit * 3, MEMORY_FETCH_CAP))
-    const rows = this.db
-      .prepare(
-        `SELECT d.path, d.scope, d.scope_id, d.type, snippet(memory_doc_fts, 0, '<<', '>>', '...', 32) AS snippet, bm25(memory_doc_fts) AS rank
-         FROM memory_doc_fts JOIN memory_doc d ON d.id = memory_doc_fts.rowid
-         WHERE memory_doc_fts MATCH ? ${where.length ? `AND ${where.join(" AND ")}` : ""}
-         ORDER BY rank LIMIT ?`,
-      )
-      .all(...params) as (Omit<MemoryHit, "score"> & { rank: number })[]
+    const rows = await this.db.all<Omit<MemoryHit, "score"> & { rank: number }>(
+      `SELECT d.path, d.scope, d.scope_id, d.type, snippet(memory_doc_fts, 0, '<<', '>>', '...', 32) AS snippet, bm25(memory_doc_fts) AS rank
+       FROM memory_doc_fts JOIN memory_doc d ON d.id = memory_doc_fts.rowid
+       WHERE memory_doc_fts MATCH ? ${where.length ? `AND ${where.join(" AND ")}` : ""}
+       ORDER BY rank LIMIT ?`,
+      ...params,
+    )
     const hits = rows.map(({ rank, ...row }) => ({ ...row, score: -rank }))
     if (!hits.length) return []
     const cutoff = hits[0]!.score * MEMORY_SCORE_FLOOR

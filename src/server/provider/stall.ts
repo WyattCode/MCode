@@ -18,6 +18,30 @@ export interface StallGuard {
   dispose(): void
 }
 
+/**
+ * The stream guards in flight, so a machine that has just woken can cut them
+ * (N11-16).
+ *
+ * A stream that was open when the laptop slept is dead on the other side but
+ * looks perfectly alive from here: nothing arrives, and nothing will, so the
+ * turn sits behind the eight-minute quiet bound with the spinner turning and
+ * the power hold keeping the machine awake. Cutting them on resume makes it a
+ * stream timeout, which the retry ladder already knows how to handle.
+ */
+const live = new Set<(why: string) => void>()
+
+/** How many streams are in flight, for the checks. */
+export function liveStreams(): number {
+  return live.size
+}
+
+/** Ends every stream in flight with a stall-shaped failure. Returns how many there were. */
+export function cutLiveStreams(why: string): number {
+  const trips = [...live]
+  for (const trip of trips) trip(why)
+  return trips.length
+}
+
 export function stallGuard(outer: AbortSignal, waitForHeaders: boolean): StallGuard {
   const controller = new AbortController()
   let failure: Error | undefined
@@ -34,6 +58,14 @@ export function stallGuard(outer: AbortSignal, waitForHeaders: boolean): StallGu
     clearTimeout(timer)
     controller.abort(outer.reason)
   }
+  /* Worded like the guard's own timeouts, so retry.ts sorts it as a stream failure. */
+  const trip = (why: string) => {
+    if (outer.aborted || failure) return
+    clearTimeout(timer)
+    failure = new Error(`${why}: stream timeout`)
+    controller.abort(failure)
+  }
+  live.add(trip)
   if (outer.aborted) controller.abort(outer.reason)
   else outer.addEventListener("abort", onAbort, { once: true })
   if (waitForHeaders) arm(STALL.headerMs, "The provider sent no response")
@@ -46,6 +78,7 @@ export function stallGuard(outer: AbortSignal, waitForHeaders: boolean): StallGu
     failure: (err) => failure ?? err,
     dispose: () => {
       clearTimeout(timer)
+      live.delete(trip)
       outer.removeEventListener("abort", onAbort)
     },
   }

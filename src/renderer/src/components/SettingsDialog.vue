@@ -231,14 +231,34 @@ function blankMcpForm(): McpForm {
  * conversation. Counted, so overlapping passes keep 检测中… until the last ends.
  */
 const mcpChecking = ref(0)
+/* N11-27: a saved MCP change still waiting for the next conversation, and what 现在应用 last said. */
+const mcpUnapplied = ref(false)
+const mcpApply = ref<"idle" | "doing" | "done" | "busy" | "failed">("idle")
+
+async function applyMcpNow() {
+  const client = app.client
+  if (!client || mcpApply.value === "doing") return
+  mcpApply.value = "doing"
+  const result = await client.request({ type: "mcp.applyNow" }).catch(() => undefined)
+  if (!result) {
+    mcpApply.value = "failed"
+    return
+  }
+  app.mcpServers = result.servers
+  mcpApply.value = result.outcome === "nothing" ? "done" : result.outcome
+  if (result.outcome === "done" || result.outcome === "nothing") mcpUnapplied.value = false
+}
 
 async function refreshMcp() {
   const client = app.client
   if (!client) return
   mcpChecking.value++
   try {
-    let servers = (await client.request({ type: "mcp.list" }).catch(() => undefined))?.servers
+    const listed = await client.request({ type: "mcp.list" }).catch(() => undefined)
+    let servers = listed?.servers
     if (!servers) return
+    mcpUnapplied.value = listed?.unapplied === true
+    if (!mcpUnapplied.value && mcpApply.value !== "done") mcpApply.value = "idle"
     const known = new Set(servers.map((server) => server.name))
     const missing = Object.entries(app.config?.mcpServers ?? {})
       .filter(([name, entry]) => entry.enabled !== false && !known.has(name))
@@ -2478,6 +2498,20 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         <template v-else-if="section === 'mcp'">
           <h2>{{ t("set.nav.mcp") }}</h2>
           <p class="page-sub">{{ t("set.mcp.sub") }}</p>
+          <!-- N11-27: a saved change waits for the next conversation; this says so and offers to apply it now. -->
+          <div v-if="mcpUnapplied || mcpApply !== 'idle'" class="card mcp-apply" data-mcp-apply>
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t(mcpUnapplied ? "set.mcp.unapplied" : "set.mcp.applyDone") }}</div>
+                <div v-if="mcpUnapplied && mcpApply !== 'idle'" class="line-sub" :data-mcp-apply-state="mcpApply">
+                  {{ t(mcpApply === "doing" ? "set.mcp.applyDoing" : mcpApply === "busy" ? "set.mcp.applyBusy" : mcpApply === "failed" ? "set.mcp.applyFailed" : "set.mcp.applyDone") }}
+                </div>
+              </div>
+              <div class="mcp-ctrl">
+                <button v-if="mcpUnapplied" class="ctl-btn" data-mcp-apply-now :disabled="mcpApply === 'doing'" @click="applyMcpNow">{{ t("set.mcp.applyNow") }}</button>
+              </div>
+            </div>
+          </div>
           <div class="card" data-mcp-list>
             <template v-for="row in mcpRows" :key="row.name">
               <div class="line" :data-mcp-row="row.name">

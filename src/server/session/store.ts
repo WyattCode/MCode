@@ -169,6 +169,24 @@ export class SessionStore {
     for (const watcher of this.watchers) watcher(change)
   }
 
+  /**
+   * The whole list, read once and kept until a record changes (N11-5).
+   *
+   * `list()` reads every conversation's info.json, and nineteen callers reach
+   * it - every cross-conversation message, every subagent lookup, the sidebar,
+   * the search overlay. Measured on this machine, the first window took 166ms
+   * with two conversations and 223-236ms with two hundred, all of it here, and
+   * the search overlay called it on every keystroke.
+   *
+   * A message being written does not touch a record, so the cache survives a
+   * streaming turn; only create, update and delete drop it.
+   */
+  private listing: Promise<SessionInfo[]> | undefined
+
+  private forgetList(): void {
+    this.listing = undefined
+  }
+
   private infoKey(sessionID: string) {
     return `session/${sessionID}/info`
   }
@@ -230,6 +248,7 @@ export class SessionStore {
       usage: emptyUsage(),
     }
     await this.storage.write(this.infoKey(session.id), session)
+    this.forgetList()
     this.bus.publish({ type: "session.updated", session })
     return session
   }
@@ -245,6 +264,15 @@ export class SessionStore {
   }
 
   async list(): Promise<SessionInfo[]> {
+    this.listing ??= this.readAll().catch((cause: unknown) => {
+      this.forgetList()
+      throw cause
+    })
+    // A copy each time: callers hold on to what they are given, and one of them editing a record must not edit the cache.
+    return structuredClone(await this.listing)
+  }
+
+  private async readAll(): Promise<SessionInfo[]> {
     const ids = await this.storage.listDirectories("session")
     const sessions: SessionInfo[] = []
     for (const id of ids) {
@@ -298,6 +326,7 @@ export class SessionStore {
     const session = await this.require(sessionID)
     const next = change(session)
     await this.storage.write(this.infoKey(sessionID), next)
+    this.forgetList()
     this.bus.publish({ type: "session.updated", session: next })
     return next
   }
@@ -530,6 +559,7 @@ export class SessionStore {
 
   async delete(sessionID: string): Promise<void> {
     await this.storage.removeDirectory(`session/${sessionID}`)
+    this.forgetList()
     this.changed({ type: "session.removed", sessionID })
     this.bus.publish({ type: "session.deleted", sessionID })
   }
@@ -602,8 +632,8 @@ export class SessionStore {
    * high-frequency path where a delta event already told the UI what changed
    * and the write is only for durability.
    */
-  async saveMessage(message: Message, silent = false): Promise<void> {
-    await this.storage.write(this.messageKey(message.sessionID, message.id), message)
+  async saveMessage(message: Message, silent = false, durable = true): Promise<void> {
+    await this.storage.write(this.messageKey(message.sessionID, message.id), message, { durable })
     this.changed({ type: "message", message })
     if (!silent) this.bus.publish({ type: "message.updated", message })
   }

@@ -44,7 +44,12 @@ interface FileHistory {
  * An edited file with no repository to take it back through is never
  * rewritten by hand: there is no history to undo it from.
  */
-export async function revertTurnFiles(directory: string, messages: Message[]): Promise<TurnRevertResult> {
+/** Every file a turn's editing calls changed, as absolute paths - what taking it back would touch. */
+export function turnFilePaths(directory: string, messages: Message[]): string[] {
+  return [...filesOf(directory, messages).keys()]
+}
+
+function filesOf(directory: string, messages: Message[]): Map<string, FileHistory> {
   const files = new Map<string, FileHistory>()
   const root = path.resolve(directory)
 
@@ -69,6 +74,12 @@ export async function revertTurnFiles(directory: string, messages: Message[]): P
       }
     }
   }
+  return files
+}
+
+export async function revertTurnFiles(directory: string, messages: Message[]): Promise<TurnRevertResult> {
+  const files = filesOf(directory, messages)
+  const root = path.resolve(directory)
 
   /* Each folder asks git once, as MiMo caches `rev-parse --show-cdup` per folder. */
   const roots = new Map<string, Promise<string | undefined>>()

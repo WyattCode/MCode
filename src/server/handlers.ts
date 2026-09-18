@@ -31,6 +31,8 @@ import { restoreHeaders, restoreMasked, restoreServer, restoreUrl } from "./conf
 import { discoverModels } from "./provider/discover"
 import { blankProjectDirectory, scratchDirectory, scratchRoot } from "./scratch"
 import { searchMessages } from "./search"
+import { historyService } from "./history/service"
+import { SEARCH_HARD_CAP } from "./history/index"
 import { workspaceInfo } from "./workspace"
 import { systemPrompt } from "./session/prompt"
 import * as git from "./git"
@@ -45,7 +47,6 @@ import { applyMcpImports, importItem, scanMcpImports } from "./mcp-import"
 import { runImport, scanImports } from "./import"
 import { mergeMcpSecrets } from "./mcp-save"
 import { agentsState, deleteAgents, ensureAgents, globalAgentsPath, setAgentsEnabled } from "./global-agents"
-import { revertTurnFiles } from "./session/turn-revert"
 import { turnFileDiffs } from "./session/turn-diff"
 import type { ShellOwner } from "./shell"
 
@@ -221,6 +222,27 @@ async function shellGroup(runtime: Runtime, request: { sessionID?: string; direc
  * without handling it is a type error.
  */
 
+/** How long a delete waits for the turn it just stopped to actually be over (N11-6). */
+export const IDLE_WAIT_MS = 5000
+
+/**
+ * Waits for a conversation's turn to really finish after it has been stopped.
+ *
+ * `abort` only signals: the turn's own ending - the shadow repository's leave,
+ * the last `add -A` - runs afterwards, and deleting the project's store under it
+ * is what N11-6 is about. Bounded, and the collection refuses on its own if a
+ * recording is still open, so a turn that will not stop costs a leftover store
+ * rather than a delete that never returns.
+ */
+async function waitForIdle(runtime: Runtime, sessionID: string, within = IDLE_WAIT_MS): Promise<boolean> {
+  const until = Date.now() + within
+  while (runtime.runner.isRunning(sessionID)) {
+    if (Date.now() >= until) return false
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  return true
+}
+
 export async function handle(runtime: Runtime, request: Request, owner?: ShellOwner): Promise<unknown> {
   switch (request.type) {
     case "session.list":
@@ -239,6 +261,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         permissions: runtime.permissions.outstanding(),
         // session chat: replayed for the same reason, so a reopened window still marks the rows.
         chatLinks: runtime.runner.chat.links(),
+        // And the waits between attempts, which live nowhere else at all (N11-17).
+        retries: runtime.runner.retryRows(),
       } satisfies Handled<"session.list">
 
     /*
@@ -313,7 +337,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         try {
           // Conversations that changed since the last pass are read again first, so a file written since launch is there.
           await runtime.artifacts.reconcile(sessions, (id) => runtime.sessions.messages(id))
-          return { artifacts: runtime.artifacts.list(query) } satisfies Handled<"artifact.list">
+          return { artifacts: await runtime.artifacts.list(query) } satisfies Handled<"artifact.list">
         } catch {
           // A store that cannot answer (a newer build's shape, a failed write) leaves the walk below.
         }
@@ -398,7 +422,21 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "search.messages": {
       const sessions = await runtime.sessions.list()
       const limit = Math.max(1, Math.min(200, request.limit ?? 50))
-      const hits = await searchMessages(sessions, (id) => runtime.sessions.messages(id), request.query, limit)
+      /*
+       * The full-text index the backend already keeps names the conversations
+       * worth reading (N11-5). It was serving only the model's `history` tool;
+       * the overlay read every message of every conversation instead, once per
+       * keystroke. While the index is still being filled it says so, and the
+       * search falls back to a capped scan.
+       */
+      const history = historyService()
+      const narrow = async (query: string): Promise<readonly string[] | undefined> => {
+        if (!history || history.index.building) return undefined
+        const found = new Set<string>()
+        for (const hit of await history.index.search({ query, limit: SEARCH_HARD_CAP })) found.add(hit.session_id)
+        return [...found]
+      }
+      const hits = await searchMessages(sessions, (id) => runtime.sessions.messages(id), request.query, limit, narrow)
       return { hits } satisfies Handled<"search.messages">
     }
 
@@ -448,13 +486,26 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "session.delete": {
       runtime.runner.abort(request.sessionID)
+      /*
+       * abort only signals; the turn's own finish - Recording.finish, leave,
+       * add -A - carries on afterwards. Collecting the project's store under it
+       * is what N11-6 is about, so the delete waits for the turn to really be
+       * over. Bounded, because a turn that will not stop must not hold the
+       * delete open: the collection below refuses on its own if one is still
+       * recording.
+       */
+      await waitForIdle(runtime, request.sessionID)
       // The project it worked in, read before the record goes, so its store can be collected after.
       const worked = (await runtime.sessions.get(request.sessionID).catch(() => undefined))?.directory
       // subagents: a conversation's subagents go with it, background ones stopped first; nothing else could reach them.
       await runtime.runner.dropSubagents(request.sessionID)
       for (const child of await runtime.sessions.list()) {
-        if (child.parentID === request.sessionID) await runtime.sessions.delete(child.id)
+        if (child.parentID !== request.sessionID) continue
+        await runtime.sessions.delete(child.id)
+        runtime.runner.forgetSession(child.id)
+        await runtime.permissions.forgetSession(child.id)
       }
+      runtime.runner.forgetSession(request.sessionID)
       await runtime.sessions.delete(request.sessionID)
       /*
        * The shadow repository undo keeps for that project goes with it, once the
@@ -464,13 +515,15 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        */
       // Anything remembered for this conversation alone goes with it; a project's rules stay.
       await runtime.permissions.forgetSession(request.sessionID)
+      // And any question still open in it - an MCP server's sampling request among them - is refused rather than left pending for ever (N11-10).
+      runtime.permissions.rejectAll(request.sessionID)
       /*
        * The files it produced are not deleted with it. They are still on disk,
        * and losing the only record of where they came from was the thing the
        * artifact store was built to stop; the rows keep the title this
        * conversation had.
        */
-      runtime.artifacts?.detach(request.sessionID)
+      await runtime.artifacts?.detach(request.sessionID).catch(() => undefined)
       if (worked) {
         const place = (directory: string) => {
           const resolved = path.resolve(directory)
@@ -478,7 +531,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         }
         const remaining = await runtime.sessions.list()
         if (!remaining.some((session) => place(session.directory) === place(worked))) {
-          await runtime.runner.checkpoints.collect(worked)
+          const collected = await runtime.runner.checkpoints.collect(worked)
+          if (!collected) console.warn(`[snapshot] ${worked} is still being recorded; its store was left in place`)
         }
       }
       return {} satisfies Handled<"session.delete">
@@ -1110,13 +1164,12 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     }
 
     case "session.revertTurn": {
-      if (runtime.runner.isRunning(request.sessionID)) throw new Error("Wait for the current turn to finish")
-      const session = await runtime.sessions.require(request.sessionID)
       const chosen = (await runtime.sessions.messages(request.sessionID)).filter(
         (message) => message.role === "assistant" && request.messageIDs.includes(message.id),
       )
       if (!chosen.length) throw new Error("That turn is no longer in the conversation")
-      const result = await revertTurnFiles(session.directory, chosen)
+      // Busy, other conversations' later work and the project's lock are the runner's to check (N11-13, N11-15).
+      const result = await runtime.runner.revertTurn(request.sessionID, chosen)
       /*
        * The card remembers it on the turn's last message, and only when a file
        * actually moved: a revert that touched nothing leaves the card offering
@@ -1375,21 +1428,22 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
            * is the only thing that will ever end the shell for them.
            */
           owner,
+          request.surface === "panel" ? "panel" : "drawer",
         ),
         cwd,
       } satisfies Handled<"shell.open">
     }
 
     case "shell.input":
-      runtime.shells.write(request.shellID, request.data)
+      runtime.shells.write(request.shellID, request.data, owner)
       return {} satisfies Handled<"shell.input">
 
     case "shell.resize":
-      runtime.shells.resize(request.shellID, request.cols, request.rows)
+      runtime.shells.resize(request.shellID, request.cols, request.rows, owner)
       return {} satisfies Handled<"shell.resize">
 
     case "shell.list":
-      return { shells: runtime.shells.list((await shellGroup(runtime, request)).key, owner) } satisfies Handled<"shell.list">
+      return { shells: runtime.shells.list((await shellGroup(runtime, request)).key, owner, request.surface === "panel" ? "panel" : "drawer") } satisfies Handled<"shell.list">
 
     case "shell.attach": {
       const found = runtime.shells.attach(request.shellID, owner)
@@ -1399,14 +1453,19 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     }
 
     case "shell.close":
-      runtime.shells.close(request.shellID)
+      runtime.shells.close(request.shellID, owner)
       return {} satisfies Handled<"shell.close">
 
     case "workspace.list":
       return { worktrees: await git.worktrees(request.directory) } satisfies Handled<"workspace.list">
 
     case "mcp.list":
-      return { servers: runtime.mcp.list() } satisfies Handled<"mcp.list">
+      return { servers: runtime.mcp.list(), unapplied: runtime.mcp.unapplied } satisfies Handled<"mcp.list">
+
+    case "mcp.applyNow": {
+      const outcome = await runtime.mcp.applyNow()
+      return { outcome, servers: runtime.mcp.list() } satisfies Handled<"mcp.applyNow">
+    }
 
     case "mcp.toggle": {
       await runtime.mcp.toggle(request.name)
@@ -1610,8 +1669,14 @@ export async function searchTree(directory: string, query: string): Promise<Hand
 }
 
 const SEARCH_LIMIT = 50
-/* A walk this long is a huge tree; what was found by then is what is shown. */
-const SEARCH_VISITS = 20_000
+/*
+ * A walk this long is a huge tree; what was found by then is what is shown.
+ * MiMo's `searchFiles` budget, 4,000 (N11-39): this was five times that, which
+ * cost about five times MiMo's time per keystroke on a large project for a
+ * slightly better hit rate, and the command palette now searches through it on
+ * every keystroke too.
+ */
+const SEARCH_VISITS = 4000
 /*
  * As deep as the files tab's own search goes, and MiMo's `searchFiles` with it.
  *
@@ -1729,17 +1794,27 @@ export async function searchFolder(directory: string, query: string, sub?: strin
   return { entries: scored.slice(0, cap).map((hit) => hit.entry), truncated: overflow || scored.length > cap }
 }
 
+/** How many entries one file.list may look at before it answers with what it has (N11-23). */
+const LIST_VISITS = 20_000
+
 async function listFiles(directory: string, query?: string): Promise<FileEntry[]> {
   const root = path.resolve(directory)
   const needle = query?.toLowerCase()
   const results: FileEntry[] = []
   const shielded = protectedFilter(root)
   const queue = [root]
+  /*
+   * A budget on what is looked at, not only on what is kept (N11-23). With a
+   * query that matches little, filling MAX_FILES meant walking the whole tree -
+   * a hundred thousand entries on a large project.
+   */
+  let visits = 0
 
-  while (queue.length && results.length < MAX_FILES) {
+  while (queue.length && results.length < MAX_FILES && visits < LIST_VISITS) {
     const dir = queue.shift()!
     const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => [])
     for (const entry of entries) {
+      visits += 1
       if (entry.name.startsWith(".") || IGNORED.has(entry.name)) continue
       const absolute = path.join(dir, entry.name)
       const rel = path.relative(root, absolute).split(path.sep).join("/")

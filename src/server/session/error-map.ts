@@ -57,6 +57,12 @@ function statusOf(err: unknown, text: string): number | undefined {
   return found ? Number(found[1]) : undefined
 }
 
+/**
+ * An allowance that has run out, as the providers word it: a usage limit, an
+ * exhausted quota, no credit left. Kept apart from being asked to slow down.
+ */
+const QUOTA_GONE = /usage[ _-]?limit|insufficient[ _-]?quota|quota[ _-]?exceeded|exceeded your current quota|out of credit|insufficient[ _-]?(?:credit|balance|funds)|billing[ _-]?hard[ _-]?limit/i
+
 export function failureCode(err: unknown): { code: string; params?: Record<string, string> } | undefined {
   if (err instanceof ProviderError && err.code) return { code: err.code, params: err.params }
   const text = failureDetail(err)
@@ -65,6 +71,14 @@ export function failureCode(err: unknown): { code: string; params?: Record<strin
   // Checked before the statuses: a proxy's own 401 page is not the user's key being wrong.
   if (GATEWAY_PAGE.test(text)) return { code: "error.gatewayBlocked" }
   if (TIMED_OUT.test(text)) return { code: "error.modelTimeout" }
+  /*
+   * N11-18: an allowance that has run out is not a request that came too fast.
+   * retry.ts already tells them apart - it refuses to retry a usage limit at
+   * all - but this table did not, so the reader was told to wait a moment when
+   * what they actually had to do was top up or use another key. It is the
+   * failure a long conversation meets most often.
+   */
+  if (QUOTA_GONE.test(text)) return { code: "error.quotaExceeded" }
   if (status === 429) return { code: "error.rateLimited" }
   if (status === 401 || status === 403) return { code: "error.authInvalid" }
   if (status === 404) return { code: "error.modelUnavailable" }

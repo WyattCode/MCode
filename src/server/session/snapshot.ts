@@ -109,6 +109,63 @@ interface Ran {
 }
 
 /**
+ * How long one of the shadow repository's git calls may take (N11-7).
+ *
+ * Deliberately larger than git-process.ts's GIT_TIMEOUT_MS, which is sized for
+ * the informational commands run against the user's own repository: an `add -A`
+ * over a large project is legitimately slow, and this bound exists to catch a
+ * call that will never return rather than to hurry a slow one.
+ */
+export const SNAPSHOT_GIT_TIMEOUT_MS = 60_000
+
+/**
+ * How long a turn waits for its place in one project's git queue before giving
+ * up on being recorded (N11-7).
+ *
+ * Above the timeout on a single call, so an ordinary backlog is waited out and
+ * only a genuine pile-up is abandoned. Giving up costs that turn its undo,
+ * which is said in the transcript; hanging costs it everything and says nothing.
+ */
+export const SNAPSHOT_QUEUE_TIMEOUT_MS = 90_000
+
+/** What a turn that gave up waiting for the queue is told. */
+const QUEUE_GAVE_UP = "the project's snapshot queue did not free up"
+
+/**
+ * One lock per project for the work that writes its files outside a turn's
+ * tools - an undo, a redo, a turn's 撤销 - and for the photographs that mark
+ * where each turn begins and ends (N11-15).
+ *
+ * The photographs already queue on the shadow repository's git lock, but a
+ * restore writes files one by one with plain fs calls and took no lock at
+ * all, so another conversation's turn could open or close half way through
+ * it and count the restored files as its own work. Held outside the git lock
+ * everywhere - a restore still reads its bodies through that lock - so the
+ * order is always this one first and the two can never wait on each other.
+ */
+const projectLocks = new Map<string, Promise<unknown>>()
+
+function projectKey(directory: string): string {
+  const resolved = path.resolve(directory)
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved
+}
+
+export function withProjectLock<T>(directory: string, work: () => Promise<T>): Promise<T> {
+  const key = projectKey(directory)
+  const run = (projectLocks.get(key) ?? Promise.resolve()).catch(() => undefined).then(work)
+  const settled = run.catch(() => undefined)
+  projectLocks.set(key, settled)
+  void settled.then(() => {
+    if (projectLocks.get(key) === settled) projectLocks.delete(key)
+  })
+  return run
+}
+
+/** What a call made after its repository was collected is told. */
+const REPO_RETIRED = "this project's snapshot store has been removed"
+
+
+/**
  * Runs git, with the surrounding environment's opinions removed.
  *
  * A shell that exported GIT_DIR, or a hook that set GIT_INDEX_FILE, would
@@ -117,6 +174,14 @@ interface Ran {
  */
 function exec(args: string[], cwd: string, stdin?: string | Buffer): Promise<Ran> {
   return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let killer: ReturnType<typeof setTimeout> | undefined
+    const done = () => {
+      if (timer) clearTimeout(timer)
+      if (killer) clearTimeout(killer)
+      timer = undefined
+      killer = undefined
+    }
     const env = { ...process.env }
     for (const name of [
       "GIT_DIR",
@@ -137,8 +202,30 @@ function exec(args: string[], cwd: string, stdin?: string | Buffer): Promise<Ran
     let err = ""
     child.stdout.on("data", (chunk: Buffer) => out.push(chunk))
     child.stderr.on("data", (chunk: Buffer) => (err += chunk.toString("utf8")))
-    child.on("error", reject)
-    child.on("close", (code) => resolve({ code: code ?? 1, stdout: Buffer.concat(out), stderr: err }))
+    child.on("error", (cause) => {
+      done()
+      reject(cause)
+    })
+    child.on("close", (code) => {
+      done()
+      resolve({ code: code ?? 1, stdout: Buffer.concat(out), stderr: err })
+    })
+    /*
+     * A bound, because there was none (N11-7). One project has one shadow
+     * repository and every write tool waits on it, so a single git that never
+     * returns used to hang every turn open on that project, for ever and with
+     * nothing on screen to say why. Killing it turns that into one recording
+     * that failed, which the turn already knows how to report.
+     */
+    timer = setTimeout(() => {
+      timer = undefined
+      child.kill()
+      // Ignored a polite end: SIGKILL, which ConPTY-free children on Windows take as a terminate.
+      killer = setTimeout(() => child.kill("SIGKILL"), 2000)
+      killer.unref?.()
+      reject(new Error(`git ${args[args.indexOf("--git-dir") + 2] ?? args[0]} did not finish within ${SNAPSHOT_GIT_TIMEOUT_MS / 1000}s`))
+    }, SNAPSHOT_GIT_TIMEOUT_MS)
+    timer.unref?.()
     if (stdin !== undefined) {
       child.stdin.on("error", () => {})
       child.stdin.end(stdin)
@@ -224,10 +311,58 @@ class Repo {
     readonly directory: string,
   ) {}
 
+  /** Set once the store has been collected; every later call refuses rather than recreating it. */
+  private retired = false
+
   private lock<T>(work: () => Promise<T>): Promise<T> {
     const next = this.queue.then(work, work)
     this.queue = next.catch(() => undefined)
     return next
+  }
+
+  /**
+   * The same queue, but the caller stops waiting after `ms`.
+   *
+   * The queued work is told it was abandoned rather than simply dropped, so it
+   * can still do the bookkeeping that costs nothing - taking a turn out of the
+   * live set - without taking another photograph nobody is waiting for.
+   */
+  private raceLock<T>(ms: number, work: (abandoned: () => boolean) => Promise<T>): Promise<T> {
+    let gaveUp = false
+    const queued = this.lock(() => work(() => gaveUp))
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        gaveUp = true
+        reject(new Error(QUEUE_GAVE_UP))
+      }, ms)
+      timer.unref?.()
+      queued.then(
+        (value) => {
+          clearTimeout(timer)
+          resolve(value)
+        },
+        (cause: unknown) => {
+          clearTimeout(timer)
+          reject(cause instanceof Error ? cause : new Error(String(cause)))
+        },
+      )
+    })
+  }
+
+  /**
+   * Takes this repository out of use for good, refusing while a turn is still
+   * recording here (N11-6).
+   *
+   * Collection used to be an unlocked `rm -rf` racing whatever the just-aborted
+   * turn was still doing on its way out - and `abort` only signals, so that
+   * turn's `leave()` and `add -A` carried on afterwards.
+   */
+  retire(): Promise<boolean> {
+    return this.lock(async () => {
+      if (this.live.size > 0) return false
+      this.retired = true
+      return true
+    })
   }
 
   /*
@@ -237,6 +372,7 @@ class Repo {
    * artefact would be stored corrupted, silently.
    */
   private git(args: string[], stdin?: string | Buffer): Promise<Ran> {
+    if (this.retired) return Promise.reject(new Error(REPO_RETIRED))
     return exec(["--git-dir", this.gitDir, ...args], this.directory, stdin)
   }
 
@@ -319,7 +455,14 @@ class Repo {
    * so end up with a stretch nobody marked as shared.
    */
   join(recording: Recording): Promise<string> {
-    return this.lock(async () => {
+    // Never in the middle of a restore (N11-15): its files would read as this turn's starting point half put back.
+    return withProjectLock(this.directory, () => this.joinNow(recording))
+  }
+
+  private joinNow(recording: Recording): Promise<string> {
+    return this.raceLock(SNAPSHOT_QUEUE_TIMEOUT_MS, async (abandoned) => {
+      // Nothing was added to the live set yet, so an abandoned join has nothing to undo.
+      if (abandoned()) throw new Error(QUEUE_GAVE_UP)
       const tree = await this.treeNow()
       const shared = this.live.size >= 2
       for (const other of this.live) {
@@ -334,7 +477,17 @@ class Repo {
 
   /** Photographs the project as one turn closes, ending a stretch for everyone here. */
   leave(recording: Recording): Promise<string> {
-    return this.lock(async () => {
+    // Nor at its end (N11-15), or half a restore would be counted as this turn's work.
+    return withProjectLock(this.directory, () => this.leaveNow(recording))
+  }
+
+  private leaveNow(recording: Recording): Promise<string> {
+    return this.raceLock(SNAPSHOT_QUEUE_TIMEOUT_MS, async (abandoned) => {
+      // The caller has stopped waiting, but this turn must still stop counting as live.
+      if (abandoned()) {
+        this.live.delete(recording)
+        throw new Error(QUEUE_GAVE_UP)
+      }
       const tree = await this.treeNow()
       const shared = this.live.size >= 2
       for (const other of this.live) other.mark(tree, shared)
@@ -1000,6 +1153,14 @@ export class Snapshots {
      * repeating the whole sequence is safe.
      */
     if (!(await fs.stat(path.join(gitDir, "info", "attributes")).catch(() => undefined))) {
+      /*
+       * No sentinel but a folder standing: a set-up or a collection that was
+       * interrupted partway (N11-6). `git init` on it would only reinitialise,
+       * leaving an index that still names objects the interrupted removal took
+       * away - "fatal: bad object" on the very next turn, for good. So whatever
+       * is left goes first and the store is built again from nothing.
+       */
+      await fs.rm(gitDir, { recursive: true, force: true }).catch(() => undefined)
       await fs.mkdir(path.dirname(gitDir), { recursive: true })
       const made = await exec(["init", "--bare", "-q", gitDir], this.root)
       if (made.code !== 0) throw new Error(made.stderr.trim() || "git init failed")
@@ -1060,13 +1221,35 @@ export class Snapshots {
    * for two live conversations, holding objects for projects and conversations
    * long since deleted.
    */
-  async collect(directory: string): Promise<void> {
+  async collect(directory: string): Promise<boolean> {
     const key = process.platform === "win32" ? directory.toLowerCase() : directory
+    /*
+     * Under the project's own git lock, and only while nothing is recording
+     * there (N11-6). The opponent is not another conversation - collection only
+     * happens once the last one working here has gone - but the deleted
+     * conversation's own just-aborted turn, which is still finishing
+     * asynchronously when the delete request returns.
+     */
+    const open = this.repos.get(key) ?? this.bares.get(key)
+    if (open) {
+      const repo = await open.catch(() => undefined)
+      if (repo && !(await repo.retire())) return false
+    }
     this.repos.delete(key)
     this.bares.delete(key)
     this.ledgers.delete(this.ledgerFile(directory))
-    await fs.rm(path.join(this.root, this.digest(directory)), { recursive: true, force: true }).catch(() => undefined)
+    const gitDir = path.join(this.root, this.digest(directory))
+    /*
+     * The sentinel first. `bare()` reads info/attributes as "this repository is
+     * finished"; fs.rm's order is its own business, so a removal interrupted
+     * partway could leave that file standing over an emptied objects folder,
+     * and the next open would hand back a repository that cannot store
+     * anything - permanently, since nothing reinitialises it.
+     */
+    await fs.rm(path.join(gitDir, "info", "attributes"), { force: true }).catch(() => undefined)
+    await fs.rm(gitDir, { recursive: true, force: true }).catch(() => undefined)
     await fs.rm(this.ledgerFile(directory), { force: true }).catch(() => undefined)
+    return true
   }
 
   /**

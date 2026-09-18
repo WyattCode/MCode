@@ -121,7 +121,7 @@ type Row =
   | { kind: "group"; id: string; items: StepItem[]; open: boolean; actor?: boolean }
   | { kind: "steer"; id: string; steer: Steer }
   /** MiMo's 正在重新连接 N, while the provider request is being tried again. */
-  | { kind: "retry"; id: string; attempt: number; reason?: string }
+  | { kind: "retry"; id: string; attempt: number; reason?: string; next?: number }
 
 /** The rows for the parts between two points of the turn, with the errors that fell there. */
 function rows(turn: Turn, start: number, end: number, live: boolean): Row[] {
@@ -520,7 +520,7 @@ function layout(turn: Turn, at: number): { rows: Row[]; foldAt: number } {
 
   if (live) {
     const retry = turn.last?.retry
-    if (retry) all.push({ kind: "retry", id: `retry:${turn.last?.id}`, attempt: retry.attempt, reason: retryReason(retry.message) })
+    if (retry) all.push({ kind: "retry", id: `retry:${turn.last?.id}`, attempt: retry.attempt, reason: retryReason(retry.message), next: retry.next })
     // The last group with nothing said after it is the one being worked in.
     for (let index = all.length - 1; index >= 0; index--) {
       const row = all[index]!
@@ -1259,7 +1259,7 @@ defineExpose({ stepMessage, scroller })
             <ToolGroup v-else-if="row.kind === 'group'" :items="row.items" :default-open="row.open" :actor="row.actor" />
             <QuestionCard v-else-if="row.kind === 'question'" :part="row.part" />
             <ErrorStep v-else-if="row.kind === 'error'" :error="row.error" />
-            <RetryRow v-else-if="row.kind === 'retry'" :attempt="row.attempt" :reason="row.reason" />
+            <RetryRow v-else-if="row.kind === 'retry'" :attempt="row.attempt" :reason="row.reason" :next="row.next" @stop="app.abort(shownID)" />
             <TextPart v-else-if="row.part.type === 'text'" :part="row.part" />
           </div>
 

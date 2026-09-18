@@ -31,7 +31,16 @@ export interface RetryBudget {
 export const RETRY_BUDGETS: Record<RetryKind, RetryBudget> = {
   stream: { retries: 5, deadline: 10 * 60_000, initial: 2_000, max: 30_000, jitter: true },
   server: { retries: 8, deadline: 15 * 60_000, initial: 2_000, max: 30_000, jitter: true },
-  rate_limit: { retries: 5, deadline: 15 * 60_000, initial: 2_000, max: 5 * 60_000, jitter: true },
+  /*
+   * N11-19: a provider that says "try again in 30 minutes" - which is what an
+   * hours-long quota window or a daily allowance says - used to be tried again
+   * after five, refused again, and the turn given up on inside a quarter of an
+   * hour. The user decided a turn may wait out a named wait of up to half an
+   * hour, with a countdown and a way to stop waiting, so the deadline is now
+   * above RATE_LIMIT_HINT_CAP; `max` still bounds the backoff this app invents
+   * for itself when the provider names no wait at all.
+   */
+  rate_limit: { retries: 5, deadline: 35 * 60_000, initial: 2_000, max: 5 * 60_000, jitter: true },
   network: { retries: Infinity, deadline: Infinity, initial: 5_000, max: 60_000, jitter: false },
   /*
    * MiMo's last resort, for a failure it could not sort but the SDK marks
@@ -79,8 +88,15 @@ export async function withRequestRetry<T>(work: () => Promise<T>, signal?: Abort
 /** No wait is shorter than this. */
 const FLOOR = 100
 
-/** A wait named in the provider's words is taken up to this long. */
-const HINT_CAP = 5 * 60_000
+/**
+ * How long a rate limit's own named wait may be waited out (N11-19), and the
+ * longest wait read out of a provider's words at all.
+ *
+ * Half an hour, which the user chose: long enough for the windows providers
+ * actually use, and short enough that a turn does not sit there all day. The
+ * retry row counts it down and offers to stop waiting.
+ */
+export const RATE_LIMIT_HINT_CAP = 30 * 60_000
 
 /** GPT's overload answer: tried at once the first time, and three times at most. */
 const GPT_OVERLOAD_RETRIES = 3
@@ -237,7 +253,7 @@ export function retryHint(err: unknown): number | undefined {
   const amount = Number.parseFloat(said[1]!)
   const unit = said[2]!.toLowerCase()
   const scale = unit.startsWith("ms") || unit.startsWith("milli") ? 1 : unit.startsWith("s") ? 1000 : unit.startsWith("m") ? 60_000 : 3_600_000
-  return Math.min(HINT_CAP, Math.ceil(amount * scale))
+  return Math.min(RATE_LIMIT_HINT_CAP, Math.ceil(amount * scale))
 }
 
 export interface RetryDecision {
@@ -288,7 +304,8 @@ export function retryDecision(
   let wait: number
   const hint = retryHint(err)
   if (overload && attempt === 1) wait = 0
-  else if (hint !== undefined) wait = Math.min(budget.max, Math.max(FLOOR, hint))
+  // A rate limit's named wait is waited out up to half an hour; every other kind stays held to its own ceiling.
+  else if (hint !== undefined) wait = Math.min(kind === "rate_limit" ? RATE_LIMIT_HINT_CAP : budget.max, Math.max(FLOOR, hint))
   else {
     const base = Math.min(budget.max, budget.initial * Math.pow(2, attempt - 1))
     const spread = budget.jitter ? 1 + (random * 2 - 1) * 0.1 : 1
@@ -298,18 +315,66 @@ export function retryDecision(
   return { kind, wait, max: Number.isFinite(retries) ? retries : 0 }
 }
 
-/** A wait that Stop cuts short. Resolves false when it was cut. */
+/**
+ * When each provider said it may be asked again (N11-21).
+ *
+ * Every request used to keep its own budget and nothing else. Ten
+ * conversations running on one key, and a provider starting to answer 429,
+ * meant ten separate backoffs that knew nothing of one another: each kept
+ * knocking, the account-wide limit stretched rather than eased, and in the
+ * worst case each turn burned its whole budget before failing. MiMo queues on
+ * its own server and has nothing to learn from here; with the user's own keys
+ * the waiting has to happen on this side, once, for everyone on that provider.
+ */
+const cooldowns = new Map<string, number>()
+
+/** A provider said to wait; every conversation using it waits the same. */
+export function noteRateLimit(provider: string, until: number): void {
+  if (until > (cooldowns.get(provider) ?? 0)) cooldowns.set(provider, until)
+}
+
+/** How long a request to this provider should hold off before it is sent, 0 when it need not. */
+export function cooldownLeft(provider: string, now = Date.now()): number {
+  const until = cooldowns.get(provider)
+  if (until === undefined) return 0
+  if (until <= now) {
+    cooldowns.delete(provider)
+    return 0
+  }
+  return until - now
+}
+
+/**
+ * Anything that can end a wait early.
+ *
+ * Stop is one; waking from sleep and the network coming back are the others
+ * (N11-16). A machine that slept through a sixty-second network backoff, or
+ * one whose cable was plugged back in, used to sit out the rest of the wait
+ * with nothing on screen to say why.
+ */
+const wakers = new Set<() => void>()
+
+/** Ends every wait in progress now, because the reason for waiting may have gone. */
+export function wakeWaiters(why: string): void {
+  if (!wakers.size) return
+  console.info(`[retry] ${why}: ${wakers.size} wait(s) ended early`)
+  for (const wake of [...wakers]) wake()
+}
+
+/** A wait that Stop cuts short. Resolves false when it was cut, true when it ran out or was woken. */
 export function waitFor(ms: number, signal: AbortSignal): Promise<boolean> {
   return new Promise((resolve) => {
     if (signal.aborted) return resolve(false)
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", stop)
-      resolve(true)
-    }, ms)
-    const stop = () => {
+    const done = (value: boolean) => {
       clearTimeout(timer)
-      resolve(false)
+      wakers.delete(wake)
+      signal.removeEventListener("abort", stop)
+      resolve(value)
     }
+    const timer = setTimeout(() => done(true), ms)
+    const wake = () => done(true)
+    const stop = () => done(false)
+    wakers.add(wake)
     signal.addEventListener("abort", stop, { once: true })
   })
 }

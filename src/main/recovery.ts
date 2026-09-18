@@ -122,6 +122,17 @@ export function beginIntentionalQuit(): void {
   quitting = true
 }
 
+let gaveUp: (() => void) | undefined
+
+/*
+ * Told once recovery has run out of attempts and there will be no window at
+ * all. Nothing else notices: session-end is registered per window (N11-33), so
+ * from here on an OS shutdown has nobody to hear it.
+ */
+export function onRecoveryGaveUp(listener: () => void): void {
+  gaveUp = listener
+}
+
 /** How recovery makes a window, and whether there is work that wants one while hidden. */
 export interface RecoveryHost {
   create(show: boolean): BrowserWindow
@@ -172,7 +183,10 @@ function requestReplacement(old: BrowserWindow | undefined, show: boolean): void
       return false
     }
   })
-  if (outcome === "exhausted") record("app", "renderer recovery gave up", schedule.snapshot)
+  if (outcome === "exhausted") {
+    record("app", "renderer recovery gave up", schedule.snapshot)
+    gaveUp?.()
+  }
 }
 
 function recover(window: BrowserWindow, becameUnavailable: boolean, wasVisible: boolean): void {

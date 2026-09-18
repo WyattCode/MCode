@@ -871,7 +871,7 @@ export function splitLive(text: string): { settled: string; open: string } {
 export function renderReply(source: string, options: MarkdownOptions = {}): ReplyBlock[] {
   const ctx: Context = { options, notes: new Map(), order: [] }
   // Control characters are what the renderer's own markers are made of, so the source may not carry any.
-  let text = source.replace(/\r\n?/g, "\n").replace(/[ -]/g, "")
+  let text = source.replace(/\r\n?/g, "\n").replace(/[\x00-]/g, "")
   if (options.math && needsMathRewrite(text)) text = normaliseMath(text)
   if (options.diagrams) text = wrapRawSvg(text, options.diagrams.streaming)
   let open = ""

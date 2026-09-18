@@ -393,7 +393,7 @@ export class CronScheduler {
   }
 }
 
-const loopKey = (ownerID: string, prompt: string) => `${ownerID} ${prompt}`
+const loopKey = (ownerID: string, prompt: string) => `${ownerID}\u0000${prompt}`
 
 /** Who is asking about a task: the conversation, and the project it works in. */
 export interface Scope {

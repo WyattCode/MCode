@@ -17,6 +17,8 @@ import type { Attachment, AgentName,
   SessionInfo,
 } from "@shared/protocol"
 import { Client } from "../lib/client"
+import { drafts, scheduleDraftSave } from "../lib/composer-drafts"
+import { useAnnotations } from "./annotations"
 import { setChordPlatform } from "../lib/keys"
 import { language, sessionTitle, t } from "../lib/i18n"
 import { mcpNeedsSignIn } from "../lib/mcp-status"
@@ -76,7 +78,31 @@ export const useApp = defineStore("app", () => {
   const finished = ref<{ sessionID: string; elapsed: number }>()
   /* automation: conversations whose running turn is a scheduled task's run, and the last run the user should be told about. */
   const automationRuns = ref(new Set<string>())
-  const automationNotice = ref<{ sessionID: string; at: number }>()
+  const automationNotice = ref<{ sessionID: string; at: number; failed: boolean }>()
+  /*
+   * N11-17: the turns waiting between attempts, as the backend last reported
+   * them. A retry never reaches disk, so a window that reloaded into one read
+   * back a message with no parts, no finish and no error, and drew nothing at
+   * all. This is put back onto the message once its transcript is loaded.
+   */
+  const liveRetries = new Map<string, { messageID: string; attempt: number; message: string; next: number; kind?: string; max?: number }>()
+
+  /** Puts a waiting turn's retry back onto the message it belongs to, wherever that message is held. */
+  function applyRetry(sessionID: string, list: Message[] | undefined): void {
+    const waiting = liveRetries.get(sessionID)
+    if (!waiting || !list) return
+    const message = list.find((candidate) => candidate.id === waiting.messageID)
+    if (message?.role !== "assistant") return
+    message.retry = { attempt: waiting.attempt, message: waiting.message, next: waiting.next, kind: waiting.kind, max: waiting.max }
+  }
+  /*
+   * session chat: conversations whose current turn is answering a message
+   * another conversation sent. Their end is a reply rather than a task
+   * finishing, and MiMo says so in its own words (N11-3).
+   */
+  const answeredAnother = new Set<string>()
+  /* N11-14: folders whose git write is queued behind another one on the same repository. */
+  const gitWaiting = ref(new Set<string>())
   /**
    * Bumped whenever the window comes back into focus, as MiMo's shell bumps its
    * `fsNonce`.
@@ -364,6 +390,7 @@ export const useApp = defineStore("app", () => {
    */
   function forgetSession(sessionID: string) {
     held.delete(sessionID)
+    forgetDrafts(sessionID)
 
     if (running.value.delete(sessionID)) running.value = new Set(running.value)
     turnStarted.delete(sessionID)
@@ -410,6 +437,8 @@ export const useApp = defineStore("app", () => {
       if (oldest === undefined) break
       held.delete(oldest)
     }
+    // held is an ordinary Map, so it says for itself when what this window follows has changed (N11-4).
+    declareWatched()
   }
 
   /** What a transcript looks like, cheaply: enough to tell whether a fresh read changed anything. */
@@ -488,6 +517,7 @@ export const useApp = defineStore("app", () => {
           subagentSessions.value = subagentSessions.value.filter((session) => session.id !== event.sessionID)
           if (running.value.delete(event.sessionID)) running.value = new Set(running.value)
           forgetSideTranscript(event.sessionID)
+          forgetDrafts(event.sessionID)
           break
         }
         if (sideSessions.value.some((session) => session.id === event.sessionID)) {
@@ -552,6 +582,10 @@ export const useApp = defineStore("app", () => {
         }
         // MiMo's present_files and pdf_locate opens, for every conversation, on show or not.
         noteDeliveryUpdate(event.message)
+        if (event.message.role === "user") {
+          if (event.message.inbox?.direction === "request") answeredAnother.add(event.message.sessionID)
+          else if (!event.message.steered) answeredAnother.delete(event.message.sessionID)
+        }
         noteToolWrites(
           event.message,
           (sessions.value.find((session) => session.id === event.message.sessionID) ?? sideSessions.value.find((session) => session.id === event.message.sessionID))?.directory,
@@ -583,6 +617,47 @@ export const useApp = defineStore("app", () => {
         reindex(event.message)
         break
       }
+      case "git.waiting": {
+        const next = new Set(gitWaiting.value)
+        if (event.waiting) next.add(event.directory)
+        else next.delete(event.directory)
+        gitWaiting.value = next
+        break
+      }
+      case "message.part.updated": {
+        /*
+         * N11-4: one part of a reply, rather than the whole message again. The
+         * message itself always arrives first as message.updated, so a part for
+         * a message this window does not hold is a conversation it is not
+         * drawing, and there is nothing to put it into.
+         */
+        const changed = event.part
+        // What a finished call means for this window is the same wherever the conversation is; both read the part alone.
+        const alone = { id: event.messageID, sessionID: event.sessionID, role: "assistant", parts: [changed] } as unknown as Message
+        noteDeliveryUpdate(alone)
+        noteToolWrites(alone, (sessions.value.find((session) => session.id === event.sessionID) ?? sideSessions.value.find((session) => session.id === event.sessionID))?.directory)
+        const into = (list: Message[] | undefined) => {
+          const message = list?.find((candidate) => candidate.id === event.messageID)
+          if (!message || message.role !== "assistant") return undefined
+          const at = message.parts.findIndex((part) => part.id === changed.id)
+          if (at === -1) message.parts.push(changed)
+          else message.parts[at] = changed
+          return message
+        }
+        {
+          const list = sideTranscripts.value[event.sessionID]
+          if (list) {
+            const message = into(list)
+            if (message) sideReindex(event.sessionID, message)
+            break
+          }
+        }
+        into(held.get(event.sessionID))
+        if (event.sessionID !== currentID.value) break
+        const message = into(messages.value)
+        if (message) reindex(message)
+        break
+      }
       case "message.delta": {
         if (sideTranscripts.value[event.sessionID]) {
           const location = sidePartIndexes.get(event.sessionID)?.get(event.partID)
@@ -599,15 +674,29 @@ export const useApp = defineStore("app", () => {
         const message = messages.value.find((candidate) => candidate.id === location.messageID)
         if (message?.role !== "assistant") break
         const part = message.parts[location.index]
-        if (part?.type === "text" || part?.type === "reasoning") part.text += event.text
+        if (part?.type !== "text" && part?.type !== "reasoning") break
+        /*
+         * N11-32: a window that connected mid-step holds the copy written to
+         * disk, which lags by up to 500ms. Appending onto it left a hole in the
+         * middle of the paragraph that only the next part - or the end of the
+         * step - closed, which in a long plain answer can be minutes.
+         */
+        if (part.text.length !== event.at) {
+          noteDeltaGap(event.sessionID)
+          break
+        }
+        part.text += event.text
         break
       }
       case "automation.run": {
+        // A run that is only waiting for a busy conversation has not started and has not ended.
+        if (event.phase === "queued") break
         const runs = new Set(automationRuns.value)
         if (event.phase === "started") runs.add(event.sessionID)
         else {
           runs.delete(event.sessionID)
-          if (event.notify) automationNotice.value = { sessionID: event.sessionID, at: Date.now() }
+          // The server has already judged the run; a failure must not be announced as a completion (N11-3).
+          if (event.notify) automationNotice.value = { sessionID: event.sessionID, at: Date.now(), failed: event.outcome === "failed" || event.outcome === "skipped" }
         }
         automationRuns.value = runs
         break
@@ -626,6 +715,7 @@ export const useApp = defineStore("app", () => {
           if (running.value.delete(event.sessionID)) running.value = new Set(running.value)
           break
         }
+        liveRetries.delete(event.sessionID)
         noteRunEnded(event.sessionID)
         noteDeliveryTurnEnded(event.sessionID)
         endOfficeWatches(event.sessionID)
@@ -880,6 +970,7 @@ export const useApp = defineStore("app", () => {
      */
     pendingPermissions.value = groupPermissions(listed.permissions)
     chatLinks.value = listed.chatLinks ?? {}
+    noteRetries(listed.retries)
     booted = true
     /*
      * Everything the first screen reads has now arrived.
@@ -904,11 +995,86 @@ export const useApp = defineStore("app", () => {
     // project is chosen there. Auto-creating one would skip past it.
   }
 
+  /**
+   * A deleted conversation's waiting words and annotations go with it (N11-24),
+   * as MiMo drops a conversation's draft and composer state on deletion. They
+   * stayed for the life of the profile, and every one of them was written out
+   * again with every keystroke anywhere, since the draft file is saved whole.
+   */
+  function forgetDrafts(sessionID: string): void {
+    const annotations = useAnnotations()
+    let changed = false
+    for (const key of [`main:${sessionID}`, `side:${sessionID}`]) {
+      if (drafts.delete(key)) changed = true
+      if (annotations.list(key).length) {
+        annotations.put(key, [])
+        changed = true
+      }
+    }
+    if (changed) scheduleDraftSave()
+  }
+
+  /** What session.list said about the turns that are waiting between attempts. */
+  function noteRetries(rows: Record<string, { messageID: string; attempt: number; message: string; next: number; kind?: string; max?: number }> | undefined): void {
+    liveRetries.clear()
+    for (const [sessionID, row] of Object.entries(rows ?? {})) liveRetries.set(sessionID, row)
+    for (const [sessionID, list] of Object.entries(sideTranscripts.value)) applyRetry(sessionID, list)
+    for (const [sessionID, list] of held) applyRetry(sessionID, list)
+    if (currentID.value) applyRetry(currentID.value, messages.value)
+  }
+
+  /*
+   * A delta that did not line up: the transcript on screen is missing
+   * something, so it is read again. Debounced, because a window that connected
+   * mid-step will see several in a row.
+   */
+  let gapTimer: ReturnType<typeof setTimeout> | undefined
+
+  function noteDeltaGap(sessionID: string): void {
+    if (sessionID !== currentID.value || gapTimer) return
+    gapTimer = setTimeout(() => {
+      gapTimer = undefined
+      if (currentID.value === sessionID) void open(sessionID).catch(() => undefined)
+    }, 300)
+  }
+
   function api() {
     const instance = client.value
     if (!instance) throw new Error("Not connected")
     return instance
   }
+
+  /*
+   * N11-4: the conversations whose fine-grained events this window wants -
+   * the one on screen, the side chats and subagent transcripts it holds, and
+   * the few it keeps in case the reader comes straight back. Sent whenever the
+   * set changes, and again after a reconnect.
+   */
+  let declared = ""
+
+  function declareWatched(): void {
+    const instance = client.value
+    if (!instance) return
+    const wanted = [
+      ...(currentID.value ? [currentID.value] : []),
+      ...Object.keys(sideTranscripts.value),
+      ...held.keys(),
+    ]
+    const unique = [...new Set(wanted)].sort()
+    const key = unique.join(",")
+    if (key === declared) return
+    declared = key
+    void instance.request({ type: "session.watch", sessionIDs: unique }).catch(() => {
+      // A socket that dropped; the reconnect declares again.
+      declared = ""
+    })
+  }
+
+  watch(
+    [currentID, () => Object.keys(sideTranscripts.value).sort().join(",")],
+    () => declareWatched(),
+    { immediate: true },
+  )
 
   /** Set once the first load is done, so the opening connect is not a return. */
   let booted = false
@@ -1010,6 +1176,10 @@ export const useApp = defineStore("app", () => {
       // published while it was down, a permission request included.
       pendingPermissions.value = groupPermissions(listed.permissions)
       chatLinks.value = listed.chatLinks ?? {}
+      noteRetries(listed.retries)
+      // A fresh socket knows nothing about this window; say again what it is drawing.
+      declared = ""
+      declareWatched()
       if (currentID.value) await open(currentID.value)
     } catch {
       // A socket that dropped again; the next open will bring another attempt.
@@ -1064,6 +1234,7 @@ export const useApp = defineStore("app", () => {
       partIndex.clear()
       messages.value.forEach(reindex)
     }
+    applyRetry(sessionID, messages.value)
     error.value = undefined
     noteError(sessionID, undefined)
     /*
@@ -2049,6 +2220,8 @@ export const useApp = defineStore("app", () => {
     finished,
     automationRuns,
     automationNotice,
+    answeredAnother,
+    gitWaiting,
     clearPermission,
     recent,
     forkFrom,

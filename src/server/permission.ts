@@ -702,6 +702,8 @@ export class Permissions {
 
   /** Drops what one conversation was allowed "always", as its conversation is deleted. */
   async forgetSession(sessionID: string): Promise<void> {
+    // A subagent's background mark goes with it too (N11-37); it was only cleared for one run without a parent.
+    this.background.delete(sessionID)
     if (!this.rules.delete(`session:${sessionID}`)) return
     await this.persist()
   }

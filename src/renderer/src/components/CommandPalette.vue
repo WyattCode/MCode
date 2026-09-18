@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useApp } from "../stores/app"
 import { sessionTitle, t } from "../lib/i18n"
 import { projectName } from "../lib/project"
@@ -47,9 +47,8 @@ function score(text: string, needle: string): number | undefined {
 }
 
 /**
- * The project file list is fetched once per open and filtered locally. Asking
- * the backend on every keystroke would walk the tree again for no benefit -
- * the list is already capped server-side.
+ * What the picker shows before anything is typed: the first files of the
+ * project, fetched once per open.
  */
 async function loadFiles() {
   const directory = app.current?.directory
@@ -57,6 +56,42 @@ async function loadFiles() {
   const result = await app.client.request({ type: "file.list", directory })
   files.value = result.files.map((file) => file.path)
 }
+
+/*
+ * N11-23: once something is typed, the project is searched for it, as MiMo's
+ * picker asks its searchFiles on every keystroke. Filtering the list fetched on
+ * open only ever reached the first 500 files in breadth-first order - on a large
+ * project, almost none of them. The answers are ranked here as before.
+ */
+const searched = ref<string[]>()
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+let searchTicket = 0
+
+watch(query, (next) => {
+  if (searchTimer) clearTimeout(searchTimer)
+  const needle = next.trim()
+  if (!needle || props.mode !== "files") {
+    searched.value = undefined
+    return
+  }
+  searchTimer = setTimeout(() => void searchFiles(needle), SEARCH_DEBOUNCE_MS)
+})
+
+async function searchFiles(needle: string) {
+  const directory = app.current?.directory
+  if (!directory || !app.client) return
+  const ticket = ++searchTicket
+  const result = await app.client.request({ type: "file.search", directory, query: needle, limit: SCOPED_LIMIT }).catch(() => undefined)
+  // A slower answer to an older query never replaces a newer one.
+  if (ticket !== searchTicket || !result) return
+  searched.value = result.entries.map((entry) => entry.rel)
+}
+
+const SEARCH_DEBOUNCE_MS = 120
+
+onBeforeUnmount(() => {
+  if (searchTimer) clearTimeout(searchTimer)
+})
 
 type Row =
   | { kind: "file"; id: string; path: string; rank: number }
@@ -76,7 +111,8 @@ const placeholder = computed(() => t(`search.in.${props.mode}`))
 const rows = computed<Row[]>(() => {
   const needle = query.value.trim()
 
-  const fileRows = files.value
+  // Typed: the backend's search, while its answer is on the way the first files as before.
+  const fileRows = (needle && searched.value ? searched.value : files.value)
     .map((path) => ({ path, rank: score(path, needle) }))
     .filter((entry): entry is { path: string; rank: number } => entry.rank !== undefined)
     .sort((a, b) => a.rank - b.rank)

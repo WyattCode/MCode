@@ -41,20 +41,39 @@ export function findInMessages(messages: Message[], query: string): Omit<Message
 }
 
 /**
+ * How many conversations are read when the index cannot narrow the field.
+ *
+ * Only reached while the index is still being filled, or on a machine where
+ * SQLite would not open at all. Without it, one keystroke read every message of
+ * every conversation from disk - measured at about 150,000 file reads on a
+ * profile with 500 conversations - on the same thread as every running turn.
+ */
+export const SCAN_LIMIT = 200
+
+/**
  * One hit per conversation - its best message - best first and, between equal
  * scores, newest first, up to `limit`.
  *
  * Archived conversations, side chats and subagents are left out, as they are
  * from every list the overlay draws.
+ *
+ * `narrow` is the full-text index (N11-5): given the query it names the
+ * conversations worth reading, and only those are read. It returns nothing when
+ * it cannot help - no index, or one still being filled - and then the newest
+ * SCAN_LIMIT conversations are read instead, so a search during the first
+ * minutes after an upgrade is incomplete rather than ruinous.
  */
 export async function searchMessages(
   sessions: SessionInfo[],
   load: (sessionID: string) => Promise<Message[]>,
   query: string,
   limit = 50,
+  narrow?: (query: string) => Promise<readonly string[] | undefined> | readonly string[] | undefined,
 ): Promise<MessageHit[]> {
   if (!query.trim()) return []
-  const candidates = sessions.filter((session) => !session.archived && !session.sideOf && !session.parentID)
+  const eligible = sessions.filter((session) => !session.archived && !session.sideOf && !session.parentID)
+  const named = await narrow?.(query)
+  const candidates = named ? eligible.filter((session) => named.includes(session.id)) : eligible.slice(0, SCAN_LIMIT)
   const hits: (MessageHit & { updated: number })[] = []
   for (const session of candidates) {
     const found = findInMessages(await load(session.id), query)

@@ -53,7 +53,7 @@ export function tempNameFor(target: string): string {
  * filesystems showing the new name over no contents at all, which turns "the
  * old version survived" into "neither version did".
  */
-export async function writeAtomic(target: string, data: string, mode?: number): Promise<void> {
+export async function writeAtomic(target: string, data: string, mode?: number, durable = true): Promise<void> {
   await fs.mkdir(path.dirname(target), { recursive: true })
   const temp = tempNameFor(target)
   let written = false
@@ -62,7 +62,15 @@ export async function writeAtomic(target: string, data: string, mode?: number): 
     try {
       await handle.writeFile(data, "utf8")
       written = true
-      await handle.sync()
+      /*
+       * Skipped only for the half-second saves of a reply still streaming
+       * (N11-29): N turns in flight meant 2N fsyncs a second of documents up
+       * to a quarter of a megabyte, and each of them is overwritten half a
+       * second later. The rename is still atomic, so a crash can only cost the
+       * last half-second of a reply that was never finished anyway; the save
+       * at the end of the step is durable as ever.
+       */
+      if (durable) await handle.sync()
     } finally {
       await handle.close()
     }
@@ -141,6 +149,9 @@ export async function quarantine(target: string): Promise<string | undefined> {
   }
   return undefined
 }
+
+/** A temp file tempNameFor made: `.<pid>.<counter>.tmp` at the end of the name. */
+export const TEMP_NAME = /\.\d+\.\d+\.tmp$/
 
 export class Storage {
   constructor(private readonly root: string) {}
@@ -223,10 +234,10 @@ export class Storage {
     }
   }
 
-  async write(key: string, value: unknown): Promise<void> {
+  async write(key: string, value: unknown, options: { durable?: boolean } = {}): Promise<void> {
     // Serialised per key, so a later save cannot be overtaken by an earlier one.
     const previous = this.queued.get(key) ?? Promise.resolve()
-    const next = previous.catch(() => {}).then(() => this.writeNow(key, value))
+    const next = previous.catch(() => {}).then(() => this.writeNow(key, value, options.durable ?? true))
     this.queued.set(key, next)
     try {
       await next
@@ -264,14 +275,40 @@ export class Storage {
     }
   }
 
-  private async writeNow(key: string, value: unknown): Promise<void> {
+  private async writeNow(key: string, value: unknown, durable: boolean): Promise<void> {
     /*
      * Owner-only, as the credential file is: config.json holds MCP bearer
      * headers and gateway keys, mcp-auth.json the MCP sign-ins, and the rest
      * is the user's conversations. (On Windows the mode only sets the
      * read-only bit; there the profile folder's own ACL is what keeps others out.)
      */
-    await writeAtomic(this.file(key), JSON.stringify(value, null, 2), 0o600)
+    await writeAtomic(this.file(key), JSON.stringify(value, null, 2), 0o600, durable)
+  }
+
+  /**
+   * Temp files a previous run of the app left behind (N11-30).
+   *
+   * A write killed between creating its temp file and renaming it over the
+   * document leaves `<name>.<pid>.<n>.tmp` in place, and nothing ever looked
+   * for them: this run's own failed writes clean up after themselves, the
+   * previous process's cannot. Only names carrying another process's id are
+   * taken, so a write in flight right now is never touched.
+   */
+  async sweepTemps(): Promise<number> {
+    let removed = 0
+    const own = `.${process.pid}.`
+    const walk = async (directory: string): Promise<void> => {
+      const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => [])
+      for (const entry of entries) {
+        const full = path.join(directory, entry.name)
+        if (entry.isDirectory()) await walk(full)
+        else if (TEMP_NAME.test(entry.name) && !entry.name.includes(own)) {
+          await fs.rm(full, { force: true }).then(() => removed++, () => undefined)
+        }
+      }
+    }
+    await walk(this.root)
+    return removed
   }
 
   async remove(key: string): Promise<void> {

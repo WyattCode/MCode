@@ -772,12 +772,12 @@ function sanitizeSharedStrings(xml: string): string {
   return xml.replace(/<si\b[^>]*>[\s\S]*?<\/si>/gi, (item) => {
     if (!/<r\b/i.test(item)) return item
     const runs: string[] = []
-    const held = item.replace(/<(r|rPh)\b[^>]*>[\s\S]*?<\/\1>/gi, (run) => ` ${runs.push(run) - 1} `)
+    const held = item.replace(/<(r|rPh)\b[^>]*>[\s\S]*?<\/\1>/gi, (run) => `\u0000${runs.push(run) - 1}\u0000`)
     if (!runs.length) return item
     return held
       .replace(/<t\b[^>]*\/>/gi, "")
       .replace(/<t\b[^>]*>[\s\S]*?<\/t>/gi, "")
-      .replace(/ (\d+) /g, (_match, index: string) => runs[Number(index)])
+      .replace(/\x00(\d+)\x00/g, (_match, index: string) => runs[Number(index)])
   })
 }
 

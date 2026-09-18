@@ -107,6 +107,8 @@ const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘⏎" : "Ctrl+�
 
 function busyLabel(which: Action, idle: string): string {
   if (action.value !== which || !phase.value) return t(idle)
+  // Queued behind another git write on the same repository: waiting rather than committing yet (N11-14).
+  if (phase.value !== "gen" && app.gitWaiting.has(props.directory)) return t("info.gitWaiting")
   return t(phase.value === "gen" ? "info.genBusy" : phase.value === "commit" ? "info.commitBusy" : "info.pushBusy")
 }
 

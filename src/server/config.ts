@@ -791,7 +791,21 @@ export class Config {
     for (const listener of this.reloadListeners) await Promise.resolve(listener(before, next)).catch(() => undefined)
   }
 
-  async set(patch: Partial<AppConfig>): Promise<AppConfig> {
+  /**
+   * One change at a time (N11-34). A save that fails rolls the settings back to
+   * how it found them, and two overlapping saves meant that roll-back also
+   * threw away the other save's change - gone from memory and never written.
+   * Queued, "how it found them" is exactly the state before this change.
+   */
+  private setting: Promise<unknown> = Promise.resolve()
+
+  set(patch: Partial<AppConfig>): Promise<AppConfig> {
+    const next = this.setting.catch(() => undefined).then(() => this.setNow(patch))
+    this.setting = next
+    return next
+  }
+
+  private async setNow(patch: Partial<AppConfig>): Promise<AppConfig> {
     const previous = this.current
     try {
       return await this.apply(patch)

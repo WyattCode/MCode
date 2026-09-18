@@ -73,10 +73,30 @@ export class HistoryIndex {
   private unwatch: (() => void) | undefined
   private unsubscribe: (() => void) | undefined
   private closed = false
+  /**
+   * The whole of `start()`, from the content check to the comparison with the
+   * store (N11-12). The database lives in a worker now, so a start that is
+   * still running when the store is closed would have its statements refused;
+   * `close()` waits this out first. Errors are swallowed here, as they are in
+   * `ready`: an index that cannot be built leaves history missing, not broken.
+   */
+  private starting: Promise<void> = Promise.resolve()
   /** Settles once the start-up comparison with the store has finished. */
   ready: Promise<void> = Promise.resolve()
   /** True while that comparison runs: search may then be missing what it has not reached yet. */
   building = false
+  /**
+   * Every write in flight, in order (N11-12). The index lives in a worker now,
+   * so a write is something to wait for; a search waits for all of them first,
+   * so it never reads behind a save.
+   */
+  private writing: Promise<unknown> = Promise.resolve()
+
+  /** Queues a write behind the others; one that fails is dropped, as it was, and the next reconcile makes it good. */
+  private queue(work: () => Promise<unknown>): Promise<unknown> {
+    this.writing = this.writing.then(work).catch(() => undefined)
+    return this.writing
+  }
 
   constructor(
     private readonly database: IndexDatabase,
@@ -90,14 +110,29 @@ export class HistoryIndex {
   }
 
   start(): Promise<void> {
-    if (this.database.meta("history_content") !== CONTENT_VERSION) {
-      this.database.transaction(() => {
-        this.db.exec("DELETE FROM history_part")
-        this.db.exec("DELETE FROM history_session")
+    this.starting = this.begin().catch(() => undefined)
+    return this.starting
+  }
+
+  private async begin(): Promise<void> {
+    // Building from the first moment: until the comparison below has run, a search may be missing things.
+    this.building = true
+    if ((await this.database.meta("history_content")) !== CONTENT_VERSION) {
+      await this.database.transaction(async (tx) => {
+        await tx.exec("DELETE FROM history_part")
+        await tx.exec("DELETE FROM history_session")
       })
-      this.database.setMeta("history_content", CONTENT_VERSION)
+      await this.database.setMeta("history_content", CONTENT_VERSION)
+      /*
+       * The file does not shrink on its own (N11-40): a full rebuild emptied
+       * every table and the pages stayed allocated, so each content change left
+       * the index its previous size again on top of the new one. It is the one
+       * store here with no other way of giving space back.
+       */
+      // A large index takes a while to rewrite; given longer than an ordinary statement.
+      await this.db.exec("VACUUM", { timeoutMs: 5 * 60_000 })
     }
-    for (const row of this.db.prepare("SELECT session_id, project FROM history_session").all() as { session_id: string; project: string }[]) {
+    for (const row of await this.db.all<{ session_id: string; project: string }>("SELECT session_id, project FROM history_session")) {
       this.projects.set(row.session_id, row.project)
     }
     this.unwatch = this.store.watch((change) => this.onChange(change))
@@ -113,12 +148,16 @@ export class HistoryIndex {
     return this.ready
   }
 
-  close(): void {
+async close(): Promise<void> {
     this.closed = true
-    this.flush()
+    const flushed = this.flush()
     if (this.timer) clearTimeout(this.timer)
     this.unwatch?.()
     this.unsubscribe?.()
+    // Whatever start and the comparison are still doing, and every write they or a save has queued (N11-12).
+    await this.starting
+    await flushed
+    await this.writing
   }
 
   private onChange(change: StoreChange): void {
@@ -130,11 +169,11 @@ export class HistoryIndex {
         return
       case "message.removed":
         this.pending.delete(`${change.sessionID}/${change.messageID}`)
-        this.db.prepare("DELETE FROM history_part WHERE session_id = ? AND message_id = ?").run(change.sessionID, change.messageID)
+        void this.queue(() => this.db.run("DELETE FROM history_part WHERE session_id = ? AND message_id = ?", change.sessionID, change.messageID))
         return
       case "session.removed":
         for (const key of [...this.pending.keys()]) if (key.startsWith(`${change.sessionID}/`)) this.pending.delete(key)
-        this.forgetSession(change.sessionID)
+        void this.forgetSession(change.sessionID)
     }
   }
 
@@ -147,26 +186,30 @@ export class HistoryIndex {
     const known = this.projects.get(session.id)
     const project = projectMemoryID(session.directory)
     // A new or replaced compaction summary is searchable as soon as it is written.
-    if (this.summaries.get(session.id) !== summaryStamp(session)) this.writeSummary(session, project)
+    if (this.summaries.get(session.id) !== summaryStamp(session)) void this.writeSummary(session, project)
     if (known === project) return
     if (known === undefined) {
       this.projects.set(session.id, project)
       return
     }
-    this.database.transaction(() => {
-      this.db.prepare("UPDATE history_part SET project = ? WHERE session_id = ?").run(project, session.id)
-      this.db.prepare("UPDATE history_session SET project = ? WHERE session_id = ?").run(project, session.id)
-    })
+    void this.queue(() =>
+      this.database.transaction(async (tx) => {
+        await tx.run("UPDATE history_part SET project = ? WHERE session_id = ?", project, session.id)
+        await tx.run("UPDATE history_session SET project = ? WHERE session_id = ?", project, session.id)
+      }),
+    )
     this.projects.set(session.id, project)
   }
 
-  private forgetSession(sessionID: string): void {
-    this.database.transaction(() => {
-      this.db.prepare("DELETE FROM history_part WHERE session_id = ?").run(sessionID)
-      this.db.prepare("DELETE FROM history_session WHERE session_id = ?").run(sessionID)
-    })
+  private forgetSession(sessionID: string): Promise<unknown> {
     this.projects.delete(sessionID)
     this.summaries.delete(sessionID)
+    return this.queue(() =>
+      this.database.transaction(async (tx) => {
+        await tx.run("DELETE FROM history_part WHERE session_id = ?", sessionID)
+        await tx.run("DELETE FROM history_session WHERE session_id = ?", sessionID)
+      }),
+    )
   }
 
   /**
@@ -174,24 +217,34 @@ export class HistoryIndex {
    * message it covers. The store keeps only the latest one, so any earlier row
    * is replaced.
    */
-  private writeSummary(session: SessionInfo, project: string): void {
+  private writeSummary(session: SessionInfo, project: string): Promise<unknown> {
     const row = summaryRow(session)
-    this.database.transaction(() => {
-      this.db.prepare("DELETE FROM history_part WHERE session_id = ? AND kind = 'summary'").run(session.id)
-      if (row) {
-        this.db
-          .prepare("INSERT INTO history_part (part_id, session_id, message_id, project, kind, tool_name, body, time_created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-          .run(row.part_id, row.session_id, row.message_id, project, row.kind, row.tool_name, row.body, row.time_created)
-      }
-    })
     this.summaries.set(session.id, summaryStamp(session))
+    return this.queue(() =>
+      this.database.transaction(async (tx) => {
+        await tx.run("DELETE FROM history_part WHERE session_id = ? AND kind = 'summary'", session.id)
+        if (row) {
+          await tx.run(
+            "INSERT INTO history_part (part_id, session_id, message_id, project, kind, tool_name, body, time_created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            row.part_id,
+            row.session_id,
+            row.message_id,
+            project,
+            row.kind,
+            row.tool_name,
+            row.body,
+            row.time_created,
+          )
+        }
+      }),
+    )
   }
 
-  /** Writes every message waiting to be indexed. Search calls this first, so it never reads behind a save. */
-  flush(): void {
+  /** Writes every message waiting to be indexed, and settles once every write so far has landed. Search waits for this. */
+  flush(): Promise<unknown> {
     if (this.timer) clearTimeout(this.timer)
     this.timer = undefined
-    if (!this.pending.size) return
+    if (!this.pending.size) return this.writing
     const batch = [...this.pending.values()]
     this.pending.clear()
     const now = Date.now()
@@ -201,32 +254,49 @@ export class HistoryIndex {
       const project = this.projects.get(sessionID)
       if (project === undefined) {
         // Not seen before: its project is read first, then it is indexed like any other.
-        void this.store.get(sessionID).then((session) => {
+        void this.queue(async () => {
+          const session = await this.store.get(sessionID)
           if (!session || this.closed) return
           this.projects.set(sessionID, projectMemoryID(session.directory))
-          this.write(sessionID, projectMemoryID(session.directory), messages, now)
+          await this.writeNow(sessionID, projectMemoryID(session.directory), messages, now)
         })
         continue
       }
-      this.write(sessionID, project, messages, now)
+      void this.write(sessionID, project, messages, now)
     }
+    return this.writing
   }
 
-  private write(sessionID: string, project: string, messages: Message[], stamp: number, replaceSession = false): void {
-    // A message written again keeps the compaction summary filed under it; that row follows the session, not the message.
-    const remove = this.db.prepare("DELETE FROM history_part WHERE session_id = ? AND message_id = ? AND kind != 'summary'")
-    const insert = this.db.prepare(
-      "INSERT INTO history_part (part_id, session_id, message_id, project, kind, tool_name, body, time_created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    this.database.transaction(() => {
-      if (replaceSession) this.db.prepare("DELETE FROM history_part WHERE session_id = ?").run(sessionID)
+  private write(sessionID: string, project: string, messages: Message[], stamp: number, replaceSession = false): Promise<unknown> {
+    return this.queue(() => this.writeNow(sessionID, project, messages, stamp, replaceSession))
+  }
+
+  private writeNow(sessionID: string, project: string, messages: Message[], stamp: number, replaceSession = false): Promise<unknown> {
+    return this.database.transaction(async (tx) => {
+      if (replaceSession) await tx.run("DELETE FROM history_part WHERE session_id = ?", sessionID)
       for (const message of messages) {
-        remove.run(sessionID, message.id)
-        for (const row of rowsOf(message)) insert.run(row.part_id, row.session_id, row.message_id, project, row.kind, row.tool_name, row.body, row.time_created)
+        // A message written again keeps the compaction summary filed under it; that row follows the session, not the message.
+        await tx.run("DELETE FROM history_part WHERE session_id = ? AND message_id = ? AND kind != 'summary'", sessionID, message.id)
+        for (const row of rowsOf(message)) {
+          await tx.run(
+            "INSERT INTO history_part (part_id, session_id, message_id, project, kind, tool_name, body, time_created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            row.part_id,
+            row.session_id,
+            row.message_id,
+            project,
+            row.kind,
+            row.tool_name,
+            row.body,
+            row.time_created,
+          )
+        }
       }
-      this.db
-        .prepare("INSERT INTO history_session (session_id, project, indexed_at) VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET project = excluded.project, indexed_at = excluded.indexed_at")
-        .run(sessionID, project, stamp)
+      await tx.run(
+        "INSERT INTO history_session (session_id, project, indexed_at) VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET project = excluded.project, indexed_at = excluded.indexed_at",
+        sessionID,
+        project,
+        stamp,
+      )
     })
   }
 
@@ -238,10 +308,10 @@ export class HistoryIndex {
    * history does not hold up the app.
    */
   private async reconcile(): Promise<void> {
-    const indexed = new Map((this.db.prepare("SELECT session_id, indexed_at FROM history_session").all() as { session_id: string; indexed_at: number }[]).map((row) => [row.session_id, row.indexed_at]))
+    const indexed = new Map((await this.db.all<{ session_id: string; indexed_at: number }>("SELECT session_id, indexed_at FROM history_session")).map((row) => [row.session_id, row.indexed_at]))
     const sessions = await this.store.list()
     const onDisk = new Set(sessions.map((session) => session.id))
-    for (const sessionID of indexed.keys()) if (!onDisk.has(sessionID) && !this.closed) this.forgetSession(sessionID)
+    for (const sessionID of indexed.keys()) if (!onDisk.has(sessionID) && !this.closed) await this.forgetSession(sessionID)
     for (const session of sessions) {
       if (this.closed) return
       const started = Date.now()
@@ -251,7 +321,7 @@ export class HistoryIndex {
         const messages = await this.store.messages(session.id)
         if (this.closed) return
         this.projects.set(session.id, projectMemoryID(session.directory))
-        this.write(session.id, projectMemoryID(session.directory), messages, started, true)
+        await this.write(session.id, projectMemoryID(session.directory), messages, started, true)
       } else {
         const changed: Message[] = []
         for (const id of ids) {
@@ -261,24 +331,27 @@ export class HistoryIndex {
           if (message) changed.push(message)
         }
         const kept = new Set(ids)
-        const stale = (this.db.prepare("SELECT DISTINCT message_id FROM history_part WHERE session_id = ?").all(session.id) as { message_id: string }[])
+        const stale = (await this.db.all<{ message_id: string }>("SELECT DISTINCT message_id FROM history_part WHERE session_id = ?", session.id))
           .map((row) => row.message_id)
           .filter((id) => !kept.has(id))
         if (this.closed) return
         if (stale.length) {
-          const drop = this.db.prepare("DELETE FROM history_part WHERE session_id = ? AND message_id = ?")
-          this.database.transaction(() => stale.forEach((id) => drop.run(session.id, id)))
+          await this.queue(() =>
+            this.database.transaction(async (tx) => {
+              for (const id of stale) await tx.run("DELETE FROM history_part WHERE session_id = ? AND message_id = ?", session.id, id)
+            }),
+          )
         }
         this.projects.set(session.id, projectMemoryID(session.directory))
-        this.write(session.id, projectMemoryID(session.directory), changed, started)
+        await this.write(session.id, projectMemoryID(session.directory), changed, started)
       }
-      if (this.summaries.get(session.id) !== summaryStamp(session)) this.writeSummary(session, projectMemoryID(session.directory))
+      if (this.summaries.get(session.id) !== summaryStamp(session)) await this.writeSummary(session, projectMemoryID(session.directory))
       await new Promise((resolve) => setImmediate(resolve))
     }
   }
 
-  search(input: HistorySearch): HistoryHit[] {
-    this.flush()
+  async search(input: HistorySearch): Promise<HistoryHit[]> {
+    await this.flush()
     const expression = ftsQuery(input.query, "AND")
     if (!expression) return []
     const limit = Math.max(1, Math.min(input.limit ?? SEARCH_DEFAULT, SEARCH_HARD_CAP))
@@ -305,28 +378,28 @@ export class HistoryIndex {
       params.push(input.before)
     }
     params.push(limit)
-    const rows = this.db
-      .prepare(
-        `SELECT p.part_id, p.session_id, p.message_id, p.project, p.tool_name, p.time_created,
-                substr(snippet(history_part_fts, 0, '<<', '>>', '...', 32), 1, 1001) AS snippet,
-                bm25(history_part_fts) AS rank
-         FROM history_part_fts JOIN history_part p ON p.id = history_part_fts.rowid
-         WHERE history_part_fts MATCH ? ${where.length ? `AND ${where.join(" AND ")}` : ""}
-         ORDER BY rank LIMIT ?`,
-      )
-      .all(...params) as (Omit<HistoryHit, "score"> & { rank: number })[]
+    const rows = await this.db.all<Omit<HistoryHit, "score"> & { rank: number }>(
+      `SELECT p.part_id, p.session_id, p.message_id, p.project, p.tool_name, p.time_created,
+              substr(snippet(history_part_fts, 0, '<<', '>>', '...', 32), 1, 1001) AS snippet,
+              bm25(history_part_fts) AS rank
+       FROM history_part_fts JOIN history_part p ON p.id = history_part_fts.rowid
+       WHERE history_part_fts MATCH ? ${where.length ? `AND ${where.join(" AND ")}` : ""}
+       ORDER BY rank LIMIT ?`,
+      ...params,
+    )
     return rows.map(({ rank, ...row }) => ({ ...row, score: -rank }))
   }
 
   /** The conversation a message belongs to, when the index has seen it. */
-  sessionOf(messageID: string): string | undefined {
-    this.flush()
-    const row = this.db.prepare("SELECT session_id FROM history_part WHERE message_id = ? LIMIT 1").get(messageID) as { session_id: string } | undefined
+  async sessionOf(messageID: string): Promise<string | undefined> {
+    await this.flush()
+    const row = await this.db.get<{ session_id: string }>("SELECT session_id FROM history_part WHERE message_id = ? LIMIT 1", messageID)
     return row?.session_id
   }
 
   /** How many parts are indexed, for the checks. */
-  count(): number {
-    return (this.db.prepare("SELECT count(*) AS n FROM history_part").get() as { n: number }).n
+  async count(): Promise<number> {
+    await this.flush()
+    return (await this.db.get<{ n: number }>("SELECT count(*) AS n FROM history_part"))!.n
   }
 }

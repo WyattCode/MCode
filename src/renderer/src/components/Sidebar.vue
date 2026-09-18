@@ -1155,9 +1155,10 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
         </button>
         <div class="quick-rule" />
         <div class="quick-scroll" data-quick-recent-scroll>
+          <!-- A page at a time, as the side column's own list is (N11-25): every conversation at once built thousands of rows. -->
           <template v-if="recentAll.length">
             <button
-              v-for="session in recentAll"
+              v-for="session in recent"
               :key="session.id"
               type="button"
               class="quick-convo"
@@ -1167,6 +1168,9 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
               @click="quickPick(session.id)"
             >
               <span class="quick-label">{{ title(session.title) }}</span>
+            </button>
+            <button v-if="recentLeft > 0" type="button" class="quick-convo" data-quick-more @click="recentShown += RECENT_PAGE">
+              <span class="quick-label">{{ t("side.showMore", { count: recentLeft }) }}</span>
             </button>
           </template>
           <div v-else class="quick-empty" data-quick-empty>{{ t("side.noTasks") }}</div>

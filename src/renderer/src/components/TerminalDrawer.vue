@@ -187,7 +187,8 @@ onMounted(async () => {
     add()
     return
   }
-  const found = await client.request({ type: "shell.list", ...where }).catch(() => undefined)
+  // The drawer's own shells only: the right panel's terminal is not a tab here (N11-9).
+  const found = await client.request({ type: "shell.list", ...where, surface: "drawer" }).catch(() => undefined)
   if (found?.shells.length) for (const shell of found.shells) add(shell.shellID, shell.cwd, shell.used)
   else add()
 })
@@ -334,6 +335,7 @@ function startResize(event: PointerEvent) {
         :active="term.id === activeID"
         :height="height"
         :shellID="term.shellID"
+        surface="drawer"
         :sessionID="sessionID"
         :directory="directory"
         @opened="(shellID: string, cwd: string) => opened(term.id, shellID, cwd)"

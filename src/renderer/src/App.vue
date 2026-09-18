@@ -123,6 +123,13 @@ bindDraftSources({
 watch(() => annotationStore.byScope, scheduleDraftSave)
 window.addEventListener("pagehide", flushDrafts)
 window.addEventListener("beforeunload", flushDrafts)
+/*
+ * N11-16: the machine is back on the network. The main process cannot see
+ * this, and the backend, sitting in it, would otherwise wait out the rest of a
+ * sixty-second backoff before finding out. An application-lifetime listener,
+ * like the two above.
+ */
+window.addEventListener("online", () => window.mcode.networkBack())
 let draftScreenRestored = false
 /* The project a task typed on the home screen will be created in. */
 const homeDirectory = ref<string>()
@@ -3449,7 +3456,7 @@ watch(
       heldNotices.add(turn.sessionID)
       return
     }
-    window.mcode.taskNotice({ kind: "done", ...about, silent: chiming })
+    window.mcode.taskNotice({ kind: app.answeredAnother.has(turn.sessionID) ? "chat" : "done", ...about, silent: chiming })
   },
 )
 
@@ -3479,7 +3486,7 @@ watch(
   () => app.automationNotice,
   (notice) => {
     if (!notice) return
-    window.mcode.taskNotice({ kind: "done", ...noticeAbout(notice.sessionID), silent: false })
+    window.mcode.taskNotice({ kind: notice.failed ? "failed" : "done", ...noticeAbout(notice.sessionID), silent: false })
   },
 )
 

@@ -40,7 +40,7 @@ function reply(operation: string, output: string, count = 0, truncated = false):
 async function sessionHolding(service: HistoryService, messageID: string, named?: string): Promise<string | undefined> {
   const exists = (sessionID: string) => service.storage.read<Message>(`session/${sessionID}/message/${messageID}`).then(Boolean, () => false)
   if (named && (await exists(named))) return named
-  const indexed = service.index.sessionOf(messageID)
+  const indexed = await service.index.sessionOf(messageID)
   if (indexed && (await exists(indexed))) return indexed
   for (const sessionID of await service.storage.listDirectories("session")) if (await exists(sessionID)) return sessionID
   return undefined
@@ -50,7 +50,7 @@ async function search(input: Record<string, unknown>, directory: string): Promis
   const query = text(input.query)
   if (!query) return reply("search", "search needs a query.")
   const service = serviceOf()
-  const hits = service.index.search({
+  const hits = await service.index.search({
     query,
     directory: input.scope === "global" ? undefined : directory,
     sessionID: text(input.session_id),

@@ -1200,6 +1200,27 @@ export type VoiceEdit = VoiceDraft
  * window is hidden instead of closed on macOS, or wherever the tray switch is on,
  * so the app keeps running behind its tray or menu bar icon; otherwise it closes.
  */
+/**
+ * The conversation an event is only of use to, or nothing when every window
+ * should have it (N11-4).
+ *
+ * A text delta is dropped on arrival by a window that is not showing the
+ * conversation, and a running tool's changing output is drawn nowhere else
+ * either - those two are the whole of the high-frequency traffic. Everything
+ * structural - a new message, a part being announced, a tool that has finished
+ * or failed - goes to every window, because a window acts on those wherever
+ * they happened: the automatic opens and the file notices both read a completed
+ * call in any conversation.
+ */
+/** The two places a terminal lives; each owns its own shells (N11-9). */
+export type ShellSurface = "drawer" | "panel"
+
+export function narrowcastSession(event: ServerEvent): string | undefined {
+  if (event.type === "message.delta") return event.sessionID
+  if (event.type === "message.part.updated" && event.part.type === "tool" && (event.part.status === "running" || event.part.status === "pending")) return event.sessionID
+  return undefined
+}
+
 export function closeHidesToTray(state: {
   quitting: boolean
   otherWindows: number
@@ -1835,6 +1856,15 @@ export type Request =
   | { type: "session.redo"; sessionID: string }
   /* One turn's file changes taken back out of the project; `messageIDs` are the turn's assistant messages. */
   | { type: "session.revertTurn"; sessionID: string; messageIDs: string[] }
+  /**
+   * Which conversations this window is drawing (N11-4).
+   *
+   * The high-frequency events - a text delta, a running tool's output -
+   * are only sent to the windows that named the conversation they belong
+   * to. Everything structural is still sent to every window, because a
+   * window acts on a finished tool call wherever it happened.
+   */
+  | { type: "session.watch"; sessionIDs: string[] }
   | { type: "session.history"; sessionID: string }
   | { type: "session.agent"; sessionID: string; agent: AgentName }
   | { type: "session.access"; sessionID: string; access: "ask" | "auto" | "full" }
@@ -2034,7 +2064,11 @@ export type Request =
    * A conversation's shells work in its folder. The home screen's bottom panel
    * has no conversation yet, so it names the project folder it has picked.
    */
-  | { type: "shell.open"; sessionID?: string; directory?: string; cwd?: string; cols?: number; rows?: number }
+  /**
+   * `surface`: which terminal asked - the bottom drawer or the right panel (N11-9).
+   * Each owns its own pty; a shell opened by one is never listed to the other.
+   */
+  | { type: "shell.open"; sessionID?: string; directory?: string; cwd?: string; cols?: number; rows?: number; surface?: ShellSurface }
   | { type: "shell.input"; shellID: string; data: string }
   | { type: "shell.resize"; shellID: string; cols: number; rows: number }
   | { type: "shell.close"; shellID: string }
@@ -2042,11 +2076,13 @@ export type Request =
    * The shells this session already has running, so the drawer can come back
    * to them instead of starting new ones.
    */
-  | { type: "shell.list"; sessionID?: string; directory?: string }
+  | { type: "shell.list"; sessionID?: string; directory?: string; surface?: ShellSurface }
   /** Everything a shell has printed so far, to redraw a pane that went away. */
   | { type: "shell.attach"; shellID: string }
   | { type: "workspace.list"; directory: string }
   | { type: "mcp.list" }
+  /** N11-27: apply a saved MCP change now rather than at the next conversation, when nothing is running. */
+  | { type: "mcp.applyNow" }
   | { type: "mcp.toggle"; name: string }
   | { type: "mcp.tools"; name: string }
   /* 授权: the browser sign-in for a remote server that answered 401; resolves when it has finished. */
@@ -2113,6 +2149,16 @@ export interface ResponseMap {
     permissions: PermissionRequest[]
     /** session chat: the messages in flight, for a window that was not listening when they started. */
     chatLinks: Record<string, ChatLink[]>
+    /**
+     * The turns waiting between attempts, by conversation (N11-17).
+     *
+     * The retry lives only on the copy published with `message.updated`, so a
+     * window that reloaded - or a replacement window - read back a message with
+     * no parts, no finish, no error and no retry, and drew nothing at all for
+     * the whole turn while the sidebar span. This is the same replay the
+     * permissions get, for the same reason.
+     */
+    retries: Record<string, { messageID: string; attempt: number; message: string; next: number; kind?: string; max?: number }>
   }
   "artifact.list": { artifacts: SessionArtifacts[] }
   /** The document and the name to suggest for it; the window puts up the save dialog. */
@@ -2147,6 +2193,7 @@ export interface ResponseMap {
   "session.undo": { files: number; history: HistoryDepth }
   "session.redo": { files: number; history: HistoryDepth }
   "session.revertTurn": TurnRevertResult
+  "session.watch": Record<string, never>
   "session.history": { history: HistoryDepth }
   "session.archive": { session: SessionInfo }
   "session.rename": { session: SessionInfo }
@@ -2250,7 +2297,9 @@ export interface ResponseMap {
   /* `edit` is 智能编辑's validated answer when a draft was sent; without it the window types `text` in. */
   "voice.transcribe": { text: string; heard: string; edit?: VoiceEdit }
   "workspace.list": { worktrees: Worktree[] }
-  "mcp.list": { servers: McpServerState[] }
+  /** `unapplied`: a saved change is still waiting for the next conversation (N11-27). */
+  "mcp.list": { servers: McpServerState[]; unapplied?: boolean }
+  "mcp.applyNow": { outcome: "done" | "busy" | "failed" | "nothing"; servers: McpServerState[] }
   "mcp.toggle": { servers: McpServerState[] }
   /** A connected server's tools, or why there are none to list (a status name or the server's error). */
   "mcp.tools": { tools?: McpToolInfo[]; error?: string }
@@ -2302,11 +2351,42 @@ export type ServerEvent =
    */
   | { type: "session.reverted"; sessionID: string }
   /** automation: a scheduled task's run started in a conversation, or its turn ended and whether the user is told. */
-  | { type: "automation.run"; sessionID: string; phase: "started" | "finished"; notify?: boolean }
+  | {
+      type: "automation.run"
+      sessionID: string
+      /** `queued` says the run is due but its conversation is busy, so it is waiting rather than lost (N11-22). */
+      phase: "started" | "queued" | "finished"
+      notify?: boolean
+      /** What became of the run, so the notification can say a failure is a failure (N11-3). */
+      outcome?: "succeeded" | "failed" | "skipped"
+    }
   /** session chat: every conversation's messages in flight, whole, whenever one changes. */
   | { type: "session.chatLinks"; links: Record<string, ChatLink[]> }
-  /** Incremental append to a part already announced via message.updated. */
-  | { type: "message.delta"; sessionID: string; messageID: string; partID: string; text: string }
+  /**
+   * Incremental append to a part already announced.
+   *
+   * `at` is how long the part was before this append (N11-32). A window
+   * that connected mid-step holds the copy from disk, which is up to 500ms
+   * behind, so appending blindly left a hole in the middle of a paragraph
+   * that could sit there for minutes. A length that does not line up means
+   * something was missed, and the transcript is read again instead.
+   */
+  | { type: "message.delta"; sessionID: string; messageID: string; partID: string; text: string; at: number }
+  /**
+   * One part of a reply, new or changed (N11-4).
+   *
+   * A tool call changes six or seven times between being announced and
+   * finishing, and a talkative bash command reports ten times a second.
+   * Each of those used to clone and broadcast the whole assistant message,
+   * so a turn with K tool calls cost O(K) broadcasts of O(K) bytes. The
+   * part alone is what changed, and it is what is sent.
+   *
+   * A window that does not have the message yet ignores this; the message
+   * itself is always announced with `message.updated` first.
+   */
+  | { type: "message.part.updated"; sessionID: string; messageID: string; part: AssistantPart }
+  /** A git write for this folder is queued behind another one on the same repository, or has stopped waiting (N11-14). */
+  | { type: "git.waiting"; directory: string; waiting: boolean }
   | { type: "permission.requested"; request: PermissionRequest }
   | { type: "permission.resolved"; requestID: string; decided?: PermissionDecision; reason?: string }
   /**

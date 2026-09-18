@@ -38,7 +38,8 @@ import { keepReadCopy } from "../tool/read-media"
 import { ToolError } from "../tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../tool/validate"
 import { ToolOutputs } from "../tool/truncate"
-import { retryDecision, waitFor, withRequestRetry } from "./retry"
+import { cooldownLeft, noteRateLimit, retryDecision, waitFor, withRequestRetry } from "./retry"
+import { Semaphore, STEP_TOOL_LIMIT, SUBAGENT_LIMIT } from "./semaphore"
 import { CodedError, codeOf, paramsOf } from "@shared/errors"
 import { AnthropicAdapter, describeAnthropicError } from "../provider/anthropic"
 import { OpenAICompatible } from "../provider/openai"
@@ -49,7 +50,8 @@ import { failureCode, failureDetail } from "./error-map"
 import type { SessionStore, Snapshot, SnapshotFile } from "./store"
 import { emptyUsage } from "./store"
 import type { Recording } from "./snapshot"
-import { Snapshots, keepSnapshotFile, snapshotBytes } from "./snapshot"
+import { Snapshots, keepSnapshotFile, snapshotBytes, withProjectLock } from "./snapshot"
+import { revertTurnFiles, turnFilePaths } from "./turn-revert"
 import { isOverflowByCount, isOverflowError, maxOutputTokens, underPressure } from "./overflow"
 // MiMo's pruning: what a turn re-sends of its older tool output once the prompt cache has gone cold.
 import { pruneLevelFor, prunedHistory, type PruneLevel } from "./prune"
@@ -285,6 +287,17 @@ const PLAN_AWARE = new Set(["write", "edit", "notebook_edit", "plan_exit"])
 
 export class SessionRunner {
   private readonly running = new Map<string, AbortController>()
+  /** Where each running turn works, so the MCP servers of a folder with a turn in it are never swept (N11-36). */
+  private readonly workingIn = new Map<string, string>()
+  /** N11-20: every subagent in the process shares these permits; top-level conversations do not take one. */
+  readonly subagentGate = new Semaphore(SUBAGENT_LIMIT)
+  /**
+   * The turns that are waiting between attempts, by conversation (N11-17).
+   *
+   * A retry is never written to disk, so this is the only place a window that
+   * reconnects mid-wait can learn about one; `session.list` replays it.
+   */
+  private readonly retrying = new Map<string, { messageID: string; attempt: number; message: string; next: number; kind?: string; max?: number }>()
   /**
    * The requests a conversation has out that are not its turn.
    *
@@ -582,6 +595,8 @@ export class SessionRunner {
    * would be littered by them, so those go to the app's own folder instead.
    */
   private async planFor(session: SessionInfo): Promise<{ file: string; folders: string[] }> {
+    // Bounded: one entry per folder ever opened, which on a long-lived profile is not a small number (N11-37).
+    if (this.repos.size > 256) this.repos.clear()
     let repo = this.repos.get(session.directory)
     if (repo === undefined) {
       repo = (await gitStatus(session.directory).catch(() => undefined))?.repo === true
@@ -688,6 +703,16 @@ export class SessionRunner {
    */
   compactingSessions(): string[] {
     return [...this.summarising]
+  }
+
+  /** The folders turns are running in right now (N11-36). */
+  busyDirectories(): string[] {
+    return [...new Set(this.workingIn.values())]
+  }
+
+  /** The turns waiting between attempts, for a window that reconnected into one (N11-17). */
+  retryRows(): Record<string, { messageID: string; attempt: number; message: string; next: number; kind?: string; max?: number }> {
+    return Object.fromEntries(this.retrying)
   }
 
   busySessions(): string[] {
@@ -1161,6 +1186,11 @@ export class SessionRunner {
    * copies of every file.
    */
   private async write(files: SnapshotFile[], directory?: string): Promise<SnapshotFile[]> {
+    // Under the project's lock, so no turn's photograph lands half way through (N11-15).
+    return directory ? withProjectLock(directory, () => this.writeNow(files, directory)) : this.writeNow(files, directory)
+  }
+
+  private async writeNow(files: SnapshotFile[], directory?: string): Promise<SnapshotFile[]> {
     const swapped: SnapshotFile[] = []
     for (const file of files) {
       swapped.push(await keepSnapshotFile(this.snapshots, directory, file.path))
@@ -1209,6 +1239,27 @@ export class SessionRunner {
     if (!clashes.length) return
     const rest = clashes.length > 1 ? ` (and ${clashes.length - 1} more)` : ""
     throw new Error(`Another conversation has changed ${clashes[0]}${rest} since this turn, so taking it back would undo that work too`)
+  }
+
+  /**
+   * A turn's 撤销 from the "edited N files" card (N11-13).
+   *
+   * It checked only that its own conversation was idle. Undo and redo also
+   * refuse to take another conversation's later work with them, and record the
+   * restore so the next one to look sees it; this did neither, so it could put
+   * back a file another conversation had changed since. It now does both, and
+   * does its writing under the project's lock as they do (N11-15).
+   */
+  async revertTurn(sessionID: string, messages: Message[]): Promise<Awaited<ReturnType<typeof revertTurnFiles>>> {
+    if (this.isRunning(sessionID)) throw new CodedError("Wait for the current turn to finish", "error.sessionBusy")
+    const session = await this.store.require(sessionID)
+    const paths = turnFilePaths(session.directory, messages)
+    const since = Math.min(...messages.map((message) => message.time.created))
+    const files = paths.map((path) => ({ path }) as SnapshotFile)
+    await this.guardOthers(sessionID, Number.isFinite(since) ? since : Date.now(), files)
+    const result = await withProjectLock(session.directory, () => revertTurnFiles(session.directory, messages))
+    if (result.restored + result.removed > 0) await this.noteRestore(sessionID, files)
+    return result
   }
 
   /** A restore is a write like any other, so the next conversation to look sees it. */
@@ -2097,6 +2148,8 @@ export class SessionRunner {
           })
         }
         this.running.delete(sessionID)
+        this.retrying.delete(sessionID)
+        this.workingIn.delete(sessionID)
 
         /*
          * The last read of the waiting list, and the only one that can see a
@@ -2132,6 +2185,7 @@ export class SessionRunner {
     // plan: what this step is judged by; a plan approved during the turn moves it to build from the next step.
     this.turnAgents.set(sessionID, session.agent)
     // The project's servers are connected (or have failed) before the turn is offered their tools, as MiMo's instance waits for them.
+    this.workingIn.set(sessionID, session.directory)
     await this.mcp?.ready(session.directory)
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new CodedError(`No provider called ${session.model.provider} is set up`, "error.noModel")
@@ -2532,9 +2586,11 @@ export class SessionRunner {
 
       // Tools in one assistant turn are independent, so run them together and
       // let each report its own transitions.
+      // At most STEP_TOOL_LIMIT at once (N11-20): twenty shell commands in one reply used to be twenty processes together.
+      const calls = new Semaphore(STEP_TOOL_LIMIT)
       await Promise.all(
         pending.map((part) =>
-          this.runTool({ part, assistant, session: { id: sessionID, directory: session.directory }, signal: controller.signal }),
+          calls.run(() => this.runTool({ part, assistant, session: { id: sessionID, directory: session.directory }, signal: controller.signal })),
         ),
       )
 
@@ -2622,15 +2678,19 @@ export class SessionRunner {
     const flush = setInterval(() => {
       if (!dirty) return
       dirty = false
-      void this.store.saveMessage(assistant, true)
+      // Not flushed to the platter: overwritten half a second from now, and the step's own save is durable (N11-29).
+      void this.store.saveMessage(assistant, true, false)
     }, 500)
 
     const announce = (part: AssistantPart) => {
       assistant.parts.push(part)
-      this.bus.publish({ type: "message.updated", message: structuredClone(assistant) })
+      // N11-4: the part, not the whole message. The message itself was announced before the stream opened.
+      this.bus.publish({ type: "message.part.updated", sessionID: assistant.sessionID, messageID: assistant.id, part: structuredClone(part) })
     }
 
     const append = (part: TextPart | ReasoningPart, text: string) => {
+      // Where this append belongs, so a window that missed one can tell (N11-32).
+      const at = part.text.length
       part.text += text
       dirty = true
       this.bus.publish({
@@ -2639,6 +2699,7 @@ export class SessionRunner {
         messageID: assistant.id,
         partID: part.id,
         text,
+        at,
       })
     }
 
@@ -2703,6 +2764,24 @@ export class SessionRunner {
       /* When this request first failed: each kind of failure is retried for so long and no longer. */
       let firstFailure: number | undefined
       for (let attempt = 1; outcome === undefined; attempt++) {
+        /*
+         * N11-21: another conversation on the same provider was just told to
+         * wait. Knocking anyway only earns another 429 and makes the account's
+         * limit last longer, so this one waits too - in the open, with the same
+         * countdown and the same way out.
+         */
+        const held = cooldownLeft(assistant.model.provider)
+        // Under a second is the tail of a wait this request has just sat out itself, not a reason for another row.
+        if (held >= 1000) {
+          const retry = { attempt, message: "The provider asked every request to wait", next: Date.now() + held, kind: "rate_limit" }
+          this.retrying.set(assistant.sessionID, { messageID: assistant.id, ...retry })
+          this.bus.publish({ type: "message.updated", message: { ...structuredClone(assistant), retry } })
+          try {
+            if (!(await waitFor(held, request.signal))) throw new DOMException("Aborted", "AbortError")
+          } finally {
+            this.retrying.delete(assistant.sessionID)
+          }
+        }
         try {
           // The SDK's own quiet retries are off here: this loop retries in the open.
           outcome = await adapter.stream({ ...request, retries: 0, signal: inner.signal }, emit)
@@ -2750,14 +2829,17 @@ export class SessionRunner {
           assistant.parts = []
           blocks.clear()
           dirty = false
-          this.bus.publish({
-            type: "message.updated",
-            message: {
-              ...structuredClone(assistant),
-              retry: { attempt, message: describe(err), next: Date.now() + decision.wait, kind: decision.kind, max: decision.max },
-            },
-          })
-          if (!(await waitFor(decision.wait, request.signal))) throw new DOMException("Aborted", "AbortError")
+          const retry = { attempt, message: describe(err), next: Date.now() + decision.wait, kind: decision.kind, max: decision.max }
+          // Everyone else on this provider holds off for as long as it asked (N11-21).
+          if (decision.kind === "rate_limit") noteRateLimit(assistant.model.provider, retry.next)
+          // Kept as well as published, so a window that reconnects mid-wait is told (N11-17).
+          this.retrying.set(assistant.sessionID, { messageID: assistant.id, ...retry })
+          this.bus.publish({ type: "message.updated", message: { ...structuredClone(assistant), retry } })
+          try {
+            if (!(await waitFor(decision.wait, request.signal))) throw new DOMException("Aborted", "AbortError")
+          } finally {
+            this.retrying.delete(assistant.sessionID)
+          }
         }
       }
 
@@ -2824,7 +2906,14 @@ export class SessionRunner {
     signal: AbortSignal
   }): Promise<void> {
     const { part, assistant } = input
-    const publish = () => this.bus.publish({ type: "message.updated", message: structuredClone(assistant) })
+    /*
+     * N11-4: every one of the six places below changes this one part and
+     * nothing else, so this one part is what goes out. A bash command reporting
+     * its output ten times a second used to clone and serialise the whole
+     * message - the largest one measured on this machine is 244 KB - and send
+     * it to every window.
+     */
+    const publish = () => this.bus.publish({ type: "message.part.updated", sessionID: assistant.sessionID, messageID: assistant.id, part: structuredClone(part) })
 
     /*
      * A name that does not resolve is repaired rather than refused, which is
@@ -3316,9 +3405,16 @@ export class SessionRunner {
     let failure: unknown
     // tasks: how often the completion gate sent it back, and the last words it had said by then.
     const gate: TaskGate = { turns: 0 }
+    let release: (() => void) | undefined
     try {
+      /*
+       * N11-20: MiMo's process-wide subagent gate. Past min(16, 2 x cores)
+       * subagents at once the rest queue here - still shown as started, not
+       * refused - and one stopped while it waits simply never takes a permit.
+       */
+      release = await this.subagentGate.acquire(controller.signal).catch(() => undefined)
       let reminded = 0
-      for (;;) {
+      while (release) {
         await this.run(child.id, this.config.apiKey(child.model.provider) ?? "", controller)
         await this.steering.get(child.id)?.written
         if (controller.signal.aborted) break
@@ -3362,10 +3458,12 @@ export class SessionRunner {
       failure = err
       if (!(err instanceof Shown)) this.bus.publish({ type: "session.error", sessionID: child.id, error: describe(err) })
     } finally {
+      release?.()
       // Closed with nothing awaited since the last look, so a follow-up either made it in or finds the turn over.
       this.steering.delete(child.id)
       if (!this.owners.has(child.id)) await this.commitSnapshot(child.id).catch(() => undefined)
       this.running.delete(child.id)
+      this.workingIn.delete(child.id)
       this.owners.delete(child.id)
       this.bus.publish({ type: "session.idle", sessionID: child.id })
     }
@@ -3812,6 +3910,21 @@ export class SessionRunner {
     worker.notify = false
     this.abort(sessionID)
     await within(worker.settled, 5000)
+  }
+
+  /**
+   * Everything kept per conversation that nothing else takes away (N11-37):
+   * called once the conversation itself is deleted. Each of these used to live
+   * for the life of the process - a whole system prompt per conversation among
+   * them - because only the turn's own bookkeeping was ever cleared.
+   */
+  forgetSession(sessionID: string): void {
+    this.turnPrune.delete(sessionID)
+    this.turnAgents.delete(sessionID)
+    this.prefixes.delete(sessionID)
+    this.taskQueues.delete(sessionID)
+    this.retrying.delete(sessionID)
+    for (const key of [...this.numbering.keys()]) if (key.startsWith(`${sessionID}:`)) this.numbering.delete(key)
   }
 
   /** subagents: stops every subagent of a conversation that is being deleted. Stop alone leaves background ones working, as MiMo does. */

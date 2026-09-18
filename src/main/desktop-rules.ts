@@ -51,8 +51,14 @@ export function nextZoom(current: number, action: "in" | "out" | "reset"): numbe
   return clampZoom(percent / 100)
 }
 
-/** What a task notification is about. */
-export type TaskNoticeKind = "done" | "confirm"
+/**
+ * What a task notification is about, as MiMo's four kinds (N11-3).
+ *
+ * `done` and `failed` were one kind here, so a scheduled task that failed
+ * overnight still said "task completed"; `chat` is a conversation answering a
+ * message another conversation sent it.
+ */
+export type TaskNoticeKind = "done" | "confirm" | "failed" | "chat"
 
 export interface TaskNotice {
   kind: TaskNoticeKind
@@ -67,7 +73,7 @@ export function readTaskNotice(raw: unknown): TaskNotice {
   const value = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {}
   const text = (field: unknown) => (typeof field === "string" && field ? field.slice(0, 500) : undefined)
   return {
-    kind: value.kind === "confirm" ? "confirm" : "done",
+    kind: value.kind === "confirm" || value.kind === "failed" || value.kind === "chat" ? value.kind : "done",
     sessionID: text(value.sessionID),
     title: text(value.title),
     project: text(value.project),

@@ -924,7 +924,7 @@ async function storedSecretChecks(check: Check, section: Section, root: string):
     check("config.json is 0600", mode === 0o600, mode.toString(8))
   }
   const source = await fs.readFile(path.join(process.cwd(), "src/server/storage.ts"), "utf8").catch(() => "")
-  check("every stored document is written with 0600", /writeAtomic\(this\.file\(key\), JSON\.stringify\(value, null, 2\), 0o600\)/.test(source))
+  check("every stored document is written with 0600", /writeAtomic\(this\.file\(key\), JSON\.stringify\(value, null, 2\), 0o600(?:, durable)?\)/.test(source))
 
   section("Round 8 (X12): the log file masks the rest of MiMo's secret shapes")
   // Made-up tokens of the right shapes.

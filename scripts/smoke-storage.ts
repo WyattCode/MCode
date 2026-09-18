@@ -405,7 +405,7 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     // The same file again, from another conversation: one row, not two.
     await wrote(two.id, "msg_w3", "report.md", 12)
 
-    const artifacts = ArtifactStore.open(path.join(root, "art", "artifacts.db"))
+    const artifacts = await ArtifactStore.open(path.join(root, "art", "artifacts.db"))
     check("the store opens", Boolean(artifacts) && artifacts?.writable === true)
     const unwatch = store.watch((change) => {
       if (change.type === "message") artifacts?.touched(change.message.sessionID)
@@ -413,15 +413,15 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     })
     await artifacts?.reconcile(await store.list(), (id) => store.messages(id))
 
-    check("the same file produced twice is one row, as its identity key says", artifacts?.count() === 2, artifacts?.count())
+    check("the same file produced twice is one row, as its identity key says", (await artifacts?.count()) === 2, await artifacts?.count())
     const reportAt = path.join(directory, "report.md")
-    const reportSources = artifacts?.sourcesOf(reportAt) ?? []
+    const reportSources = (await artifacts?.sourcesOf(reportAt)) ?? []
     check(
       "round 9: every conversation that wrote a file is one of its sources, newest first",
       reportSources.map((source) => source.sessionID).join() === [two.id, one.id].join(),
       reportSources,
     )
-    const listed = artifacts?.list() ?? []
+    const listed = (await artifacts?.list()) ?? []
     const files = listed.flatMap((group) => group.files)
     const report = files.find((file) => file.path === "report.md")
     const helper = files.find((file) => file.path === "helper.ts")
@@ -437,7 +437,7 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     /* Availability is re-checked rather than believed: the record of writing a file says nothing about now. */
     await fs.rm(path.join(directory, "helper.ts"), { force: true })
     await artifacts?.recheck()
-    const gone = (artifacts?.list() ?? []).flatMap((group) => group.files).find((file) => file.path === "helper.ts")
+    const gone = ((await artifacts?.list()) ?? []).flatMap((group) => group.files).find((file) => file.path === "helper.ts")
     check("a file deleted since is found missing on the next check", gone?.exists === false, gone)
 
     /* A file written after the first pass is there at the next listing, without a restart. */
@@ -446,7 +446,7 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     await artifacts?.reconcile(await store.list(), (id) => store.messages(id))
     check(
       "round 9: a file written since the last pass is picked up by the next one",
-      (artifacts?.list() ?? []).some((group) => group.files.some((file) => file.path === "later-notes.md")),
+      ((await artifacts?.list()) ?? []).some((group) => group.files.some((file) => file.path === "later-notes.md")),
     )
 
     /*
@@ -456,12 +456,12 @@ export async function storageChecks(check: Check, section: (name: string) => voi
      */
     const twoMessages = await store.messages(two.id)
     const beforeDelete = await store.list()
-    artifacts?.detach(two.id)
+    await artifacts?.detach(two.id)
     await store.delete(two.id)
-    const afterTwo = artifacts?.sourcesOf(reportAt) ?? []
+    const afterTwo = (await artifacts?.sourcesOf(reportAt)) ?? []
     check(
       "round 9: deleting one writer unlinks only its source, keeping the other and the gone one's title",
-      artifacts?.count() === 3 &&
+      (await artifacts?.count()) === 3 &&
         afterTwo.length === 2 &&
         afterTwo.some((source) => source.sessionID === one.id) &&
         afterTwo.some((source) => source.sessionID === "" && source.title === "Second conversation"),
@@ -469,17 +469,17 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     )
     check(
       "round 9: and the file is shown under the writer that still exists",
-      (artifacts?.list() ?? []).find((group) => group.files.some((file) => file.path === "report.md"))?.sessionID === one.id,
+      ((await artifacts?.list()) ?? []).find((group) => group.files.some((file) => file.path === "report.md"))?.sessionID === one.id,
     )
     // A pass that started before the deletion still has the conversation and its messages in hand.
     await artifacts?.reconcile(beforeDelete, (id) => (id === two.id ? Promise.resolve(twoMessages) : store.messages(id)))
-    check("round 9: a deleted conversation is not linked back by a later pass", (artifacts?.sourcesOf(reportAt) ?? []).every((source) => source.sessionID !== two.id))
+    check("round 9: a deleted conversation is not linked back by a later pass", ((await artifacts?.sourcesOf(reportAt)) ?? []).every((source) => source.sessionID !== two.id))
 
-    artifacts?.detach(one.id)
+    await artifacts?.detach(one.id)
     await store.delete(one.id)
-    const after = artifacts?.list() ?? []
+    const after = (await artifacts?.list()) ?? []
     const survived = after.flatMap((group) => group.files).find((file) => file.path === "helper.ts")
-    check("a deleted conversation's files are still held", artifacts?.count() === 3 && Boolean(survived), artifacts?.count())
+    check("a deleted conversation's files are still held", (await artifacts?.count()) === 3 && Boolean(survived), await artifacts?.count())
     check("under the title that conversation had", after.some((group) => group.title === "First conversation" && group.sessionID === ""), after.map((group) => [group.title, group.sessionID]))
 
     /* A message edited away takes that conversation's claim with it; a file no one claims goes, as in MiMo. */
@@ -487,24 +487,27 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     await fs.writeFile(path.join(directory, "draft.md"), "# draft", "utf8")
     await wrote(three.id, "msg_w5", "draft.md", 14)
     await artifacts?.reconcile(await store.list(), (id) => store.messages(id))
-    const withDraft = artifacts?.count()
+    const withDraft = await artifacts?.count()
     await store.deleteMessage(three.id, "msg_w5")
     await artifacts?.reconcile(await store.list(), (id) => store.messages(id))
-    check("round 9: a claim edited out of its conversation is dropped at the next pass", withDraft === 4 && artifacts?.count() === 3, [withDraft, artifacts?.count()])
+    check("round 9: a claim edited out of its conversation is dropped at the next pass", withDraft === 4 && (await artifacts?.count()) === 3, [withDraft, await artifacts?.count()])
 
     /*
      * Search, as MiMo's: the file's name only, through the trigram index for
      * three characters or more, a substring test below that; NFC and case do
      * not matter.
      */
-    const names = (query: string) => (artifacts?.list(query) ?? []).flatMap((group) => group.files.map((file) => file.path)).sort()
-    check("the store can be searched by file name", names("report").join() === "report.md", names("report"))
-    check("round 9: a search three characters or longer goes through the trigram index", names("ORT.M").join() === "report.md" && names("ter-no").join() === "later-notes.md", [names("ORT.M"), names("ter-no")])
-    check("round 9: a shorter one is a substring test", names("ts").join() === "helper.ts" && names("r").length === 3, [names("ts"), names("r")])
-    check("round 9: a conversation's title is not searched, as MiMo searches the name only", names("First").length === 0, names("First"))
-    check("round 9: a quote in the search is taken literally", names('re"port').length === 0)
+    const names = async (query: string) => ((await artifacts?.list(query)) ?? []).flatMap((group) => group.files.map((file) => file.path)).sort()
+    const reportNames = await names("report")
+    check("the store can be searched by file name", reportNames.join() === "report.md", reportNames)
+    const trigram = [await names("ORT.M"), await names("ter-no")]
+    check("round 9: a search three characters or longer goes through the trigram index", trigram[0]!.join() === "report.md" && trigram[1]!.join() === "later-notes.md", trigram)
+    const short = [await names("ts"), await names("r")]
+    check("round 9: a shorter one is a substring test", short[0]!.join() === "helper.ts" && short[1]!.length === 3, short)
+    check("round 9: a conversation's title is not searched, as MiMo searches the name only", (await names("First")).length === 0, await names("First"))
+    check("round 9: a quote in the search is taken literally", (await names('re"port')).length === 0)
     unwatch()
-    artifacts?.close()
+    await artifacts?.close()
 
     /*
      * A version-1 store is carried to version 2 without losing a row: the
@@ -530,23 +533,24 @@ export async function storageChecks(check: Check, section: (name: string) => voi
       add.run(path.join(oldDir, "orphan.pptx").toLowerCase(), "", "Gone one", oldDir, "orphan.pptx", path.join(oldDir, "orphan.pptx"), "deliverable", "doc", 6, 6)
       raw.close()
     }
-    const migrated = ArtifactStore.open(oldFile)
-    const oldNames = (query: string) => (migrated?.list(query) ?? []).flatMap((group) => group.files.map((file) => file.path))
-    check("round 9: a version-1 store opens writable and keeps every row", migrated?.writable === true && migrated?.count() === 2, migrated?.count())
+    const migrated = await ArtifactStore.open(oldFile)
+    const oldNames = async (query: string) => ((await migrated?.list(query)) ?? []).flatMap((group) => group.files.map((file) => file.path))
+    check("round 9: a version-1 store opens writable and keeps every row", migrated?.writable === true && (await migrated?.count()) === 2, await migrated?.count())
+    const keptSources = (await migrated?.sourcesOf(path.join(root, "old-project", "kept.md"))) ?? []
+    const orphanSources = (await migrated?.sourcesOf(path.join(root, "old-project", "orphan.pptx"))) ?? []
     check(
       "round 9: each old row's conversation becomes its source, a gone one keeping its title",
-      migrated?.sourcesOf(path.join(root, "old-project", "kept.md"))[0]?.sessionID === "ses_live" &&
-        migrated?.sourcesOf(path.join(root, "old-project", "orphan.pptx"))[0]?.title === "Gone one",
+      keptSources[0]?.sessionID === "ses_live" && orphanSources[0]?.title === "Gone one",
     )
-    check("round 9: and the old rows are searchable through the new index", oldNames("orphan").join() === "orphan.pptx" && oldNames("kept").join() === "kept.md")
+    check("round 9: and the old rows are searchable through the new index", (await oldNames("orphan")).join() === "orphan.pptx" && (await oldNames("kept")).join() === "kept.md")
     check(
       "round 9: the old rows are still grouped as before",
-      (migrated?.list() ?? []).some((group) => group.sessionID === "" && group.title === "Gone one"),
+      ((await migrated?.list()) ?? []).some((group) => group.sessionID === "" && group.title === "Gone one"),
     )
-    migrated?.close()
-    const reopened = ArtifactStore.open(oldFile)
-    check("round 9: opening a migrated store again changes nothing", reopened?.writable === true && reopened?.count() === 2)
-    reopened?.close()
+    await migrated?.close()
+    const reopened = await ArtifactStore.open(oldFile)
+    check("round 9: opening a migrated store again changes nothing", reopened?.writable === true && (await reopened?.count()) === 2)
+    await reopened?.close()
 
     /*
      * A store written by a newer build is read but never written over. Unlike
@@ -554,20 +558,20 @@ export async function storageChecks(check: Check, section: (name: string) => voi
      * record of files whose conversations are gone.
      */
     const newerFile = path.join(root, "art", "artifacts-newer.db")
-    const seed = ArtifactStore.open(newerFile)
-    seed?.close()
+    const seed = await ArtifactStore.open(newerFile)
+    await seed?.close()
     const raw = new (await import("node:sqlite")).DatabaseSync(newerFile)
     raw.prepare("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(ARTIFACT_SCHEMA_VERSION + 1, Date.now())
     raw.close()
-    const newer = ArtifactStore.open(newerFile)
+    const newer = await ArtifactStore.open(newerFile)
     check("a store from a newer build opens read-only rather than being rebuilt", newer?.writable === false, newer?.writable)
     const lateSession = await store.create({ directory, model: MODEL, title: "Late conversation" })
     await wrote(lateSession.id, "msg_w6", "report.md", 20)
     newer?.touched(lateSession.id)
-    newer?.detach(lateSession.id)
+    await newer?.detach(lateSession.id)
     await newer?.reconcile(await store.list(), (id) => store.messages(id))
-    check("and nothing is written into it", newer?.count() === 0, newer?.count())
-    newer?.close()
+    check("and nothing is written into it", (await newer?.count()) === 0, await newer?.count())
+    await newer?.close()
   }
 
   // --------------------------------------------------------------- S20/S21

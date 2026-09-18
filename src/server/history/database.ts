@@ -1,6 +1,6 @@
 import fs from "node:fs"
 import path from "node:path"
-import { DatabaseSync } from "node:sqlite"
+import { SqlDatabase, STORE_PRAGMAS, type Sql } from "../sql-worker"
 
 /**
  * The SQLite file behind history and memory search.
@@ -83,7 +83,8 @@ export type OpenedAs = "existing" | "created" | "recreated"
 
 export class IndexDatabase {
   private constructor(
-    readonly db: DatabaseSync,
+    /** The file, open in a worker of its own (N11-12). */
+    readonly db: SqlDatabase,
     readonly file: string,
     readonly openedAs: OpenedAs,
   ) {}
@@ -92,11 +93,11 @@ export class IndexDatabase {
    * Opens the index at `file`, making it when it is missing and making it
    * again when it is damaged or from another schema.
    */
-  static open(file: string): IndexDatabase {
+  static async open(file: string): Promise<IndexDatabase> {
     fs.mkdirSync(path.dirname(file), { recursive: true })
     const existed = fs.existsSync(file)
     try {
-      return new IndexDatabase(IndexDatabase.connect(file), file, existed ? "existing" : "created")
+      return new IndexDatabase(await IndexDatabase.connect(file), file, existed ? "existing" : "created")
     } catch (failure) {
       /*
        * Only a damaged index is started over.
@@ -110,7 +111,7 @@ export class IndexDatabase {
        */
       if (!IndexDatabase.damaged(failure)) throw failure
       IndexDatabase.quarantine(file)
-      return new IndexDatabase(IndexDatabase.connect(file), file, "recreated")
+      return new IndexDatabase(await IndexDatabase.connect(file), file, "recreated")
     }
   }
 
@@ -147,25 +148,23 @@ export class IndexDatabase {
     IndexDatabase.remove(file)
   }
 
-  private static connect(file: string): DatabaseSync {
-    const db = new DatabaseSync(file)
+  private static async connect(file: string): Promise<SqlDatabase> {
+    const db = await SqlDatabase.open(file)
     try {
-      const check = db.prepare("PRAGMA quick_check").get() as Record<string, unknown> | undefined
+      const check = await db.get("PRAGMA quick_check")
       if (check && Object.values(check)[0] !== "ok") throw new Error("the index failed its integrity check")
-      const version = Number((db.prepare("PRAGMA user_version").get() as Record<string, unknown> | undefined)?.user_version ?? 0)
-      const tables = db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type = 'table'").get() as { n: number }
+      const version = Number((await db.get("PRAGMA user_version"))?.user_version ?? 0)
+      const tables = (await db.get<{ n: number }>("SELECT count(*) AS n FROM sqlite_master WHERE type = 'table'"))!
       // A file with tables from another schema is not patched: it is started over.
       if (tables.n > 0 && version !== SCHEMA_VERSION) throw new Error(`the index is at schema ${version}`)
-      db.exec("PRAGMA journal_mode = WAL")
-      db.exec(SCHEMA)
-      db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
+      // MiMo's pragmas (N11-12): WAL as before, plus a busy wait and WAL's own flushing.
+      for (const pragma of STORE_PRAGMAS) await db.exec(pragma)
+      await db.exec(SCHEMA)
+      await db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
       return db
     } catch (failure) {
-      try {
-        db.close()
-      } catch {
-        // Already unusable; the file is removed next either way.
-      }
+      // Already unusable; the file is removed next either way.
+      await db.close()
       throw failure
     }
   }
@@ -175,33 +174,22 @@ export class IndexDatabase {
     for (const suffix of ["", "-wal", "-shm", "-journal"]) fs.rmSync(file + suffix, { force: true })
   }
 
-  meta(key: string): string | undefined {
-    const row = this.db.prepare("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | undefined
+  async meta(key: string): Promise<string | undefined> {
+    const row = await this.db.get<{ value: string }>("SELECT value FROM meta WHERE key = ?", key)
     return row?.value
   }
 
-  setMeta(key: string, value: string): void {
-    this.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value)
+  async setMeta(key: string, value: string): Promise<void> {
+    await this.db.run("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, value)
   }
 
-  /** Runs `work` as one transaction: all of it lands, or none of it does. */
-  transaction<T>(work: () => T): T {
-    this.db.exec("BEGIN IMMEDIATE")
-    try {
-      const result = work()
-      this.db.exec("COMMIT")
-      return result
-    } catch (failure) {
-      this.db.exec("ROLLBACK")
-      throw failure
-    }
+  /** Runs `work` as one transaction: all of it lands, or none of it does. Its statements go through `tx`. */
+  transaction<T>(work: (tx: Sql) => Promise<T>): Promise<T> {
+    return this.db.transaction(work)
   }
 
-  close(): void {
-    try {
-      this.db.close()
-    } catch {
-      // Closing twice, or after a failure, changes nothing worth reporting.
-    }
+  /** Closing twice, or after a failure, changes nothing worth reporting. */
+  close(): Promise<void> {
+    return this.db.close()
   }
 }
