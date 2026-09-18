@@ -143,6 +143,7 @@ function remapContent(content: string, font: string): string {
 }
 
 const ratios = new Map<string, number>()
+const RATIOS_KEPT = 512
 function normalLineHeight(family: string, sample: string): number {
   const key = `${family}\u0000${sample}`
   const known = ratios.get(key)
@@ -154,6 +155,8 @@ function normalLineHeight(family: string, sample: string): number {
   const measured = probe.getBoundingClientRect().height / 100
   probe.remove()
   const ratio = measured >= 1 && measured <= 1.8 ? measured : 1.2
+  // Oldest out first, so a long session of document previews cannot grow this for ever (N11-37).
+  if (ratios.size >= RATIOS_KEPT) ratios.delete(ratios.keys().next().value!)
   ratios.set(key, ratio)
   return ratio
 }

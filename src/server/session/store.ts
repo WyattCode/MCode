@@ -632,8 +632,8 @@ export class SessionStore {
    * high-frequency path where a delta event already told the UI what changed
    * and the write is only for durability.
    */
-  async saveMessage(message: Message, silent = false): Promise<void> {
-    await this.storage.write(this.messageKey(message.sessionID, message.id), message)
+  async saveMessage(message: Message, silent = false, durable = true): Promise<void> {
+    await this.storage.write(this.messageKey(message.sessionID, message.id), message, { durable })
     this.changed({ type: "message", message })
     if (!silent) this.bus.publish({ type: "message.updated", message })
   }

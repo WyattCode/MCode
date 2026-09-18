@@ -39,6 +39,7 @@ import { ToolError } from "../tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../tool/validate"
 import { ToolOutputs } from "../tool/truncate"
 import { cooldownLeft, noteRateLimit, retryDecision, waitFor, withRequestRetry } from "./retry"
+import { Semaphore, STEP_TOOL_LIMIT, SUBAGENT_LIMIT } from "./semaphore"
 import { CodedError, codeOf, paramsOf } from "@shared/errors"
 import { AnthropicAdapter, describeAnthropicError } from "../provider/anthropic"
 import { OpenAICompatible } from "../provider/openai"
@@ -285,6 +286,8 @@ const PLAN_AWARE = new Set(["write", "edit", "notebook_edit", "plan_exit"])
 
 export class SessionRunner {
   private readonly running = new Map<string, AbortController>()
+  /** N11-20: every subagent in the process shares these permits; top-level conversations do not take one. */
+  readonly subagentGate = new Semaphore(SUBAGENT_LIMIT)
   /**
    * The turns that are waiting between attempts, by conversation (N11-17).
    *
@@ -590,6 +593,8 @@ export class SessionRunner {
    * would be littered by them, so those go to the app's own folder instead.
    */
   private async planFor(session: SessionInfo): Promise<{ file: string; folders: string[] }> {
+    // Bounded: one entry per folder ever opened, which on a long-lived profile is not a small number (N11-37).
+    if (this.repos.size > 256) this.repos.clear()
     let repo = this.repos.get(session.directory)
     if (repo === undefined) {
       repo = (await gitStatus(session.directory).catch(() => undefined))?.repo === true
@@ -2530,9 +2535,11 @@ export class SessionRunner {
 
       // Tools in one assistant turn are independent, so run them together and
       // let each report its own transitions.
+      // At most STEP_TOOL_LIMIT at once (N11-20): twenty shell commands in one reply used to be twenty processes together.
+      const calls = new Semaphore(STEP_TOOL_LIMIT)
       await Promise.all(
         pending.map((part) =>
-          this.runTool({ part, assistant, session: { id: sessionID, directory: session.directory }, signal: controller.signal }),
+          calls.run(() => this.runTool({ part, assistant, session: { id: sessionID, directory: session.directory }, signal: controller.signal })),
         ),
       )
 
@@ -2612,7 +2619,8 @@ export class SessionRunner {
     const flush = setInterval(() => {
       if (!dirty) return
       dirty = false
-      void this.store.saveMessage(assistant, true)
+      // Not flushed to the platter: overwritten half a second from now, and the step's own save is durable (N11-29).
+      void this.store.saveMessage(assistant, true, false)
     }, 500)
 
     const announce = (part: AssistantPart) => {
@@ -3323,9 +3331,16 @@ export class SessionRunner {
     let failure: unknown
     // tasks: how often the completion gate sent it back, and the last words it had said by then.
     const gate: TaskGate = { turns: 0 }
+    let release: (() => void) | undefined
     try {
+      /*
+       * N11-20: MiMo's process-wide subagent gate. Past min(16, 2 x cores)
+       * subagents at once the rest queue here - still shown as started, not
+       * refused - and one stopped while it waits simply never takes a permit.
+       */
+      release = await this.subagentGate.acquire(controller.signal).catch(() => undefined)
       let reminded = 0
-      for (;;) {
+      while (release) {
         await this.run(child.id, this.config.apiKey(child.model.provider) ?? "", controller)
         await this.steering.get(child.id)?.written
         if (controller.signal.aborted) break
@@ -3369,6 +3384,7 @@ export class SessionRunner {
       failure = err
       if (!(err instanceof Shown)) this.bus.publish({ type: "session.error", sessionID: child.id, error: describe(err) })
     } finally {
+      release?.()
       // Closed with nothing awaited since the last look, so a follow-up either made it in or finds the turn over.
       this.steering.delete(child.id)
       if (!this.owners.has(child.id)) await this.commitSnapshot(child.id).catch(() => undefined)
@@ -3819,6 +3835,21 @@ export class SessionRunner {
     worker.notify = false
     this.abort(sessionID)
     await within(worker.settled, 5000)
+  }
+
+  /**
+   * Everything kept per conversation that nothing else takes away (N11-37):
+   * called once the conversation itself is deleted. Each of these used to live
+   * for the life of the process - a whole system prompt per conversation among
+   * them - because only the turn's own bookkeeping was ever cleared.
+   */
+  forgetSession(sessionID: string): void {
+    this.turnPrune.delete(sessionID)
+    this.turnAgents.delete(sessionID)
+    this.prefixes.delete(sessionID)
+    this.taskQueues.delete(sessionID)
+    this.retrying.delete(sessionID)
+    for (const key of [...this.numbering.keys()]) if (key.startsWith(`${sessionID}:`)) this.numbering.delete(key)
   }
 
   /** subagents: stops every subagent of a conversation that is being deleted. Stop alone leaves background ones working, as MiMo does. */

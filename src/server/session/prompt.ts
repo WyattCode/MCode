@@ -330,6 +330,7 @@ async function projectInstructions(
  * MCode keeps the fresher answer.
  */
 const environments = new Map<string, string>()
+const ENVIRONMENTS_KEPT = 64
 
 async function environment(directory: string, model?: PromptModel, configured?: string, today = new Date().toISOString().slice(0, 10)): Promise<string> {
   // The shell the bash tool will pick: a login shell of fish or nu is not it.
@@ -369,6 +370,8 @@ async function environment(directory: string, model?: PromptModel, configured?: 
   lines.push("", `Top level of the project: ${entries}`)
 
   const block = lines.join("\n")
+  // Keyed by the date among other things, so it grows by a day's worth of entries every day; kept to the recent ones (N11-37).
+  if (environments.size >= ENVIRONMENTS_KEPT) environments.delete(environments.keys().next().value!)
   environments.set(key, block)
   return block
 }

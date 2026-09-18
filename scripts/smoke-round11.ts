@@ -24,6 +24,7 @@ import { RATE_LIMIT_HINT_CAP, cooldownLeft, noteRateLimit, retryDecision, retryK
 import { cutLiveStreams, liveStreams, stallGuard } from "../src/server/provider/stall"
 import { failureCode } from "../src/server/session/error-map"
 import { ProviderHttpError } from "../src/server/provider/types"
+import { Semaphore, STEP_TOOL_LIMIT, SUBAGENT_LIMIT } from "../src/server/session/semaphore"
 import type { Message, ModelRef, ServerEvent, SessionInfo, ToolPart } from "@shared/protocol"
 import { narrowcastSession } from "@shared/protocol"
 
@@ -407,6 +408,55 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     check("session.list replays the turns waiting between attempts", /retries: runtime\.runner\.retryRows\(\)/.test(handlers) && /noteRetries\(listed\.retries\)/.test(store) && /applyRetry\(sessionID, messages\.value\)/.test(store))
     const runner = await read("src/server/session/runner.ts")
     check("each text delta says where it belongs, and a window that missed one reads the transcript again", /const at = part\.text\.length/.test(runner) && /part\.text\.length !== event\.at/.test(store) && /noteDeltaGap\(event\.sessionID\)/.test(store))
+  }
+
+  section("Round 11 (N11-20): a gate on subagents, none on conversations")
+  {
+    const gate = new Semaphore(3)
+    const releases: (() => void)[] = []
+    for (let i = 0; i < 3; i++) releases.push(await gate.acquire())
+    const queued = gate.acquire()
+    const giveUp = new AbortController()
+    const abandoned = gate.acquire(giveUp.signal).then(() => "granted", () => "left")
+    check("past the permits, callers queue rather than being refused", gate.held === 3 && gate.waiting === 2)
+    giveUp.abort()
+    check("one stopped while it waits leaves the queue", (await abandoned) === "left" && gate.waiting === 1)
+    releases.pop()!()
+    const next = await queued
+    check("and a permit given back goes to the next in line", gate.held === 3 && gate.waiting === 0)
+    next()
+    const cores = os.availableParallelism?.() ?? os.cpus().length
+    check("MiMo's size: min(16, 2 x cores)", SUBAGENT_LIMIT === Math.max(1, Math.min(16, 2 * cores)) && STEP_TOOL_LIMIT === 8, { SUBAGENT_LIMIT, cores })
+    const runner = await read("src/server/session/runner.ts")
+    check(
+      "a subagent's turn waits for a permit and gives it back; a step's calls run eight at a time",
+      /release = await this\.subagentGate\.acquire\(controller\.signal\)/.test(runner) && /release\?\.\(\)/.test(runner) && /const calls = new Semaphore\(STEP_TOOL_LIMIT\)/.test(runner),
+    )
+    check("while a conversation's own turn takes no permit", !/subagentGate/.test(runner.slice(runner.indexOf("private launch("), runner.indexOf("private launch(") + 4000)))
+  }
+
+  section("Round 11 (N11-29/N11-30/N11-37): storage and what is kept per conversation")
+  {
+    const temp = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r11-tmp-"))
+    const storage = new Storage(temp)
+    await storage.write("session/a/info", { id: "a" })
+    await fs.writeFile(path.join(temp, "session", "a", "info.json.4242.7.tmp"), "half", "utf8")
+    await fs.writeFile(path.join(temp, "session", "a", `info.json.${process.pid}.9.tmp`), "mine", "utf8")
+    const swept = await storage.sweepTemps()
+    const left = await fs.readdir(path.join(temp, "session", "a"))
+    check("a temp file another run left is swept, one of this run's and the document itself are not", swept === 1 && left.includes("info.json") && left.includes(`info.json.${process.pid}.9.tmp`) && !left.includes("info.json.4242.7.tmp"), left)
+    await storage.write("session/a/info", { id: "a", fast: true }, { durable: false })
+    check("a write that skips the flush still lands whole", JSON.stringify(await storage.read("session/a/info")) === JSON.stringify({ id: "a", fast: true }))
+    await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined)
+    const storageSource = await read("src/server/storage.ts")
+    const runner = await read("src/server/session/runner.ts")
+    check("only the streaming half-second saves skip the flush", /if \(durable\) await handle\.sync\(\)/.test(storageSource) && /void this\.store\.saveMessage\(assistant, true, false\)/.test(runner) && (runner.match(/saveMessage\([^)]*, false\)/g) ?? []).length === 1)
+    const handlers = await read("src/server/handlers.ts")
+    const forget = runner.slice(runner.indexOf("forgetSession(sessionID: string): void {"), runner.indexOf("forgetSession(sessionID: string): void {") + 500)
+    check(
+      "a deleted conversation's per-conversation state goes with it",
+      ["turnPrune", "turnAgents", "prefixes", "taskQueues", "numbering"].every((field) => forget.includes(`this.${field}`)) && /runtime\.runner\.forgetSession\(request\.sessionID\)/.test(handlers),
+    )
   }
 
   section("Round 11 (N11-3): the four kinds of task notification")

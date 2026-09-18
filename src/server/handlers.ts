@@ -501,8 +501,12 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       // subagents: a conversation's subagents go with it, background ones stopped first; nothing else could reach them.
       await runtime.runner.dropSubagents(request.sessionID)
       for (const child of await runtime.sessions.list()) {
-        if (child.parentID === request.sessionID) await runtime.sessions.delete(child.id)
+        if (child.parentID !== request.sessionID) continue
+        await runtime.sessions.delete(child.id)
+        runtime.runner.forgetSession(child.id)
+        await runtime.permissions.forgetSession(child.id)
       }
+      runtime.runner.forgetSession(request.sessionID)
       await runtime.sessions.delete(request.sessionID)
       /*
        * The shadow repository undo keeps for that project goes with it, once the

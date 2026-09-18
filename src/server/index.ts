@@ -130,6 +130,9 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       )
       await migrateCheckpoints(storage, runner.checkpoints, config)
       await runner.checkpoints.sweep((await sessions.list()).map((session) => session.directory))
+      // Temp files a killed write of an earlier run left in the storage folder (N11-30).
+      const swept = await storage.sweepTemps()
+      if (swept) console.info(`[storage] removed ${swept} temp file(s) an earlier run left behind`)
       // Brings the store up to date with the transcripts and re-checks what is still on disk.
       await artifacts?.reconcile(await sessions.list(), (id) => sessions.messages(id))
     } catch {
