@@ -88,6 +88,7 @@ watch(
       :active="active"
       :height="0"
       :shellID="shell"
+      surface="panel"
       :sessionID="sessionID"
       :directory="sessionID ? undefined : directory"
       @opened="opened"

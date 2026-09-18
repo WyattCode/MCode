@@ -29,6 +29,7 @@ import { onGitWaiting, queuedWrites, serialisedWrite } from "../src/server/git-q
 import { checkoutFile, commit as gitCommit } from "../src/server/git"
 import { withProjectLock } from "../src/server/session/snapshot"
 import { authOnce } from "../src/server/mcp-oauth"
+import { Shells } from "../src/server/shell"
 import type { Message, ModelRef, ServerEvent, SessionInfo, ToolPart } from "@shared/protocol"
 import { narrowcastSession } from "@shared/protocol"
 
@@ -600,6 +601,31 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
       /data-mcp-apply-now/.test(settings) && /type: "mcp\.applyNow"/.test(settings) && ["set.mcp.unapplied", "set.mcp.applyNow", "set.mcp.applyDoing", "set.mcp.applyDone", "set.mcp.applyBusy", "set.mcp.applyFailed"].every((key) => i18n.split(`"${key}":`).length - 1 === 18),
     )
     check("and apply-now keeps the rule: nothing is reconnected under a running turn", /if \(this\.busy\(\)\) return "busy"/.test(mcp))
+  }
+
+  section("Round 11 (N11-9/N11-31): each terminal owns its own shell")
+  {
+    const shells = new Shells(new Bus())
+    const windowA = {}
+    const windowB = {}
+    const cwd = os.tmpdir()
+    const drawer = shells.open("ses_r11", cwd, undefined, { cols: 80, rows: 24 }, windowA, "drawer")
+    const panel = shells.open("ses_r11", cwd, undefined, { cols: 80, rows: 24 }, windowA, "panel")
+    const listed = shells.list("ses_r11", windowA, "drawer").map((entry) => entry.shellID)
+    check("the drawer lists its own shells and never the right panel's", listed.length === 1 && listed[0] === drawer && !listed.includes(panel), listed)
+    check("and the panel's are its own too", shells.list("ses_r11", windowA, "panel").map((entry) => entry.shellID).join() === panel)
+    check("a shell's output is for the window that owns it", shells.ownerOf(drawer) === windowA)
+    shells.close(drawer, windowB)
+    check("another window cannot close it", shells.list("ses_r11", windowA, "drawer").length === 1)
+    shells.close(drawer, windowA)
+    shells.close(panel, windowA)
+    check("its owner can", shells.list("ses_r11", windowA, "drawer").length === 0 && shells.list("ses_r11", windowA, "panel").length === 0)
+    await shells.closeAll()
+    const index = await read("src/server/index.ts")
+    check("the socket sends a terminal's output to its owner alone", /if \(shellOwner && shellOwner !== client\) continue/.test(index))
+    const drawerSource = await read("src/renderer/src/components/TerminalDrawer.vue")
+    const panelSource = await read("src/renderer/src/components/right/RpTerminal.vue")
+    check("and each terminal says which it is", /surface: "drawer"/.test(drawerSource) && /surface="drawer"/.test(drawerSource) && /surface="panel"/.test(panelSource))
   }
 
   section("Round 11 (N11-3): the four kinds of task notification")

@@ -8,6 +8,7 @@ import { WebglAddon } from "@xterm/addon-webgl"
 import { Unicode11Addon } from "@xterm/addon-unicode11"
 import "@xterm/xterm/css/xterm.css"
 import { typedInput } from "@shared/terminal-input"
+import type { ShellSurface } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 import { isPasteKey, terminalPalette } from "../lib/terminal"
@@ -61,6 +62,8 @@ const props = defineProps<{
   sessionID?: string
   /** On the home screen, the project folder picked there, which the shell starts in. */
   directory?: string
+  /** Which terminal this pane is part of; the drawer and the right panel each own their shells (N11-9). */
+  surface?: ShellSurface
 }>()
 /*
  * `used`: something was typed into the shell, now or before this pane - MiMo
@@ -302,6 +305,7 @@ onMounted(async () => {
         ...(props.sessionID ? { sessionID: props.sessionID } : { directory: props.directory }),
         cols: terminal.cols,
         rows: terminal.rows,
+        surface: props.surface ?? "drawer",
       })
       shellID.value = result.shellID
       emit("opened", result.shellID, result.cwd)

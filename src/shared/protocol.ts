@@ -1194,6 +1194,9 @@ export type VoiceEdit = VoiceDraft
  * they happened: the automatic opens and the file notices both read a completed
  * call in any conversation.
  */
+/** The two places a terminal lives; each owns its own shells (N11-9). */
+export type ShellSurface = "drawer" | "panel"
+
 export function narrowcastSession(event: ServerEvent): string | undefined {
   if (event.type === "message.delta") return event.sessionID
   if (event.type === "message.part.updated" && event.part.type === "tool" && (event.part.status === "running" || event.part.status === "pending")) return event.sessionID
@@ -2043,7 +2046,11 @@ export type Request =
    * A conversation's shells work in its folder. The home screen's bottom panel
    * has no conversation yet, so it names the project folder it has picked.
    */
-  | { type: "shell.open"; sessionID?: string; directory?: string; cwd?: string; cols?: number; rows?: number }
+  /**
+   * `surface`: which terminal asked - the bottom drawer or the right panel (N11-9).
+   * Each owns its own pty; a shell opened by one is never listed to the other.
+   */
+  | { type: "shell.open"; sessionID?: string; directory?: string; cwd?: string; cols?: number; rows?: number; surface?: ShellSurface }
   | { type: "shell.input"; shellID: string; data: string }
   | { type: "shell.resize"; shellID: string; cols: number; rows: number }
   | { type: "shell.close"; shellID: string }
@@ -2051,7 +2058,7 @@ export type Request =
    * The shells this session already has running, so the drawer can come back
    * to them instead of starting new ones.
    */
-  | { type: "shell.list"; sessionID?: string; directory?: string }
+  | { type: "shell.list"; sessionID?: string; directory?: string; surface?: ShellSurface }
   /** Everything a shell has printed so far, to redraw a pane that went away. */
   | { type: "shell.attach"; shellID: string }
   | { type: "workspace.list"; directory: string }

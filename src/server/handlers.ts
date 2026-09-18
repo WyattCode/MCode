@@ -1429,21 +1429,22 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
            * is the only thing that will ever end the shell for them.
            */
           owner,
+          request.surface === "panel" ? "panel" : "drawer",
         ),
         cwd,
       } satisfies Handled<"shell.open">
     }
 
     case "shell.input":
-      runtime.shells.write(request.shellID, request.data)
+      runtime.shells.write(request.shellID, request.data, owner)
       return {} satisfies Handled<"shell.input">
 
     case "shell.resize":
-      runtime.shells.resize(request.shellID, request.cols, request.rows)
+      runtime.shells.resize(request.shellID, request.cols, request.rows, owner)
       return {} satisfies Handled<"shell.resize">
 
     case "shell.list":
-      return { shells: runtime.shells.list((await shellGroup(runtime, request)).key, owner) } satisfies Handled<"shell.list">
+      return { shells: runtime.shells.list((await shellGroup(runtime, request)).key, owner, request.surface === "panel" ? "panel" : "drawer") } satisfies Handled<"shell.list">
 
     case "shell.attach": {
       const found = runtime.shells.attach(request.shellID, owner)
@@ -1453,7 +1454,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     }
 
     case "shell.close":
-      runtime.shells.close(request.shellID)
+      runtime.shells.close(request.shellID, owner)
       return {} satisfies Handled<"shell.close">
 
     case "workspace.list":

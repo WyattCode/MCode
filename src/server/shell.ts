@@ -3,7 +3,7 @@ import { spawn as ptySpawn, type IPty } from "@lydell/node-pty"
 import { Identifier } from "@shared/id"
 import { typedInput } from "@shared/terminal-input"
 import type { Bus } from "./bus"
-import type { ShellSummary } from "@shared/protocol"
+import type { ShellSummary, ShellSurface } from "@shared/protocol"
 import { platformShell } from "./shell-path"
 
 /** How wide and how tall the drawer's grid is, in character cells. */
@@ -68,6 +68,8 @@ interface Running {
   sessionID: string
   cwd: string
   owner?: ShellOwner
+  /** Which terminal opened it; the drawer and the right panel never share a pty (N11-9). */
+  surface: ShellSurface
   /** What it has printed, oldest first, trimmed to BUFFER_LIMIT. */
   output: string[]
   bytes: number
@@ -109,7 +111,7 @@ export class Shells {
     private readonly graceMs = ORPHAN_GRACE_MS,
   ) {}
 
-  open(sessionID: string, cwd: string, chosen?: string, size?: ShellSize, owner?: ShellOwner): string {
+  open(sessionID: string, cwd: string, chosen?: string, size?: ShellSize, owner?: ShellOwner, surface: ShellSurface = "drawer"): string {
     const shellID = Identifier.shell()
     const { command, args } = shellCommand(chosen)
     const grid = usable(size) ? size : FALLBACK
@@ -187,13 +189,27 @@ export class Shells {
       this.bus.publish({ type: "shell.exit", shellID, code: exitCode })
     })
 
-    this.shells.set(shellID, { proc, sessionID, cwd, owner, output: [], bytes: 0, alive: true, used: false })
+    this.shells.set(shellID, { proc, sessionID, cwd, owner, surface, output: [], bytes: 0, alive: true, used: false })
     return shellID
   }
 
-  write(shellID: string, data: string): void {
+  /**
+   * Whether this window may drive a shell (N11-9): only what it owns, or what
+   * nobody owns yet. Input, resize and close used to accept any id at all, so
+   * one window could type into, resize or kill another window's terminal.
+   */
+  private allowed(found: Running, owner?: ShellOwner): boolean {
+    return !owner || !found.owner || found.owner === owner
+  }
+
+  /** The window a shell's output is for, so the socket sends it there alone (N11-31); nothing while nobody owns it. */
+  ownerOf(shellID: string): ShellOwner | undefined {
+    return this.shells.get(shellID)?.owner
+  }
+
+  write(shellID: string, data: string, owner?: ShellOwner): void {
     const found = this.shells.get(shellID)
-    if (!found?.alive) return
+    if (!found?.alive || !this.allowed(found, owner)) return
     // Held here so a pane that comes back still knows to ask before closing.
     if (!found.used && typedInput(data)) found.used = true
     found.proc.write(data)
@@ -207,18 +223,18 @@ export class Shells {
    * anything that redraws itself - a progress bar, an editor, a pager - paints
    * over the wrong cells.
    */
-  resize(shellID: string, cols: number, rows: number): void {
+  resize(shellID: string, cols: number, rows: number, owner?: ShellOwner): void {
     const found = this.shells.get(shellID)
-    if (!found?.alive || !usable({ cols, rows })) return
+    if (!found?.alive || !usable({ cols, rows }) || !this.allowed(found, owner)) return
     // A pty that has already exited throws rather than ignoring the call.
     try {
       found.proc.resize(cols, rows)
     } catch {}
   }
 
-  close(shellID: string): void {
+  close(shellID: string, owner?: ShellOwner): void {
     const found = this.shells.get(shellID)
-    if (!found) return
+    if (!found || !this.allowed(found, owner)) return
     if (found.orphanTimer) clearTimeout(found.orphanTimer)
     this.shells.delete(shellID)
     const queued = this.exited.indexOf(shellID)
@@ -287,10 +303,12 @@ export class Shells {
    * unmounting the drawer under `v-if` took every shell with it, so a dev
    * server started in the terminal died the moment the panel was collapsed.
    */
-  list(sessionID: string, owner?: ShellOwner): ShellSummary[] {
+  list(sessionID: string, owner?: ShellOwner, surface: ShellSurface = "drawer"): ShellSummary[] {
     const found: ShellSummary[] = []
     for (const [shellID, entry] of this.shells) {
       if (entry.sessionID !== sessionID) continue
+      // The drawer lists the drawer's shells and nothing else; the right panel keeps its own by id (N11-9).
+      if (entry.surface !== surface) continue
       if (owner && entry.owner && entry.owner !== owner) continue
       // Asking what is there is how a window comes back to its terminals, so it
       // is also where one left loose by a crashed window is taken over.

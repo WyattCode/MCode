@@ -238,8 +238,15 @@ export async function startBackend(dataDirectory: string, options: BackendOption
     const frame = frameForWindow({ kind: "event", event })
     const payload = JSON.stringify(frame)
     const only = narrowcastSession(event)
+    /*
+     * A terminal's output is for the window that owns it (N11-31). Every other
+     * window used to receive it too, which was the whole terminal's contents
+     * travelling to a window that never asked for it.
+     */
+    const shellOwner = event.type === "shell.data" || event.type === "shell.exit" ? shells.ownerOf(event.shellID) : undefined
     for (const client of clients) {
       if (client.readyState !== client.OPEN) continue
+      if (shellOwner && shellOwner !== client) continue
       if (only !== undefined) {
         const declared = watching.get(client)
         if (declared && !declared.has(only)) continue
