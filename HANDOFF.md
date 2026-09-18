@@ -406,10 +406,10 @@
 - **第十轮收尾**：核对那一路合并后（8f72997），smoke **3947 全过**、build 通过，八个失败探针全部通过。唯一真缺陷：子智能体刚派出、还在准备第一步时被取消，停止信号在监听挂上前已落下，回合照样发出请求、取消要等满 10 秒且没有「已取消」通知（round4-subagents R5 的间歇失败），现已信号先落就立即中止（修复前 26 次里间歇失败，修复后 12/12）。其余为探针问题：技能三项改由探针拦截渲染包自行打开插件页（入口仍隐藏）；两个平台探针结果文件带后缀；无焦点窗口里 Chromium 不派发 focus 事件，改用 CDP 焦点模拟；round8-a11y 的 5 处 1.7px 与 text-align 来自 Electron 41 本身（同一棵树在 38 下 0 差异），与去掉空卡一起重录基准；round8-narrow 的 1.75 基准改用 41 重录；slash-menu / search 是第十轮之前就过期的预期。
 - 约定补充：从 Git Bash 跑 smoke 时 `SHELL` 已设，bash 工具会照 MiMo 用它；没有系统焦点的探针窗口收不到 focus / focusin，需要 CDP `Emulation.setFocusEmulationEnabled`；锁屏时 Electron 41 读不到显示器，像素探针可用 `R8A_DPR` / `NARROW_DPR` 强制比例。
 
-**第十一轮对照（2026-09-18 起）：进行中。** 三个没用过的只读角度：**输入到回合之间的全部路径**（输入法、粘贴与超大文本、拖放、附件、提及与芯片、发送时机、语音，`round11-composer.md`）、**并发与长期运行**（多回合同时跑、共享资源与锁、后端重启与断网、内存与句柄增长、超大对话与仓库，`round11-concurrency.md`）、**模型回复的解析**（流式事件、工具参数分片与损坏、推理块、重试与续流、用量与中止，`round11-stream.md`）。
+**第十一轮对照（2026-09-18）：已完成并合并入 `v2.0`（输入路径 · 并发与长期运行 · 回复解析）。** 三个没用过的只读角度：**输入到回合之间的全部路径**（输入法、粘贴与超大文本、拖放、附件、提及与芯片、发送时机、语音，`round11-composer.md`）、**并发与长期运行**（多回合同时跑、共享资源与锁、后端重启与断网、内存与句柄增长、超大对话与仓库，`round11-concurrency.md`）、**模型回复的解析**（流式事件、工具参数分片与损坏、推理块、重试与续流、用量与中止，`round11-stream.md`）。
 - 排查结果：输入路径 52 项（高 3）、并发与长期运行 41 项（高 7）、回复解析 17 项（高 2）。更正两条旧结论：MiMo 的引擎同样在主进程里（只隔了一层本机 HTTP），真正搬出主线程的只有 SQLite（每库一个 worker）；MiMo 26.914 与 26.912 的 @ 提及都是**后端项目级搜索**，第五轮 L7 据错误判读改成了本地过滤。另发现 MCode 有 7 个源文件含裸 NUL，约 900 行对 ripgrep 不可见——前十轮所有基于 rg 的检索都有这个盲区。
 - **用户 2026-09-18 第十一轮决定**：附件完全照 MiMo（只内联图片，其余走三段 `[Attachments]` 系统块，不再内联文本、不再直送 PDF / 音视频字节）；回滚 L7、@ 提及改回后端搜索；语音改分段转写；附件胶囊改图标、去掉「内置技能」标签、只有附件时照抄 MiMo 文案；输入框撤销 / 重做保留为「比 MiMo 好」。并发：定时任务做完整队列与租约、消息广播改增量、界面搜索走 FTS、SQLite 进 worker 线程、面板与抽屉终端各用自己的 pty、同仓 git 写操作排队、MCP 当前会话按会话区分、子智能体并发闸门；限流最多等 30 分钟并给倒计时与「不等了」。推理**完全照 MiMo**：请求里要思考（界面仍不画，只用于「只思考没回答」判定），Responses 通道索取并回传加密思考（密文存进对话记录）。
-- 进行中：并发与长期运行、输入路径两路构建。
+- **并发与长期运行（`round11-concurrency.md` N11-1 … N11-41）已全部完成并验证，已合并入 `v2.0`。** 十一条 N11 提交加 N11-12：定时任务的完整队列与租约、消息广播改增量、界面搜索走 FTS、SQLite 进 worker 线程（新 `src/server/sql-worker.ts`，每库一个，请求 15 秒超时，全部数据库调用变异步、调用点全部 await，`HistoryIndex.close()` 等待尚在飞的 `start()`）、面板与抽屉终端各用自己的 pty、同仓 git 写操作排队、MCP 当前会话按会话区分、子智能体并发闸门、限流最多等 30 分钟并给倒计时与「不等了」。合并后 typecheck / build 通过，smoke **4168 全过**。逐项见下方 N11 段。
 - **回复解析（`round11-stream.md` S11-1 … S11-17）已全部完成并验证。** 最终：十三项检查全过，build 通过，smoke **4020 全过**（新增 73 条，`scripts/smoke-round11-stream.ts`，全部服务器都是本地起的假 SSE，没有调用任何真实服务商）；探针 `mcode-round11-stream.cjs` 6 项全过，回归 `mcode-round3-stream` 34 项、`mcode-round8-model` 9 项全过。逐项：
   - **S11-1 / S11-2**（`provider/anthropic.ts` 新增 `anthropicStop`）：停止原因与工具调用不再互相覆盖。原来顺序是 `refusal → max_tokens → 工具`，于是"边写工具参数边撞输出上限"返回 `max_tokens`，回合走进"没有工具要跑"的分支，`continuationFor` 看见消息里有 tool part 又直接返回 `{}`，那次已经宣告的调用永远停在 `pending`，界面只剩一张"输出超长"卡片。现在照 MiMo `mapAnthropicStopReason`：工具优先，`finishReason` 仍带着服务商自己的词。`model_context_window_exceeded` 并入 `max_tokens`（它是 stop_reason 不是错误正文，`overflow.ts` 的正则够不着，原来落到 `end_turn`）。
   - **S11-3**（`session/retry.ts`）：200 流里的错误帧按 `code || type` 分档，`overloaded_error` / `server_is_overloaded` / `server_error` → `server`（八次 / 十五分钟）。这类帧没有 HTTP 状态，原来 `retryKind` 全部落空、一次就红。`insufficient_quota` / `usage_not_included` / `invalid_prompt` 显式列为不重试（**注**：实测它们本来也不匹配下面任何分支，这行是守卫，注释里写明了）。
@@ -460,6 +460,18 @@
   - C11-46 斜杠高亮的命令名接受 `[^\s/]+`（MiMo 只接受 `[A-Za-z0-9_-]+`）：MCode 的 MCP 提示命令名是 `服务:提示`，收严会让这类命令不再高亮；高亮本来就要求命令在缓存列表里，不会误标。
   - C11-48 只有技能芯片、没有文字时照常发出（MiMo 拒发并提示「请输入内容」）。
   - C11-50 运行中发送走完整路径（命令模板、技能芯片、批注都带上；MiMo 只插「文本 + 附件」）。
+
+## 第十一轮：并发与长期运行（2026-09-18）
+
+只读审计在 `scratchpad/round11-concurrency.md`（N11-1…N11-41，高 7）。**全部完成并验证，已合并入 `v2.0`（合并提交 `19c3a7e`）。**十一条 N11 提交加 N11-12，合并后 typecheck / build 通过，smoke **4168 全过**（新增第十一轮检查文件 `scripts/smoke-round11.ts`）。
+
+**N11-12：SQLite 进 worker 线程（本轮最后一项）**
+- 新文件 `src/server/sql-worker.ts`：`WORKER_SOURCE` / `SqlDatabase` / `SqlError`，每个库一个 worker 线程；MiMo 的四条 pragma（`busy_timeout = 5000` / `journal_mode = WAL` / `synchronous = NORMAL` / `temp_store = MEMORY`）、`SQL_REQUEST_TIMEOUT_MS = 15_000`、事务与回滚都在工作线程里跑。
+- 转换：`history/database.ts`、`history/index.ts`、`history/service.ts`、`artifact/store.ts`、`memory/index.ts`、`search.ts`、`tool/history.ts`、`index.ts`、`handlers.ts`、`session/context.ts`（数据库调用全部变异步，调用点全部 await）。
+- 收尾竞态：`HistoryIndex` 新增 `starting`，`start()` 拆成 `start()` / `begin()`，`close()` 依次等 `starting`、`flushed`、`writing`——否则后台 VACUUM / reconcile 还在飞时关库会抛未处理异常。
+- smoke 新增 9 条：pragma 集合、超时、两个库都从 worker 打开、事务护住语句、pragma 到达文件、写入报 changes、事务整体落地与回滚、**一条慢语句不占调用线程**（四百万次递归查询跑在 worker 上时 1ms 定时器跳 480 次；同一查询放主线程实测只跳 0 次）。改坏 pragma 后对应检查确实报失败。
+
+**其余 N11 提交**：退出、运行队列与通知说法（`b104b09`）；阴影仓库的锁、超时与半删除的存储（`957039c`）；界面搜索走索引、列表只读一次（`e6bc517`）；消息改逐 part 递给正在绘制它的窗口（`48421eb`）；git 写操作轮流、恢复不打扰快照（`62633a3`）；等待服务商时对用户开放、限流最多 30 分钟带倒计时（`decd517`）；子智能体闸门、更省的流式保存、删除对话后的残留（`bd0efdc`）；抽屉与面板终端各自拥有 pty（`28c1f67`）；MCP 在多个会话下（`d1fc2b2`）；小尾巴（`6fe3dc5`）；以及 N11-12（`c206feb`）。
 
 ## 第十一轮：输入框全链路（2026-09-18）
 
@@ -764,4 +776,8 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
 
 ## 下一步建议
 
-1. 按「待办：清单之外的只读审计结果」里没标 [已完成] 的条目逐条做，先小后大：「工作中」动画条（先核实）、项目行 git 分支名；再做中等和大的（MCP 表单、已编辑 N 个文件卡片、分支选择器等）。新页面（钩子、CLI 插件、SSH 连接）用户决定不做。
+**第十一轮三路（输入路径、并发与长期运行、回复解析）已全部完成并合并入 `v2.0`。** 第十一轮遗留的两小项：
+
+1. C11-15「这个对话无法继续」（`reviewRestricted`）：MiMo 有这一档占位符和禁用态，但 MCode 没有这个会话状态，要新引入一个后端字段才能接；等用户拍板。
+2. C11-13 的「挂载时若草稿非空就聚焦」半题：MCode 同时挂着停靠栏 / 侧边 / 首页三个输入框，谁后挂载谁抢键盘；现在只做了「聚焦时光标置尾」和「切会话后光标同步」两半。
+3. 另按「待办：清单之外的只读审计结果」里没标 [已完成] 的条目逐条做，先小后大（项目行 git 分支名、MCP 表单、分支选择器等）；新页面（钩子、CLI 插件、SSH 连接）用户决定不做。
