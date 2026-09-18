@@ -78,6 +78,22 @@ export const useApp = defineStore("app", () => {
   const automationRuns = ref(new Set<string>())
   const automationNotice = ref<{ sessionID: string; at: number; failed: boolean }>()
   /*
+   * N11-17: the turns waiting between attempts, as the backend last reported
+   * them. A retry never reaches disk, so a window that reloaded into one read
+   * back a message with no parts, no finish and no error, and drew nothing at
+   * all. This is put back onto the message once its transcript is loaded.
+   */
+  const liveRetries = new Map<string, { messageID: string; attempt: number; message: string; next: number; kind?: string; max?: number }>()
+
+  /** Puts a waiting turn's retry back onto the message it belongs to, wherever that message is held. */
+  function applyRetry(sessionID: string, list: Message[] | undefined): void {
+    const waiting = liveRetries.get(sessionID)
+    if (!waiting || !list) return
+    const message = list.find((candidate) => candidate.id === waiting.messageID)
+    if (message?.role !== "assistant") return
+    message.retry = { attempt: waiting.attempt, message: waiting.message, next: waiting.next, kind: waiting.kind, max: waiting.max }
+  }
+  /*
    * session chat: conversations whose current turn is answering a message
    * another conversation sent. Their end is a reply rather than a task
    * finishing, and MiMo says so in its own words (N11-3).
@@ -645,7 +661,18 @@ export const useApp = defineStore("app", () => {
         const message = messages.value.find((candidate) => candidate.id === location.messageID)
         if (message?.role !== "assistant") break
         const part = message.parts[location.index]
-        if (part?.type === "text" || part?.type === "reasoning") part.text += event.text
+        if (part?.type !== "text" && part?.type !== "reasoning") break
+        /*
+         * N11-32: a window that connected mid-step holds the copy written to
+         * disk, which lags by up to 500ms. Appending onto it left a hole in the
+         * middle of the paragraph that only the next part - or the end of the
+         * step - closed, which in a long plain answer can be minutes.
+         */
+        if (part.text.length !== event.at) {
+          noteDeltaGap(event.sessionID)
+          break
+        }
+        part.text += event.text
         break
       }
       case "automation.run": {
@@ -675,6 +702,7 @@ export const useApp = defineStore("app", () => {
           if (running.value.delete(event.sessionID)) running.value = new Set(running.value)
           break
         }
+        liveRetries.delete(event.sessionID)
         noteRunEnded(event.sessionID)
         noteDeliveryTurnEnded(event.sessionID)
         endOfficeWatches(event.sessionID)
@@ -929,6 +957,7 @@ export const useApp = defineStore("app", () => {
      */
     pendingPermissions.value = groupPermissions(listed.permissions)
     chatLinks.value = listed.chatLinks ?? {}
+    noteRetries(listed.retries)
     booted = true
     /*
      * Everything the first screen reads has now arrived.
@@ -951,6 +980,30 @@ export const useApp = defineStore("app", () => {
 
     // No session is opened on boot: the launcher is the entry point, and a
     // project is chosen there. Auto-creating one would skip past it.
+  }
+
+  /** What session.list said about the turns that are waiting between attempts. */
+  function noteRetries(rows: Record<string, { messageID: string; attempt: number; message: string; next: number; kind?: string; max?: number }> | undefined): void {
+    liveRetries.clear()
+    for (const [sessionID, row] of Object.entries(rows ?? {})) liveRetries.set(sessionID, row)
+    for (const [sessionID, list] of Object.entries(sideTranscripts.value)) applyRetry(sessionID, list)
+    for (const [sessionID, list] of held) applyRetry(sessionID, list)
+    if (currentID.value) applyRetry(currentID.value, messages.value)
+  }
+
+  /*
+   * A delta that did not line up: the transcript on screen is missing
+   * something, so it is read again. Debounced, because a window that connected
+   * mid-step will see several in a row.
+   */
+  let gapTimer: ReturnType<typeof setTimeout> | undefined
+
+  function noteDeltaGap(sessionID: string): void {
+    if (sessionID !== currentID.value || gapTimer) return
+    gapTimer = setTimeout(() => {
+      gapTimer = undefined
+      if (currentID.value === sessionID) void open(sessionID).catch(() => undefined)
+    }, 300)
   }
 
   function api() {
@@ -1091,6 +1144,7 @@ export const useApp = defineStore("app", () => {
       // published while it was down, a permission request included.
       pendingPermissions.value = groupPermissions(listed.permissions)
       chatLinks.value = listed.chatLinks ?? {}
+      noteRetries(listed.retries)
       // A fresh socket knows nothing about this window; say again what it is drawing.
       declared = ""
       declareWatched()
@@ -1148,6 +1202,7 @@ export const useApp = defineStore("app", () => {
       partIndex.clear()
       messages.value.forEach(reindex)
     }
+    applyRetry(sessionID, messages.value)
     error.value = undefined
     noteError(sessionID, undefined)
     /*

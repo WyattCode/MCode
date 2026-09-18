@@ -20,6 +20,10 @@ import { SCAN_LIMIT, searchMessages } from "../src/server/search"
 import { SessionStore } from "../src/server/session/store"
 import { Storage } from "../src/server/storage"
 import { Bus } from "../src/server/bus"
+import { RATE_LIMIT_HINT_CAP, cooldownLeft, noteRateLimit, retryDecision, retryKind, waitFor, wakeWaiters } from "../src/server/session/retry"
+import { cutLiveStreams, liveStreams, stallGuard } from "../src/server/provider/stall"
+import { failureCode } from "../src/server/session/error-map"
+import { ProviderHttpError } from "../src/server/provider/types"
 import type { Message, ModelRef, ServerEvent, SessionInfo, ToolPart } from "@shared/protocol"
 import { narrowcastSession } from "@shared/protocol"
 
@@ -338,6 +342,71 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     await store.delete(first.id)
     check("a deletion drops it too", (await store.list()).length === 1 && reads === 3, reads)
     await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined)
+  }
+
+  section("Round 11 (N11-19/N11-21): a provider's named wait, waited out once for everyone")
+  {
+    const long = retryDecision(new ProviderHttpError("slow down", 429, { "retry-after": "1500" }), 1, 0)
+    check("a rate limit's own 25-minute wait is taken whole", long?.wait === 25 * 60_000, long)
+    check("half an hour is the most a turn waits", RATE_LIMIT_HINT_CAP === 30 * 60_000 && retryDecision(new ProviderHttpError("x", 429, { "retry-after": "99999" }), 1, 0)?.wait === RATE_LIMIT_HINT_CAP)
+    check("a server error's named wait is still held to its own ceiling", retryDecision(new ProviderHttpError("busy", 503, { "retry-after": "1500" }), 1, 0)?.wait === 30_000)
+    const now = 1_000_000
+    noteRateLimit("r11-provider", now + 40_000)
+    noteRateLimit("r11-provider", now + 10_000)
+    check("one conversation's 429 makes every conversation on that provider wait, for the longest it was told", cooldownLeft("r11-provider", now) === 40_000 && cooldownLeft("r11-other", now) === 0)
+    check("and the wait lifts on its own", cooldownLeft("r11-provider", now + 40_001) === 0)
+    const runner = await read("src/server/session/runner.ts")
+    check("the runner holds off before sending and records what it is told", /const held = cooldownLeft\(assistant\.model\.provider\)/.test(runner) && /noteRateLimit\(assistant\.model\.provider, retry\.next\)/.test(runner))
+    const row = await read("src/renderer/src/components/parts/RetryRow.vue")
+    check("the retry row counts the wait down and offers to stop waiting", /harnessRow\.retryIn/.test(row) && /harnessRow\.stopWaiting/.test(row) && /emit\('stop'\)/.test(row))
+    const stream = await read("src/renderer/src/components/MessageStream.vue")
+    check("and stopping waiting stops the turn", /:next="row\.next" @stop="app\.abort\(shownID\)"/.test(stream))
+  }
+
+  section("Round 11 (N11-16): waking up ends the waiting")
+  {
+    const controller = new AbortController()
+    const started = Date.now()
+    const waiting = waitFor(60_000, controller.signal)
+    wakeWaiters("r11 check")
+    check("a wait between attempts ends as soon as the machine wakes or the network is back", (await waiting) === true && Date.now() - started < 5000)
+    const stopped = new AbortController()
+    const cut = waitFor(60_000, stopped.signal)
+    stopped.abort()
+    check("and Stop still ends one as a stop", (await cut) === false)
+
+    const outer = new AbortController()
+    const before = liveStreams()
+    const guard = stallGuard(outer.signal, false)
+    const tripped = cutLiveStreams("the machine woke")
+    const failure = guard.failure(new Error("aborted"))
+    guard.dispose()
+    check("a provider stream open across a sleep is cut rather than waited on for eight minutes", tripped >= 1 && guard.signal.aborted, tripped)
+    check("and the cut is a stream failure, which the retry ladder takes over", retryKind(failure) === "stream", String(failure))
+    check("a guard that has finished is no longer held", liveStreams() === before, { before, after: liveStreams() })
+    const main = await read("src/main/index.ts")
+    const app = await read("src/renderer/src/App.vue")
+    check("waking and the network coming back are both wired", /powerMonitor\.on\("resume", \(\) => woke\(/.test(main) && /ipcMain\.on\("mcode:network-back"/.test(main) && /addEventListener\("online", \(\) => window\.mcode\.networkBack\(\)\)/.test(app))
+  }
+
+  section("Round 11 (N11-18): an allowance used up is not a request too many")
+  {
+    const quota = failureCode(new ProviderHttpError('{"error":{"type":"usage_limit_reached","message":"You have reached your usage limit"}}', 429, {}))
+    check("a used-up allowance says so", quota?.code === "error.quotaExceeded", quota)
+    check("an OpenAI quota error too", failureCode(new ProviderHttpError("You exceeded your current quota, please check your plan and billing details.", 429, {}))?.code === "error.quotaExceeded")
+    check("a plain 429 is still being asked to slow down", failureCode(new ProviderHttpError("Too many requests", 429, {}))?.code === "error.rateLimited")
+    const i18n = await read("src/renderer/src/lib/i18n.ts")
+    const tables = (key: string) => i18n.split(`"${key}":`).length - 1
+    check("the three new strings are in all 18 tables", tables("error.quotaExceeded") === 18 && tables("harnessRow.retryIn") === 18 && tables("harnessRow.stopWaiting") === 18)
+  }
+
+  section("Round 11 (N11-17/N11-32): a window that reconnects is told what it missed")
+  {
+    const handlers = await read("src/server/handlers.ts")
+    const store = await read("src/renderer/src/stores/app.ts")
+    check("session.list replays the turns waiting between attempts", /retries: runtime\.runner\.retryRows\(\)/.test(handlers) && /noteRetries\(listed\.retries\)/.test(store) && /applyRetry\(sessionID, messages\.value\)/.test(store))
+    const runner = await read("src/server/session/runner.ts")
+    check("each text delta says where it belongs, and a window that missed one reads the transcript again", /const at = part\.text\.length/.test(runner) && /part\.text\.length !== event\.at/.test(store) && /noteDeltaGap\(event\.sessionID\)/.test(store))
   }
 
   section("Round 11 (N11-3): the four kinds of task notification")

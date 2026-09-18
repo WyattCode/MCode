@@ -262,6 +262,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         permissions: runtime.permissions.outstanding(),
         // session chat: replayed for the same reason, so a reopened window still marks the rows.
         chatLinks: runtime.runner.chat.links(),
+        // And the waits between attempts, which live nowhere else at all (N11-17).
+        retries: runtime.runner.retryRows(),
       } satisfies Handled<"session.list">
 
     /*

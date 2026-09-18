@@ -17,6 +17,8 @@ import { insideReal } from "../server/tool/fs-util"
 import { setImageShrinker } from "../server/provider/attachment-parts"
 import { shrinkImage } from "./image-shrink"
 import { scratchRoot } from "../server/scratch"
+import { wakeWaiters } from "../server/session/retry"
+import { cutLiveStreams } from "../server/provider/stall"
 import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
 import { closeHidesToTray } from "@shared/protocol"
 import { label, setLabels } from "./labels"
@@ -1601,6 +1603,22 @@ app.whenReady().then(async () => {
     console.info("[quit] powerMonitor shutdown")
     noteOsQuit()
   })
+
+  /*
+   * N11-16: waking up. A provider stream that was open when the machine slept
+   * is dead on the other side and looks alive from here, so the turn used to
+   * wait out the eight-minute quiet bound with the spinner turning; and a wait
+   * between attempts had no reason to keep waiting either. Both are ended here,
+   * and the retry ladder takes it from there.
+   */
+  const woke = (why: string) => {
+    const cut = cutLiveStreams(why)
+    if (cut) console.info(`[power] ${why}: ${cut} provider stream(s) cut`)
+    wakeWaiters(why)
+  }
+  powerMonitor.on("resume", () => woke("the machine woke"))
+  /* The network coming back, which only the window can see (navigator.onLine). */
+  ipcMain.on("mcode:network-back", () => woke("the network came back"))
   onRecoveryGaveUp(() => {
     console.info("[quit] renderer recovery gave up; no window is left to notice an OS shutdown")
     noteOsQuit()

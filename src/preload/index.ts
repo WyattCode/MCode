@@ -64,6 +64,8 @@ const api = {
 
   /** Menu bar labels; the translations live here, the menu is built there. */
   menuLabels: (labels: Record<string, string>): void => ipcRenderer.send("mcode:menu-labels", labels),
+  /* N11-16: the machine is back online, which the main process cannot see for itself. */
+  networkBack: (): void => ipcRenderer.send("mcode:network-back"),
   /** The shortcuts as bound, and whether one is being recorded, for the application menu. */
   menuKeys: (keys: { binds: Record<string, string>; recording: boolean }): void => ipcRenderer.send("mcode:menu-keys", keys),
 

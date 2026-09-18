@@ -38,7 +38,7 @@ import { keepReadCopy } from "../tool/read-media"
 import { ToolError } from "../tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../tool/validate"
 import { ToolOutputs } from "../tool/truncate"
-import { retryDecision, waitFor, withRequestRetry } from "./retry"
+import { cooldownLeft, noteRateLimit, retryDecision, waitFor, withRequestRetry } from "./retry"
 import { CodedError, codeOf, paramsOf } from "@shared/errors"
 import { AnthropicAdapter, describeAnthropicError } from "../provider/anthropic"
 import { OpenAICompatible } from "../provider/openai"
@@ -285,6 +285,13 @@ const PLAN_AWARE = new Set(["write", "edit", "notebook_edit", "plan_exit"])
 
 export class SessionRunner {
   private readonly running = new Map<string, AbortController>()
+  /**
+   * The turns that are waiting between attempts, by conversation (N11-17).
+   *
+   * A retry is never written to disk, so this is the only place a window that
+   * reconnects mid-wait can learn about one; `session.list` replays it.
+   */
+  private readonly retrying = new Map<string, { messageID: string; attempt: number; message: string; next: number; kind?: string; max?: number }>()
   /**
    * The requests a conversation has out that are not its turn.
    *
@@ -689,6 +696,11 @@ export class SessionRunner {
    */
   compactingSessions(): string[] {
     return [...this.summarising]
+  }
+
+  /** The turns waiting between attempts, for a window that reconnected into one (N11-17). */
+  retryRows(): Record<string, { messageID: string; attempt: number; message: string; next: number; kind?: string; max?: number }> {
+    return Object.fromEntries(this.retrying)
   }
 
   busySessions(): string[] {
@@ -2100,6 +2112,7 @@ export class SessionRunner {
           })
         }
         this.running.delete(sessionID)
+        this.retrying.delete(sessionID)
 
         /*
          * The last read of the waiting list, and the only one that can see a
@@ -2609,6 +2622,8 @@ export class SessionRunner {
     }
 
     const append = (part: TextPart | ReasoningPart, text: string) => {
+      // Where this append belongs, so a window that missed one can tell (N11-32).
+      const at = part.text.length
       part.text += text
       dirty = true
       this.bus.publish({
@@ -2617,6 +2632,7 @@ export class SessionRunner {
         messageID: assistant.id,
         partID: part.id,
         text,
+        at,
       })
     }
 
@@ -2673,6 +2689,23 @@ export class SessionRunner {
       /* When this request first failed: each kind of failure is retried for so long and no longer. */
       let firstFailure: number | undefined
       for (let attempt = 1; outcome === undefined; attempt++) {
+        /*
+         * N11-21: another conversation on the same provider was just told to
+         * wait. Knocking anyway only earns another 429 and makes the account's
+         * limit last longer, so this one waits too - in the open, with the same
+         * countdown and the same way out.
+         */
+        const held = cooldownLeft(assistant.model.provider)
+        if (held > 0) {
+          const retry = { attempt, message: "The provider asked every request to wait", next: Date.now() + held, kind: "rate_limit" }
+          this.retrying.set(assistant.sessionID, { messageID: assistant.id, ...retry })
+          this.bus.publish({ type: "message.updated", message: { ...structuredClone(assistant), retry } })
+          try {
+            if (!(await waitFor(held, request.signal))) throw new DOMException("Aborted", "AbortError")
+          } finally {
+            this.retrying.delete(assistant.sessionID)
+          }
+        }
         try {
           // The SDK's own quiet retries are off here: this loop retries in the open.
           outcome = await adapter.stream({ ...request, retries: 0, signal: inner.signal }, emit)
@@ -2714,14 +2747,17 @@ export class SessionRunner {
           assistant.parts = []
           blocks.clear()
           dirty = false
-          this.bus.publish({
-            type: "message.updated",
-            message: {
-              ...structuredClone(assistant),
-              retry: { attempt, message: describe(err), next: Date.now() + decision.wait, kind: decision.kind, max: decision.max },
-            },
-          })
-          if (!(await waitFor(decision.wait, request.signal))) throw new DOMException("Aborted", "AbortError")
+          const retry = { attempt, message: describe(err), next: Date.now() + decision.wait, kind: decision.kind, max: decision.max }
+          // Everyone else on this provider holds off for as long as it asked (N11-21).
+          if (decision.kind === "rate_limit") noteRateLimit(assistant.model.provider, retry.next)
+          // Kept as well as published, so a window that reconnects mid-wait is told (N11-17).
+          this.retrying.set(assistant.sessionID, { messageID: assistant.id, ...retry })
+          this.bus.publish({ type: "message.updated", message: { ...structuredClone(assistant), retry } })
+          try {
+            if (!(await waitFor(decision.wait, request.signal))) throw new DOMException("Aborted", "AbortError")
+          } finally {
+            this.retrying.delete(assistant.sessionID)
+          }
         }
       }
 

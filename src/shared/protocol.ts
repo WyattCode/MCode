@@ -2122,6 +2122,16 @@ export interface ResponseMap {
     permissions: PermissionRequest[]
     /** session chat: the messages in flight, for a window that was not listening when they started. */
     chatLinks: Record<string, ChatLink[]>
+    /**
+     * The turns waiting between attempts, by conversation (N11-17).
+     *
+     * The retry lives only on the copy published with `message.updated`, so a
+     * window that reloaded - or a replacement window - read back a message with
+     * no parts, no finish, no error and no retry, and drew nothing at all for
+     * the whole turn while the sidebar span. This is the same replay the
+     * permissions get, for the same reason.
+     */
+    retries: Record<string, { messageID: string; attempt: number; message: string; next: number; kind?: string; max?: number }>
   }
   "artifact.list": { artifacts: SessionArtifacts[] }
   /** The document and the name to suggest for it; the window puts up the save dialog. */
@@ -2323,8 +2333,16 @@ export type ServerEvent =
     }
   /** session chat: every conversation's messages in flight, whole, whenever one changes. */
   | { type: "session.chatLinks"; links: Record<string, ChatLink[]> }
-  /** Incremental append to a part already announced via message.updated. */
-  | { type: "message.delta"; sessionID: string; messageID: string; partID: string; text: string }
+  /**
+   * Incremental append to a part already announced.
+   *
+   * `at` is how long the part was before this append (N11-32). A window
+   * that connected mid-step holds the copy from disk, which is up to 500ms
+   * behind, so appending blindly left a hole in the middle of a paragraph
+   * that could sit there for minutes. A length that does not line up means
+   * something was missed, and the transcript is read again instead.
+   */
+  | { type: "message.delta"; sessionID: string; messageID: string; partID: string; text: string; at: number }
   /**
    * One part of a reply, new or changed (N11-4).
    *
