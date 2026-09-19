@@ -76,6 +76,7 @@ import { chime } from "./lib/sound"
 import { stepTarget } from "./lib/visible-chats"
 import { fontScale } from "./lib/font-scale"
 import { announce } from "./lib/announce"
+import { dialogOpen } from "./lib/escape-layer"
 import { chimeOf, longTask } from "@shared/chime"
 
 const app = useApp()
@@ -3018,6 +3019,36 @@ const modalOpen = computed(
     Boolean(renamingProject.value),
 )
 
+/*
+ * The commands that act on the open conversation, which MiMo gives no target
+ * while anything covers it.
+ */
+const CONVERSATION_COMMANDS = new Set([
+  "session.pin",
+  "session.rename",
+  "session.archive",
+  "session.delete",
+  "session.side",
+  "session.fork",
+  "session.share",
+  "session.copyID",
+  "session.copyLink",
+  "session.copyMarkdown",
+  "session.exportMarkdown",
+  "session.compact",
+  "view.priority",
+])
+
+/**
+ * Whether a layer covers the conversation: MiMo's target for a conversation
+ * command is empty while a dialog, the search, the palette or a preview is up.
+ * Read from the page as well as from the flags above, so the search, the
+ * palette and every confirmation count without a list of them to keep.
+ */
+function conversationCovered(): boolean {
+  return modalOpen.value || searchOpen.value || paletteOpen.value || dialogOpen()
+}
+
 /* The box MiMo's annotations go to: the open conversation's, or the home screen's. */
 const annotationScope = computed(() => (isHome.value || !app.currentID ? HOME_SCOPE : app.currentID))
 watch(annotationScope, (scope) => (mainAnnotationScope.value = scope), { immediate: true })
@@ -3053,6 +3084,7 @@ function onKeydown(event: KeyboardEvent) {
       const command = commands.value.find((entry) => entry.id === bound)
       if (command && command.enabled !== false) {
         if (TYPING_OFF.has(command.id) && typingIn(event.target)) return
+        if (CONVERSATION_COMMANDS.has(command.id) && conversationCovered()) return
         event.preventDefault()
         void command.run()
         return
@@ -3086,7 +3118,7 @@ function onKeydown(event: KeyboardEvent) {
 
   /* Pinning the open conversation, and copying the id of it. */
   if (mod && event.altKey && letter === "p") {
-    if (modalOpen.value || !app.currentID) return
+    if (conversationCovered() || !app.currentID) return
     event.preventDefault()
     app.togglePinned(app.currentID)
     return
@@ -3094,14 +3126,14 @@ function onKeydown(event: KeyboardEvent) {
 
   /* Renaming and archiving the open conversation, on MiMo's chords. */
   if (mod && event.altKey && letter === "r") {
-    if (modalOpen.value || !app.currentID || isHome.value) return
+    if (conversationCovered() || !app.currentID || isHome.value) return
     event.preventDefault()
     beginRename()
     return
   }
 
   if (mod && event.altKey && letter === "a") {
-    if (modalOpen.value || !app.currentID) return
+    if (conversationCovered() || !app.currentID) return
     event.preventDefault()
     void archiveSessions([app.currentID])
     return
@@ -3109,7 +3141,7 @@ function onKeydown(event: KeyboardEvent) {
 
   /* A side chat tab, on MiMo's chord. */
   if (mod && event.altKey && letter === "s") {
-    if (modalOpen.value) return
+    if (conversationCovered()) return
     event.preventDefault()
     openSideChatTab()
     return
@@ -3117,14 +3149,14 @@ function onKeydown(event: KeyboardEvent) {
 
   /* The priority filter, on MiMo's own chord. */
   if (mod && event.altKey && letter === "u") {
-    if (modalOpen.value) return
+    if (conversationCovered()) return
     event.preventDefault()
     priorityFilter.value = !priorityFilter.value
     return
   }
 
   if (mod && event.altKey && letter === "c") {
-    if (modalOpen.value || !app.currentID) return
+    if (conversationCovered() || !app.currentID) return
     event.preventDefault()
     window.mcode.setClipboardText(app.currentID)
     notify(t("menu.copiedID"))
@@ -3132,7 +3164,7 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   if (mod && event.altKey && letter === "l") {
-    if (modalOpen.value || !app.current) return
+    if (conversationCovered() || !app.current) return
     event.preventDefault()
     copySessionLink()
     return

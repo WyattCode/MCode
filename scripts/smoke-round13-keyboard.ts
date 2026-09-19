@@ -177,4 +177,25 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
       /useEscapeLayer\(close\)/.test(overlay) && !/@keydown="onKeydown"/.test(overlay),
     )
   }
+
+  const shell = await read("src/renderer/src/App.vue")
+  // ---------------------------------------------------------------- K13-5
+  {
+    const covered = shell.slice(shell.indexOf("function conversationCovered("), shell.indexOf("\n}\n", shell.indexOf("function conversationCovered(")))
+    check(
+      "K13-5: a conversation is covered while a modal, the search, the palette or any dialog on the page is up",
+      /modalOpen\.value/.test(covered) && /searchOpen\.value/.test(covered) && /paletteOpen\.value/.test(covered) && /dialogOpen\(\)/.test(covered),
+      covered,
+    )
+    const unguarded = ["p", "r", "a", "s", "u", "c", "l"].filter((letter) => {
+      const at = shell.indexOf(`if (mod && event.altKey && letter === "${letter}") {`)
+      return at < 0 || !/^\s+if \(conversationCovered\(\)/.test(shell.slice(shell.indexOf("\n", at) + 1, shell.indexOf("\n", shell.indexOf("\n", at) + 1)))
+    })
+    check("K13-5: pin, rename, archive, side chat, priority filter, copy id and copy link do nothing behind a layer", unguarded.length === 0, unguarded)
+    check(
+      "K13-5: and neither do they when re-bound to another chord",
+      /if \(CONVERSATION_COMMANDS\.has\(command\.id\) && conversationCovered\(\)\) return/.test(shell) &&
+        ["session.pin", "session.archive", "session.rename", "session.side", "session.copyID", "session.copyLink", "view.priority"].every((id) => new RegExp(`CONVERSATION_COMMANDS = new Set\\(\\[[^\\]]*"${id.replace(".", "\\.")}"`).test(shell)),
+    )
+  }
 }
