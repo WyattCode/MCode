@@ -266,7 +266,7 @@ import { HISTORY_BUDGET, HistoryTool } from "../src/server/tool/history"
 import { MemoryTool } from "../src/server/tool/memory"
 import { CronTool, cronOperation } from "../src/server/tool/cron"
 import { clampLoopDelay, nextCronRun, oneShotFireAt, parseCron, recurringFireAt } from "../src/server/cron/expr"
-import { cronFile, readCronTasks, writeCronTasks } from "../src/server/cron/tasks"
+import { cronFile, readCronTasks, writeCronTasks, type CronTask } from "../src/server/cron/tasks"
 import { CronScheduler, KEEPALIVE_DELAY_SECONDS, bindScheduler } from "../src/server/cron/scheduler"
 import { resolvePath as resolveToolPath } from "../src/server/tool/fs-util"
 import type { Message as HistoryMessage, SessionInfo as HistorySession } from "../src/shared/protocol"
@@ -9337,11 +9337,12 @@ async function historyMemoryCronChecks(root: string, project: string) {
 
   // The durable task file.
   const cronDir = path.join(root, "hmc-cron")
-  await writeCronTasks(cronDir, [{ id: "a1", cron: "* * * * *", prompt: "p", createdAt: 1, durable: true }, { id: "bad", cron: "nope", prompt: "p", createdAt: 1 }])
+  await writeCronTasks(cronDir, [{ id: "a1", cron: "* * * * *", prompt: "p", createdAt: 1, durable: true }, { id: "bad", cron: "nope", prompt: "p", createdAt: 1 }, { id: 7 } as unknown as CronTask])
   const written = JSON.parse(await fs.readFile(cronFile(cronDir), "utf8")) as { tasks: Record<string, unknown>[] }
-  check("durable tasks go to .mcode/scheduled_tasks.json without the malformed one or the runtime flag", cronFile(cronDir) === path.join(cronDir, ".mcode", "scheduled_tasks.json") && written.tasks.length === 1 && written.tasks[0]?.durable === undefined, written)
+  // L12-8: a schedule this build cannot read is kept rather than dropped; a record that is not a task at all still goes.
+  check("durable tasks go to .mcode/scheduled_tasks.json without the malformed one or the runtime flag", cronFile(cronDir) === path.join(cronDir, ".mcode", "scheduled_tasks.json") && written.tasks.length === 2 && written.tasks[0]?.durable === undefined && written.tasks[1]?.id === "bad", written)
   await fs.writeFile(cronFile(cronDir), `﻿${JSON.stringify(written)}`)
-  check("and read back, byte-order mark and all", (await readCronTasks(cronDir)).length === 1)
+  check("and read back, byte-order mark and all", (await readCronTasks(cronDir)).length === 2)
   await fs.writeFile(cronFile(cronDir), "{ not json")
   check("an unreadable file reads as no tasks", (await readCronTasks(cronDir)).length === 0)
 

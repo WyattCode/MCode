@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto"
 import type { SessionInfo } from "@shared/protocol"
 import { scheduledPromptText } from "@shared/scheduled"
 import { JITTER, clampLoopDelay, oneShotFireAt, recurringFireAt } from "./expr"
-import { cronFile, missedTasks, readCronTasks, writeCronTasks, type CronTask } from "./tasks"
+import { cronFile, missedTasks, readCronFile, readCronTasks, schedulable, writeCronTasks, type CronTask } from "./tasks"
 
 /**
  * cron: the scheduler behind the `cron` tool, as MiMo's runs it - a check once
@@ -108,7 +108,8 @@ export class CronScheduler {
       }
     }
     if (options.interval === false) return
-    this.interval = setInterval(() => void this.tick(), TICK_MS)
+    // A project file that cannot be written (L12-8) fails that check, never the process.
+    this.interval = setInterval(() => void this.tick().catch((cause: unknown) => console.warn("[cron] a check failed:", cause instanceof Error ? cause.message : cause)), TICK_MS)
     this.interval.unref?.()
   }
 
@@ -171,7 +172,10 @@ export class CronScheduler {
   }
 
   private async rewrite(directory: string, change: (tasks: CronTask[]) => CronTask[]): Promise<void> {
-    const next = change(await readCronTasks(directory))
+    const read = await readCronFile(directory)
+    // Never over a file that could not be read or moved aside: it holds the project's only copy of its tasks.
+    if (read.blocked) throw new Error(read.blocked)
+    const next = change(read.tasks)
     await writeCronTasks(directory, next)
     const stat = await fs.stat(cronFile(directory)).catch(() => undefined)
     const state = this.durable.get(directory)
@@ -198,7 +202,7 @@ export class CronScheduler {
       for (const task of this.sessionTasks.values()) entries.push({ task })
       const now = this.host.now()
       for (const { task, directory } of entries) {
-        if (this.inFlight.has(task.id)) continue
+        if (this.inFlight.has(task.id) || !schedulable(task)) continue
         if (!this.nextFireAt.has(task.id)) this.nextFireAt.set(task.id, this.fireAt(task, task.lastFiredAt ?? task.createdAt))
         if (now < (this.nextFireAt.get(task.id) ?? Number.POSITIVE_INFINITY)) continue
         const ownerID = task.createdBySessionId
