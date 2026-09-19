@@ -40456,20 +40456,12 @@ export function sessionTitle(title: string): string {
 
 /**
  * Token counts the way a context window is talked about: 39.2K, 1.0M - one
- * decimal, a capital K, as MiMo's composer writes them - with the interface
- * language's decimal mark, so a count reads like the money beside it
- * (39,2K next to 1,23 $ in German).
+ * decimal with a point and a capital K in every language, as MiMo's composer
+ * writes them.
  */
 export function compactTokens(count: number): string {
-  const tenths = (value: number) => {
-    try {
-      return new Intl.NumberFormat(language.value, { minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false }).format(value)
-    } catch {
-      return value.toFixed(1)
-    }
-  }
-  if (count >= 1_000_000) return `${tenths(count / 1_000_000)}M`
-  if (count >= 1_000) return `${tenths(count / 1_000)}K`
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`
   return String(count)
 }
 

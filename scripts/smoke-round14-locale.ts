@@ -158,8 +158,7 @@ export async function roundFourteenLocaleChecks(check: Check, section: (name: st
     const de = read7("de")
     language.value = saved
     check("L14-7: token counts read as the composer writes them - one decimal, capital K / M", en.k === "12.5K" && en.m === "3.4M" && en.small === "999" && zh.k === "12.5K", { en, zh })
-    const mark = (text: string) => (/\d,\d/.test(text) ? "," : /\d\.\d/.test(text) ? "." : "?")
-    check("L14-7: with the same decimal mark as the cost on the same row", mark(de.k) === mark(de.cost) && de.k === "12,5K" && mark(en.k) === mark(en.cost), { de, en })
+    check("L14-7: and with MiMo's decimal point in every language, German included", de.k === "12.5K" && de.m === "3.4M", { de })
     check("L14-7: the day column is a localised month and day, not a fixed 09-20", en.day === "Sep 20" && zh.day === "9月20日" && !/^\d\d-\d\d$/.test(de.day), { en: en.day, zh: zh.day, de: de.day })
     const [settings, composer] = await Promise.all([read("src/renderer/src/components/SettingsDialog.vue"), read("src/renderer/src/components/Composer.vue")])
     check(
