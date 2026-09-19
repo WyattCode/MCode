@@ -32,6 +32,12 @@ const artifacts = ref<SessionArtifacts[]>([])
  * asked while the box is empty.
  */
 const artifactStatus = ref<"loading" | "ready" | "error">("ready")
+/*
+ * The transcript search can fail too since it became a query on a worker with
+ * a request timeout: said with the same row and 重试, rather than read as
+ * "no matching results".
+ */
+const messageFailed = ref(false)
 /* MiMo keeps the overlay up for its 180ms exit before it goes. */
 const closing = ref(false)
 const CLOSE_MS = 180
@@ -195,12 +201,15 @@ function runSearch(needle: string) {
     void (async () => {
       try {
         const result = await app.client?.request({ type: "search.messages", query: needle, limit: RECENT })
+        if (!result) throw new Error("not connected")
         if (run !== generation) return
-        hits.value = result?.hits ?? []
+        hits.value = result.hits
+        messageFailed.value = false
       } catch {
-        // What was said is one source among three; losing it leaves the titles and the files.
+        // What was said is one source among three; losing it leaves the titles and the files, and says so.
         if (run !== generation) return
         hits.value = []
+        messageFailed.value = true
       }
     })()
     void (async () => {
@@ -228,6 +237,7 @@ function search() {
     hits.value = []
     artifacts.value = []
     artifactStatus.value = "ready"
+    messageFailed.value = false
     return
   }
   runSearch(needle)
@@ -285,12 +295,16 @@ defineExpose({ close })
         />
       </div>
       <div class="search-results">
-        <div v-if="artifactStatus === 'error'" class="sr-artifact-error" data-search-error>
+        <div v-if="messageFailed" class="sr-artifact-error" data-search-error="messages">
+          <span>{{ t("searchOverlay.messageError") }}</span>
+          <button type="button" @click="search">{{ t("searchOverlay.retry") }}</button>
+        </div>
+        <div v-if="artifactStatus === 'error'" class="sr-artifact-error" data-search-error="artifacts">
           <span>{{ t("searchOverlay.error") }}</span>
           <button type="button" @click="search">{{ t("searchOverlay.retry") }}</button>
         </div>
         <div v-if="!flat.length && artifactStatus === 'loading'" class="sr-empty" data-search-loading>{{ t("searchOverlay.loading") }}</div>
-        <div v-else-if="!flat.length && artifactStatus !== 'error'" class="sr-empty">{{ t("searchOverlay.empty") }}</div>
+        <div v-else-if="!flat.length && artifactStatus !== 'error' && !messageFailed" class="sr-empty">{{ t("searchOverlay.empty") }}</div>
         <div v-for="group in groups" :key="group.kind" class="sr-group">
           <div class="sr-head">{{ t(HEAD[group.kind]) }}</div>
           <button

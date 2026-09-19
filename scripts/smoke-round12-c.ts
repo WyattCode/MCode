@@ -62,6 +62,19 @@ export async function roundTwelveFailureChecks(check: Check, section: (name: str
     check("C12-4: the home hero and its dock no longer hide on a failure", !/!app\.error/.test(shell) && /<SessionHero v-if="empty" \/>/.test(shell))
     check("C12-4: a failed turn still shows under the open transcript", /app\.turnError/.test(stream) && /turnError\.value = said/.test(store))
   }
+
+  // ---------------------------------------------------------------- C12-5
+  {
+    const overlay = await read("src/renderer/src/components/SearchOverlay.vue")
+    const messages = overlay.slice(overlay.indexOf('type: "search.messages"'), overlay.indexOf('type: "artifact.list"'))
+    check("C12-5: a failed message search is remembered as failed, not as no hits", /catch \{[^}]*messageFailed\.value = true/.test(messages), messages.slice(0, 400))
+    check(
+      "C12-5: it shows the error row with Retry, and not 'No matching results'",
+      /<div v-if="messageFailed" class="sr-artifact-error"[^>]*>\s*<span>\{\{ t\("searchOverlay\.messageError"\) \}\}<\/span>\s*<button type="button" @click="search">/.test(overlay) &&
+        /v-else-if="[^"]*!messageFailed[^"]*" class="sr-empty">\{\{ t\("searchOverlay\.empty"\)/.test(overlay) &&
+        inTables("searchOverlay.messageError"),
+    )
+  }
 }
 
 /** A port nothing listens on yet. */
