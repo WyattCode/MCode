@@ -29,7 +29,7 @@ import { codeOf, paramsOf } from "../src/shared/errors"
 import { CHECKPOINT_PACK_EVERY_MS, CHECKPOINT_PACK_FIRST_MS, Snapshots } from "../src/server/session/snapshot"
 import { execFileSync } from "node:child_process"
 import { SKILL_TRASH_DAYS, pruneSkillTrash } from "../src/server/skill"
-import { AutomationService, bindAutomations, type AutomationDeps } from "../src/server/automation/service"
+import { AutomationService, RUN_REASONS, bindAutomations, type AutomationDeps } from "../src/server/automation/service"
 
 const exists = (file: string) =>
   fs.access(file).then(
@@ -486,6 +486,75 @@ export async function roundTwelveLifecycleChecks(check: Check, section: (name: s
     await fs.writeFile(file, "someone-elses-id")
     forgetProjectIDs()
     check("an id already there is used as it is", projectMemoryID(repo, { home }) === "someone-elses-id")
+  }
+
+  // ----------------------------------------------------------------- L12-17
+  section("Round 12 (L12-17): a failed or skipped scheduled run records why, in MiMo's codes")
+  {
+    const base = path.join(root, "run-reasons")
+    await fs.mkdir(base, { recursive: true })
+    let clock = Date.UTC(2026, 8, 20, 8, 0)
+    const target = { id: "ses_target", directory: base, model: { provider: "fake", model: "m" }, title: "Target" } as unknown as SessionInfo
+    let targetThere = true
+    let busy = false
+    let promptThrows: string | undefined
+    let models = [{ provider: "fake", id: "m", name: "Fake M" }]
+    const deps: AutomationDeps = {
+      ...automationDeps(path.join(base, "automations.json")),
+      now: () => clock,
+      sessions: { get: async (id) => (targetThere && id === target.id ? target : undefined), create: async () => target, messages: async () => [] },
+      prompt: async () => {
+        if (promptThrows) throw new Error(promptThrows)
+      },
+      busy: () => busy,
+      models: () => models,
+    }
+    const service = new AutomationService(deps)
+    await service.start({ interval: false })
+    const made = JSON.parse(
+      await service.handle(
+        { mode: "create", title: "Nightly", prompt: "Summarise", rrule: "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0", runMode: "existing-task", targetThreadId: target.id, notification: "failed-runs" },
+        { sessionID: target.id },
+      ),
+    ) as { automation: { id: string } }
+    const id = made.automation.id
+    const last = () => service.list()[0]?.runHistory?.at(-1)
+    const due = async () => {
+      clock = (service.dueAt(id) ?? 0) + 1000
+      await service.tick()
+    }
+
+    promptThrows = "the provider refused"
+    await due()
+    check("a turn that would not begin, with its model still offered, carries no code rather than a wrong one", last()?.status === "failed" && last()?.errorCode === undefined, last())
+    models = []
+    await due()
+    check("with its model no longer offered it is model-unavailable", last()?.status === "failed" && last()?.errorCode === "model-unavailable", last())
+    models = [{ provider: "fake", id: "m", name: "Fake M" }]
+    promptThrows = undefined
+
+    busy = true
+    await due()
+    await due()
+    check("a run that waited on a busy conversation until the next came due is target-busy", last()?.status === "skipped" && last()?.errorCode === "target-busy", last())
+    busy = false
+    // The run still queued from the last tick starts once the conversation is free; it is left running.
+    await service.tick()
+
+    targetThere = false
+    await due()
+    check("a run whose conversation is gone is target-missing", last()?.status === "skipped" && last()?.errorCode === "target-missing", last())
+    targetThere = true
+
+    await due()
+    check("a run under way", last()?.status === "running", last())
+    await service.stop()
+    check("that the app closes on is app_interrupted, MiMo's code for it", last()?.status === "skipped" && last()?.errorCode === "app_interrupted", last())
+
+    const saved = JSON.parse(await fs.readFile(deps.file, "utf8")) as { automations: { runHistory?: { errorCode?: string }[] }[] }
+    const codes = (saved.automations[0]?.runHistory ?? []).map((record) => record.errorCode).filter(Boolean)
+    check("the codes are kept on disk with the run records", ["model-unavailable", "target-busy", "target-missing", "app_interrupted"].every((code) => codes.includes(code)), codes)
+    check("and every one is from MiMo's list", codes.every((code) => (RUN_REASONS as readonly string[]).includes(code!)), codes)
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)

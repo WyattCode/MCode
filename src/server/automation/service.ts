@@ -70,11 +70,36 @@ export interface RunRecord {
   resultThreadId?: string
   hasNonEmptyReply?: boolean
   error?: string
+  /** Why it failed or was skipped, in MiMo's words (L12-17); absent where none of them fits. */
+  errorCode?: RunReason
   /** Set once the user has been told about a run that did not finish. */
   reported?: boolean
   /** Set on a record opened while the run was still waiting for a busy conversation (N11-22). */
   queuedAt?: number
 }
+
+/**
+ * MiMo's reasons for a run that failed or was skipped, as its run records keep
+ * them in `errorCode` and its automations page maps them to a sentence each
+ * (`automations.runReason.*`). Kept on the record here too, as data only, so a
+ * history written now already says why when a page reads it. `app_interrupted`
+ * is MiMo's own code for a run the app closed on.
+ */
+export const RUN_REASONS = [
+  "unauthenticated",
+  "model-unavailable",
+  "project-unavailable",
+  "empty-prompt",
+  "target-missing",
+  "target-busy",
+  "overlap",
+  "schedule-changed",
+  "paused",
+  "deleted",
+  "duplicate-run",
+  "app_interrupted",
+] as const
+export type RunReason = (typeof RUN_REASONS)[number]
 
 interface Receipt {
   operationId: string
@@ -343,6 +368,7 @@ export class AutomationService {
           record.status = "skipped"
           record.finishedAt = this.deps.now()
           record.error = CLOSED_MID_RUN
+          record.errorCode = "app_interrupted"
           settled = true
         }
         if (record.status !== "skipped" || record.reported) continue
@@ -380,6 +406,7 @@ export class AutomationService {
         record.status = "skipped"
         record.finishedAt = this.deps.now()
         record.error = CLOSED_MID_RUN
+        record.errorCode = "app_interrupted"
         ended = true
       }
     }
@@ -393,7 +420,7 @@ export class AutomationService {
    * shows in the task's history, and is not reported again at the next start,
    * since there is no conversation to point the user at.
    */
-  private skipRun(automation: Automation, error: string, run?: QueuedRun): void {
+  private skipRun(automation: Automation, error: string, run?: QueuedRun, errorCode?: RunReason): void {
     const at = this.deps.now()
     const record: RunRecord = {
       runId: run ? `${run.runId}-skipped` : `run-${at.toString(36)}-skipped`,
@@ -402,6 +429,7 @@ export class AutomationService {
       status: "skipped",
       finishedAt: at,
       error,
+      ...(errorCode ? { errorCode } : {}),
       reported: true,
     }
     automation.runHistory = [...(automation.runHistory ?? []), record].slice(-RUNS_KEPT)
@@ -741,7 +769,7 @@ export class AutomationService {
       // Rescheduled while this run waited: running it now would run it at a time nobody asked for.
       if (entry.scheduleFingerprint && entry.scheduleFingerprint !== scheduleKey(automation.rrule, automation.label)) {
         this.queue.drop(entry.runId)
-        this.skipRun(automation, "The task was rescheduled before this run could start.", entry)
+        this.skipRun(automation, "The task was rescheduled before this run could start.", entry, "schedule-changed")
         dirty = true
         continue
       }
@@ -774,7 +802,7 @@ export class AutomationService {
 
   /** Records a run that waited for a busy conversation until it was too late, and tells the user by the task's policy. */
   private settleQueuedRecord(automation: Automation, run: QueuedRun, why: string): void {
-    this.skipRun(automation, why, run)
+    this.skipRun(automation, why, run, "target-busy")
     this.tellAbout(automation, automation.targetThreadId, "skipped")
   }
 
@@ -799,6 +827,8 @@ export class AutomationService {
       record.status = "failed"
       record.finishedAt = this.deps.now()
       record.error = cause instanceof Error ? cause.message : String(cause)
+      const reason = this.failureReason(automation)
+      if (reason) record.errorCode = reason
       record.reported = true
     }
     console.warn(`[automation] the run of "${automation.title}" could not start`, cause)
@@ -809,12 +839,22 @@ export class AutomationService {
     }
   }
 
+  /**
+   * Which of MiMo's reasons a turn that would not begin comes under, when one
+   * does: nothing to send, or a model no connected provider offers any more.
+   */
+  private failureReason(automation: Automation): RunReason | undefined {
+    if (!automation.prompt?.trim()) return "empty-prompt"
+    const offered = this.deps.models().some((model) => model.provider === automation.model.provider && model.id === automation.model.model)
+    return offered ? undefined : "model-unavailable"
+  }
+
   private async run(automation: Automation, entry: QueuedRun): Promise<"started" | "skipped" | "waiting" | "failed"> {
     const inbox = { from: automation.title, automationID: automation.id }
     if (automation.runMode === "existing-task") {
       const target = automation.targetThreadId ? await this.deps.sessions.get(automation.targetThreadId) : undefined
       if (!target) {
-        this.skipRun(automation, "The conversation this task runs in no longer exists.", entry)
+        this.skipRun(automation, "The conversation this task runs in no longer exists.", entry, "target-missing")
         this.tellAbout(automation, automation.targetThreadId, "skipped")
         return "skipped"
       }
@@ -832,7 +872,7 @@ export class AutomationService {
     }
     let directory = automation.project?.path
     if (directory && !(await fs.stat(directory).then((stat) => stat.isDirectory(), () => false))) {
-      this.skipRun(automation, "The project folder this task runs in no longer exists.", entry)
+      this.skipRun(automation, "The project folder this task runs in no longer exists.", entry, "project-unavailable")
       this.tellAbout(automation, undefined, "skipped")
       return "skipped"
     }
