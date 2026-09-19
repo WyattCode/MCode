@@ -955,8 +955,8 @@ app.whenReady().then(async () => {
     return within && (await insideReal(root, target)) ? target : undefined
   }
 
-  ipcMain.on("mcode:menu-labels", (_event, next: Record<string, string>) => {
-    setLabels(next)
+  ipcMain.on("mcode:menu-labels", (_event, next: unknown) => {
+    if (!setLabels(next)) return
     // Rebuilt rather than patched: Electron has no way to relabel in place.
     buildMenu()
     // The tray's menu has the same problem and the same answer.

@@ -16,8 +16,18 @@
  */
 let table: Record<string, string> = {}
 
-export function setLabels(next: Record<string, string>): void {
-  table = next
+/**
+ * The window's table, checked the way the menu's key message is: only a plain
+ * object passes, and only its string values are kept. Anything else keeps the
+ * table already held and answers false - `label()` reads this table for every
+ * menu item, tray row and dialog, so a bad message must not reach it.
+ */
+export function setLabels(next: unknown): boolean {
+  if (!next || typeof next !== "object" || Array.isArray(next)) return false
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(next)) if (typeof value === "string") out[key] = value
+  table = out
+  return true
 }
 
 /**
