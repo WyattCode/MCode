@@ -885,7 +885,22 @@ export const useApp = defineStore("app", () => {
         offlineTimer = undefined
       }
       if (up) offline.value = false
-      else offlineTimer = setTimeout(() => (offline.value = true), 2500)
+      else {
+        offlineTimer = setTimeout(() => {
+          offline.value = true
+          /*
+           * After boot the conversation stays on screen, as MiMo's does: only
+           * the reconnect notice escalates, keeping its promise about queued
+           * messages and adding what to do if the service stays away. The boot
+           * overlay is for a service that never started.
+           */
+          if (booted) {
+            if (reconnectTimer !== undefined) clearTimeout(reconnectTimer)
+            reconnectTimer = undefined
+            notice.danger(t("error.connectionRecovering"), { id: RECONNECT_TOAST, body: t("error.connectionStillDown"), duration: 0, closable: false })
+          }
+        }, 2500)
+      }
       /*
        * And said out loud in the meantime. Frames raised while the socket is
        * down are queued rather than refused, so without this a message sent in

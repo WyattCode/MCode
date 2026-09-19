@@ -3826,7 +3826,8 @@ onBeforeUnmount(() => {
           project, no session and no stream, so none of the usual places an
           error can appear exist yet.
         -->
-        <div v-if="!app.connected && (app.error || app.offline)" class="boot">
+        <!-- Before boot only: a drop after it keeps the view, and the reconnect notice says so. -->
+        <div v-if="!app.connected && (app.error || (app.offline && !app.ready))" class="boot">
           <p class="boot-msg">{{ app.error || t("boot.unreachable", { url: app.client?.server ?? "" }) }}</p>
           <button class="boot-retry" @click="retry">{{ t("common.retry") }}</button>
         </div>

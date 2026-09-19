@@ -31,6 +31,22 @@ export async function roundTwelveFailureChecks(check: Check, section: (name: str
 
   // ---------------------------------------------------------------- C12-2
   await queuedRequestChecks(check)
+
+  const store = await read("src/renderer/src/stores/app.ts")
+  const shell = await read("src/renderer/src/App.vue")
+  const i18n = await read("src/renderer/src/lib/i18n.ts")
+  const inTables = (key: string) => i18n.split(`"${key}":`).length - 1 === 18
+
+  // ---------------------------------------------------------------- C12-3
+  {
+    const overlay = /<div v-if="([^"]*)" class="boot">/.exec(shell)?.[1] ?? ""
+    check("C12-3: the full-screen overlay is shown for boot failures only, not for a drop after boot", /app\.offline && !app\.ready/.test(overlay) && !/\|\| app\.offline\)/.test(overlay), overlay)
+    const timer = store.slice(store.indexOf("offlineTimer = setTimeout("), store.indexOf("}, 2500)"))
+    check(
+      "C12-3: after boot the reconnect notice escalates in place instead",
+      /if \(booted\)/.test(timer) && /notice\.danger\(t\("error\.connectionRecovering"\), \{ id: RECONNECT_TOAST, body: t\("error\.connectionStillDown"\)/.test(timer) && inTables("error.connectionStillDown"),
+    )
+  }
 }
 
 /** A port nothing listens on yet. */
