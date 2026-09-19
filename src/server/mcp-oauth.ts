@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { createConnection } from "node:net"
 import { createHash, randomBytes } from "node:crypto"
 import type { McpOAuthConfig } from "@shared/protocol"
+import { CodedError } from "@shared/errors"
 import { writeAtomic, type Storage } from "./storage"
 import { oauthFetch } from "./oauth-fetch"
 
@@ -99,10 +100,37 @@ export interface McpAuthEntry {
 export class McpAuthStore {
   private queue: Promise<void> = Promise.resolve()
 
+  /** Why the file cannot be written right now: it could not be read, and was not moved aside. */
+  private blocked: string | undefined
+
   constructor(private readonly storage: Storage) {}
 
+  /**
+   * Every sign-in, or none while the file cannot be read.
+   *
+   * A file that will not parse used to read as no sign-ins, and the next
+   * change wrote its one entry over it, losing every other server's tokens
+   * (L12-10). It is now moved aside as `mcp-auth.json.corrupt-<time>`. One that
+   * cannot be read at all - a lock, a permission - or cannot be moved stays
+   * exactly where it is, and every change is refused until it reads again.
+   */
   async all(): Promise<Record<string, McpAuthEntry>> {
-    return (await this.storage.read<Record<string, McpAuthEntry>>(KEY).catch(() => undefined)) ?? {}
+    try {
+      const value = await this.storage.read<Record<string, McpAuthEntry>>(KEY)
+      this.blocked = undefined
+      return value ?? {}
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err)
+      const aside = err instanceof SyntaxError ? await this.storage.quarantine(KEY) : undefined
+      if (aside) {
+        console.warn(`[mcp] the MCP sign-ins could not be read (${why}); the file was kept as ${aside}`)
+        this.blocked = undefined
+      } else {
+        if (this.blocked === undefined) console.warn(`[mcp] the MCP sign-ins could not be read (${why}); nothing is saved over them`)
+        this.blocked = why
+      }
+      return {}
+    }
   }
 
   async get(name: string): Promise<McpAuthEntry | undefined> {
@@ -120,6 +148,10 @@ export class McpAuthStore {
       .catch(() => {})
       .then(async () => {
         const all = await this.all()
+        if (this.blocked !== undefined) {
+          const file = this.storage.fileOf(KEY)
+          throw new CodedError(`${file} could not be read (${this.blocked}), so nothing is saved over it`, "error.mcpAuthUnreadable", { file })
+        }
         change(all)
         await writeAtomic(this.storage.fileOf(KEY), JSON.stringify(all, null, 2), 0o600)
       })

@@ -22,6 +22,8 @@ import { Storage } from "../src/server/storage"
 import { Bus } from "../src/server/bus"
 import { SessionStore } from "../src/server/session/store"
 import { runImport, scanImports } from "../src/server/import"
+import { McpAuthStore } from "../src/server/mcp-oauth"
+import { codeOf, paramsOf } from "../src/shared/errors"
 
 const exists = (file: string) =>
   fs.access(file).then(
@@ -183,6 +185,42 @@ export async function roundTwelveLifecycleChecks(check: Check, section: (name: s
       if (previous === undefined) delete process.env.MCODE_IMPORT_HOME
       else process.env.MCODE_IMPORT_HOME = previous
     }
+  }
+
+  // ----------------------------------------------------------------- L12-10
+  section("Round 12 (L12-10): a damaged mcp-auth.json is kept, never written over")
+  {
+    const storage = new Storage(path.join(root, "mcp-auth", "storage"))
+    const file = storage.fileOf("mcp-auth")
+    await fs.mkdir(path.dirname(file), { recursive: true })
+    const auth = new McpAuthStore(storage)
+
+    await fs.writeFile(file, '{ "github": { "tokens": { "accessToken": "kept-for-evidence"')
+    check("a file that will not parse reads as no sign-ins", Object.keys(await auth.all()).length === 0)
+    const kept = (await fs.readdir(path.dirname(file))).filter((name) => name.startsWith("mcp-auth.json.corrupt-"))
+    check("and is kept aside byte for byte", kept.length === 1 && (await fs.readFile(path.join(path.dirname(file), kept[0]!), "utf8")).includes("kept-for-evidence"), kept)
+    await auth.set("linear", { codeVerifier: "v1" }, "https://linear.example")
+    check("a later sign-in is saved beside nothing it could have destroyed", (await auth.get("linear"))?.codeVerifier === "v1")
+
+    await fs.writeFile(file, "{ damaged and stuck")
+    const rename = fs.rename
+    ;(fs as { rename: typeof fs.rename }).rename = async () => {
+      throw Object.assign(new Error("cannot move"), { code: "EXDEV" })
+    }
+    let refused: unknown
+    try {
+      refused = await auth.set("notion", { codeVerifier: "v2" }).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      )
+    } finally {
+      ;(fs as { rename: typeof fs.rename }).rename = rename
+    }
+    check("a change is refused with a code while the file can be neither read nor moved", codeOf(refused) === "error.mcpAuthUnreadable" && paramsOf(refused)?.file === file, String(refused))
+    check("and the file is exactly as it was", (await fs.readFile(file, "utf8")) === "{ damaged and stuck")
+    await fs.writeFile(file, JSON.stringify({ linear: { codeVerifier: "v1" } }))
+    await auth.set("notion", { codeVerifier: "v2" })
+    check("once it reads again, changes are saved", (await auth.get("notion"))?.codeVerifier === "v2" && (await auth.get("linear"))?.codeVerifier === "v1")
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
