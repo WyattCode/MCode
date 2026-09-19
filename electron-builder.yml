@@ -88,10 +88,10 @@ publish:
   url: https://updates.invalid/mcode/
 
 mac:
+  # No zip: it is only what electron-updater would replace the app from, and
+  # macOS has no automatic updates (M10-8).
   target:
     - dmg
-    # electron-updater replaces a macOS app from the zip (and needs the app signed).
-    - zip
   icon: build/icon.icns
   category: public.app-category.developer-tools
   # The Dock's cut of each colourway (scripts/icons.mjs), on Apple's icon grid.

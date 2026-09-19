@@ -242,4 +242,19 @@ export async function roundFourteenPackagingChecks(check: Check, section: (name:
       await fs.rm(cache, { recursive: true, force: true }).catch(() => undefined)
     }
   }
+
+  // ------------------------------------------------------------------ P14-6
+  section("Round 14 (P14-6): no automatic updates on macOS (M10-8 declined)")
+  {
+    const main = await read("src/main/index.ts")
+    const builder = await read("electron-builder.yml")
+    check("the updater is gated on the platform", /const autoUpdates = process\.platform !== "darwin"/.test(main))
+    check(
+      "on macOS electron-updater is never even loaded, so nothing is scheduled or downloaded",
+      /\(autoUpdates \? import\("electron-updater"\) : Promise\.reject\(/.test(main) && (main.match(/import\("electron-updater"\)/g) ?? []).length === 1,
+    )
+    check("a check asked for there says no feed is configured, not that something broke", /if \(!updater && !autoUpdates\) return \{ \.\.\.idleUpdate, outcome: "no-feed" \}/.test(main))
+    const mac = /\nmac:\n([\s\S]*?)\n\S/.exec(builder)?.[1] ?? ""
+    check("and the mac build no longer makes the zip only an updater would use", /target:\s*\n\s*- dmg/.test(mac) && !/^\s*- zip\s*$/m.test(mac), mac.slice(0, 300))
+  }
 }
