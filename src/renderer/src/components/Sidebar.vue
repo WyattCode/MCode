@@ -6,7 +6,7 @@ import ChatLinkMark from "./ChatLinkMark.vue"
 import { convoCard } from "../lib/convo-card"
 import { projectOf } from "../lib/session-project"
 import { useApp } from "../stores/app"
-import { language, sessionTitle, t } from "../lib/i18n"
+import { dateIn, language, sessionTitle, t } from "../lib/i18n"
 import { notify } from "../lib/toast"
 import { RAIL_WIDTH } from "../lib/right-tools"
 import { shownChord } from "../lib/keys"
@@ -660,7 +660,7 @@ function dayLabel(at: number): string {
   const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
   if (at >= midnight) return t("side.today")
   if (at >= midnight - DAY) return t("side.yesterday")
-  return new Intl.DateTimeFormat(language.value, { weekday: "long" }).format(new Date(at))
+  return dateIn(at, { weekday: "long" })
 }
 
 /* What a conversation is waiting on, most urgent first. */

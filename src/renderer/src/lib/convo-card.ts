@@ -1,5 +1,5 @@
 import type { ChatLink } from "@shared/protocol"
-import { language, sessionTitle, t } from "./i18n"
+import { dateIn, language, sessionTitle, t } from "./i18n"
 import { projectName } from "./project"
 import { sessionGroup, type GroupContext } from "@shared/session-group"
 import type { TipLine } from "./tip"
@@ -15,11 +15,7 @@ export function cardTime(at: number): string {
   const pad = (value: number) => String(value).padStart(2, "0")
   const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}`
   if (language.value.toLowerCase().startsWith("zh")) return `${pad(date.getMonth() + 1)}月${pad(date.getDate())}日 ${clock}`
-  try {
-    return `${new Intl.DateTimeFormat(language.value, { month: "short", day: "numeric" }).format(date)} ${clock}`
-  } catch {
-    return clock
-  }
+  return `${dateIn(date, { month: "short", day: "numeric" })} ${clock}`
 }
 
 /** session chat: MiMo's order - the messages being handled first, then the queue by position. */

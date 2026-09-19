@@ -69,9 +69,9 @@ export function badgeOf(file: string): BadgeStyle {
 export type ArtifactAge =
   | { unit: "just" }
   | { unit: "m" | "h" | "d"; n: number }
-  | { unit: "date"; y: number; mo: number; day: number }
+  | { unit: "date" }
 
-/** MiMo's tile time, floored: just now, minutes, hours, days under a week, then an unpadded Y/M/D. */
+/** MiMo's tile time, floored: just now, minutes, hours, days under a week, then the date (calendarDate's unpadded Y/M/D). */
 export function artifactAge(at: number, now: number): ArtifactAge {
   const seconds = Math.max(0, Math.floor((now - at) / 1000))
   if (seconds < 60) return { unit: "just" }
@@ -81,8 +81,7 @@ export function artifactAge(at: number, now: number): ArtifactAge {
   if (hours < 24) return { unit: "h", n: hours }
   const days = Math.floor(hours / 24)
   if (days < 7) return { unit: "d", n: days }
-  const date = new Date(at)
-  return { unit: "date", y: date.getFullYear(), mo: date.getMonth() + 1, day: date.getDate() }
+  return { unit: "date" }
 }
 
 /** MiMo's page size for 加载更多. */

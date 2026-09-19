@@ -11,7 +11,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { LANGUAGE_IDS, resolveLanguage, systemLanguage } from "../src/shared/locale"
-import { ago, compactTokens, dayLabel, detectLanguage, language, LANGUAGES } from "../src/renderer/src/lib/i18n"
+import { ago, calendarDate, compactTokens, dateIn, dayLabel, detectLanguage, language, LANGUAGES } from "../src/renderer/src/lib/i18n"
 import { subagentTime } from "../src/renderer/src/lib/subagents"
 import { interfaceLocale, setMachineLocale } from "../src/server/session/locale"
 
@@ -166,5 +166,36 @@ export async function roundFourteenLocaleChecks(check: Check, section: (name: st
       "L14-7: the usage page and the composer share the one formatter",
       !/day\.key\.slice\(5\)/.test(settings) && /dayLabel\(day\.key\)/.test(settings) && !/function (tokens|compactTokens)\(/.test(settings + composer) && /compactTokens\(/.test(settings) && /compactTokens\(/.test(composer),
     )
+  }
+
+  // ---------------------------------------------------------------- L14-8
+  {
+    const saved = language.value
+    const at = new Date(2026, 8, 20, 10).getTime()
+    const old = Date.now() - 60 * 86_400_000
+    const split: string[] = []
+    for (const { id } of LANGUAGES) {
+      language.value = id
+      const year = (value: number) => dateIn(value, { year: "numeric" }).replace(/\D/g, "")
+      const tile = calendarDate(at).split("/")[0]
+      if (tile !== year(at)) split.push(`${id}: artifacts ${tile}, conversations ${year(at)}`)
+      if (!ago(old).replace(/\D/g, "").includes(year(old))) split.push(`${id}: ago ${ago(old)} lacks ${year(old)}`)
+    }
+    language.value = "th"
+    const thai = { tile: calendarDate(at), ago: ago(old) }
+    language.value = "zh-CN"
+    const chinese = calendarDate(at)
+    language.value = saved
+    check("L14-8: every language writes the same year on the artifacts page as on conversation dates", split.length === 0, split)
+    check("L14-8: Thai is the Buddhist year on both, as the conversation dates always were", thai.tile.startsWith("2569/") && /2569/.test(thai.ago), thai)
+    check("L14-8: the artifacts page keeps MiMo's unpadded Y/M/D", chinese === "2026/9/20", chinese)
+    const renderer = await Promise.all(
+      [
+        "src/renderer/src/components/ArtifactsView.vue", "src/renderer/src/components/right/VersionHistory.vue", "src/renderer/src/components/MessageStream.vue",
+        "src/renderer/src/components/Sidebar.vue", "src/renderer/src/lib/convo-card.ts", "src/renderer/src/components/SettingsDialog.vue",
+      ].map(async (file) => [file, await read(file)] as const),
+    )
+    const own = renderer.filter(([, text]) => /new Intl\.DateTimeFormat\(/.test(text) || /\$\{age\.y\}/.test(text)).map(([file]) => file)
+    check("L14-8: dates go through the one formatter (dateIn / calendarDate), none builds its own", own.length === 0, own)
   }
 }

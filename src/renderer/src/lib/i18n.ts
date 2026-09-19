@@ -40473,15 +40473,40 @@ export function compactTokens(count: number): string {
   return String(count)
 }
 
+/**
+ * The one date formatter: a moment in the interface language and that
+ * language's own default calendar - MiMo's Intl.DateTimeFormat(language) for
+ * conversation dates. Every date the interface writes goes through here, so
+ * Thai reads the Buddhist year (2569) on every page rather than on some.
+ */
+export function dateIn(value: number | Date, options?: Intl.DateTimeFormatOptions): string {
+  const date = typeof value === "number" ? new Date(value) : value
+  try {
+    return new Intl.DateTimeFormat(language.value, options).format(date)
+  } catch {
+    return date.toLocaleDateString(undefined, options)
+  }
+}
+
+/** MiMo's unpadded Y/M/D (2026/9/20), its year, month and day counted in that same calendar. */
+export function calendarDate(value: number): string {
+  try {
+    const parts = new Intl.DateTimeFormat(language.value, { year: "numeric", month: "numeric", day: "numeric" }).formatToParts(new Date(value))
+    const part = (type: string) => parts.find((entry) => entry.type === type)?.value ?? ""
+    const [year, month, day] = [part("year"), part("month"), part("day")]
+    if (year && month && day) return `${year}/${month}/${day}`
+  } catch {
+    // A tag the runtime does not know falls through to the plain calendar.
+  }
+  const date = new Date(value)
+  return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`
+}
+
 /** A calendar day kept as YYYY-MM-DD, as a short month and day in the interface language: "Sep 20", "9月20日". */
 export function dayLabel(key: string): string {
   const [year, month, day] = key.split("-").map(Number)
   if (!year || !month || !day) return key
-  try {
-    return new Intl.DateTimeFormat(language.value, { month: "short", day: "numeric" }).format(new Date(year, month - 1, day))
-  } catch {
-    return key.slice(5)
-  }
+  return dateIn(new Date(year, month - 1, day), { month: "short", day: "numeric" })
 }
 
 /**
@@ -40499,9 +40524,5 @@ export function ago(value: number): string {
   if (hours < 24) return tn("time.hoursAgo", hours)
   const days = Math.floor(hours / 24)
   if (days < 30) return tn("time.daysAgo", days)
-  try {
-    return new Intl.DateTimeFormat(language.value).format(new Date(value))
-  } catch {
-    return new Date(value).toLocaleDateString()
-  }
+  return dateIn(value)
 }

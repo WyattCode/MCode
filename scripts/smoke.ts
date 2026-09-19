@@ -88,7 +88,7 @@ import { blankProjectDirectory } from "../src/server/scratch"
 // round 6 (L6): a thumbnail needs the attachment's bytes, which a saved draft no longer carries.
 import { preview } from "../src/renderer/src/lib/attach"
 import { blockedIPv4, blockedIPv6 } from "../src/server/tool/webfetch"
-import { ago, t, tn } from "../src/renderer/src/lib/i18n"
+import { ago, calendarDate, language, t, tn } from "../src/renderer/src/lib/i18n"
 import {
   VOICE_EDIT_MAX,
   VOICE_EDIT_PROMPT,
@@ -5933,7 +5933,11 @@ async function main() {
     check("hours below a day", JSON.stringify(artifactAge(base - 23 * 60 * MIN, base)) === '{"unit":"h","n":23}')
     check("days below a week", JSON.stringify(artifactAge(base - 6 * 1440 * MIN, base)) === '{"unit":"d","n":6}')
     const old = artifactAge(new Date(2026, 0, 5, 9).getTime(), base)
-    check("a week or more is an unpadded Y/M/D", old.unit === "date" && `${old.y}/${old.mo}/${old.day}` === "2026/1/5", old)
+    const shown = language.value
+    language.value = "zh-CN"
+    const written = calendarDate(new Date(2026, 0, 5, 9).getTime())
+    language.value = shown
+    check("a week or more is an unpadded Y/M/D", old.unit === "date" && written === "2026/1/5", { old, written })
     check("a clock behind the file still reads just now", artifactAge(base + 5000, base).unit === "just")
 
     check("kind colours are MiMo's", badgeOf("a/b.docx").fg === "#2b6cb0" && badgeOf("s.pptx").fg === "#c43e1c" && badgeOf("t.xlsx").fg === "#21a366" && badgeOf("r.pdf").fg === "#d93831")

@@ -17,7 +17,7 @@ import { turnOpeners } from "@shared/steer"
 import { redactText } from "@shared/display-redact"
 import { preview, videoUrl } from "../lib/attach"
 import { openImagePreview, openVideoPreview, type ImagePreviewMeta } from "../lib/image-preview"
-import { language, t } from "../lib/i18n"
+import { dateIn, language, t } from "../lib/i18n"
 import { questionParts } from "../lib/question-parts"
 import { renderMarkdown } from "../lib/markdown"
 import { highlightWithin } from "../lib/highlight"
@@ -392,11 +392,11 @@ function stamp(at: number): string {
     const day = `${date.getMonth() + 1}月${date.getDate()}日`
     return `${otherYear ? `${date.getFullYear()}年` : ""}${day} ${clock}`
   }
-  const day = new Intl.DateTimeFormat(language.value, {
+  const day = dateIn(date, {
     month: "short",
     day: "numeric",
     ...(otherYear ? { year: "numeric" as const } : {}),
-  }).format(date)
+  })
   return `${day} ${clock}`
 }
 
