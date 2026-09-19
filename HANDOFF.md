@@ -490,7 +490,12 @@
 - L14-8 一个日期格式器 `dateIn` / `calendarDate`，产物、侧栏、回复脚注、信息卡、版本历史、用量页都用它，泰语全应用佛历（`8a726fa`）
 - 没改：Word 批注时间照 MiMo 用 ISO 公历；PPTX 里的 echarts 切换语言后要重载才变（MiMo 同）
 
-**本机相关**：`D:\Apps\MCode` 装的是 0.2.4（Electron 38、旧 GitHub 更新配置），收不到新更新源，需要手动装一次新版本。注意 MCode 还没有更新服务器：`electron-builder.yml` 的 `publish.url` 是故意不可解析的 `updates.invalid`，更新源要在设置里填或用 `MCODE_UPDATE_URL`，否则装了新版也不会自动更新。
+**打包与安装实测（2026-09-20，本轮之后做的）**
+- **P14-9 打包后打不开（本轮最重要的发现）**：0.2.8 装好后主进程一直卡住、窗口始终不出现。原因是 `turndown`（第十轮加的）在 devDependencies，vite 把它打进主进程，但它对 `@mixmark-io/domino` 是运行时 `require`，而 electron-builder 只拷 `dependencies` 及其依赖，所以安装包里没有这个模块。开发和探针都从仓库的 `node_modules` 解析得到，所以一直没暴露。修法：把 `@mixmark-io/domino` 写进 `dependencies`（`0ce7d95`），并加检查「out/main 里引用的每个外部模块都必须在 `dependencies` 闭包里」（`smoke-round14-packaging.ts` P14-9）。**教训：只有真正安装的包才能发现这类问题，打包后至少装一次再发。**
+- 0.2.9（`e3997bd`）已装到 `D:\Apps\MCode`（注册表里记着该目录，原地升级），窗口正常、日志正常、真实配置目录 `%APPDATA%\mcode` 不变。
+- **自动更新端到端实测通过**：本机 `127.0.0.1:8765` 起一个 generic 更新源（`latest.yml` 写成 0.2.10，文件仍是 0.2.9 安装包），用 `MCODE_UPDATE_URL` 启动安装版（不动用户设置）。结果：启动 5 秒后检查 → 差分下载（读两个 blockmap，实际下载 0 KB，基准是缓存里的 `installer.exe`）→ 校验通过 → 正常退出时静默安装 → 装完版本正确。装完不会自动重开（electron-updater 的退出时安装不带重启），MiMo 同。测试下载已清掉，`installer.exe`（差分基准）保留。
+- 未实测：P14-2（关机时不装更新）只有 smoke 覆盖，没有真的关机验证。
+- **注意 MCode 还没有更新服务器**：`electron-builder.yml` 的 `publish.url` 是故意不可解析的 `updates.invalid`，更新源要在设置里填或用 `MCODE_UPDATE_URL`，否则装了新版也不会自动更新。
 
 ## 第十三轮：键盘与焦点、多实例、大数据量（2026-09-20）
 
@@ -894,6 +899,6 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
 **第十四轮（网络与代理、本地化、打包与更新）16 项已全部完成并合并入 `v2.0`**，已知 backlog 清空。下一步：
 
 1. 如要继续对照，可再换只读角度开第十五轮，例如：（a）MCP 与工具全链路的边界情况（工具超时、大结果、并发调用、服务器中途退出）逐项对照 MiMo；（b）会话与上下文管理（自动压缩、上下文溢出、回退、分支、导出）的细节；（c）主题与视觉细节在高 DPI、缩放 125/150%、高对比度模式下的表现。
-2. 打包一次新版本（`npm run package:win`，会升版本号）并手动装到 `D:\Apps\MCode`（注册表记着该目录，原地升级），顺带在本机临时起一个更新源端到端验证 P14-2/4/5 与自动更新。
+2. 用真实模型实际使用已装好的 0.2.9，按看到的问题逐条修；这是现在最有价值的一步（smoke 4700 条大多用模拟模型，真实长时间使用覆盖少）。
 3. 小尾巴（可选）：`update-transaction.json` 与 `composer-input.ts` 走 `writeAtomicSync`；清理崩溃留下的 `*.tmp`；提示超过 3 条时持久提示被挤掉；两处偶发失败的 smoke 检查（见「约定与坑」）。
 4. 新页面（钩子、CLI 插件、SSH 连接）用户已决定不做。
