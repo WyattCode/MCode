@@ -150,6 +150,62 @@ export async function quarantine(target: string): Promise<string | undefined> {
   return undefined
 }
 
+/** How long a quarantined copy is kept once a newer one of the same document exists. */
+export const QUARANTINE_KEEP_DAYS = 30
+
+/**
+ * A copy `quarantine` (or the SQLite stores' own) made: the document's name,
+ * `.corrupt-`, the moment as an ISO time with `:` and `.` made `-`, a counter
+ * when that name was taken, and a journal's suffix for a database's.
+ */
+const QUARANTINED = /^(.+)\.corrupt-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)(-\d+)?(-wal|-shm|-journal)?$/
+
+/**
+ * Removes old quarantined copies from a folder, once at start-up (L12-15).
+ *
+ * Nothing ever deleted a `.corrupt-*` file, so a document that kept being
+ * damaged - or a store that kept being moved aside - piled copies up for the
+ * life of the profile. A copy goes once it is more than 30 days old, by the
+ * time in its own name; the newest copy of each document is always kept,
+ * however old, since it may be the only evidence left of what happened.
+ * Journal files go with the copy they belong to.
+ *
+ * @returns how many files were removed.
+ */
+export async function pruneQuarantined(directory: string, options: { recursive?: boolean; now?: number } = {}): Promise<number> {
+  const now = options.now ?? Date.now()
+  let removed = 0
+  const sweep = async (folder: string): Promise<void> => {
+    const entries = await fs.readdir(folder, { withFileTypes: true }).catch(() => [])
+    const copies = new Map<string, Map<string, { at: number; files: string[] }>>()
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (options.recursive) await sweep(path.join(folder, entry.name))
+        continue
+      }
+      const match = QUARANTINED.exec(entry.name)
+      if (!match) continue
+      const [, document, stamp, attempt = ""] = match
+      const at = Date.parse(stamp!.replace(/^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/, "$1:$2:$3.$4Z"))
+      if (!Number.isFinite(at)) continue
+      const byCopy = copies.get(document!) ?? new Map<string, { at: number; files: string[] }>()
+      copies.set(document!, byCopy)
+      const copy = byCopy.get(stamp + attempt) ?? { at, files: [] }
+      copy.files.push(entry.name)
+      byCopy.set(stamp + attempt, copy)
+    }
+    for (const byCopy of copies.values()) {
+      const newest = [...byCopy.entries()].sort((a, b) => b[1].at - a[1].at || b[0].localeCompare(a[0]))[0]?.[0]
+      for (const [id, copy] of byCopy) {
+        if (id === newest || now - copy.at <= QUARANTINE_KEEP_DAYS * 24 * 60 * 60 * 1000) continue
+        for (const name of copy.files) await fs.rm(path.join(folder, name), { force: true }).then(() => removed++, () => undefined)
+      }
+    }
+  }
+  await sweep(directory)
+  return removed
+}
+
 /** A temp file tempNameFor made: `.<pid>.<counter>.tmp` at the end of the name. */
 export const TEMP_NAME = /\.\d+\.\d+\.tmp$/
 

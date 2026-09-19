@@ -3,7 +3,7 @@ import { WebSocketServer, type WebSocket } from "ws"
 import type { ClientFrame, ServerFrame } from "@shared/protocol"
 import { narrowcastSession } from "@shared/protocol"
 import { codeOf, paramsOf } from "@shared/errors"
-import { Storage } from "./storage"
+import { Storage, pruneQuarantined } from "./storage"
 import { Bus } from "./bus"
 import { Config } from "./config"
 import { AuthManager } from "./auth/manager"
@@ -142,6 +142,12 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       // Temp files a killed write of an earlier run left in the storage folder (N11-30).
       const swept = await storage.sweepTemps()
       if (swept) console.info(`[storage] removed ${swept} temp file(s) an earlier run left behind`)
+      // Quarantined copies over 30 days old, beside every store; the newest of each document stays (L12-15).
+      const pruned =
+        (await pruneQuarantined(storage.directory, { recursive: true })) +
+        (await pruneQuarantined(path.join(dataDirectory, "index"))) +
+        (await pruneQuarantined(dataDirectory))
+      if (pruned) console.info(`[storage] removed ${pruned} quarantined file(s) older than 30 days`)
       // Brings the store up to date with the transcripts and re-checks what is still on disk.
       await artifacts?.reconcile(await sessions.list(), (id) => sessions.messages(id))
     } catch {

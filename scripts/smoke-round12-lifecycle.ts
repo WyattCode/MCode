@@ -18,7 +18,8 @@ import { quarantineSqlite } from "../src/server/sql-worker"
 import { cronFile, readCronFile, schedulable } from "../src/server/cron/tasks"
 import { CronScheduler } from "../src/server/cron/scheduler"
 import type { SessionInfo } from "../src/shared/protocol"
-import { Storage } from "../src/server/storage"
+import { Storage, pruneQuarantined } from "../src/server/storage"
+import { IndexDatabase } from "../src/server/history/database"
 import { Bus } from "../src/server/bus"
 import { SessionStore } from "../src/server/session/store"
 import { runImport, scanImports } from "../src/server/import"
@@ -400,6 +401,58 @@ export async function roundTwelveLifecycleChecks(check: Check, section: (name: s
       await service.stop()
       bindAutomations(undefined)
     }
+  }
+
+  // ----------------------------------------------------------------- L12-15
+  section("Round 12 (L12-15): the search index is deleted, not kept, on a schema change; old quarantined copies are pruned")
+  {
+    const base = path.join(root, "prune")
+    const indexFolder = path.join(base, "index")
+    const indexPath = path.join(indexFolder, "search.db")
+    const first = await IndexDatabase.open(indexPath)
+    await first.db.exec("PRAGMA user_version = 99")
+    await first.close()
+    const flipped = await IndexDatabase.open(indexPath)
+    check("an index from another schema is started over", flipped.openedAs === "recreated")
+    check("and no copy of it is kept", !(await fs.readdir(indexFolder)).some((name) => name.includes(".corrupt-")), await fs.readdir(indexFolder))
+    await flipped.close()
+    for (const suffix of ["-wal", "-shm"]) await fs.rm(indexPath + suffix, { force: true })
+    await fs.writeFile(indexPath, "not a database")
+    const damaged = await IndexDatabase.open(indexPath)
+    check("a damaged one is still kept aside", damaged.openedAs === "recreated" && (await fs.readdir(indexFolder)).some((name) => name.startsWith("search.db.corrupt-")))
+    await damaged.close()
+
+    const storage = path.join(base, "storage")
+    const now = Date.UTC(2026, 8, 20, 12)
+    const day = 24 * 60 * 60 * 1000
+    const stamp = (daysAgo: number) => new Date(now - daysAgo * day).toISOString().replace(/[:.]/g, "-")
+    const files = [
+      "config.json",
+      `config.json.corrupt-${stamp(60)}`,
+      `config.json.corrupt-${stamp(40)}`,
+      `config.json.corrupt-${stamp(1)}`,
+      `permissions.json.corrupt-${stamp(90)}`,
+      `artifacts.db.corrupt-${stamp(50)}`,
+      `artifacts.db.corrupt-${stamp(50)}-wal`,
+      `artifacts.db.corrupt-${stamp(50)}-shm`,
+      `artifacts.db.corrupt-${stamp(2)}`,
+      `artifacts.db.corrupt-${stamp(2)}-wal`,
+      "notes.corrupt-by-hand",
+      path.join("session", "ses_1", `history.json.corrupt-${stamp(50)}`),
+      path.join("session", "ses_1", `history.json.corrupt-${stamp(45)}-1`),
+    ]
+    for (const name of files) {
+      await fs.mkdir(path.dirname(path.join(storage, name)), { recursive: true })
+      await fs.writeFile(path.join(storage, name), name)
+    }
+    const removed = await pruneQuarantined(storage, { recursive: true, now })
+    const left = new Set([...(await fs.readdir(storage)), ...(await fs.readdir(path.join(storage, "session", "ses_1")))])
+    const gone = (name: string) => !left.has(path.basename(name))
+    check("copies over 30 days old go, journals with them", gone(`config.json.corrupt-${stamp(60)}`) && gone(`config.json.corrupt-${stamp(40)}`) && gone(`artifacts.db.corrupt-${stamp(50)}-wal`) && gone(`artifacts.db.corrupt-${stamp(50)}`), [...left])
+    check("the newest copy of each document stays, however old", left.has(`config.json.corrupt-${stamp(1)}`) && left.has(`permissions.json.corrupt-${stamp(90)}`) && left.has(`history.json.corrupt-${stamp(45)}-1`) && gone(`history.json.corrupt-${stamp(50)}`), [...left])
+    check("recent copies and their journals stay", left.has(`artifacts.db.corrupt-${stamp(2)}`) && left.has(`artifacts.db.corrupt-${stamp(2)}-wal`))
+    check("the documents themselves and names that are not this app's are never touched", left.has("config.json") && left.has("notes.corrupt-by-hand"))
+    check("and it says how many went", removed === 6, removed)
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)

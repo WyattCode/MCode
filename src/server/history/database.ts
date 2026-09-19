@@ -100,7 +100,7 @@ export class IndexDatabase {
       return new IndexDatabase(await IndexDatabase.connect(file), file, existed ? "existing" : "created")
     } catch (failure) {
       /*
-       * Only a damaged index is started over.
+       * Only a damaged index, or one from another schema, is started over.
        *
        * A bare catch could not tell "this file is not a database" from "another
        * instance of this app holds it", "the virus scanner has the -wal open"
@@ -108,16 +108,23 @@ export class IndexDatabase {
        * long history's index over one is a silent, avoidable rebuild. The
        * reference gates its own recovery on the same test and rethrows
        * everything else.
+       *
+       * A file from another schema is not damage and is not kept (L12-15).
+       * It is what a downgrade, an upgrade, or a development build sharing the
+       * profile with the installed one leaves behind, and the index holds
+       * nothing that cannot be made again - so keeping a copy at every flip
+       * only filled the folder with whole indexes nobody would look at.
        */
-      if (!IndexDatabase.damaged(failure)) throw failure
-      IndexDatabase.quarantine(file)
+      if (IndexDatabase.otherSchema(failure)) removeSqlite(file)
+      else if (sqliteDamaged(failure)) IndexDatabase.quarantine(file)
+      else throw failure
       return new IndexDatabase(await IndexDatabase.connect(file), file, "recreated")
     }
   }
 
-  /** The reference's `isCorruption`, plus this app's own word for a file from another schema. */
-  private static damaged(failure: unknown): boolean {
-    return sqliteDamaged(failure) || /is at schema/i.test(failure instanceof Error ? failure.message : String(failure))
+  /** This app's own word for a file from another schema. */
+  private static otherSchema(failure: unknown): boolean {
+    return /is at schema/i.test(failure instanceof Error ? failure.message : String(failure))
   }
 
   /**
