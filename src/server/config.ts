@@ -921,6 +921,7 @@ export class Config {
    * purpose - and nothing about the conversations themselves changes.
    */
   async migrateRepositoryProjects(): Promise<void> {
+    if (this.fromNewerVersion) return
     const done = this.current.migrations ?? []
     if (done.includes(REPOSITORY_PROJECTS_MIGRATION)) return
     const leaving = new Set<string>()
@@ -951,6 +952,7 @@ export class Config {
    * finished, so a failure is tried again at the next launch.
    */
   async migrateMemory(directories: readonly string[], move: (directories: string[]) => Promise<unknown>): Promise<void> {
+    if (this.fromNewerVersion) return
     const done = this.current.migrations ?? []
     if (done.includes(MEMORY_LAYOUT_MIGRATION)) return
     await move([...directories, ...listedProjects(this.current), ...(this.current.closedProjects ?? [])])
@@ -964,6 +966,7 @@ export class Config {
    * were.
    */
   async migrateProjects(directories: readonly string[]): Promise<void> {
+    if (this.fromNewerVersion) return
     const done = this.current.migrations ?? []
     if (done.includes(PROJECT_LIST_MIGRATION)) return
     await this.set({ ...adoptedProjects(this.current, directories), migrations: [...done, PROJECT_LIST_MIGRATION] })

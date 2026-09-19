@@ -52,4 +52,21 @@ async function checks(check: Check, section: (name: string) => void): Promise<vo
       await (backend as Awaited<ReturnType<typeof startBackend>>).close()
     }
   }
+
+  section("Round 12 (L12-4): a newer build's config.json without our migrations does not stop the backend")
+  {
+    const dir = await profile("newer")
+    const file = path.join(dir, "storage", "config.json")
+    const text = JSON.stringify({ schemaVersion: 99, theme: "dark", futureField: { kept: true } }, null, 2)
+    await fs.writeFile(file, text)
+    const backend = await startBackend(dir).catch((error: unknown) => error)
+    const started = !(backend instanceof Error) && typeof (backend as { port?: unknown }).port === "number"
+    check("the backend starts over schemaVersion 99 with no migrations recorded", started, backend instanceof Error ? backend.message : undefined)
+    if (started) {
+      const { runtime } = backend as Awaited<ReturnType<typeof startBackend>>
+      check("the document is read as far as it goes", runtime.config.fromNewerVersion && runtime.config.get().theme === "dark")
+      await (backend as Awaited<ReturnType<typeof startBackend>>).close()
+    }
+    check("and it is left exactly as it was", (await fs.readFile(file, "utf8")) === text)
+  }
 }
