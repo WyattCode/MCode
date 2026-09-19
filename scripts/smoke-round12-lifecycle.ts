@@ -24,6 +24,8 @@ import { SessionStore } from "../src/server/session/store"
 import { runImport, scanImports } from "../src/server/import"
 import { McpAuthStore } from "../src/server/mcp-oauth"
 import { codeOf, paramsOf } from "../src/shared/errors"
+import { Snapshots } from "../src/server/session/snapshot"
+import { execFileSync } from "node:child_process"
 
 const exists = (file: string) =>
   fs.access(file).then(
@@ -63,7 +65,7 @@ export async function roundTwelveLifecycleChecks(check: Check, section: (name: s
       left,
     )
 
-    const runtime = { artifacts: store } as unknown as Runtime
+    const runtime = { artifacts: store, sessions: { unreadable: async () => [] } } as unknown as Runtime
     const first = await storeNotices(runtime)
     check("the window is told once, with the path", first.length === 1 && first[0]?.code === "error.artifactsRecreated" && first[0]?.params?.path === store?.recovered, first)
     check("and not again on a second ask", (await storeNotices(runtime)).length === 0)
@@ -221,6 +223,80 @@ export async function roundTwelveLifecycleChecks(check: Check, section: (name: s
     await fs.writeFile(file, JSON.stringify({ linear: { codeVerifier: "v1" } }))
     await auth.set("notion", { codeVerifier: "v2" })
     check("once it reads again, changes are saved", (await auth.get("notion"))?.codeVerifier === "v2" && (await auth.get("linear"))?.codeVerifier === "v1")
+  }
+
+  // ----------------------------------------------------------------- L12-11
+  section("Round 12 (L12-11): a conversation whose record will not read keeps its undo store and its files")
+  {
+    const base = path.join(root, "unreadable")
+    const storage = new Storage(path.join(base, "storage"))
+    const sessions = new SessionStore(storage, new Bus())
+    const snapshots = new Snapshots(path.join(base, "snapshot"))
+    const folder = async (name: string) => {
+      const directory = path.join(base, name)
+      await fs.mkdir(directory, { recursive: true })
+      execFileSync("git", ["init", "-q"], { cwd: directory })
+      return directory
+    }
+    const [historyProject, ledgerProject, orphanProject] = await Promise.all([folder("by-history"), folder("by-ledger"), folder("orphan")])
+    const model = { provider: "anthropic", model: "claude-opus-5" }
+
+    // One found through its undo history, one only through the project's writers ledger.
+    const byHistory = await sessions.create({ directory: historyProject, model })
+    const blob = await snapshots.keep(historyProject, Buffer.from("before the turn"))
+    await sessions.pushSnapshot(byHistory.id, { at: 1, files: [{ path: path.join(historyProject, "a.txt"), blob }], messages: ["msg_1"], directory: historyProject })
+    const byLedger = await sessions.create({ directory: ledgerProject, model })
+    await snapshots.keep(ledgerProject, Buffer.from("kept by the ledger"))
+    await snapshots.wrote(ledgerProject, byLedger.id, 1, [path.join(ledgerProject, "b.txt")])
+    await snapshots.keep(orphanProject, Buffer.from("nobody's"))
+
+    // Its files, recorded while it could still be read.
+    const artifacts = await ArtifactStore.open(path.join(base, "artifacts.db"))
+    await sessions.saveMessage(
+      {
+        id: "msg_w1",
+        sessionID: byHistory.id,
+        role: "assistant",
+        model,
+        agent: "build",
+        parts: [{ type: "tool", id: "prt_w1", callID: "call_w1", name: "write", status: "completed", input: { file_path: "report.md" }, output: "", title: "report.md", metadata: { created: true }, time: { created: 5, completed: 5 } }],
+        finish: "end_turn",
+        time: { created: 5, completed: 5 },
+      } as never,
+      true,
+    )
+    await artifacts?.reconcile(await sessions.list(), (id) => sessions.messages(id))
+
+    for (const session of [byHistory, byLedger]) await fs.writeFile(storage.fileOf(`session/${session.id}/info`), '{ "id": "truncated')
+    // As the next launch meets them: a store that has not read the list yet.
+    const reopened = new SessionStore(storage, new Bus())
+    const listed = (await reopened.list()).map((session) => session.id)
+    const unreadable = await reopened.unreadable()
+    check("the damaged records are left out of the list", !listed.includes(byHistory.id) && !listed.includes(byLedger.id))
+    check("and reported as unreadable, by id", unreadable.length === 2 && unreadable.includes(byHistory.id) && unreadable.includes(byLedger.id), unreadable)
+    check("they stay exactly where they are", (await fs.readFile(storage.fileOf(`session/${byHistory.id}/info`), "utf8")) === '{ "id": "truncated')
+    check("the folder one worked in is read from its undo history", (await reopened.unreadableDirectories()).includes(historyProject), await reopened.unreadableDirectories())
+
+    const stores = async () => (await fs.readdir(path.join(base, "snapshot"))).filter((name) => /^[0-9a-f]{40}$/.test(name)).length
+    const before = await stores()
+    // The call server/index.ts makes at start-up.
+    const swept = await snapshots.sweep([...(await reopened.list()).map((session) => session.directory), ...(await reopened.unreadableDirectories())], unreadable)
+    check("the start-up sweep keeps both of their undo stores and takes only the orphan", before === 3 && swept === 1 && (await stores()) === 2, { before, swept, after: await stores() })
+    check("the kept store still answers for its turn", (await snapshots.fetch(historyProject, blob))?.toString("utf8") === "before the turn")
+
+    await artifacts?.reconcile(await reopened.list(), (id) => reopened.messages(id))
+    const sources = (await artifacts?.sourcesOf(path.join(historyProject, "report.md"))) ?? []
+    check("its files keep their conversation in the artifacts store", sources.length === 1 && sources[0]?.sessionID === byHistory.id, sources)
+    await artifacts?.close()
+
+    const runtime = { sessions: reopened, storage } as unknown as Runtime
+    const said = await storeNotices(runtime)
+    check(
+      "the window is told how many, and where they were kept",
+      said.some((notice) => notice.code === "error.sessionsUnreadable" && notice.params?.count === 2 && notice.params?.path === storage.folder("session")),
+      said,
+    )
+    check("once", (await storeNotices(runtime)).length === 0)
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)

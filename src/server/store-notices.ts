@@ -19,6 +19,9 @@ export async function storeNotices(runtime: Runtime): Promise<StoreNotice[]> {
   const found: StoreNotice[] = []
   // L12-7: the artifacts store was damaged, kept aside and made again.
   if (runtime.artifacts?.recovered) found.push({ code: "error.artifactsRecreated", params: { path: runtime.artifacts.recovered } })
+  // L12-11: conversations whose record would not read, left where they are.
+  const unreadable = await runtime.sessions.unreadable().catch(() => [])
+  if (unreadable.length) found.push({ code: "error.sessionsUnreadable", params: { count: unreadable.length, path: runtime.storage.folder("session") } })
   const said = told.get(runtime) ?? new Set<string>()
   told.set(runtime, said)
   const fresh = found.filter((notice) => !said.has(notice.code))

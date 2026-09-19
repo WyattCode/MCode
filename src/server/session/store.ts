@@ -272,9 +272,45 @@ export class SessionStore {
     return structuredClone(await this.listing)
   }
 
+  /**
+   * Conversations whose record is there and could not be read, as the last
+   * listing found them (L12-11).
+   *
+   * They are left exactly where they are - nothing writes a record it could
+   * not read, and one repaired by hand is listed again at once - but they used
+   * to be invisible to everything else too: the start-up sweep took their undo
+   * stores as belonging to nobody, and nothing said they existed. Anything that
+   * decides what is still spoken for asks here as well.
+   */
+  private unreadableIDs = new Set<string>()
+  /** Said in the log once each, not on every listing. */
+  private readonly loggedUnreadable = new Set<string>()
+
+  /** The conversations the list could not read, by id. */
+  async unreadable(): Promise<string[]> {
+    await this.list()
+    return [...this.unreadableIDs]
+  }
+
+  /**
+   * The project folders unreadable conversations recorded turns in, read from
+   * their undo history rather than their record - the one piece of them that
+   * names where their checkpoint store is.
+   */
+  async unreadableDirectories(): Promise<string[]> {
+    const directories = new Set<string>()
+    for (const id of await this.unreadable()) {
+      const history = await this.storage.read<Partial<History>>(this.historyKey(id)).catch(() => undefined)
+      const snapshots = [...(history?.undo ?? []), ...(history?.redo ?? []), ...(history?.reverted ?? []).map((step) => step?.snapshot)]
+      for (const snapshot of snapshots) if (typeof snapshot?.directory === "string" && snapshot.directory) directories.add(snapshot.directory)
+    }
+    return [...directories]
+  }
+
   private async readAll(): Promise<SessionInfo[]> {
     const ids = await this.storage.listDirectories("session")
     const sessions: SessionInfo[] = []
+    const unreadable = new Set<string>()
     for (const id of ids) {
       /*
        * One unreadable record must not cost the whole list.
@@ -286,9 +322,17 @@ export class SessionStore {
        * that conversation by id still throws, because a caller that named it
        * cannot go on without it.
        */
-      const session = await this.get(id).catch(() => undefined)
-      if (session) sessions.push(session)
+      const read = await this.storage.readOrCorrupt<SessionInfo>(this.infoKey(id))
+      if (read.value) sessions.push(read.value)
+      else if (read.corrupt !== undefined) {
+        unreadable.add(id)
+        if (!this.loggedUnreadable.has(id)) {
+          this.loggedUnreadable.add(id)
+          console.warn(`[sessions] ${this.storage.fileOf(this.infoKey(id))} could not be read (${read.corrupt}); the conversation is kept as it is and left out of the list`)
+        }
+      }
     }
+    this.unreadableIDs = unreadable
     // Most recently touched first - matches how the sidebar is read.
     return sessions.sort((a, b) => b.updated - a.updated)
   }

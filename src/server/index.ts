@@ -133,7 +133,11 @@ export async function startBackend(dataDirectory: string, options: BackendOption
         (directories) => migrateMemoryLayout({ dataDirectory, directories }),
       )
       await migrateCheckpoints(storage, runner.checkpoints, config)
-      await runner.checkpoints.sweep((await sessions.list()).map((session) => session.directory))
+      // Conversations whose record would not read still own their stores (L12-11).
+      await runner.checkpoints.sweep(
+        [...(await sessions.list()).map((session) => session.directory), ...(await sessions.unreadableDirectories())],
+        await sessions.unreadable(),
+      )
       // Temp files a killed write of an earlier run left in the storage folder (N11-30).
       const swept = await storage.sweepTemps()
       if (swept) console.info(`[storage] removed ${swept} temp file(s) an earlier run left behind`)

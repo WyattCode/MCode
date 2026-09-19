@@ -1261,9 +1261,29 @@ export class Snapshots {
    * so the live conversations' folders name every store that is still spoken
    * for, and anything else is a project whose conversations have all gone.
    */
-  async sweep(live: readonly string[]): Promise<number> {
+  async sweep(live: readonly string[], unreadable: readonly string[] = []): Promise<number> {
     const spokenFor = new Set(live.map((directory) => this.digest(directory)))
     const entries = await fs.readdir(this.root).catch(() => [] as string[])
+    /*
+     * A conversation whose record could not be read still owns its stores
+     * (L12-11): its folder is unknown, but a store whose writers ledger names
+     * it is plainly its own, and removing that would take its undo away for
+     * good - even after the record is repaired.
+     */
+    if (unreadable.length) {
+      const owners = new Set(unreadable)
+      for (const name of entries) {
+        if (!name.endsWith(".writers.json")) continue
+        const raw = await fs.readFile(path.join(this.root, name), "utf8").catch(() => "")
+        let writers: Record<string, Writer> = {}
+        try {
+          writers = JSON.parse(raw) as Record<string, Writer>
+        } catch {
+          // An unreadable ledger names nobody.
+        }
+        if (Object.values(writers ?? {}).some((writer) => owners.has(writer?.session))) spokenFor.add(name.slice(0, -".writers.json".length))
+      }
+    }
     let removed = 0
     for (const name of entries) {
       const digest = name.endsWith(".writers.json") ? name.slice(0, -".writers.json".length) : name
