@@ -95,4 +95,31 @@ export async function roundThirteenInstanceChecks(check: Check, section: (name: 
     check("nor does a tray profile switch, which would build a window", /click: \(\) => \{\s*if \(closing\) return\s*const window = currentWindow\(\) \?\? createWindow\(\)/.test(main))
     check("nor does the Dock's activate", /^\{\s*\/\/[^\n]*\n\s*if \(closing\) return/.test(body(main, 'app.on("activate", () => {')))
   }
+
+  // ------------------------------------------------------------------ I13-5
+  section("Round 13 (I13-5): a second launch always brings the window up, and a link is never lost")
+  {
+    const recovery = await fs.readFile(path.join(root, "src/main/recovery.ts"), "utf8")
+    const deliver = body(main, "function deliverLink(raw: string) {")
+    const activateAt = deliver.indexOf("activate(raise)")
+    check(
+      "the window is activated first, before the link is even judged (a link this app does not open still raises it)",
+      activateAt > 0 && deliver.indexOf("if (!target) return") > activateAt && !/if \(!target\) return/.test(deliver.slice(0, activateAt)),
+      deliver,
+    )
+    check(
+      "the link goes to the window recovery holds current, and only once its page is ready",
+      /const window = readyWindow\(\)/.test(deliver) && !/\[\.\.\.windows\]/.test(deliver) && /window\.webContents\.send\("mcode:open-link", target\)/.test(deliver),
+    )
+    check("otherwise it is kept for the page to take when it connects", /if \(!window\) \{\s*pendingLink = raw/.test(deliver) && /ipcMain\.handle\("mcode:take-link"/.test(main))
+    check("before the app is ready it is only kept: there is no window to raise yet", /if \(!app\.isReady\(\)\) \{\s*if \(target\) pendingLink = raw\s*return/.test(deliver))
+    const ready = body(recovery, "export function readyWindow(): BrowserWindow | undefined {")
+    check(
+      "ready means recovery's current window, its renderer loaded and not loading again",
+      /currentWindow\(\)/.test(ready) && /health\.state\(window\.webContents\) !== "ready"/.test(ready) && /window\.webContents\.isLoading\(\)/.test(ready),
+      ready,
+    )
+    const second = body(main, 'app.on("second-instance", (_event, argv) => {')
+    check("a second launch without a link is activated too", /if \(raw\) return deliverLink\(raw\)\s*\/\/[^\n]*\n\s*if \(app\.isReady\(\)\) activate\(raise\)/.test(second), second)
+  }
 }

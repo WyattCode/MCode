@@ -36,6 +36,7 @@ import {
   currentWindow,
   markClosing,
   onRecoveryGaveUp,
+  readyWindow,
   recordProcessError,
   relaunch,
   setRecoveryHost,
@@ -356,16 +357,26 @@ function raise(window: BrowserWindow) {
   window.flashFrame(false)
 }
 
-/** Shows a linked session in the window that is up, or keeps it for the first one. */
+/**
+ * Brings the window up for a link, as MiMo does whatever the link says, then
+ * shows the linked session in it (I13-5). A renderer that is still loading, or
+ * one that has failed and is being replaced, cannot take it yet: the link is
+ * kept, and the page asks for it once it has connected (mcode:take-link).
+ * Before the app is ready there is no window to raise; the first one takes it.
+ */
 function deliverLink(raw: string) {
   const target = parseSessionLink(raw)
+  if (!app.isReady()) {
+    if (target) pendingLink = raw
+    return
+  }
+  activate(raise)
   if (!target) return
-  const window = [...windows].find((entry) => !entry.isDestroyed())
-  if (!window || window.webContents.isLoading()) {
+  const window = readyWindow()
+  if (!window) {
     pendingLink = raw
     return
   }
-  raise(window)
   window.webContents.send("mcode:open-link", target)
 }
 
@@ -390,7 +401,8 @@ app.on("second-instance", (_event, argv) => {
   if (closing) return relaunchAfterQuit(argv)
   const raw = linkInArgs(argv)
   if (raw) return deliverLink(raw)
-  activate(raise)
+  // Before ready the first window is on its way up anyway, and none can be made yet.
+  if (app.isReady()) activate(raise)
 })
 
 /*
