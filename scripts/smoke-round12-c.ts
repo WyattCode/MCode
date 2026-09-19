@@ -139,6 +139,19 @@ export async function roundTwelveFailureChecks(check: Check, section: (name: str
     check("C12-9: a review-restricted send is refused with a code the window phrases", /reviewRestricted\) throw new CodedError\([^)]*"composer\.reviewRestricted"\)/.test(handlers))
     check("C12-9: a PDF read failure never shows a raw reason or English literal", !/"read failed"/.test(pdf) && /: t\("rp\.files\.errCannotRead"\)\)/.test(pdf))
   }
+
+  // ---------------------------------------------------------------- C12-10
+  {
+    const stream = await read("src/renderer/src/components/MessageStream.vue")
+    const rule = /\n\.thread-loading \{([^}]*)\}/.exec(stream)?.[1] ?? ""
+    check(
+      "C12-10: a read conversation with nothing to draw says so, when not loading and not busy",
+      /const emptyHere = computed\(\(\) => !props\.side && !props\.latest && !props\.subagent && !loadingHere\.value && !shownBusy\.value && turns\.value\.length === 0\)/.test(stream) &&
+        /<div v-else-if="emptyHere" class="thread-loading" data-thread-empty>\{\{ t\("stream\.emptyConvo"\) \}\}<\/div>/.test(stream) &&
+        inTables("stream.emptyConvo"),
+    )
+    check("C12-10: it is MiMo's placeholder: 80px above and below, 13px, muted, centred", /padding-block: 80px/.test(rule) && /font-size: calc\(13px/.test(rule) && /color: var\(--text-weak\)/.test(rule) && /text-align: center/.test(rule), rule)
+  }
 }
 
 /** A port nothing listens on yet. */

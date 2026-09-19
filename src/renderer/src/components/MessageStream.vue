@@ -84,6 +84,12 @@ const shownError = computed(() => (props.side ? app.sideErrorOf(sideKey.value) :
 const bare = computed(() => Boolean(props.side || props.latest))
 /* The open conversation was just switched to and its messages are still on their way. */
 const loadingHere = computed(() => !props.side && !props.latest && !props.subagent && Boolean(app.loadingID) && app.loadingID === app.currentID)
+/*
+ * MiMo's empty thread line: a conversation that has been read and has nothing
+ * to draw - rolled back to its first question, say - says so rather than
+ * leaving a blank pane. Not while a turn is starting, whose question is on its way.
+ */
+const emptyHere = computed(() => !props.side && !props.latest && !props.subagent && !loadingHere.value && !shownBusy.value && turns.value.length === 0)
 /* speak: a completed call of the speak tool is read aloud, with the machine's own voice. */
 followSpoken({
   enabled: () => !props.side && !props.latest && !props.subagent,
@@ -1008,6 +1014,7 @@ defineExpose({ stepMessage, scroller })
     <div ref="inner" class="inner">
       <!-- MiMo's line while a conversation just switched to has not brought its messages. -->
       <div v-if="loadingHere" class="thread-loading" data-thread-loading>{{ t("stream.loadingConvo") }}</div>
+      <div v-else-if="emptyHere" class="thread-loading" data-thread-empty>{{ t("stream.emptyConvo") }}</div>
       <!--
         MiMo's marker at the top of a branched conversation: a hairline either
         side of a link back to the conversation it came from.
@@ -1984,6 +1991,7 @@ defineExpose({ stepMessage, scroller })
 }
 
 /* MiMo's 正在加载对话…: centred, 13px and muted, 80 above and below. */
+/* MiMo's thread placeholder, loading or empty: 80 above and below, 13px, muted, centred. */
 .thread-loading {
   padding-block: 80px;
   color: var(--text-weak);
