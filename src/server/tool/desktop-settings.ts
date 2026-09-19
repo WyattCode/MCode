@@ -1,4 +1,5 @@
 import type { AppConfig } from "@shared/protocol"
+import { LANGUAGE_IDS } from "@shared/locale"
 import type { ToolDefinition } from "./types"
 
 /*
@@ -26,10 +27,6 @@ export function bindDesktopSettings(config: SettingsConfig | undefined) {
   bound = config
 }
 
-/** MCode's interface languages, as the settings page lists them. `system` follows the machine. */
-export const LANGUAGE_IDS = [
-  "zh-CN", "zh-TW", "en", "ar", "bs", "da", "de", "es", "fr", "ja", "ko", "nb", "pl", "pt-BR", "ru", "th", "tr", "uk",
-] as const
 
 /** The settings page's own bounds; MiMo's are the same. */
 export const FONT_BOUNDS = {

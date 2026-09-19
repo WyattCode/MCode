@@ -1,4 +1,5 @@
 import { ref } from "vue"
+import { systemLanguage } from "../../../shared/locale"
 
 /**
  * Translations.
@@ -32,40 +33,22 @@ export const LANGUAGES = [
 export type Language = (typeof LANGUAGES)[number]["id"]
 
 /**
+ * The language to start in when nobody has chosen one: the machine's locale
+ * mapped onto the tables by the rule the backend uses for the reply language
+ * (`systemLanguage`), so zh-HK reads Traditional and nn reads Norwegian on
+ * both sides.
+ */
+export function detectLanguage(tag = typeof navigator === "object" ? navigator.language : ""): Language {
+  return systemLanguage(tag)
+}
+
+/**
  * Languages written right to left.
  *
  * Setting `dir` on the document is what makes the whole interface mirror -
  * every rule that uses a logical property (padding-inline, margin-inline-start)
  * follows it, which is why those were used in the first place.
  */
-/**
- * The language to start in when nobody has chosen one.
- *
- * Walks the browser's ordered preferences, taking an exact match first and then
- * a match on the base tag, so de-AT lands on de and pt-PT on the only
- * Portuguese there is. English is the fallback rather than the first entry,
- * because a machine set to a language this app does not speak is better served
- * by one it can read than by one it happened to be written in.
- */
-export function detectLanguage(): Language {
-  const supported = LANGUAGES.map((entry) => entry.id) as readonly string[]
-  const wanted =
-    typeof navigator === "object" && navigator.languages?.length
-      ? navigator.languages
-      : [typeof navigator === "object" ? navigator.language : ""]
-
-  for (const raw of wanted) {
-    const tag = (raw || "").trim()
-    if (!tag) continue
-    const exact = supported.find((id) => id.toLowerCase() === tag.toLowerCase())
-    if (exact) return exact as Language
-    const base = tag.split("-")[0].toLowerCase()
-    const loose = supported.find((id) => id.toLowerCase().split("-")[0] === base)
-    if (loose) return loose as Language
-  }
-  return "en"
-}
-
 export const RTL_LANGUAGES: readonly string[] = ["ar"]
 
 export const language = ref<Language>("zh-CN")

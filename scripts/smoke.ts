@@ -230,7 +230,8 @@ import { stepTitle as subagentStepTitle, stepVerb as subagentStepVerb } from "..
 import type { SessionInfo as SubagentSession, SubagentNotice, SubagentNoticeStatus } from "../src/shared/protocol"
 // round 4: MiMo's built-in window tools and the pieces the window uses.
 import type { PresentSkip, PresentedFile } from "../src/server/tool/present"
-import { LANGUAGE_IDS, bindDesktopSettings } from "../src/server/tool/desktop-settings"
+import { bindDesktopSettings } from "../src/server/tool/desktop-settings"
+import { LANGUAGE_IDS } from "../src/shared/locale"
 import { deliveredCard, deliveredFiles, relativeInside, sizeLabel } from "../src/renderer/src/lib/delivered"
 import { prRowState } from "../src/renderer/src/lib/pr-row"
 import { addFileNotice, fileNoticesBlock } from "../src/shared/file-notices"
@@ -330,6 +331,7 @@ import { roundThirteenArtifactChecks } from "./smoke-round13-artifacts"
 import { roundThirteenInstanceChecks } from "./smoke-round13-instances"
 // Round 13, lane K: keyboard and focus paths (K13-1 onwards).
 import { roundThirteenKeyboardChecks } from "./smoke-round13-keyboard"
+import { roundFourteenLocaleChecks } from "./smoke-round14-locale"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -6957,6 +6959,7 @@ async function main() {
   await roundThirteenArtifactChecks(check, section)
   await roundThirteenInstanceChecks(check, section)
   await roundThirteenKeyboardChecks(check, section)
+  await roundFourteenLocaleChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

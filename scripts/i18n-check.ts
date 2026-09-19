@@ -387,39 +387,34 @@ for (const file of sourceFiles(path.join(root, "src"))) {
  *
  * The default is deliberately empty so the window can ask the machine, and that
  * path runs exactly once per profile - on a machine which, here, answers
- * Chinese either way. So the mapping is exercised directly instead.
+ * Chinese either way. So the mapping is exercised directly instead, through
+ * the window's own entry point.
  */
-const CASES: [string[], string][] = [
-  [["de-AT", "en-US"], "de"],
-  [["fr-CA"], "fr"],
-  [["pt-PT"], "pt-BR"],
-  [["zh-TW", "zh-CN"], "zh-TW"],
-  [["zh-CN"], "zh-CN"],
-  [["ar-EG"], "ar"],
-  [["en-GB"], "en"],
-  [["ko"], "ko"],
-  [["is-IS"], "en"],
-  [["is-IS", "nb-NO"], "nb"],
-  [[], "en"],
+const CASES: [string, string][] = [
+  ["de-AT", "de"],
+  ["fr-CA", "fr"],
+  ["pt-PT", "pt-BR"],
+  ["zh-TW", "zh-TW"],
+  ["zh-HK", "zh-TW"],
+  ["zh-MO", "zh-TW"],
+  ["zh-Hant-SG", "zh-TW"],
+  ["zh_Hant", "zh-TW"],
+  ["zh-CN", "zh-CN"],
+  ["zh-SG", "zh-CN"],
+  ["ar-EG", "ar"],
+  ["en-GB", "en"],
+  ["ko", "ko"],
+  ["no", "nb"],
+  ["nn-NO", "nb"],
+  ["nb-NO", "nb"],
+  ["is-IS", "en"],
+  ["", "en"],
 ]
 
-const previousNavigator = (globalThis as Record<string, unknown>).navigator
-for (const [languages, expected] of CASES) {
-  Object.defineProperty(globalThis, "navigator", {
-    value: { languages, language: languages[0] ?? "" },
-    configurable: true,
-    writable: true,
-  })
-  const { detectLanguage } = await import("../src/renderer/src/lib/i18n")
-  const got = detectLanguage()
-  if (got !== expected) {
-    problems.push(`a machine set to [${languages.join(", ")}] would start in ${got}, not ${expected}`)
-  }
-}
-if (previousNavigator === undefined) {
-  delete (globalThis as Record<string, unknown>).navigator
-} else {
-  Object.defineProperty(globalThis, "navigator", { value: previousNavigator, configurable: true, writable: true })
+const { detectLanguage } = await import("../src/renderer/src/lib/i18n")
+for (const [tag, expected] of CASES) {
+  const got = detectLanguage(tag)
+  if (got !== expected) problems.push(`a machine set to "${tag}" would start in ${got}, not ${expected}`)
 }
 console.log(`first-run language cases: ${CASES.length}`)
 
