@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue"
+import { computed, ref } from "vue"
 import type { SkillSummary } from "@shared/protocol"
 import { language, t } from "../lib/i18n"
+import { useEscapeLayer } from "../lib/escape-layer"
 import { skillBrief, skillDescription, skillHue, skillTitle, type SkillContentState } from "../lib/skill-display"
 
 /**
@@ -34,12 +35,7 @@ function toggleContent() {
   if (open.value && props.content.status === "idle") emit("load-content")
 }
 
-function onKeydown(event: KeyboardEvent) {
-  if (event.key === "Escape") emit("close")
-}
-
-onMounted(() => window.addEventListener("keydown", onKeydown))
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
+useEscapeLayer(() => emit("close"))
 </script>
 
 <template>

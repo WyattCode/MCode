@@ -3880,7 +3880,6 @@ onBeforeUnmount(() => {
             :visible="infoShowing"
             :floating="infoFloating"
             :bottom-inset="terminalUp ? drawerHeight : 0"
-            :escape-blocked="modalOpen || searchOpen || connectOpen || Boolean(sessionMenu) || Boolean(projectMenu) || Boolean(app.permission)"
             @close="closeInfo"
           />
           </ErrorBoundary>

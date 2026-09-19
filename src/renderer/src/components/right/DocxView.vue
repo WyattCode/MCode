@@ -23,6 +23,7 @@ import {
 } from "../../lib/docx-parse"
 import { notifyFailure } from "../../lib/toast"
 import { t } from "../../lib/i18n"
+import { dialogOpen } from "../../lib/escape-layer"
 import CellAffordance from "../CellAffordance.vue"
 import AnnotationFx from "../AnnotationFx.vue"
 import AnnotationMarkLayer, { type MarkItem } from "../AnnotationMarkLayer.vue"
@@ -919,9 +920,9 @@ watch(
   },
 )
 
-/* Escape clears what this file sent. */
+/* Escape clears what this file sent, unless a layer on top took it or a dialog covers the page. */
 function onEscape(event: KeyboardEvent) {
-  if (!props.active || event.key !== "Escape" || event.defaultPrevented || event.isComposing) return
+  if (!props.active || event.key !== "Escape" || event.defaultPrevented || event.isComposing || dialogOpen()) return
   batch.clearFile(props.path)
 }
 

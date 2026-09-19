@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted } from "vue"
 import { t } from "../lib/i18n"
+import { useEscapeLayer } from "../lib/escape-layer"
 
 /**
  * MiMo's own confirm for switching to full access, rather than the shared one.
@@ -13,14 +13,7 @@ import { t } from "../lib/i18n"
  */
 const emit = defineEmits<{ close: []; confirm: [] }>()
 
-function onKeydown(event: KeyboardEvent) {
-  if (event.key !== "Escape") return
-  event.stopImmediatePropagation()
-  emit("close")
-}
-
-onMounted(() => window.addEventListener("keydown", onKeydown, true))
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true))
+useEscapeLayer(() => emit("close"))
 </script>
 
 <template>

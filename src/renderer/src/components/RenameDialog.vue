@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue"
+import { onMounted, ref } from "vue"
 import { t } from "../lib/i18n"
+import { useEscapeLayer } from "../lib/escape-layer"
 
 /**
  * Asks for one line of text.
@@ -56,16 +57,12 @@ function onEnter(event: KeyboardEvent) {
   submit()
 }
 
-function onKeydown(event: KeyboardEvent) {
-  if (event.key === "Escape") emit("close")
-}
+useEscapeLayer(() => emit("close"))
 
 onMounted(() => {
-  window.addEventListener("keydown", onKeydown)
   field.value?.focus()
   field.value?.select()
 })
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 </script>
 
 <template>

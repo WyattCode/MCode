@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue"
+import { computed, ref } from "vue"
 import type { CustomProvider } from "@shared/protocol"
 import { t } from "../lib/i18n"
+import { useEscapeLayer } from "../lib/escape-layer"
 import CustomProviderForm from "./CustomProviderForm.vue"
 
 /**
@@ -24,15 +25,7 @@ async function save() {
   if (await form.value.submit()) emit("close")
 }
 
-function onKeydown(event: KeyboardEvent) {
-  if (event.key !== "Escape") return
-  // The settings dialog underneath listens for Escape too; this layer closes alone.
-  event.stopImmediatePropagation()
-  emit("close")
-}
-
-onMounted(() => window.addEventListener("keydown", onKeydown, true))
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true))
+useEscapeLayer(() => emit("close"))
 </script>
 
 <template>

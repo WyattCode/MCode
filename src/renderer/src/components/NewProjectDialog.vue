@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue"
+import { computed, onMounted, ref } from "vue"
 import { t } from "../lib/i18n"
+import { useEscapeLayer } from "../lib/escape-layer"
 
 /**
  * MiMo's "new blank project" dialog.
@@ -69,16 +70,12 @@ function onEnter(event: KeyboardEvent) {
   submit()
 }
 
-function onKeydown(event: KeyboardEvent) {
-  if (event.key === "Escape") emit("close")
-}
+useEscapeLayer(() => emit("close"))
 
 onMounted(() => {
-  window.addEventListener("keydown", onKeydown)
   field.value?.focus()
   field.value?.select()
 })
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 </script>
 
 <template>

@@ -325,6 +325,8 @@ import { failureChecks } from "./smoke-failures"
 // round 7 (storage): what the profile keeps, in its own file for the same reason.
 import { storageChecks } from "./smoke-storage"
 import { roundTwelveLifecycleChecks } from "./smoke-round12-lifecycle"
+// Round 13, lane K: keyboard and focus paths (K13-1 onwards).
+import { roundThirteenKeyboardChecks } from "./smoke-round13-keyboard"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -6948,6 +6950,7 @@ async function main() {
   await roundTwelveCredentialChecks(check, section)
   await roundTwelveIpcChecks(check, section)
   await roundTwelveLifecycleChecks(check, section)
+  await roundThirteenKeyboardChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
