@@ -50,6 +50,9 @@ export function findInMessages(messages: Message[], query: string): Omit<Message
  */
 export const SCAN_LIMIT = 200
 
+/** How many transcripts a search reads at once. */
+const READ_PARALLEL = 8
+
 /**
  * One hit per conversation - its best message - best first and, between equal
  * scores, newest first, up to `limit`.
@@ -74,10 +77,16 @@ export async function searchMessages(
   const named = await narrow?.(query)
   const candidates = named ? eligible.filter((session) => named.includes(session.id)) : eligible.slice(0, SCAN_LIMIT)
   const hits: (MessageHit & { updated: number })[] = []
-  for (const session of candidates) {
-    const found = findInMessages(await load(session.id), query)
-    if (found) hits.push({ sessionID: session.id, ...found, updated: session.updated })
+  // A few transcripts read at once (S13-5): one after another, fifty named conversations were fifty waits on the disk.
+  let next = 0
+  const reader = async () => {
+    while (next < candidates.length) {
+      const session = candidates[next++]!
+      const found = findInMessages(await load(session.id), query)
+      if (found) hits.push({ sessionID: session.id, ...found, updated: session.updated })
+    }
   }
+  await Promise.all(Array.from({ length: Math.min(READ_PARALLEL, candidates.length) }, reader))
   return hits
     .sort((a, b) => b.score - a.score || b.updated - a.updated)
     .slice(0, limit)

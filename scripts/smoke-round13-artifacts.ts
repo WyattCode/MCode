@@ -89,6 +89,10 @@ export async function roundThirteenArtifactChecks(check: Check, section: (name: 
       }
     }
 
+    // And one whose file never reached the disk.
+    const ghost = await store.create({ directory, model: MODEL, title: "Ghost" })
+    await wrote(ghost.id, "msg_00000500", "ghost.md", 500)
+
     const artifacts = (await ArtifactStore.open(path.join(root, "art", "storage", "artifacts.db")))!
     const unwatch = store.watch((change) => {
       if (change.type === "message") artifacts.touched(change.message.sessionID)
@@ -108,7 +112,13 @@ export async function roundThirteenArtifactChecks(check: Check, section: (name: 
       { building: first.building, reads, files: first.artifacts.flatMap((group) => group.files).length },
     )
     check("S13-3: the build goes on in the background and finishes", await until(() => !artifacts.building), artifacts.building)
-    check("S13-3: and when it is done every file is stored", (await artifacts.count()) === 120, await artifacts.count())
+    check("S13-3: and when it is done every file is stored", (await artifacts.count()) === 121, await artifacts.count())
+    check(
+      "S13-3: and asked about on disk, so the tabs do not count a file that is not there",
+      // Asked through the apps tab, whose page never reaches the missing document.
+      (await artifacts.list({ category: "app" })).facets.doc === 40,
+      (await artifacts.list({ category: "app" })).facets,
+    )
 
     // Paging: fifty at a time, newest first, each page starting where the last ended.
     const seen: string[] = []
@@ -316,6 +326,8 @@ export async function roundThirteenArtifactChecks(check: Check, section: (name: 
       /history\.index\.candidates\(query, sessions\)/.test(searchCase) && !/building\) return undefined/.test(searchCase),
       searchCase.slice(0, 500),
     )
+    const search = await read("src/server/search.ts")
+    check("S13-5: the conversations it names are read a few at a time, not one after another", /Array\.from\(\{ length: Math\.min\(READ_PARALLEL, candidates\.length\) \}, reader\)/.test(search))
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
