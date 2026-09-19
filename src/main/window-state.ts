@@ -3,6 +3,7 @@ import path from "node:path"
 import { app, screen, type BrowserWindow, type Rectangle } from "electron"
 import { WINDOW_MIN, firstRunSize, readSavedWindow, windowStateToSave, type SavedWindow } from "./desktop-rules"
 import { writeAtomicSync } from "./atomic-write"
+import { startBounds } from "./work-area"
 
 /**
  * Remembers where the window was and how big it was.
@@ -33,41 +34,6 @@ function read(): SavedWindow | undefined {
 }
 
 /**
- * Keeps the window somewhere it can actually be seen.
- *
- * Saved coordinates go stale: a monitor gets unplugged, a laptop leaves its
- * dock, the resolution changes. Restoring them blindly puts the window off the
- * edge of the world, where it looks like the app failed to start.
- */
-function visible(bounds: Rectangle): Rectangle {
-  const width = Math.max(MIN.width, Math.round(bounds.width))
-  const height = Math.max(MIN.height, Math.round(bounds.height))
-  const display = screen.getDisplayMatching({ ...bounds, width, height })
-  const area = display.workArea
-
-  // A window is usable as long as a decent strip of its title bar is on screen.
-  const overlapX = Math.min(bounds.x + width, area.x + area.width) - Math.max(bounds.x, area.x)
-  const overlapY = Math.min(bounds.y + height, area.y + area.height) - Math.max(bounds.y, area.y)
-  const reachable = overlapX >= 120 && overlapY >= 40
-
-  if (reachable) {
-    return {
-      x: Math.round(bounds.x),
-      y: Math.round(bounds.y),
-      width: Math.min(width, area.width),
-      height: Math.min(height, area.height),
-    }
-  }
-
-  const fitted = { width: Math.min(width, area.width), height: Math.min(height, area.height) }
-  return {
-    x: Math.round(area.x + (area.width - fitted.width) / 2),
-    y: Math.round(area.y + (area.height - fitted.height) / 2),
-    ...fitted,
-  }
-}
-
-/**
  * Bounds and the maximised flag to pass to the BrowserWindow constructor.
  *
  * x and y come back undefined when there is nothing remembered, which is not a
@@ -87,7 +53,13 @@ export function restore(): {
     // First run: MiMo's share of the primary work area; the position is left to the OS, which centres it.
     return { ...firstRunSize(screen.getPrimaryDisplay().workArea), maximized: false }
   }
-  return { ...visible(saved.bounds), maximized: saved.maximized }
+  /*
+   * Saved coordinates go stale: a monitor gets unplugged, a laptop leaves its
+   * dock, the resolution or the scaling changes. The window is put wholly on a
+   * screen that is there now.
+   */
+  const areas = screen.getAllDisplays().map((display) => display.workArea)
+  return { ...startBounds(saved.bounds, areas, MIN), maximized: saved.maximized }
 }
 
 /** What is on disk for each window, so measurement noise never ratchets the size up. */

@@ -12,6 +12,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { pinnedProfile, relaunchArgs } from "../src/main/desktop-rules"
+import { startBounds } from "../src/main/work-area"
 
 const posix = (...parts: string[]) => parts.join("/")
 const win = (...parts: string[]) => parts.join("\\")
@@ -121,5 +122,32 @@ export async function roundThirteenInstanceChecks(check: Check, section: (name: 
     )
     const second = body(main, 'app.on("second-instance", (_event, argv) => {')
     check("a second launch without a link is activated too", /if \(raw\) return deliverLink\(raw\)\s*\/\/[^\n]*\n\s*if \(app\.isReady\(\)\) activate\(raise\)/.test(second), second)
+  }
+
+  // ------------------------------------------------------------------ I13-4
+  section("Round 13 (I13-4): a saved position is put wholly on a screen at startup")
+  {
+    const primary = { x: 0, y: 0, width: 1920, height: 1040 }
+    const right = { x: 1920, y: 0, width: 1280, height: 984 }
+    const min = { width: 720, height: 640 }
+    const titleAbove = startBounds({ x: 200, y: -300, width: 1200, height: 800 }, [primary], min)
+    check("a window whose title bar was above the screen comes down onto it", JSON.stringify(titleAbove) === JSON.stringify({ x: 200, y: 0, width: 1200, height: 800 }), titleAbove)
+    const hanging = startBounds({ x: 1500, y: 600, width: 1000, height: 800 }, [primary], min)
+    check("one hanging past the right and bottom edges is pulled back in", hanging.x === 920 && hanging.y === 240 && hanging.width === 1000 && hanging.height === 800, hanging)
+    const gone = startBounds({ x: -2000, y: 100, width: 1000, height: 700 }, [primary, right], min)
+    check("one left on a monitor that is gone lands on the nearest one there is", gone.x === 0 && gone.y === 100, gone)
+    const tooBig = startBounds({ x: 1900, y: 0, width: 3000, height: 1500 }, [primary, right], min)
+    check("one larger than the screen it mostly covers is shrunk to fit", JSON.stringify(tooBig) === JSON.stringify(primary) || JSON.stringify(tooBig) === JSON.stringify(right), tooBig)
+    const fine = startBounds({ x: 2000, y: 50, width: 1000, height: 700 }, [primary, right], min)
+    check("one already on a screen stays exactly where it was", JSON.stringify(fine) === JSON.stringify({ x: 2000, y: 50, width: 1000, height: 700 }), fine)
+    const small = startBounds({ x: 10, y: 10, width: 300, height: 200 }, [primary], min)
+    check("a saved size below the minimum is grown to it", small.width === 720 && small.height === 640, small)
+    check("with no displays to ask (a locked workstation) the saved bounds are kept", JSON.stringify(startBounds({ x: -50, y: -50, width: 800, height: 700 }, [], min)) === JSON.stringify({ x: -50, y: -50, width: 800, height: 700 }))
+    const state = await fs.readFile(path.join(root, "src/main/window-state.ts"), "utf8")
+    const restoreBody = state.slice(state.indexOf("export function restore()"), state.indexOf("const baselines"))
+    check(
+      "restore() places saved bounds with that rule, over every display's work area",
+      /startBounds\(saved\.bounds, areas, MIN\)/.test(restoreBody) && /screen\.getAllDisplays\(\)\.map\(\(display\) => display\.workArea\)/.test(restoreBody) && !/overlapX|>= 120/.test(state),
+    )
   }
 }

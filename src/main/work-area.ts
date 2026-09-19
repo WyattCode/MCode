@@ -93,3 +93,21 @@ export function boundsOnShow(recorded: Box | undefined, fullScreen: boolean, are
   if (!recorded || fullScreen) return undefined
   return clampToWorkAreas(recorded, areas) ?? recorded
 }
+
+/**
+ * Where a window with saved bounds opens (I13-4): grown to the minimum size,
+ * then wholly inside a work area, as MiMo places it at creation. The old rule
+ * kept any bounds with 120 by 40 of the window on a screen, and that strip
+ * could be the bottom of it - leaving the title bar, the only thing to drag a
+ * frameless window by, above the top of the screen. With no displays to ask
+ * (a locked workstation) the saved bounds are kept.
+ */
+export function startBounds(saved: Box, areas: readonly Box[], min: { width: number; height: number }): Box {
+  const sized = {
+    x: Math.round(saved.x),
+    y: Math.round(saved.y),
+    width: Math.max(min.width, Math.round(saved.width)),
+    height: Math.max(min.height, Math.round(saved.height)),
+  }
+  return clampToWorkAreas(sized, areas) ?? sized
+}
