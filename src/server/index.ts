@@ -23,7 +23,7 @@ import { onGitWaiting } from "./git-queue"
 import { bindDesktopSettings } from "./tool/desktop-settings"
 import { bindMemoryWrites, startHistory, stopHistory } from "./history/service"
 import { migrateMemoryLayout } from "./memory/migrate"
-import { watchSkillProblems } from "./skill"
+import { pruneSkillTrash, watchSkillProblems } from "./skill"
 import { startScheduler } from "./cron/start"
 import { startAutomations } from "./automation/start"
 import { protectAppData } from "./tool/app-data"
@@ -149,6 +149,10 @@ export async function startBackend(dataDirectory: string, options: BackendOption
   })()
   // history: the search index beside the store, filled in the background.
   const history = await startHistory(dataDirectory, sessions, storage, bus)
+  // skills: uninstalled skills older than a week leave the trash, as MiMo's start-up sweep removes its own (L12-12).
+  void pruneSkillTrash(storage.directory).then((removed) => {
+    if (removed) console.info(`[skills] removed ${removed} uninstalled skill(s) older than a week from the trash`)
+  })
   // skills: a SKILL.md that will not parse is said in the window, once per file, as MiMo reports one.
   watchSkillProblems((problem) => bus.publish({ type: "skill.problem", path: problem.path, message: problem.message }))
   // memory: config's memory.disableWrite, read at every write so a hand edit takes effect at once.

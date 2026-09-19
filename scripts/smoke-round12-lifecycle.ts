@@ -26,6 +26,7 @@ import { McpAuthStore } from "../src/server/mcp-oauth"
 import { codeOf, paramsOf } from "../src/shared/errors"
 import { Snapshots } from "../src/server/session/snapshot"
 import { execFileSync } from "node:child_process"
+import { SKILL_TRASH_DAYS, pruneSkillTrash } from "../src/server/skill"
 
 const exists = (file: string) =>
   fs.access(file).then(
@@ -297,6 +298,34 @@ export async function roundTwelveLifecycleChecks(check: Check, section: (name: s
       said,
     )
     check("once", (await storeNotices(runtime)).length === 0)
+  }
+
+  // ----------------------------------------------------------------- L12-12
+  section("Round 12 (L12-12): uninstalled skills leave the trash after a week, judged by the name")
+  {
+    const storageDirectory = path.join(root, "skills-storage")
+    const trash = path.join(storageDirectory, "skill-trash")
+    const now = Date.UTC(2026, 8, 20, 12)
+    const day = 24 * 60 * 60 * 1000
+    const make = async (name: string) => {
+      await fs.mkdir(path.join(trash, name), { recursive: true })
+      await fs.writeFile(path.join(trash, name, "SKILL.md"), "---\nname: x\n---\n")
+    }
+    await make(`${now - 8 * day}-old-skill`)
+    await make(`${now - 6 * day}-recent-skill`)
+    await make("not-ours")
+    // A folder renamed into the trash today keeps its old mtime; the name, not the clock on the folder, says when.
+    await make(`${now - 1 * day}-renamed-long-ago`)
+    const ancient = new Date(now - 400 * day)
+    await fs.utimes(path.join(trash, `${now - 1 * day}-renamed-long-ago`), ancient, ancient)
+
+    const removed = await pruneSkillTrash(storageDirectory, now)
+    const left = (await fs.readdir(trash)).sort()
+    check("only the one uninstalled more than seven days ago goes", removed === 1 && !left.includes(`${now - 8 * day}-old-skill`), left)
+    check("a recent one stays, whatever its folder's mtime", left.includes(`${now - 6 * day}-recent-skill`) && left.includes(`${now - 1 * day}-renamed-long-ago`), left)
+    check("a folder without a time in its name is not this app's and stays", left.includes("not-ours"), left)
+    check("a profile with no trash is fine", (await pruneSkillTrash(path.join(root, "no-such-storage"), now)) === 0)
+    check("the window is MiMo's seven days", SKILL_TRASH_DAYS === 7)
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)

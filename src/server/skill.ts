@@ -208,7 +208,7 @@ export function removableSkill(skill: SkillInfo, storageDirectory: string): bool
 /**
  * MiMo's uninstall: no question first, and the folder is not deleted but moved
  * into a trash folder beside the app's data (`skill-trash/<time>-<name>`),
- * where it stays.
+ * where it stays for a week (see `pruneSkillTrash`).
  */
 export async function uninstallSkill(skill: SkillInfo, storageDirectory: string, now = Date.now()): Promise<string> {
   if (!removableSkill(skill, storageDirectory)) throw new Error(`The skill ${skill.name} is not one of your own global skills, so it cannot be uninstalled here`)
@@ -217,6 +217,33 @@ export async function uninstallSkill(skill: SkillInfo, storageDirectory: string,
   await fs.rename(skill.directory, trash)
   knownDirectories.delete(skill.directory)
   return trash
+}
+
+/** How long an uninstalled skill is kept: MiMo's start-up sweep of its extension trash keeps seven days. */
+export const SKILL_TRASH_DAYS = 7
+
+/**
+ * Removes uninstalled skills older than a week, once at start-up (L12-12).
+ *
+ * The trash used to grow for the life of the profile. MiMo sweeps its own at
+ * every start and removes what is more than seven days old; so does this. Age
+ * is read from the time at the front of the folder's name, which is when it was
+ * uninstalled - the folder's own mtime is not, because a rename keeps it - and
+ * a name without one is not this app's and is left alone.
+ */
+export async function pruneSkillTrash(storageDirectory: string, now = Date.now()): Promise<number> {
+  const trash = path.join(storageDirectory, "skill-trash")
+  const entries = await fs.readdir(trash).catch(() => [] as string[])
+  let removed = 0
+  for (const name of entries) {
+    const at = Number(/^(\d{10,})-/.exec(name)?.[1])
+    if (!Number.isFinite(at) || now - at < SKILL_TRASH_DAYS * 24 * 60 * 60 * 1000) continue
+    await fs.rm(path.join(trash, name), { recursive: true, force: true }).then(
+      () => removed++,
+      (cause: unknown) => console.warn(`[skills] ${name} could not be removed from the skill trash:`, cause instanceof Error ? cause.message : cause),
+    )
+  }
+  return removed
 }
 
 /* ------------------------------------------------ what a message brings in */
