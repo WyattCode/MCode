@@ -8,6 +8,7 @@
 - 最近更新：2026-09-20
 - 第十二轮（2026-09-19/20）：三个新的只读角度（数据生命周期与版本升级、主进程与界面的通信契约、失败与空状态）的审计已做完，34 项全部完成并合并入 `v2.0`，见下方「第十二轮」一节。报告在 scratchpad `round12-lifecycle.md` / `round12-ipc.md` / `round12-failure-ux.md`
 - 第十三轮（2026-09-20）：键盘与焦点、多实例与窗口生命周期、大数据量三个只读角度，37 项全部完成并合并入 `v2.0`，见下方「第十三轮」一节。报告在 scratchpad `round13-keyboard.md` / `round13-instances.md` / `round13-scale.md`
+- 第十四轮（2026-09-20）：网络与代理、本地化格式与从右到左、打包安装与自动更新三个只读角度，16 项全部完成并合并入 `v2.0`，见下方「第十四轮」一节。报告在 scratchpad `round14-network.md` / `round14-locale.md` / `round14-packaging.md`
 
 ## 现在到哪了
 
@@ -463,6 +464,34 @@
   - C11-48 只有技能芯片、没有文字时照常发出（MiMo 拒发并提示「请输入内容」）。
   - C11-50 运行中发送走完整路径（命令模板、技能芯片、批注都带上；MiMo 只插「文本 + 附件」）。
 
+## 第十四轮：网络与代理、本地化、打包与更新（2026-09-20）
+
+三份只读审计：`scratchpad/round14-network.md`、`round14-locale.md`、`round14-packaging.md`。网络只有一处与 MiMo 不同（视频卡片）；模型、`/models`、MCP、网页工具两边都不走任何代理、都没有代理设置页，证书、超时、离线启动一致。用户决定：名称排序、表格图表坐标数字继续跟随界面语言（记为故意不同）；超出 MiMo 的不做（Electron fuses 加固、全局环境变量代理）。两路 worktree，合并后 13 项检查 + build 通过，smoke **4700 全过**；新增 `scripts/smoke-round14-packaging.ts`（含 Electron 下跑的 `smoke-round14-net-electron.ts`，需要 PATH 上有 openssl）/ `smoke-round14-locale.ts`。
+
+**网络与打包（P14-*）**
+- P14-1 视频卡片标题/封面与封面代理走 Chromium 网络（跟随系统代理 / PAC），新文件 `src/main/chromium-fetch.ts` 封装 `net.request`：手动重定向返回 3xx 与 `location`、不带也不存 Cookie、referer 保留；`net.fetch` 的 `redirect: "manual"` 实测会报 "Redirect was cancelled" 所以没用；b23.tv 短链逐跳跟随（`c1f3753`）
+- P14-2 系统关机/注销引起的退出（`noteOsQuit()`，含恢复放弃时）关掉 `autoInstallOnAppQuit`，下载好的更新等下次正常退出再装（`85b9548`）
+- P14-3 `scripts/runtimes.mjs` 删掉 Python 包里名为 `tests`/`test` 的文件夹（从不删顶层包、从不删包自己导入的），保留 `numpy.testing`、`pandas._testing`；省 19.9 MB；运行时布局版本 3→4，下次打包重建（`01593f6`）
+- P14-4 先跑 electron-updater 自己的 `isUpdateSupported`（`minimumSystemVersion`），再跑 MCode 的规则（`8cc53a0`）
+- P14-5 下载完成后把安装包经临时文件改名覆盖到更新缓存的 `installer.exe`，下次可差分下载（`5b9f473`）
+- P14-6 macOS 不加载自动更新，「检查更新」说未配置更新源；去掉 mac `zip` 目标（`1b60eeb`）
+- P14-7 `electron-builder.yml` 从 `node_modules` 排除 `*.map`、`*.ts/.mts/.cts`、非许可证 `*.md`，干跑确认只少 1393 个文件（6.9 MB）（`73a3eec`）
+- P14-8 `allowScripts` 改为 `electron@41.7.2`（`40afdf5`）
+- 未端到端验证：P14-2/4/5 没有真的打包安装（打包会升版本号）
+
+**本地化（L14-*）**
+- L14-1 未手选语言时界面语言与回复语言同源：main 的 `app.getLocale()` 传给后端并回答窗口；`--lang=fr-FR` 实测界面法语、回复要求法语（`c14eeff`）
+- L14-2 `<html lang>` 跟随界面语言，`index.html` 初值 `zh-CN`（`b279ba7`）
+- L14-3 `src/shared/locale.ts` 一份语言映射给窗口与后端共用：zh-HK/zh-MO/zh-Hant→zh-TW，no/nb/nn→nb（`1e7a592`）
+- L14-4 快捷键页「全部重置」不再受 320px 限制、可折行、有悬停提示（`0fe9173`）
+- L14-5 「N 分钟/小时/天前」改为按复数类别分键，`tn()` 移入 `i18n.ts`、删 `plural.ts`；阿拉伯语有单/双/复数（`067255f`）
+- L14-6 从右到左时侧栏前进/后退箭头镜像，对话脊柱与预览卡用逻辑方向（`eaf3b7c`）
+- L14-7 用量页日期本地化（列宽 44→64px），token 数与输入框共用 `compactTokens`；该函数照 MiMo 在所有语言都用小数点「39.2K」（L 路曾改成跟随语言的小数点，合并后改回，`bbd4218`）（`d019d86`）
+- L14-8 一个日期格式器 `dateIn` / `calendarDate`，产物、侧栏、回复脚注、信息卡、版本历史、用量页都用它，泰语全应用佛历（`8a726fa`）
+- 没改：Word 批注时间照 MiMo 用 ISO 公历；PPTX 里的 echarts 切换语言后要重载才变（MiMo 同）
+
+**本机相关**：`D:\Apps\MCode` 装的是 0.2.4（Electron 38、旧 GitHub 更新配置），收不到新更新源，需要手动装一次新版本。注意 MCode 还没有更新服务器：`electron-builder.yml` 的 `publish.url` 是故意不可解析的 `updates.invalid`，更新源要在设置里填或用 `MCODE_UPDATE_URL`，否则装了新版也不会自动更新。
+
 ## 第十三轮：键盘与焦点、多实例、大数据量（2026-09-20）
 
 三份只读审计：`scratchpad/round13-keyboard.md`（17 条）、`round13-instances.md`（7 条）、`round13-scale.md`（6 条 + 小项）。用户决定：开发版用独立数据目录（记为故意不同）；其余照 MiMo；超出 MiMo 的两条（键盘打开的菜单关闭后焦点归还、看过的子代理对话记录释放）不做。四路 worktree，合并后 13 项检查 + build 通过，smoke **4632 全过**（连跑两次）；新增 `scripts/smoke-round13-keyboard.ts` / `-instances.ts` / `-scale.ts` / `-artifacts.ts`。
@@ -640,7 +669,7 @@
 npm run dev          # 开发版（先结束残留的 node_modules/electron/dist/electron.exe）
 npm run typecheck
 npm run build
-npm run smoke        # 当前 4632 条（2026-09-20）
+npm run smoke        # 当前 4700 条（2026-09-20）
 npm run i18ncheck    # 18 种语言表键一致
 npm run themecheck   # 重新生成 tokens.css 并逐字节比对；也拦物理方向的 CSS
 npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监听
@@ -668,7 +697,7 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
   - 打开弹窗后第一次 `capturePage` 可能是旧画面，等约 2 秒并 `invalidate()` 再截。
   - ContextMenu 当前选中项是 `.item.ticked`；侧栏底部「设置」行现在先打开菜单，再点菜单里的「设置」。
 - 开发版重启：先停旧的 `npm run dev` 任务，再结束残留 electron 进程，否则两个开发实例抢同一份配置（会报缓存无法创建）。第十三轮起未打包运行默认用独立数据目录 `%APPDATA%\MCode-dev`（I13-1），不再和安装版共用 `%APPDATA%\MCode`；探针用 `app.setPath("userData")` 或 `--user-data-dir` 仍然优先。
-- 已知不稳定检查：第五轮计划模式一节（`smoke-round5.ts`「plan mode writes one file…」）偶发 6 条一起失败，2026-09-20 四次全量里出现一次；疑似后台请求（标题生成）插进来，使 `e.bodies.at(-1)` 不是本轮请求。重跑即过，未修。
+- 已知不稳定检查：第五轮计划模式一节（`smoke-round5.ts`「plan mode writes one file…」）偶发 6 条一起失败，2026-09-20 四次全量里出现一次；疑似后台请求（标题生成）插进来，使 `e.bodies.at(-1)` 不是本轮请求。重跑即过，未修。第十四轮 P 路还见过一次第七轮「provider receives the long bash description」两条失败（那次请求里没有工具列表），重跑即过，疑同类。
 - 版本号只在打包时递增，不要手改。WSL 永久不在范围内。
 - 对用户仓库跑 git 一律用 `server/git-process.ts` 的 `runGit`（固定环境、路径不加引号、超时、隐藏窗口）；解析路径用 `-z` 输出和 `parsePorcelain`。只有影子快照仓库（`session/snapshot.ts`）自己起进程。smoke-round10-git 会扫描 `src/server`、`src/main` 里没带 `windowsHide` 的 git 进程。
 
@@ -862,8 +891,9 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
 
 ## 下一步建议
 
-**第十三轮（键盘与焦点、多实例与窗口、大数据量）37 项已全部完成并合并入 `v2.0`**，已知 backlog 清空。下一步：
+**第十四轮（网络与代理、本地化、打包与更新）16 项已全部完成并合并入 `v2.0`**，已知 backlog 清空。下一步：
 
-1. 如要继续对照，可再换只读角度开第十四轮，例如：（a）网络与代理（系统代理、PAC、证书错误、离线启动、服务商超时设置）对照 MiMo；（b）国际化细节（日期/数字/相对时间格式、从右到左布局、长译文溢出）逐页实测；（c）打包与安装（安装/升级/卸载后残留、自动更新全流程、签名与图标）。
-2. 小尾巴（可选）：`update-transaction.json` 与 `composer-input.ts` 走 `writeAtomicSync`；清理崩溃留下的 `*.tmp`；提示超过 3 条时持久提示被挤掉；第五轮计划模式偶发失败的检查（见「约定与坑」）。
-3. 新页面（钩子、CLI 插件、SSH 连接）用户已决定不做。
+1. 如要继续对照，可再换只读角度开第十五轮，例如：（a）MCP 与工具全链路的边界情况（工具超时、大结果、并发调用、服务器中途退出）逐项对照 MiMo；（b）会话与上下文管理（自动压缩、上下文溢出、回退、分支、导出）的细节；（c）主题与视觉细节在高 DPI、缩放 125/150%、高对比度模式下的表现。
+2. 打包一次新版本（`npm run package:win`，会升版本号）并手动装到 `D:\Apps\MCode`（注册表记着该目录，原地升级），顺带在本机临时起一个更新源端到端验证 P14-2/4/5 与自动更新。
+3. 小尾巴（可选）：`update-transaction.json` 与 `composer-input.ts` 走 `writeAtomicSync`；清理崩溃留下的 `*.tmp`；提示超过 3 条时持久提示被挤掉；两处偶发失败的 smoke 检查（见「约定与坑」）。
+4. 新页面（钩子、CLI 插件、SSH 连接）用户已决定不做。
