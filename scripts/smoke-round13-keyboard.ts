@@ -144,4 +144,28 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
       /useEscapeLayerWhile\(\s*\(\) => open\.value,/.test(picker) && /useEscapeLayerWhile\(\s*\(\) => pending\.value,/.test(picker) && !/addEventListener\("keydown"/.test(picker),
     )
   }
+
+  const composer = await component("Composer")
+  // ---------------------------------------------------------------- K13-3
+  {
+    const plus = /<div v-if="menu === 'plus'"[^>]*>/.exec(composer)?.[0] ?? ""
+    check("K13-3: the plus menu is a menu with its own keys", /role="menu"/.test(plus) && /@keydown="onPlusKeys"/.test(plus), plus)
+    check(
+      "K13-3: opening it puts focus on its first row, as MiMo's menu primitive does",
+      /watch\(menu, async \(value\) => \{\n\s+if \(value !== "plus"\) return\n\s+await nextTick\(\)\n\s+plusMenu\.value\?\.querySelector<HTMLElement>\(":scope > \.item"\)\?\.focus\(/.test(composer),
+    )
+    const keys = composer.slice(composer.indexOf("function onPlusKeys("), composer.indexOf("\n}\n", composer.indexOf("function onPlusKeys(")))
+    check(
+      "K13-3: Up, Down, Home and End walk its rows; Right on 技能 opens the skills with focus in the search; Down leaves the search for the list and Left comes back out",
+      /isRovingKey\(event\.key\)/.test(keys) && /focusRow\(\[\.\.\.\(plusMenu\.value\?\.querySelectorAll<HTMLElement>\(":scope > \.item"\)/.test(keys) &&
+        /event\.key === "ArrowRight" && event\.target === skillRow/.test(keys) && /openSkillFrom\(skillRow\)/.test(keys) &&
+        /field && event\.key !== "ArrowDown"/.test(keys) && /event\.key === "ArrowLeft"/.test(keys),
+    )
+    const layer = composer.slice(composer.indexOf('useEscapeLayerWhile(\n  () => menu.value === "plus"'))
+    check(
+      "K13-3: Escape closes the skills panel back to its row, then the menu back to the box, and the search no longer closes the whole menu itself",
+      layer.length > 0 && /if \(skillSubOpen\.value\) \{[\s\S]*?\[data-plus-skills\][\s\S]*?menu\.value = undefined\n\s+focus\(\)/.test(layer.slice(0, 500)) && !/@keydown\.escape\.stop\.prevent="menu = undefined"/.test(composer),
+    )
+    check("K13-3: every row of the menu and the skills panel is a menuitem", (composer.match(/role="menuitem"/g) ?? []).length >= 4)
+  }
 }

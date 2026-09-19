@@ -38,6 +38,8 @@ import AnnotationChips from "./AnnotationChips.vue"
 import ModelMenuRow from "./ModelMenuRow.vue"
 import { besideRow } from "../lib/submenu"
 import { isRovingKey, rovingStep, type RovingKey } from "../lib/composer-menu"
+import { focusRow } from "../lib/menu-keys"
+import { useEscapeLayerWhile } from "../lib/escape-layer"
 import FullAccessDialog from "./FullAccessDialog.vue"
 import ContextRing from "./ContextRing.vue"
 import { readContext } from "./session-context"
@@ -1113,8 +1115,12 @@ function skillChipName(trigger: string): string {
   return commandTitle(serverCommand(trigger), trigger, language.value)
 }
 
-async function openSkillMenu(event: Event) {
-  const row = (event.currentTarget as HTMLElement).getBoundingClientRect()
+function openSkillMenu(event: Event) {
+  void openSkillFrom(event.currentTarget as HTMLElement)
+}
+
+async function openSkillFrom(from: HTMLElement) {
+  const row = from.getBoundingClientRect()
   skillSubOpen.value = true
   await nextTick()
   const panel = skillMenu.value
@@ -2340,6 +2346,59 @@ const ACCESS_ICONS: Record<Access, string[]> = {
  */
 const accessMenu = ref<HTMLElement>()
 const plusMenu = ref<HTMLElement>()
+
+/*
+ * MiMo's plus menu is its menu primitive: focus goes to the first row when it
+ * opens, Up, Down, Home and End walk the rows, Enter and Space are the row's
+ * own button, and Right opens 技能 with focus in its search. Escape closes one
+ * level: the skills panel back to its row, then the menu back to the box.
+ */
+watch(menu, async (value) => {
+  if (value !== "plus") return
+  await nextTick()
+  plusMenu.value?.querySelector<HTMLElement>(":scope > .item")?.focus({ preventScroll: true })
+})
+
+function onPlusKeys(event: KeyboardEvent) {
+  if (event.altKey || event.metaKey || event.ctrlKey || event.isComposing) return
+  const panel = skillMenu.value
+  const skillRow = plusMenu.value?.querySelector<HTMLElement>("[data-plus-skills]")
+  const inSkills = Boolean(panel?.contains(event.target as Node))
+  if (inSkills) {
+    const field = event.target instanceof HTMLInputElement
+    // The search keeps its own caret keys; Down leaves it for the list.
+    if (field && event.key !== "ArrowDown") return
+    const rows = [...(panel?.querySelectorAll<HTMLElement>(".skill-item") ?? [])]
+    if (isRovingKey(event.key)) {
+      if (focusRow(rows, event.key)) event.preventDefault()
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault()
+      skillSubOpen.value = false
+      skillRow?.focus()
+    }
+    return
+  }
+  if (isRovingKey(event.key)) {
+    if (focusRow([...(plusMenu.value?.querySelectorAll<HTMLElement>(":scope > .item") ?? [])], event.key)) event.preventDefault()
+  } else if (event.key === "ArrowRight" && event.target === skillRow && skillRow) {
+    event.preventDefault()
+    void openSkillFrom(skillRow)
+  }
+}
+
+useEscapeLayerWhile(
+  () => menu.value === "plus",
+  () => {
+    if (skillSubOpen.value) {
+      skillSubOpen.value = false
+      skillQuery.value = ""
+      plusMenu.value?.querySelector<HTMLElement>("[data-plus-skills]")?.focus()
+      return
+    }
+    menu.value = undefined
+    focus()
+  },
+)
 const menuUp = ref(false)
 watch(menu, async (value) => {
   menuUp.value = false
@@ -3168,8 +3227,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 <path d="M8 3.4v9.2M3.4 8h9.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
               </svg>
             </button>
-            <div v-if="menu === 'plus'" ref="plusMenu" class="menu plus-menu" :class="{ up: menuUp }" data-plus-menu>
-              <button class="item" data-plus-files @click="attachFromMenu">
+            <div v-if="menu === 'plus'" ref="plusMenu" class="menu plus-menu" :class="{ up: menuUp }" role="menu" data-plus-menu @keydown="onPlusKeys">
+              <button class="item" role="menuitem" data-plus-files @click="attachFromMenu">
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M10.6 5.2 6 9.8a1.4 1.4 0 0 0 2 2l5-5a2.8 2.8 0 0 0-4-4l-5.2 5.2a4.2 4.2 0 0 0 6 6l4.2-4.2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
                 </svg>
@@ -3177,7 +3236,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               </button>
               <template v-if="!side">
                 <div class="rule" />
-                <button class="item" data-plus-terminal @click="terminalFromMenu">
+                <button class="item" role="menuitem" data-plus-terminal @click="terminalFromMenu">
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                     <rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6" stroke="currentColor" stroke-width="1.2" />
                     <path d="M4.6 6.4 6.8 8.4 4.6 10.4M8.6 10.6h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
@@ -3199,6 +3258,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               <button
                 class="item skill-row"
                 :class="{ hot: skillSubOpen }"
+                role="menuitem"
                 aria-haspopup="menu"
                 :aria-expanded="skillSubOpen"
                 data-plus-skills
@@ -3225,7 +3285,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                   type="text"
                   spellcheck="false"
                   :placeholder="t('composer.skillSearch')"
-                  @keydown.escape.stop.prevent="menu = undefined"
                   @keydown.enter.prevent="skillRows[0] && addSkill(skillRows[0].name)"
                 />
                 <div class="skill-list">
@@ -3235,6 +3294,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                     v-for="skill in skillRows"
                     :key="skill.name"
                     class="item skill-item"
+                    role="menuitem"
                     :title="skill.description || skill.name"
                     @click="addSkill(skill.name)"
                   >
