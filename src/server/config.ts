@@ -27,7 +27,8 @@ import { sanitizeConfig } from "./config-sanitize"
 import { defaultAccess, type Access } from "@shared/access"
 import type { Storage } from "./storage"
 import { quarantine, writeAtomic } from "./storage"
-import { readCredentialFile, renderCredentials } from "./credential-file"
+import fs from "node:fs/promises"
+import { parseCredentials, readCredentialFile, renderCredentials, sameCredentials, type SecretBox } from "./credential-file"
 import type { Bus } from "./bus"
 import {
   BUILT_IN,
@@ -55,6 +56,8 @@ export const PROJECT_LIST_MIGRATION = "projects-list"
 export const REPOSITORY_PROJECTS_MIGRATION = "projects-by-repository"
 /** Round 10: project memory is filed per repository, and outside a repository in one shared folder. */
 export const MEMORY_LAYOUT_MIGRATION = "memory-by-repository"
+/** Round 12 (L12-3): a plain-text credentials.json has been encrypted with the system's secure storage. */
+export const CREDENTIALS_SEALED_MIGRATION = "credentials-sealed-r12"
 
 /**
  * Which build's idea of the stored config this one is.
@@ -470,6 +473,8 @@ export class Config {
     private readonly storage: Storage,
     private readonly bus: Bus,
     private readonly credentialFile: string,
+    /** The system's secure storage (L12-3); absent under plain node, where the file stays plain text. */
+    private readonly secrets?: SecretBox,
   ) {
     this.repoRoots = new RepoRoots(storage)
   }
@@ -654,10 +659,11 @@ export class Config {
    * saving credentials is refused rather than writing over it.
    */
   private async loadCredentials(): Promise<void> {
-    const read = await readCredentialFile(this.credentialFile)
+    const read = await readCredentialFile(this.credentialFile, this.secrets)
     if (read.state === "read") {
       this.credentials = read.credentials.keys
       this.oauth = read.credentials.oauth
+      this.credentialsInPlainText = !read.sealed
       return
     }
     this.credentials = {}
@@ -674,6 +680,20 @@ export class Config {
 
   /** An unreadable credential file that could not be moved aside: nothing may write over it. */
   private credentialsBlocked = false
+
+  /** Whether credentials.json on disk is plain text rather than sealed. */
+  private credentialsInPlainText = false
+
+  /**
+   * Keys and sign-ins are being kept in plain text because this system has no
+   * secure storage to seal them with - Linux without a keyring (L12-3). Said
+   * only once there is something stored; with nothing saved there is nothing
+   * exposed yet.
+   */
+  get credentialsPlaintext(): boolean {
+    if (!this.secrets || this.secrets.available()) return false
+    return Object.keys(this.credentials).length > 0 || Object.keys(this.oauth).length > 0
+  }
 
   private writableCredentials(): void {
     if (this.credentialsBlocked) {
@@ -786,11 +806,50 @@ export class Config {
    * rename treatment as the document store.
    */
   private async persistCredentials(): Promise<void> {
-    const next = this.persisting.catch(() => {}).then(() =>
-      writeAtomic(this.credentialFile, renderCredentials({ keys: this.credentials, oauth: this.oauth }), 0o600),
-    )
+    const next = this.persisting.catch(() => {}).then(async () => {
+      // Sealed whenever the system can; see migrateCredentials for the first time.
+      const sealed = Boolean(this.secrets?.available())
+      await writeAtomic(this.credentialFile, renderCredentials({ keys: this.credentials, oauth: this.oauth }, this.secrets), 0o600)
+      this.credentialsInPlainText = !sealed
+    })
     this.persisting = next
     await next
+  }
+
+  /**
+   * Round 12 (L12-3), once: a plain-text credentials.json is encrypted with
+   * the system's secure storage, as MiMo keeps its provider keys.
+   *
+   * The sealed copy is written beside the file and read back and compared
+   * before it replaces anything, so the plain one is only dropped once the
+   * sealed one is known to open to the same keys. Anything that goes wrong
+   * leaves the plain file as it was, unrecorded, and this is tried again at
+   * the next launch; never recorded either while the system cannot seal.
+   */
+  async migrateCredentials(): Promise<void> {
+    if (this.fromNewerVersion) return
+    if ((this.current.migrations ?? []).includes(CREDENTIALS_SEALED_MIGRATION)) return
+    const box = this.secrets
+    if (!box?.available() || this.credentialsBlocked) return
+    try {
+      if (this.credentialsInPlainText) {
+        const credentials = { keys: this.credentials, oauth: this.oauth }
+        const next = this.persisting.catch(() => {}).then(() =>
+          writeAtomic(this.credentialFile, renderCredentials(credentials, box), 0o600, true, async (written) => {
+            const back = parseCredentials(await fs.readFile(written, "utf8"), box)
+            if (back.state !== "read" || !back.sealed || !sameCredentials(back.credentials, credentials)) {
+              throw new Error("the encrypted copy did not read back the same")
+            }
+          }),
+        )
+        this.persisting = next
+        await next
+        this.credentialsInPlainText = false
+      }
+      await this.set({ migrations: [...(this.current.migrations ?? []), CREDENTIALS_SEALED_MIGRATION] })
+    } catch (err) {
+      console.warn(`[config] the saved keys were not encrypted this time (${err instanceof Error ? err.message : String(err)}); the plain file is kept and this is tried again at the next launch`)
+    }
   }
 
   /** Tokens from a subscription login, if this provider has one. */

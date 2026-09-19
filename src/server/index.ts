@@ -6,6 +6,7 @@ import { codeOf, paramsOf } from "@shared/errors"
 import { Storage } from "./storage"
 import { Bus } from "./bus"
 import { Config } from "./config"
+import type { SecretBox } from "./credential-file"
 import { AuthManager } from "./auth/manager"
 import { Permissions } from "./permission"
 import { SessionStore } from "./session/store"
@@ -59,6 +60,8 @@ export const MAX_FRAME_BYTES = 100 * 1024 * 1024
 export interface BackendOptions {
   /** Browser origins allowed to connect: the renderer page's own. None means only non-browser clients. */
   origins?: readonly string[]
+  /** The system's secure storage for the saved keys (L12-3); the desktop app passes Electron's safeStorage. */
+  secrets?: SecretBox
 }
 
 /**
@@ -72,7 +75,7 @@ export interface BackendOptions {
 export async function startBackend(dataDirectory: string, options: BackendOptions = {}): Promise<Backend> {
   const storage = new Storage(path.join(dataDirectory, "storage"))
   const bus = new Bus()
-  const config = new Config(storage, bus, path.join(dataDirectory, "credentials.json"))
+  const config = new Config(storage, bus, path.join(dataDirectory, "credentials.json"), options.secrets)
   const auth = new AuthManager(config, bus)
   await config.load()
   // The model's file tools never write here: config.json there decides what starts at launch.
@@ -103,6 +106,8 @@ export async function startBackend(dataDirectory: string, options: BackendOption
   // Before the socket opens, so the first window already reads a filled project list.
   await config.migrateProjects(projectDirectoriesOf(await sessions.list()))
   await config.migrateRepositoryProjects()
+  // Plain-text keys are encrypted once the system can (L12-3); a failure is kept plain and tried next launch.
+  await config.migrateCredentials()
   const runner = new SessionRunner(sessions, bus, config, permissions, auth, storage)
   /*
    * Undo's own housekeeping, in the background so the window is not held up by

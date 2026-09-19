@@ -12,6 +12,7 @@ import { DailyLog, LOG_DIR } from "./log-file"
 import { BOOT_DEFAULTS, BOOT_PREFS_FILE, readBootPrefs, themePref, windowBackground, writeBootPrefs, type BootPrefs } from "./boot-prefs"
 import { startBackend, type Backend } from "../server/index"
 import { rendererOrigins } from "../server/socket-guard"
+import { safeStorageBox } from "./safe-storage"
 import { workingRoots } from "../server/file-access"
 import { insideReal } from "../server/tool/fs-util"
 import { setImageShrinker } from "../server/provider/attachment-parts"
@@ -812,7 +813,7 @@ app.whenReady().then(async () => {
    * inside the window rather than the window itself.
    */
   // Only this app's own page may open the socket from a browser context.
-  const starting = startBackend(app.getPath("userData"), { origins: rendererOrigins(process.env.ELECTRON_RENDERER_URL) }).then((started) => {
+  const starting = startBackend(app.getPath("userData"), { origins: rendererOrigins(process.env.ELECTRON_RENDERER_URL), secrets: safeStorageBox }).then((started) => {
     backend = started
     /*
      * MiMo keeps the machine from suspending while a turn runs. The runner's busy

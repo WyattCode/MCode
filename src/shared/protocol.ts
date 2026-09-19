@@ -2240,13 +2240,16 @@ export interface ResponseMap {
    * the defaults, with where the damaged file was kept; `fromNewerVersion`
    * when it was written by a later build and this one will not write over it.
    * `credentialsUnreadable` when credentials.json was there but could not be
-   * read (or decrypted) and the app started without the keys in it.
+   * read (or decrypted) and the app started without the keys in it;
+   * `credentialsPlaintext` when keys are saved unencrypted because the system
+   * has no secure storage.
    */
   "config.get": {
     config: AppConfig
     unreadable?: { problem: string; evidence?: string }
     fromNewerVersion?: boolean
     credentialsUnreadable?: { problem: string; evidence?: string }
+    credentialsPlaintext?: boolean
   }
   "config.set": { config: AppConfig }
   "provider.list": { providers: ProviderStatus[] }

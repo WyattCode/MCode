@@ -13,7 +13,8 @@ import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { startBackend } from "../src/server/index"
 import { Bus } from "../src/server/bus"
-import { Config } from "../src/server/config"
+import { CREDENTIALS_SEALED_MIGRATION, Config } from "../src/server/config"
+import type { SecretBox } from "../src/server/credential-file"
 import { Storage } from "../src/server/storage"
 import { handle } from "../src/server/handlers"
 import { appDataRefusal } from "../src/server/tool/app-data"
@@ -195,4 +196,129 @@ async function checks(check: Check, section: (name: string) => void): Promise<vo
     await fresh.load()
     check("no file at all is a first run, not a damaged one", !fresh.credentialsUnreadable)
   }
+
+  section("Round 12 (L12-3): keys and sign-ins are encrypted with the system's secure storage")
+  {
+    // Everything the backend logs in this section, so a key that reached a log line fails a check.
+    const logged: string[] = []
+    const originals = { info: console.info, warn: console.warn, error: console.error }
+    for (const level of ["info", "warn", "error"] as const) {
+      console[level] = (...args: unknown[]) => {
+        logged.push(args.map(String).join(" "))
+      }
+    }
+    try {
+      await sealingChecks(check, logged)
+    } finally {
+      Object.assign(console, originals)
+    }
+    check("no key or token value appears in anything logged", !logged.some((line) => SECRETS.some((secret) => line.includes(secret))), logged.length)
+  }
+}
+
+// Test values only; nothing here is a real key.
+const KEY = "test-openai-value-0001"
+const OTHER = "test-anthropic-value-0002"
+const TOKEN = "test-access-token-0003"
+const SECRETS = [KEY, OTHER, TOKEN]
+const PLAIN = JSON.stringify({ keys: { openai: KEY, anthropic: OTHER }, oauth: { openai: { access: TOKEN, refresh: "test-refresh-0004" } } }, null, 2)
+
+/**
+ * A stand-in for safeStorage: reversible, bound to one "machine", and
+ * unable to open what another one sealed - which is what DPAPI does for a
+ * profile copied to another Windows user or computer.
+ */
+function testBox(machine: string, options: { available?: boolean; openable?: boolean } = {}): SecretBox & { sealed: number } {
+  const box = {
+    sealed: 0,
+    available: () => options.available ?? true,
+    seal(plain: string) {
+      box.sealed++
+      return Buffer.from(`${machine}:${Buffer.from(plain, "utf8").toString("hex")}`, "utf8").toString("base64")
+    },
+    open(sealed: string) {
+      const text = Buffer.from(sealed, "base64").toString("utf8")
+      if (options.openable === false || !text.startsWith(`${machine}:`)) throw new Error("sealed elsewhere")
+      return Buffer.from(text.slice(machine.length + 1), "hex").toString("utf8")
+    },
+  }
+  return box
+}
+
+async function migrations(dir: string): Promise<string[]> {
+  const doc = JSON.parse(await fs.readFile(path.join(dir, "storage", "config.json"), "utf8").catch(() => "{}")) as { migrations?: string[] }
+  return doc.migrations ?? []
+}
+
+async function sealingChecks(check: Check, logged: string[]): Promise<void> {
+  // An existing plain-text file is sealed at the first launch that can.
+  const dir = await profile("seal")
+  const file = path.join(dir, "credentials.json")
+  await fs.writeFile(file, PLAIN)
+  const machine = testBox("machine-a")
+  let backend = await startBackend(dir, { secrets: machine })
+  let text = await fs.readFile(file, "utf8")
+  check("the plain file is replaced by a sealed one", (JSON.parse(text) as { sealed?: string }).sealed === "safeStorage")
+  check("which holds none of the values in the clear", !SECRETS.some((secret) => text.includes(secret)))
+  check("every value is sealed on its own", machine.sealed === 3, machine.sealed)
+  check("the migration is recorded by name", (await migrations(dir)).includes(CREDENTIALS_SEALED_MIGRATION))
+  check("and the keys and sign-in still work", backend.runtime.config.apiKey("openai") === KEY && backend.runtime.config.tokens("openai")?.access === TOKEN)
+  check("no temp file is left beside it", !(await listed(dir)).some((name) => name.startsWith("credentials.json.")), await listed(dir))
+  await backend.runtime.config.setApiKey("mistral", "test-mistral-0005")
+  text = await fs.readFile(file, "utf8")
+  check("a key saved later is sealed too", !text.includes("test-mistral-0005") && (JSON.parse(text) as { keys: Record<string, string> }).keys.mistral !== undefined)
+  await backend.close()
+
+  backend = await startBackend(dir, { secrets: testBox("machine-a") })
+  check("the next launch on the same machine opens them", backend.runtime.config.apiKey("anthropic") === OTHER && backend.runtime.config.apiKey("mistral") === "test-mistral-0005" && !backend.runtime.config.credentialsUnreadable)
+  await backend.close()
+
+  // Another user or machine: unreadable, kept aside - never empty and written over.
+  const sealedText = await fs.readFile(file, "utf8")
+  backend = await startBackend(dir, { secrets: testBox("machine-b") })
+  const aside = (await listed(dir)).filter((name) => name.startsWith("credentials.json.corrupt-"))
+  check("a file sealed elsewhere is unreadable, not empty", Boolean(backend.runtime.config.credentialsUnreadable) && backend.runtime.config.apiKey("anthropic") === undefined)
+  check("and is kept aside byte for byte", aside.length === 1 && (await fs.readFile(path.join(dir, aside[0]!), "utf8")) === sealedText)
+  await backend.close()
+
+  // Plain node with no box at all reads a sealed file as unreadable too.
+  const bare = await profile("bare")
+  await fs.writeFile(path.join(bare, "credentials.json"), sealedText)
+  const noBox = new Config(new Storage(path.join(bare, "storage")), new Bus(), path.join(bare, "credentials.json"))
+  await noBox.load()
+  check("without secure storage a sealed file is unreadable as well", Boolean(noBox.credentialsUnreadable))
+
+  // A sealing that does not read back leaves the plain file and retries next launch.
+  const failing = await profile("failing")
+  const failingFile = path.join(failing, "credentials.json")
+  await fs.writeFile(failingFile, PLAIN)
+  backend = await startBackend(failing, { secrets: testBox("machine-a", { openable: false }) })
+  check("a sealed copy that does not open again never replaces the plain file", (await fs.readFile(failingFile, "utf8")) === PLAIN)
+  check("the keys still work meanwhile", backend.runtime.config.apiKey("openai") === KEY)
+  check("the migration is not recorded, so it is tried again", !(await migrations(failing)).includes(CREDENTIALS_SEALED_MIGRATION))
+  check("and no half-written copy is left", !(await listed(failing)).some((name) => name.startsWith("credentials.json.")), await listed(failing))
+  check("the failure is logged without the values", logged.some((line) => line.includes("were not encrypted this time")))
+  await backend.close()
+  backend = await startBackend(failing, { secrets: testBox("machine-a") })
+  check("the next launch that can seal does", (JSON.parse(await fs.readFile(failingFile, "utf8")) as { sealed?: string }).sealed === "safeStorage" && backend.runtime.config.apiKey("openai") === KEY)
+  await backend.close()
+
+  // No secure storage (Linux without a keyring): plain text, said in the window.
+  const linux = await profile("nokeyring")
+  const linuxFile = path.join(linux, "credentials.json")
+  await fs.writeFile(linuxFile, PLAIN)
+  backend = await startBackend(linux, { secrets: testBox("machine-a", { available: false }) })
+  const got = (await handle(backend.runtime, { type: "config.get" } as Request)) as { credentialsPlaintext?: boolean }
+  check("without secure storage the keys stay in plain text and work", (await fs.readFile(linuxFile, "utf8")) === PLAIN && backend.runtime.config.apiKey("openai") === KEY)
+  check("config.get says they are unencrypted", got.credentialsPlaintext === true)
+  check("and the migration waits for a launch that can seal", !(await migrations(linux)).includes(CREDENTIALS_SEALED_MIGRATION))
+  await backend.close()
+
+  // The checks' own backend (no box) keeps plain text and raises no notice.
+  const plainNode = await profile("plainnode")
+  await fs.writeFile(path.join(plainNode, "credentials.json"), PLAIN)
+  backend = await startBackend(plainNode)
+  const quiet = (await handle(backend.runtime, { type: "config.get" } as Request)) as { credentialsPlaintext?: boolean }
+  check("a backend given no secure storage reads plain text without a notice", backend.runtime.config.apiKey("openai") === KEY && !quiet.credentialsPlaintext)
+  await backend.close()
 }

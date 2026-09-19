@@ -52,8 +52,12 @@ export function tempNameFor(target: string): string {
  * durable one: without this, power lost shortly after a save can leave some
  * filesystems showing the new name over no contents at all, which turns "the
  * old version survived" into "neither version did".
+ *
+ * `verify`, when given, reads the written temp file back before it replaces
+ * anything, and a throw from it leaves the target as it was - for a write
+ * that must be proved readable before the old version goes (L12-3).
  */
-export async function writeAtomic(target: string, data: string, mode?: number, durable = true): Promise<void> {
+export async function writeAtomic(target: string, data: string, mode?: number, durable = true, verify?: (written: string) => Promise<void>): Promise<void> {
   await fs.mkdir(path.dirname(target), { recursive: true })
   const temp = tempNameFor(target)
   let written = false
@@ -74,6 +78,7 @@ export async function writeAtomic(target: string, data: string, mode?: number, d
     } finally {
       await handle.close()
     }
+    if (verify) await verify(temp)
     await renameOver(temp, target)
   } catch (err) {
     /*
