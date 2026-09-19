@@ -5,8 +5,8 @@
 - 分支：`v2.0`（只在本地，从未推送）
 - 目标：在界面和功能上 1:1 复刻 Xiaomi MiMo 桌面端，MCode 保留自己的名字、图标和字标
 - 对照清单（逐项实测，含百分比）：https://claude.ai/code/artifact/f149a5d1-857e-4bae-80be-ca03265d9f83
-- 最近更新：2026-09-19
-- 第十二轮审计（2026-09-19 起，用户选定）：前几轮已审完输入/对话/侧栏/设置/工具/存储/语言与无障碍与安全/服务商/渲染性能等面；本轮换三个未用过的只读角度：**数据生命周期与版本升级**、**渲染进程与主进程主契约的完整性**、**失败与空状态的用户可见面**。报告写到 scratchpad `round12-lifecycle.md` / `round12-ipc.md` / `round12-failure-ux.md`，待出清单后逐条做。
+- 最近更新：2026-09-20
+- 第十二轮（2026-09-19/20）：三个新的只读角度（数据生命周期与版本升级、主进程与界面的通信契约、失败与空状态）的审计已做完，34 项全部完成并合并入 `v2.0`，见下方「第十二轮」一节。报告在 scratchpad `round12-lifecycle.md` / `round12-ipc.md` / `round12-failure-ux.md`
 
 ## 现在到哪了
 
@@ -395,7 +395,7 @@
   - R10-10 全局 AGENTS.md 并入指令列表、排在项目文件之后；找到第一个存在的全局文件就停（空文件也停），所以有全局 AGENTS.md 时不读 `~/.claude/CLAUDE.md`，停用（改名）后才读。提示词段名改为「## Instructions」，全局 AGENTS.md 模板文案同步。
   - R10-11 后备标题和标题请求都去掉消息开头的技能芯片 `/name`。R10-12 新内置技能 `memory-search`（表结构、只读 SQLite、查询模板；技能和 dream / distill 提示词里的查询都在 smoke 里对真实索引跑过）。
   - R10-1 技能开关：配置 `disabledSkills`（MCode 自己的键）；提示词清单、skill / skill_search、斜杠与加号菜单、`/name` 加载统一过滤；插件页技能卡片显示真实状态，已停用的显示 MiMo 的「安装」按钮（点了即启用），否则「…」菜单里是「停用」；切换后吐司「已启用 / 已停用技能」并重取斜杠列表；手改 config.json 同样生效。
-  - R10-2 技能详情卡（`SkillDetailDialog.vue`，520 宽 / 圆角 16 / 内距 22，照 MiMo）：图标（frontmatter `icon`，否则按名字取色的拼图）、`locales/<语言>.json` 的显示名与简介、开关、说明（界面简体中文而说明纯英文、界面英文而说明含中文时照 MiMo 不显示）、「查看 SKILL.md 内容」（整文件，最多 20 万字，超出提示）、底部「卸载」「让智能体来配置」「在对话中试用」。**卸载照 MiMo**：不弹确认，只对用户全局技能目录（`<数据目录>/storage/skills`）里的技能显示，文件夹移到 `<数据目录>/storage/skill-trash/<时间戳>-<名字>`，不删除也不清理；内置技能和项目 `.mcode` 技能没有卸载。「让智能体来配置」开新任务、只挂 `skill-creator` 芯片并预填请求；「在对话中试用」把芯片放进当前对话（没有就放首页）的输入框（`composer-drafts` 的 `addDraftSkill`）。
+  - R10-2 技能详情卡（`SkillDetailDialog.vue`，520 宽 / 圆角 16 / 内距 22，照 MiMo）：图标（frontmatter `icon`，否则按名字取色的拼图）、`locales/<语言>.json` 的显示名与简介、开关、说明（界面简体中文而说明纯英文、界面英文而说明含中文时照 MiMo 不显示）、「查看 SKILL.md 内容」（整文件，最多 20 万字，超出提示）、底部「卸载」「让智能体来配置」「在对话中试用」。**卸载照 MiMo**：不弹确认，只对用户全局技能目录（`<数据目录>/storage/skills`）里的技能显示，文件夹移到 `<数据目录>/storage/skill-trash/<时间戳>-<名字>`，启动时按名字里的时间戳删掉超过 7 天的（第十二轮 L12-12 更正：MiMo 26.914 把卸载项放进 `extension-trash`，启动时删掉超过 7 天的；此前写的「照 MiMo 不清理」有误）；内置技能和项目 `.mcode` 技能没有卸载。「让智能体来配置」开新任务、只挂 `skill-creator` 芯片并预填请求；「在对话中试用」把芯片放进当前对话（没有就放首页）的输入框（`composer-drafts` 的 `addDraftSkill`）。
   - **注意：插件页入口仍按 2026-09-14 的决定隐藏**（`goPlugins` 没有调用者），所以 R10-1 的「…」菜单和 R10-2 的详情卡目前在界面上进不去；探针是在临时加了 `window.__probePlugins` 钩子的构建上跑的（钩子未提交）。是否恢复侧栏「插件」行需用户决定；在此之前可手改 config.json 的 `disabledSkills`。
   - R10-3 斜杠命令照 MiMo：列表开头依次 `/init` `/review` `/dream` `/distill` `/rebuild`（对话里 `/compact` 仍在最前），来源标签「命令」，说明是英文（MiMo 也直接显示引擎的英文说明），文字全部自写（`server/command-builtin.ts`）；同名的用户命令会替换它（`CommandInfo.own` 区分）。`/init` 在对话里写仓库根的 AGENTS.md；`/review` 交给子智能体；`/dream` `/distill` 本回合以自己的智能体运行（`COMMAND_AGENTS` / `TurnAgent`，`prompts.ts` 的 DREAM / DISTILL 提示词，只有 read / write / edit / glob / grep / memory / bash，不给 MCP，写入只许记忆目录和项目 `.mcode`；bash 仍按用户的权限级别询问——MiMo 的 dream 规则里 bash 是 allow，这里没有放宽）；`/rebuild` 由输入框接管，照 MiMo 桌面端（关了 checkpoint）改为压缩，后面的参数忽略。回合中途压缩后仍保持命令指定的智能体和模型。
   - R10-4 斜杠菜单只按名称、逐词前缀匹配（与设置搜索同一 `wordMatch`）；加号菜单的技能子菜单核实过 MiMo 就是名称 + 说明子串匹配，未改。R10-14 frontmatter 解析失败的 SKILL.md 每个文件报一次错误吐司（修好再坏会再报），缺 name / description 的只写日志。
@@ -461,6 +461,53 @@
   - C11-46 斜杠高亮的命令名接受 `[^\s/]+`（MiMo 只接受 `[A-Za-z0-9_-]+`）：MCode 的 MCP 提示命令名是 `服务:提示`，收严会让这类命令不再高亮；高亮本来就要求命令在缓存列表里，不会误标。
   - C11-48 只有技能芯片、没有文字时照常发出（MiMo 拒发并提示「请输入内容」）。
   - C11-50 运行中发送走完整路径（命令模板、技能芯片、批注都带上；MiMo 只插「文本 + 附件」）。
+
+## 第十二轮：数据生命周期、失败提示、主进程契约（2026-09-20）
+
+三份只读审计：`scratchpad/round12-lifecycle.md`（22 条）、`round12-failure-ux.md`（17 条）、`round12-ipc.md`（13 条）。用户决定：凭证照 MiMo 用系统安全存储加密；卸载的技能照 MiMo 7 天清理；可选改进「MiMo 有的都做」（只做了定时任务运行记录的原因码，降级提示、无模型指路、磁盘满文案 MiMo 没有，不做）。四路 worktree 分头做，合并后 13 项检查 + build 通过，smoke **4457 全过**；新增检查文件 `scripts/smoke-round12-credentials.ts` / `smoke-round12-lifecycle.ts` / `smoke-round12-c.ts` / `smoke-round12-ipc.ts`。窗口提示用一次性配置实测过（产物库重建、对话读不出、定时任务文件损坏、凭证读不出四条中文提示都出现）。
+
+**凭证与设置（L12-1…6）**
+- L12-1 `storage/models.json` 损坏：挪成 `.corrupt-<iso>`，模型列表从空开始，启动不再失败（`6bbe519`）
+- L12-2 `credentials.json` 读不出：挪到 `credentials.json.corrupt-<iso>`，挪不动就拒绝保存 Key（`error.credentialsInvalid`）；`config.get` 带 `credentialsUnreadable`，窗口提示；模型工具不能读 `credentials.json.*`（`8ad995b`，文件处理在 `src/server/credential-file.ts`）
+- L12-3 **凭证加密**：Key 与 OAuth 令牌逐条用 Electron `safeStorage` 加密（base64）。main 注入加密器（`src/main/safe-storage.ts`），纯 node 跑时没有加密器、保持明文。一次性迁移 `credentials-sealed-r12`：写加密版→读回比对→再替换明文，失败保留明文下次重试。旧明文照读。别的用户/机器加密的文件、或无安全存储时读到加密文件，按读不出处理（走 L12-2）。系统无安全存储且确有保存内容时明文保存并提示 `error.credentialsPlaintext`（`750cc1c`）。已知取舍：Linux 密钥环暂未解锁时加密文件会被挪开，需要手动改回名字
+- L12-4 所有启动 `migrate*` 遇到更新版本写的 config 直接返回（`3e4c5e0`）
+- L12-5 设置校验只改内存副本，不认识的取值原样留在文件里，直到用户改该项（`517e84f`；`smoke-round9-settings.ts` 相应改了一条）
+- L12-6 `Storage.drain()` / `Config.drain()`，`close()` 末尾依次 `permissions.flush()`、config、storage，仍在 5 秒上限内（`b2c6d40`）
+
+**其余存储（L12-7…17）**
+- L12-7 `artifacts.db` 真损坏时连同 -wal/-shm/-journal 挪开重建，`reconcile()` 补回，窗口提示 `error.artifactsRecreated`；损坏判断与挪开抽到 `sql-worker.ts` 与 search.db 共用（`dc017de`）
+- L12-8 `.mcode/scheduled_tasks.json` 读不出挪开，挪不动拒绝写；解析不了的 cron 串写回时保留、不触发（`25ebb66`）
+- L12-9 `imported.json` 损坏不再导致重复导入：用 `SessionInfo.imported` 去重，新增 `mtime`（`a70577f`）
+- L12-10 `mcp-auth.json` 解析失败挪开；读不了时 `mutate()` 拒绝（`error.mcpAuthUnreadable`）（`c266065`）
+- L12-11 读不出的 `info.json`：原地保留、记日志一次，checkpoint 清理与 artifacts reconcile 当作仍在用，窗口提示 `error.sessionsUnreadable`（`e6bf337`）
+- L12-12 `skill-trash` 启动时删掉超过 7 天的（按名字开头的时间戳）（`c75b76c`）
+- L12-13 撤销仓库启动约 1 分钟后、之后每小时 `git repack -a -d --keep-unreachable -q`，从不 prune，持有该仓库的 git 锁（`abb278e`）
+- L12-14 `automations.json` 损坏启动时窗口提示 `error.automationsInvalid`（`a1f1f81`）
+- L12-15 search.db schema 不匹配直接删掉重建；启动时清理超过 30 天的 `*.corrupt-*`，每份文档留最新一份（`f2b25a5`）
+- L12-16 记忆 project-id 原子写（临时文件 + 硬链接），无效旧文件先另存（`b1c1142`）
+- L12-17 定时任务运行记录带 MiMo 的 `errorCode`（`target-missing` / `project-unavailable` / `target-busy` / `schedule-changed` / `app_interrupted` / `empty-prompt` / `model-unavailable`），只改数据（`b95b894`）
+- 窗口提示走新请求 `storage.problems`（`src/server/store-notices.ts`），每次启动每个 code 只说一次。注意提示最多同时显示 3 条（`lib/toast.ts` `LIMIT`），四个文件同时损坏时最早那条会被挤掉
+
+**失败提示与空状态（C12-1…10）**
+- C12-1 重试倒计时 18 种语言不再显示花括号；i18ncheck 拒绝任何 `{{`（`bb69baa`）
+- C12-2 断线时只让已发出的请求失败，未发出的等重连（最多 30 秒），不会先报失败再发出；错误说本地服务（`error.backendLost`）（`8944bd3`）
+- C12-3 启动后断线保留对话界面，只升级重连提示（`error.connectionStillDown`）；顺带修了离线计时每次重连都被重置、从未到点的旧 bug；`boot.unreachable` 删除（`7b0e3f1`、`c21462b`）
+- C12-4 发送/子任务失败改成「请求失败」提示并保留草稿，`app.error` 只给启动失败；失败回合横幅读 `turnError`（`b0cc90a`）
+- C12-5 消息搜索失败显示错误行加重试（`searchOverlay.messageError`）（`403bc8b`）
+- C12-6 插件页列表失败显示失败行加重试（`plugins.listUnavailable`），刷新失败说「刷新失败：…」且不清空技能（`b429fce`、`ed7ad6d`）
+- C12-7 表格视图离开时没写进去的编辑提示 `office.saveFailed`（`5ec2e0d`）
+- C12-8 侧边对话历史加载失败：加载中→`subagentDetail.error`→每 2 秒重试；删了 `loadSubagent`（`5c92051`）
+- C12-9 三句英文改成表内文案：限速重试行 `error.rateLimited`、不能继续用 `composer.reviewRestricted`、PDF 读失败 `rp.files.errCannotRead`（`17a0afe`）
+- C12-10 读出来但没有可显示内容的对话显示「这个对话还没有消息」（`stream.emptyConvo`，MCode 自己的措辞）；全新空会话仍是欢迎页（`428059a`）
+
+**主进程契约（D12-1…7）**
+- D12-1 删掉没人调用的 `browserClose` 与 `mcode:browser-close`；wiringcheck 新规则：preload 暴露的每个方法都必须在渲染端有调用（`75bd186`）
+- D12-2 `mcode:menu-labels` 只收纯对象里的字符串（`9d64d40`）
+- D12-3 `clipboard-write` / `browser-bounds` / `titlebar-mode`（及 `browser-open` 的框）形状不对就忽略，`src/main/ipc-input.ts`（`1525bc3`）
+- D12-4 `edit` / `view` / `window` / `browser-act` 不认识的动作什么也不做（`4c17a48`）
+- D12-5 Office 通道检查抛错时回答自己的拒绝形状（`guarded()`）（`68397b4`）
+- D12-6 `pick-directory` 标题只收文本、开关只认 `=== true`（`d47a3d9`）
+- D12-7 `src/main/atomic-write.ts` `writeAtomicSync`：`boot-prefs.json` / `display-server.json` / `window.json` 走临时文件+fsync+改名（`c1ce049`）。没做：`updates/update-transaction.json` 仍是普通写，`composer-input.ts` 没有 fsync（关页时同步写、最大 16 MB，fsync 可能卡关闭）；崩溃留下的 `*.<pid>.<n>.tmp` 没人清
 
 ## 第十一轮：并发与长期运行（2026-09-18）
 
@@ -557,7 +604,7 @@
 npm run dev          # 开发版（先结束残留的 node_modules/electron/dist/electron.exe）
 npm run typecheck
 npm run build
-npm run smoke        # 当前 334 条
+npm run smoke        # 当前 4457 条（2026-09-20）
 npm run i18ncheck    # 18 种语言表键一致
 npm run themecheck   # 重新生成 tokens.css 并逐字节比对；也拦物理方向的 CSS
 npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监听
@@ -778,7 +825,8 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
 
 ## 下一步建议
 
-**第十一轮四路（输入路径、并发与长期运行、回复解析，加 C11-15 / C11-13 两项）已全部完成并合并入 `v2.0`。** 第十一轮清单已清空；「待办：清单之外的只读审计结果」里最后一项（项目行 git 分支名，MiMo `pi-branch`）于 2026-09-18 核实**早已实现**，HANDOFF 的「还没做」是旧笔误（见 `40acafb`）。换言之，**已知 backlog 已经真空**（只剩 [调研] 性的笔记，不是任务）。下一步：
+**第十二轮（数据生命周期、失败提示与空状态、主进程契约）34 项已全部完成并合并入 `v2.0`**，已知 backlog 再次清空。下一步：
 
-1. 开第十二轮审计（用户 2026-09-19 选定）：换几个前几轮没用过的只读角度再对照 MiMo，产出新清单后逐条做。待选角度：（a）**数据生命周期与版本升级**（各持久化存储的 schema 版本与迁移、降级、损坏文件恢复）；（b）**渲染进程与主进程契约的完整性**（preload 面 vs `ipcMain.handle`、参数校验、错误传播、返回值一致性）；（c）**失败与空状态的用户可见面**（每个错误路径与空状态的文案与下一步、静默吞掉的 catch）。
-2. 新页面（钩子、CLI 插件、SSH 连接）用户已决定不做。
+1. 如要继续对照，可再换只读角度开第十三轮，例如：（a）键盘与焦点全路径（每个弹窗/菜单/面板的 Tab 顺序、Esc、焦点归还）对照 MiMo；（b）多窗口与多实例（两个 MCode 同开、同一数据目录的并发写）；（c）大数据量下的表现（上千对话、超长对话、大仓库的文件树与搜索）。
+2. 第十二轮留下的小尾巴（可选）：`update-transaction.json` 与 `composer-input.ts` 走 `writeAtomicSync`；清理崩溃留下的 `*.tmp`；提示同时超过 3 条时持久提示被挤掉的问题。
+3. 新页面（钩子、CLI 插件、SSH 连接）用户已决定不做。
