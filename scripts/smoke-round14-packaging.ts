@@ -395,4 +395,40 @@ export async function roundFourteenPackagingChecks(check: Check, section: (name:
     check("the build removes them right after the install, and only then proves the libraries import", pruneAt > build.indexOf('pipInstall("packages"') && pruneAt < probeAt && /import openpyxl[^"`]*\bnumpy\.testing, pandas\.testing\b/.test(build))
     check("a tree built before this is rebuilt (the layout number moved on)", Number(/^const LAYOUT = (\d+)$/m.exec(script)?.[1]) >= 4)
   }
+
+  section("Round 14 (P14-9): every module the built main process loads at run time ships with the app")
+  {
+    /*
+     * The bundle keeps some requires external: the runtime dependencies, and a
+     * bundled library's own lazy require (turndown's `@mixmark-io/domino`).
+     * electron-builder copies only package.json's dependencies and what they
+     * depend on, so an external that a dev dependency brought in resolved from
+     * the repo's node_modules in every test and was missing from the installed
+     * app, whose main module then never finished loading: no window at all.
+     */
+    const pkg = JSON.parse(await fs.readFile("package.json", "utf8")) as { dependencies?: Record<string, string> }
+    const shipped = new Set<string>()
+    const walk = async (name: string): Promise<void> => {
+      if (shipped.has(name)) return
+      shipped.add(name)
+      const manifest = await fs.readFile(path.join("node_modules", name, "package.json"), "utf8").then((text) => JSON.parse(text) as { dependencies?: Record<string, string>; optionalDependencies?: Record<string, string> }, () => undefined)
+      for (const dep of Object.keys({ ...manifest?.dependencies, ...manifest?.optionalDependencies })) await walk(dep)
+    }
+    for (const dep of Object.keys(pkg.dependencies ?? {})) await walk(dep)
+    const packageOf = (spec: string) => (spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : spec.split("/")[0]!)
+    const builtins = new Set(createRequire(import.meta.url)("node:module").builtinModules as string[])
+    const external = (code: string) => {
+      const specs = new Set<string>()
+      for (const match of code.matchAll(/\b(?:require\d*\(|from\s+|import\()\s*"([^".][^"]*)"/g)) specs.add(match[1]!)
+      const named = /^(?:@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*(?:\/[\w./-]+)?$/i
+      return [...specs].filter((spec) => named.test(spec) && !spec.startsWith("node:") && spec !== "electron" && !builtins.has(packageOf(spec)))
+    }
+    const main = await fs.readdir("out/main", { recursive: true }).then((names) => names.filter((name) => String(name).endsWith(".js")).map(String))
+    const missing: string[] = []
+    for (const file of main) for (const spec of external(await fs.readFile(path.join("out/main", file), "utf8"))) if (!shipped.has(packageOf(spec))) missing.push(`${file}: ${spec}`)
+    check("the built main process requires nothing outside package.json's dependencies and theirs", main.length > 0 && missing.length === 0, missing)
+    check("turndown's parser is one of them", shipped.has("@mixmark-io/domino"))
+    check("the check sees the bundle's own lazy requires", external('var d = require2("@mixmark-io/domino"); import x from "ws"').join() === "@mixmark-io/domino,ws")
+  }
+
 }
