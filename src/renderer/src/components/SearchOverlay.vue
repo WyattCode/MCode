@@ -5,6 +5,7 @@ import { useApp } from "../stores/app"
 import { sessionTitle, t } from "../lib/i18n"
 import { projectName } from "../lib/project"
 import { projectOf } from "../lib/session-project"
+import { useEscapeLayer } from "../lib/escape-layer"
 import { scoreMatch } from "@shared/search-score"
 
 /**
@@ -259,12 +260,8 @@ function choose(item?: Item) {
   close()
 }
 
-function onKeydown(event: KeyboardEvent) {
-  if (event.key !== "Escape") return
-  event.preventDefault()
-  event.stopPropagation()
-  close()
-}
+/* Escape closes it wherever focus is - the field, or a result that Tab reached - as MiMo's document-wide binding does. */
+useEscapeLayer(close)
 
 onMounted(() => {
   field.value?.focus()
@@ -291,7 +288,6 @@ defineExpose({ close })
           :placeholder="t('searchOverlay.placeholder')"
           spellcheck="false"
           autocomplete="off"
-          @keydown="onKeydown"
         />
       </div>
       <div class="search-results">

@@ -168,4 +168,13 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
     )
     check("K13-3: every row of the menu and the skills panel is a menuitem", (composer.match(/role="menuitem"/g) ?? []).length >= 4)
   }
+
+  // ---------------------------------------------------------------- K13-4
+  {
+    const overlay = await component("SearchOverlay")
+    check(
+      "K13-4: the search overlay closes on Escape wherever focus is, a result row included, not only from its field",
+      /useEscapeLayer\(close\)/.test(overlay) && !/@keydown="onKeydown"/.test(overlay),
+    )
+  }
 }
