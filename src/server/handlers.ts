@@ -613,7 +613,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * conversation and a new message.
        */
       const restricting = await runtime.sessions.get(request.sessionID)
-      if (restricting?.reviewRestricted) throw new Error("this conversation can't be continued - start a new one")
+      if (restricting?.reviewRestricted) throw new CodedError("this conversation can't be continued - start a new one", "composer.reviewRestricted")
       const messageID = await runtime.runner.prompt({
         sessionID: request.sessionID,
         text: request.text,

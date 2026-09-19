@@ -11,6 +11,7 @@ import { WebSocketServer } from "ws"
 import type { Check } from "./smoke-round5"
 import { Client } from "../src/renderer/src/lib/client"
 import { LANGUAGES, language, t } from "../src/renderer/src/lib/i18n"
+import { retryReason } from "../src/renderer/src/lib/step-rows"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
 
@@ -120,6 +121,23 @@ export async function roundTwelveFailureChecks(check: Check, section: (name: str
         /loadState\.value === "loading" \? t\("stream\.loadingConvo"\) : loadState\.value === "error" \? t\("subagentDetail\.error"\) : t\("rp\.chat\.empty"\)/.test(chat) &&
         /onBeforeUnmount\(\(\) => clearTimeout\(retry\)\)/.test(chat),
     )
+  }
+
+  // ---------------------------------------------------------------- C12-9
+  {
+    const runner = await read("src/server/session/runner.ts")
+    const handlers = await read("src/server/handlers.ts")
+    const pdf = await read("src/renderer/src/components/right/PdfView.vue")
+    check("C12-9: the shared rate-limit wait carries no English sentence of its own", !/asked every request to wait/.test(runner) && /message: "", next: Date\.now\(\) \+ held, kind: "rate_limit"/.test(runner))
+    const before = language.value
+    language.value = "zh-CN"
+    const said = retryReason("Too Many Requests: please slow down", "rate_limit")
+    const plain = retryReason("  overloaded\n  try later ", "server")
+    language.value = before
+    check("C12-9: a rate_limit retry row reads error.rateLimited in the reader's language", said === t("error.rateLimited") && said !== "error.rateLimited" && /[一-鿿]/.test(said ?? ""), said)
+    check("C12-9: other retry reasons still show the provider's line", plain === "overloaded try later", plain)
+    check("C12-9: a review-restricted send is refused with a code the window phrases", /reviewRestricted\) throw new CodedError\([^)]*"composer\.reviewRestricted"\)/.test(handlers))
+    check("C12-9: a PDF read failure never shows a raw reason or English literal", !/"read failed"/.test(pdf) && /: t\("rp\.files\.errCannotRead"\)\)/.test(pdf))
   }
 }
 

@@ -520,7 +520,7 @@ function layout(turn: Turn, at: number): { rows: Row[]; foldAt: number } {
 
   if (live) {
     const retry = turn.last?.retry
-    if (retry) all.push({ kind: "retry", id: `retry:${turn.last?.id}`, attempt: retry.attempt, reason: retryReason(retry.message), next: retry.next })
+    if (retry) all.push({ kind: "retry", id: `retry:${turn.last?.id}`, attempt: retry.attempt, reason: retryReason(retry.message, retry.kind), next: retry.next })
     // The last group with nothing said after it is the one being worked in.
     for (let index = all.length - 1; index >= 0; index--) {
       const row = all[index]!

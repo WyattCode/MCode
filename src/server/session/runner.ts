@@ -2773,7 +2773,8 @@ export class SessionRunner {
         const held = cooldownLeft(assistant.model.provider)
         // Under a second is the tail of a wait this request has just sat out itself, not a reason for another row.
         if (held >= 1000) {
-          const retry = { attempt, message: "The provider asked every request to wait", next: Date.now() + held, kind: "rate_limit" }
+          // No sentence of its own: the window says a rate_limit wait in the reader's language (error.rateLimited).
+          const retry = { attempt, message: "", next: Date.now() + held, kind: "rate_limit" }
           this.retrying.set(assistant.sessionID, { messageID: assistant.id, ...retry })
           this.bus.publish({ type: "message.updated", message: { ...structuredClone(assistant), retry } })
           try {
