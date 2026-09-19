@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue"
 import type { ProviderStatus } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
+import { composing } from "../lib/keys"
 import { notifyFailure } from "../lib/toast"
 import { useEscapeLayer } from "../lib/escape-layer"
 import { connectableProviders, groupConnected, groupProviders, waysFor, type Group, type Way } from "../lib/connect"
@@ -375,7 +376,7 @@ useEscapeLayer(dismiss)
               :placeholder="t('model.apiKeyPlaceholder')"
               spellcheck="false"
               data-connect-key
-              @keydown.enter="submitKey"
+              @keydown.enter="!composing($event) && submitKey()"
             />
             <button
               type="button"
@@ -413,7 +414,7 @@ useEscapeLayer(dismiss)
             spellcheck="false"
             autocomplete="off"
             @input="endpoint = ($event.target as HTMLInputElement).value"
-            @keydown.enter="connectLocal"
+            @keydown.enter="!composing($event) && connectLocal()"
           />
           <p class="lead soft">{{ t("onboard.endpointHint") }}</p>
           <div class="actions">

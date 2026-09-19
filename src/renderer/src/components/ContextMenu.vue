@@ -4,7 +4,7 @@ import { filterMenu, type MenuItem } from "../lib/menu"
 import { besideRow } from "../lib/submenu"
 import { isRovingKey } from "../lib/composer-menu"
 import { focusRow } from "../lib/menu-keys"
-import { shownChord } from "../lib/keys"
+import { composing, shownChord } from "../lib/keys"
 import { useEscapeLayer } from "../lib/escape-layer"
 
 /**
@@ -167,7 +167,8 @@ function searchKey(event: KeyboardEvent) {
     subBox.value?.querySelector<HTMLElement>(".item:not(:disabled)")?.focus()
     return
   }
-  if (event.key === "Enter") {
+  // Enter that commits a pinyin candidate is the input method's, not a pick.
+  if (event.key === "Enter" && !composing(event)) {
     event.preventDefault()
     event.stopPropagation()
     const first = filtered.value.rows.find((item) => !item.sticky && item.enabled !== false)

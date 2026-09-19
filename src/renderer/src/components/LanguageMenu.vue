@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue"
 import { LANGUAGES, t } from "../lib/i18n"
+import { composing } from "../lib/keys"
 import { onMenuRowKey } from "../lib/menu-keys"
 
 /**
@@ -78,7 +79,7 @@ function onSearchKey(event: KeyboardEvent) {
   if (event.key === "Escape") {
     event.preventDefault()
     close()
-  } else if (event.key === "Enter") {
+  } else if (event.key === "Enter" && !composing(event)) {
     event.preventDefault()
     const first = matches.value[0]
     if (first) choose(first.id)

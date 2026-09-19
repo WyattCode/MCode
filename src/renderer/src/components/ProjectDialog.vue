@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
+import { composing } from "../lib/keys"
 import { useEscapeLayer } from "../lib/escape-layer"
 import { projectHue } from "../lib/project"
 
@@ -113,7 +114,7 @@ async function save() {
         v-model="name"
         class="field"
         spellcheck="false"
-        @keydown.enter="save"
+        @keydown.enter="!composing($event) && save()"
       />
 
       <label class="label">{{ t("proj.icon") }}</label>

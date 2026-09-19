@@ -13,6 +13,7 @@ import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { effectScope, nextTick, ref } from "vue"
 import { dialogOpen, dismissMenus, escapeLayer, layerOpen, useEscapeLayerWhile } from "../src/renderer/src/lib/escape-layer"
+import { composing } from "../src/renderer/src/lib/keys"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
 const component = (name: string) => read(`src/renderer/src/components/${name}.vue`)
@@ -244,4 +245,76 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
       /<div v-modal class="md-table-preview-dialog"/.test(text) && /useEscapeLayerWhile\(\(\) => previewing\.value, closePreview\)/.test(text) && !/addEventListener\("keydown", onEscape\)/.test(text),
     )
   }
+
+  // ---------------------------------------------------------------- K13-9
+  {
+    check(
+      "K13-9: composing() is MiMo's test: isComposing, or the 229 an input method reports",
+      composing({ isComposing: true, keyCode: 13 }) && composing({ isComposing: false, keyCode: 229 }) && !composing({ isComposing: false, keyCode: 13 }),
+    )
+    const unguarded = await enterFieldsWithoutImeGuard()
+    check("K13-9: every Enter handler on a text field steps aside while an input method is composing", unguarded.length === 0, unguarded)
+    const palette = await component("CommandPalette")
+    check("K13-9: the palette's Enter, bound on its dialog rather than its field, is guarded too", /event\.key === "Enter" && !composing\(event\)/.test(palette))
+  }
+}
+
+/*
+ * Every <input> and <textarea> in the renderer whose Enter does something: the
+ * handler, or the function it names, has to test composing() or isComposing.
+ * A generic @keydown handler counts when its body looks at Enter.
+ */
+/** Each <input> and <textarea> opening tag, read to its closing bracket outside quotes (an arrow in a handler is not one). */
+function fieldTags(source: string): string[] {
+  const tags: string[] = []
+  for (const start of source.matchAll(/<(input|textarea)\b/g)) {
+    let quote = ""
+    let at = start.index ?? 0
+    for (; at < source.length; at++) {
+      const char = source[at]
+      if (quote) {
+        if (char === quote) quote = ""
+      } else if (char === '"' || char === "'") quote = char
+      else if (char === ">") break
+    }
+    tags.push(source.slice(start.index, at + 1))
+  }
+  return tags
+}
+
+async function enterFieldsWithoutImeGuard(): Promise<string[]> {
+  const root = path.join(process.cwd(), "src/renderer/src/components")
+  const files: string[] = []
+  const walk = async (dir: string) => {
+    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) await walk(full)
+      else if (entry.name.endsWith(".vue")) files.push(full)
+    }
+  }
+  await walk(root)
+  const guarded = (text: string) => /composing\(|isComposing/.test(text)
+  const bad: string[] = []
+  for (const file of files) {
+    const source = await fs.readFile(file, "utf8")
+    const script = source.slice(0, source.indexOf("<template>"))
+    const bodyOf = (name: string) => {
+      const at = script.search(new RegExp(`function ${name}\\(`))
+      return at < 0 ? "" : script.slice(at, script.indexOf("\n}\n", at))
+    }
+    for (const tag of fieldTags(source)) {
+      for (const handler of tag.matchAll(/@keydown(\.[\w.]+)?="([^"]*)"/g)) {
+        const modifiers = handler[1] ?? ""
+        const expr = handler[2]
+        const named = /^(\w+)(\(.*\))?$/.exec(expr.trim())?.[1]
+        const body = named ? bodyOf(named) : ""
+        if (modifiers.includes(".enter")) {
+          if (!guarded(expr) && !guarded(body)) bad.push(`${path.basename(file)}: ${handler[0]}`)
+        } else if (!modifiers && body && /"Enter"/.test(body) && !guarded(body)) {
+          bad.push(`${path.basename(file)}: ${handler[0]}`)
+        }
+      }
+    }
+  }
+  return bad
 }

@@ -99,9 +99,18 @@ export function controlChord(rest: string, platform: string): string {
   return [...parts.sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b)), key].join("+")
 }
 
+/**
+ * Whether a key press belongs to an input method rather than to the page, as
+ * MiMo tests it before acting on Enter in a field: Enter that commits a pinyin
+ * candidate must not also save, pick or submit.
+ */
+export function composing(event: Pick<KeyboardEvent, "isComposing" | "keyCode">): boolean {
+  return event.isComposing === true || event.keyCode === 229
+}
+
 export function chordOf(event: KeyboardEvent, platform = ""): string {
   // A key still being composed by an input method is not a shortcut yet.
-  if (event.isComposing || event.keyCode === 229) return ""
+  if (composing(event)) return ""
   // A bare modifier is not a chord, and capturing one would bind nothing.
   if (MODIFIER_CODES.has(event.code) || ["Control", "Alt", "Shift", "Meta"].includes(event.key)) return ""
   const mac = isMac(platform)

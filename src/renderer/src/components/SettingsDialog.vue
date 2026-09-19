@@ -25,7 +25,7 @@ import type { McpImportItem, McpImportSource, McpServerConfig, McpStatus, McpToo
 import { MCP_STATUS_TONE, isMcpStatus, mcpNeedsSignIn, mcpStatusLabel } from "../lib/mcp-status"
 import { homePath } from "../lib/home-path"
 import classicIcon from "@resources/app-icons/classic.png"
-import { chordOf, formatChord, isBindable, recordingChord } from "../lib/keys"
+import { chordOf, composing, formatChord, isBindable, recordingChord } from "../lib/keys"
 import { layerOpen } from "../lib/escape-layer"
 import { pageRows } from "../lib/shortcut-page"
 import { fullAccessOff } from "../lib/confirm-queue"
@@ -1679,7 +1679,7 @@ onBeforeUnmount(() => {
           :aria-label="t('set.search')"
           spellcheck="false"
           autocomplete="off"
-          @keydown.enter="openFirstMatch"
+          @keydown.enter="!composing($event) && openFirstMatch()"
         />
         <!--
           MiMo's four groups, in its order.
@@ -2207,7 +2207,7 @@ onBeforeUnmount(() => {
                   data-size-input="ui"
                   @input="typeSize('uiFontSize', $event)"
                   @change="setSize('uiFontSize', $event, 14)"
-                  @keydown.enter="($event.target as HTMLInputElement).blur()"
+                  @keydown.enter="!composing($event) && ($event.target as HTMLInputElement).blur()"
                 />
                 <span class="unit">px</span>
               </span>
@@ -2228,7 +2228,7 @@ onBeforeUnmount(() => {
                   data-size-input="code"
                   @input="typeSize('codeFontSize', $event)"
                   @change="setSize('codeFontSize', $event, 12)"
-                  @keydown.enter="($event.target as HTMLInputElement).blur()"
+                  @keydown.enter="!composing($event) && ($event.target as HTMLInputElement).blur()"
                 />
                 <span class="unit">px</span>
               </span>
@@ -3249,7 +3249,7 @@ onBeforeUnmount(() => {
                 :placeholder="t('set.baseURL')"
                 spellcheck="false"
                 @input="endpoints[provider.id] = ($event.target as HTMLInputElement).value"
-                @keydown.enter="saveEndpoint(provider.id)"
+                @keydown.enter="!composing($event) && saveEndpoint(provider.id)"
               />
               <button
                 class="ctl-btn"

@@ -7,7 +7,7 @@ import { interruptedTurn } from "@shared/resume"
 import { textualName } from "@shared/attachment-kind"
 import { commandTitle } from "../lib/skill-display"
 import { normalizeChord } from "@shared/chord"
-import { chordOf } from "../lib/keys"
+import { chordOf, composing } from "../lib/keys"
 import { detectCodeLanguage, insertFence } from "../lib/paste-code"
 import { appendMentions, mentionBackspace, projectRelative, promptHistory, slashAt } from "../lib/composer-text"
 import { matchingNames, wordMatch } from "../lib/word-match"
@@ -1077,6 +1077,13 @@ function addSkill(name: string) {
   menu.value = undefined
   if (!skills.value.includes(name)) skills.value = [...skills.value, name]
   focus()
+}
+
+/* Enter in the skills search adds the first match; Enter that commits an IME candidate is left to the input method. */
+function pickFirstSkill(event: KeyboardEvent) {
+  event.preventDefault()
+  const first = skillRows.value[0]
+  if (first) addSkill(first.name)
 }
 
 function removeSkill(name: string) {
@@ -3286,7 +3293,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                   type="text"
                   spellcheck="false"
                   :placeholder="t('composer.skillSearch')"
-                  @keydown.enter.prevent="skillRows[0] && addSkill(skillRows[0].name)"
+                  @keydown.enter="!composing($event) && pickFirstSkill($event)"
                 />
                 <div class="skill-list">
                   <div v-if="!hasSkills" class="skill-empty">{{ t("composer.skillEmpty") }}</div>
