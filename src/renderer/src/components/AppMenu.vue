@@ -156,7 +156,7 @@ useEscapeLayer(() => {
   const row = [...(panel.value?.querySelectorAll<HTMLElement>(".row") ?? [])].find((entry) => entry.dataset.group === open.value)
   open.value = undefined
   row?.focus()
-})
+}, () => emit("close"))
 
 function onKey(event: KeyboardEvent) {
   const rows = [...(panel.value?.querySelectorAll<HTMLElement>(".row") ?? [])]

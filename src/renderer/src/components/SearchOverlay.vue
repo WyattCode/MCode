@@ -276,7 +276,7 @@ defineExpose({ close })
 
 <template>
   <div class="search-overlay" :class="{ closing }" @mousedown.self="close">
-    <div v-modal class="search-card" role="dialog" :aria-label="t('searchOverlay.placeholder')">
+    <div v-modal class="search-card" role="dialog" data-new-task-clears :aria-label="t('searchOverlay.placeholder')">
       <div class="search-bar">
         <svg class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M7.2 2.8a4.4 4.4 0 1 0 0 8.8 4.4 4.4 0 0 0 0-8.8z" />

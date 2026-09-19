@@ -161,6 +161,7 @@ useEscapeLayerWhile(
     draft.value = ""
     search.value?.focus()
   },
+  () => (open.value = false),
 )
 useEscapeLayerWhile(
   () => pending.value,

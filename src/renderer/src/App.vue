@@ -27,7 +27,7 @@ import { acceptsDrop, outsideWindow } from "./lib/attach"
 import { fileRequest, reviewRequest } from "./lib/review-request"
 import { foldedMatches } from "./lib/find-folded"
 import { deliveryShown, setDeliveryView } from "./lib/delivered"
-import { imagePreview, videoPreview } from "./lib/image-preview"
+import { closeImagePreview, closeVideoPreview, imagePreview, videoPreview } from "./lib/image-preview"
 import VideoPreview from "./components/VideoPreview.vue"
 import RenameDialog from "./components/RenameDialog.vue"
 import { markUpdateReady, updateState } from "./components/UpdatePill.vue"
@@ -76,7 +76,7 @@ import { chime } from "./lib/sound"
 import { stepTarget } from "./lib/visible-chats"
 import { fontScale } from "./lib/font-scale"
 import { announce } from "./lib/announce"
-import { dialogOpen } from "./lib/escape-layer"
+import { dialogOpen, dismissMenus } from "./lib/escape-layer"
 import { chimeOf, longTask } from "@shared/chime"
 
 const app = useApp()
@@ -1239,6 +1239,44 @@ async function selectTab(id: string) {
 /** Starts a task from the 2.0 home screen, in the project picked there. */
 function newSession() {
   if (!alreadyNewTask(app.current?.directory)) startIn(app.current?.directory)
+}
+
+const settingsDialog = ref<InstanceType<typeof SettingsDialog>>()
+
+/**
+ * MiMo's new task clears the screen before it runs: every menu, the search,
+ * the palette, Settings - asking first when an environment has unsaved edits -
+ * and the previews. A dialog that asks something (a rename, a confirmation)
+ * keeps the key, and then this answers false and does nothing.
+ */
+function newTaskOverLayers(): boolean {
+  const asking = [...document.querySelectorAll('[aria-modal="true"]')].some(
+    (node) => !node.closest("[data-new-task-clears]") && !node.closest("[data-modal-exit]"),
+  )
+  if (asking || editingProject.value || renamingSession.value || renamingProject.value) return false
+  dismissMenus()
+  searchOpen.value = false
+  paletteOpen.value = false
+  closeImagePreview()
+  closeVideoPreview()
+  if (settingsOpen.value && settingsDialog.value) {
+    settingsDialog.value.leaveThen(() => {
+      settingsOpen.value = false
+      newSession()
+    })
+    return true
+  }
+  settingsOpen.value = false
+  newSession()
+  return true
+}
+
+/** Whether a chord is the one new task answers to: Ctrl+N, or wherever it has been re-bound. */
+function isNewTaskChord(chord: string): boolean {
+  if (!chord) return false
+  const bound = rebound.value.get(chord)
+  if (bound) return bound === "session.new"
+  return chord === "Ctrl+N" && !retiredChords.value.has(chord)
 }
 
 async function focusComposer() {
@@ -3072,6 +3110,12 @@ function onKeydown(event: KeyboardEvent) {
   const letter = (keyOfCode(event.code) ?? event.key).toLowerCase()
   if (event.isComposing || event.keyCode === 229) return
 
+  /* New task runs over whatever is on screen, clearing it first, as MiMo's does; the rest stays put behind a modal. */
+  if (isNewTaskChord(chordOf(event, platform)) && !commandDisabled("session.new") && newTaskOverLayers()) {
+    event.preventDefault()
+    return
+  }
+
   /*
    * A shortcut the user has re-bound wins over the built-in table, and is
    * looked up by the chord rather than by the key - which is what lets a
@@ -3312,7 +3356,7 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 const menuCommands: Record<string, () => void> = {
-  "new-session": () => void newSession(),
+  "new-session": () => void newTaskOverLayers(),
   back: () => void back(),
   forward: () => void forward(),
   "prev-session": () => void stepSession(-1),
@@ -4077,6 +4121,7 @@ onBeforeUnmount(() => {
     <!-- MiMo's settings boundary: a page that fails to draw shows its strip, not the fatal page. -->
     <ErrorBoundary v-if="settingsOpen" :reset-key="settingsSection">
     <SettingsDialog
+      ref="settingsDialog"
       :section="settingsSection"
       :commands="bindableCommands"
       :update-checking="updateChecking"

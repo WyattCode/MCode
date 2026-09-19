@@ -228,7 +228,7 @@ onMounted(() => {
 
 <template>
   <div class="overlay palette-overlay" @mousedown.self="emit('close')">
-    <div v-modal class="dialog palette" @keydown="onKeydown">
+    <div v-modal class="dialog palette" data-new-task-clears @keydown="onKeydown">
       <div class="search">
         <input
           ref="input"

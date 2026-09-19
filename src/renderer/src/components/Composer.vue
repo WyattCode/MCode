@@ -2398,6 +2398,7 @@ useEscapeLayerWhile(
     menu.value = undefined
     focus()
   },
+  () => (menu.value = undefined),
 )
 const menuUp = ref(false)
 watch(menu, async (value) => {

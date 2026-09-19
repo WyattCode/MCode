@@ -969,6 +969,16 @@ function reducedMotion(): boolean {
   return motion === "on" || (motion !== "off" && window.matchMedia("(prefers-reduced-motion: reduce)").matches)
 }
 
+/* Closes at once for a command that runs over Settings (MiMo's new task), still asking about unsaved edits first. */
+function leaveThen(action: () => void) {
+  requestLeave(() => {
+    emit("close")
+    action()
+  })
+}
+
+defineExpose({ leaveThen })
+
 function requestClose() {
   requestLeave(() => {
     if (closing.value) return
@@ -1652,7 +1662,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="overlay" :class="{ closing }" data-settings-overlay data-modal-no-exit @mousedown.self="requestClose">
-    <div ref="dialogEl" v-modal class="dialog" data-modal-keep-focus>
+    <div ref="dialogEl" v-modal class="dialog" data-modal-keep-focus data-new-task-clears>
       <!-- 2.0: MiMo's dialog closes from its own corner as well as from Escape
            and the scrim, which a pointer-only reader otherwise has to find. -->
       <button class="close" :aria-label="t('set.close')" data-settings-close @click="requestClose">

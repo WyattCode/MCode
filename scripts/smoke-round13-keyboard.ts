@@ -12,7 +12,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { effectScope, nextTick, ref } from "vue"
-import { dialogOpen, escapeLayer, layerOpen, useEscapeLayerWhile } from "../src/renderer/src/lib/escape-layer"
+import { dialogOpen, dismissMenus, escapeLayer, layerOpen, useEscapeLayerWhile } from "../src/renderer/src/lib/escape-layer"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
 const component = (name: string) => read(`src/renderer/src/components/${name}.vue`)
@@ -197,5 +197,37 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
       /if \(CONVERSATION_COMMANDS\.has\(command\.id\) && conversationCovered\(\)\) return/.test(shell) &&
         ["session.pin", "session.archive", "session.rename", "session.side", "session.copyID", "session.copyLink", "view.priority"].every((id) => new RegExp(`CONVERSATION_COMMANDS = new Set\\(\\[[^\\]]*"${id.replace(".", "\\.")}"`).test(shell)),
     )
+  }
+
+  // ---------------------------------------------------------------- K13-6
+  {
+    ;(globalThis as { document?: unknown }).document = standInDocument([])
+    const gone: string[] = []
+    const releaseDialog = escapeLayer(() => gone.push("dialog escaped"))
+    const releaseMenu = escapeLayer(() => gone.push("menu escaped"), () => gone.push("menu"))
+    const releaseSub = escapeLayer(() => gone.push("sub escaped"), () => gone.push("sub"))
+    dismissMenus()
+    releaseSub()
+    releaseMenu()
+    releaseDialog()
+    ;(globalThis as { document?: unknown }).document = saved
+    check("K13-6: dismissing closes every open menu, innermost first, and leaves a dialog alone", gone.join() === "sub,menu", gone)
+
+    const run = shell.slice(shell.indexOf("function newTaskOverLayers("), shell.indexOf("\n}\n", shell.indexOf("function newTaskOverLayers(")))
+    check(
+      "K13-6: new task closes the menus, the search, the palette, the previews and Settings (asking first about unsaved edits), then runs",
+      /dismissMenus\(\)/.test(run) && /searchOpen\.value = false/.test(run) && /paletteOpen\.value = false/.test(run) && /closeImagePreview\(\)/.test(run) && /closeVideoPreview\(\)/.test(run) &&
+        /settingsDialog\.value\.leaveThen\(\(\) => \{\s+settingsOpen\.value = false\s+newSession\(\)/.test(run) && /\n  newSession\(\)\n  return true$/.test(run),
+      run,
+    )
+    check("K13-6: a dialog that asks something keeps the key", /!node\.closest\("\[data-new-task-clears\]"\)/.test(run) && /if \(asking \|\| editingProject\.value/.test(run))
+    check(
+      "K13-6: its chord is tried before the modal block, wherever it is bound, and the application menu's New goes the same way",
+      /if \(isNewTaskChord\(chordOf\(event, platform\)\) && !commandDisabled\("session\.new"\) && newTaskOverLayers\(\)\) \{/.test(shell) &&
+        shell.indexOf("if (isNewTaskChord(") < shell.indexOf("if (!modalOpen.value) {\n    const chord = chordOf(") && /"new-session": \(\) => void newTaskOverLayers\(\)/.test(shell),
+    )
+    const cleared = await Promise.all(["SettingsDialog", "SearchOverlay", "CommandPalette", "ImagePreview", "VideoPreview"].map(async (name) => /data-new-task-clears/.test(await component(name))))
+    check("K13-6: Settings, the search, the palette and both previews are marked as what a new task clears", cleared.every(Boolean), cleared)
+    check("K13-6: Settings leaves for it through its own unsaved-edits guard", /function leaveThen\(action: \(\) => void\) \{\n\s+requestLeave\(/.test(settings) && /defineExpose\(\{ leaveThen \}\)/.test(settings))
   }
 }

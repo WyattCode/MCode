@@ -21,42 +21,54 @@ import { onBeforeUnmount, onMounted, onScopeDispose, watch } from "vue"
  */
 type Layer = (event: KeyboardEvent) => void
 
-const layers: Layer[] = []
+/* A menu also names how it goes away all at once, which is what `dismissMenus` calls. */
+type Entry = { close: Layer; dismiss?: () => void }
+
+const layers: Entry[] = []
 
 function onKeydown(event: KeyboardEvent) {
   if (event.key !== "Escape" || event.defaultPrevented || event.isComposing || event.keyCode === 229) return
   const top = layers[layers.length - 1]
   if (!top) return
   event.preventDefault()
-  top(event)
+  top.close(event)
 }
 
-/** Registers a layer's close; the returned function takes it off again. */
-export function escapeLayer(close: Layer): () => void {
+/** Registers a layer's close (and a menu's dismiss); the returned function takes it off again. */
+export function escapeLayer(close: Layer, dismiss?: () => void): () => void {
   if (!layers.length) document.addEventListener("keydown", onKeydown, true)
-  layers.push(close)
+  const entry: Entry = { close, dismiss }
+  layers.push(entry)
   return () => {
-    const at = layers.lastIndexOf(close)
+    const at = layers.indexOf(entry)
     if (at >= 0) layers.splice(at, 1)
     if (!layers.length) document.removeEventListener("keydown", onKeydown, true)
   }
 }
 
+/**
+ * Closes every open menu at once, innermost first: MiMo's `dismissAll`, which
+ * its new task, settings and shortcut commands run before they act.
+ */
+export function dismissMenus(): void {
+  for (const entry of [...layers].reverse()) entry.dismiss?.()
+}
+
 /** `escapeLayer` for as long as the component is mounted. */
-export function useEscapeLayer(close: Layer): void {
+export function useEscapeLayer(close: Layer, dismiss?: () => void): void {
   let release: (() => void) | undefined
-  onMounted(() => (release = escapeLayer(close)))
+  onMounted(() => (release = escapeLayer(close, dismiss)))
   onBeforeUnmount(() => release?.())
 }
 
 /** `escapeLayer` while `open` holds, for a menu that lives inside an always-mounted component. */
-export function useEscapeLayerWhile(open: () => unknown, close: Layer): void {
+export function useEscapeLayerWhile(open: () => unknown, close: Layer, dismiss?: () => void): void {
   let release: (() => void) | undefined
   watch(
     () => Boolean(open()),
     (on) => {
       release?.()
-      release = on ? escapeLayer(close) : undefined
+      release = on ? escapeLayer(close, dismiss) : undefined
     },
     { immediate: true },
   )

@@ -307,6 +307,7 @@ onBeforeUnmount(() => {
       :aria-label="t('imagePreview.title')"
       tabindex="-1"
       data-image-preview
+      data-new-task-clears
       @click="close"
       @wheel.prevent.stop="onWheel"
     >

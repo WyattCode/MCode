@@ -178,10 +178,13 @@ function searchKey(event: KeyboardEvent) {
 }
 
 // One level at a time: the child panel first, then the menu.
-useEscapeLayer(() => {
-  if (sub.value) closeSub(true)
-  else emit("close")
-})
+useEscapeLayer(
+  () => {
+    if (sub.value) closeSub(true)
+    else emit("close")
+  },
+  () => emit("close"),
+)
 
 function onKey(event: KeyboardEvent) {
   const inSub = Boolean(subBox.value?.contains(document.activeElement))
