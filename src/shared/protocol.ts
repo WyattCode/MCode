@@ -76,9 +76,12 @@ export interface SessionInfo {
    *
    * Only the importer reads it: it is how a conversation already taken is
    * recognised when the same source is scanned again, so re-running an import
-   * writes the same conversation rather than a second copy of it.
+   * writes the same conversation rather than a second copy of it. `mtime` is
+   * the source's clock when it was taken (absent on one taken before it was
+   * kept), so the conversation is recognised as unchanged even when the
+   * importer's own record is lost (L12-9).
    */
-  imported?: { source: ImportSource; key: string }
+  imported?: { source: ImportSource; key: string; mtime?: number }
   /**
    * A side chat, and the conversation it was opened beside.
    *

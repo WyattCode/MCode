@@ -384,19 +384,48 @@ async function countOpenCode(home: string): Promise<{ available: boolean; sessio
   }
 }
 
-async function record(storage: Storage): Promise<ImportedRecord & { fromNewerVersion: boolean }> {
-  const stored = await storage.read<Partial<ImportedRecord>>(RECORD_KEY).catch(() => undefined)
+/** The source's clock of a conversation recognised only by its own marker, which carried none. */
+const UNKNOWN_MTIME = -1
+
+/**
+ * What has been taken so far, and whether that record may be written back.
+ *
+ * The record is not the only place this is written down (L12-9). Every
+ * conversation an import made carries its source and key, so one whose entry
+ * is missing - the record would not parse and was moved aside, or was deleted
+ * by hand - is still recognised, and a second import writes the same
+ * conversation again rather than a copy of it. Without that, one damaged
+ * record duplicated every imported conversation.
+ */
+async function record(storage: Storage, sessions?: SessionStore): Promise<ImportedRecord & { fromNewerVersion: boolean; blocked: boolean }> {
+  const read = await storage.readOrCorrupt<Partial<ImportedRecord>>(RECORD_KEY)
+  let blocked = false
+  if (read.corrupt !== undefined) {
+    const aside = await storage.quarantine(RECORD_KEY)
+    // Nothing is written over a record that could be neither read nor moved.
+    blocked = !aside
+    console.warn(`[import] the import record could not be read (${read.corrupt})${aside ? `; it was kept as ${aside}` : " and could not be moved aside"}`)
+  }
+  const stored = read.value
+  const entries: Record<string, ImportedEntry> = { ...(stored?.entries ?? {}) }
+  for (const session of sessions ? await sessions.list().catch(() => []) : []) {
+    const marker = session.imported
+    if (!marker || !IMPORT_SOURCES.includes(marker.source)) continue
+    const key = `${marker.source}:${marker.key}`
+    entries[key] ??= { source: marker.source, key: marker.key, mtime: marker.mtime ?? UNKNOWN_MTIME, sessionID: session.id }
+  }
   return {
-    entries: stored?.entries ?? {},
+    entries,
     // A record from a later build is read as far as it goes and never written back.
     fromNewerVersion: typeof stored?.schemaVersion === "number" && stored.schemaVersion > IMPORT_SCHEMA_VERSION,
+    blocked,
   }
 }
 
 /** What each source holds, and how much of it has already been taken. */
-export async function scanImports(storage: Storage): Promise<ImportScan> {
+export async function scanImports(storage: Storage, sessions?: SessionStore): Promise<ImportScan> {
   const home = homeDirectory()
-  const taken = await record(storage)
+  const taken = await record(storage, sessions)
   const counts = { cc: 0, codex: 0, opencode: 0 } as Record<ImportSource, number>
   for (const entry of Object.values(taken.entries)) {
     if (IMPORT_SOURCES.includes(entry.source)) counts[entry.source] += 1
@@ -499,8 +528,8 @@ export interface ImportDeps {
  */
 export async function runImport(deps: ImportDeps, sources: readonly ImportSource[]): Promise<ImportRun> {
   const home = homeDirectory()
-  const taken = await record(deps.storage)
-  const out = { cc: emptyResult(), codex: emptyResult(), opencode: emptyResult() } as ImportRun
+  const taken = await record(deps.storage, deps.sessions)
+  const out ={ cc: emptyResult(), codex: emptyResult(), opencode: emptyResult() } as ImportRun
   const wanted = IMPORT_SOURCES.filter((source) => sources.includes(source))
 
   for (const source of wanted) {
@@ -512,7 +541,13 @@ export async function runImport(deps: ImportDeps, sources: readonly ImportSource
       const key = `${source}:${item.key}`
       const entry = taken.entries[key]
       const existing = entry ? await deps.sessions.get(entry.sessionID).catch(() => undefined) : undefined
-      if (entry && existing && entry.mtime === item.mtime) {
+      if (entry && existing && (entry.mtime === item.mtime || entry.mtime === UNKNOWN_MTIME)) {
+        /*
+         * Recognised by its marker alone, with no clock to compare: it is taken
+         * as unchanged rather than written again, since writing again would
+         * replace whatever was added to it here since.
+         */
+        if (entry.mtime === UNKNOWN_MTIME) taken.entries[key] = { ...entry, mtime: item.mtime }
         result.skipped += 1
         continue
       }
@@ -525,7 +560,7 @@ export async function runImport(deps: ImportDeps, sources: readonly ImportSource
           for (const message of messagesOf(item, existing.id, deps.model)) {
             await deps.sessions.saveMessage(message, true)
           }
-          await deps.sessions.stamp(existing.id, { title: item.title, updated: item.updated })
+          await deps.sessions.stamp(existing.id, { title: item.title, updated: item.updated, imported: { source, key: item.key, mtime: item.mtime } })
           taken.entries[key] = { source, key: item.key, mtime: item.mtime, sessionID: existing.id }
           result.resynced += 1
           continue
@@ -541,7 +576,7 @@ export async function runImport(deps: ImportDeps, sources: readonly ImportSource
           created: item.created,
           updated: item.updated,
           titleSource: "user",
-          imported: { source, key: item.key },
+          imported: { source, key: item.key, mtime: item.mtime },
         })
         for (const message of messagesOf(item, session.id, deps.model)) {
           await deps.sessions.saveMessage(message, true)
@@ -560,7 +595,7 @@ export async function runImport(deps: ImportDeps, sources: readonly ImportSource
    * writing this build's understanding back would drop whatever it had added,
    * and the next run would import everything again as though it were new.
    */
-  if (!taken.fromNewerVersion) {
+  if (!taken.fromNewerVersion && !taken.blocked) {
     await deps.storage.write(RECORD_KEY, { schemaVersion: IMPORT_SCHEMA_VERSION, entries: taken.entries })
   }
   return out

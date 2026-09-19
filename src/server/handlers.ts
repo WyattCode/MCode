@@ -1513,7 +1513,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
      */
     case "import.scan":
       return {
-        scan: await scanImports(runtime.storage),
+        scan: await scanImports(runtime.storage, runtime.sessions),
         asked: runtime.config.get().importOnboarded,
       } satisfies Handled<"import.scan">
 

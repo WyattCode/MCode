@@ -18,6 +18,10 @@ import { quarantineSqlite } from "../src/server/sql-worker"
 import { cronFile, readCronFile, schedulable } from "../src/server/cron/tasks"
 import { CronScheduler } from "../src/server/cron/scheduler"
 import type { SessionInfo } from "../src/shared/protocol"
+import { Storage } from "../src/server/storage"
+import { Bus } from "../src/server/bus"
+import { SessionStore } from "../src/server/session/store"
+import { runImport, scanImports } from "../src/server/import"
 
 const exists = (file: string) =>
   fs.access(file).then(
@@ -133,6 +137,52 @@ export async function roundTwelveLifecycleChecks(check: Check, section: (name: s
     check("and it is never fired", !fired.some((text) => text.includes("a newer build's syntax")), fired)
     check("it reads as unschedulable, not as malformed", !schedulable({ id: "x", cron: "@every 90s", prompt: "p", createdAt: 1 }) && schedulable({ id: "x", cron: "0 9 * * *", prompt: "p", createdAt: 1 }))
     await scheduler.stop()
+  }
+
+  // ------------------------------------------------------------------ L12-9
+  section("Round 12 (L12-9): a damaged import record does not duplicate every imported conversation")
+  {
+    const home = path.join(root, "import-home")
+    const transcript = path.join(home, ".claude", "projects", "d--work-beta", "conversation.jsonl")
+    await fs.mkdir(path.dirname(transcript), { recursive: true })
+    await fs.writeFile(
+      transcript,
+      [
+        JSON.stringify({ type: "user", cwd: root, timestamp: "2026-09-01T10:00:00.000Z", message: { role: "user", content: "Tidy the parser" } }),
+        JSON.stringify({ type: "assistant", timestamp: "2026-09-01T10:00:20.000Z", message: { role: "assistant", content: [{ type: "text", text: "Tidied." }] } }),
+      ].join("\n"),
+    )
+    const previous = process.env.MCODE_IMPORT_HOME
+    process.env.MCODE_IMPORT_HOME = home
+    try {
+      const storage = new Storage(path.join(root, "import-store"))
+      const sessions = new SessionStore(storage, new Bus())
+      const model = { provider: "stub", model: "stub-1" }
+      const first = await runImport({ storage, sessions, model }, ["cc"])
+      const made = (await sessions.list()).filter((session) => session.imported)
+      check("the first import takes the conversation", first.cc.imported === 1 && made.length === 1, first.cc)
+      check("and the conversation carries its source key and clock", made[0]?.imported?.source === "cc" && typeof made[0]?.imported?.mtime === "number", made[0]?.imported)
+
+      await fs.writeFile(storage.fileOf("imported"), '{ "schemaVersion": 1, "entries": { "cc:')
+      const again = await runImport({ storage, sessions, model }, ["cc"])
+      const after = (await sessions.list()).filter((session) => session.imported)
+      check("importing again after the record was damaged makes no second copy", after.length === 1 && again.cc.imported === 0 && again.cc.skipped === 1, again.cc)
+      const kept = (await fs.readdir(path.dirname(storage.fileOf("imported")))).filter((name) => name.startsWith("imported.json.corrupt-"))
+      check("the damaged record is kept aside", kept.length === 1, kept)
+      const rebuilt = JSON.parse(await fs.readFile(storage.fileOf("imported"), "utf8")) as { entries?: Record<string, { sessionID?: string }> }
+      check("and a new record names the conversation again", Object.values(rebuilt.entries ?? {}).some((entry) => entry.sessionID === made[0]?.id), rebuilt)
+
+      // A conversation taken before the clock was kept is recognised by its marker, and not written again.
+      await sessions.stamp(made[0]!.id, { updated: made[0]!.updated, imported: { source: "cc", key: made[0]!.imported!.key } })
+      await fs.rm(storage.fileOf("imported"), { force: true })
+      const scan = await scanImports(storage, sessions)
+      check("a scan counts it as taken with no record at all", scan.cc.imported === 1, scan.cc)
+      const third = await runImport({ storage, sessions, model }, ["cc"])
+      check("and a run with no record skips it", third.cc.imported === 0 && third.cc.resynced === 0 && third.cc.skipped === 1 && (await sessions.list()).filter((session) => session.imported).length === 1, third.cc)
+    } finally {
+      if (previous === undefined) delete process.env.MCODE_IMPORT_HOME
+      else process.env.MCODE_IMPORT_HOME = previous
+    }
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
