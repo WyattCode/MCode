@@ -1942,13 +1942,11 @@ function transcriptMarkdown(): string {
 /**
  * Says that writing a file did not work, and leaves the app alone otherwise.
  *
- * `app.error` is the one message the boot screen reads, and setting it does
- * more than show a line of text: it hides the empty-session hero, takes the
- * blank class off the body, and puts a raw exception in the stream with nothing
- * to dismiss it. That is right for a backend that never started - there is no
- * app to go back to - and wrong for a save that failed, which leaves everything
- * else exactly where it was. So this goes in a toast, which times out and has a
- * close button.
+ * `app.error` is the one message the boot screen reads, and setting it
+ * replaces the whole window with that screen. That is right for a backend that
+ * never started - there is no app to go back to - and wrong for a save that
+ * failed, which leaves everything else exactly where it was. So this goes in a
+ * toast, which times out and has a close button, as send failures do.
  *
  * `what` names the thing that was being attempted, so the message is not just a
  * bare errno with no subject.
@@ -3826,8 +3824,9 @@ onBeforeUnmount(() => {
           project, no session and no stream, so none of the usual places an
           error can appear exist yet.
         -->
-        <div v-if="!app.connected && (app.error || app.offline)" class="boot">
-          <p class="boot-msg">{{ app.error || t("boot.unreachable", { url: app.client?.server ?? "" }) }}</p>
+        <!-- Boot failures only: a drop after boot keeps the view, and the reconnect notice escalates instead. -->
+        <div v-if="app.error" class="boot">
+          <p class="boot-msg">{{ app.error }}</p>
           <button class="boot-retry" @click="retry">{{ t("common.retry") }}</button>
         </div>
 
@@ -3872,9 +3871,9 @@ onBeforeUnmount(() => {
             @bottom="terminalOpen = !terminalOpen"
           />
 
-          <SessionHero v-if="empty && !app.error" />
+          <SessionHero v-if="empty" />
           <MessageStream v-else ref="stream" />
-          <SessionSpine v-if="!(empty && !app.error)" :scroller="stream?.scroller" />
+          <SessionSpine v-if="!empty" :scroller="stream?.scroller" />
           <!-- MiMo's boundaries inside the page: the info panel, and the composer's dock zone, each apart from the transcript. -->
           <ErrorBoundary :reset-key="app.currentID ?? ''">
           <InfoPanel
@@ -3928,7 +3927,7 @@ onBeforeUnmount(() => {
             <LiveEditPill :expanded="liveEditShowing" />
           </div>
           <div id="main-dock" class="main-dock" />
-          <Teleport :to="floatingComposer ? '#float-dock' : empty && !app.error ? '#hero-dock' : '#main-dock'">
+          <Teleport :to="floatingComposer ? '#float-dock' : empty ? '#hero-dock' : '#main-dock'">
             <Composer
               ref="composer"
               :resizable="!floatingComposer"

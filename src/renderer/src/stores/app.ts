@@ -161,7 +161,14 @@ export const useApp = defineStore("app", () => {
    * refusal is exactly when it would otherwise say nothing at all.
    */
   const compacting = computed(() => (currentID.value ? summarising.value.has(currentID.value) : false))
+  /**
+   * Why the app could not start: the one message the boot screen reads, and
+   * set by nothing else. A failure after boot leaves the app where it was and
+   * is said in a toast (a send, a subtask) or under the transcript (a turn).
+   */
   const error = ref<string>()
+  /** Why the open conversation's last turn ended in an error, for the banner under its transcript. */
+  const turnError = ref<string>()
 
   /*
    * Side chats: conversations started beside the open one, in the side column.
@@ -747,7 +754,7 @@ export const useApp = defineStore("app", () => {
         noteError(event.sessionID, said)
         // The banner is only for the session on screen; the record is kept for
         // all of them, so the sidebar can mark the ones that went wrong.
-        if (event.sessionID === currentID.value) error.value = said
+        if (event.sessionID === currentID.value) turnError.value = said
         if (isSide(event.sessionID)) setSideError(event.sessionID, said)
         break
       }
@@ -878,14 +885,31 @@ export const useApp = defineStore("app", () => {
        * Held back a moment before it is admitted to. The socket drops briefly
        * whenever the backend restarts, and a window that announced every one of
        * those would cry wolf; a server that is genuinely not there stays down
-       * far longer than this.
+       * far longer than this. Timed from the drop: each refused reconnect
+       * attempt closes again well inside this, and restarting the clock on
+       * every one meant it never ran out.
        */
-      if (offlineTimer !== undefined) {
+      if (up) {
         clearTimeout(offlineTimer)
         offlineTimer = undefined
+        offline.value = false
+      } else if (offlineTimer === undefined && !offline.value) {
+        offlineTimer = setTimeout(() => {
+          offlineTimer = undefined
+          offline.value = true
+          /*
+           * After boot the conversation stays on screen, as MiMo's does: only
+           * the reconnect notice escalates, keeping its promise about queued
+           * messages and adding what to do if the service stays away. The boot
+           * overlay is for a service that never started.
+           */
+          if (booted) {
+            if (reconnectTimer !== undefined) clearTimeout(reconnectTimer)
+            reconnectTimer = undefined
+            notice.danger(t("error.connectionRecovering"), { id: RECONNECT_TOAST, body: t("error.connectionStillDown"), duration: 0, closable: false })
+          }
+        }, 2500)
       }
-      if (up) offline.value = false
-      else offlineTimer = setTimeout(() => (offline.value = true), 2500)
       /*
        * And said out loud in the meantime. Frames raised while the socket is
        * down are queued rather than refused, so without this a message sent in
@@ -900,7 +924,8 @@ export const useApp = defineStore("app", () => {
         reconnectTimer = undefined
       }
       if (up) notice.dismiss(RECONNECT_TOAST)
-      else if (booted) {
+      // Once escalated it stays so until the socket is back.
+      else if (booted && !offline.value) {
         reconnectTimer = setTimeout(() => {
           notice.warning(t("error.connectionRecovering"), { id: RECONNECT_TOAST, duration: 0, closable: false })
         }, RECONNECT_DELAY)
@@ -1223,7 +1248,7 @@ export const useApp = defineStore("app", () => {
       held.delete(sessionID)
       currentID.value = sessionID
       partIndex.clear()
-      error.value = undefined
+      turnError.value = undefined
       if (kept) {
         loadingID.value = undefined
         messages.value = kept
@@ -1251,7 +1276,7 @@ export const useApp = defineStore("app", () => {
       messages.value.forEach(reindex)
     }
     applyRetry(sessionID, messages.value)
-    error.value = undefined
+    turnError.value = undefined
     noteError(sessionID, undefined)
     /*
      * Two of the three command sources are files under the session's own
@@ -1561,11 +1586,8 @@ export const useApp = defineStore("app", () => {
     // An attachment, or a place pointed at, with no words is still something to answer.
     if (!target || (!text.trim() && !attachments.length && !annotations.length)) return false
     const onSide = isSide(target)
-    const report = (message: string | undefined) => {
-      if (onSide) setSideError(target, message)
-      else error.value = message
-    }
-    report(undefined)
+    if (onSide) setSideError(target, undefined)
+    else turnError.value = undefined
     noteError(target, undefined)
 
     /*
@@ -1611,7 +1633,14 @@ export const useApp = defineStore("app", () => {
         running.value.delete(target)
         turnStarted.delete(target)
       }
-      report(err instanceof Error ? err.message : String(err))
+      /*
+       * A message that was not accepted is a notice, as MiMo's composer says
+       * it, with the draft kept by the caller. The side chat says it under its
+       * own transcript, where the reader is looking.
+       */
+      const reason = err instanceof Error ? err.message : String(err)
+      if (onSide) setSideError(target, reason)
+      else notifyFailure(t("common.requestFailed"), reason)
       return false
     }
   }
@@ -1658,7 +1687,7 @@ export const useApp = defineStore("app", () => {
     const target = to ?? currentID.value
     if (!target || running.value.has(target)) return false
     if (isSide(target)) setSideError(target, undefined)
-    else error.value = undefined
+    else turnError.value = undefined
     noteError(target, undefined)
     running.value.add(target)
     turnStarted.set(target, Date.now())
@@ -2111,21 +2140,19 @@ export const useApp = defineStore("app", () => {
   /**
    * Reads a side conversation that already exists into its own transcript,
    * once: after that its events keep it current whether or not it is on show.
+   * False when it could not be read, so the side chat and the 子智能体 tab can
+   * say so and try again.
    */
-  async function loadSide(sessionID: string) {
-    if (sideTranscripts.value[sessionID]) return
+  async function loadSide(sessionID: string): Promise<boolean> {
+    if (sideTranscripts.value[sessionID]) return true
     const result = await api().request({ type: "session.get", sessionID }).catch(() => undefined)
-    if (!result || sideTranscripts.value[sessionID]) return
+    if (sideTranscripts.value[sessionID]) return true
+    if (!result) return false
     sidePartIndexes.delete(sessionID)
     const read = result.messages.map(readLegacyMessage)
     read.forEach((message) => sideReindex(sessionID, message))
     sideTranscripts.value = { ...sideTranscripts.value, [sessionID]: read }
-  }
-
-  /** subagents: reads a subagent's transcript, for the 子智能体 tab; false when it could not be read. */
-  async function loadSubagent(sessionID: string): Promise<boolean> {
-    await loadSide(sessionID)
-    return Boolean(sideTranscripts.value[sessionID])
+    return true
   }
 
   /**
@@ -2136,7 +2163,7 @@ export const useApp = defineStore("app", () => {
   async function subtask(text: string, command: { description: string; prompt: string }): Promise<boolean> {
     const target = currentID.value
     if (!target) return false
-    error.value = undefined
+    turnError.value = undefined
     noteError(target, undefined)
     const joined = running.value.has(target)
     running.value.add(target)
@@ -2149,7 +2176,7 @@ export const useApp = defineStore("app", () => {
         running.value.delete(target)
         turnStarted.delete(target)
       }
-      error.value = err instanceof Error ? err.message : String(err)
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
       return false
     }
   }
@@ -2197,7 +2224,6 @@ export const useApp = defineStore("app", () => {
     mcpServers,
     runtimeStatus,
     loadMcp,
-    offline,
     platform,
     version,
     port,
@@ -2213,6 +2239,7 @@ export const useApp = defineStore("app", () => {
     markReplacing,
     compacting,
     error,
+    turnError,
     config,
     providers,
     commands,
@@ -2249,7 +2276,6 @@ export const useApp = defineStore("app", () => {
     // subagents
     subagentSessions,
     rootOf,
-    loadSubagent,
     subtask,
     sideMessages,
     sideBusy,

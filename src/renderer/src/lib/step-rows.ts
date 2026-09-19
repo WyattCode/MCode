@@ -1,6 +1,7 @@
 import type { AssistantPart, PermissionRecord, ReasoningPart, TextPart, ToolPart } from "@shared/protocol"
 import { saysSomething } from "@shared/reply-clean"
 import { bucketOf, permissionsOf, stepState, stepTitle, type Bucket } from "./tool-meta"
+import { t } from "./i18n"
 
 /**
  * How a turn's parts become MiMo's step list.
@@ -41,9 +42,12 @@ export type StepRow =
 
 /**
  * Why the reconnecting row is retrying, as one line: MiMo draws the reason the
- * retry carries after the attempt, and nothing when there is none.
+ * retry carries after the attempt, and nothing when there is none. A wait the
+ * provider asked for is said from the tables rather than in whatever words
+ * came back with it.
  */
-export function retryReason(message: string | undefined): string | undefined {
+export function retryReason(message: string | undefined, kind?: string): string | undefined {
+  if (kind === "rate_limit") return t("error.rateLimited")
   const line = (message ?? "").replace(/\s+/g, " ").trim()
   return line || undefined
 }

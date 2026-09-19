@@ -51,14 +51,39 @@ interface Entry {
 /* The folder whose skills are listed: the open conversation's, or the default one on the home screen. */
 const where = computed(() => app.current?.directory ?? app.config?.directory)
 
+/** Rejects when the list cannot be read, leaving the skills already shown in place. */
 async function loadSkills(): Promise<void> {
   const directory = where.value
   if (!directory) {
     skills.value = []
     return
   }
-  const listed = await app.client?.request({ type: "skill.list", directory }).catch(() => undefined)
-  skills.value = listed?.skills ?? []
+  const listed = await app.client?.request({ type: "skill.list", directory })
+  if (!listed) throw new Error(t("error.backendLost"))
+  skills.value = listed.skills
+}
+
+/*
+ * The servers and the skills, read side by side as MiMo's page reads them
+ * (Promise.allSettled): a half that answers is shown, and a half that fails
+ * is said rather than read as "nothing installed". Resolves to the first
+ * failure's reason, or undefined when both answered.
+ */
+const listFailed = ref(false)
+
+async function loadLists(): Promise<string | undefined> {
+  const [listed, read] = await Promise.allSettled([app.client?.request({ type: "mcp.list" }), loadSkills()])
+  if (listed.status === "fulfilled" && listed.value) servers.value = listed.value.servers
+  const failure =
+    listed.status === "rejected" ? listed.reason : !listed.value ? new Error(t("error.backendLost")) : read.status === "rejected" ? read.reason : undefined
+  listFailed.value = failure !== undefined
+  return failure === undefined ? undefined : failure instanceof Error ? failure.message : String(failure)
+}
+
+async function retryLists() {
+  loaded.value = false
+  await loadLists()
+  loaded.value = true
 }
 
 /* MiMo's filter: by state, then by type, each with its own "all". */
@@ -114,9 +139,7 @@ onMounted(async () => {
   off = app.client?.on((event) => {
     if (event.type === "mcp.status") servers.value = event.servers
   })
-  const result = await app.client?.request({ type: "mcp.list" }).catch(() => undefined)
-  servers.value = result?.servers ?? []
-  await loadSkills()
+  await loadLists()
   loaded.value = true
 })
 
@@ -145,8 +168,8 @@ async function toggle(name: string) {
 
 /*
  * Refresh reads both halves again - the servers and the skills - and says
- * whether it could, as MiMo's does. The server list is the read that can fail;
- * the skills are read beside it and fall back to none rather than throwing.
+ * whether it could, as MiMo's does: either half failing is 刷新失败 with its
+ * reason, and what that half showed before stays on the page.
  */
 const refreshing = ref(false)
 
@@ -154,11 +177,9 @@ async function refresh() {
   if (refreshing.value) return
   refreshing.value = true
   try {
-    const [listed] = await Promise.all([app.client?.request({ type: "mcp.list" }), loadSkills(), app.refreshCommands()])
-    if (listed) servers.value = listed.servers
-    notify(t("plugins.refreshed"))
-  } catch (err) {
-    notifyFailure(t("plugins.refreshFailed", { error: err instanceof Error ? err.message : String(err) }))
+    const [failure] = await Promise.all([loadLists(), app.refreshCommands()])
+    if (failure === undefined) notify(t("plugins.refreshed"))
+    else notifyFailure(t("plugins.refreshFailed", { error: failure }))
   } finally {
     refreshing.value = false
   }
@@ -353,6 +374,14 @@ function pickFilter(key: string) {
         <button class="manage" @click="emit('manage')">{{ t("plugins.manage") }}</button>
       </div>
 
+      <!--
+        A list that could not be read is said, with Retry, rather than read as
+        nothing installed - above what the other half did bring back, where it is seen.
+      -->
+      <p v-if="loaded && listFailed" class="empty failed" data-plugins-failed>
+        <span>{{ t("plugins.listUnavailable") }}</span>
+        <button class="retry" @click="retryLists">{{ t("common.retry") }}</button>
+      </p>
       <div v-if="shown.length" class="cards">
         <div
           v-for="entry in shown"
@@ -423,7 +452,7 @@ function pickFilter(key: string) {
         </div>
       </div>
 
-      <p v-else-if="loaded" class="empty">{{ entries.length ? t("plugins.noMatch") : t("plugins.none") }}</p>
+      <p v-if="loaded && !listFailed && !shown.length" class="empty">{{ entries.length ? t("plugins.noMatch") : t("plugins.none") }}</p>
     </div>
     <ContextMenu
       v-if="filterMenu"
@@ -763,5 +792,18 @@ function pickFilter(key: string) {
   color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 20.8px;
+}
+
+.failed {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.failed .retry {
+  color: var(--text-strong);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 </style>

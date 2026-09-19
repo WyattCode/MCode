@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from "vue"
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import MessageStream from "../MessageStream.vue"
 import Composer from "../Composer.vue"
 import { useApp } from "../../stores/app"
@@ -45,10 +45,30 @@ async function createOnSend() {
   return id
 }
 
+/*
+ * The conversation's history: read once, then kept current by its events. A
+ * failed read is said and tried again every 2 s, as the 子智能体 tab's is,
+ * rather than showing the new-chat line over a chat that has history.
+ */
+const loadState = ref<"ready" | "loading" | "error">("ready")
+let retry: ReturnType<typeof setTimeout> | undefined
+async function load() {
+  clearTimeout(retry)
+  const id = props.convoId
+  if (!id) return
+  if (!messages.value.length) loadState.value = "loading"
+  const ok = await app.loadSide(id)
+  if (props.convoId !== id) return
+  loadState.value = ok ? "ready" : "error"
+  if (!ok) retry = setTimeout(() => void load(), 2000)
+}
+const emptyLine = computed(() => (loadState.value === "loading" ? t("stream.loadingConvo") : loadState.value === "error" ? t("subagentDetail.error") : t("rp.chat.empty")))
+
 onMounted(() => {
-  if (props.convoId) void app.loadSide(props.convoId)
+  void load()
   void take()
 })
+onBeforeUnmount(() => clearTimeout(retry))
 watch(
   () => props.active,
   (on) => {
@@ -60,7 +80,7 @@ watch(
 <template>
   <!-- Annotations made in here go to this tab's box, not the main one. -->
   <div class="rp-chat" data-rp-chat :data-annotate-scope="convoId ?? SIDE_SCOPE">
-    <div v-if="!messages.length" class="rp-chat-empty">{{ t("rp.chat.empty") }}</div>
+    <div v-if="!messages.length" class="rp-chat-empty" :data-side-load="loadState">{{ emptyLine }}</div>
     <MessageStream v-else class="rp-chat-stream" side :sideId="convoId" />
     <div class="rp-chat-dock">
       <Composer

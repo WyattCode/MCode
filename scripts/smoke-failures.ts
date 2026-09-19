@@ -311,14 +311,15 @@ export async function failureChecks(check: Check, section: (name: string) => voi
     /*
      * These rejections are shown as the body of a notice, so a sentence written
      * in the client surfaced as English in an otherwise translated interface.
-     * MiMo answers this case from its error table; the wording MCode already
-     * carries for it is error.network, so no new key was needed.
+     * MiMo answers this case from its error table. The key names the local
+     * service (C12-2): error.network blamed the reader's network for a
+     * loopback socket.
      */
     const client = (await readOrNothing(path.join(process.cwd(), "src/renderer/src/lib/client.ts"))) ?? ""
     check("the lost-connection sentence is no longer written in English in the client", !client.includes("Lost connection to the backend"))
-    check("it is phrased through the language tables instead", client.includes('t("error.network")'))
+    check("it is phrased through the language tables instead", client.includes('t("error.backendLost")'))
     const tables = (await readOrNothing(path.join(process.cwd(), "src/renderer/src/lib/i18n.ts"))) ?? ""
-    const defined = (tables.match(/"error\.network":/g) ?? []).length
+    const defined = (tables.match(/"error\.backendLost":/g) ?? []).length
     check("and that key is defined in all eighteen tables", defined === 18, defined)
   }
 

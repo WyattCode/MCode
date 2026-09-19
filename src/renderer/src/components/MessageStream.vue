@@ -79,11 +79,17 @@ const shownID = computed(() => (props.side ? sideKey.value : app.currentID))
 /* The project the shown conversation works in; a side conversation shares the main one's. */
 const shownDirectory = computed(() => app.current?.directory)
 const shownStreaming = computed(() => (props.side ? app.sideStreamingOf(sideKey.value) : app.streaming))
-const shownError = computed(() => (props.side ? app.sideErrorOf(sideKey.value) : app.error))
+const shownError = computed(() => (props.side ? app.sideErrorOf(sideKey.value) : app.turnError))
 /* round3-panel (P5-12/13): MiMo's side chat and floating card draw a reply with showActions false. */
 const bare = computed(() => Boolean(props.side || props.latest))
 /* The open conversation was just switched to and its messages are still on their way. */
 const loadingHere = computed(() => !props.side && !props.latest && !props.subagent && Boolean(app.loadingID) && app.loadingID === app.currentID)
+/*
+ * MiMo's empty thread line: a conversation that has been read and has nothing
+ * to draw - rolled back to its first question, say - says so rather than
+ * leaving a blank pane. Not while a turn is starting, whose question is on its way.
+ */
+const emptyHere = computed(() => !props.side && !props.latest && !props.subagent && !loadingHere.value && !shownBusy.value && turns.value.length === 0)
 /* speak: a completed call of the speak tool is read aloud, with the machine's own voice. */
 followSpoken({
   enabled: () => !props.side && !props.latest && !props.subagent,
@@ -520,7 +526,7 @@ function layout(turn: Turn, at: number): { rows: Row[]; foldAt: number } {
 
   if (live) {
     const retry = turn.last?.retry
-    if (retry) all.push({ kind: "retry", id: `retry:${turn.last?.id}`, attempt: retry.attempt, reason: retryReason(retry.message), next: retry.next })
+    if (retry) all.push({ kind: "retry", id: `retry:${turn.last?.id}`, attempt: retry.attempt, reason: retryReason(retry.message, retry.kind), next: retry.next })
     // The last group with nothing said after it is the one being worked in.
     for (let index = all.length - 1; index >= 0; index--) {
       const row = all[index]!
@@ -1008,6 +1014,7 @@ defineExpose({ stepMessage, scroller })
     <div ref="inner" class="inner">
       <!-- MiMo's line while a conversation just switched to has not brought its messages. -->
       <div v-if="loadingHere" class="thread-loading" data-thread-loading>{{ t("stream.loadingConvo") }}</div>
+      <div v-else-if="emptyHere" class="thread-loading" data-thread-empty>{{ t("stream.emptyConvo") }}</div>
       <!--
         MiMo's marker at the top of a branched conversation: a hairline either
         side of a link back to the conversation it came from.
@@ -1984,6 +1991,7 @@ defineExpose({ stepMessage, scroller })
 }
 
 /* MiMo's 正在加载对话…: centred, 13px and muted, 80 above and below. */
+/* MiMo's thread placeholder, loading or empty: 80 above and below, 13px, muted, centred. */
 .thread-loading {
   padding-block: 80px;
   color: var(--text-weak);

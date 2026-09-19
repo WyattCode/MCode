@@ -152,8 +152,8 @@ async function load() {
     if (mine !== generation) return
     if (!read.ok || read.unchanged) {
       const reason = read.ok ? "" : read.reason
-      // No server is involved in reading a PDF, so any other reason is shown as the read's own.
-      return fail(reason === "noent" ? t("office.fileMissing") : reason === "toobig" ? t("rp.files.errTooBig") : reason || "read failed")
+      // Every other reason (denied, a folder, unsupported) is the files tab's "cannot read", in the reader's language.
+      return fail(reason === "noent" ? t("office.fileMissing") : reason === "toobig" ? t("rp.files.errTooBig") : t("rp.files.errCannotRead"))
     }
     lastBase64 = read.base64
     const binary = atob(read.base64)
