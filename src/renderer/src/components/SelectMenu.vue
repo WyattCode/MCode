@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { typeAheadBuffer, typeAheadMatch } from "../lib/type-ahead"
 
 /**
  * Dropdown drawn in-app.
@@ -95,17 +96,41 @@ function onPointerDown(event: MouseEvent) {
  * Replacing it with a drawn menu quietly removed arrow-key selection, so the
  * control could only be operated with a mouse - worse than what it replaced.
  */
+const typed = typeAheadBuffer()
+
+/*
+ * MiMo's settings dropdown types ahead, open or closed: open, the typed text
+ * moves the highlighted row; closed, it picks the next matching value, as a
+ * select does.
+ */
+function typeAhead(event: KeyboardEvent): boolean {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing || event.key.length !== 1) return false
+  if (event.key === " " && !typed.searching()) return false
+  const labels = props.options.map((option) => option.label)
+  const current = open.value ? active.value : props.options.findIndex((option) => option.value === props.modelValue)
+  const hit = typeAheadMatch(labels, current, typed.push(event.key))
+  event.preventDefault()
+  if (hit < 0) return true
+  if (open.value) active.value = hit
+  else choose(props.options[hit].value)
+  return true
+}
+
 function onKeydown(event: KeyboardEvent) {
   const focused = root.value?.contains(document.activeElement)
 
   if (!open.value) {
     if (!focused) return
-    if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Enter") {
+    if (typeAhead(event)) return
+    // MiMo's trigger opens on Space as well as the arrows and Enter.
+    if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Enter" || event.key === " ") {
       event.preventDefault()
       toggle()
     }
     return
   }
+
+  if (typeAhead(event)) return
 
   const last = props.options.length - 1
   switch (event.key) {

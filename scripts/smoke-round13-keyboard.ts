@@ -14,6 +14,7 @@ import type { Check } from "./smoke-round5"
 import { effectScope, nextTick, ref } from "vue"
 import { dialogOpen, dismissMenus, escapeLayer, layerOpen, useEscapeLayerWhile } from "../src/renderer/src/lib/escape-layer"
 import { composing } from "../src/renderer/src/lib/keys"
+import { typeAheadBuffer, typeAheadMatch } from "../src/renderer/src/lib/type-ahead"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
 const component = (name: string) => read(`src/renderer/src/components/${name}.vue`)
@@ -297,6 +298,30 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
     check(
       "K13-11: Escape in the project picker's \"add a project\" submenu closes the submenu alone and gives focus back to its row",
       /if \(!sub\.value\) \{\s+open\.value = false\s+return\s+\}\s+sub\.value = false\s+trigger\.value\?\.focus\(\)/.test(layer.slice(0, 300)) && !/addEventListener\("keydown"/.test(picker),
+    )
+  }
+
+  // ---------------------------------------------------------------- K13-12
+  {
+    const labels = ["Light", "Dark", "Dim", "System", "Deep"]
+    check("K13-12: a letter lands on the next label starting with it, after the current row", typeAheadMatch(labels, 0, "d") === 1 && typeAheadMatch(labels, 1, "d") === 2)
+    check("K13-12: the same letter again steps on and wraps round", typeAheadMatch(labels, 4, "dd") === 1 && typeAheadMatch(labels, 2, "ddd") === 4)
+    check("K13-12: a longer search narrows, and may stay on the row it already matches", typeAheadMatch(labels, 1, "de") === 4 && typeAheadMatch(labels, 3, "sy") === -1 && typeAheadMatch(labels, 0, "sy") === 3)
+    check("K13-12: nothing matching moves nothing, and case does not matter", typeAheadMatch(labels, 0, "x") === -1 && typeAheadMatch(labels, -1, "S") === 3)
+    const buffer = typeAheadBuffer()
+    const first = buffer.push("d")
+    const second = buffer.push("i")
+    check("K13-12: keys typed together build one search", first === "d" && second === "di" && buffer.searching())
+
+    const select = await component("SelectMenu")
+    check(
+      "K13-12: the settings dropdown opens on Space as well as the arrows and Enter, as MiMo's does",
+      /event\.key === "ArrowDown" \|\| event\.key === "ArrowUp" \|\| event\.key === "Enter" \|\| event\.key === " "\) \{\s+event\.preventDefault\(\)\s+toggle\(\)/.test(select),
+    )
+    check(
+      "K13-12: and types ahead both closed (picking the value) and open (moving the highlighted row)",
+      /if \(typeAhead\(event\)\) return\n\s+\/\/ MiMo's trigger opens on Space/.test(select) && /\n  if \(typeAhead\(event\)\) return\n/.test(select) &&
+        /if \(open\.value\) active\.value = hit\n\s+else choose\(props\.options\[hit\]\.value\)/.test(select) && /if \(event\.key === " " && !typed\.searching\(\)\) return false/.test(select),
     )
   }
 }
