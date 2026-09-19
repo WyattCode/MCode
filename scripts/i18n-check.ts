@@ -279,6 +279,14 @@ for (const [name, entries] of Object.entries(tables)) {
   if (absent.length) problems.push(`${name}: ${absent.length} key(s) missing`)
 }
 
+// t() fills single-brace {name} only. A double-brace value copied from an
+// i18next table renders its braces, so "Retrying in {{time}}" shows as
+// "Retrying in {12s}".
+for (const [name, entries] of Object.entries(tables)) {
+  const doubled = Object.keys(entries).filter((key) => entries[key].includes("{{"))
+  if (doubled.length) problems.push(`${name}: ${doubled.length} value(s) use {{...}}, which t() never fills: ${doubled.slice(0, 6).join(", ")}`)
+}
+
 console.log(`keys used by the interface: ${used.size}`)
 console.log(`keys defined in English:    ${Object.keys(english).length}`)
 for (const name of names) {
