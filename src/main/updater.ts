@@ -64,6 +64,8 @@ export interface FeedInfo {
   sha512?: string
   /** MiMo's explicit rollback declaration, written into latest.yml by hand. */
   rollback?: unknown
+  /** The oldest OS release the version runs on, read by electron-updater's own check. */
+  minimumSystemVersion?: string
 }
 
 /** The part of electron-updater's AppUpdater this module uses. */
@@ -200,7 +202,18 @@ export function createUpdater(deps: UpdaterDeps): Updater {
    * recent rollback - and every entry without a sha512.
    */
   updater.allowDowngrade = true
-  updater.isUpdateSupported = (info) => {
+  /*
+   * The library's own check runs first: it refuses a version whose feed names
+   * a `minimumSystemVersion` above this OS release. That is not a failure,
+   * just an update this machine cannot take, so the check stays "current".
+   */
+  const supportedHere = updater.isUpdateSupported
+  updater.isUpdateSupported = async (info) => {
+    refused = undefined
+    if (!(await supportedHere.call(updater, info))) {
+      deps.log(`[update] ${info.version} needs a newer system (${info.minimumSystemVersion ?? "its minimumSystemVersion"})`)
+      return false
+    }
     refused = refusal(info, deps.currentVersion, now())
     return refused === undefined
   }

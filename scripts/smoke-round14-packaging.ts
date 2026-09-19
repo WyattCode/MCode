@@ -175,4 +175,22 @@ export async function roundFourteenPackagingChecks(check: Check, section: (name:
     )
     check("every OS-quit path goes through noteOsQuit", (main.match(/noteOsQuit\(\)/g) ?? []).length >= 4)
   }
+
+  // ------------------------------------------------------------------ P14-4
+  section("Round 14 (P14-4): electron-updater's minimumSystemVersion check still runs before MCode's rules")
+  {
+    const { real, library } = standInUpdater(os.tmpdir())
+    const logged: string[] = []
+    createUpdater({ currentVersion: "0.2.5", feedURL: () => "", autoUpdater: library, emit: () => {}, log: (line) => logged.push(line), scheduler: idle })
+    const sha512 = "A".repeat(86) + "=="
+    const available = (info: Record<string, unknown>) => (real as unknown as { isUpdateAvailable(info: unknown): Promise<boolean> }).isUpdateAvailable(info)
+    const system = os.release()
+    check("a newer, verified version for this system is still an update", await available({ version: "0.3.0", files: [{ url: "MCode-0.3.0-x64.exe", sha512 }], minimumSystemVersion: "1.0.0" }), system)
+    check(
+      "one whose feed asks for a newer system than this one is not",
+      !(await available({ version: "0.3.0", files: [{ url: "MCode-0.3.0-x64.exe", sha512 }], minimumSystemVersion: "99.0.0" })) && logged.some((line) => line.includes("99.0.0")),
+      logged,
+    )
+    check("and MCode's own rules still follow it (no sha512, no update)", !(await available({ version: "0.3.0", files: [{ url: "MCode-0.3.0-x64.exe" }], minimumSystemVersion: "1.0.0" })))
+  }
 }
