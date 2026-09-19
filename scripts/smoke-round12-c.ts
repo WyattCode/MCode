@@ -41,7 +41,11 @@ export async function roundTwelveFailureChecks(check: Check, section: (name: str
   // ---------------------------------------------------------------- C12-3
   {
     const overlay = /<div v-if="([^"]*)" class="boot">/.exec(shell)?.[1] ?? ""
-    check("C12-3: the full-screen overlay is shown for boot failures only, not for a drop after boot", /app\.offline && !app\.ready/.test(overlay) && !/\|\| app\.offline\)/.test(overlay), overlay)
+    check("C12-3: the full-screen overlay is shown for boot failures only, not for a drop after boot", overlay === "app.error" && !/boot\.unreachable/.test(shell), overlay)
+    check(
+      "C12-3: the offline clock runs from the drop, not from each refused reconnect, and an escalated notice is not downgraded",
+      /\} else if \(offlineTimer === undefined && !offline\.value\) \{/.test(store) && /else if \(booted && !offline\.value\) \{\s+reconnectTimer = setTimeout/.test(store),
+    )
     const timer = store.slice(store.indexOf("offlineTimer = setTimeout("), store.indexOf("}, 2500)"))
     check(
       "C12-3: after boot the reconnect notice escalates in place instead",

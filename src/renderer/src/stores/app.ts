@@ -885,15 +885,17 @@ export const useApp = defineStore("app", () => {
        * Held back a moment before it is admitted to. The socket drops briefly
        * whenever the backend restarts, and a window that announced every one of
        * those would cry wolf; a server that is genuinely not there stays down
-       * far longer than this.
+       * far longer than this. Timed from the drop: each refused reconnect
+       * attempt closes again well inside this, and restarting the clock on
+       * every one meant it never ran out.
        */
-      if (offlineTimer !== undefined) {
+      if (up) {
         clearTimeout(offlineTimer)
         offlineTimer = undefined
-      }
-      if (up) offline.value = false
-      else {
+        offline.value = false
+      } else if (offlineTimer === undefined && !offline.value) {
         offlineTimer = setTimeout(() => {
+          offlineTimer = undefined
           offline.value = true
           /*
            * After boot the conversation stays on screen, as MiMo's does: only
@@ -922,7 +924,8 @@ export const useApp = defineStore("app", () => {
         reconnectTimer = undefined
       }
       if (up) notice.dismiss(RECONNECT_TOAST)
-      else if (booted) {
+      // Once escalated it stays so until the socket is back.
+      else if (booted && !offline.value) {
         reconnectTimer = setTimeout(() => {
           notice.warning(t("error.connectionRecovering"), { id: RECONNECT_TOAST, duration: 0, closable: false })
         }, RECONNECT_DELAY)
@@ -2205,7 +2208,6 @@ export const useApp = defineStore("app", () => {
     mcpServers,
     runtimeStatus,
     loadMcp,
-    offline,
     platform,
     version,
     port,
