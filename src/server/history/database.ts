@@ -1,6 +1,6 @@
 import fs from "node:fs"
 import path from "node:path"
-import { SqlDatabase, STORE_PRAGMAS, type Sql } from "../sql-worker"
+import { SqlDatabase, STORE_PRAGMAS, quarantineSqlite, removeSqlite, sqliteDamaged, type Sql } from "../sql-worker"
 
 /**
  * The SQLite file behind history and memory search.
@@ -117,8 +117,7 @@ export class IndexDatabase {
 
   /** The reference's `isCorruption`, plus this app's own word for a file from another schema. */
   private static damaged(failure: unknown): boolean {
-    const text = failure instanceof Error ? `${failure.message} ${String((failure as { code?: unknown }).code ?? "")}` : String(failure)
-    return /integrity check failed|failed its integrity check|database disk image is malformed|file is not a database|SQLITE_(?:CORRUPT|NOTADB)|is at schema/i.test(text)
+    return sqliteDamaged(failure) || /is at schema/i.test(failure instanceof Error ? failure.message : String(failure))
   }
 
   /**
@@ -127,25 +126,10 @@ export class IndexDatabase {
    * Nothing in it cannot be rebuilt, so this is not about recovery - it is so
    * that a file this app could not read is still there to be looked at when
    * the rebuild turns out to have been triggered by something worth fixing.
-   * The journal files go with it, since a `-wal` left beside a fresh database
-   * is itself a way to corrupt one.
    */
   private static quarantine(file: string): void {
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-")
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const aside = attempt === 0 ? `${file}.corrupt-${stamp}` : `${file}.corrupt-${stamp}-${attempt}`
-      if (fs.existsSync(aside)) continue
-      try {
-        for (const suffix of ["", "-wal", "-shm", "-journal"]) {
-          if (fs.existsSync(file + suffix)) fs.renameSync(file + suffix, aside + suffix)
-        }
-        return
-      } catch {
-        // Tried again under another name, and failing that the file is removed below.
-      }
-    }
     // The app must open with a working index even where the rename cannot happen.
-    IndexDatabase.remove(file)
+    if (!quarantineSqlite(file)) removeSqlite(file)
   }
 
   private static async connect(file: string): Promise<SqlDatabase> {
@@ -167,11 +151,6 @@ export class IndexDatabase {
       await db.close()
       throw failure
     }
-  }
-
-  /** The file and the journal files SQLite keeps beside it. */
-  private static remove(file: string): void {
-    for (const suffix of ["", "-wal", "-shm", "-journal"]) fs.rmSync(file + suffix, { force: true })
   }
 
   async meta(key: string): Promise<string | undefined> {

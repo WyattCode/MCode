@@ -49,6 +49,7 @@ import { mergeMcpSecrets } from "./mcp-save"
 import { agentsState, deleteAgents, ensureAgents, globalAgentsPath, setAgentsEnabled } from "./global-agents"
 import { turnFileDiffs } from "./session/turn-diff"
 import type { ShellOwner } from "./shell"
+import { storeNotices } from "./store-notices"
 
 type Handled<T extends Request["type"]> = ResponseMap[T]
 
@@ -754,6 +755,9 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         ...(runtime.config.unreadable ? { unreadable: runtime.config.unreadable } : {}),
         ...(runtime.config.fromNewerVersion ? { fromNewerVersion: true } : {}),
       } satisfies Handled<"config.get">
+
+    case "storage.problems":
+      return { problems: await storeNotices(runtime) } satisfies Handled<"storage.problems">
 
     case "config.set": {
       // The window was sent masked secrets; one it sends back unchanged keeps the stored value.

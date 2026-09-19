@@ -1,3 +1,4 @@
+import fs from "node:fs"
 import { Worker } from "node:worker_threads"
 
 /**
@@ -245,3 +246,48 @@ export class SqlDatabase implements Sql {
  * WAL's safe setting, which flushes at checkpoints rather than on every commit.
  */
 export const STORE_PRAGMAS = ["PRAGMA busy_timeout = 5000", "PRAGMA journal_mode = WAL", "PRAGMA synchronous = NORMAL", "PRAGMA temp_store = MEMORY"]
+
+/** The files SQLite keeps beside a database, which go wherever the database goes. */
+const JOURNALS = ["", "-wal", "-shm", "-journal"]
+
+/**
+ * Whether a failure to open a store means the file itself is damaged.
+ *
+ * MiMo's `isCorruption`: only these are grounds for moving a file aside. "The
+ * file is locked by another instance", "the virus scanner holds the -wal" and
+ * an EACCES on a read-only folder all fail an open too, and starting a store
+ * over for one of those is a silent, avoidable loss.
+ */
+export function sqliteDamaged(failure: unknown): boolean {
+  const text = failure instanceof Error ? `${failure.message} ${String((failure as { code?: unknown }).code ?? "")}` : String(failure)
+  return /integrity check failed|failed its integrity check|database disk image is malformed|file is not a database|SQLITE_(?:CORRUPT|NOTADB)/i.test(text)
+}
+
+/**
+ * Moves a damaged database aside as `<file>.corrupt-<time>`, its journal files
+ * with it - a `-wal` left beside a fresh database is itself a way to corrupt
+ * one - as MiMo's runner quarantines its own.
+ *
+ * @returns where it went, or undefined when it could not be moved.
+ */
+export function quarantineSqlite(file: string): string | undefined {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-")
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const aside = attempt === 0 ? `${file}.corrupt-${stamp}` : `${file}.corrupt-${stamp}-${attempt}`
+    if (fs.existsSync(aside)) continue
+    try {
+      for (const suffix of JOURNALS) {
+        if (fs.existsSync(file + suffix)) fs.renameSync(file + suffix, aside + suffix)
+      }
+      return aside
+    } catch {
+      // Tried again under another name.
+    }
+  }
+  return undefined
+}
+
+/** Deletes a database and the journal files beside it. */
+export function removeSqlite(file: string): void {
+  for (const suffix of JOURNALS) fs.rmSync(file + suffix, { force: true })
+}

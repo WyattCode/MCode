@@ -319,6 +319,7 @@ import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
 // round 7 (storage): what the profile keeps, in its own file for the same reason.
 import { storageChecks } from "./smoke-storage"
+import { roundTwelveLifecycleChecks } from "./smoke-round12-lifecycle"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -6938,6 +6939,7 @@ async function main() {
   await roundSevenTimingChecks()
   await storageChecks(check, section)
   await roundElevenChecks(check, section)
+  await roundTwelveLifecycleChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

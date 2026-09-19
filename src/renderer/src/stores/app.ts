@@ -987,6 +987,18 @@ export const useApp = defineStore("app", () => {
     // some panel that shows it first happens to be opened.
     void loadMcp()
 
+    /*
+     * Stored documents the backend found damaged or unreadable at start-up -
+     * a store it had to start again, conversations it could not read - said
+     * the way an unreadable settings file is, and left up until dismissed.
+     */
+    void instance
+      .request({ type: "storage.problems" })
+      .then(({ problems }) => {
+        for (const problem of problems) notice.warning(t(problem.code, problem.params), { duration: 0 })
+      })
+      .catch(() => undefined)
+
     // A default left pointing at a provider whose key was since removed would
     // fail on the first prompt with no hint as to why.
     await ensureUsableModel()

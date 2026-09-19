@@ -1982,6 +1982,8 @@ export type Request =
   /** skills: MiMo's uninstall - the skill's folder moves to the app's skill trash. */
   | { type: "skill.uninstall"; directory: string; name: string }
   | { type: "config.get" }
+  /** Stored documents found damaged or unreadable at start-up, each answered once per launch. */
+  | { type: "storage.problems" }
   | { type: "config.set"; patch: Partial<AppConfig> }
   | { type: "provider.list" }
   | { type: "provider.auth"; provider: string; apiKey: string }
@@ -2241,6 +2243,8 @@ export interface ResponseMap {
    * when it was written by a later build and this one will not write over it.
    */
   "config.get": { config: AppConfig; unreadable?: { problem: string; evidence?: string }; fromNewerVersion?: boolean }
+  /** Each problem is an i18n code and the values its sentence fills in, as a coded error carries them. */
+  "storage.problems": { problems: { code: string; params?: Record<string, string | number> }[] }
   "config.set": { config: AppConfig }
   "provider.list": { providers: ProviderStatus[] }
   "provider.auth": { providers: ProviderStatus[]; models: number }

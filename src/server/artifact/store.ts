@@ -1,7 +1,7 @@
 import fs from "node:fs"
 import fsp from "node:fs/promises"
 import path from "node:path"
-import { SqlDatabase, STORE_PRAGMAS, type Sql } from "../sql-worker"
+import { SqlDatabase, STORE_PRAGMAS, quarantineSqlite, sqliteDamaged, type Sql } from "../sql-worker"
 import type { ArtifactFile, Message, SessionArtifacts, SessionInfo } from "@shared/protocol"
 import { sessionArtifacts } from "@shared/session-files"
 
@@ -29,11 +29,18 @@ import { sessionArtifacts } from "@shared/session-files"
  * is what the page groups by, and it keeps the columns a version-1 build reads,
  * so an older build handed this file reads it correctly (read-only, as it must).
  *
- * What it deliberately does NOT do is rebuild itself when it cannot read the
- * file, which is what the search index does. The search index is derived from
- * the transcripts and can always be made again; this holds the one record of
- * files whose conversations are gone, so a version it does not understand is
- * read as far as it goes and never written over.
+ * What it deliberately does NOT do is rebuild itself when it merely cannot
+ * understand the file, which is what the search index does. The search index is
+ * derived from the transcripts and can always be made again; this holds the one
+ * record of files whose conversations are gone, so a version it does not
+ * understand is read as far as it goes and never written over.
+ *
+ * A file that is damaged - it fails its integrity check, or is not a database
+ * at all - is another matter (L12-7). Left in place it switched the store off
+ * on every launch for good, so it is moved aside with its journal files, as
+ * MiMo's runner quarantines its own, and a fresh store is filled again from the
+ * transcripts by the next reconcile. The damaged copy is kept and the window is
+ * told where.
  */
 
 /**
@@ -179,14 +186,46 @@ export class ArtifactStore {
   ) {}
 
   /**
-   * Opens the store, making it if it is not there. Never throws: without it the
-   * app still runs and the page falls back to reading the transcripts.
+   * Where a damaged file was moved before this store was made again, so the
+   * window can say so; absent for a store that opened as it was.
+   */
+  recovered: string | undefined
+
+  /**
+   * Opens the store, making it if it is not there, and making it again if the
+   * file is damaged. Never throws: without it the app still runs and the page
+   * falls back to reading the transcripts.
    */
   static async open(file: string): Promise<ArtifactStore | undefined> {
-    let db: SqlDatabase | undefined
     try {
       fs.mkdirSync(path.dirname(file), { recursive: true })
-      db = await SqlDatabase.open(file)
+      return await ArtifactStore.connect(file)
+    } catch (failure) {
+      const why = failure instanceof Error ? failure.message : String(failure)
+      // A lock, a sharing violation or a read-only folder is not damage: the file is left exactly where it is.
+      if (!sqliteDamaged(failure)) {
+        console.warn(`[artifacts] the store could not be opened (${why}); the page reads the conversations instead`)
+        return undefined
+      }
+      const aside = quarantineSqlite(file)
+      if (!aside) {
+        console.warn(`[artifacts] ${file} is damaged (${why}) and could not be moved aside; the store stays off`)
+        return undefined
+      }
+      console.warn(`[artifacts] ${file} was damaged (${why}); it was kept as ${aside} and the store was started again`)
+      try {
+        const store = await ArtifactStore.connect(file)
+        store.recovered = aside
+        return store
+      } catch {
+        return undefined
+      }
+    }
+  }
+
+  private static async connect(file: string): Promise<ArtifactStore> {
+    const db = await SqlDatabase.open(file)
+    try {
       const check = await db.get("PRAGMA quick_check")
       if (check && Object.values(check)[0] !== "ok") throw new Error("the artifact store failed its integrity check")
       // MiMo's pragmas (N11-12), and foreign keys as before.
@@ -200,9 +239,9 @@ export class ArtifactStore {
       }
       if (latest < 2) await ArtifactStore.migrateToV2(db)
       return new ArtifactStore(db, true)
-    } catch {
-      await db?.close()
-      return undefined
+    } catch (failure) {
+      await db.close()
+      throw failure
     }
   }
 
