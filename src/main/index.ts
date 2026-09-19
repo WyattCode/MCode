@@ -22,6 +22,7 @@ import { cutLiveStreams } from "../server/provider/stall"
 import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
 import { closeHidesToTray } from "@shared/protocol"
 import { label, setLabels } from "./labels"
+import { clipboardText, panelBounds, titlebarMode } from "./ipc-input"
 import { buildMenu } from "./menu"
 import { readMenuKeys } from "./menu-keys"
 import { cancelPendingHide, claimDialog, dialogParent, hideWindow, micDecision, releaseDialog } from "./native-dialogs"
@@ -72,7 +73,6 @@ import {
   selectTab,
   setBounds,
   type BrowserAct,
-  type BrowserBounds,
 } from "./browser"
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
 import { fcitxEnvironment } from "./linux-ime"
@@ -1025,7 +1025,10 @@ app.whenReady().then(async () => {
     return raw ? parseSessionLink(raw) : undefined
   })
 
-  ipcMain.on("mcode:clipboard-write", (_event, text: string) => clipboard.writeText(text))
+  ipcMain.on("mcode:clipboard-write", (_event, raw: unknown) => {
+    const text = clipboardText(raw)
+    if (text !== undefined) clipboard.writeText(text)
+  })
 
   /*
    * A link clicked in the terminal.
@@ -1401,18 +1404,20 @@ app.whenReady().then(async () => {
    * The browser panel. The window owns the layout and says where the page
    * goes; main owns the page itself, for the reasons at the top of browser.ts.
    */
-  ipcMain.handle("mcode:browser-open", (event, bounds: BrowserBounds) => {
+  ipcMain.handle("mcode:browser-open", (event, raw: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender)
-    if (!window) return undefined
+    const bounds = panelBounds(raw)
+    if (!window || !bounds) return undefined
     openPanel(window, bounds, (state) => {
       if (!window.isDestroyed()) window.webContents.send("mcode:browser-state", state)
     })
     return panelState(window)
   })
 
-  ipcMain.on("mcode:browser-bounds", (event, bounds: BrowserBounds) => {
+  ipcMain.on("mcode:browser-bounds", (event, raw: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender)
-    if (window) setBounds(window, bounds)
+    const bounds = panelBounds(raw)
+    if (window && bounds) setBounds(window, bounds)
   })
 
   ipcMain.handle("mcode:browser-navigate", (event, input: string) => {
@@ -1571,8 +1576,9 @@ app.whenReady().then(async () => {
     if (bootPrefs.theme !== theme) void saveBootPrefs({ theme })
   })
 
-  ipcMain.on("mcode:titlebar-mode", (event, mode: "dark" | "light") => {
-    setTitlebarMode(BrowserWindow.fromWebContents(event.sender), mode)
+  ipcMain.on("mcode:titlebar-mode", (event, raw: unknown) => {
+    const mode = titlebarMode(raw)
+    if (mode) setTitlebarMode(BrowserWindow.fromWebContents(event.sender), mode)
   })
 
   /* MiMo's winIsFullscreen / winExitFullscreen, answered for the window that asks. */
