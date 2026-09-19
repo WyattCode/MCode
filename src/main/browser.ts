@@ -274,7 +274,7 @@ export function setBounds(window: BrowserWindow, bounds: BrowserBounds): void {
   })
 }
 
-export function closePanel(window: BrowserWindow): void {
+function closePanel(window: BrowserWindow): void {
   const panel = panels.get(window.id)
   if (!panel) return
   panels.delete(window.id)

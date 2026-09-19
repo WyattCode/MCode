@@ -63,7 +63,6 @@ import {
   act,
   clearBrowsingData,
   clearSiteData,
-  closePanel,
   closeTab,
   navigate,
   newTab,
@@ -1414,11 +1413,6 @@ app.whenReady().then(async () => {
   ipcMain.on("mcode:browser-bounds", (event, bounds: BrowserBounds) => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (window) setBounds(window, bounds)
-  })
-
-  ipcMain.on("mcode:browser-close", (event) => {
-    const window = BrowserWindow.fromWebContents(event.sender)
-    if (window) closePanel(window)
   })
 
   ipcMain.handle("mcode:browser-navigate", (event, input: string) => {
