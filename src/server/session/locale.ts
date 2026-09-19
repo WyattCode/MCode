@@ -1,12 +1,29 @@
 import { resolveLanguage } from "@shared/locale"
 
+/*
+ * The machine's locale, handed over by the main process from `app.getLocale()`
+ * - the window reads the same value - so the reply language and the interface
+ * come from one source, as MiMo's do. The process's own Intl default is the
+ * region format rather than the display language, and is only the fallback for
+ * a backend running without Electron.
+ */
+let machine: string | undefined
+
+export function setMachineLocale(tag: string): void {
+  machine = tag || undefined
+}
+
+export function machineLocale(): string {
+  return machine ?? Intl.DateTimeFormat().resolvedOptions().locale
+}
+
 /**
  * The interface language as a locale code: the one chosen in Settings, or the
  * machine's own mapped onto the languages the interface has by the rule the
  * window uses (`systemLanguage`). MiMo takes its reply language from the same
  * place.
  */
-export function interfaceLocale(language: string | undefined, system = Intl.DateTimeFormat().resolvedOptions().locale): string {
+export function interfaceLocale(language: string | undefined, system = machineLocale()): string {
   return resolveLanguage(language, system)
 }
 

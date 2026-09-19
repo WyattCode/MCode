@@ -73,6 +73,8 @@ const api = {
   /** The same write, finished before the page goes away. */
   composerInputFlush: (text: string): boolean => ipcRenderer.sendSync("mcode:composer-input-flush", text),
 
+  /** The machine's locale as the main process reads it (`app.getLocale()`), for the language nobody has chosen. */
+  systemLocale: (): string => ipcRenderer.sendSync("mcode:system-locale"),
   /** Menu bar labels; the translations live here, the menu is built there. */
   menuLabels: (labels: Record<string, string>): void => ipcRenderer.send("mcode:menu-labels", labels),
   /* N11-16: the machine is back online, which the main process cannot see for itself. */

@@ -12,12 +12,41 @@ import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { LANGUAGE_IDS, resolveLanguage, systemLanguage } from "../src/shared/locale"
 import { detectLanguage, LANGUAGES } from "../src/renderer/src/lib/i18n"
-import { interfaceLocale } from "../src/server/session/locale"
+import { interfaceLocale, setMachineLocale } from "../src/server/session/locale"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
 
 export async function roundFourteenLocaleChecks(check: Check, section: (name: string) => void): Promise<void> {
   section("Round 14 (L): locale formatting and right-to-left")
+
+  // ---------------------------------------------------------------- L14-1
+  {
+    /*
+     * A machine whose display language (app.getLocale) is French and whose
+     * region format - this process's Intl default - is something else: both
+     * sides must follow the display language main hands them.
+     */
+    const g = globalThis as { window?: unknown }
+    const savedWindow = g.window
+    const region = Intl.DateTimeFormat().resolvedOptions().locale
+    const display = systemLanguage(region) === "fr" ? "de-DE" : "fr-FR"
+    g.window = { mcode: { systemLocale: () => display } }
+    setMachineLocale(display)
+    const reply = interfaceLocale(undefined)
+    const ui = detectLanguage()
+    check("L14-1: with no choice, the reply language is the display language main reads, not the region format", reply === systemLanguage(display), { reply, region })
+    check("L14-1: and the window starts in that same language", ui === reply, { ui, reply })
+    setMachineLocale("")
+    g.window = savedWindow
+    check("L14-1: without Electron the backend still has a locale", interfaceLocale(undefined) === systemLanguage(region))
+    const [main, preload] = await Promise.all([read("src/main/index.ts"), read("src/preload/index.ts")])
+    check(
+      "L14-1: main hands app.getLocale() to the backend and answers the window's ask with it",
+      /setMachineLocale\(app\.getLocale\(\)\)/.test(main) &&
+        /ipcMain\.on\("mcode:system-locale"[\s\S]{0,80}returnValue = app\.getLocale\(\)/.test(main) &&
+        /systemLocale: \(\): string => ipcRenderer\.sendSync\("mcode:system-locale"\)/.test(preload),
+    )
+  }
 
   // ---------------------------------------------------------------- L14-3
   {

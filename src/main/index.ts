@@ -19,6 +19,7 @@ import { setImageShrinker } from "../server/provider/attachment-parts"
 import { shrinkImage } from "./image-shrink"
 import { scratchRoot } from "../server/scratch"
 import { wakeWaiters } from "../server/session/retry"
+import { setMachineLocale } from "../server/session/locale"
 import { cutLiveStreams } from "../server/provider/stall"
 import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
 import { closeHidesToTray } from "@shared/protocol"
@@ -865,6 +866,17 @@ app.whenReady().then(async () => {
 
   // MiMo makes an oversized picture smaller rather than dropping it; the decoder lives here, so the backend is handed one.
   setImageShrinker(shrinkImage)
+
+  /*
+   * MiMo's one source for the language nobody chose: `app.getLocale()`, the
+   * display language Chromium runs in. The backend's reply language and the
+   * window's interface read it from here, rather than one of them from the
+   * region format this process's Intl defaults to.
+   */
+  setMachineLocale(app.getLocale())
+  ipcMain.on("mcode:system-locale", (event) => {
+    event.returnValue = app.getLocale()
+  })
 
   /*
    * MiMo creates its main window first and only then starts the pieces that

@@ -38,8 +38,24 @@ export type Language = (typeof LANGUAGES)[number]["id"]
  * (`systemLanguage`), so zh-HK reads Traditional and nn reads Norwegian on
  * both sides.
  */
-export function detectLanguage(tag = typeof navigator === "object" ? navigator.language : ""): Language {
+export function detectLanguage(tag = machineLocale()): Language {
   return systemLanguage(tag)
+}
+
+/*
+ * The locale the main process reads with `app.getLocale()` and hands the
+ * backend too, so the interface and the reply language come from one source
+ * (MiMo's). The page's own navigator answer is only for a page without the
+ * bridge.
+ */
+function machineLocale(): string {
+  try {
+    const tag = typeof window === "object" ? window.mcode?.systemLocale?.() : undefined
+    if (tag) return tag
+  } catch {
+    // No main process to ask.
+  }
+  return typeof navigator === "object" ? navigator.language : ""
 }
 
 /**
