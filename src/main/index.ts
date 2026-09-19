@@ -116,6 +116,22 @@ if (process.platform === "win32") app.setAppUserModelId(app.isPackaged ? APP_ID 
 const pinned = pinnedProfile(app.getPath("userData"), app.getPath("appData"), app.getName(), path.join, app.isPackaged)
 if (pinned) app.setPath("userData", pinned)
 
+/*
+ * One running copy per profile, so a link clicked while the app is open lands
+ * in that copy instead of starting a second one beside it. The lock is keyed on
+ * the profile, and a development build has its own (pinnedProfile), so the two
+ * run side by side. Packaged builds only, as MiMo skips it in development: a
+ * development run is restarted by its tooling and must not find the one it
+ * replaces still holding the lock.
+ *
+ * Taken as soon as the profile is known, as MiMo takes it (I13-6): a second
+ * launch hands its arguments over and is gone before the log, the crash
+ * reporter or the environment refresh (a login shell on macOS and Linux) start.
+ * process.exit rather than app.exit, which only queues the exit and lets the
+ * rest of this module run first.
+ */
+if (app.isPackaged && !app.requestSingleInstanceLock()) process.exit(0)
+
 const here = path.dirname(fileURLToPath(import.meta.url))
 
 /*
@@ -324,16 +340,6 @@ async function removeStaleInstallers() {
  * asks for it once it has connected.
  */
 let pendingLink: string | undefined = linkInArgs(process.argv)
-
-/*
- * One running copy per profile, so a link clicked while the app is open lands
- * in that copy instead of starting a second one beside it. The lock is keyed on
- * the profile, and a development build has its own (pinnedProfile), so the two
- * run side by side. Packaged builds only, as MiMo skips it in development: a
- * development run is restarted by its tooling and must not find the one it
- * replaces still holding the lock.
- */
-if (app.isPackaged && !app.requestSingleInstanceLock()) app.exit(0)
 
 /*
  * MiMo's raise: a moment always on top around the show, because Windows' focus

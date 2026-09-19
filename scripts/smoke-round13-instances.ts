@@ -49,4 +49,17 @@ export async function roundThirteenInstanceChecks(check: Check, section: (name: 
       /if \(app\.isPackaged && !app\.requestSingleInstanceLock\(\)\)/.test(main) && !/requestSingleInstanceLock\([^)]/.test(main),
     )
   }
+
+  // ------------------------------------------------------------------ I13-6
+  section("Round 13 (I13-6): a second launch hands over before the environment is set up")
+  {
+    const lockAt = main.indexOf("requestSingleInstanceLock()")
+    const profileAt = main.indexOf('if (pinned) app.setPath("userData", pinned)')
+    const later = ["refreshEnvironment({", "new DailyLog(", "startLocalCrashDumps({", "fcitxEnvironment(", "displaySwitches(", "bundledRuntimeEnv({", "readBootPrefs("].map((marker) => [marker, main.indexOf(marker)] as const)
+    // Between the two there is only the lock's own comment.
+    const between = profileAt > 0 && lockAt > profileAt ? main.slice(main.indexOf("\n", profileAt), lockAt).replace(/\/\*[\s\S]*?\*\//g, "").trim() : "missing"
+    check("the lock is taken right after the profile is set", between === "if (app.isPackaged && !app.", { profileAt, lockAt, between: between.slice(0, 200) })
+    check("and before the log, the crash reporter, the environment refresh and the rest", later.every(([, at]) => at > lockAt), later)
+    check("a second launch leaves at once, not after the rest of the module has run", /if \(app\.isPackaged && !app\.requestSingleInstanceLock\(\)\) process\.exit\(0\)/.test(main))
+  }
 }
