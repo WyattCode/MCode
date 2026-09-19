@@ -125,4 +125,23 @@ export async function roundFourteenLocaleChecks(check: Check, section: (name: st
       rule,
     )
   }
+
+  // ---------------------------------------------------------------- L14-6
+  {
+    const [sidebar, spine] = await Promise.all([read("src/renderer/src/components/Sidebar.vue"), read("src/renderer/src/components/SessionSpine.vue")])
+    const arrows = [...sidebar.matchAll(/<button[^>]*@click="emit\('(back|forward)'\)"[^>]*>\s*<svg([^>]*)>/g)]
+    check(
+      "L14-6: both back / forward pairs (open and folded column) draw arrows that can turn",
+      arrows.length === 4 && arrows.every((match) => /class="way"/.test(match[2])),
+      arrows.map((match) => match[1] + (/class="way"/.test(match[2]) ? "+" : "-")),
+    )
+    check("L14-6: and turn under dir=rtl", /\.way:dir\(rtl\) \{\s*transform: scaleX\(-1\);/.test(sidebar))
+    const css = spine.slice(spine.indexOf("<style"))
+    const physical = [...css.matchAll(/^\s*(left|right|padding: 0 \d+px 0 \d+px)[:;]/gm)].map((match) => match[1])
+    check("L14-6: the spine's strip, ticks, fades and card bridge are placed by logical sides", physical.length === 0 && /\.spine \{[^}]*inset-inline-start: 0/.test(css), physical)
+    check(
+      "L14-6: right to left the card opens on the rail's left, and the room is measured at the right",
+      /rtl\(rail\.value\) \? railRect\.left - 14 - /.test(spine) && /rtl\(view\) \? viewRect\.right - innerRect\.right/.test(spine),
+    )
+  }
 }

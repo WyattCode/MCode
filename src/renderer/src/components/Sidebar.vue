@@ -1039,12 +1039,12 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
         </svg>
       </button>
       <button class="ico" :disabled="!canBack" :aria-label="t('side.back')" v-tip="{ label: t('side.back'), hint: 'Ctrl+[' }" @click="emit('back')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <svg class="way" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M19.5 12h-15M11 5.5 4.5 12l6.5 6.5" />
         </svg>
       </button>
       <button class="ico" :disabled="!canForward" :aria-label="t('title.forward')" v-tip="{ label: t('title.forward'), hint: 'Ctrl+]' }" @click="emit('forward')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <svg class="way" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M4.5 12h15M13 5.5l6.5 6.5-6.5 6.5" />
         </svg>
       </button>
@@ -1063,12 +1063,12 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
         </svg>
       </button>
       <button class="ico" :disabled="!canBack" :aria-label="t('side.back')" v-tip="{ label: t('side.back'), hint: 'Ctrl+[' }" @click="emit('back')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <svg class="way" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M19.5 12h-15M11 5.5 4.5 12l6.5 6.5" />
         </svg>
       </button>
       <button class="ico" :disabled="!canForward" :aria-label="t('title.forward')" v-tip="{ label: t('title.forward'), hint: 'Ctrl+]' }" @click="emit('forward')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <svg class="way" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M4.5 12h15M13 5.5l6.5 6.5-6.5 6.5" />
         </svg>
       </button>
@@ -1957,6 +1957,11 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
 .app[data-platform="win32"] .rail-tools .ico svg {
   width: 12px;
   height: 12px;
+}
+
+/* Right to left, back points the way the line came from - rightward - and forward the other way. */
+.way:dir(rtl) {
+  transform: scaleX(-1);
 }
 
 /* Nowhere to go back or forward to: MiMo leaves the arrow at a third, and it does nothing. */

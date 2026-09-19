@@ -90,6 +90,8 @@ const cardAt = ref({ left: 0, top: 0 })
 
 const soundOn = () => app.config?.spineSound !== false
 
+const rtl = (element: Element) => getComputedStyle(element).direction === "rtl"
+
 /** Where the rail stands: level with the scroller, whatever sits above or below it. */
 function measure() {
   const view = props.scroller
@@ -98,7 +100,9 @@ function measure() {
   const inner = view.querySelector<HTMLElement>(".inner")
   const viewRect = view.getBoundingClientRect()
   const hostRect = host.getBoundingClientRect()
-  room.value = inner ? inner.getBoundingClientRect().left - viewRect.left : 0
+  const innerRect = inner?.getBoundingClientRect()
+  // The room at the start of the line: left of the column, or right of it when the page reads right to left.
+  room.value = innerRect ? (rtl(view) ? viewRect.right - innerRect.right : innerRect.left - viewRect.left) : 0
   box.value = { top: viewRect.top - hostRect.top, bottom: hostRect.bottom - viewRect.bottom }
   pan()
 }
@@ -211,7 +215,9 @@ function placeCard(y: number) {
   if (!railRect) return
   const height = card.value?.offsetHeight || 140
   const lowest = Math.min(window.innerHeight - height - 12, railRect.bottom - height)
-  cardAt.value = { left: railRect.right + 14, top: Math.max(12, Math.min(lowest, y - height / 2)) }
+  // 14 past the rail on the side the conversation lies: its right, or its left right to left.
+  const left = rail.value && rtl(rail.value) ? railRect.left - 14 - (card.value?.offsetWidth || 300) : railRect.right + 14
+  cardAt.value = { left, top: Math.max(12, Math.min(lowest, y - height / 2)) }
 }
 
 function onEnter() {
@@ -351,11 +357,12 @@ onBeforeUnmount(() => {
  * MiMo's measurements: a 48px strip at the start of the conversation, its rail
  * inset 7.5% top and bottom (plus 10), ticks 4 tall with 6 between, each a 2px
  * bar 9 wide that swells to 24 near the pointer; the card 300 wide on a 20px
- * corner, 14 to the right of the rail.
+ * corner, 14 past the rail. Placed by logical sides, so right to left the
+ * strip stands at the right, where the lines start, and the card opens leftward.
  */
 .spine {
   position: absolute;
-  left: 0;
+  inset-inline-start: 0;
   z-index: 15;
   width: 48px;
   pointer-events: none;
@@ -367,7 +374,8 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 0 20px 0 12px;
+  padding-block: 0;
+  padding-inline: 12px 20px;
   overflow: hidden;
   pointer-events: auto;
   cursor: pointer;
@@ -394,7 +402,7 @@ onBeforeUnmount(() => {
 .spine-tick i {
   position: absolute;
   top: 50%;
-  left: 0;
+  inset-inline-start: 0;
   width: 9px;
   height: 2px;
   background: var(--text-weak);
@@ -413,8 +421,7 @@ onBeforeUnmount(() => {
 
 .spine-fade {
   position: absolute;
-  right: 0;
-  left: 0;
+  inset-inline: 0;
   z-index: 2;
   height: 64px;
   pointer-events: none;
@@ -446,6 +453,10 @@ onBeforeUnmount(() => {
   transition: opacity 0.16s, transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
+.spine-preview:dir(rtl) {
+  transform-origin: 100% 50%;
+}
+
 .spine-preview.show {
   opacity: 1;
   pointer-events: auto;
@@ -459,7 +470,7 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -16px;
+  inset-inline-start: -16px;
   width: 16px;
 }
 
