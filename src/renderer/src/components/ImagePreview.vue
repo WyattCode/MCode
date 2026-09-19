@@ -301,6 +301,8 @@ onBeforeUnmount(() => {
     <div
       v-if="imagePreview"
       ref="root"
+      v-modal
+      data-modal-keep-focus
       class="image-preview"
       role="dialog"
       aria-modal="true"

@@ -230,4 +230,18 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
     check("K13-6: Settings, the search, the palette and both previews are marked as what a new task clears", cleared.every(Boolean), cleared)
     check("K13-6: Settings leaves for it through its own unsaved-edits guard", /function leaveThen\(action: \(\) => void\) \{\n\s+requestLeave\(/.test(settings) && /defineExpose\(\{ leaveThen \}\)/.test(settings))
   }
+
+  // ---------------------------------------------------------------- K13-8
+  {
+    const image = await component("ImagePreview")
+    const video = await component("VideoPreview")
+    const text = await component("parts/TextPart")
+    const imageRoot = /<div\s+v-if="imagePreview"[\s\S]*?>/.exec(image)?.[0] ?? ""
+    check("K13-8: the image preview keeps Tab inside and gives focus back on close, still focusing its own root as MiMo's does", /v-modal/.test(imageRoot) && /data-modal-keep-focus/.test(imageRoot), imageRoot)
+    check("K13-8: the video preview takes focus, keeps Tab inside and gives it back", /<div id="video-preview" v-modal /.test(video) && !/id="video-preview"[^>]*data-modal-keep-focus/.test(video))
+    check(
+      "K13-8: so does the table preview, which now closes on Escape as a layer",
+      /<div v-modal class="md-table-preview-dialog"/.test(text) && /useEscapeLayerWhile\(\(\) => previewing\.value, closePreview\)/.test(text) && !/addEventListener\("keydown", onEscape\)/.test(text),
+    )
+  }
 }

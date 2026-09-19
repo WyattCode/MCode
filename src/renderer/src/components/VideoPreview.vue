@@ -253,7 +253,7 @@ onBeforeUnmount(() => {
 <template>
   <Teleport to="body">
     <div v-if="shown" class="vp-overlay" data-video-preview>
-      <div id="video-preview" class="vp-content" role="dialog" aria-modal="true" data-new-task-clears :aria-label="t('videoPreview.title')" @pointerdown.capture="onGroundPointerDown" @click="onGroundClick">
+      <div id="video-preview" v-modal class="vp-content" role="dialog" aria-modal="true" data-new-task-clears :aria-label="t('videoPreview.title')" @pointerdown.capture="onGroundPointerDown" @click="onGroundClick">
         <span class="vp-sr">{{ t("videoPreview.title") }}</span>
         <div class="vp-column" @click.stop>
           <div class="vp-frame">
