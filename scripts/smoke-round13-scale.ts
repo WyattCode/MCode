@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Round 13 (lane S): what the backend does with a lot of data - a diff of a
  * very large file, the usage page over thousands of conversations, and the
  * conversation list kept current instead of re-read (S13-1 onwards). Kept apart
@@ -367,6 +367,43 @@ export async function roundThirteenScaleChecks(check: Check, section: (name: str
       check("deleting 100 conversations reads no record list again", reads === 0 && (await store.list()).length === 900 - 1, { reads, left: (await store.list()).length })
       await same("and leaves the list a fresh read gives")
       console.log(`    (1000 conversations: cold list ${Math.round(coldMs)} ms, list after a step ${stepMs.toFixed(1)} ms, 100 deletes ${Math.round(deleteMs)} ms)`)
+    }
+
+    // ------------------------------------------------------------------ S13-7
+    section("Round 13 (S13-7): the Files panel's full read measures a file before reading it")
+    {
+      const folder = path.join(root, "files")
+      await fs.mkdir(folder, { recursive: true })
+      const read = async (rel: string) =>
+        (await handle({} as Runtime, { type: "file.read", root: folder, rel } as unknown as Request)) as { kind: string; tooBig?: boolean; truncated: boolean; content: string; data?: string }
+      // Longer than any read may hold: past 2 GB a whole read fails outright. Made without writing it (the file is sparse or lazily zeroed).
+      const huge = path.join(folder, "huge.png")
+      await fs.writeFile(huge, "")
+      await fs.truncate(huge, 2 ** 31 + 200_000_000)
+      let answer: Awaited<ReturnType<typeof read>> | undefined
+      let failed: unknown
+      try {
+        answer = await read("huge.png")
+      } catch (err) {
+        failed = err
+      }
+      check("a picture over 2 GB is too large, not an error", answer?.kind === "image" && answer.tooBig === true && !answer.data, failed ? String(failed) : answer)
+      await fs.rm(huge, { force: true })
+
+      const pdf = path.join(folder, "big.pdf")
+      await fs.writeFile(pdf, Buffer.alloc(26_000_000, 0x41))
+      const bigPdf = await read("big.pdf")
+      check("a document just over the cap is too large as it was", bigPdf.kind === "pdf" && bigPdf.tooBig === true && !bigPdf.data)
+      const text = path.join(folder, "big.txt")
+      await fs.writeFile(text, "line of text\n".repeat(2_100_000))
+      const bigText = await read("big.txt")
+      check("a text file over the cap still shows its opening, cut", bigText.kind === "text" && bigText.truncated && bigText.content.length === 500_000 && bigText.content.startsWith("line of text\nline"), [bigText.kind, bigText.truncated, bigText.content.length])
+      await fs.writeFile(path.join(folder, "small.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]))
+      const small = await read("small.png")
+      check("a picture under the cap comes whole, as before", small.kind === "image" && small.data === Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]).toString("base64") && !small.tooBig)
+      await fs.writeFile(path.join(folder, "short.txt"), "short\n")
+      const short = await read("short.txt")
+      check("and a short text file whole, not cut", short.kind === "text" && short.content === "short\n" && !short.truncated)
     }
   } finally {
     await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)

@@ -1361,7 +1361,16 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * of replacement characters, which the panel then drew as the file.
        */
       if (request.preview) return (await readPreview(resolved)) satisfies Handled<"file.read">
-      const bytes = await fs.readFile(resolved)
+      /*
+       * Measured before it is read (S13-7). Reading first held a whole file of
+       * any size in memory to find it was over the cap, and past 2 GB the read
+       * itself failed with ERR_FS_FILE_TOO_LARGE instead of the panel saying
+       * the file is too large. Past the cap only the head is read: enough to
+       * tell what the file is, and to show a text file's opening.
+       */
+      const whole = (await fs.stat(resolved)).size <= MEDIA_LIMIT
+      const limit = 500_000
+      const bytes = whole ? await fs.readFile(resolved) : await readHead(resolved, limit * 4)
       const kind = kindFor(resolved, bytes.subarray(0, 4096))
 
       if (kind === "image" || kind === "audio" || kind === "pdf") {
@@ -1379,7 +1388,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
          * while the string for this (`rp.files.errTooBig`) already existed.
          * One figure for every kind, as MiMo has one.
          */
-        if (bytes.byteLength > MEDIA_LIMIT) {
+        if (!whole) {
           return { path: resolved, kind, content: "", truncated: false, tooBig: true } satisfies Handled<"file.read">
         }
         return {
@@ -1397,12 +1406,11 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       }
 
       const content = bytes.toString("utf8")
-      const limit = 500_000
       return {
         path: resolved,
         kind,
         content: content.slice(0, limit),
-        truncated: content.length > limit,
+        truncated: !whole || content.length > limit,
       } satisfies Handled<"file.read">
     }
 
@@ -1591,6 +1599,18 @@ export const PREVIEW_TEXT_LIMIT = 512 * 1024
  * make sense of rather than as one too large to preview.
  */
 export const MEDIA_LIMIT = 25_000_000
+
+/** A file's first `bytes` bytes, or all of it when it is shorter. */
+async function readHead(file: string, bytes: number): Promise<Buffer> {
+  const handle = await fs.open(file, "r")
+  try {
+    const buffer = Buffer.alloc(bytes)
+    const { bytesRead } = await handle.read(buffer, 0, bytes, 0)
+    return buffer.subarray(0, bytesRead)
+  } finally {
+    await handle.close()
+  }
+}
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".m4v", ".webm", ".mov", ".ogv"])
 
