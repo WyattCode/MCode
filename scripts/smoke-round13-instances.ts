@@ -11,8 +11,8 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
-import { pinnedProfile, relaunchArgs } from "../src/main/desktop-rules"
-import { startBounds } from "../src/main/work-area"
+import { WINDOW_MIN, WINDOW_PREFERRED, pinnedProfile, relaunchArgs } from "../src/main/desktop-rules"
+import { fillsWorkArea, linuxMaximizeToggle, startBounds } from "../src/main/work-area"
 
 const posix = (...parts: string[]) => parts.join("/")
 const win = (...parts: string[]) => parts.join("\\")
@@ -173,6 +173,50 @@ export async function roundThirteenInstanceChecks(check: Check, section: (name: 
     check(
       "the comment no longer blames the shared flag for the skipped teardown",
       !/Sharing one flag meant an OS shutdown set it through session-end and then\s*\n\s*\* before-quit's first line returned/.test(main) && /Electron emits no before-quit/.test(main),
+    )
+  }
+
+  // ------------------------------------------------------------------ I13-7
+  section("Round 13 (I13-7, Linux): maximize fills the work area and is saved as maximized")
+  {
+    const area = { x: 0, y: 27, width: 1920, height: 1053 }
+    const sizes = { min: WINDOW_MIN, preferred: WINDOW_PREFERRED }
+    check("a window within 2 px of the work area's size fills it; 3 px short does not", fillsWorkArea({ x: 5, y: 30, width: 1918, height: 1051 }, area) && !fillsWorkArea({ x: 0, y: 27, width: 1917, height: 1053 }, area))
+    const normal = { x: 200, y: 150, width: 1100, height: 760 }
+    const up = linuxMaximizeToggle(normal, area, undefined, sizes)
+    check("maximizing a normal window sizes it to the work area", up.maximized && JSON.stringify(up.bounds) === JSON.stringify(area), up)
+    const down = linuxMaximizeToggle(area, area, normal, sizes)
+    check("toggling a filled window puts back the bounds it had", !down.maximized && JSON.stringify(down.bounds) === JSON.stringify(normal), down)
+    const fresh = linuxMaximizeToggle(area, area, undefined, sizes)
+    check("with nothing to go back to, the preferred size in the middle of the area", !fresh.maximized && fresh.bounds.width === 1340 && fresh.bounds.height === 880 && fresh.bounds.x === 290 && fresh.bounds.y === 114, fresh)
+    const again = linuxMaximizeToggle(area, area, { x: 0, y: 27, width: 1921, height: 1060 }, sizes)
+    check("saved bounds that would fill the area again give the preferred size instead", !again.maximized && again.bounds.width === 1340, again)
+    const tiny = linuxMaximizeToggle(area, area, { x: 40, y: 60, width: 300, height: 200 }, sizes)
+    check("saved bounds below the minimum are grown to it", tiny.bounds.width === WINDOW_MIN.width && tiny.bounds.height === WINDOW_MIN.height && tiny.bounds.x === 40, tiny)
+    const state = await fs.readFile(path.join(root, "src/main/window-state.ts"), "utf8")
+    const menu = await fs.readFile(path.join(root, "src/main/menu.ts"), "utf8")
+    const toggle = body(state, "export function toggleMaximize(window: BrowserWindow): void {")
+    const save = body(state, "export function saveWindowState(window: BrowserWindow): void {")
+    check(
+      "on Linux the toggle sets bounds from that rule; elsewhere it stays the native maximize",
+      /if \(process\.platform !== "linux"\) \{\s*if \(window\.isMaximized\(\)\) window\.unmaximize\(\)\s*else window\.maximize\(\)/.test(toggle) &&
+        /linuxMaximizeToggle\(current, area, beforeFill\.get\(window\) \?\? baselines\.get\(window\)/.test(toggle) &&
+        /window\.setBounds\(next\.bounds\)/.test(toggle),
+      toggle,
+    )
+    check(
+      "a window that fills its work area is saved as maximized, with the bounds it had before",
+      /const fills = fillsItsWorkArea\(window\)/.test(save) && /maximized: fills \|\| window\.isMaximized\(\)/.test(save) && /normalBounds: fills \? \(beforeFill\.get\(window\) \?\? baseline\)/.test(save) &&
+        /if \(process\.platform !== "linux"\) return false/.test(body(state, "function fillsItsWorkArea(window: BrowserWindow): boolean {")),
+    )
+    check(
+      "a window saved as maximized opens filling its display's work area on Linux",
+      /if \(saved\.maximized\) maximizeAtStart\(window, requested\)/.test(main) &&
+        /beforeFill\.set\(window, bounds\)\s*window\.setBounds\(screen\.getDisplayMatching\(bounds\)\.workArea\)/.test(body(state, "export function maximizeAtStart(window: BrowserWindow, bounds: Rectangle): void {")),
+    )
+    check(
+      "the title bar's toggle and the menu's both go through it",
+      /case "maximize":\s*return toggleMaximize\(window\)/.test(main) && /if \(window\) toggleMaximize\(window\)/.test(menu) && !/window\.unmaximize\(\)/.test(main + menu),
     )
   }
 }

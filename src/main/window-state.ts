@@ -1,9 +1,9 @@
 import fs from "node:fs"
 import path from "node:path"
 import { app, screen, type BrowserWindow, type Rectangle } from "electron"
-import { WINDOW_MIN, firstRunSize, readSavedWindow, windowStateToSave, type SavedWindow } from "./desktop-rules"
+import { WINDOW_MIN, WINDOW_PREFERRED, firstRunSize, readSavedWindow, windowStateToSave, type SavedWindow } from "./desktop-rules"
 import { writeAtomicSync } from "./atomic-write"
-import { startBounds } from "./work-area"
+import { fillsWorkArea, linuxMaximizeToggle, startBounds } from "./work-area"
 
 /**
  * Remembers where the window was and how big it was.
@@ -70,13 +70,15 @@ export function saveWindowState(window: BrowserWindow): void {
   if (window.isDestroyed()) return
   const baseline = baselines.get(window)
   if (!baseline) return
+  // On Linux a window that fills the work area is maximized (MiMo's); its normal bounds are the ones it had before.
+  const fills = fillsItsWorkArea(window)
   const state = windowStateToSave(
     {
       minimized: window.isMinimized(),
       fullScreen: window.isFullScreen(),
-      maximized: window.isMaximized(),
+      maximized: fills || window.isMaximized(),
       // The un-maximised geometry, which is what restoring needs.
-      normalBounds: window.getNormalBounds(),
+      normalBounds: fills ? (beforeFill.get(window) ?? baseline) : window.getNormalBounds(),
     },
     baseline,
   )
@@ -87,6 +89,45 @@ export function saveWindowState(window: BrowserWindow): void {
   } catch {
     // Losing the remembered size is not worth interrupting anything over.
   }
+}
+
+/*
+ * Linux, MiMo's way (I13-7): maximize sizes the window to its display's work
+ * area instead of asking the window manager. The bounds it had before are kept
+ * here, as the OS keeps normal bounds for a native maximize.
+ */
+const beforeFill = new WeakMap<BrowserWindow, Rectangle>()
+
+function fillsItsWorkArea(window: BrowserWindow): boolean {
+  if (process.platform !== "linux") return false
+  try {
+    const bounds = window.getBounds()
+    return fillsWorkArea(bounds, screen.getDisplayMatching(bounds).workArea)
+  } catch {
+    return false
+  }
+}
+
+/** The maximize toggle of the title bar and the menu. */
+export function toggleMaximize(window: BrowserWindow): void {
+  if (process.platform !== "linux") {
+    if (window.isMaximized()) window.unmaximize()
+    else window.maximize()
+    return
+  }
+  const current = window.getBounds()
+  const area = screen.getDisplayMatching(current).workArea
+  const next = linuxMaximizeToggle(current, area, beforeFill.get(window) ?? baselines.get(window), { min: MIN, preferred: WINDOW_PREFERRED })
+  if (next.maximized) beforeFill.set(window, current)
+  else beforeFill.delete(window)
+  window.setBounds(next.bounds)
+}
+
+/** A window saved as maximized opens that way; on Linux, filling the work area of the display its bounds are on. */
+export function maximizeAtStart(window: BrowserWindow, bounds: Rectangle): void {
+  if (process.platform !== "linux") return window.maximize()
+  beforeFill.set(window, bounds)
+  window.setBounds(screen.getDisplayMatching(bounds).workArea)
 }
 
 /**

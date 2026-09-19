@@ -79,7 +79,7 @@ import {
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
 import { fcitxEnvironment } from "./linux-ime"
 import { linuxIconSync } from "./linux-icon-sync"
-import { restore, saveWindowState, track } from "./window-state"
+import { maximizeAtStart, restore, saveWindowState, toggleMaximize, track } from "./window-state"
 import { keepWindowsOnScreen, repaintAfterWake } from "./displays"
 import { boundsOnShow, closeBounds } from "./work-area"
 import { HELPER_SWEEP_TIMEOUT_MS, createUpdater, helperSweep, staleInstallers, type AutoUpdaterLike, type UpdateState, type Updater } from "./updater"
@@ -703,9 +703,9 @@ function createWindow(show = true): BrowserWindow {
 
   // Maximise before the first paint, so the window does not appear at its
   // restored size and then jump.
-  if (saved.maximized) window.maximize()
   // getNormalBounds covers the first run, where the OS picked the position. MiMo saves as the last window goes.
   const requested = saved.x !== undefined && saved.y !== undefined ? ({ x: saved.x, y: saved.y, width: saved.width, height: saved.height } as Rectangle) : window.getNormalBounds()
+  if (saved.maximized) maximizeAtStart(window, requested)
   track(window, requested, () => ![...windows].some((entry) => entry !== window && !entry.isDestroyed()))
 
   // A pinch or Ctrl+wheel scales the page without going through applyZoom, so
@@ -1691,7 +1691,7 @@ app.whenReady().then(async () => {
       case "close":
         return window.close()
       case "maximize":
-        return window.isMaximized() ? window.unmaximize() : window.maximize()
+        return toggleMaximize(window)
     }
   })
 

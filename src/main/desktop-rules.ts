@@ -10,7 +10,7 @@
 /** MiMo's smallest window, which a remembered size is also held to. */
 export const WINDOW_MIN = { width: 720, height: 640 }
 /* MiMo's preferred first size, its ceiling, and the share of the work area it takes. */
-const PREFERRED = { width: 1340, height: 880 }
+export const WINDOW_PREFERRED = { width: 1340, height: 880 }
 const CEILING = { width: 1920, height: 1200 }
 const SHARE = 0.8
 
@@ -27,10 +27,10 @@ function firstSide(area: number, preferred: number, ceiling: number, minimum: nu
  * minimum.
  */
 export function firstRunSize(area: { width: number; height: number }): { width: number; height: number } {
-  if (!(area.width > 0) || !(area.height > 0)) return { ...PREFERRED }
+  if (!(area.width > 0) || !(area.height > 0)) return { ...WINDOW_PREFERRED }
   return {
-    width: firstSide(area.width, PREFERRED.width, CEILING.width, WINDOW_MIN.width),
-    height: firstSide(area.height, PREFERRED.height, CEILING.height, WINDOW_MIN.height),
+    width: firstSide(area.width, WINDOW_PREFERRED.width, CEILING.width, WINDOW_MIN.width),
+    height: firstSide(area.height, WINDOW_PREFERRED.height, CEILING.height, WINDOW_MIN.height),
   }
 }
 

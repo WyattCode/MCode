@@ -111,3 +111,42 @@ export function startBounds(saved: Box, areas: readonly Box[], min: { width: num
   }
   return clampToWorkAreas(sized, areas) ?? sized
 }
+
+/*
+ * MiMo's maximize on Linux (I13-7): the window is sized to the work area
+ * rather than handed to the window manager, whose maximize differs from one
+ * desktop to the next. A window counts as maximized when its size is within
+ * 2 px of the work area's, as MiMo measures it.
+ */
+const FILL_TOLERANCE = 2
+
+export function fillsWorkArea(bounds: Box, area: Box): boolean {
+  return Math.abs(bounds.width - area.width) <= FILL_TOLERANCE && Math.abs(bounds.height - area.height) <= FILL_TOLERANCE
+}
+
+/* The preferred size, no larger than the area, in the middle of it. */
+function centred(area: Box, preferred: { width: number; height: number }): Box {
+  const width = Math.min(preferred.width, area.width)
+  const height = Math.min(preferred.height, area.height)
+  return { x: Math.round(area.x + (area.width - width) / 2), y: Math.round(area.y + (area.height - height) / 2), width, height }
+}
+
+/**
+ * Where MiMo's Linux maximize toggle puts a window. One that fills the work
+ * area goes back to the saved bounds - held between the minimum and the area,
+ * or the preferred size in the middle of the area when nothing is saved or the
+ * saved bounds would fill it again. Any other window fills the work area.
+ */
+export function linuxMaximizeToggle(
+  current: Box,
+  area: Box,
+  saved: Box | undefined,
+  sizes: { min: { width: number; height: number }; preferred: { width: number; height: number } },
+): { bounds: Box; maximized: boolean } {
+  if (!fillsWorkArea(current, area)) return { bounds: { ...area }, maximized: true }
+  if (!saved) return { bounds: centred(area, sizes.preferred), maximized: false }
+  const width = Math.max(sizes.min.width, Math.min(Math.round(saved.width), area.width))
+  const height = Math.max(sizes.min.height, Math.min(Math.round(saved.height), area.height))
+  const back = { x: Math.round(saved.x), y: Math.round(saved.y), width, height }
+  return { bounds: fillsWorkArea(back, area) ? centred(area, sizes.preferred) : back, maximized: false }
+}
