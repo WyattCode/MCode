@@ -8,6 +8,11 @@ export function emptyUsage(): Usage {
   return { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }
 }
 
+/** Most recently touched first, as the side column reads, and by id where two tie - so a patched list and a fresh read agree. */
+function byRecent(a: SessionInfo, b: SessionInfo): number {
+  return b.updated - a.updated || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+}
+
 /** Runs `work` over every item, at most `limit` at a time. */
 export async function inParallel<T>(items: readonly T[], limit: number, work: (item: T, index: number) => Promise<void>): Promise<void> {
   let next = 0
@@ -191,12 +196,39 @@ export class SessionStore {
    * the search overlay called it on every keystroke.
    *
    * A message being written does not touch a record, so the cache survives a
-   * streaming turn; only create, update and delete drop it.
+   * streaming turn. Create, update and delete patch the one record in place
+   * (S13-4): dropping the cache instead meant every model step - its usage is
+   * a record write - cost the next reader a re-read of every record, 367 ms at
+   * two thousand conversations, and a bulk delete two of them per item.
    */
   private listing: Promise<SessionInfo[]> | undefined
 
   private forgetList(): void {
     this.listing = undefined
+  }
+
+  /**
+   * Puts one record's new state into the cached list, if there is one; a list
+   * still being read gets it once the read is done. `next` undefined removes it.
+   * Idempotent, so a read that already saw the change is left as it is.
+   */
+  private patchList(sessionID: string, next: SessionInfo | undefined): void {
+    if (!this.listing) return
+    const copy = next && structuredClone(next)
+    this.listing = this.listing.then((sessions) => {
+      const at = sessions.findIndex((session) => session.id === sessionID)
+      if (at >= 0) sessions.splice(at, 1)
+      if (copy) {
+        const into = sessions.findIndex((session) => byRecent(copy, session) < 0)
+        sessions.splice(into < 0 ? sessions.length : into, 0, copy)
+      }
+      return sessions
+    })
+    // A failed read is dropped for the next caller to try again, as `list` drops it.
+    const patched = this.listing
+    patched.catch(() => {
+      if (this.listing === patched) this.forgetList()
+    })
   }
 
   private infoKey(sessionID: string) {
@@ -260,7 +292,7 @@ export class SessionStore {
       usage: emptyUsage(),
     }
     await this.storage.write(this.infoKey(session.id), session)
-    this.forgetList()
+    this.patchList(session.id, session)
     this.bus.publish({ type: "session.updated", session })
     return session
   }
@@ -323,7 +355,8 @@ export class SessionStore {
     const ids = await this.storage.listDirectories("session")
     const sessions: SessionInfo[] = []
     const unreadable = new Set<string>()
-    for (const id of ids) {
+    // A few dozen records at a time rather than one after another (S13-4).
+    await inParallel(ids, 32, async (id) => {
       /*
        * One unreadable record must not cost the whole list.
        *
@@ -343,10 +376,9 @@ export class SessionStore {
           console.warn(`[sessions] ${this.storage.fileOf(this.infoKey(id))} could not be read (${read.corrupt}); the conversation is kept as it is and left out of the list`)
         }
       }
-    }
+    })
     this.unreadableIDs = unreadable
-    // Most recently touched first - matches how the sidebar is read.
-    return sessions.sort((a, b) => b.updated - a.updated)
+    return sessions.sort(byRecent)
   }
 
   /**
@@ -382,7 +414,7 @@ export class SessionStore {
     const session = await this.require(sessionID)
     const next = change(session)
     await this.storage.write(this.infoKey(sessionID), next)
-    this.forgetList()
+    this.patchList(sessionID, next)
     this.bus.publish({ type: "session.updated", session: next })
     return next
   }
@@ -634,7 +666,8 @@ export class SessionStore {
 
   async delete(sessionID: string): Promise<void> {
     await this.storage.removeDirectory(`session/${sessionID}`)
-    this.forgetList()
+    this.patchList(sessionID, undefined)
+    this.unreadableIDs.delete(sessionID)
     this.changed({ type: "session.removed", sessionID })
     this.bus.publish({ type: "session.deleted", sessionID })
   }

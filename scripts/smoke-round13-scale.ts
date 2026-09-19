@@ -276,6 +276,98 @@ export async function roundThirteenScaleChecks(check: Check, section: (name: str
       await live.stop()
       store.messages = original
     }
+
+    // ------------------------------------------------------------------ S13-4
+    section("Round 13 (S13-4): the conversation list is patched in place, and read in parallel when it has to be")
+    {
+      const data = path.join(root, "list", "storage")
+      const storage = new Storage(data)
+      // Counts record reads, and how many are in flight at once.
+      const read = storage.readOrCorrupt.bind(storage)
+      let reads = 0
+      let inFlight = 0
+      let widest = 0
+      storage.readOrCorrupt = async <T>(key: string) => {
+        reads++
+        widest = Math.max(widest, ++inFlight)
+        try {
+          return await read<T>(key)
+        } finally {
+          inFlight--
+        }
+      }
+      const store = new SessionStore(storage, new Bus())
+      const model = { provider: "p", model: "m" }
+      const at = Date.now() - 10 * DAY
+      for (let s = 0; s < 1000; s++) await store.create({ directory: root, model, title: `c${s}`, created: at + s, updated: at + s - (s % 2) })
+      const fresh = async () => new SessionStore(new Storage(data), new Bus()).list()
+      const same = async (label: string) => {
+        const expected = JSON.stringify(await fresh())
+        reads = 0
+        const listed = JSON.stringify(await store.list())
+        check(label, reads === 0 && listed === expected, { reads, same: listed === expected })
+      }
+
+      reads = 0
+      widest = 0
+      const coldStarted = performance.now()
+      const cold = await new SessionStore(storage, new Bus()).list()
+      const coldMs = performance.now() - coldStarted
+      check("a cold list reads its records a few dozen at a time, not one after another", cold.length === 1000 && reads === 1000 && widest > 1 && widest <= 32, { reads, widest, coldMs: Math.round(coldMs) })
+      check("records that tie on time are listed by id, the same way every time", cold.every((session, i) => i === 0 || cold[i - 1].updated > session.updated || (cold[i - 1].updated === session.updated && cold[i - 1].id < session.id)))
+
+      await store.list()
+      const target = cold[500]
+      await store.addUsage(target.id, { input: 1, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 })
+      await same("after a step's usage the list is not read again, and is what a fresh read gives")
+      await store.addUsage(target.id, { input: 1, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 })
+      const stepStarted = performance.now()
+      await store.list()
+      const stepMs = performance.now() - stepStarted
+      check("and it moves the conversation to the top", (await store.list())[0].id === target.id)
+      await store.update(cold[10].id, { title: "renamed" })
+      await same("after a rename, too")
+      await store.setAccess(cold[20].id, "full")
+      await same("after a change that does not move it up the list")
+      await store.stamp(cold[30].id, { updated: at - DAY })
+      await same("after an import stamps it with an older time")
+      const made = await store.create({ directory: root, model })
+      await same("after a new conversation")
+      await store.delete(made.id)
+      await store.delete(cold[40].id)
+      await same("after deletes")
+
+      // What a caller holds is its own.
+      const held = await store.list()
+      held[0].title = "changed by a caller"
+      const returned = await store.update(cold[50].id, { title: "mine" })
+      returned.title = "changed again by a caller"
+      await same("a caller editing what it was given does not edit the list")
+
+      // A list being read while a record is written still ends up with the write.
+      const racingStorage = new Storage(path.join(root, "racing", "storage"))
+      for (let s = 0; s < 50; s++) await new SessionStore(racingStorage, new Bus()).create({ directory: root, model })
+      const racing = new SessionStore(racingStorage, new Bus())
+      const pending = racing.list()
+      const born = await racing.create({ directory: root, model, title: "born during a read" })
+      const seen = await pending
+      const after = await racing.list()
+      check("a conversation made while the list was being read is in the next listing", after.some((session) => session.id === born.id) && after.length === seen.length + (seen.some((session) => session.id === born.id) ? 0 : 1))
+
+      // The delete handler's pattern - list for children, delete, list what remains - over 100 conversations.
+      const victims = (await store.list()).slice(-100).map((session) => session.id)
+      reads = 0
+      const deleteStarted = performance.now()
+      for (const id of victims) {
+        for (const child of await store.list()) if (child.parentID === id) await store.delete(child.id)
+        await store.delete(id)
+        await store.list()
+      }
+      const deleteMs = performance.now() - deleteStarted
+      check("deleting 100 conversations reads no record list again", reads === 0 && (await store.list()).length === 900 - 1, { reads, left: (await store.list()).length })
+      await same("and leaves the list a fresh read gives")
+      console.log(`    (1000 conversations: cold list ${Math.round(coldMs)} ms, list after a step ${stepMs.toFixed(1)} ms, 100 deletes ${Math.round(deleteMs)} ms)`)
+    }
   } finally {
     await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
   }
