@@ -1206,9 +1206,14 @@ app.whenReady().then(async () => {
    *
    * electron-updater is loaded on first use, the way MiMo loads it, so a
    * library that fails to load costs updates and nothing else.
+   *
+   * Not on macOS: mac auto-update was declined (M10-8), and on an unsigned app
+   * Squirrel.Mac would refuse every download it made. There the updater is
+   * never loaded and a check says no feed is configured.
    */
   const updateFeed = () => process.env.MCODE_UPDATE_URL?.trim() || backend?.runtime.config.get().updateFeed || ""
-  const updaterReady: Promise<Updater | undefined> = import("electron-updater")
+  const autoUpdates = process.platform !== "darwin"
+  const updaterReady: Promise<Updater | undefined> = (autoUpdates ? import("electron-updater") : Promise.reject(new Error("macOS has no automatic updates")))
     .then((loaded) => {
       const autoUpdater = (loaded as { autoUpdater?: unknown; default?: { autoUpdater?: unknown } }).autoUpdater ?? (loaded as { default?: { autoUpdater?: unknown } }).default?.autoUpdater
       if (!autoUpdater) throw new Error("electron-updater has no autoUpdater")
@@ -1228,12 +1233,14 @@ app.whenReady().then(async () => {
         },
         log: (line) => console.info(line),
       })
+      liveUpdater = created
+      if (osQuitting) created.holdInstallOnQuit()
       created.start()
       app.on("before-quit", () => created.stop())
       return created
     })
     .catch((error: unknown) => {
-      console.warn("[update] electron-updater did not load; updates are off for this run", error)
+      if (autoUpdates) console.warn("[update] electron-updater did not load; updates are off for this run", error)
       return undefined
     })
   const idleUpdate: UpdateState = { phase: "idle", ready: null }
@@ -1253,6 +1260,7 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle("mcode:update-check", async () => {
     const updater = await updaterReady
+    if (!updater && !autoUpdates) return { ...idleUpdate, outcome: "no-feed" }
     if (!updater) return { ...idleUpdate, outcome: "failed", during: "check", error: "the updater is not available" }
     return updater.checkNow()
   })
@@ -1781,9 +1789,23 @@ let closing = false
 /** Either kind of going away, for the close rule and the wake repaint. */
 const leaving = () => osQuitting || closing
 
-/** The OS is taking the app away; the last window must not hide to the tray. */
+/*
+ * The updater, once electron-updater has loaded; noteOsQuit needs it
+ * synchronously, before the quit it announces reaches electron-updater's own
+ * quit handler.
+ */
+let liveUpdater: Updater | undefined
+
+/**
+ * The OS is taking the app away; the last window must not hide to the tray,
+ * and a downloaded update must not start installing while Windows ends the
+ * session (it could be killed halfway and leave no MCode.exe). MiMo never
+ * quits there at all; MCode quits to run its teardown, so it holds the
+ * install instead, and the update installs on the next ordinary quit.
+ */
 function noteOsQuit(): void {
   osQuitting = true
+  liveUpdater?.holdInstallOnQuit()
   beginIntentionalQuit()
 }
 

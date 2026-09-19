@@ -51,7 +51,7 @@ async function cappedBytes(response: Response, limit: number): Promise<Uint8Arra
   return body
 }
 
-/** Answers one proxy request; `fetcher` is the network (the global fetch in the app). */
+/** Answers one proxy request; `fetcher` is the network (Chromium's, chromium-fetch.ts, in the app). */
 export async function serveCover(requestUrl: string, method: string, fetcher: CoverFetch, timeoutMs = TIMEOUT_MS): Promise<Response> {
   const asked = coverRequest(requestUrl, method)
   if (!asked.ok) return refuse(asked.status)

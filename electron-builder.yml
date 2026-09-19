@@ -26,6 +26,12 @@ files:
   - out/preload/**/*
   - out/renderer/**/*
   - package.json
+  # Nothing in the runtime dependencies loads these: source maps, TypeScript
+  # sources and declarations (mostly @anthropic-ai/sdk's), and markdown other
+  # than a licence. electron-builder applies only these exclusions to
+  # node_modules; its own defaults already drop top-level READMEs and changelogs.
+  - "!**/node_modules/**/*.{map,ts,mts,cts}"
+  - "!**/node_modules/**/!(LICENSE|LICENCE|License|Licence|license|licence).md"
 # The backend runs in the main process, so only its runtime deps ship.
 # node-pty is the one native dependency. Its .node binaries, and the
 # OpenConsole.exe that conpty launches, cannot be loaded from inside an asar,
@@ -88,10 +94,10 @@ publish:
   url: https://updates.invalid/mcode/
 
 mac:
+  # No zip: it is only what electron-updater would replace the app from, and
+  # macOS has no automatic updates (M10-8).
   target:
     - dmg
-    # electron-updater replaces a macOS app from the zip (and needs the app signed).
-    - zip
   icon: build/icon.icns
   category: public.app-category.developer-tools
   # The Dock's cut of each colourway (scripts/icons.mjs), on Apple's icon grid.

@@ -14,7 +14,8 @@
  *  - every file must carry the sha512 electron-updater verifies the download
  *    against; a feed without one offers nothing (N9-2);
  *  - a newer installer downloads in the background (differentially when the
- *    folder has block maps) and the capsule says it is ready;
+ *    folder has block maps), is copied over the cache's installer.exe as the
+ *    next differential base, and the capsule says it is ready;
  *  - installing runs the installer silently with --updated and relaunches the
  *    app afterwards; an install under Program Files runs it with its window so
  *    Windows can ask for elevation (N9-3). The caller starts it only once the
@@ -23,6 +24,8 @@
  * Nothing here imports Electron: the caller passes electron-updater's
  * autoUpdater (or a fake), so smoke drives the schedule and the rules.
  */
+import fs from "node:fs/promises"
+import path from "node:path"
 
 export type UpdatePhase = "idle" | "checking" | "downloading" | "ready"
 
@@ -64,6 +67,8 @@ export interface FeedInfo {
   sha512?: string
   /** MiMo's explicit rollback declaration, written into latest.yml by hand. */
   rollback?: unknown
+  /** The oldest OS release the version runs on, read by electron-updater's own check. */
+  minimumSystemVersion?: string
 }
 
 /** The part of electron-updater's AppUpdater this module uses. */
@@ -159,6 +164,41 @@ export interface Updater {
   readyVersion(): string | undefined
   /** Runs the downloaded installer (see the module notes); false when nothing is ready. */
   install(execPath: string): boolean
+  /**
+   * The OS is ending the session: a downloaded update must not start
+   * installing on this quit, where Windows may kill the installer halfway.
+   * It stays in the cache and installs on the next ordinary quit.
+   */
+  holdInstallOnQuit(): void
+}
+
+/*
+ * electron-builder's name for the installer a differential download is built
+ * against, kept in the updater cache's root (the downloads go to `pending`).
+ */
+const INSTALLER_BASE = "installer.exe"
+
+/**
+ * MiMo's re-sync once a download completes: the new installer is copied over
+ * the cache's `installer.exe`. electron-updater has just put the new version's
+ * `current.blockmap` there, so without this a newer release arriving before
+ * the pending one is installed would plan its differential download against
+ * the wrong base, fail the sha512 and fetch the whole installer again. Only a
+ * Windows installer in a `pending` folder is copied; a failure is only logged.
+ */
+export async function resyncInstallerBase(downloaded: string | undefined, log: (line: string) => void): Promise<boolean> {
+  if (!downloaded || !/\.exe$/i.test(downloaded) || path.basename(path.dirname(downloaded)) !== "pending") return false
+  const target = path.join(path.dirname(path.dirname(downloaded)), INSTALLER_BASE)
+  const staged = `${target}.tmp`
+  try {
+    await fs.copyFile(downloaded, staged)
+    await fs.rename(staged, target)
+    return true
+  } catch (error) {
+    await fs.rm(staged, { force: true }).catch(() => undefined)
+    log(`[update] ${INSTALLER_BASE} was not re-synced: ${(error as Error).message}`)
+    return false
+  }
 }
 
 export function createUpdater(deps: UpdaterDeps): Updater {
@@ -194,7 +234,18 @@ export function createUpdater(deps: UpdaterDeps): Updater {
    * recent rollback - and every entry without a sha512.
    */
   updater.allowDowngrade = true
-  updater.isUpdateSupported = (info) => {
+  /*
+   * The library's own check runs first: it refuses a version whose feed names
+   * a `minimumSystemVersion` above this OS release. That is not a failure,
+   * just an update this machine cannot take, so the check stays "current".
+   */
+  const supportedHere = updater.isUpdateSupported
+  updater.isUpdateSupported = async (info) => {
+    refused = undefined
+    if (!(await supportedHere.call(updater, info))) {
+      deps.log(`[update] ${info.version} needs a newer system (${info.minimumSystemVersion ?? "its minimumSystemVersion"})`)
+      return false
+    }
     refused = refusal(info, deps.currentVersion, now())
     return refused === undefined
   }
@@ -237,7 +288,8 @@ export function createUpdater(deps: UpdaterDeps): Updater {
       during = "download"
       move("downloading")
       if (!checked.downloadPromise) throw new Error("the download did not start")
-      await checked.downloadPromise
+      const downloaded = await checked.downloadPromise
+      await resyncInstallerBase(downloaded?.[0], deps.log)
       ready = { version, notes: notesOf(checked.updateInfo) }
       deps.log(`[update] ${version} is ready to install`)
       move("ready")
@@ -274,6 +326,11 @@ export function createUpdater(deps: UpdaterDeps): Updater {
       // --updated, /S when silent, and --force-run so the new version opens once it is in place.
       updater.quitAndInstall(silent, true)
       return true
+    },
+    holdInstallOnQuit() {
+      // electron-updater reads the flag in its quit handler, so this holds even after the download.
+      updater.autoInstallOnAppQuit = false
+      if (ready) deps.log(`[update] the OS is ending the session; ${ready.version} installs on the next quit`)
     },
   }
 }
