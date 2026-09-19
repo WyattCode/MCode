@@ -75,6 +75,22 @@ export async function roundTwelveFailureChecks(check: Check, section: (name: str
         inTables("searchOverlay.messageError"),
     )
   }
+
+  // ---------------------------------------------------------------- C12-6
+  {
+    const page = await read("src/renderer/src/components/PluginsView.vue")
+    const loadSkills = page.slice(page.indexOf("async function loadSkills("), page.indexOf("\n}\n", page.indexOf("async function loadSkills(")))
+    const refresh = page.slice(page.indexOf("async function refresh("), page.indexOf("\n}\n", page.indexOf("async function refresh(")))
+    check("C12-6: a skill list that cannot be read rejects instead of emptying the list", !/\.catch\(/.test(loadSkills) && !/\?\? \[\]/.test(loadSkills) && /skills\.value = listed\.skills/.test(loadSkills), loadSkills)
+    check("C12-6: both halves are read side by side, and a failed half is noted", /Promise\.allSettled\(\[app\.client\?\.request\(\{ type: "mcp\.list" \}\), loadSkills\(\)\]\)/.test(page) && /listFailed\.value = failure !== undefined/.test(page))
+    check(
+      "C12-6: a failed list shows its failure line with Retry, not 'Nothing installed yet'",
+      /<p v-if="loaded && listFailed"[^>]*>\s*<span>\{\{ t\("plugins\.listUnavailable"\) \}\}<\/span>\s*<button class="retry" @click="retryLists">/.test(page) &&
+        /<p v-else-if="loaded && !shown\.length" class="empty">/.test(page) &&
+        inTables("plugins.listUnavailable"),
+    )
+    check("C12-6: Refresh says it failed when either half failed", /if \(failure === undefined\) notify\(t\("plugins\.refreshed"\)\)\s+else notifyFailure\(t\("plugins\.refreshFailed", \{ error: failure \}\)\)/.test(refresh), refresh)
+  }
 }
 
 /** A port nothing listens on yet. */
