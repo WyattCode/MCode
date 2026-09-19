@@ -91,7 +91,8 @@ export async function roundTwelveFailureChecks(check: Check, section: (name: str
     check(
       "C12-6: a failed list shows its failure line with Retry, not 'Nothing installed yet'",
       /<p v-if="loaded && listFailed"[^>]*>\s*<span>\{\{ t\("plugins\.listUnavailable"\) \}\}<\/span>\s*<button class="retry" @click="retryLists">/.test(page) &&
-        /<p v-else-if="loaded && !shown\.length" class="empty">/.test(page) &&
+        /<p v-if="loaded && !listFailed && !shown\.length" class="empty">/.test(page) &&
+        page.indexOf("data-plugins-failed") < page.indexOf('class="cards"') &&
         inTables("plugins.listUnavailable"),
     )
     check("C12-6: Refresh says it failed when either half failed", /if \(failure === undefined\) notify\(t\("plugins\.refreshed"\)\)\s+else notifyFailure\(t\("plugins\.refreshFailed", \{ error: failure \}\)\)/.test(refresh), refresh)

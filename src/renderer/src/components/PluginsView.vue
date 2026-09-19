@@ -374,6 +374,14 @@ function pickFilter(key: string) {
         <button class="manage" @click="emit('manage')">{{ t("plugins.manage") }}</button>
       </div>
 
+      <!--
+        A list that could not be read is said, with Retry, rather than read as
+        nothing installed - above what the other half did bring back, where it is seen.
+      -->
+      <p v-if="loaded && listFailed" class="empty failed" data-plugins-failed>
+        <span>{{ t("plugins.listUnavailable") }}</span>
+        <button class="retry" @click="retryLists">{{ t("common.retry") }}</button>
+      </p>
       <div v-if="shown.length" class="cards">
         <div
           v-for="entry in shown"
@@ -444,12 +452,7 @@ function pickFilter(key: string) {
         </div>
       </div>
 
-      <!-- A list that could not be read is said, with Retry, rather than read as nothing installed. -->
-      <p v-if="loaded && listFailed" class="empty failed" data-plugins-failed>
-        <span>{{ t("plugins.listUnavailable") }}</span>
-        <button class="retry" @click="retryLists">{{ t("common.retry") }}</button>
-      </p>
-      <p v-else-if="loaded && !shown.length" class="empty">{{ entries.length ? t("plugins.noMatch") : t("plugins.none") }}</p>
+      <p v-if="loaded && !listFailed && !shown.length" class="empty">{{ entries.length ? t("plugins.noMatch") : t("plugins.none") }}</p>
     </div>
     <ContextMenu
       v-if="filterMenu"
