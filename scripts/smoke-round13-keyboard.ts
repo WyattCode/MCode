@@ -337,6 +337,12 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
       /<MessageStream v-else ref="stream" @click="onThreadClick" \/>/.test(app) && /if \(window\.getSelection\(\)\?\.toString\(\)\) return/.test(click) && /closest\?\.\(THREAD_CONTROLS\)\) return\n\s+composer\.value\?\.focus\(\)/.test(click),
     )
   }
+
+  // ---------------------------------------------------------------- K13-15
+  {
+    const importer = await component("ImportDialog")
+    check("K13-15: the import dialog closes on Escape, as every MiMo dialog but the image preview does", /useEscapeLayer\(\(\) => emit\("close"\)\)/.test(importer))
+  }
 }
 
 /*
