@@ -15,6 +15,9 @@ import { Bus } from "../src/server/bus"
 import { Storage } from "../src/server/storage"
 import { SessionStore } from "../src/server/session/store"
 import { ARTIFACT_LIST_LIMIT, ArtifactStore, INLINE_RECONCILE } from "../src/server/artifact/store"
+import { startHistory, stopHistory } from "../src/server/history/service"
+import { UNINDEXED_SCAN } from "../src/server/history/index"
+import { searchMessages } from "../src/server/search"
 
 const MODEL = { provider: "anthropic", model: "claude-opus-5" } as const
 
@@ -232,6 +235,86 @@ export async function roundThirteenArtifactChecks(check: Check, section: (name: 
     check(
       "S13-3: the search overlay asks for fifty files and more as its results are scrolled",
       /type: "artifact\.list", query: needle, limit: RECENT \}/.test(overlay) && /limit: RECENT, cursor \}/.test(overlay) && /@scroll\.passive="onResultsScroll"/.test(overlay),
+    )
+  }
+
+  // ------------------------------------------------------------------ S13-5
+  section("Round 13 (S13-5): conversation search is usable while the index catches up after a launch")
+  {
+    const data = path.join(root, "history")
+    const storage = new Storage(path.join(data, "storage"))
+    const bus = new Bus()
+    const store = new SessionStore(storage, bus)
+    const directory = path.join(root, "history-project")
+    await fs.mkdir(directory, { recursive: true })
+    const asked = (sessionID: string, id: string, text: string) =>
+      store.saveMessage({ id, sessionID, role: "user", text, attachments: [], time: { created: 1000 } } as never, true)
+
+    // Twelve conversations last touched a minute ago, written well before they are indexed.
+    const past = Date.now() - 60_000
+    const old: string[] = []
+    for (let n = 0; n < 12; n++) {
+      const session = await store.create({ directory, model: MODEL, title: `Old ${n}`, created: past, updated: past })
+      old.push(session.id)
+      await asked(session.id, `msg_${n}a`, `kiwiword number ${n}`)
+      await asked(session.id, `msg_${n}b`, "nothing to see here")
+      await fs.utimes(storage.folder(`session/${session.id}/message`), past / 1000, past / 1000)
+    }
+    let service = (await startHistory(data, store, storage, bus))!
+    await until(() => !service.index.building)
+    const stamps = async () =>
+      new Map((await service.database.db.all<{ session_id: string; indexed_at: number }>("SELECT session_id, indexed_at FROM history_session")).map((row) => [row.session_id, row.indexed_at]))
+    const firstStamps = await stamps()
+    await stopHistory(service)
+
+    // Written while the app was closed: one message added to one conversation.
+    await asked(old[4]!, "msg_4c", "a late moaword")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    service = (await startHistory(data, store, storage, bus))!
+    await until(() => !service.index.building)
+    const secondStamps = await stamps()
+    const untouched = old.filter((id) => id !== old[4])
+    check(
+      "S13-5: a conversation unchanged since it was indexed is not looked into again at launch",
+      untouched.every((id) => secondStamps.get(id) === firstStamps.get(id)) && secondStamps.get(old[4]!)! > firstStamps.get(old[4]!)!,
+      untouched.map((id) => [firstStamps.get(id), secondStamps.get(id)]),
+    )
+    check(
+      "S13-5: while one written since is, and what was written is found",
+      (await service.index.search({ query: "moaword" })).length === 1 && (await service.index.search({ query: "kiwiword", limit: 50 })).length === 12,
+    )
+
+    // Conversations the index has never seen, as after an upgrade: made where its watch cannot see them.
+    const unseen: string[] = []
+    const elsewhere = new SessionStore(storage, new Bus())
+    for (let n = 0; n < 30; n++) {
+      const session = await elsewhere.create({ directory, model: MODEL, title: `New ${n}` })
+      unseen.push(session.id)
+      await elsewhere.saveMessage({ id: `msg_n${n}`, sessionID: session.id, role: "user", text: n === 29 ? "the emuterm is here" : "plain words", attachments: [], time: { created: 2000 } } as never, true)
+    }
+    // A fresh store's list, which reads every record: the index's own store has its list cached.
+    const sessions = await elsewhere.list()
+    service.index.building = true
+    const catching = await service.index.candidates("kiwiword", sessions)
+    const reachedFirst = catching.filter((id) => unseen.includes(id))
+    check(
+      "S13-5: while catching up, a search names what the index holds plus the newest few it has not reached",
+      catching.filter((id) => old.includes(id)).length === 12 && reachedFirst.length === UNINDEXED_SCAN && reachedFirst.includes(unseen[29]!),
+      { indexed: catching.filter((id) => old.includes(id)).length, unseen: reachedFirst.length },
+    )
+    const found = await searchMessages(sessions, (id) => store.messages(id), "emuterm", 50, (query) => service.index.candidates(query, sessions))
+    check("S13-5: and a conversation not yet indexed is still found by what was said in it", found.length === 1 && found[0]!.sessionID === unseen[29], found)
+    service.index.building = false
+    const settled = await service.index.candidates("kiwiword", sessions)
+    check("S13-5: once caught up, only the index names them", settled.length === 12 && settled.every((id) => old.includes(id)), settled.length)
+    await stopHistory(service)
+
+    const handlers = await read("src/server/handlers.ts")
+    const searchCase = handlers.slice(handlers.indexOf('case "search.messages"'), handlers.indexOf('case "session.get"'))
+    check(
+      "S13-5: the overlay's search goes through the index even while it is building",
+      /history\.index\.candidates\(query, sessions\)/.test(searchCase) && !/building\) return undefined/.test(searchCase),
+      searchCase.slice(0, 500),
     )
   }
 

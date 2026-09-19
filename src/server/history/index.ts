@@ -31,6 +31,12 @@ const SETTLE_MS = 400
 /** Slack on file times when deciding whether a message changed after it was indexed. */
 const MTIME_SLACK_MS = 1500
 
+/** How many sessions' folders the start-up comparison asks about at once. */
+const CHECK_PARALLEL = 16
+
+/** While the index catches up, how many never-indexed conversations a search reads directly, newest first. */
+export const UNINDEXED_SCAN = 20
+
 /**
  * Bumped when what is indexed changes, so an index from before is filled again.
  * 2: projects are named by repository (memory/project-id.ts), and compaction
@@ -70,6 +76,8 @@ export class HistoryIndex {
   private readonly projects = new Map<string, string>()
   /** Which compaction summary each session last had indexed, so an unchanged one is not written again. */
   private readonly summaries = new Map<string, string>()
+  /** The sessions the index holds, so a search while it catches up knows which it has not reached (S13-5). */
+  private readonly indexedSessions = new Set<string>()
   private unwatch: (() => void) | undefined
   private unsubscribe: (() => void) | undefined
   private closed = false
@@ -134,6 +142,7 @@ export class HistoryIndex {
     }
     for (const row of await this.db.all<{ session_id: string; project: string }>("SELECT session_id, project FROM history_session")) {
       this.projects.set(row.session_id, row.project)
+      this.indexedSessions.add(row.session_id)
     }
     this.unwatch = this.store.watch((change) => this.onChange(change))
     this.unsubscribe = this.bus.subscribe((event) => {
@@ -204,6 +213,7 @@ async close(): Promise<void> {
   private forgetSession(sessionID: string): Promise<unknown> {
     this.projects.delete(sessionID)
     this.summaries.delete(sessionID)
+    this.indexedSessions.delete(sessionID)
     return this.queue(() =>
       this.database.transaction(async (tx) => {
         await tx.run("DELETE FROM history_part WHERE session_id = ?", sessionID)
@@ -271,8 +281,8 @@ async close(): Promise<void> {
     return this.queue(() => this.writeNow(sessionID, project, messages, stamp, replaceSession))
   }
 
-  private writeNow(sessionID: string, project: string, messages: Message[], stamp: number, replaceSession = false): Promise<unknown> {
-    return this.database.transaction(async (tx) => {
+  private async writeNow(sessionID: string, project: string, messages: Message[], stamp: number, replaceSession = false): Promise<void> {
+    await this.database.transaction(async (tx) => {
       if (replaceSession) await tx.run("DELETE FROM history_part WHERE session_id = ?", sessionID)
       for (const message of messages) {
         // A message written again keeps the compaction summary filed under it; that row follows the session, not the message.
@@ -298,22 +308,37 @@ async close(): Promise<void> {
         stamp,
       )
     })
+    this.indexedSessions.add(sessionID)
   }
 
   /**
    * Brings the index level with the store: sessions it has never seen are
    * indexed whole, messages whose file changed after the session was last
    * indexed are indexed again, and anything no longer on disk is dropped.
-   * One session at a time, yielding between them, so a first run over a long
-   * history does not hold up the app.
+   * One session at a time, newest first, yielding between them, so a first run
+   * over a long history does not hold up the app.
+   *
+   * A session unchanged since it was indexed is not looked into at all
+   * (S13-5). Its record was not written since (so neither its project nor its
+   * compaction summary moved), and its message folder was not either: every
+   * save creates its temp file in that folder and renames it into place, so
+   * the folder's own time moves with every message written or removed. One
+   * stat per session, a few at a time, instead of one per message file.
    */
   private async reconcile(): Promise<void> {
     const indexed = new Map((await this.db.all<{ session_id: string; indexed_at: number }>("SELECT session_id, indexed_at FROM history_session")).map((row) => [row.session_id, row.indexed_at]))
     const sessions = await this.store.list()
     const onDisk = new Set(sessions.map((session) => session.id))
     for (const sessionID of indexed.keys()) if (!onDisk.has(sessionID) && !this.closed) await this.forgetSession(sessionID)
+    const unchanged = await this.unchanged(sessions, indexed)
     for (const session of sessions) {
       if (this.closed) return
+      if (unchanged.has(session.id)) {
+        this.projects.set(session.id, projectMemoryID(session.directory))
+        // Its summary was written when it was indexed, and has not moved since.
+        if (!this.summaries.has(session.id)) this.summaries.set(session.id, summaryStamp(session))
+        continue
+      }
       const started = Date.now()
       const since = indexed.get(session.id)
       const ids = await this.storage.list(`session/${session.id}/message`)
@@ -348,6 +373,49 @@ async close(): Promise<void> {
       if (this.summaries.get(session.id) !== summaryStamp(session)) await this.writeSummary(session, projectMemoryID(session.directory))
       await new Promise((resolve) => setImmediate(resolve))
     }
+  }
+
+  /** The indexed sessions whose record and message folder are both older than their indexing, asked a few at a time. */
+  private async unchanged(sessions: readonly SessionInfo[], indexed: ReadonlyMap<string, number>): Promise<Set<string>> {
+    const quiet = sessions.filter((session) => {
+      const since = indexed.get(session.id)
+      return since !== undefined && session.updated < since - MTIME_SLACK_MS
+    })
+    const found = new Set<string>()
+    let next = 0
+    const worker = async () => {
+      while (next < quiet.length && !this.closed) {
+        const session = quiet[next++]!
+        const since = indexed.get(session.id)!
+        const folder = await fs.stat(this.storage.folder(`session/${session.id}/message`)).catch(() => undefined)
+        // No folder is no messages: the index has none for it either, unless the folder went, which a walk finds.
+        if (folder && folder.mtimeMs < since - MTIME_SLACK_MS) found.add(session.id)
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(CHECK_PARALLEL, quiet.length) }, worker))
+    return found
+  }
+
+  /**
+   * The conversations worth reading for a search of `query` (N11-5, S13-5).
+   *
+   * The index names them. While it is still catching up after a launch it
+   * names what it has - every conversation indexed before, plus whatever was
+   * written since - and the newest few it has never seen are added to be read
+   * directly, so a search right after launch is answered in about the time a
+   * settled one is rather than by reading hundreds of transcripts.
+   */
+  async candidates(query: string, sessions: readonly SessionInfo[]): Promise<string[]> {
+    const found = new Set((await this.search({ query, limit: SEARCH_HARD_CAP })).map((hit) => hit.session_id))
+    if (!this.building) return [...found]
+    let unseen = 0
+    for (const session of sessions) {
+      if (unseen >= UNINDEXED_SCAN) break
+      if (session.archived || session.sideOf || session.parentID || this.indexedSessions.has(session.id)) continue
+      found.add(session.id)
+      unseen += 1
+    }
+    return [...found]
   }
 
   async search(input: HistorySearch): Promise<HistoryHit[]> {

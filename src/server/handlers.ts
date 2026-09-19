@@ -33,7 +33,6 @@ import { discoverModels } from "./provider/discover"
 import { blankProjectDirectory, scratchDirectory, scratchRoot } from "./scratch"
 import { searchMessages } from "./search"
 import { historyService } from "./history/service"
-import { SEARCH_HARD_CAP } from "./history/index"
 import { workspaceInfo } from "./workspace"
 import { systemPrompt } from "./session/prompt"
 import * as git from "./git"
@@ -450,16 +449,12 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * The full-text index the backend already keeps names the conversations
        * worth reading (N11-5). It was serving only the model's `history` tool;
        * the overlay read every message of every conversation instead, once per
-       * keystroke. While the index is still being filled it says so, and the
-       * search falls back to a capped scan.
+       * keystroke. While it is still catching up after a launch it answers
+       * from what it holds, with the newest few it has not reached read
+       * directly (S13-5); only without an index is the search a capped scan.
        */
       const history = historyService()
-      const narrow = async (query: string): Promise<readonly string[] | undefined> => {
-        if (!history || history.index.building) return undefined
-        const found = new Set<string>()
-        for (const hit of await history.index.search({ query, limit: SEARCH_HARD_CAP })) found.add(hit.session_id)
-        return [...found]
-      }
+      const narrow = history ? (query: string) => history.index.candidates(query, sessions) : undefined
       const hits = await searchMessages(sessions, (id) => runtime.sessions.messages(id), request.query, limit, narrow)
       return { hits } satisfies Handled<"search.messages">
     }
