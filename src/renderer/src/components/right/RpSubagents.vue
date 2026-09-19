@@ -70,7 +70,7 @@ async function load() {
   const id = detail.value?.sessionID
   if (!id) return
   if (!app.sideMessagesOf(id).length) loadState.value = "loading"
-  const ok = await app.loadSubagent(id)
+  const ok = await app.loadSide(id)
   if (detail.value?.sessionID !== id) return
   loadState.value = ok ? "ready" : "error"
   if (!ok) retry = setTimeout(() => void load(), 2000)

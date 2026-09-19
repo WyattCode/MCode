@@ -107,6 +107,20 @@ export async function roundTwelveFailureChecks(check: Check, section: (name: str
       flush,
     )
   }
+
+  // ---------------------------------------------------------------- C12-8
+  {
+    const chat = await read("src/renderer/src/components/right/RpChat.vue")
+    const loadSide = store.slice(store.indexOf("async function loadSide("), store.indexOf("\n  }\n", store.indexOf("async function loadSide(")))
+    check("C12-8: reading a side conversation reports whether it could", /Promise<boolean>/.test(loadSide) && /if \(!result\) return false/.test(loadSide) && /return true\s*$/.test(loadSide), loadSide)
+    check(
+      "C12-8: the side chat shows loading, then the failure, and tries again every 2 s",
+      /const ok = await app\.loadSide\(id\)/.test(chat) &&
+        /if \(!ok\) retry = setTimeout\(\(\) => void load\(\), 2000\)/.test(chat) &&
+        /loadState\.value === "loading" \? t\("stream\.loadingConvo"\) : loadState\.value === "error" \? t\("subagentDetail\.error"\) : t\("rp\.chat\.empty"\)/.test(chat) &&
+        /onBeforeUnmount\(\(\) => clearTimeout\(retry\)\)/.test(chat),
+    )
+  }
 }
 
 /** A port nothing listens on yet. */

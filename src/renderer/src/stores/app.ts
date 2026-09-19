@@ -2121,21 +2121,19 @@ export const useApp = defineStore("app", () => {
   /**
    * Reads a side conversation that already exists into its own transcript,
    * once: after that its events keep it current whether or not it is on show.
+   * False when it could not be read, so the side chat and the 子智能体 tab can
+   * say so and try again.
    */
-  async function loadSide(sessionID: string) {
-    if (sideTranscripts.value[sessionID]) return
+  async function loadSide(sessionID: string): Promise<boolean> {
+    if (sideTranscripts.value[sessionID]) return true
     const result = await api().request({ type: "session.get", sessionID }).catch(() => undefined)
-    if (!result || sideTranscripts.value[sessionID]) return
+    if (sideTranscripts.value[sessionID]) return true
+    if (!result) return false
     sidePartIndexes.delete(sessionID)
     const read = result.messages.map(readLegacyMessage)
     read.forEach((message) => sideReindex(sessionID, message))
     sideTranscripts.value = { ...sideTranscripts.value, [sessionID]: read }
-  }
-
-  /** subagents: reads a subagent's transcript, for the 子智能体 tab; false when it could not be read. */
-  async function loadSubagent(sessionID: string): Promise<boolean> {
-    await loadSide(sessionID)
-    return Boolean(sideTranscripts.value[sessionID])
+    return true
   }
 
   /**
@@ -2260,7 +2258,6 @@ export const useApp = defineStore("app", () => {
     // subagents
     subagentSessions,
     rootOf,
-    loadSubagent,
     subtask,
     sideMessages,
     sideBusy,
