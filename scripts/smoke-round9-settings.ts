@@ -358,4 +358,31 @@ async function settingsChecks(check: Check, section: (name: string) => void): Pr
       await backend.close()
     }
   }
+
+  section("Models page: a card holding a sentence keeps the rows' spacing")
+  {
+    /*
+     * The empty "no custom models yet" card wrote `padding: 18px 16px`, but the
+     * `.card` rules further down the same file set `padding: 0 17px` for the
+     * cards made of rows and, reading later, won: measured in the window, the
+     * sentence sat 0px from the card's top edge and 1px from its bottom, while
+     * the config-file card beside it had its usual 16. The rule is written
+     * against `.card` as well now, so it keeps winning.
+     */
+    const dialog = await fsp.readFile("src/renderer/src/components/SettingsDialog.vue", "utf8")
+    const rule = (selector: string) => {
+      const at = dialog.indexOf(`\n${selector} {`)
+      return at === -1 ? "" : dialog.slice(at, dialog.indexOf("}", at))
+    }
+    const padding = (selector: string) => /padding:\s*([^;]+);/.exec(rule(selector))?.[1]?.trim()
+    const vertical = (value?: string) => value?.split(/\s+/)[0]
+    const horizontal = (value?: string) => value?.split(/\s+/)[1]
+    const rows = dialog.lastIndexOf("\n.line {")
+    const rowPadding = /padding:\s*([^;]+);/.exec(dialog.slice(rows, dialog.indexOf("}", rows)))?.[1]?.trim()
+    const cards = dialog.lastIndexOf("\n.card {")
+    const cardPadding = /padding:\s*([^;]+);/.exec(dialog.slice(cards, dialog.indexOf("}", cards)))?.[1]?.trim()
+    check("the empty card is written against .card, so the row cards' padding cannot flatten it", padding(".card.empty-card") !== undefined && padding(".empty-card") === undefined, { plain: padding(".empty-card"), both: padding(".card.empty-card") })
+    check("and it holds the sentence at the rows' 16 above and below, 17 aside", vertical(padding(".card.empty-card")) === vertical(rowPadding) && horizontal(padding(".card.empty-card")) === horizontal(cardPadding), { empty: padding(".card.empty-card"), row: rowPadding, card: cardPadding })
+  }
+
 }

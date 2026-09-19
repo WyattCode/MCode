@@ -4897,8 +4897,16 @@ h3 {
   white-space: nowrap;
 }
 
-.empty-card {
-  padding: 18px 16px;
+/*
+ * A card holding a sentence instead of rows still sits on the rows' rhythm:
+ * 16 above and below, 17 aside, as `.line` inside `.card` gives every other
+ * card on this page. Written against `.card` as well, because the `.card`
+ * rules further down set `padding: 0 17px` for the row cards and, reading
+ * later, used to flatten this one's padding to nothing - the sentence then
+ * touched the card's top and bottom edges.
+ */
+.card.empty-card {
+  padding: 16px 17px;
 }
 
 .empty-title {
