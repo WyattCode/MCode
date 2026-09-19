@@ -421,7 +421,7 @@ export async function storageChecks(check: Check, section: (name: string) => voi
       reportSources.map((source) => source.sessionID).join() === [two.id, one.id].join(),
       reportSources,
     )
-    const listed = (await artifacts?.list()) ?? []
+    const listed = (await artifacts?.list())?.artifacts ?? []
     const files = listed.flatMap((group) => group.files)
     const report = files.find((file) => file.path === "report.md")
     const helper = files.find((file) => file.path === "helper.ts")
@@ -437,8 +437,15 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     /* Availability is re-checked rather than believed: the record of writing a file says nothing about now. */
     await fs.rm(path.join(directory, "helper.ts"), { force: true })
     await artifacts?.recheck()
-    const gone = ((await artifacts?.list()) ?? []).flatMap((group) => group.files).find((file) => file.path === "helper.ts")
-    check("a file deleted since is found missing on the next check", gone?.exists === false, gone)
+    const gone = ((await artifacts?.list())?.artifacts ?? []).flatMap((group) => group.files).find((file) => file.path === "helper.ts")
+    check("a file deleted since is found missing on the next check, and left out of the listing", gone === undefined && (await artifacts?.count()) === 2, gone)
+    // Put back, the next full check finds it again, although a listing would not ask about a missing file for a while.
+    await fs.writeFile(path.join(directory, "helper.ts"), "export {}", "utf8")
+    await artifacts?.recheck()
+    check(
+      "S13-3: a file that comes back is found by the next full check",
+      ((await artifacts?.list())?.artifacts ?? []).some((group) => group.files.some((file) => file.path === "helper.ts" && file.exists)),
+    )
 
     /* A file written after the first pass is there at the next listing, without a restart. */
     await fs.writeFile(path.join(directory, "later-notes.md"), "# later", "utf8")
@@ -446,7 +453,7 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     await artifacts?.reconcile(await store.list(), (id) => store.messages(id))
     check(
       "round 9: a file written since the last pass is picked up by the next one",
-      ((await artifacts?.list()) ?? []).some((group) => group.files.some((file) => file.path === "later-notes.md")),
+      ((await artifacts?.list())?.artifacts ?? []).some((group) => group.files.some((file) => file.path === "later-notes.md")),
     )
 
     /*
@@ -469,7 +476,7 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     )
     check(
       "round 9: and the file is shown under the writer that still exists",
-      ((await artifacts?.list()) ?? []).find((group) => group.files.some((file) => file.path === "report.md"))?.sessionID === one.id,
+      ((await artifacts?.list())?.artifacts ?? []).find((group) => group.files.some((file) => file.path === "report.md"))?.sessionID === one.id,
     )
     // A pass that started before the deletion still has the conversation and its messages in hand.
     await artifacts?.reconcile(beforeDelete, (id) => (id === two.id ? Promise.resolve(twoMessages) : store.messages(id)))
@@ -477,7 +484,7 @@ export async function storageChecks(check: Check, section: (name: string) => voi
 
     await artifacts?.detach(one.id)
     await store.delete(one.id)
-    const after = (await artifacts?.list()) ?? []
+    const after = (await artifacts?.list())?.artifacts ?? []
     const survived = after.flatMap((group) => group.files).find((file) => file.path === "helper.ts")
     check("a deleted conversation's files are still held", (await artifacts?.count()) === 3 && Boolean(survived), await artifacts?.count())
     check("under the title that conversation had", after.some((group) => group.title === "First conversation" && group.sessionID === ""), after.map((group) => [group.title, group.sessionID]))
@@ -497,7 +504,7 @@ export async function storageChecks(check: Check, section: (name: string) => voi
      * three characters or more, a substring test below that; NFC and case do
      * not matter.
      */
-    const names = async (query: string) => ((await artifacts?.list(query)) ?? []).flatMap((group) => group.files.map((file) => file.path)).sort()
+    const names = async (query: string) => ((await artifacts?.list({ query }))?.artifacts ?? []).flatMap((group) => group.files.map((file) => file.path)).sort()
     const reportNames = await names("report")
     check("the store can be searched by file name", reportNames.join() === "report.md", reportNames)
     const trigram = [await names("ORT.M"), await names("ter-no")]
@@ -529,12 +536,15 @@ export async function storageChecks(check: Check, section: (name: string) => voi
         "INSERT INTO artifact (identity_key, session_id, session_title, directory, path, absolute, role, kind, produced_at, updated_at, availability) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available')",
       )
       const oldDir = path.join(root, "old-project")
+      await fs.mkdir(oldDir, { recursive: true })
+      await fs.writeFile(path.join(oldDir, "kept.md"), "# kept", "utf8")
+      await fs.writeFile(path.join(oldDir, "orphan.pptx"), "", "utf8")
       add.run(path.join(oldDir, "kept.md").toLowerCase(), "ses_live", "Live one", oldDir, "kept.md", path.join(oldDir, "kept.md"), "deliverable", "doc", 5, 5)
       add.run(path.join(oldDir, "orphan.pptx").toLowerCase(), "", "Gone one", oldDir, "orphan.pptx", path.join(oldDir, "orphan.pptx"), "deliverable", "doc", 6, 6)
       raw.close()
     }
     const migrated = await ArtifactStore.open(oldFile)
-    const oldNames = async (query: string) => ((await migrated?.list(query)) ?? []).flatMap((group) => group.files.map((file) => file.path))
+    const oldNames = async (query: string) => ((await migrated?.list({ query }))?.artifacts ?? []).flatMap((group) => group.files.map((file) => file.path))
     check("round 9: a version-1 store opens writable and keeps every row", migrated?.writable === true && (await migrated?.count()) === 2, await migrated?.count())
     const keptSources = (await migrated?.sourcesOf(path.join(root, "old-project", "kept.md"))) ?? []
     const orphanSources = (await migrated?.sourcesOf(path.join(root, "old-project", "orphan.pptx"))) ?? []
@@ -545,7 +555,7 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     check("round 9: and the old rows are searchable through the new index", (await oldNames("orphan")).join() === "orphan.pptx" && (await oldNames("kept")).join() === "kept.md")
     check(
       "round 9: the old rows are still grouped as before",
-      ((await migrated?.list()) ?? []).some((group) => group.sessionID === "" && group.title === "Gone one"),
+      ((await migrated?.list())?.artifacts ?? []).some((group) => group.sessionID === "" && group.title === "Gone one"),
     )
     await migrated?.close()
     const reopened = await ArtifactStore.open(oldFile)

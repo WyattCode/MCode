@@ -24,6 +24,9 @@ const query = ref("")
 const field = ref<HTMLInputElement>()
 const hits = ref<MessageHit[]>([])
 const artifacts = ref<SessionArtifacts[]>([])
+/* Where the next page of matching files starts, and how many pages are in (S13-3). */
+const artifactCursor = ref<string>()
+const artifactPages = ref(1)
 /*
  * The artifact search is the one part of this search that can fail, and MiMo
  * drives 正在搜索产物… and 产物搜索暂不可用 from it: conversations and projects
@@ -157,7 +160,8 @@ const items = computed<Item[]>(() => {
       })
     }
   }
-  return found.sort((a, b) => b.score - a.score || b.time - a.time).slice(0, RECENT)
+  // Fifty, as MiMo caps them, and fifty more for each further page of files scrolled to.
+  return found.sort((a, b) => b.score - a.score || b.time - a.time).slice(0, RECENT * artifactPages.value)
 })
 
 const ORDER: Kind[] = ["convo", "project", "artifact"]
@@ -213,12 +217,14 @@ function runSearch(needle: string) {
       }
     })()
     void (async () => {
-      // The files conversations wrote whose names match, and MiMo's 重试 when that cannot be had.
+      // The files conversations wrote whose names match, fifty as MiMo asks for, and MiMo's 重试 when that cannot be had.
       try {
-        const result = await app.client?.request({ type: "artifact.list", query: needle })
+        const result = await app.client?.request({ type: "artifact.list", query: needle, limit: RECENT })
         if (!result) throw new Error("not connected")
         if (run !== generation) return
         artifacts.value = result.artifacts
+        artifactCursor.value = result.nextCursor
+        artifactPages.value = 1
         artifactStatus.value = "ready"
       } catch {
         if (run !== generation) return
@@ -229,9 +235,42 @@ function runSearch(needle: string) {
   }, 150)
 }
 
+/*
+ * The next fifty matching files, when the results are scrolled to their end
+ * (S13-3): the server answers a page at a time, and the list grows by what
+ * came back.
+ */
+let loadingArtifacts = false
+async function moreArtifacts() {
+  const cursor = artifactCursor.value
+  const needle = query.value.trim()
+  if (loadingArtifacts || !cursor || !needle) return
+  const run = generation
+  loadingArtifacts = true
+  try {
+    const result = await app.client?.request({ type: "artifact.list", query: needle, limit: RECENT, cursor })
+    if (!result || run !== generation) return
+    artifacts.value = [...artifacts.value, ...result.artifacts]
+    artifactCursor.value = result.nextCursor
+    artifactPages.value += 1
+  } catch {
+    // What is shown stays; the end of the list is asked for again on the next scroll.
+  } finally {
+    loadingArtifacts = false
+  }
+}
+
+const LOAD_AHEAD_PX = 120
+function onResultsScroll(event: Event) {
+  const pane = event.target as HTMLElement
+  if (pane.scrollTop + pane.clientHeight >= pane.scrollHeight - LOAD_AHEAD_PX) void moreArtifacts()
+}
+
 function search() {
   if (timer) clearTimeout(timer)
   const needle = query.value.trim()
+  artifactCursor.value = undefined
+  artifactPages.value = 1
   if (!needle) {
     generation += 1
     hits.value = []
@@ -294,7 +333,7 @@ defineExpose({ close })
           @keydown="onKeydown"
         />
       </div>
-      <div class="search-results">
+      <div class="search-results" @scroll.passive="onResultsScroll">
         <div v-if="messageFailed" class="sr-artifact-error" data-search-error="messages">
           <span>{{ t("searchOverlay.messageError") }}</span>
           <button type="button" @click="search">{{ t("searchOverlay.retry") }}</button>

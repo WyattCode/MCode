@@ -12,7 +12,7 @@ import { Permissions } from "./permission"
 import { SessionStore } from "./session/store"
 import { migrateCheckpoints } from "./session/checkpoint-migrate"
 import { CHECKPOINT_PACK_EVERY_MS, CHECKPOINT_PACK_FIRST_MS } from "./session/snapshot"
-import { ArtifactStore } from "./artifact/store"
+import { ARTIFACT_SETTLE_MS, ArtifactStore } from "./artifact/store"
 import { readStorageLayout } from "./storage-layout"
 import { projectDirectoriesOf } from "@shared/projects"
 import { SessionRunner } from "./session/runner"
@@ -119,10 +119,26 @@ export async function startBackend(dataDirectory: string, options: BackendOption
    */
   // Produced files, kept in a store of their own so they outlive their conversations.
   const artifacts = await ArtifactStore.open(path.join(dataDirectory, "storage", "artifacts.db"))
-  // A written or removed message may change what its conversation produced; the next listing reads it again.
+  /*
+   * A written or removed message may change what its conversation produced.
+   * The conversation is marked, and read again once its writes have paused -
+   * MiMo's reconcile when a conversation settles (S13-3) - so a listing
+   * seldom has anything left to read first.
+   */
+  let settleArtifacts: ReturnType<typeof setTimeout> | undefined
   const unwatchArtifacts = sessions.watch((change) => {
-    if (change.type === "message") artifacts?.touched(change.message.sessionID)
-    else if (change.type === "message.removed") artifacts?.touched(change.sessionID)
+    if (change.type !== "message" && change.type !== "message.removed") return
+    artifacts?.touched(change.type === "message" ? change.message.sessionID : change.sessionID)
+    if (!artifacts) return
+    if (settleArtifacts) clearTimeout(settleArtifacts)
+    settleArtifacts = setTimeout(() => {
+      settleArtifacts = undefined
+      void sessions
+        .list()
+        .then((listed) => artifacts.reconcile(listed, (id) => sessions.messages(id)))
+        .catch(() => undefined)
+    }, ARTIFACT_SETTLE_MS)
+    settleArtifacts.unref?.()
   })
   void (async () => {
     try {
@@ -154,7 +170,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
         (await pruneQuarantined(dataDirectory))
       if (pruned) console.info(`[storage] removed ${pruned} quarantined file(s) older than 30 days`)
       // Brings the store up to date with the transcripts and re-checks what is still on disk.
-      await artifacts?.reconcile(await sessions.list(), (id) => sessions.messages(id))
+      await artifacts?.reconcile(await sessions.list(), (id) => sessions.messages(id), { recheck: true })
     } catch {
       // Housekeeping must never be the reason the app fails to open.
     }
@@ -390,6 +406,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       await stopHistory(history)
       watchSkillProblems(undefined)
       unwatchArtifacts()
+      if (settleArtifacts) clearTimeout(settleArtifacts)
       await artifacts?.close()
       for (const client of clients) client.terminate()
       await new Promise<void>((resolve) => server.close(() => resolve()))

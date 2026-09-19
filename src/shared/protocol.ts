@@ -302,6 +302,14 @@ export interface SessionArtifacts {
   files: ArtifactFile[]
 }
 
+/** How many files each of the artifacts page's tabs holds - MiMo's facets. */
+export interface ArtifactFacets {
+  total: number
+  doc: number
+  app: number
+  other: number
+}
+
 import type { FileNotice } from "./file-notices"
 
 export interface UserMessage {
@@ -1825,11 +1833,13 @@ export interface ModelInfo {
 export type Request =
   | { type: "session.list" }
   /*
-   * Every file every stored session has written, for the artifacts page and
-   * the search overlay. `query` narrows it to files whose name matches, as
-   * MiMo's artifact search does.
+   * The files stored sessions have written, for the artifacts page and the
+   * search overlay, newest first. `query` narrows it to files whose name
+   * matches, as MiMo's artifact search does, and `category` to one tab. A page
+   * holds at most `limit` files (50, MiMo's size); the next one is asked for
+   * with the `nextCursor` the last answer gave.
    */
-  | { type: "artifact.list"; query?: string }
+  | { type: "artifact.list"; query?: string; category?: "doc" | "app" | "other"; cursor?: string; limit?: number }
   /*
    * A conversation as a file, and back again - MiMo's `mimo export` / `mimo
    * import` pair, over this app's own documents. The Markdown export is a
@@ -2184,7 +2194,12 @@ export interface ResponseMap {
      */
     retries: Record<string, { messageID: string; attempt: number; message: string; next: number; kind?: string; max?: number }>
   }
-  "artifact.list": { artifacts: SessionArtifacts[] }
+  /**
+   * One page, grouped by conversation. `nextCursor` is absent on the last page;
+   * `facets` counts every file the search matches, whatever the tab; `building`
+   * says the store is still being filled, so the answer may be missing files.
+   */
+  "artifact.list": { artifacts: SessionArtifacts[]; nextCursor?: string; facets?: ArtifactFacets; building?: boolean }
   /** The document and the name to suggest for it; the window puts up the save dialog. */
   "session.exportFile": { name: string; text: string }
   /**
