@@ -257,4 +257,17 @@ export async function roundFourteenPackagingChecks(check: Check, section: (name:
     const mac = /\nmac:\n([\s\S]*?)\n\S/.exec(builder)?.[1] ?? ""
     check("and the mac build no longer makes the zip only an updater would use", /target:\s*\n\s*- dmg/.test(mac) && !/^\s*- zip\s*$/m.test(mac), mac.slice(0, 300))
   }
+
+  // ------------------------------------------------------------------ P14-8
+  section("Round 14 (P14-8): npm's install-script allowlist names the Electron actually used")
+  {
+    const pkg = JSON.parse(await read("package.json")) as { devDependencies: Record<string, string>; allowScripts?: Record<string, boolean> }
+    const pinned = pkg.devDependencies.electron
+    const entries = Object.keys(pkg.allowScripts ?? {}).filter((key) => key === "electron" || key.startsWith("electron@"))
+    check(
+      "the one electron entry is the pinned version, so its install script (the binary download) may run",
+      /^\d+\.\d+\.\d+$/.test(pinned) && entries.length === 1 && entries[0] === `electron@${pinned}` && pkg.allowScripts?.[entries[0]] === true,
+      { pinned, entries },
+    )
+  }
 }
