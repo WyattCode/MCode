@@ -14,6 +14,7 @@ import {
   type MediaMeta,
   type MediaPlatform,
 } from "@shared/media-platform"
+import { chromiumFetch } from "./chromium-fetch"
 import { serveCover } from "./media-cover"
 
 /**
@@ -26,7 +27,8 @@ import { serveCover } from "./media-cover"
  * Open Graph tags. Only links `parsePlatformLink` already accepted are ever
  * fetched. A card itself opens its video in the panel's browser, as MiMo's does.
  * Its cover is an address on MiMo's cover proxy (media-cover.ts), never the
- * picture's own address.
+ * picture's own address. Every request here goes through Chromium's network
+ * (chromium-fetch.ts), as MiMo's do, so a system proxy or PAC file applies.
  */
 
 const AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
@@ -55,6 +57,20 @@ async function cappedText(response: Response, limit: number): Promise<string> {
   return text
 }
 
+/* Where a short link lands. Chromium's answer names no final address, so the hops are read one at a time. */
+export async function landing(short: string, signal: AbortSignal): Promise<ReturnType<typeof parseBilibili>> {
+  let at = short
+  for (let hop = 0; hop < 5; hop += 1) {
+    const response = await chromiumFetch(at, { method: "HEAD", headers: BILIBILI_HEADERS, redirect: "manual", signal }).catch(() => undefined)
+    const location = response && response.status >= 300 && response.status < 400 ? response.headers.get("location") : null
+    if (!location) return undefined
+    at = new URL(location, at).href
+    const target = parseBilibili(at)
+    if (target && !("short" in target.id)) return target
+  }
+  return undefined
+}
+
 async function bilibili(url: string, signal: AbortSignal): Promise<MediaMeta | null> {
   const link = parseBilibili(url)
   if (!link) return null
@@ -63,21 +79,18 @@ async function bilibili(url: string, signal: AbortSignal): Promise<MediaMeta | n
   else if ("aid" in link.id) query = `aid=${link.id.aid}`
   else {
     // A b23.tv short link is followed to the video it stands for.
-    const landed = await fetch(link.id.short, { method: "HEAD", headers: BILIBILI_HEADERS, redirect: "follow", signal })
-      .then((response) => response.url)
-      .catch(() => "")
-    const target = parseBilibili(landed)
+    const target = await landing(link.id.short, signal)
     if (target && "bvid" in target.id) query = `bvid=${encodeURIComponent(target.id.bvid)}`
     else if (target && "aid" in target.id) query = `aid=${target.id.aid}`
     else return null
   }
-  const response = await fetch(`https://api.bilibili.com/x/web-interface/view?${query}`, { headers: BILIBILI_HEADERS, signal })
+  const response = await chromiumFetch(`https://api.bilibili.com/x/web-interface/view?${query}`, { headers: BILIBILI_HEADERS, signal })
   if (response.status !== 200) return null
   return bilibiliMeta(await response.json(), link.url) ?? null
 }
 
 async function youtube(url: string, signal: AbortSignal): Promise<MediaMeta | null> {
-  const response = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`, { headers: { "user-agent": AGENT }, signal })
+  const response = await chromiumFetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`, { headers: { "user-agent": AGENT }, signal })
   if (response.status !== 200) return null
   const meta = oembedMeta(await response.json())
   if (!meta.title || !coverAddress(meta.image)) return null
@@ -88,7 +101,7 @@ async function youtube(url: string, signal: AbortSignal): Promise<MediaMeta | nu
 async function external(platform: MediaPlatform, url: string, signal: AbortSignal): Promise<MediaMeta> {
   const blank: MediaMeta = { kind: "video", platform, url, title: "", coverUrl: "", aspect: "16:9" }
   try {
-    const response = await fetch(url, { headers: { "user-agent": AGENT }, redirect: "follow", signal })
+    const response = await chromiumFetch(url, { headers: { "user-agent": AGENT }, redirect: "follow", signal })
     if (response.status !== 200) return blank
     const meta = pageMeta(await cappedText(response, PAGE_LIMIT))
     const title = meta.titleFromOg && meta.title ? meta.title : ""
@@ -152,9 +165,9 @@ export function registerMediaEmbeds(detailsOn: () => boolean): void {
   /*
    * The covers, on the window's own session only. The browser panel's
    * partition has no such scheme, so a page there cannot use the app to fetch
-   * with a platform's referer. The global fetch is looked up per request.
+   * with a platform's referer.
    */
   session.defaultSession.protocol.handle(COVER_SCHEME, (request) =>
-    detailsOn() ? serveCover(request.url, request.method, (url, init) => fetch(url, init)) : new Response(null, { status: 404 }),
+    detailsOn() ? serveCover(request.url, request.method, chromiumFetch) : new Response(null, { status: 404 }),
   )
 }

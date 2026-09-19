@@ -330,6 +330,7 @@ import { roundThirteenArtifactChecks } from "./smoke-round13-artifacts"
 import { roundThirteenInstanceChecks } from "./smoke-round13-instances"
 // Round 13, lane K: keyboard and focus paths (K13-1 onwards).
 import { roundThirteenKeyboardChecks } from "./smoke-round13-keyboard"
+import { roundFourteenPackagingChecks } from "./smoke-round14-packaging"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -6957,6 +6958,7 @@ async function main() {
   await roundThirteenArtifactChecks(check, section)
   await roundThirteenInstanceChecks(check, section)
   await roundThirteenKeyboardChecks(check, section)
+  await roundFourteenPackagingChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
