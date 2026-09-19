@@ -12,6 +12,9 @@ import os from "node:os"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { startBackend } from "../src/server/index"
+import { Bus } from "../src/server/bus"
+import { Config } from "../src/server/config"
+import { Storage } from "../src/server/storage"
 
 const scratch: string[] = []
 
@@ -68,5 +71,37 @@ async function checks(check: Check, section: (name: string) => void): Promise<vo
       await (backend as Awaited<ReturnType<typeof startBackend>>).close()
     }
     check("and it is left exactly as it was", (await fs.readFile(file, "utf8")) === text)
+  }
+
+  section("Round 12 (L12-5): a value this build does not know is replaced in memory, never on disk")
+  {
+    const dir = await profile("sanitize")
+    const storage = new Storage(path.join(dir, "storage"))
+    const credentials = path.join(dir, "credentials.json")
+    // A first load writes the document with every load-time migration recorded.
+    await new Config(storage, new Bus(), credentials).load()
+    const file = storage.fileOf("config")
+    const text = (await fs.readFile(file, "utf8")).replace('"theme": "system"', '"theme": "neon-future"')
+    check("the seeded document names a theme from a later build", text.includes('"theme": "neon-future"'))
+    await fs.writeFile(file, text)
+    const config = new Config(storage, new Bus(), credentials)
+    await config.load()
+    check("the app runs on the default theme", config.get().theme === "system", config.get().theme)
+    check("and the file is byte for byte what it was", (await fs.readFile(file, "utf8")) === text)
+
+    await config.set({ uiFontSize: 16 })
+    const afterOther = await fs.readFile(file, "utf8")
+    check("a save of another setting keeps the stored theme", afterOther.includes('"theme": "neon-future"') && afterOther.includes('"uiFontSize": 16'))
+    await config.set({ theme: "system" })
+    check("choosing a theme writes the choice, even the default", (await fs.readFile(file, "utf8")).includes('"theme": "system"'))
+
+    // A migration that has to write still leaves an unknown value alone.
+    const unmigrated = JSON.parse(text) as Record<string, unknown>
+    delete unmigrated.migrations
+    await fs.writeFile(file, JSON.stringify(unmigrated, null, 2))
+    const migrated = new Config(storage, new Bus(), credentials)
+    await migrated.load()
+    const written = JSON.parse(await fs.readFile(file, "utf8")) as Record<string, unknown>
+    check("a load that migrates writes the migrations but not the checked theme", Array.isArray(written.migrations) && written.theme === "neon-future" && migrated.get().theme === "system", written.theme)
   }
 }

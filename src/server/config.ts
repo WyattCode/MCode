@@ -225,6 +225,32 @@ function dropRetired(document: object): boolean {
   return dropped
 }
 
+/** A stored value the checks replaced as it was read, and what it was replaced with. */
+interface HeldValue {
+  stored: unknown
+  read: unknown
+}
+
+/**
+ * Checks `doc` as `sanitizeConfig` does, and answers the stored values that
+ * changed on the way in (L12-5).
+ *
+ * The checks are for this process: a value this build does not know - a
+ * newer build's theme, app icon or effort level - is the default here, but it
+ * is the newer build's value on disk and stays there. Writing the checked copy
+ * back meant that opening an older build once replaced it for good.
+ */
+function sanitizeHeld(doc: AppConfig, stored: Partial<AppConfig> | undefined): Map<string, HeldValue> {
+  const before = { ...doc } as Record<string, unknown>
+  sanitizeConfig(doc, defaults())
+  const after = doc as unknown as Record<string, unknown>
+  const held = new Map<string, HeldValue>()
+  for (const [key, value] of Object.entries(stored ?? {})) {
+    if (!Object.is(before[key], after[key])) held.set(key, { stored: value, read: after[key] })
+  }
+  return held
+}
+
 /**
  * The permission map MiMo's three levels leave behind, at `level`.
  *
@@ -600,8 +626,8 @@ export class Config {
     this.fromNewerVersion = typeof stored?.schemaVersion === "number" && stored.schemaVersion > CONFIG_SCHEMA_VERSION
     this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
     const retired = dropRetired(this.current)
-    // Before the migrations, which read these values as the types they claim to be.
-    const cleaned = sanitizeConfig(this.current, defaults())
+    // Before the migrations, which read these values as the types they claim to be; in memory only.
+    this.held = sanitizeHeld(this.current, stored)
     /*
      * A first install - no config on disk at all - starts where MiMo's does:
      * 帮我审批, with full access allowed. The user chose these (2026-09-15). Only
@@ -613,7 +639,7 @@ export class Config {
     if (stored === undefined && !read.corrupt) Object.assign(this.current, firstInstall())
     const migrated = this.migrate()
     this.current.autoApprove = allowed(this.current.permissions)
-    if ((migrated || retired || cleaned) && !this.fromNewerVersion) await this.persist()
+    if ((migrated || retired) && !this.fromNewerVersion) await this.persist()
     this.discovered = await this.readDiscovered()
     try {
       const raw = JSON.parse(await fs.readFile(this.credentialFile, "utf8"))
@@ -696,13 +722,29 @@ export class Config {
   /** Writes the settings key by key into the file as it stands, refusing one that no longer parses. */
   private persist(): Promise<void> {
     const file = this.storage.fileOf("config")
-    const value = this.current
+    const value = this.asStored(this.current)
     return this.storage.writeText("config", (current) => {
       const text = renderJsonc(file, current, value)
       this.written.push(text)
       if (this.written.length > 16) this.written.shift()
       return text
     })
+  }
+
+  /**
+   * Stored values the checks replaced as they were read, kept for the file
+   * (L12-5); a field leaves this once something sets it.
+   */
+  private held = new Map<string, HeldValue>()
+
+  /** The settings as the file should say them: a replaced value nobody has changed since is written as it was stored. */
+  private asStored(current: AppConfig): AppConfig {
+    if (!this.held.size) return current
+    const out = { ...current } as Record<string, unknown>
+    for (const [key, entry] of this.held) {
+      if (JSON.stringify(out[key]) === JSON.stringify(entry.read)) out[key] = entry.stored
+    }
+    return out as unknown as AppConfig
   }
 
   /** The last credential write, so two of them cannot interleave. */
@@ -800,13 +842,14 @@ export class Config {
     this.fromNewerVersion = typeof stored.schemaVersion === "number" && stored.schemaVersion > CONFIG_SCHEMA_VERSION
     let next: AppConfig = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
     dropRetired(next)
-    sanitizeConfig(next, defaults())
+    const held = sanitizeHeld(next, stored)
     // As set keeps it: a custom provider taken out of the file is disabled, not lost.
     if (JSON.stringify(next.customProviders) !== JSON.stringify(before.customProviders)) {
       next = { ...next, ...customProviderWrite(before.customProviders, next) }
     }
     next.autoApprove = allowed(next.permissions)
     this.current = next
+    this.held = held
     this.bus.publish({ type: "config.updated", config: this.current })
     for (const listener of this.reloadListeners) await Promise.resolve(listener(before, next)).catch(() => undefined)
   }
@@ -827,11 +870,13 @@ export class Config {
 
   private async setNow(patch: Partial<AppConfig>): Promise<AppConfig> {
     const previous = this.current
+    const held = new Map(this.held)
     try {
       return await this.apply(patch)
     } catch (err) {
       // A save that could not be written leaves the settings as they were, so memory never runs ahead of the file.
       this.current = previous
+      this.held = held
       throw err
     }
   }
@@ -841,6 +886,8 @@ export class Config {
     const providersBefore = this.current.customProviders
     const projectsBefore = { projects: this.current.projects, closedProjects: this.current.closedProjects }
     this.current = { ...this.current, ...patch }
+    // A value set now is the one to write, even where it equals what a stored one was read as.
+    for (const key of Object.keys(patch)) this.held.delete(key)
     dropRetired(this.current)
     if (patch.customProviders) {
       this.current = { ...this.current, ...customProviderWrite(providersBefore, this.current) }
