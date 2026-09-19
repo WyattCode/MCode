@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Round 13 (lane S): what the backend does with a lot of data - a diff of a
  * very large file, the usage page over thousands of conversations, and the
  * conversation list kept current instead of re-read (S13-1 onwards). Kept apart
@@ -8,8 +8,46 @@
  * Everything here runs in temporary folders of its own. Nothing reads the
  * user's profile, calls a model or reaches the network.
  */
+import fs from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
 import type { Check } from "./smoke-round5"
+import type { Runtime } from "../src/server/index"
+import type { Request, UsageSummary } from "../src/shared/protocol"
 import { DIFF_EDIT_LIMIT, unifiedDiff } from "../src/server/diff"
+import { Storage } from "../src/server/storage"
+import { Bus } from "../src/server/bus"
+import { SessionStore } from "../src/server/session/store"
+import { UsageDays } from "../src/server/session/usage-days"
+import { BackgroundUsage } from "../src/server/session/background-usage"
+import { summarizeUsage, type UsageRecord } from "../src/server/usage-summary"
+import { handle } from "../src/server/handlers"
+
+const DAY = 24 * 60 * 60 * 1000
+
+/** The usage page's figures the way they were found before S13-2: every message of every conversation. */
+async function scannedSummary(store: SessionStore, background: BackgroundUsage, days: number, now: number): Promise<UsageSummary> {
+  const records: UsageRecord[] = []
+  for (const session of await store.list()) {
+    for (const message of await store.messages(session.id)) {
+      if (message.role !== "assistant" || !message.usage) continue
+      records.push({ at: message.time.created, model: message.model, usage: message.usage, turn: true })
+    }
+  }
+  for (const entry of await background.list()) records.push({ at: entry.at, model: entry.model, usage: entry.usage, turn: false })
+  return summarizeUsage(records, days, now)
+}
+
+/** Two summaries alike: every count exact, money to within rounding of the order it was added in. */
+function sameSummary(a: UsageSummary, b: UsageSummary): boolean {
+  const alike = (x: unknown, y: unknown, key = ""): boolean => {
+    if (key === "cost" && typeof x === "number" && typeof y === "number") return Math.abs(x - y) < 1e-9
+    if (typeof x !== "object" || x === null || typeof y !== "object" || y === null) return x === y
+    const keys = Object.keys(x)
+    return keys.length === Object.keys(y).length && keys.every((name) => alike((x as Record<string, unknown>)[name], (y as Record<string, unknown>)[name], name))
+  }
+  return alike(a, b)
+}
 
 /** Rebuilds the new text from the old one and a diff, or undefined when the diff does not fit the old text. */
 function applyDiff(before: string, diff: string): string | undefined {
@@ -61,7 +99,7 @@ export async function roundThirteenScaleChecks(check: Check, section: (name: str
     check("ordinary edits print exactly what they printed before", drifted.length === 0, drifted.map(([a, b]) => unifiedDiff("f.txt", a, b)))
     check("identical sides still give nothing", unifiedDiff("f.txt", "same\n", "same\n") === "")
 
-    // Random small edits over a small vocabulary (so lines repeat): the diff must rebuild the new side and change no more lines than needed.
+    // Random small edits over a small vocabulary (so lines repeat): the diff must rebuild the new side exactly.
     let seed = 13
     const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648
     const vocabulary = ["{", "}", "", "  return x", "foo()", "bar()", "// note"]
@@ -126,5 +164,119 @@ export async function roundThirteenScaleChecks(check: Check, section: (name: str
       const diff2 = unifiedDiff("f.ts", framed.join("\n"), reframed.join("\n"))
       check("the lines around a replaced block stay as context", diff2.split("\n")[2] === "@@ -1,5002 +1,5002 @@" && diff2.split("\n")[3] === " top" && diff2.endsWith("\n bottom"), diff2.split("\n").slice(0, 4))
     }
+  }
+
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r13-scale-"))
+  try {
+    // ------------------------------------------------------------------ S13-2
+    section("Round 13 (S13-2): the usage page sums daily totals, and they are the figures the transcripts give")
+    {
+      const data = path.join(root, "usage", "storage")
+      const storage = new Storage(data)
+      const store = new SessionStore(storage, new Bus())
+      const background = new BackgroundUsage(storage)
+      const now = Date.now()
+      const boundary = now - 14 * DAY
+      const models = [
+        { provider: "a", model: "priced" },
+        { provider: "b", model: "free" },
+        { provider: "c", model: "other" },
+      ]
+      let serial = 0
+      const turn = async (sessionID: string, at: number, index: number) => {
+        const model = models[index % 3]
+        const usage = { input: 100 + index, output: 10 + (index % 7), reasoning: index % 3, cacheRead: index % 5, cacheWrite: 0, cost: model.provider === "a" ? 0.013 * (1 + (index % 4)) : 0 }
+        const id = `msg_${at.toString(16).padStart(12, "0")}${String(serial++).padStart(6, "0")}`
+        await store.saveMessage({ id, sessionID, role: "assistant", model, agent: "build", parts: [], finish: "end_turn", usage, time: { created: at, completed: at } } as never, true, false)
+      }
+      const sessions: string[] = []
+      for (let s = 0; s < 30; s++) {
+        const session = await store.create({ directory: root, model: models[0] })
+        sessions.push(session.id)
+        // Spread from three weeks back to now, with some on each side of the moment the window starts.
+        for (let k = 0; k < 6; k++) await turn(session.id, now - ((s * 6 + k) % 21) * DAY - (k % 2 ? 3600_000 : 0) - s * 1000, s + k)
+        if (s % 5 === 0) {
+          await turn(session.id, boundary + 60_000, s)
+          await turn(session.id, boundary - 60_000, s + 1)
+        }
+      }
+      // A turn with no priced model and no tokens: neither priced nor unpriced.
+      await store.saveMessage({ id: "msg_zero", sessionID: sessions[1], role: "assistant", model: models[1], agent: "build", parts: [], usage: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }, time: { created: now - DAY } } as never, true, false)
+      await background.add({ at: now - 2 * DAY, sessionID: sessions[0], model: models[2], usage: { input: 7, output: 3, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }, kind: "title" })
+
+      const days = new UsageDays(storage, store)
+      const runtime = { runner: { usageDays: days, backgroundUsage: background } } as unknown as Runtime
+      const page = async () => ((await handle(runtime, { type: "usage.summary", days: 14 } as unknown as Request)) as { summary: UsageSummary }).summary
+      const first = await page()
+      const scanned = await scannedSummary(store, background, 14, Date.now())
+      check("the first page after the upgrade gives the figures reading every transcript gave", sameSummary(first, scanned) && first.turns > 50 && first.byModel.length === 3, [first, scanned])
+      check("including the day the window starts in, counted from the moment it starts", first.byDay[0]?.key === scanned.byDay[0]?.key && sameSummary({ ...first, byDay: first.byDay.slice(0, 1) }, { ...scanned, byDay: scanned.byDay.slice(0, 1) }), [first.byDay[0], scanned.byDay[0]])
+      const file = path.join(data, "usage-daily.json")
+      const written = JSON.parse(await fs.readFile(file, "utf8")) as { version: number; sessions: Record<string, unknown> }
+      check("the totals are written down, versioned, one entry per conversation", written.version === 1 && Object.keys(written.sessions).length === 30, Object.keys(written))
+
+      // A restart: the totals are read back, and only conversations with turns on the window's first day are opened.
+      const original = store.messages.bind(store)
+      let opened = 0
+      store.messages = async (id: string) => {
+        opened++
+        return original(id)
+      }
+      const again = new UsageDays(storage, store)
+      const againRuntime = { runner: { usageDays: again, backgroundUsage: background } } as unknown as Runtime
+      const reread = ((await handle(againRuntime, { type: "usage.summary", days: 14 } as unknown as Request)) as { summary: UsageSummary }).summary
+      const openedByPage = opened
+      const firstDay = (await scannedSummary(store, background, 14, Date.now())).byDay[0]?.key
+      let onFirstDay = 0
+      for (const id of sessions) if ((await original(id)).some((message) => message.role === "assistant" && new Date(message.time.created).toDateString() === new Date(`${firstDay}T12:00`).toDateString())) onFirstDay++
+      check("after a restart the page opens only the transcripts on the window's first day", openedByPage === onFirstDay && onFirstDay < 30 && sameSummary(reread, scanned), { openedByPage, onFirstDay })
+
+      // Every way a transcript changes, followed.
+      opened = 0
+      await turn(sessions[3], Date.now(), 99)
+      await store.addUsage(sessions[3], { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 })
+      check("a new turn is counted, and only its conversation is read again", sameSummary(await page(), await scannedSummary(store, background, 14, Date.now())) && opened > 0)
+      const doomed = (await original(sessions[4])).find((message) => message.role === "assistant" && message.time.created > Date.now() - 5 * DAY)
+      await store.deleteMessage(sessions[4], doomed!.id)
+      check("a message taken back by a retry is no longer counted", sameSummary(await page(), await scannedSummary(store, background, 14, Date.now())))
+      await store.delete(sessions[6])
+      const afterDelete = await page()
+      check("a deleted conversation is no longer counted", sameSummary(afterDelete, await scannedSummary(store, background, 14, Date.now())))
+      const middle = (await original(sessions[7])).at(-1)!
+      await store.fork(sessions[7], middle.id)
+      check("a branch's copied turns count as they did", sameSummary(await page(), await scannedSummary(store, background, 14, Date.now())))
+
+      // Damaged: moved aside and counted again from the transcripts, once.
+      await fs.writeFile(file, "{ not json")
+      const healed = new UsageDays(storage, store)
+      const healedRuntime = { runner: { usageDays: healed, backgroundUsage: background } } as unknown as Runtime
+      const warn = console.warn
+      console.warn = () => undefined
+      const fixed = ((await handle(healedRuntime, { type: "usage.summary", days: 14 } as unknown as Request)) as { summary: UsageSummary }).summary
+      console.warn = warn
+      const names = await fs.readdir(data)
+      check("a damaged totals file is moved aside and the figures are counted again", sameSummary(fixed, await scannedSummary(store, background, 14, Date.now())) && names.some((name) => name.startsWith("usage-daily.json.corrupt-") || name.startsWith("usage-daily.corrupt-")), names)
+      check("and a whole one is written in its place", JSON.parse(await fs.readFile(file, "utf8")).version === 1)
+      // Another shape's version is not trusted.
+      await fs.writeFile(file, JSON.stringify({ version: 99, sessions: { [sessions[0]]: { updated: 0, rows: [["2000-01-01", "x/y", 1e9, 0, 0, 0, 0, 0, 1, 0, 1]] } } }))
+      const other = new UsageDays(storage, store)
+      const otherRuntime = { runner: { usageDays: other, backgroundUsage: background } } as unknown as Runtime
+      const rebuilt = ((await handle(otherRuntime, { type: "usage.summary", days: 365 } as unknown as Request)) as { summary: UsageSummary }).summary
+      check("a totals file of another version is built again", sameSummary(rebuilt, await scannedSummary(store, background, 365, Date.now())) && !rebuilt.byModel.some((entry) => entry.key === "x/y"), rebuilt)
+
+      // The running app keeps up after a step without the page being opened.
+      const live = new UsageDays(storage, store)
+      live.start()
+      await live.refresh()
+      await turn(sessions[8], Date.now(), 5)
+      await new Promise((resolve) => setTimeout(resolve, 2600))
+      const kept = JSON.parse(await fs.readFile(file, "utf8")) as { sessions: Record<string, { rows: unknown[][] }> }
+      const rowTurns = (kept.sessions[sessions[8]]?.rows ?? []).reduce((sum, row) => sum + Number(row[8]), 0)
+      check("a step's usage reaches the totals file on its own shortly after", rowTurns === (await original(sessions[8])).filter((message) => message.role === "assistant").length, rowTurns)
+      await live.stop()
+      store.messages = original
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
   }
 }

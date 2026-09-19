@@ -186,6 +186,8 @@ export async function startBackend(dataDirectory: string, options: BackendOption
     packEvery.unref?.()
   }, CHECKPOINT_PACK_FIRST_MS)
   packFirst.unref?.()
+  // usage: the daily totals the usage page reads, built once from the transcripts if missing and kept up after each step.
+  runner.usageDays.start()
   // history: the search index beside the store, filled in the background.
   const history = await startHistory(dataDirectory, sessions, storage, bus)
   // skills: uninstalled skills older than a week leave the trash, as MiMo's start-up sweep removes its own (L12-12).
@@ -388,6 +390,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       await scheduler.stop()
       await automations.stop()
       await stopHistory(history)
+      await runner.usageDays.stop()
       watchSkillProblems(undefined)
       unwatchArtifacts()
       await artifacts?.close()

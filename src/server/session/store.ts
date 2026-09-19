@@ -8,6 +8,18 @@ export function emptyUsage(): Usage {
   return { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }
 }
 
+/** Runs `work` over every item, at most `limit` at a time. */
+export async function inParallel<T>(items: readonly T[], limit: number, work: (item: T, index: number) => Promise<void>): Promise<void> {
+  let next = 0
+  const lane = async () => {
+    while (next < items.length) {
+      const index = next++
+      await work(items[index], index)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane))
+}
+
 /**
  * Persistence and change notification for sessions and their messages.
  *

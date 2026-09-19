@@ -15,7 +15,7 @@ import { sessionFiles } from "@shared/session-files"
 import { Identifier } from "@shared/id"
 import { normalizeBaseURL } from "@shared/custom-endpoint"
 import { CodedError } from "@shared/errors"
-import { summarizeUsage, type UsageRecord } from "./usage-summary"
+import { summarizeUsage } from "./usage-summary"
 import { imageInputOf, type Catalog } from "@shared/models-dev"
 // A conversation as a file this app can read back, both halves of the pair.
 import { conversationDocument, conversationFileName, parseConversationDocument } from "@shared/convo-file"
@@ -799,21 +799,12 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "usage.summary": {
       const days = Math.max(1, Math.min(365, request.days ?? 30))
-      const records: UsageRecord[] = []
-      for (const session of await runtime.sessions.list()) {
-        for (const message of await runtime.sessions.messages(session.id)) {
-          if (message.role !== "assistant" || !message.usage) continue
-          /*
-           * The turn's own clock, not the session's. A conversation returned
-           * to over a fortnight would otherwise report every token it ever
-           * spent on whichever day it was last touched.
-           */
-          records.push({ at: message.time.created, model: message.model, usage: message.usage, turn: true })
-        }
-      }
+      const now = Date.now()
+      // The turns come from the daily totals rather than from every transcript (S13-2).
+      const { rows, records } = await runtime.runner.usageDays.gather(days, now)
       // Titles, Smart's routing, summaries and command reviews spend tokens too, on no message.
       for (const entry of await runtime.runner.backgroundUsage.list()) records.push({ at: entry.at, model: entry.model, usage: entry.usage, turn: false })
-      return { summary: summarizeUsage(records, days) } satisfies Handled<"usage.summary">
+      return { summary: summarizeUsage(records, days, now, rows) } satisfies Handled<"usage.summary">
     }
 
     case "voice.transcribe": {

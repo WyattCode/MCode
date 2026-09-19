@@ -73,6 +73,7 @@ import { hasLinkedWorktrees, worktreeNotice, worktreeTop } from "./worktree"
 import type { ModelModalities } from "@shared/protocol"
 import { costOf } from "./usage"
 import { BackgroundUsage, type BackgroundUse } from "./background-usage"
+import { UsageDays } from "./usage-days"
 import type { Usage as TurnUsage } from "@shared/protocol"
 import { ABORTED_TOOL } from "../provider/history"
 import { LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, recallHint, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
@@ -359,6 +360,8 @@ export class SessionRunner {
   private readonly snapshots: Snapshots
   /** What background requests spent; the usage page counts it with the turns. */
   readonly backgroundUsage: BackgroundUsage
+  /** Each conversation's turns by day, so the usage page does not read every transcript (S13-2). */
+  readonly usageDays: UsageDays
 
   /**
    * The undo stores, for the two things outside a turn that have to reach them:
@@ -429,6 +432,7 @@ export class SessionRunner {
   ) {
     this.snapshots = new Snapshots(storage.folder("snapshot"))
     this.backgroundUsage = new BackgroundUsage(storage)
+    this.usageDays = new UsageDays(storage, store)
     // Complete outputs the shared cap cut, kept a week, as MiMo keeps them.
     this.toolOutputs = new ToolOutputs(storage.folder("tool-output"))
     this.toolOutputs.start()
