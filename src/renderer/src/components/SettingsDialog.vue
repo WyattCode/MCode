@@ -26,6 +26,7 @@ import { MCP_STATUS_TONE, isMcpStatus, mcpNeedsSignIn, mcpStatusLabel } from "..
 import { homePath } from "../lib/home-path"
 import classicIcon from "@resources/app-icons/classic.png"
 import { chordOf, formatChord, isBindable, recordingChord } from "../lib/keys"
+import { layerOpen } from "../lib/escape-layer"
 import { pageRows } from "../lib/shortcut-page"
 import { fullAccessOff } from "../lib/confirm-queue"
 import { notifyFailure, notify } from "../lib/toast"
@@ -1616,36 +1617,37 @@ async function confirmRemoveProvider() {
   }
 }
 
+/*
+ * Whether another layer was up when Escape went down, read on the capture phase
+ * before any of them has closed, as MiMo's overlay reads it. A confirmation, a
+ * picker or a dialog opened from here closes alone, whichever it is: there is
+ * no hand-kept list of them to fall out of step.
+ */
+let layerAtPress = false
+function notePress(event: KeyboardEvent) {
+  if (event.key === "Escape") layerAtPress = layerOpen(dialogEl.value)
+}
+
 function onKeydown(event: KeyboardEvent) {
   if (event.key !== "Escape") return
-  /*
-   * The connect dialog opens on top of this one and listens for Escape too, so
-   * without standing down here a single press closed both layers at once.
-   */
-  if (connectOpen.value) return
   /* As in MiMo, the overlay closes only when nothing on top of it took the Escape. An open picker marks it taken. */
   if (event.defaultPrevented) return
   if (confirmingVoiceSend.value) {
     confirmingVoiceSend.value = false
     return
   }
-  // These close themselves on the same press.
-  if (
-    pendingLeave.value ||
-    confirmingClear.value ||
-    confirmingDelete.value ||
-    removingProject.value ||
-    confirmingAgentsDelete.value ||
-    voiceUsageOpen.value ||
-    licensesOpen.value
-  ) {
-    return
-  }
+  if (layerAtPress) return
   requestClose()
 }
 
-onMounted(() => window.addEventListener("keydown", onKeydown))
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
+onMounted(() => {
+  window.addEventListener("keydown", notePress, true)
+  window.addEventListener("keydown", onKeydown)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", notePress, true)
+  window.removeEventListener("keydown", onKeydown)
+})
 </script>
 
 <template>

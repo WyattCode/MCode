@@ -99,4 +99,21 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
     const shell = await read("src/renderer/src/App.vue")
     check("K13-7: the info card reads the page instead of a hand-made escapeBlocked list", !/escapeBlocked|escape-blocked/.test(info + shell) && /dialogOpen\(\)/.test(info))
   }
+
+  const settings = await component("SettingsDialog")
+  // ---------------------------------------------------------------- K13-1
+  {
+    const onKeydown = settings.slice(settings.indexOf("function onKeydown(event: KeyboardEvent) {\n  if (event.key !== \"Escape\")"))
+    const body = onKeydown.slice(0, onKeydown.indexOf("\n}\n"))
+    check(
+      "K13-1: Settings records on the capture phase whether any other layer was up when Escape went down, as MiMo's overlay does",
+      /function notePress\(event: KeyboardEvent\) \{\n\s+if \(event\.key === "Escape"\) layerAtPress = layerOpen\(dialogEl\.value\)/.test(settings) &&
+        /window\.addEventListener\("keydown", notePress, true\)/.test(settings),
+    )
+    check(
+      "K13-1: and closes only when no layer was up and none took the key, with no hand-kept list (the models page's confirmation was missing from it)",
+      /if \(event\.defaultPrevented\) return/.test(body) && /if \(layerAtPress\) return\s+requestClose\(\)/.test(body) && !/removingProject\.value \|\|/.test(body) && !/connectOpen/.test(body),
+      body,
+    )
+  }
 }
