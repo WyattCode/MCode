@@ -11,10 +11,23 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
-import { pinnedProfile } from "../src/main/desktop-rules"
+import { pinnedProfile, relaunchArgs } from "../src/main/desktop-rules"
 
 const posix = (...parts: string[]) => parts.join("/")
 const win = (...parts: string[]) => parts.join("\\")
+
+/** The braces that follow `opening` in the source, or "" when it is not there. */
+function body(source: string, opening: string): string {
+  const start = source.indexOf(opening)
+  if (start < 0) return ""
+  const open = source.indexOf("{", start + opening.length - 1)
+  let depth = 0
+  for (let i = open; i >= 0 && i < source.length; i++) {
+    if (source[i] === "{") depth++
+    else if (source[i] === "}" && --depth === 0) return source.slice(open, i + 1)
+  }
+  return ""
+}
 
 export async function roundThirteenInstanceChecks(check: Check, section: (name: string) => void): Promise<void> {
   const root = process.cwd()
@@ -61,5 +74,25 @@ export async function roundThirteenInstanceChecks(check: Check, section: (name: 
     check("the lock is taken right after the profile is set", between === "if (app.isPackaged && !app.", { profileAt, lockAt, between: between.slice(0, 200) })
     check("and before the log, the crash reporter, the environment refresh and the rest", later.every(([, at]) => at > lockAt), later)
     check("a second launch leaves at once, not after the rest of the module has run", /if \(app\.isPackaged && !app\.requestSingleInstanceLock\(\)\) process\.exit\(0\)/.test(main))
+  }
+
+  // ------------------------------------------------------------------ I13-2
+  section("Round 13 (I13-2): a launch made while quitting starts once the quit is done")
+  {
+    const handedOver = ["C:\\MCode\\MCode.exe", "--allow-file-access-from-files", "--original-process-start-time=1325", "mcode://open-session?id=s1", "--flag"]
+    check(
+      "the relaunch keeps the second launch's own arguments, a link among them, less the executable and Chromium's additions",
+      JSON.stringify(relaunchArgs(handedOver)) === JSON.stringify(["mcode://open-session?id=s1", "--flag"]),
+      relaunchArgs(handedOver),
+    )
+    check("a plain second launch relaunches with nothing", relaunchArgs(["C:\\MCode\\MCode.exe"]).length === 0)
+    const second = body(main, 'app.on("second-instance", (_event, argv) => {')
+    const queue = body(main, "function relaunchAfterQuit(argv: readonly string[]) {")
+    check("while quitting, a second launch is queued instead of raising the window the quit hid", /^\{\s*if \(closing\) return relaunchAfterQuit\(argv\)/.test(second), second.slice(0, 120))
+    check("queued once, as app.relaunch with the handed-over arguments", /if \(relaunchQueued\) return/.test(queue) && /app\.relaunch\(\{ args: relaunchArgs\(argv\) \}\)/.test(queue), queue)
+    check("a macOS link while quitting is queued the same way", /if \(closing\) return relaunchAfterQuit\(\[process\.execPath, url\]\)/.test(body(main, 'app.on("open-url", (event, url) => {')))
+    check("the tray's Open does nothing while quitting", /const open = \(\) => \{\s*if \(!closing\) activate\(raise\)/.test(main))
+    check("nor does a tray profile switch, which would build a window", /click: \(\) => \{\s*if \(closing\) return\s*const window = currentWindow\(\) \?\? createWindow\(\)/.test(main))
+    check("nor does the Dock's activate", /^\{\s*\/\/[^\n]*\n\s*if \(closing\) return/.test(body(main, 'app.on("activate", () => {')))
   }
 }

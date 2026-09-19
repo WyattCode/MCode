@@ -229,3 +229,20 @@ export function badgeCount(raw: unknown): number {
   const value = typeof raw === "number" ? raw : Number(raw)
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
 }
+
+/*
+ * Switches Chromium adds to the command line it hands the running copy, which
+ * the person never passed. Allowing file pages to read other files is not one
+ * to carry into a relaunch.
+ */
+const HANDED_OVER_SWITCHES = ["--allow-file-access-from-files", "--original-process-start-time"]
+
+/**
+ * The arguments to relaunch with for a second launch that arrived while this
+ * copy was quitting (I13-2): the second launch's own, less the executable and
+ * what Chromium added on the way. A link among them is kept, so the new copy
+ * opens it.
+ */
+export function relaunchArgs(argv: readonly string[]): string[] {
+  return argv.slice(1).filter((entry) => !HANDED_OVER_SWITCHES.some((name) => entry === name || entry.startsWith(`${name}=`)))
+}

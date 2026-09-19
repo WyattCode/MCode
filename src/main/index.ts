@@ -48,7 +48,7 @@ import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { SOUNDFONT } from "@shared/soundfont"
 import { readSoundfont } from "./soundfont"
 import { applyZoom } from "./zoom"
-import { APP_NAME, WINDOW_MIN, badgeCount, noticeTitle, pinnedProfile, readTaskNotice, textMenuItems, wantsNotice } from "./desktop-rules"
+import { APP_NAME, WINDOW_MIN, badgeCount, noticeTitle, pinnedProfile, readTaskNotice, relaunchArgs, textMenuItems, wantsNotice } from "./desktop-rules"
 import { registerOffice } from "./office"
 import { registerComposerInput } from "./composer-input"
 import { registerPasteFiles } from "./paste-files"
@@ -369,7 +369,25 @@ function deliverLink(raw: string) {
   window.webContents.send("mcode:open-link", target)
 }
 
+/*
+ * A launch that arrives while this copy is quitting (I13-2). The lock is held
+ * until the process ends, and the quit holds the process for up to five seconds
+ * while the backend closes, so the new copy has already handed over and gone.
+ * Raising the window the quit has just hidden only flashed it up before the
+ * teardown took it away again, and nothing opened. Instead the launch is
+ * queued, with its own arguments (a link among them), to start once this copy
+ * has exited and let go of the lock.
+ */
+let relaunchQueued = false
+function relaunchAfterQuit(argv: readonly string[]) {
+  if (relaunchQueued) return
+  relaunchQueued = true
+  console.info("[quit] a launch arrived while quitting; it starts once the quit is done")
+  app.relaunch({ args: relaunchArgs(argv) })
+}
+
 app.on("second-instance", (_event, argv) => {
+  if (closing) return relaunchAfterQuit(argv)
   const raw = linkInArgs(argv)
   if (raw) return deliverLink(raw)
   activate(raise)
@@ -388,6 +406,7 @@ setRecoveryHost({
 // macOS delivers links as an event rather than as arguments.
 app.on("open-url", (event, url) => {
   event.preventDefault()
+  if (closing) return relaunchAfterQuit([process.execPath, url])
   deliverLink(url)
 })
 
@@ -496,8 +515,14 @@ function refreshTray(enabled: boolean): void {
     // The source is 512, so this is a reduction rather than a stretch.
     image = nativeImage.createFromPath(file).resize({ width: 16, height: 16 })
   }
-  /* MiMo's tray opens the window on a click and on a double-click alike; it never hides it. */
-  const open = () => activate(raise)
+  /*
+   * MiMo's tray opens the window on a click and on a double-click alike; it
+   * never hides it. Nothing while quitting: the window would only flash up
+   * before the teardown takes it away (I13-2).
+   */
+  const open = () => {
+    if (!closing) activate(raise)
+  }
   if (!tray) {
     tray = new Tray(image)
     tray.on("click", open)
@@ -521,6 +546,7 @@ function refreshTray(enabled: boolean): void {
           type: "radio" as const,
           checked: entry.checked,
           click: () => {
+            if (closing) return
             const window = currentWindow() ?? createWindow()
             window.webContents.send("mcode:tray-profile", entry.key)
           },
@@ -1673,6 +1699,8 @@ app.whenReady().then(async () => {
   })
 
   app.on("activate", () => {
+    // Clicking the Dock icon while quitting brings nothing back (I13-2).
+    if (closing) return
     // Asked for again while leaving full screen to hide: it stays (MiMo's).
     for (const window of BrowserWindow.getAllWindows()) cancelPendingHide(window)
     // A window hidden to the tray or menu bar comes back; one whose renderer is gone is replaced.
