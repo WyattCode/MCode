@@ -14,6 +14,8 @@ import os from "node:os"
 import path from "node:path"
 import { createRequire } from "node:module"
 import type { Check } from "./smoke-round5"
+import { NsisUpdater } from "electron-updater"
+import { createUpdater, type AutoUpdaterLike } from "../src/main/updater"
 
 type Seen = { host: string; path: string; method: string; referer?: string; agent?: string; cookie?: string }
 type Answer = { status: number; type: string | null; bytes: number }
@@ -40,6 +42,42 @@ async function freePort(): Promise<number> {
       probe.close(() => resolve(port))
     })
   })
+}
+
+/** A body in `source` from `opening` to its matching brace, or "" when it is not there. */
+function body(source: string, opening: string): string {
+  const start = source.indexOf(opening)
+  if (start < 0) return ""
+  const open = source.indexOf("{", start + opening.length - 1)
+  let depth = 0
+  for (let i = open; i >= 0 && i < source.length; i++) {
+    if (source[i] === "{") depth++
+    else if (source[i] === "}" && --depth === 0) return source.slice(open, i + 1)
+  }
+  return ""
+}
+
+const idle = { setTimeout: () => 0, setInterval: () => 0, clearTimeout: () => {}, clearInterval: () => {} }
+
+/** A real NsisUpdater with a stand-in app; the quit handler it registers and the installs it starts are caught. */
+function standInUpdater(cache: string) {
+  const quits: ((code: number) => void)[] = []
+  const real = new NsisUpdater(null as never, {
+    version: "0.2.5",
+    name: "mcode",
+    isPackaged: true,
+    appUpdateConfigPath: "unused.yml",
+    userDataPath: cache,
+    baseCachePath: cache,
+    whenReady: () => Promise.resolve(),
+    quit: () => {},
+    relaunch: () => {},
+    onQuit: (handler: (code: number) => void) => quits.push(handler),
+  } as never)
+  real.logger = null
+  const installs: unknown[][] = []
+  Object.assign(real, { install: (...args: unknown[]) => (installs.push(args), true) })
+  return { real, quits, installs, library: real as unknown as AutoUpdaterLike }
 }
 
 /** Runs the P14-1 helper under Electron and returns what it saw. */
@@ -108,11 +146,33 @@ export async function roundFourteenPackagingChecks(check: Check, section: (name:
     check("a cover that does not answer in time is refused", net.slow?.answer.status === 502 && (net.slow.ms ?? 0) >= 400 && net.slow.ms < 5_000, net.slow)
     check(
       "a b23.tv short link is read hop by hop to the video it stands for",
-      net.landing?.target?.id?.bvid === "BV1xx411c7mD" && hosts(net.landing.seen).length === 1 && net.landing.seen[0]?.method === "HEAD",
+      net.landing?.target?.id?.bvid === "BV1xx411c7mD" && hosts(net.landing.seen).length === 1 && hosts(net.landing.seen)[0]?.method === "HEAD",
       net.landing,
     )
     const everything = [net.hop, net.relative, net.away, net.landing].flatMap((part) => hosts(part?.seen))
     check("no cookie is sent, and none a server sets is kept", everything.length > 0 && everything.every((entry) => !entry.cookie) && Array.isArray(net.cookies) && net.cookies.length === 0, net.cookies)
     check("an aborted request fails as an abort", net.preAborted === "AbortError", net.preAborted)
+  }
+
+  // ------------------------------------------------------------------ P14-2
+  section("Round 14 (P14-2): an OS shutdown never starts a downloaded update's installer")
+  {
+    const main = await read("src/main/index.ts")
+    const { quits, installs, library } = standInUpdater(os.tmpdir())
+    const updater = createUpdater({ currentVersion: "0.2.5", feedURL: () => "", autoUpdater: library, emit: () => {}, log: () => {}, scheduler: idle })
+    // What electron-updater does once a download completes.
+    ;(library as unknown as { addQuitHandler(): void }).addQuitHandler()
+    quits.forEach((quit) => quit(0))
+    check("an ordinary quit with an update waiting runs electron-updater's installer (the control)", quits.length === 1 && installs.length === 1, { quits: quits.length, installs })
+    updater.holdInstallOnQuit()
+    quits.forEach((quit) => quit(0))
+    check("once the OS is ending the session, the same quit starts nothing", library.autoInstallOnAppQuit === false && installs.length === 1, installs)
+    const note = body(main, "function noteOsQuit(): void {")
+    check("noteOsQuit holds the install, before the quit it announces", /liveUpdater\?\.holdInstallOnQuit\(\)/.test(note), note)
+    check(
+      "the updater is reachable there as soon as it exists, and one created after the OS spoke holds at once",
+      /liveUpdater = created\s+if \(osQuitting\) created\.holdInstallOnQuit\(\)/.test(main),
+    )
+    check("every OS-quit path goes through noteOsQuit", (main.match(/noteOsQuit\(\)/g) ?? []).length >= 4)
   }
 }

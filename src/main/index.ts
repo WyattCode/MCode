@@ -1216,6 +1216,8 @@ app.whenReady().then(async () => {
         },
         log: (line) => console.info(line),
       })
+      liveUpdater = created
+      if (osQuitting) created.holdInstallOnQuit()
       created.start()
       app.on("before-quit", () => created.stop())
       return created
@@ -1769,9 +1771,23 @@ let closing = false
 /** Either kind of going away, for the close rule and the wake repaint. */
 const leaving = () => osQuitting || closing
 
-/** The OS is taking the app away; the last window must not hide to the tray. */
+/*
+ * The updater, once electron-updater has loaded; noteOsQuit needs it
+ * synchronously, before the quit it announces reaches electron-updater's own
+ * quit handler.
+ */
+let liveUpdater: Updater | undefined
+
+/**
+ * The OS is taking the app away; the last window must not hide to the tray,
+ * and a downloaded update must not start installing while Windows ends the
+ * session (it could be killed halfway and leave no MCode.exe). MiMo never
+ * quits there at all; MCode quits to run its teardown, so it holds the
+ * install instead, and the update installs on the next ordinary quit.
+ */
 function noteOsQuit(): void {
   osQuitting = true
+  liveUpdater?.holdInstallOnQuit()
   beginIntentionalQuit()
 }
 

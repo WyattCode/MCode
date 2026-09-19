@@ -159,6 +159,12 @@ export interface Updater {
   readyVersion(): string | undefined
   /** Runs the downloaded installer (see the module notes); false when nothing is ready. */
   install(execPath: string): boolean
+  /**
+   * The OS is ending the session: a downloaded update must not start
+   * installing on this quit, where Windows may kill the installer halfway.
+   * It stays in the cache and installs on the next ordinary quit.
+   */
+  holdInstallOnQuit(): void
 }
 
 export function createUpdater(deps: UpdaterDeps): Updater {
@@ -274,6 +280,11 @@ export function createUpdater(deps: UpdaterDeps): Updater {
       // --updated, /S when silent, and --force-run so the new version opens once it is in place.
       updater.quitAndInstall(silent, true)
       return true
+    },
+    holdInstallOnQuit() {
+      // electron-updater reads the flag in its quit handler, so this holds even after the download.
+      updater.autoInstallOnAppQuit = false
+      if (ready) deps.log(`[update] the OS is ending the session; ${ready.version} installs on the next quit`)
     },
   }
 }
