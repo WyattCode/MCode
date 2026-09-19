@@ -614,7 +614,7 @@ export class Config {
     const migrated = this.migrate()
     this.current.autoApprove = allowed(this.current.permissions)
     if ((migrated || retired || cleaned) && !this.fromNewerVersion) await this.persist()
-    this.discovered = (await this.storage.read<Record<string, ModelEntry[]>>("models")) ?? {}
+    this.discovered = await this.readDiscovered()
     try {
       const raw = JSON.parse(await fs.readFile(this.credentialFile, "utf8"))
       // The file used to be a bare provider -> key map; keep those working.
@@ -625,6 +625,26 @@ export class Config {
       this.credentials = {}
       this.oauth = {}
     }
+  }
+
+  /**
+   * The model lists discovered from each provider's /models (L12-1).
+   *
+   * This was the one plain read left on the backend's start-up path: a
+   * truncated or hand-edited models.json threw out of `load`, and the app
+   * showed its error page on every launch with Retry failing the same way. The
+   * lists are only a cache of what the next discovery fetches again, so a
+   * damaged file is kept aside and the app starts without them.
+   */
+  private async readDiscovered(): Promise<Record<string, ModelEntry[]>> {
+    const read = await this.storage.readOrCorrupt<unknown>("models")
+    const value = read.value
+    if (!read.corrupt && (value === undefined || (value && typeof value === "object" && !Array.isArray(value)))) {
+      return (value as Record<string, ModelEntry[]> | undefined) ?? {}
+    }
+    const aside = await this.storage.quarantine("models")
+    console.warn(`[config] models.json could not be read (${read.corrupt ?? "not an object"}); ${aside ? `kept as ${path.basename(aside)}` : "left in place"}, starting without discovered models`)
+    return {}
   }
 
   /**
