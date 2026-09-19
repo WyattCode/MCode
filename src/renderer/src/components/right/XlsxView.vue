@@ -468,22 +468,30 @@ async function load() {
   let flushed = false
   loaded = {
     path,
-    // Runs after the generation has moved on, so it writes without alive(), but only over the file this load last saw
+    // Runs after the generation has moved on, so it writes without alive(), but only over the file this load last saw.
+    // The view is gone by then, so edits that could not be written are said in a notice naming the file.
     flush: () => {
       if (flushed) return
       flushed = true
       clearTimeout(saveTimer)
+      const unsaved = () => notifyFailure(t("office.saveFailed"), base)
       chain = chain
         .then(async () => {
           if (!edits.size) return
           const check = await window.mcode.readFileBytes(dir, base, stat)
           if (!check.ok || !check.unchanged) {
             console.warn("[XlsxView] pending edits not written, the file changed on disk:", path)
+            unsaved()
             return
           }
           await saveEdits(() => true)
+          // saveEdits keeps what it could not write, and says so only on a view that is still there
+          if (edits.size) unsaved()
         })
-        .catch((err) => console.error("[XlsxView] flush of pending edits failed:", err))
+        .catch((err) => {
+          console.error("[XlsxView] flush of pending edits failed:", err)
+          unsaved()
+        })
     },
   }
 }

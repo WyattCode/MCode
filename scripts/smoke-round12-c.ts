@@ -91,6 +91,22 @@ export async function roundTwelveFailureChecks(check: Check, section: (name: str
     )
     check("C12-6: Refresh says it failed when either half failed", /if \(failure === undefined\) notify\(t\("plugins\.refreshed"\)\)\s+else notifyFailure\(t\("plugins\.refreshFailed", \{ error: failure \}\)\)/.test(refresh), refresh)
   }
+
+  // ---------------------------------------------------------------- C12-7
+  {
+    const sheet = await read("src/renderer/src/components/right/XlsxView.vue")
+    const start = sheet.indexOf("    flush: () => {")
+    const flush = sheet.slice(start, sheet.indexOf("\n    },\n", start))
+    const skipped = flush.slice(flush.indexOf("if (!check.ok || !check.unchanged)"), flush.indexOf("await saveEdits("))
+    check(
+      "C12-7: spreadsheet edits pending on leave that are skipped, kept or thrown say office.saveFailed with the file's name",
+      /const unsaved = \(\) => notifyFailure\(t\("office\.saveFailed"\), base\)/.test(flush) &&
+        /unsaved\(\)\s+return/.test(skipped) &&
+        /await saveEdits\(\(\) => true\)[\s\S]*if \(edits\.size\) unsaved\(\)/.test(flush) &&
+        /\.catch\(\(err\) => \{[\s\S]*unsaved\(\)/.test(flush),
+      flush,
+    )
+  }
 }
 
 /** A port nothing listens on yet. */
