@@ -257,6 +257,38 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
     const palette = await component("CommandPalette")
     check("K13-9: the palette's Enter, bound on its dialog rather than its field, is guarded too", /event\.key === "Enter" && !composing\(event\)/.test(palette))
   }
+
+  // ---------------------------------------------------------------- K13-10
+  {
+    const source = await component("Composer")
+    const row = await component("ModelMenuRow")
+    const menuOf = (marker: string) => {
+      const at = source.indexOf(marker)
+      const open = source.lastIndexOf("<div", at)
+      return source.slice(open, source.indexOf(">", at) + 1)
+    }
+    const roots = ['ref="accessMenu"', 'ref="modelMenu"', 'ref="plusMenu"'].map(menuOf)
+    check("K13-10: the access, model and plus menus close when focus moves outside them and their chip", roots.every((tag) => /@focusout="onMenuFocusOut"/.test(tag)), roots)
+    const out = source.slice(source.indexOf("function onMenuFocusOut("), source.indexOf("\n}\n", source.indexOf("function onMenuFocusOut(")))
+    check(
+      "K13-10: focus going nowhere (the window losing focus) leaves them open; focus inside or on the chip keeps them",
+      /next instanceof Node && !\(event\.currentTarget as HTMLElement\)\.parentElement\?\.contains\(next\)/.test(out),
+    )
+    // Each button tag inside the three menus, and in the model rows, is not a Tab stop.
+    const menuRegions = [
+      source.slice(source.indexOf('ref="accessMenu"'), source.indexOf("MiMo's one mode chip")),
+      source.slice(source.indexOf('ref="modelMenu"'), source.indexOf("MiMo's voice capsule")),
+      source.slice(source.indexOf('ref="plusMenu"'), source.indexOf("The permission map in one control")),
+      row.slice(row.indexOf("<template>")),
+    ]
+    const tabStops = menuRegions.flatMap((region) => [...region.matchAll(/<button\b[^>]*?>/gs)].map((tag) => tag[0]).filter((tag) => !/tabindex="-1"/.test(tag)))
+    check("K13-10: their rows are walked by the arrows and are not Tab stops, so Tab leaves in one step with no second cursor", tabStops.length === 0, tabStops)
+    const pickers = await Promise.all(["ProjectPicker", "BranchPicker"].map(component))
+    check(
+      "K13-10: the home project and branch pickers close when focus leaves them",
+      pickers.every((picker) => /ref="root"[^>]*@focusout="onFocusOut"/.test(picker) && /if \(open\.value && next instanceof Node && !root\.value\?\.contains\(next\)\) open\.value = false/.test(picker)),
+    )
+  }
 }
 
 /*

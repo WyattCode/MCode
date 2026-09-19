@@ -98,6 +98,12 @@ function onPointerDown(event: MouseEvent) {
   if (open.value && !root.value?.contains(event.target as Node)) open.value = false
 }
 
+/* MiMo's picker is a non-modal popover: focus moving anywhere outside it and its chip closes it. */
+function onFocusOut(event: FocusEvent) {
+  const next = event.relatedTarget
+  if (open.value && next instanceof Node && !root.value?.contains(next)) open.value = false
+}
+
 function onKeydown(event: KeyboardEvent) {
   if (open.value && event.key === "Escape") {
     event.preventDefault()
@@ -166,7 +172,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="root" class="picker">
+  <div ref="root" class="picker" @focusout="onFocusOut">
     <button class="chip" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
       <svg v-if="current" class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path v-for="d in ICON.folder" :key="d" :d="d" />

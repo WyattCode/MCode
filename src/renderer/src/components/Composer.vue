@@ -2868,6 +2868,16 @@ function onPointerDown(event: MouseEvent) {
   if (!pills.value?.contains(event.target as Node)) menu.value = undefined
 }
 
+/*
+ * MiMo's composer menus are non-modal popovers, which close when focus moves
+ * anywhere outside them and their chip. Their rows are not Tab stops, so Tab
+ * leaves a menu in one step, and this closes it behind.
+ */
+function onMenuFocusOut(event: FocusEvent) {
+  const next = event.relatedTarget
+  if (next instanceof Node && !(event.currentTarget as HTMLElement).parentElement?.contains(next)) menu.value = undefined
+}
+
 onMounted(() => {
   window.addEventListener("mousedown", onPointerDown, true)
   window.addEventListener("dragend", endDrag)
@@ -3235,8 +3245,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 <path d="M8 3.4v9.2M3.4 8h9.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
               </svg>
             </button>
-            <div v-if="menu === 'plus'" ref="plusMenu" class="menu plus-menu" :class="{ up: menuUp }" role="menu" data-plus-menu @keydown="onPlusKeys">
-              <button class="item" role="menuitem" data-plus-files @click="attachFromMenu">
+            <div v-if="menu === 'plus'" ref="plusMenu" class="menu plus-menu" :class="{ up: menuUp }" role="menu" data-plus-menu @keydown="onPlusKeys" @focusout="onMenuFocusOut">
+              <button class="item" role="menuitem" tabindex="-1" data-plus-files @click="attachFromMenu">
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M10.6 5.2 6 9.8a1.4 1.4 0 0 0 2 2l5-5a2.8 2.8 0 0 0-4-4l-5.2 5.2a4.2 4.2 0 0 0 6 6l4.2-4.2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
                 </svg>
@@ -3244,7 +3254,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               </button>
               <template v-if="!side">
                 <div class="rule" />
-                <button class="item" role="menuitem" data-plus-terminal @click="terminalFromMenu">
+                <button class="item" role="menuitem" tabindex="-1" data-plus-terminal @click="terminalFromMenu">
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                     <rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6" stroke="currentColor" stroke-width="1.2" />
                     <path d="M4.6 6.4 6.8 8.4 4.6 10.4M8.6 10.6h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
@@ -3253,7 +3263,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 </button>
                 <div class="rule" />
                 <!-- Compose mode: a switch rather than a command, because it stays on; the menu stays open. -->
-                <button class="item staged-row" role="switch" data-mode="staged" :aria-checked="staged" @click="toggleStaged">
+                <button class="item staged-row" role="switch" tabindex="-1" data-mode="staged" :aria-checked="staged" @click="toggleStaged">
                   <span class="staged-text">
                     <span class="item-name">{{ t("composer.staged") }}</span>
                     <span class="staged-sub">{{ t("composer.stagedSub") }}</span>
@@ -3267,6 +3277,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 class="item skill-row"
                 :class="{ hot: skillSubOpen }"
                 role="menuitem"
+                tabindex="-1"
                 aria-haspopup="menu"
                 :aria-expanded="skillSubOpen"
                 data-plus-skills
@@ -3303,6 +3314,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                     :key="skill.name"
                     class="item skill-item"
                     role="menuitem"
+                    tabindex="-1"
                     :title="skill.description || skill.name"
                     @click="addSkill(skill.name)"
                   >
@@ -3347,8 +3359,10 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               :class="{ up: menuUp }"
               tabindex="-1"
               @keydown="onAccessKeys"
+              @focusout="onMenuFocusOut"
             >
               <button
+                tabindex="-1"
                 v-for="entry in accessChoices"
                 :key="entry"
                 v-tip="{ label: t(`composer.access.${entry}Hint`), placement: 'right', trigger: 'hover' }"
@@ -3447,8 +3461,10 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               :class="{ up: menuUp }"
               tabindex="-1"
               @keydown="onModelKeys"
+              @focusout="onMenuFocusOut"
             >
               <button
+                tabindex="-1"
                 class="item model-item smart"
                 :class="{ hot: activeKey === SMART_KEY, on: smartOn }"
                 :data-key="SMART_KEY"
@@ -3494,6 +3510,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
               <div v-if="moreRows.length" class="more-slot" @mouseenter="hoverRow(MORE_KEY)">
                 <button
+                  tabindex="-1"
                   class="item model-item"
                   :class="{ hot: activeKey === MORE_KEY }"
                   :data-key="MORE_KEY"
@@ -3560,6 +3577,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
               <div class="rule" />
               <button
+                tabindex="-1"
                 class="item model-item"
                 :class="{ hot: activeKey === CONFIG_KEY }"
                 :data-key="CONFIG_KEY"

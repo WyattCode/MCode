@@ -140,6 +140,12 @@ function onPointerDown(event: MouseEvent) {
   if (open.value && !root.value?.contains(event.target as Node)) open.value = false
 }
 
+/* MiMo's branch menu is a non-modal popover: focus moving anywhere outside it and its chip closes it. */
+function onFocusOut(event: FocusEvent) {
+  const next = event.relatedTarget
+  if (open.value && next instanceof Node && !root.value?.contains(next)) open.value = false
+}
+
 /* MiMo's menu keys over the rows; the two fields keep their own keys. */
 function onMenuKey(event: KeyboardEvent) {
   onMenuRowKey(event, [...(root.value?.querySelectorAll<HTMLElement>(".menu button.row:not(:disabled)") ?? [])])
@@ -182,7 +188,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="visible" ref="root" class="branch-picker" data-branch-picker>
+  <div v-if="visible" ref="root" class="branch-picker" data-branch-picker @focusout="onFocusOut">
     <button class="chip" :class="{ open }" data-branch-chip aria-haspopup="menu" :aria-expanded="open" @click="open = !open">
       <svg class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <circle cx="4.5" cy="3.5" r="1.6" />
