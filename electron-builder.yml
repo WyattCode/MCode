@@ -26,6 +26,12 @@ files:
   - out/preload/**/*
   - out/renderer/**/*
   - package.json
+  # Nothing in the runtime dependencies loads these: source maps, TypeScript
+  # sources and declarations (mostly @anthropic-ai/sdk's), and markdown other
+  # than a licence. electron-builder applies only these exclusions to
+  # node_modules; its own defaults already drop top-level READMEs and changelogs.
+  - "!**/node_modules/**/*.{map,ts,mts,cts}"
+  - "!**/node_modules/**/!(LICENSE|LICENCE|License|Licence|license|licence).md"
 # The backend runs in the main process, so only its runtime deps ship.
 # node-pty is the one native dependency. Its .node binaries, and the
 # OpenConsole.exe that conpty launches, cannot be loaded from inside an asar,

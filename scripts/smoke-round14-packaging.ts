@@ -270,4 +270,84 @@ export async function roundFourteenPackagingChecks(check: Check, section: (name:
       { pinned, entries },
     )
   }
+
+  // ------------------------------------------------------------------ P14-7
+  section("Round 14 (P14-7): app.asar leaves out node_modules' source maps, TypeScript and docs, and nothing the app runs")
+  {
+    /*
+     * A dry run through electron-builder's own node_modules matcher (what a
+     * package build filters every dependency file with), over the runtime
+     * dependencies and theirs, without packaging anything.
+     */
+    const load = createRequire(import.meta.url)
+    const yaml = load("js-yaml") as { load(text: string): { files: unknown } }
+    const { getNodeModuleFileMatcher } = load("app-builder-lib/out/fileMatcher") as {
+      getNodeModuleFileMatcher(appDir: string, destination: string, expand: (text: string) => string, options: object, info: object): { isEmpty(): boolean; createFilter(): (file: string, stat: object) => boolean }
+    }
+    const config = yaml.load(await read("electron-builder.yml"))
+    const matcher = getNodeModuleFileMatcher(root, "app", (text) => text, {}, { config, debugLogger: { isEnabled: false } })
+    // With no exclusions electron-builder filters nothing (NodeModuleCopyHelper), and neither does this.
+    const filter = matcher.isEmpty() ? () => true : matcher.createFilter()
+    const pkg = JSON.parse(await read("package.json")) as { dependencies: Record<string, string> }
+    // The runtime closure: each dependency's own dependencies, resolved beside it or at the top.
+    const dirs = new Map<string, string>()
+    const visit = async (name: string, from: string) => {
+      for (let at = from; ; ) {
+        const candidate = path.join(at, "node_modules", name)
+        const manifest = await fs.readFile(path.join(candidate, "package.json"), "utf8").catch(() => "")
+        if (manifest) {
+          if (dirs.has(candidate)) return
+          dirs.set(candidate, path.relative(root, candidate).replace(/\\/g, "/"))
+          const deps = JSON.parse(manifest) as { dependencies?: Record<string, string>; optionalDependencies?: Record<string, string> }
+          for (const dep of Object.keys({ ...deps.dependencies, ...deps.optionalDependencies })) await visit(dep, candidate)
+          return
+        }
+        if (at === root) return
+        // Up to the package (or the project) that holds this one's node_modules.
+        do at = path.dirname(at)
+        while (at !== root && (path.basename(at) === "node_modules" || path.basename(at).startsWith("@")))
+      }
+    }
+    for (const name of Object.keys(pkg.dependencies)) await visit(name, root)
+    const kept: string[] = []
+    const dropped: string[] = []
+    const walk = async (dir: string, destination: string, top: string) => {
+      for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+        const file = path.join(dir, entry.name)
+        if (entry.isDirectory()) {
+          if (entry.name !== "node_modules") await walk(file, destination, top)
+          continue
+        }
+        const rel = path.join(destination, path.relative(top, file)).replace(/\\/g, "/")
+        const stat = Object.assign(await fs.lstat(file), { moduleFullFilePath: rel })
+        ;(filter(file, stat) ? kept : dropped).push(rel)
+      }
+    }
+    for (const [dir, destination] of dirs) await walk(dir, destination, dir)
+    check("the runtime dependencies were found", dirs.size >= 15 && kept.length > 500, { dirs: dirs.size, kept: kept.length })
+    check(
+      "every source map, TypeScript source and declaration is left out",
+      dropped.some((rel) => rel.endsWith(".map")) && dropped.some((rel) => rel.endsWith(".d.ts")) && !kept.some((rel) => /\.(map|ts|mts|cts)$/.test(rel)),
+      kept.filter((rel) => /\.(map|ts|mts|cts)$/.test(rel)).slice(0, 10),
+    )
+    check("nothing else is: every dropped file is a map, TypeScript or markdown", dropped.every((rel) => /\.(map|ts|mts|cts|md)$/.test(rel)), dropped.filter((rel) => !/\.(map|ts|mts|cts|md)$/.test(rel)).slice(0, 10))
+    check(
+      "no script, JSON, native module or licence is touched",
+      !dropped.some((rel) => /\.(c|m)?js$|\.json$|\.node$|\.exe$|\.dll$/.test(rel) || /licen[cs]e/i.test(path.basename(rel))) && kept.some((rel) => /^node_modules\/sax\/LICENSE\.md$/.test(rel)),
+      dropped.filter((rel) => /licen[cs]e/i.test(rel)),
+    )
+    const entryPoints: string[] = []
+    for (const [dir, destination] of dirs) {
+      const manifest = JSON.parse(await fs.readFile(path.join(dir, "package.json"), "utf8")) as { main?: string; exports?: unknown }
+      const collect = (value: unknown, key?: string): void => {
+        if (typeof value === "string") {
+          if (key !== "types" && key !== "typings" && value.startsWith(".")) entryPoints.push(path.posix.join(destination, value))
+        } else if (value && typeof value === "object") for (const [inner, next] of Object.entries(value)) collect(next, inner)
+      }
+      if (manifest.main) entryPoints.push(path.posix.join(destination, manifest.main))
+      collect(manifest.exports)
+    }
+    const wanted = entryPoints.filter((entry) => !entry.includes("*"))
+    check("every entry point a dependency declares still ships", wanted.length > 20 && wanted.every((entry) => !dropped.includes(entry)), wanted.filter((entry) => dropped.includes(entry)))
+  }
 }
