@@ -273,6 +273,9 @@ async function hop() {
   animation.cancel()
   hopping.value = false
 }
+
+/* The window's new task puts the keyboard in this box, as MiMo's newChatGlobal does. */
+defineExpose({ focus: () => box.value?.focus() })
 </script>
 
 <template>

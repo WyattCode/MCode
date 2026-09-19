@@ -343,6 +343,20 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
     const importer = await component("ImportDialog")
     check("K13-15: the import dialog closes on Escape, as every MiMo dialog but the image preview does", /useEscapeLayer\(\(\) => emit\("close"\)\)/.test(importer))
   }
+
+  // ---------------------------------------------------------------- K13-17
+  {
+    // A new task lands in the home screen's own box: the conversation's box is not drawn there.
+    const app = await read("src/renderer/src/App.vue")
+    const hero = await component("HomeHero")
+    const focusing = app.slice(app.indexOf("async function focusComposer("), app.indexOf("\n}\n", app.indexOf("async function focusComposer(")))
+    const side = app.slice(app.indexOf("function newTaskFromSide("), app.indexOf("\n}\n", app.indexOf("function newTaskFromSide(")))
+    check(
+      "K13-17: a new task focuses the home screen's box, as MiMo's newChatGlobal does",
+      /if \(isHome\.value\) homeHero\.value\?\.focus\(\)/.test(focusing) && /ref="homeHero"/.test(app) && /defineExpose\(\{ focus: \(\) => box\.value\?\.focus\(\) \}\)/.test(hero),
+    )
+    check("K13-17: and the side column's new task does too", /goHome\(\)\n\s+void focusComposer\(\)/.test(side))
+  }
 }
 
 /*

@@ -407,6 +407,7 @@ async function revealFolder(directory: string) {
   else notifyFailure(t("rp.files.revealFailed", { error: result.error || t("rp.files.pathNotExist") }))
 }
 const composer = ref<InstanceType<typeof Composer>>()
+const homeHero = ref<InstanceType<typeof HomeHero>>()
 const stream = ref<InstanceType<typeof MessageStream>>()
 
 /*
@@ -1205,7 +1206,9 @@ function alreadyNewTask(directory: string | undefined): boolean {
 
 /* The side column's 新建任务, MiMo's newChatGlobal. */
 function newTaskFromSide() {
-  if (!alreadyNewTask(homeDirectory.value)) goHome()
+  if (alreadyNewTask(homeDirectory.value)) return
+  goHome()
+  void focusComposer()
 }
 
 async function newSessionIn(directory: string) {
@@ -1290,9 +1293,15 @@ function onThreadClick(event: MouseEvent) {
   composer.value?.focus()
 }
 
+/*
+ * The home screen draws a box of its own (HomeHero's), so a new task focuses
+ * that one; the conversation's box is not on screen there, and focusing it
+ * left the keyboard on the page body.
+ */
 async function focusComposer() {
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  composer.value?.focus()
+  await nextTick()
+  if (isHome.value) homeHero.value?.focus()
+  else composer.value?.focus()
 }
 
 /** Reachable from the model menu, so an empty list has somewhere to go. */
@@ -3923,6 +3932,7 @@ onBeforeUnmount(() => {
 
         <HomeHero
           v-else-if="isHome"
+          ref="homeHero"
           :directory="homeDirectory"
           @directory="(directory?: string) => (homeShellDirectory = directory)"
           @open-settings="openSettings"
