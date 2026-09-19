@@ -401,6 +401,36 @@ console.log("context ring: checked")
   console.log(`config fields: ${fields.length}, each read somewhere other than the settings dialog`)
 }
 
+// ------------------------------------------------------- the preload's bridge
+/*
+ * Every method the preload exposes on `window.mcode` is a privileged capability
+ * handed to a page that renders model output, so one nothing calls is not
+ * harmless clutter: it is reach with no owner. `browserClose` sat there for
+ * rounds, with a live handler in main, before an audit noticed. A method counts
+ * as called when the renderer accesses it as a property anywhere - some call
+ * sites go through a local `bridge` variable rather than `window.mcode` itself.
+ */
+{
+  const start = preloadSource.indexOf("const api = {")
+  const end = preloadSource.indexOf("\n}\n", start)
+  const exposed = [...preloadSource.slice(start, end).matchAll(/^ {2}([A-Za-z_$][\w$]*)\s*[:(]/gm)].map((match) => match[1])
+  const rendererText: string[] = []
+  const walk = (directory: string) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const full = path.join(directory, entry.name)
+      if (entry.isDirectory()) walk(full)
+      else if (/\.(ts|vue)$/.test(entry.name)) rendererText.push(fs.readFileSync(full, "utf8"))
+    }
+  }
+  walk(path.join(root, "src/renderer"))
+  const renderer = rendererText.join("\n")
+  if (start === -1 || exposed.length < 50) problems.push(`the preload's api object was not found (${exposed.length} methods read)`)
+  for (const method of exposed) {
+    if (!new RegExp(`\\??\\.\\s*${method}(?![\\w$])`).test(renderer)) problems.push(`the preload exposes mcode.${method}, which nothing in the renderer calls`)
+  }
+  console.log(`bridge methods: ${exposed.length}, each called by the renderer`)
+}
+
 if (problems.length) {
   console.error(`\nFAILED with ${problems.length} problem(s):`)
   for (const problem of problems) console.error("  " + problem)

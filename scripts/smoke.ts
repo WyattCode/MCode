@@ -314,7 +314,11 @@ import { roundTenMemoryChecks } from "./smoke-round10-memory"
 import { roundTenAgentChecks } from "./smoke-round10-agents"
 // Round 11: how a model's answer is read - SSE, stop reasons, in-stream errors, thinking, usage, abort (S11-1 … S11-17).
 import { roundElevenStreamChecks } from "./smoke-round11-stream"
+// Round 12, lane C: failure and empty-state UX (C12-1 onwards).
 import { roundTwelveFailureChecks } from "./smoke-round12-c"
+// Round 12, lane A: credentials and the settings documents across damage, upgrades and quit (L12-1 onwards).
+import { roundTwelveCredentialChecks } from "./smoke-round12-credentials"
+import { roundTwelveIpcChecks } from "./smoke-round12-ipc"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
@@ -6940,6 +6944,8 @@ async function main() {
   await storageChecks(check, section)
   await roundElevenChecks(check, section)
   await roundTwelveFailureChecks(check, section)
+  await roundTwelveCredentialChecks(check, section)
+  await roundTwelveIpcChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

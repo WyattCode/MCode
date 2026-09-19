@@ -2239,8 +2239,18 @@ export interface ResponseMap {
    * `unreadable` when the stored config would not parse and the app opened on
    * the defaults, with where the damaged file was kept; `fromNewerVersion`
    * when it was written by a later build and this one will not write over it.
+   * `credentialsUnreadable` when credentials.json was there but could not be
+   * read (or decrypted) and the app started without the keys in it;
+   * `credentialsPlaintext` when keys are saved unencrypted because the system
+   * has no secure storage.
    */
-  "config.get": { config: AppConfig; unreadable?: { problem: string; evidence?: string }; fromNewerVersion?: boolean }
+  "config.get": {
+    config: AppConfig
+    unreadable?: { problem: string; evidence?: string }
+    fromNewerVersion?: boolean
+    credentialsUnreadable?: { problem: string; evidence?: string }
+    credentialsPlaintext?: boolean
+  }
   "config.set": { config: AppConfig }
   "provider.list": { providers: ProviderStatus[] }
   "provider.auth": { providers: ProviderStatus[]; models: number }

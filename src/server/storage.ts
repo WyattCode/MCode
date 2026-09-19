@@ -52,8 +52,12 @@ export function tempNameFor(target: string): string {
  * durable one: without this, power lost shortly after a save can leave some
  * filesystems showing the new name over no contents at all, which turns "the
  * old version survived" into "neither version did".
+ *
+ * `verify`, when given, reads the written temp file back before it replaces
+ * anything, and a throw from it leaves the target as it was - for a write
+ * that must be proved readable before the old version goes (L12-3).
  */
-export async function writeAtomic(target: string, data: string, mode?: number, durable = true): Promise<void> {
+export async function writeAtomic(target: string, data: string, mode?: number, durable = true, verify?: (written: string) => Promise<void>): Promise<void> {
   await fs.mkdir(path.dirname(target), { recursive: true })
   const temp = tempNameFor(target)
   let written = false
@@ -74,6 +78,7 @@ export async function writeAtomic(target: string, data: string, mode?: number, d
     } finally {
       await handle.close()
     }
+    if (verify) await verify(temp)
     await renameOver(temp, target)
   } catch (err) {
     /*
@@ -244,6 +249,23 @@ export class Storage {
     } finally {
       // Only the newest queue entry is worth remembering.
       if (this.queued.get(key) === next) this.queued.delete(key)
+    }
+  }
+
+  /**
+   * Settles every write queued so far, and any queued while waiting (L12-6).
+   *
+   * For quit: a write is atomic, so one cut off leaves the old version, but a
+   * setting or an approval made in the last moment before quit was lost with
+   * it. A failed write is not this caller's to report; its own caller was told.
+   */
+  async drain(): Promise<void> {
+    const awaited = new Set<Promise<void>>()
+    for (;;) {
+      const pending = [...this.queued.values()].filter((write) => !awaited.has(write))
+      if (!pending.length) return
+      for (const write of pending) awaited.add(write)
+      await Promise.allSettled(pending)
     }
   }
 

@@ -1,7 +1,6 @@
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { migrateChime } from "@shared/chime"
 import { normalizeChord, retireKeybinds } from "@shared/chord"
-import fs from "node:fs/promises"
 import { watch as watchFiles, type FSWatcher } from "node:fs"
 import path from "node:path"
 import os from "node:os"
@@ -27,7 +26,9 @@ import { worktreeTop } from "./session/worktree"
 import { sanitizeConfig } from "./config-sanitize"
 import { defaultAccess, type Access } from "@shared/access"
 import type { Storage } from "./storage"
-import { writeAtomic } from "./storage"
+import { quarantine, writeAtomic } from "./storage"
+import fs from "node:fs/promises"
+import { parseCredentials, readCredentialFile, renderCredentials, sameCredentials, type SecretBox } from "./credential-file"
 import type { Bus } from "./bus"
 import {
   BUILT_IN,
@@ -55,6 +56,8 @@ export const PROJECT_LIST_MIGRATION = "projects-list"
 export const REPOSITORY_PROJECTS_MIGRATION = "projects-by-repository"
 /** Round 10: project memory is filed per repository, and outside a repository in one shared folder. */
 export const MEMORY_LAYOUT_MIGRATION = "memory-by-repository"
+/** Round 12 (L12-3): a plain-text credentials.json has been encrypted with the system's secure storage. */
+export const CREDENTIALS_SEALED_MIGRATION = "credentials-sealed-r12"
 
 /**
  * Which build's idea of the stored config this one is.
@@ -223,6 +226,32 @@ function dropRetired(document: object): boolean {
     dropped = true
   }
   return dropped
+}
+
+/** A stored value the checks replaced as it was read, and what it was replaced with. */
+interface HeldValue {
+  stored: unknown
+  read: unknown
+}
+
+/**
+ * Checks `doc` as `sanitizeConfig` does, and answers the stored values that
+ * changed on the way in (L12-5).
+ *
+ * The checks are for this process: a value this build does not know - a
+ * newer build's theme, app icon or effort level - is the default here, but it
+ * is the newer build's value on disk and stays there. Writing the checked copy
+ * back meant that opening an older build once replaced it for good.
+ */
+function sanitizeHeld(doc: AppConfig, stored: Partial<AppConfig> | undefined): Map<string, HeldValue> {
+  const before = { ...doc } as Record<string, unknown>
+  sanitizeConfig(doc, defaults())
+  const after = doc as unknown as Record<string, unknown>
+  const held = new Map<string, HeldValue>()
+  for (const [key, value] of Object.entries(stored ?? {})) {
+    if (!Object.is(before[key], after[key])) held.set(key, { stored: value, read: after[key] })
+  }
+  return held
 }
 
 /**
@@ -444,6 +473,8 @@ export class Config {
     private readonly storage: Storage,
     private readonly bus: Bus,
     private readonly credentialFile: string,
+    /** The system's secure storage (L12-3); absent under plain node, where the file stays plain text. */
+    private readonly secrets?: SecretBox,
   ) {
     this.repoRoots = new RepoRoots(storage)
   }
@@ -600,8 +631,8 @@ export class Config {
     this.fromNewerVersion = typeof stored?.schemaVersion === "number" && stored.schemaVersion > CONFIG_SCHEMA_VERSION
     this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
     const retired = dropRetired(this.current)
-    // Before the migrations, which read these values as the types they claim to be.
-    const cleaned = sanitizeConfig(this.current, defaults())
+    // Before the migrations, which read these values as the types they claim to be; in memory only.
+    this.held = sanitizeHeld(this.current, stored)
     /*
      * A first install - no config on disk at all - starts where MiMo's does:
      * 帮我审批, with full access allowed. The user chose these (2026-09-15). Only
@@ -613,18 +644,81 @@ export class Config {
     if (stored === undefined && !read.corrupt) Object.assign(this.current, firstInstall())
     const migrated = this.migrate()
     this.current.autoApprove = allowed(this.current.permissions)
-    if ((migrated || retired || cleaned) && !this.fromNewerVersion) await this.persist()
-    this.discovered = (await this.storage.read<Record<string, ModelEntry[]>>("models")) ?? {}
-    try {
-      const raw = JSON.parse(await fs.readFile(this.credentialFile, "utf8"))
-      // The file used to be a bare provider -> key map; keep those working.
-      const versioned = raw && typeof raw === "object" && ("keys" in raw || "oauth" in raw)
-      this.credentials = versioned ? (raw.keys ?? {}) : raw
-      this.oauth = versioned ? (raw.oauth ?? {}) : {}
-    } catch {
-      this.credentials = {}
-      this.oauth = {}
+    if ((migrated || retired) && !this.fromNewerVersion) await this.persist()
+    this.discovered = await this.readDiscovered()
+    await this.loadCredentials()
+  }
+
+  /**
+   * The saved keys and sign-ins (L12-2).
+   *
+   * Any failure used to read as an empty file, and the next key saved then
+   * replaced every other key and every subscription login with nothing said.
+   * A file that is there but cannot be read is kept aside now, as a damaged
+   * config is, and the app starts without it; if it cannot even be moved,
+   * saving credentials is refused rather than writing over it.
+   */
+  private async loadCredentials(): Promise<void> {
+    const read = await readCredentialFile(this.credentialFile, this.secrets)
+    if (read.state === "read") {
+      this.credentials = read.credentials.keys
+      this.oauth = read.credentials.oauth
+      this.credentialsInPlainText = !read.sealed
+      return
     }
+    this.credentials = {}
+    this.oauth = {}
+    if (read.state === "absent") return
+    const aside = await quarantine(this.credentialFile)
+    this.credentialsUnreadable = { problem: read.problem, evidence: aside }
+    this.credentialsBlocked = aside === undefined
+    console.warn(`[config] ${read.problem}; ${aside ? `kept as ${path.basename(aside)}` : "it could not be moved, so saving keys is refused until it is"}`)
+  }
+
+  /** Set when credentials.json was there but could not be read, with where it was kept. */
+  credentialsUnreadable: { problem: string; evidence?: string } | undefined
+
+  /** An unreadable credential file that could not be moved aside: nothing may write over it. */
+  private credentialsBlocked = false
+
+  /** Whether credentials.json on disk is plain text rather than sealed. */
+  private credentialsInPlainText = false
+
+  /**
+   * Keys and sign-ins are being kept in plain text because this system has no
+   * secure storage to seal them with - Linux without a keyring (L12-3). Said
+   * only once there is something stored; with nothing saved there is nothing
+   * exposed yet.
+   */
+  get credentialsPlaintext(): boolean {
+    if (!this.secrets || this.secrets.available()) return false
+    return Object.keys(this.credentials).length > 0 || Object.keys(this.oauth).length > 0
+  }
+
+  private writableCredentials(): void {
+    if (this.credentialsBlocked) {
+      throw new CodedError("The saved credentials could not be read and are kept as they are; nothing is written over them", "error.credentialsInvalid")
+    }
+  }
+
+  /**
+   * The model lists discovered from each provider's /models (L12-1).
+   *
+   * This was the one plain read left on the backend's start-up path: a
+   * truncated or hand-edited models.json threw out of `load`, and the app
+   * showed its error page on every launch with Retry failing the same way. The
+   * lists are only a cache of what the next discovery fetches again, so a
+   * damaged file is kept aside and the app starts without them.
+   */
+  private async readDiscovered(): Promise<Record<string, ModelEntry[]>> {
+    const read = await this.storage.readOrCorrupt<unknown>("models")
+    const value = read.value
+    if (!read.corrupt && (value === undefined || (value && typeof value === "object" && !Array.isArray(value)))) {
+      return (value as Record<string, ModelEntry[]> | undefined) ?? {}
+    }
+    const aside = await this.storage.quarantine("models")
+    console.warn(`[config] models.json could not be read (${read.corrupt ?? "not an object"}); ${aside ? `kept as ${path.basename(aside)}` : "left in place"}, starting without discovered models`)
+    return {}
   }
 
   /**
@@ -676,13 +770,29 @@ export class Config {
   /** Writes the settings key by key into the file as it stands, refusing one that no longer parses. */
   private persist(): Promise<void> {
     const file = this.storage.fileOf("config")
-    const value = this.current
+    const value = this.asStored(this.current)
     return this.storage.writeText("config", (current) => {
       const text = renderJsonc(file, current, value)
       this.written.push(text)
       if (this.written.length > 16) this.written.shift()
       return text
     })
+  }
+
+  /**
+   * Stored values the checks replaced as they were read, kept for the file
+   * (L12-5); a field leaves this once something sets it.
+   */
+  private held = new Map<string, HeldValue>()
+
+  /** The settings as the file should say them: a replaced value nobody has changed since is written as it was stored. */
+  private asStored(current: AppConfig): AppConfig {
+    if (!this.held.size) return current
+    const out = { ...current } as Record<string, unknown>
+    for (const [key, entry] of this.held) {
+      if (JSON.stringify(out[key]) === JSON.stringify(entry.read)) out[key] = entry.stored
+    }
+    return out as unknown as AppConfig
   }
 
   /** The last credential write, so two of them cannot interleave. */
@@ -696,15 +806,50 @@ export class Config {
    * rename treatment as the document store.
    */
   private async persistCredentials(): Promise<void> {
-    const next = this.persisting.catch(() => {}).then(() =>
-      writeAtomic(
-        this.credentialFile,
-        JSON.stringify({ keys: this.credentials, oauth: this.oauth }, null, 2),
-        0o600,
-      ),
-    )
+    const next = this.persisting.catch(() => {}).then(async () => {
+      // Sealed whenever the system can; see migrateCredentials for the first time.
+      const sealed = Boolean(this.secrets?.available())
+      await writeAtomic(this.credentialFile, renderCredentials({ keys: this.credentials, oauth: this.oauth }, this.secrets), 0o600)
+      this.credentialsInPlainText = !sealed
+    })
     this.persisting = next
     await next
+  }
+
+  /**
+   * Round 12 (L12-3), once: a plain-text credentials.json is encrypted with
+   * the system's secure storage, as MiMo keeps its provider keys.
+   *
+   * The sealed copy is written beside the file and read back and compared
+   * before it replaces anything, so the plain one is only dropped once the
+   * sealed one is known to open to the same keys. Anything that goes wrong
+   * leaves the plain file as it was, unrecorded, and this is tried again at
+   * the next launch; never recorded either while the system cannot seal.
+   */
+  async migrateCredentials(): Promise<void> {
+    if (this.fromNewerVersion) return
+    if ((this.current.migrations ?? []).includes(CREDENTIALS_SEALED_MIGRATION)) return
+    const box = this.secrets
+    if (!box?.available() || this.credentialsBlocked) return
+    try {
+      if (this.credentialsInPlainText) {
+        const credentials = { keys: this.credentials, oauth: this.oauth }
+        const next = this.persisting.catch(() => {}).then(() =>
+          writeAtomic(this.credentialFile, renderCredentials(credentials, box), 0o600, true, async (written) => {
+            const back = parseCredentials(await fs.readFile(written, "utf8"), box)
+            if (back.state !== "read" || !back.sealed || !sameCredentials(back.credentials, credentials)) {
+              throw new Error("the encrypted copy did not read back the same")
+            }
+          }),
+        )
+        this.persisting = next
+        await next
+        this.credentialsInPlainText = false
+      }
+      await this.set({ migrations: [...(this.current.migrations ?? []), CREDENTIALS_SEALED_MIGRATION] })
+    } catch (err) {
+      console.warn(`[config] the saved keys were not encrypted this time (${err instanceof Error ? err.message : String(err)}); the plain file is kept and this is tried again at the next launch`)
+    }
   }
 
   /** Tokens from a subscription login, if this provider has one. */
@@ -713,6 +858,7 @@ export class Config {
   }
 
   async setTokens(provider: string, tokens: OAuthTokens | undefined): Promise<void> {
+    this.writableCredentials()
     if (tokens) this.oauth[provider] = tokens
     else delete this.oauth[provider]
     await this.persistCredentials()
@@ -780,13 +926,14 @@ export class Config {
     this.fromNewerVersion = typeof stored.schemaVersion === "number" && stored.schemaVersion > CONFIG_SCHEMA_VERSION
     let next: AppConfig = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
     dropRetired(next)
-    sanitizeConfig(next, defaults())
+    const held = sanitizeHeld(next, stored)
     // As set keeps it: a custom provider taken out of the file is disabled, not lost.
     if (JSON.stringify(next.customProviders) !== JSON.stringify(before.customProviders)) {
       next = { ...next, ...customProviderWrite(before.customProviders, next) }
     }
     next.autoApprove = allowed(next.permissions)
     this.current = next
+    this.held = held
     this.bus.publish({ type: "config.updated", config: this.current })
     for (const listener of this.reloadListeners) await Promise.resolve(listener(before, next)).catch(() => undefined)
   }
@@ -799,6 +946,11 @@ export class Config {
    */
   private setting: Promise<unknown> = Promise.resolve()
 
+  /** Settles the settings save and the credential write in flight, for quit (L12-6). */
+  async drain(): Promise<void> {
+    await Promise.allSettled([this.setting, this.persisting])
+  }
+
   set(patch: Partial<AppConfig>): Promise<AppConfig> {
     const next = this.setting.catch(() => undefined).then(() => this.setNow(patch))
     this.setting = next
@@ -807,11 +959,13 @@ export class Config {
 
   private async setNow(patch: Partial<AppConfig>): Promise<AppConfig> {
     const previous = this.current
+    const held = new Map(this.held)
     try {
       return await this.apply(patch)
     } catch (err) {
       // A save that could not be written leaves the settings as they were, so memory never runs ahead of the file.
       this.current = previous
+      this.held = held
       throw err
     }
   }
@@ -821,6 +975,8 @@ export class Config {
     const providersBefore = this.current.customProviders
     const projectsBefore = { projects: this.current.projects, closedProjects: this.current.closedProjects }
     this.current = { ...this.current, ...patch }
+    // A value set now is the one to write, even where it equals what a stored one was read as.
+    for (const key of Object.keys(patch)) this.held.delete(key)
     dropRetired(this.current)
     if (patch.customProviders) {
       this.current = { ...this.current, ...customProviderWrite(providersBefore, this.current) }
@@ -901,6 +1057,7 @@ export class Config {
    * purpose - and nothing about the conversations themselves changes.
    */
   async migrateRepositoryProjects(): Promise<void> {
+    if (this.fromNewerVersion) return
     const done = this.current.migrations ?? []
     if (done.includes(REPOSITORY_PROJECTS_MIGRATION)) return
     const leaving = new Set<string>()
@@ -931,6 +1088,7 @@ export class Config {
    * finished, so a failure is tried again at the next launch.
    */
   async migrateMemory(directories: readonly string[], move: (directories: string[]) => Promise<unknown>): Promise<void> {
+    if (this.fromNewerVersion) return
     const done = this.current.migrations ?? []
     if (done.includes(MEMORY_LAYOUT_MIGRATION)) return
     await move([...directories, ...listedProjects(this.current), ...(this.current.closedProjects ?? [])])
@@ -944,6 +1102,7 @@ export class Config {
    * were.
    */
   async migrateProjects(directories: readonly string[]): Promise<void> {
+    if (this.fromNewerVersion) return
     const done = this.current.migrations ?? []
     if (done.includes(PROJECT_LIST_MIGRATION)) return
     await this.set({ ...adoptedProjects(this.current, directories), migrations: [...done, PROJECT_LIST_MIGRATION] })
@@ -991,6 +1150,7 @@ export class Config {
   }
 
   async setApiKey(provider: string, apiKey: string): Promise<void> {
+    this.writableCredentials()
     if (apiKey) this.credentials[provider] = apiKey
     else {
       delete this.credentials[provider]

@@ -753,6 +753,10 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         config: runtime.config.get(),
         ...(runtime.config.unreadable ? { unreadable: runtime.config.unreadable } : {}),
         ...(runtime.config.fromNewerVersion ? { fromNewerVersion: true } : {}),
+        // L12-2: saved keys that could not be read are said too, not left to look like a first run.
+        ...(runtime.config.credentialsUnreadable ? { credentialsUnreadable: runtime.config.credentialsUnreadable } : {}),
+        // L12-3: keys kept in plain text because this system has no secure storage.
+        ...(runtime.config.credentialsPlaintext ? { credentialsPlaintext: true } : {}),
       } satisfies Handled<"config.get">
 
     case "config.set": {
