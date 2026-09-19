@@ -33,3 +33,18 @@ export function panelBounds(raw: unknown): PanelBounds | undefined {
 export function titlebarMode(raw: unknown): "dark" | "light" | undefined {
   return raw === "dark" || raw === "light" ? raw : undefined
 }
+
+/*
+ * The actions a window may ask for by name. Each channel does exactly the
+ * named thing or nothing: a misspelt or unknown action used to fall through to
+ * the last branch, so a typo selected all, went full screen or maximised.
+ */
+export const EDIT_ACTIONS = ["undo", "redo", "cut", "copy", "paste", "delete", "selectAll"] as const
+export const VIEW_ACTIONS = ["reload", "devtools", "fullscreen"] as const
+export const WINDOW_ACTIONS = ["minimize", "maximize", "close"] as const
+export const BROWSER_ACTS = ["back", "forward", "reload", "forceReload", "stop", "zoomIn", "zoomOut", "zoomReset"] as const
+
+/** The action, when it is one of the channel's own; otherwise nothing. */
+export function actionOf<T extends readonly string[]>(actions: T, raw: unknown): T[number] | undefined {
+  return typeof raw === "string" && (actions as readonly string[]).includes(raw) ? raw : undefined
+}

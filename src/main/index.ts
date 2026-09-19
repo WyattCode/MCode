@@ -22,7 +22,7 @@ import { cutLiveStreams } from "../server/provider/stall"
 import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
 import { closeHidesToTray } from "@shared/protocol"
 import { label, setLabels } from "./labels"
-import { clipboardText, panelBounds, titlebarMode } from "./ipc-input"
+import { BROWSER_ACTS, EDIT_ACTIONS, VIEW_ACTIONS, WINDOW_ACTIONS, actionOf, clipboardText, panelBounds, titlebarMode } from "./ipc-input"
 import { buildMenu } from "./menu"
 import { readMenuKeys } from "./menu-keys"
 import { cancelPendingHide, claimDialog, dialogParent, hideWindow, micDecision, releaseDialog } from "./native-dialogs"
@@ -72,7 +72,6 @@ import {
   screenshot,
   selectTab,
   setBounds,
-  type BrowserAct,
 } from "./browser"
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
 import { fcitxEnvironment } from "./linux-ime"
@@ -1079,19 +1078,25 @@ app.whenReady().then(async () => {
     return decision === "allow"
   })
 
-  ipcMain.on(
-    "mcode:edit",
-    (event, action: "undo" | "redo" | "cut" | "copy" | "paste" | "delete" | "selectAll") => {
-      const contents = event.sender
-      if (action === "undo") contents.undo()
-      else if (action === "redo") contents.redo()
-      else if (action === "cut") contents.cut()
-      else if (action === "copy") contents.copy()
-      else if (action === "paste") contents.paste()
-      else if (action === "delete") contents.delete()
-      else contents.selectAll()
-    },
-  )
+  ipcMain.on("mcode:edit", (event, raw: unknown) => {
+    const contents = event.sender
+    switch (actionOf(EDIT_ACTIONS, raw)) {
+      case "undo":
+        return contents.undo()
+      case "redo":
+        return contents.redo()
+      case "cut":
+        return contents.cut()
+      case "copy":
+        return contents.copy()
+      case "paste":
+        return contents.paste()
+      case "delete":
+        return contents.delete()
+      case "selectAll":
+        return contents.selectAll()
+    }
+  })
 
   /*
    * The window's own view commands.
@@ -1247,18 +1252,18 @@ app.whenReady().then(async () => {
     app.quit()
   })
 
-  ipcMain.on("mcode:view", (event, action: "reload" | "devtools" | "fullscreen") => {
+  ipcMain.on("mcode:view", (event, raw: unknown) => {
     const contents = event.sender
-    if (action === "reload") {
-      contents.reload()
-      return
+    switch (actionOf(VIEW_ACTIONS, raw)) {
+      case "reload":
+        return contents.reload()
+      case "devtools":
+        return contents.toggleDevTools()
+      case "fullscreen": {
+        const window = BrowserWindow.fromWebContents(contents)
+        return window?.setFullScreen(!window.isFullScreen())
+      }
     }
-    if (action === "devtools") {
-      contents.toggleDevTools()
-      return
-    }
-    const window = BrowserWindow.fromWebContents(contents)
-    window?.setFullScreen(!window.isFullScreen())
   })
 
   /*
@@ -1425,9 +1430,10 @@ app.whenReady().then(async () => {
     return window ? navigate(window, String(input)) : undefined
   })
 
-  ipcMain.handle("mcode:browser-act", (event, what: BrowserAct, id?: unknown) => {
+  ipcMain.handle("mcode:browser-act", (event, raw: unknown, id?: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender)
-    return window ? act(window, what, typeof id === "string" && id ? id : undefined) : undefined
+    const what = actionOf(BROWSER_ACTS, raw)
+    return window && what ? act(window, what, typeof id === "string" && id ? id : undefined) : undefined
   })
 
   ipcMain.handle("mcode:browser-screenshot", async (event) => {
@@ -1602,13 +1608,17 @@ app.whenReady().then(async () => {
     if (keys) buildMenu(keys)
   })
 
-  ipcMain.on("mcode:window", (event, action: "minimize" | "maximize" | "close") => {
+  ipcMain.on("mcode:window", (event, raw: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window) return
-    if (action === "minimize") window.minimize()
-    else if (action === "close") window.close()
-    else if (window.isMaximized()) window.unmaximize()
-    else window.maximize()
+    switch (actionOf(WINDOW_ACTIONS, raw)) {
+      case "minimize":
+        return window.minimize()
+      case "close":
+        return window.close()
+      case "maximize":
+        return window.isMaximized() ? window.unmaximize() : window.maximize()
+    }
   })
 
   buildMenu()

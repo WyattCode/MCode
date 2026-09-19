@@ -11,12 +11,19 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { label, setLabels } from "../src/main/labels"
-import { clipboardText, panelBounds, titlebarMode } from "../src/main/ipc-input"
+import { BROWSER_ACTS, EDIT_ACTIONS, VIEW_ACTIONS, WINDOW_ACTIONS, actionOf, clipboardText, panelBounds, titlebarMode } from "../src/main/ipc-input"
 
 export async function roundTwelveIpcChecks(check: Check, section: (name: string) => void): Promise<void> {
   const read = (file: string) => fs.readFile(path.join(process.cwd(), file), "utf8")
   const mainSource = await read("src/main/index.ts")
   const preloadSource = await read("src/preload/index.ts")
+  /** The body of one `ipcMain.on/handle("<channel>", ...)` registration, up to the next one. */
+  const handlerOf = (channel: string) => {
+    const start = mainSource.indexOf(`"${channel}"`)
+    if (start < 0) return ""
+    const next = mainSource.slice(start + channel.length + 2).search(/ipcMain\.(on|handle)\(/)
+    return next < 0 ? mainSource.slice(start) : mainSource.slice(start, start + channel.length + 2 + next)
+  }
 
   section("Round 12 (D12-1): the dead browserClose bridge is gone")
   {
@@ -54,13 +61,6 @@ export async function roundTwelveIpcChecks(check: Check, section: (name: string)
 
   section("Round 12 (D12-3): fire-and-forget channels read their value before using it")
   {
-    /** The body of one `ipcMain.on/handle("<channel>", ...)` registration, up to the next one. */
-    const handlerOf = (channel: string) => {
-      const start = mainSource.indexOf(`"${channel}"`)
-      if (start < 0) return ""
-      const next = mainSource.slice(start + channel.length + 2).search(/ipcMain\.(on|handle)\(/)
-      return next < 0 ? mainSource.slice(start) : mainSource.slice(start, start + channel.length + 2 + next)
-    }
     check("clipboard text passes as it is", clipboardText("héllo") === "héllo" && clipboardText("") === "")
     for (const bad of [undefined, null, 5, { toString: () => "x" }, ["a"]]) {
       check(`clipboard ${JSON.stringify(bad) ?? "undefined"} is dropped`, clipboardText(bad) === undefined)
@@ -86,5 +86,28 @@ export async function roundTwelveIpcChecks(check: Check, section: (name: string)
     check("mcode:browser-bounds sets only a box panelBounds passes", /panelBounds\(raw\)[^]*if \(window && bounds\) setBounds/.test(handlerOf("mcode:browser-bounds")))
     check("mcode:browser-open opens only with a box panelBounds passes", /panelBounds\(raw\)[^]*if \(!window \|\| !bounds\) return/.test(handlerOf("mcode:browser-open")))
     check("mcode:titlebar-mode sets only a mode titlebarMode passes", /titlebarMode\(raw\)[^]*if \(mode\) setTitlebarMode/.test(handlerOf("mcode:titlebar-mode")))
+  }
+
+  section("Round 12 (D12-4): action channels do the named action or nothing")
+  {
+    const channels = [
+      { channel: "mcode:edit", set: EDIT_ACTIONS, name: "EDIT_ACTIONS", bridge: "edit: (action" },
+      { channel: "mcode:view", set: VIEW_ACTIONS, name: "VIEW_ACTIONS", bridge: "view: (action" },
+      { channel: "mcode:window", set: WINDOW_ACTIONS, name: "WINDOW_ACTIONS", bridge: "window: (action" },
+      { channel: "mcode:browser-act", set: BROWSER_ACTS, name: "BROWSER_ACTS", bridge: "browserAct: (what" },
+    ] as const
+    for (const { channel, set, name, bridge } of channels) {
+      check(`${channel}: every known action passes`, set.every((action) => actionOf(set, action) === action))
+      for (const bad of ["", "selectall", "maximise", "toggle", "__proto__", "toString", 1, null, undefined, ["reload"]]) {
+        check(`${channel}: ${JSON.stringify(bad) ?? "undefined"} is no action`, actionOf(set, bad) === undefined)
+      }
+      // The preload's declared union and main's set are the same list.
+      const at = preloadSource.indexOf(bridge)
+      const union = at < 0 ? [] : [...preloadSource.slice(at, preloadSource.indexOf(")", at)).matchAll(/"([A-Za-z]+)"/g)].map((match) => match[1])
+      check(`${channel}: main accepts exactly what the preload declares`, JSON.stringify([...union].sort()) === JSON.stringify([...set].sort()), union)
+      const body = handlerOf(channel)
+      check(`${channel}: the handler dispatches on actionOf(${name}, ...)`, body.includes(`actionOf(${name}, raw)`))
+      check(`${channel}: no else-branch or default runs for an unknown action`, !/\belse\s+(?!if\b)|\bdefault\s*:/.test(body))
+    }
   }
 }

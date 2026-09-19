@@ -2,6 +2,7 @@ import { BrowserWindow, WebContentsView, clipboard, session } from "electron"
 import { addressToURL, pageMayNavigate } from "@shared/web-address"
 import { pageFavicon, stepZoom } from "@shared/browser-page"
 import { wirePage } from "./browser-page"
+import type { BROWSER_ACTS } from "./ipc-input"
 
 /**
  * The in-app browser panel.
@@ -348,7 +349,7 @@ export function navigate(window: BrowserWindow, input: string): BrowserState | u
   return stateOf(panel)
 }
 
-export type BrowserAct = "back" | "forward" | "reload" | "forceReload" | "stop" | "zoomIn" | "zoomOut" | "zoomReset"
+type BrowserAct = (typeof BROWSER_ACTS)[number]
 
 /* `id` names a page other than the open one: MiMo's Ctrl+R reloads a browser tab even while another tab is on show. */
 export function act(window: BrowserWindow, what: BrowserAct, id?: string): BrowserState | undefined {
