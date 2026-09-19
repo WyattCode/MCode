@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, ref, watch } from "vue"
 import type { ProviderStatus } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
+import { composing } from "../lib/keys"
 import { notifyFailure } from "../lib/toast"
+import { useEscapeLayer } from "../lib/escape-layer"
 import { connectableProviders, groupConnected, groupProviders, waysFor, type Group, type Way } from "../lib/connect"
 import ProviderIcon from "./ProviderIcon.vue"
 import CustomProviderForm from "./CustomProviderForm.vue"
@@ -253,14 +255,7 @@ function dismiss() {
  * way to step back; a key that sometimes closes and sometimes retreats is a key
  * nobody presses with confidence.
  */
-function onKeydown(event: KeyboardEvent) {
-  if (event.key !== "Escape") return
-  event.preventDefault()
-  dismiss()
-}
-
-onMounted(() => window.addEventListener("keydown", onKeydown))
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
+useEscapeLayer(dismiss)
 </script>
 
 <template>
@@ -381,7 +376,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               :placeholder="t('model.apiKeyPlaceholder')"
               spellcheck="false"
               data-connect-key
-              @keydown.enter="submitKey"
+              @keydown.enter="!composing($event) && submitKey()"
             />
             <button
               type="button"
@@ -419,7 +414,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             spellcheck="false"
             autocomplete="off"
             @input="endpoint = ($event.target as HTMLInputElement).value"
-            @keydown.enter="connectLocal"
+            @keydown.enter="!composing($event) && connectLocal()"
           />
           <p class="lead soft">{{ t("onboard.endpointHint") }}</p>
           <div class="actions">

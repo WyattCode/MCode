@@ -59,6 +59,7 @@ function levelTitle(level: Effort): string | undefined {
   <div ref="slot" class="slot" @mouseenter="emit('enter')">
     <button
       class="item model-item"
+      tabindex="-1"
       :class="{ hot, on }"
       :data-key="rowKey"
       :aria-haspopup="efforts.length ? 'menu' : undefined"
@@ -86,6 +87,7 @@ function levelTitle(level: Effort): string | undefined {
         v-for="entry in efforts"
         :key="entry"
         class="item model-item"
+        tabindex="-1"
         :class="{ on: on && entry === effort, hot: entry === effortHot }"
         :data-effort="entry"
         :title="levelTitle(entry)"

@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useApp } from "../stores/app"
 import { sessionTitle, t } from "../lib/i18n"
+import { composing } from "../lib/keys"
 import { projectName } from "../lib/project"
 import { badgeStyle, fileBadge } from "../lib/filetype"
 
@@ -208,7 +209,7 @@ function onKeydown(event: KeyboardEvent) {
   } else if (event.key === "ArrowUp" || (event.key === "p" && event.ctrlKey)) {
     event.preventDefault()
     active.value = (active.value - 1 + rows.value.length) % Math.max(1, rows.value.length)
-  } else if (event.key === "Enter") {
+  } else if (event.key === "Enter" && !composing(event)) {
     event.preventDefault()
     void choose(active.value)
   }
@@ -228,7 +229,7 @@ onMounted(() => {
 
 <template>
   <div class="overlay palette-overlay" @mousedown.self="emit('close')">
-    <div v-modal class="dialog palette" @keydown="onKeydown">
+    <div v-modal class="dialog palette" data-new-task-clears @keydown="onKeydown">
       <div class="search">
         <input
           ref="input"

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted } from "vue"
 import { t } from "../lib/i18n"
+import { useEscapeLayer } from "../lib/escape-layer"
 
 /**
  * MiMo's 智能编辑用法示例: what the smart voice mode understands, with examples.
@@ -19,15 +19,7 @@ const ENTRIES = [
   { id: "filler", examples: false },
 ] as const
 
-function onKeydown(event: KeyboardEvent) {
-  if (event.key !== "Escape") return
-  // The settings dialog underneath listens for Escape too; this layer closes alone.
-  event.stopImmediatePropagation()
-  emit("close")
-}
-
-onMounted(() => window.addEventListener("keydown", onKeydown, true))
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true))
+useEscapeLayer(() => emit("close"))
 </script>
 
 <template>

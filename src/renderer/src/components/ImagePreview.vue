@@ -301,12 +301,15 @@ onBeforeUnmount(() => {
     <div
       v-if="imagePreview"
       ref="root"
+      v-modal
+      data-modal-keep-focus
       class="image-preview"
       role="dialog"
       aria-modal="true"
       :aria-label="t('imagePreview.title')"
       tabindex="-1"
       data-image-preview
+      data-new-task-clears
       @click="close"
       @wheel.prevent.stop="onWheel"
     >

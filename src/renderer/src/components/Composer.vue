@@ -7,7 +7,7 @@ import { interruptedTurn } from "@shared/resume"
 import { textualName } from "@shared/attachment-kind"
 import { commandTitle } from "../lib/skill-display"
 import { normalizeChord } from "@shared/chord"
-import { chordOf } from "../lib/keys"
+import { chordOf, composing } from "../lib/keys"
 import { detectCodeLanguage, insertFence } from "../lib/paste-code"
 import { appendMentions, mentionBackspace, projectRelative, promptHistory, slashAt } from "../lib/composer-text"
 import { matchingNames, wordMatch } from "../lib/word-match"
@@ -38,6 +38,8 @@ import AnnotationChips from "./AnnotationChips.vue"
 import ModelMenuRow from "./ModelMenuRow.vue"
 import { besideRow } from "../lib/submenu"
 import { isRovingKey, rovingStep, type RovingKey } from "../lib/composer-menu"
+import { focusRow } from "../lib/menu-keys"
+import { useEscapeLayerWhile } from "../lib/escape-layer"
 import FullAccessDialog from "./FullAccessDialog.vue"
 import ContextRing from "./ContextRing.vue"
 import { readContext } from "./session-context"
@@ -1077,6 +1079,13 @@ function addSkill(name: string) {
   focus()
 }
 
+/* Enter in the skills search adds the first match; Enter that commits an IME candidate is left to the input method. */
+function pickFirstSkill(event: KeyboardEvent) {
+  event.preventDefault()
+  const first = skillRows.value[0]
+  if (first) addSkill(first.name)
+}
+
 function removeSkill(name: string) {
   leavingSkill.value = name
   setTimeout(() => {
@@ -1113,8 +1122,12 @@ function skillChipName(trigger: string): string {
   return commandTitle(serverCommand(trigger), trigger, language.value)
 }
 
-async function openSkillMenu(event: Event) {
-  const row = (event.currentTarget as HTMLElement).getBoundingClientRect()
+function openSkillMenu(event: Event) {
+  void openSkillFrom(event.currentTarget as HTMLElement)
+}
+
+async function openSkillFrom(from: HTMLElement) {
+  const row = from.getBoundingClientRect()
   skillSubOpen.value = true
   await nextTick()
   const panel = skillMenu.value
@@ -2340,6 +2353,60 @@ const ACCESS_ICONS: Record<Access, string[]> = {
  */
 const accessMenu = ref<HTMLElement>()
 const plusMenu = ref<HTMLElement>()
+
+/*
+ * MiMo's plus menu is its menu primitive: focus goes to the first row when it
+ * opens, Up, Down, Home and End walk the rows, Enter and Space are the row's
+ * own button, and Right opens 技能 with focus in its search. Escape closes one
+ * level: the skills panel back to its row, then the menu back to the box.
+ */
+watch(menu, async (value) => {
+  if (value !== "plus") return
+  await nextTick()
+  plusMenu.value?.querySelector<HTMLElement>(":scope > .item")?.focus({ preventScroll: true })
+})
+
+function onPlusKeys(event: KeyboardEvent) {
+  if (event.altKey || event.metaKey || event.ctrlKey || event.isComposing) return
+  const panel = skillMenu.value
+  const skillRow = plusMenu.value?.querySelector<HTMLElement>("[data-plus-skills]")
+  const inSkills = Boolean(panel?.contains(event.target as Node))
+  if (inSkills) {
+    const field = event.target instanceof HTMLInputElement
+    // The search keeps its own caret keys; Down leaves it for the list.
+    if (field && event.key !== "ArrowDown") return
+    const rows = [...(panel?.querySelectorAll<HTMLElement>(".skill-item") ?? [])]
+    if (isRovingKey(event.key)) {
+      if (focusRow(rows, event.key)) event.preventDefault()
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault()
+      skillSubOpen.value = false
+      skillRow?.focus()
+    }
+    return
+  }
+  if (isRovingKey(event.key)) {
+    if (focusRow([...(plusMenu.value?.querySelectorAll<HTMLElement>(":scope > .item") ?? [])], event.key)) event.preventDefault()
+  } else if (event.key === "ArrowRight" && event.target === skillRow && skillRow) {
+    event.preventDefault()
+    void openSkillFrom(skillRow)
+  }
+}
+
+useEscapeLayerWhile(
+  () => menu.value === "plus",
+  () => {
+    if (skillSubOpen.value) {
+      skillSubOpen.value = false
+      skillQuery.value = ""
+      plusMenu.value?.querySelector<HTMLElement>("[data-plus-skills]")?.focus()
+      return
+    }
+    menu.value = undefined
+    focus()
+  },
+  () => (menu.value = undefined),
+)
 const menuUp = ref(false)
 watch(menu, async (value) => {
   menuUp.value = false
@@ -2801,6 +2868,16 @@ function onPointerDown(event: MouseEvent) {
   if (!pills.value?.contains(event.target as Node)) menu.value = undefined
 }
 
+/*
+ * MiMo's composer menus are non-modal popovers, which close when focus moves
+ * anywhere outside them and their chip. Their rows are not Tab stops, so Tab
+ * leaves a menu in one step, and this closes it behind.
+ */
+function onMenuFocusOut(event: FocusEvent) {
+  const next = event.relatedTarget
+  if (next instanceof Node && !(event.currentTarget as HTMLElement).parentElement?.contains(next)) menu.value = undefined
+}
+
 onMounted(() => {
   window.addEventListener("mousedown", onPointerDown, true)
   window.addEventListener("dragend", endDrag)
@@ -3168,8 +3245,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 <path d="M8 3.4v9.2M3.4 8h9.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
               </svg>
             </button>
-            <div v-if="menu === 'plus'" ref="plusMenu" class="menu plus-menu" :class="{ up: menuUp }" data-plus-menu>
-              <button class="item" data-plus-files @click="attachFromMenu">
+            <div v-if="menu === 'plus'" ref="plusMenu" class="menu plus-menu" :class="{ up: menuUp }" role="menu" data-plus-menu @keydown="onPlusKeys" @focusout="onMenuFocusOut">
+              <button class="item" role="menuitem" tabindex="-1" data-plus-files @click="attachFromMenu">
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M10.6 5.2 6 9.8a1.4 1.4 0 0 0 2 2l5-5a2.8 2.8 0 0 0-4-4l-5.2 5.2a4.2 4.2 0 0 0 6 6l4.2-4.2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
                 </svg>
@@ -3177,7 +3254,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               </button>
               <template v-if="!side">
                 <div class="rule" />
-                <button class="item" data-plus-terminal @click="terminalFromMenu">
+                <button class="item" role="menuitem" tabindex="-1" data-plus-terminal @click="terminalFromMenu">
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                     <rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6" stroke="currentColor" stroke-width="1.2" />
                     <path d="M4.6 6.4 6.8 8.4 4.6 10.4M8.6 10.6h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
@@ -3186,7 +3263,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 </button>
                 <div class="rule" />
                 <!-- Compose mode: a switch rather than a command, because it stays on; the menu stays open. -->
-                <button class="item staged-row" role="switch" data-mode="staged" :aria-checked="staged" @click="toggleStaged">
+                <button class="item staged-row" role="switch" tabindex="-1" data-mode="staged" :aria-checked="staged" @click="toggleStaged">
                   <span class="staged-text">
                     <span class="item-name">{{ t("composer.staged") }}</span>
                     <span class="staged-sub">{{ t("composer.stagedSub") }}</span>
@@ -3199,6 +3276,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               <button
                 class="item skill-row"
                 :class="{ hot: skillSubOpen }"
+                role="menuitem"
+                tabindex="-1"
                 aria-haspopup="menu"
                 :aria-expanded="skillSubOpen"
                 data-plus-skills
@@ -3225,8 +3304,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                   type="text"
                   spellcheck="false"
                   :placeholder="t('composer.skillSearch')"
-                  @keydown.escape.stop.prevent="menu = undefined"
-                  @keydown.enter.prevent="skillRows[0] && addSkill(skillRows[0].name)"
+                  @keydown.enter="!composing($event) && pickFirstSkill($event)"
                 />
                 <div class="skill-list">
                   <div v-if="!hasSkills" class="skill-empty">{{ t("composer.skillEmpty") }}</div>
@@ -3235,6 +3313,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                     v-for="skill in skillRows"
                     :key="skill.name"
                     class="item skill-item"
+                    role="menuitem"
+                    tabindex="-1"
                     :title="skill.description || skill.name"
                     @click="addSkill(skill.name)"
                   >
@@ -3279,8 +3359,10 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               :class="{ up: menuUp }"
               tabindex="-1"
               @keydown="onAccessKeys"
+              @focusout="onMenuFocusOut"
             >
               <button
+                tabindex="-1"
                 v-for="entry in accessChoices"
                 :key="entry"
                 v-tip="{ label: t(`composer.access.${entry}Hint`), placement: 'right', trigger: 'hover' }"
@@ -3379,8 +3461,10 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               :class="{ up: menuUp }"
               tabindex="-1"
               @keydown="onModelKeys"
+              @focusout="onMenuFocusOut"
             >
               <button
+                tabindex="-1"
                 class="item model-item smart"
                 :class="{ hot: activeKey === SMART_KEY, on: smartOn }"
                 :data-key="SMART_KEY"
@@ -3426,6 +3510,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
               <div v-if="moreRows.length" class="more-slot" @mouseenter="hoverRow(MORE_KEY)">
                 <button
+                  tabindex="-1"
                   class="item model-item"
                   :class="{ hot: activeKey === MORE_KEY }"
                   :data-key="MORE_KEY"
@@ -3492,6 +3577,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
               <div class="rule" />
               <button
+                tabindex="-1"
                 class="item model-item"
                 :class="{ hot: activeKey === CONFIG_KEY }"
                 :data-key="CONFIG_KEY"

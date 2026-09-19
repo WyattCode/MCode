@@ -25,7 +25,8 @@ import type { McpImportItem, McpImportSource, McpServerConfig, McpStatus, McpToo
 import { MCP_STATUS_TONE, isMcpStatus, mcpNeedsSignIn, mcpStatusLabel } from "../lib/mcp-status"
 import { homePath } from "../lib/home-path"
 import classicIcon from "@resources/app-icons/classic.png"
-import { chordOf, formatChord, isBindable, recordingChord } from "../lib/keys"
+import { chordOf, composing, formatChord, isBindable, recordingChord } from "../lib/keys"
+import { layerOpen } from "../lib/escape-layer"
 import { pageRows } from "../lib/shortcut-page"
 import { fullAccessOff } from "../lib/confirm-queue"
 import { notifyFailure, notify } from "../lib/toast"
@@ -968,6 +969,16 @@ function reducedMotion(): boolean {
   return motion === "on" || (motion !== "off" && window.matchMedia("(prefers-reduced-motion: reduce)").matches)
 }
 
+/* Closes at once for a command that runs over Settings (MiMo's new task), still asking about unsaved edits first. */
+function leaveThen(action: () => void) {
+  requestLeave(() => {
+    emit("close")
+    action()
+  })
+}
+
+defineExpose({ leaveThen })
+
 function requestClose() {
   requestLeave(() => {
     if (closing.value) return
@@ -1616,41 +1627,42 @@ async function confirmRemoveProvider() {
   }
 }
 
+/*
+ * Whether another layer was up when Escape went down, read on the capture phase
+ * before any of them has closed, as MiMo's overlay reads it. A confirmation, a
+ * picker or a dialog opened from here closes alone, whichever it is: there is
+ * no hand-kept list of them to fall out of step.
+ */
+let layerAtPress = false
+function notePress(event: KeyboardEvent) {
+  if (event.key === "Escape") layerAtPress = layerOpen(dialogEl.value)
+}
+
 function onKeydown(event: KeyboardEvent) {
   if (event.key !== "Escape") return
-  /*
-   * The connect dialog opens on top of this one and listens for Escape too, so
-   * without standing down here a single press closed both layers at once.
-   */
-  if (connectOpen.value) return
   /* As in MiMo, the overlay closes only when nothing on top of it took the Escape. An open picker marks it taken. */
   if (event.defaultPrevented) return
   if (confirmingVoiceSend.value) {
     confirmingVoiceSend.value = false
     return
   }
-  // These close themselves on the same press.
-  if (
-    pendingLeave.value ||
-    confirmingClear.value ||
-    confirmingDelete.value ||
-    removingProject.value ||
-    confirmingAgentsDelete.value ||
-    voiceUsageOpen.value ||
-    licensesOpen.value
-  ) {
-    return
-  }
+  if (layerAtPress) return
   requestClose()
 }
 
-onMounted(() => window.addEventListener("keydown", onKeydown))
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
+onMounted(() => {
+  window.addEventListener("keydown", notePress, true)
+  window.addEventListener("keydown", onKeydown)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", notePress, true)
+  window.removeEventListener("keydown", onKeydown)
+})
 </script>
 
 <template>
   <div class="overlay" :class="{ closing }" data-settings-overlay data-modal-no-exit @mousedown.self="requestClose">
-    <div ref="dialogEl" v-modal class="dialog" data-modal-keep-focus>
+    <div ref="dialogEl" v-modal class="dialog" data-modal-keep-focus data-new-task-clears>
       <!-- 2.0: MiMo's dialog closes from its own corner as well as from Escape
            and the scrim, which a pointer-only reader otherwise has to find. -->
       <button class="close" :aria-label="t('set.close')" data-settings-close @click="requestClose">
@@ -1667,7 +1679,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           :aria-label="t('set.search')"
           spellcheck="false"
           autocomplete="off"
-          @keydown.enter="openFirstMatch"
+          @keydown.enter="!composing($event) && openFirstMatch()"
         />
         <!--
           MiMo's four groups, in its order.
@@ -2195,7 +2207,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   data-size-input="ui"
                   @input="typeSize('uiFontSize', $event)"
                   @change="setSize('uiFontSize', $event, 14)"
-                  @keydown.enter="($event.target as HTMLInputElement).blur()"
+                  @keydown.enter="!composing($event) && ($event.target as HTMLInputElement).blur()"
                 />
                 <span class="unit">px</span>
               </span>
@@ -2216,7 +2228,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   data-size-input="code"
                   @input="typeSize('codeFontSize', $event)"
                   @change="setSize('codeFontSize', $event, 12)"
-                  @keydown.enter="($event.target as HTMLInputElement).blur()"
+                  @keydown.enter="!composing($event) && ($event.target as HTMLInputElement).blur()"
                 />
                 <span class="unit">px</span>
               </span>
@@ -3237,7 +3249,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 :placeholder="t('set.baseURL')"
                 spellcheck="false"
                 @input="endpoints[provider.id] = ($event.target as HTMLInputElement).value"
-                @keydown.enter="saveEndpoint(provider.id)"
+                @keydown.enter="!composing($event) && saveEndpoint(provider.id)"
               />
               <button
                 class="ctl-btn"

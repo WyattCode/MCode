@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue"
 import { IMPORT_SOURCES, type ImportRun, type ImportScan, type ImportSource } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
+import { useEscapeLayer } from "../lib/escape-layer"
 
 /**
  * MiMo's 从其他 AI 应用导入, shown once on a first run.
@@ -93,6 +94,9 @@ const doneRows = computed(() => (state.value.name === "done" ? APPS.filter((entr
 function toggle(source: ImportSource) {
   on.value = { ...on.value, [source]: !on.value[source] }
 }
+
+// Escape closes it, as it closes every other dialog; an import already running keeps going.
+useEscapeLayer(() => emit("close"))
 
 onMounted(() => void scan())
 </script>

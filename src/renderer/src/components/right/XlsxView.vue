@@ -25,6 +25,7 @@ import {
 } from "../../lib/xlsx-overlays"
 import { notice, notifyFailure } from "../../lib/toast"
 import { t } from "../../lib/i18n"
+import { dialogOpen } from "../../lib/escape-layer"
 import CellAffordance from "../CellAffordance.vue"
 import AnnotationFx from "../AnnotationFx.vue"
 import AnnotationMarkLayer, { type MarkItem } from "../AnnotationMarkLayer.vue"
@@ -831,7 +832,7 @@ watch(
 )
 
 function onEscape(event: KeyboardEvent) {
-  if (!props.active || event.key !== "Escape" || event.defaultPrevented || event.isComposing) return
+  if (!props.active || event.key !== "Escape" || event.defaultPrevented || event.isComposing || dialogOpen()) return
   batch.clearFile(props.path)
 }
 

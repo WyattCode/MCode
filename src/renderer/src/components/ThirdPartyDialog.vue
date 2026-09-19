@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, reactive } from "vue"
+import { onMounted, reactive } from "vue"
 import { t } from "../lib/i18n"
+import { useEscapeLayer } from "../lib/escape-layer"
 import { THIRD_PARTY } from "../lib/third-party"
 
 /**
@@ -13,15 +14,9 @@ const emit = defineEmits<{ close: [] }>()
 
 const texts = reactive<Record<string, string>>({})
 
-function onKeydown(event: KeyboardEvent) {
-  if (event.key !== "Escape") return
-  // The settings dialog underneath listens for Escape too; this layer closes alone.
-  event.stopImmediatePropagation()
-  emit("close")
-}
+useEscapeLayer(() => emit("close"))
 
 onMounted(() => {
-  window.addEventListener("keydown", onKeydown, true)
   for (const notice of THIRD_PARTY) {
     void notice.text().then(
       (text) => (texts[notice.id] = text),
@@ -29,7 +24,6 @@ onMounted(() => {
     )
   }
 })
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true))
 </script>
 
 <template>

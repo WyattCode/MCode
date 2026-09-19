@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { GitSummary } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
+import { dialogOpen } from "../lib/escape-layer"
 import { openDocument, openFileInViewer } from "../lib/office-open"
 import {
   artifactGroups,
@@ -38,8 +39,6 @@ const props = defineProps<{
   floating?: boolean
   /** The height of whatever is docked along the foot of the conversation. */
   bottomInset?: number
-  /** Another overlay owns Escape. */
-  escapeBlocked?: boolean
 }>()
 const emit = defineEmits<{ close: [] }>()
 
@@ -182,14 +181,16 @@ function onPointerDown(event: PointerEvent) {
 }
 
 /*
- * Escape shuts the card when nothing else took it. Checked a tick later so that
- * every other listener - the window's shortcuts included, whichever registered
- * first - has had its chance to claim the key.
+ * Escape shuts the card when nothing else took it: every menu and confirmation
+ * marks the key as taken, and a dialog over the page keeps it. Checked a tick
+ * later too, so that every other listener - the window's shortcuts included,
+ * whichever registered first - has had its chance to claim the key. A pending
+ * permission request keeps the card open.
  */
 function onKeydown(event: KeyboardEvent) {
-  if (event.key !== "Escape" || event.isComposing || event.defaultPrevented || !props.visible) return
+  if (event.key !== "Escape" || event.isComposing || event.defaultPrevented || !props.visible || dialogOpen()) return
   setTimeout(() => {
-    if (event.defaultPrevented || !props.visible || props.escapeBlocked) return
+    if (event.defaultPrevented || !props.visible || app.permission) return
     if (document.querySelector("[data-info-popover]")) return
     emit("close")
   }, 0)

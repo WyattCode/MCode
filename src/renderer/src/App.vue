@@ -27,7 +27,7 @@ import { acceptsDrop, outsideWindow } from "./lib/attach"
 import { fileRequest, reviewRequest } from "./lib/review-request"
 import { foldedMatches } from "./lib/find-folded"
 import { deliveryShown, setDeliveryView } from "./lib/delivered"
-import { imagePreview, videoPreview } from "./lib/image-preview"
+import { closeImagePreview, closeVideoPreview, imagePreview, videoPreview } from "./lib/image-preview"
 import VideoPreview from "./components/VideoPreview.vue"
 import RenameDialog from "./components/RenameDialog.vue"
 import { markUpdateReady, updateState } from "./components/UpdatePill.vue"
@@ -76,6 +76,7 @@ import { chime } from "./lib/sound"
 import { stepTarget } from "./lib/visible-chats"
 import { fontScale } from "./lib/font-scale"
 import { announce } from "./lib/announce"
+import { dialogOpen, dismissMenus } from "./lib/escape-layer"
 import { chimeOf, longTask } from "@shared/chime"
 
 const app = useApp()
@@ -1238,6 +1239,55 @@ async function selectTab(id: string) {
 /** Starts a task from the 2.0 home screen, in the project picked there. */
 function newSession() {
   if (!alreadyNewTask(app.current?.directory)) startIn(app.current?.directory)
+}
+
+const settingsDialog = ref<InstanceType<typeof SettingsDialog>>()
+
+/**
+ * MiMo's new task clears the screen before it runs: every menu, the search,
+ * the palette, Settings - asking first when an environment has unsaved edits -
+ * and the previews. A dialog that asks something (a rename, a confirmation)
+ * keeps the key, and then this answers false and does nothing.
+ */
+function newTaskOverLayers(): boolean {
+  const asking = [...document.querySelectorAll('[aria-modal="true"]')].some(
+    (node) => !node.closest("[data-new-task-clears]") && !node.closest("[data-modal-exit]"),
+  )
+  if (asking || editingProject.value || renamingSession.value || renamingProject.value) return false
+  dismissMenus()
+  searchOpen.value = false
+  paletteOpen.value = false
+  closeImagePreview()
+  closeVideoPreview()
+  if (settingsOpen.value && settingsDialog.value) {
+    settingsDialog.value.leaveThen(() => {
+      settingsOpen.value = false
+      newSession()
+    })
+    return true
+  }
+  settingsOpen.value = false
+  newSession()
+  return true
+}
+
+/** Whether a chord is the one new task answers to: Ctrl+N, or wherever it has been re-bound. */
+function isNewTaskChord(chord: string): boolean {
+  if (!chord) return false
+  const bound = rebound.value.get(chord)
+  if (bound) return bound === "session.new"
+  return chord === "Ctrl+N" && !retiredChords.value.has(chord)
+}
+
+/* What a click in the thread leaves alone because it takes the click or the keyboard itself: MiMo's list. */
+const THREAD_CONTROLS =
+  "button, a, input, textarea, select, label, [contenteditable], [role=button], [role=textbox], [role=link], [role=menuitem], [role=checkbox], [role=tab]"
+
+/** MiMo: a click on the thread, not on a control and with nothing selected, puts the caret at the end of the box. */
+function onThreadClick(event: MouseEvent) {
+  if (window.getSelection()?.toString()) return
+  if ((event.target as Element | null)?.closest?.(THREAD_CONTROLS)) return
+  composer.value?.focus()
 }
 
 async function focusComposer() {
@@ -3018,6 +3068,36 @@ const modalOpen = computed(
     Boolean(renamingProject.value),
 )
 
+/*
+ * The commands that act on the open conversation, which MiMo gives no target
+ * while anything covers it.
+ */
+const CONVERSATION_COMMANDS = new Set([
+  "session.pin",
+  "session.rename",
+  "session.archive",
+  "session.delete",
+  "session.side",
+  "session.fork",
+  "session.share",
+  "session.copyID",
+  "session.copyLink",
+  "session.copyMarkdown",
+  "session.exportMarkdown",
+  "session.compact",
+  "view.priority",
+])
+
+/**
+ * Whether a layer covers the conversation: MiMo's target for a conversation
+ * command is empty while a dialog, the search, the palette or a preview is up.
+ * Read from the page as well as from the flags above, so the search, the
+ * palette and every confirmation count without a list of them to keep.
+ */
+function conversationCovered(): boolean {
+  return modalOpen.value || searchOpen.value || paletteOpen.value || dialogOpen()
+}
+
 /* The box MiMo's annotations go to: the open conversation's, or the home screen's. */
 const annotationScope = computed(() => (isHome.value || !app.currentID ? HOME_SCOPE : app.currentID))
 watch(annotationScope, (scope) => (mainAnnotationScope.value = scope), { immediate: true })
@@ -3041,6 +3121,12 @@ function onKeydown(event: KeyboardEvent) {
   const letter = (keyOfCode(event.code) ?? event.key).toLowerCase()
   if (event.isComposing || event.keyCode === 229) return
 
+  /* New task runs over whatever is on screen, clearing it first, as MiMo's does; the rest stays put behind a modal. */
+  if (isNewTaskChord(chordOf(event, platform)) && !commandDisabled("session.new") && newTaskOverLayers()) {
+    event.preventDefault()
+    return
+  }
+
   /*
    * A shortcut the user has re-bound wins over the built-in table, and is
    * looked up by the chord rather than by the key - which is what lets a
@@ -3053,6 +3139,7 @@ function onKeydown(event: KeyboardEvent) {
       const command = commands.value.find((entry) => entry.id === bound)
       if (command && command.enabled !== false) {
         if (TYPING_OFF.has(command.id) && typingIn(event.target)) return
+        if (CONVERSATION_COMMANDS.has(command.id) && conversationCovered()) return
         event.preventDefault()
         void command.run()
         return
@@ -3086,7 +3173,7 @@ function onKeydown(event: KeyboardEvent) {
 
   /* Pinning the open conversation, and copying the id of it. */
   if (mod && event.altKey && letter === "p") {
-    if (modalOpen.value || !app.currentID) return
+    if (conversationCovered() || !app.currentID) return
     event.preventDefault()
     app.togglePinned(app.currentID)
     return
@@ -3094,14 +3181,14 @@ function onKeydown(event: KeyboardEvent) {
 
   /* Renaming and archiving the open conversation, on MiMo's chords. */
   if (mod && event.altKey && letter === "r") {
-    if (modalOpen.value || !app.currentID || isHome.value) return
+    if (conversationCovered() || !app.currentID || isHome.value) return
     event.preventDefault()
     beginRename()
     return
   }
 
   if (mod && event.altKey && letter === "a") {
-    if (modalOpen.value || !app.currentID) return
+    if (conversationCovered() || !app.currentID) return
     event.preventDefault()
     void archiveSessions([app.currentID])
     return
@@ -3109,7 +3196,7 @@ function onKeydown(event: KeyboardEvent) {
 
   /* A side chat tab, on MiMo's chord. */
   if (mod && event.altKey && letter === "s") {
-    if (modalOpen.value) return
+    if (conversationCovered()) return
     event.preventDefault()
     openSideChatTab()
     return
@@ -3117,14 +3204,14 @@ function onKeydown(event: KeyboardEvent) {
 
   /* The priority filter, on MiMo's own chord. */
   if (mod && event.altKey && letter === "u") {
-    if (modalOpen.value) return
+    if (conversationCovered()) return
     event.preventDefault()
     priorityFilter.value = !priorityFilter.value
     return
   }
 
   if (mod && event.altKey && letter === "c") {
-    if (modalOpen.value || !app.currentID) return
+    if (conversationCovered() || !app.currentID) return
     event.preventDefault()
     window.mcode.setClipboardText(app.currentID)
     notify(t("menu.copiedID"))
@@ -3132,7 +3219,7 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   if (mod && event.altKey && letter === "l") {
-    if (modalOpen.value || !app.current) return
+    if (conversationCovered() || !app.current) return
     event.preventDefault()
     copySessionLink()
     return
@@ -3280,7 +3367,7 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 const menuCommands: Record<string, () => void> = {
-  "new-session": () => void newSession(),
+  "new-session": () => void newTaskOverLayers(),
   back: () => void back(),
   forward: () => void forward(),
   "prev-session": () => void stepSession(-1),
@@ -3872,7 +3959,7 @@ onBeforeUnmount(() => {
           />
 
           <SessionHero v-if="empty" />
-          <MessageStream v-else ref="stream" />
+          <MessageStream v-else ref="stream" @click="onThreadClick" />
           <SessionSpine v-if="!empty" :scroller="stream?.scroller" />
           <!-- MiMo's boundaries inside the page: the info panel, and the composer's dock zone, each apart from the transcript. -->
           <ErrorBoundary :reset-key="app.currentID ?? ''">
@@ -3880,7 +3967,6 @@ onBeforeUnmount(() => {
             :visible="infoShowing"
             :floating="infoFloating"
             :bottom-inset="terminalUp ? drawerHeight : 0"
-            :escape-blocked="modalOpen || searchOpen || connectOpen || Boolean(sessionMenu) || Boolean(projectMenu) || Boolean(app.permission)"
             @close="closeInfo"
           />
           </ErrorBoundary>
@@ -4046,6 +4132,7 @@ onBeforeUnmount(() => {
     <!-- MiMo's settings boundary: a page that fails to draw shows its strip, not the fatal page. -->
     <ErrorBoundary v-if="settingsOpen" :reset-key="settingsSection">
     <SettingsDialog
+      ref="settingsDialog"
       :section="settingsSection"
       :commands="bindableCommands"
       :update-checking="updateChecking"

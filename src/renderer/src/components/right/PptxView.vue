@@ -29,6 +29,7 @@ import {
 } from "../../lib/pptx-dom"
 import { notifyFailure } from "../../lib/toast"
 import { t } from "../../lib/i18n"
+import { dialogOpen } from "../../lib/escape-layer"
 import CellAffordance from "../CellAffordance.vue"
 import AnnotationFx from "../AnnotationFx.vue"
 import AnnotationMarkLayer, { type MarkItem } from "../AnnotationMarkLayer.vue"
@@ -784,10 +785,10 @@ watch(
   },
 )
 
-/* Escape clears what this file sent. */
+/* Escape clears what this file sent, unless a layer on top took it or a dialog covers the page. */
 function onEscape(event: KeyboardEvent) {
   // Escape while presenting ends the show; it must not also drop what was sent.
-  if (!props.active || present.value || event.key !== "Escape" || event.defaultPrevented || event.isComposing) return
+  if (!props.active || present.value || event.key !== "Escape" || event.defaultPrevented || event.isComposing || dialogOpen()) return
   batch.clearFile(props.path)
 }
 

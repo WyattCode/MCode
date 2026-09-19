@@ -4,7 +4,8 @@ import { filterMenu, type MenuItem } from "../lib/menu"
 import { besideRow } from "../lib/submenu"
 import { isRovingKey } from "../lib/composer-menu"
 import { focusRow } from "../lib/menu-keys"
-import { shownChord } from "../lib/keys"
+import { composing, shownChord } from "../lib/keys"
+import { useEscapeLayer } from "../lib/escape-layer"
 
 /**
  * The right-click menu, wherever one is wanted.
@@ -160,19 +161,14 @@ function leaveSub(event: MouseEvent) {
 
 /** Keys typed into the search stay there: they neither move nor close the menu. */
 function searchKey(event: KeyboardEvent) {
-  if (event.key === "Escape") {
-    event.preventDefault()
-    event.stopPropagation()
-    closeSub(true)
-    return
-  }
   if (event.key === "ArrowDown") {
     event.preventDefault()
     event.stopPropagation()
     subBox.value?.querySelector<HTMLElement>(".item:not(:disabled)")?.focus()
     return
   }
-  if (event.key === "Enter") {
+  // Enter that commits a pinyin candidate is the input method's, not a pick.
+  if (event.key === "Enter" && !composing(event)) {
     event.preventDefault()
     event.stopPropagation()
     const first = filtered.value.rows.find((item) => !item.sticky && item.enabled !== false)
@@ -182,18 +178,17 @@ function searchKey(event: KeyboardEvent) {
   event.stopPropagation()
 }
 
+// One level at a time: the child panel first, then the menu.
+useEscapeLayer(
+  () => {
+    if (sub.value) closeSub(true)
+    else emit("close")
+  },
+  () => emit("close"),
+)
+
 function onKey(event: KeyboardEvent) {
   const inSub = Boolean(subBox.value?.contains(document.activeElement))
-  if (event.key === "Escape") {
-    // One level at a time: the child panel first, then the menu.
-    if (sub.value) {
-      event.preventDefault()
-      closeSub(true)
-      return
-    }
-    emit("close")
-    return
-  }
   if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
     const rtl = document.documentElement.dir === "rtl"
     const inward = (event.key === "ArrowRight") !== rtl

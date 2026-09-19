@@ -9,6 +9,7 @@ import { openImagePreview, openVideoPreview } from "../../lib/image-preview"
 import { useApp } from "../../stores/app"
 import { t } from "../../lib/i18n"
 import { notifyFailure } from "../../lib/toast"
+import { useEscapeLayerWhile } from "../../lib/escape-layer"
 import type { MenuItem } from "../../lib/menu"
 import { localPathOf, openPathLink, pathMenuItems, resolvePathTarget, runPathMenu, type PathTarget } from "../../lib/path-open"
 import ContextMenu from "../ContextMenu.vue"
@@ -245,14 +246,7 @@ function closePreview() {
   previewing.value = undefined
 }
 
-function onEscape(event: KeyboardEvent) {
-  if (event.key === "Escape") closePreview()
-}
-
-watch(previewing, (open) => {
-  if (open) window.addEventListener("keydown", onEscape)
-  else window.removeEventListener("keydown", onEscape)
-})
+useEscapeLayerWhile(() => previewing.value, closePreview)
 
 /* The right-click menu on a path: open, copy the picture, copy the path, show it in the file manager. */
 const pathMenu = ref<{ x: number; y: number; items: MenuItem[]; target: PathTarget }>()
@@ -274,7 +268,6 @@ function pickPathMenu(key: string) {
 
 onBeforeUnmount(() => {
   unmounted = true
-  window.removeEventListener("keydown", onEscape)
   clearTimeout(colourTimer)
   for (const holder of mounted) render(null, holder)
   mounted.clear()
@@ -404,7 +397,7 @@ function onError(event: Event) {
   </div>
   <Teleport to="body">
     <div v-if="previewing" class="md-table-preview-overlay" data-table-preview-overlay @mousedown.self="closePreview">
-      <div class="md-table-preview-dialog" role="dialog" aria-modal="true" :aria-label="t('table.previewTitle')">
+      <div v-modal class="md-table-preview-dialog" role="dialog" aria-modal="true" :aria-label="t('table.previewTitle')">
         <div class="md-table-preview-header">
           <span>{{ t("table.previewTitle") }}</span>
           <button

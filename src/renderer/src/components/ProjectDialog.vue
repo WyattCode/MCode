@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue"
+import { computed, onMounted, ref } from "vue"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
+import { composing } from "../lib/keys"
+import { useEscapeLayer } from "../lib/escape-layer"
 import { projectHue } from "../lib/project"
 
 /**
@@ -37,16 +39,12 @@ const nameField = ref<HTMLInputElement>()
 
 // Every other dialog closes on Escape, and the first thing anyone does here is
 // edit the name - so land the caret there rather than making them click it.
-function onKeydown(event: KeyboardEvent) {
-  if (event.key === "Escape") emit("close")
-}
+useEscapeLayer(() => emit("close"))
 
 onMounted(() => {
-  window.addEventListener("keydown", onKeydown)
   nameField.value?.focus()
   nameField.value?.select()
 })
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
 async function readIcon(chosen: File | undefined) {
   error.value = undefined
@@ -116,7 +114,7 @@ async function save() {
         v-model="name"
         class="field"
         spellcheck="false"
-        @keydown.enter="save"
+        @keydown.enter="!composing($event) && save()"
       />
 
       <label class="label">{{ t("proj.icon") }}</label>

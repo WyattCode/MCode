@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue"
+import { onMounted, ref } from "vue"
 import { t } from "../lib/i18n"
+import { useEscapeLayer } from "../lib/escape-layer"
 
 /**
  * Asks before something that cannot be taken back.
@@ -22,15 +23,11 @@ const emit = defineEmits<{ close: []; confirm: [] }>()
  */
 const confirmButton = ref<HTMLButtonElement>()
 
-function onKeydown(event: KeyboardEvent) {
-  if (event.key === "Escape") emit("close")
-}
+useEscapeLayer(() => emit("close"))
 
 onMounted(() => {
-  window.addEventListener("keydown", onKeydown)
   confirmButton.value?.focus()
 })
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 </script>
 
 <template>

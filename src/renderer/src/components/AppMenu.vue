@@ -4,6 +4,7 @@ import { t } from "../lib/i18n"
 import { isRovingKey } from "../lib/composer-menu"
 import { focusRow } from "../lib/menu-keys"
 import { controlChord, shownChord } from "../lib/keys"
+import { useEscapeLayer } from "../lib/escape-layer"
 import { useApp } from "../stores/app"
 
 /**
@@ -146,23 +147,22 @@ function pick(item: Item) {
   emit("close")
 }
 
+// The submenu closes first: one Escape per level, as a menu does.
+useEscapeLayer(() => {
+  if (!open.value) {
+    emit("close")
+    return
+  }
+  const row = [...(panel.value?.querySelectorAll<HTMLElement>(".row") ?? [])].find((entry) => entry.dataset.group === open.value)
+  open.value = undefined
+  row?.focus()
+}, () => emit("close"))
+
 function onKey(event: KeyboardEvent) {
   const rows = [...(panel.value?.querySelectorAll<HTMLElement>(".row") ?? [])]
   const items = [...(panel.value?.querySelectorAll<HTMLButtonElement>(".sub .item:not(:disabled)") ?? [])]
   const active = document.activeElement as HTMLElement | null
   const inSub = Boolean(active && items.includes(active as HTMLButtonElement))
-
-  if (event.key === "Escape") {
-    // The submenu closes first: one Escape per level, as a menu does.
-    if (open.value) {
-      const row = rows.find((entry) => entry.dataset.group === open.value)
-      open.value = undefined
-      row?.focus()
-      return
-    }
-    emit("close")
-    return
-  }
 
   if (isRovingKey(event.key)) {
     const walk: HTMLElement[] = inSub ? items : rows
