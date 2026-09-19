@@ -14,7 +14,8 @@
  *  - every file must carry the sha512 electron-updater verifies the download
  *    against; a feed without one offers nothing (N9-2);
  *  - a newer installer downloads in the background (differentially when the
- *    folder has block maps) and the capsule says it is ready;
+ *    folder has block maps), is copied over the cache's installer.exe as the
+ *    next differential base, and the capsule says it is ready;
  *  - installing runs the installer silently with --updated and relaunches the
  *    app afterwards; an install under Program Files runs it with its window so
  *    Windows can ask for elevation (N9-3). The caller starts it only once the
@@ -23,6 +24,8 @@
  * Nothing here imports Electron: the caller passes electron-updater's
  * autoUpdater (or a fake), so smoke drives the schedule and the rules.
  */
+import fs from "node:fs/promises"
+import path from "node:path"
 
 export type UpdatePhase = "idle" | "checking" | "downloading" | "ready"
 
@@ -169,6 +172,35 @@ export interface Updater {
   holdInstallOnQuit(): void
 }
 
+/*
+ * electron-builder's name for the installer a differential download is built
+ * against, kept in the updater cache's root (the downloads go to `pending`).
+ */
+const INSTALLER_BASE = "installer.exe"
+
+/**
+ * MiMo's re-sync once a download completes: the new installer is copied over
+ * the cache's `installer.exe`. electron-updater has just put the new version's
+ * `current.blockmap` there, so without this a newer release arriving before
+ * the pending one is installed would plan its differential download against
+ * the wrong base, fail the sha512 and fetch the whole installer again. Only a
+ * Windows installer in a `pending` folder is copied; a failure is only logged.
+ */
+export async function resyncInstallerBase(downloaded: string | undefined, log: (line: string) => void): Promise<boolean> {
+  if (!downloaded || !/\.exe$/i.test(downloaded) || path.basename(path.dirname(downloaded)) !== "pending") return false
+  const target = path.join(path.dirname(path.dirname(downloaded)), INSTALLER_BASE)
+  const staged = `${target}.tmp`
+  try {
+    await fs.copyFile(downloaded, staged)
+    await fs.rename(staged, target)
+    return true
+  } catch (error) {
+    await fs.rm(staged, { force: true }).catch(() => undefined)
+    log(`[update] ${INSTALLER_BASE} was not re-synced: ${(error as Error).message}`)
+    return false
+  }
+}
+
 export function createUpdater(deps: UpdaterDeps): Updater {
   const scheduler: Scheduler = deps.scheduler ?? {
     setTimeout: (run, ms) => setTimeout(run, ms),
@@ -256,7 +288,8 @@ export function createUpdater(deps: UpdaterDeps): Updater {
       during = "download"
       move("downloading")
       if (!checked.downloadPromise) throw new Error("the download did not start")
-      await checked.downloadPromise
+      const downloaded = await checked.downloadPromise
+      await resyncInstallerBase(downloaded?.[0], deps.log)
       ready = { version, notes: notesOf(checked.updateInfo) }
       deps.log(`[update] ${version} is ready to install`)
       move("ready")

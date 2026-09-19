@@ -15,7 +15,7 @@ import path from "node:path"
 import { createRequire } from "node:module"
 import type { Check } from "./smoke-round5"
 import { NsisUpdater } from "electron-updater"
-import { createUpdater, type AutoUpdaterLike } from "../src/main/updater"
+import { createUpdater, resyncInstallerBase, type AutoUpdaterLike, type FeedInfo } from "../src/main/updater"
 
 type Seen = { host: string; path: string; method: string; referer?: string; agent?: string; cookie?: string }
 type Answer = { status: number; type: string | null; bytes: number }
@@ -192,5 +192,54 @@ export async function roundFourteenPackagingChecks(check: Check, section: (name:
       logged,
     )
     check("and MCode's own rules still follow it (no sha512, no update)", !(await available({ version: "0.3.0", files: [{ url: "MCode-0.3.0-x64.exe" }], minimumSystemVersion: "1.0.0" })))
+  }
+
+  // ------------------------------------------------------------------ P14-5
+  section("Round 14 (P14-5): a finished download becomes the next differential base (MiMo's installer.exe re-sync)")
+  {
+    const cache = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r14-updater-"))
+    try {
+      const pending = path.join(cache, "pending")
+      await fs.mkdir(pending, { recursive: true })
+      const downloaded = path.join(pending, "MCode-0.3.0-x64.exe")
+      await fs.writeFile(downloaded, "new installer")
+      await fs.writeFile(path.join(cache, "installer.exe"), "old installer")
+      const sha512 = "A".repeat(86) + "=="
+      const info: FeedInfo = { version: "0.3.0", files: [{ url: "MCode-0.3.0-x64.exe", sha512 }] }
+      const library: AutoUpdaterLike = {
+        autoDownload: false,
+        autoInstallOnAppQuit: false,
+        allowDowngrade: false,
+        allowPrerelease: true,
+        disableWebInstaller: false,
+        requestHeaders: null,
+        isUpdateSupported: () => true,
+        setFeedURL: () => {},
+        checkForUpdates: async () => ({ isUpdateAvailable: true, updateInfo: info, downloadPromise: Promise.resolve([downloaded]) }),
+        quitAndInstall: () => {},
+      }
+      const updater = createUpdater({ currentVersion: "0.2.5", feedURL: () => "https://updates.example.com/", autoUpdater: library, emit: () => {}, log: () => {}, scheduler: idle })
+      const result = await updater.checkNow()
+      const base = await fs.readFile(path.join(cache, "installer.exe"), "utf8").catch(() => "")
+      const left = await fs.readdir(cache)
+      check(
+        "once the download is verified, the cache's installer.exe is the new installer, swapped in whole",
+        result.outcome === "ready" && base === "new installer" && !left.some((name) => name.endsWith(".tmp")),
+        { result: result.outcome, base, left },
+      )
+      check("and the downloaded installer itself stays pending for the install", (await fs.readFile(downloaded, "utf8").catch(() => "")) === "new installer")
+      const logged: string[] = []
+      const elsewhere = path.join(cache, "MCode-0.3.1-x64.exe")
+      await fs.writeFile(elsewhere, "stray")
+      check(
+        "only an .exe in a pending folder is taken, and a missing file costs nothing but a log line",
+        !(await resyncInstallerBase(elsewhere, () => {})) && !(await resyncInstallerBase(path.join(pending, "MCode-0.3.0.zip"), () => {})) &&
+          !(await resyncInstallerBase(path.join(pending, "gone.exe"), (line) => logged.push(line))) && logged.length === 1 &&
+          (await fs.readFile(path.join(cache, "installer.exe"), "utf8")) === "new installer",
+        logged,
+      )
+    } finally {
+      await fs.rm(cache, { recursive: true, force: true }).catch(() => undefined)
+    }
   }
 }
