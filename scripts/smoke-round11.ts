@@ -317,9 +317,13 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     check("and the fallback still finds what is inside the cap", scanned.some((hit) => hit.sessionID === "ses_7") && !scanned.some((hit) => hit.sessionID === "ses_250"), scanned)
 
     const handlers = await read("src/server/handlers.ts")
+    const history = await read("src/server/history/index.ts")
+    // S13-5: while the index is still being filled it names what it has, plus the newest it has not reached.
     check(
-      "the handler hands the index to the search and stands back while it is still being filled",
-      /history\.index\.building/.test(handlers) && /history\.index\.search\(\{ query, limit: SEARCH_HARD_CAP \}\)/.test(handlers),
+      "the handler hands the index to the search, which still answers from it while it is being filled",
+      /history\.index\.candidates\(query, sessions\)/.test(handlers) &&
+        /this\.search\(\{ query, limit: SEARCH_HARD_CAP \}\)/.test(history) &&
+        /if \(!this\.building\) return \[\.\.\.found\]/.test(history),
     )
   }
 

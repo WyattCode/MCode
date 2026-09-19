@@ -326,6 +326,7 @@ import { failureChecks } from "./smoke-failures"
 import { storageChecks } from "./smoke-storage"
 import { roundTwelveLifecycleChecks } from "./smoke-round12-lifecycle"
 import { roundThirteenScaleChecks } from "./smoke-round13-scale"
+import { roundThirteenArtifactChecks } from "./smoke-round13-artifacts"
 import { roundThirteenInstanceChecks } from "./smoke-round13-instances"
 // Round 13, lane K: keyboard and focus paths (K13-1 onwards).
 import { roundThirteenKeyboardChecks } from "./smoke-round13-keyboard"
@@ -6953,6 +6954,7 @@ async function main() {
   await roundTwelveIpcChecks(check, section)
   await roundTwelveLifecycleChecks(check, section)
   await roundThirteenScaleChecks(check, section)
+  await roundThirteenArtifactChecks(check, section)
   await roundThirteenInstanceChecks(check, section)
   await roundThirteenKeyboardChecks(check, section)
 

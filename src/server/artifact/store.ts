@@ -2,8 +2,9 @@ import fs from "node:fs"
 import fsp from "node:fs/promises"
 import path from "node:path"
 import { SqlDatabase, STORE_PRAGMAS, quarantineSqlite, sqliteDamaged, type Sql } from "../sql-worker"
-import type { ArtifactFile, Message, SessionArtifacts, SessionInfo } from "@shared/protocol"
+import type { ArtifactFacets, ArtifactFile, Message, SessionArtifacts, SessionInfo } from "@shared/protocol"
 import { sessionArtifacts } from "@shared/session-files"
+import { APP_EXTENSIONS, DOC_EXTENSIONS, type ArtifactCategory } from "@shared/artifact-category"
 
 /**
  * Where produced files are kept, rather than worked out again every time.
@@ -74,6 +75,7 @@ CREATE TABLE IF NOT EXISTS artifact (
 );
 CREATE INDEX IF NOT EXISTS artifact_session ON artifact (session_id, produced_at);
 CREATE INDEX IF NOT EXISTS artifact_role ON artifact (role);
+CREATE INDEX IF NOT EXISTS artifact_newest ON artifact (produced_at, id);
 `
 
 const SCHEMA_V2 = `
@@ -125,11 +127,67 @@ interface Row {
   session_title: string
   directory: string
   path: string
+  absolute: string
   role: string
   produced_at: number
+  last_checked_at: number
   availability: string
   size_bytes: number | null
   modified_at: number | null
+}
+
+/** MiMo's page size, and the most one listing may ask for. */
+export const ARTIFACT_LIST_LIMIT = 50
+
+/**
+ * How many changed conversations a listing reads before it answers. More than
+ * this - a first run, or an upgrade from a build without the store - is a
+ * background pass, and the listing answers from what is already stored.
+ */
+export const INLINE_RECONCILE = 8
+
+/** How long a conversation's writes must pause before what it produced is read again. */
+export const ARTIFACT_SETTLE_MS = 2000
+
+/** A file found missing is asked about again after this long, not on every listing. */
+const MISSING_RECHECK_MS = 5 * 60_000
+
+/** How many files are asked about at once when every file is re-checked. */
+const RECHECK_PARALLEL = 16
+
+/** How many re-check answers go into one transaction. */
+const RECORD_BATCH = 200
+
+export interface ArtifactQuery {
+  query?: string
+  category?: ArtifactCategory
+  cursor?: string
+  limit?: number
+}
+
+export interface ArtifactPage {
+  artifacts: SessionArtifacts[]
+  nextCursor?: string
+  facets: ArtifactFacets
+}
+
+/** Whether a row's name puts it in a tab, in SQL: the same test as `artifactCategory`, on the lower-cased name. */
+function categorySql(category: Exclude<ArtifactCategory, "other">): string {
+  const extensions = category === "doc" ? DOC_EXTENSIONS : APP_EXTENSIONS
+  // "_%" keeps a name that only starts with the dot out, as `extensionOf` does.
+  return `(${extensions.map((extension) => `title_search LIKE '_%.${extension}'`).join(" OR ")})`
+}
+
+/** Where the next page starts: after the last row the previous one looked at. */
+function cursorOf(row: { produced_at: number; id: number }): string {
+  return `${row.produced_at}:${row.id}`
+}
+
+function readCursor(cursor: string | undefined): { at: number; id: number } | undefined {
+  if (!cursor) return undefined
+  const found = /^(\d+):(\d+)$/.exec(cursor)
+  if (!found) throw new Error("invalid artifact cursor")
+  return { at: Number(found[1]), id: Number(found[2]) }
 }
 
 interface SourceRow {
@@ -171,6 +229,14 @@ function fingerprintOf(session: SessionInfo): string {
 
 export class ArtifactStore {
   private running: Promise<void> | undefined
+  /** Whether the pass under way is a long one (more than INLINE_RECONCILE conversations), which no listing waits for. */
+  private bulk = false
+  /**
+   * Every conversation's checkpoint as last written, read once (S13-3). A
+   * listing compares the conversations with this in memory instead of asking
+   * the database about each of them.
+   */
+  private checkpoints: Map<string, string> | undefined
   /**
    * Conversations whose messages were written since their last pass, with a
    * count that moves on every write so a pass can tell a write that landed
@@ -282,29 +348,89 @@ export class ArtifactStore {
     })
   }
 
+  /** True while a long pass is filling the store, so a listing may be missing what it has not reached yet. */
+  get building(): boolean {
+    return this.running !== undefined && this.bulk
+  }
+
   /**
-   * Brings the store up to date with what the conversations say, and re-checks
-   * whether each file is still there.
+   * Brings the store up to date with what the conversations say; with
+   * `recheck`, also asks the disk whether each file is still there.
    *
    * Only conversations that changed since their last pass are read again (the
-   * checkpoint is MiMo's `artifact_reconcile`), so this is cheap enough to run
-   * before every listing - which is what keeps a file written since launch from
-   * being missing from the page. Concurrent callers share one pass.
+   * checkpoint is MiMo's `artifact_reconcile`), and which ones those are is
+   * decided in memory. Concurrent callers share one pass.
    */
-  reconcile(sessions: readonly SessionInfo[], messagesOf: (sessionID: string) => Promise<Message[]>): Promise<void> {
+  reconcile(sessions: readonly SessionInfo[], messagesOf: (sessionID: string) => Promise<Message[]>, options: { recheck?: boolean } = {}): Promise<void> {
     if (!this.writable) return Promise.resolve()
     if (this.running) return this.running
-    this.running = this.pass(sessions, messagesOf).finally(() => (this.running = undefined))
+    return (async () => {
+      const known = await this.known()
+      return this.running ?? this.begin(this.behind(sessions, known), messagesOf, options.recheck === true)
+    })()
+  }
+
+  /** Starts a pass over `behind`; whether it is a long one is known before anything waits on it. */
+  private begin(behind: readonly SessionInfo[], messagesOf: (sessionID: string) => Promise<Message[]>, recheck: boolean): Promise<void> {
+    this.bulk = behind.length > INLINE_RECONCILE
+    // A long pass has added files nothing has asked the disk about yet; the tabs' counts would take them on trust.
+    const checkAll = recheck || this.bulk
+    this.running = (async () => {
+      await this.pass(behind, messagesOf)
+      if (checkAll) await this.recheck()
+    })().finally(() => {
+      this.running = undefined
+      this.bulk = false
+    })
     return this.running
+  }
+
+  /** The checkpoints, read from the database the first time only. */
+  private async known(): Promise<Map<string, string>> {
+    if (this.checkpoints) return this.checkpoints
+    const rows = await this.db.all<{ session_id: string; fingerprint: string }>("SELECT session_id, fingerprint FROM artifact_reconcile")
+    // A checkpoint touched() dropped while this was read stays dropped: the dirty count is what says so.
+    this.checkpoints ??= new Map(rows.map((row) => [row.session_id, row.fingerprint]))
+    return this.checkpoints
+  }
+
+  /** The top-level conversations written since their last pass, or never passed at all. */
+  private behind(sessions: readonly SessionInfo[], known: Map<string, string>): SessionInfo[] {
+    // subagents: a subagent's work belongs to its parent, not to a conversation of its own.
+    return sessions.filter((session) => !session.parentID && (this.dirty.has(session.id) || known.get(session.id) !== fingerprintOf(session)))
+  }
+
+  /**
+   * One listing's answer (S13-3), as MiMo's is: never a walk of every
+   * conversation and every file.
+   *
+   * The few conversations written since their last pass - the one in front of
+   * the user, typically - are read first, so a file written a moment ago is
+   * there. Many at once is a first run or an upgrade: that pass goes on in the
+   * background, and the page is answered from what is stored so far and told
+   * so. Only the page's own files are asked about on disk.
+   */
+  async answer(
+    sessions: readonly SessionInfo[],
+    messagesOf: (sessionID: string) => Promise<Message[]>,
+    query: ArtifactQuery = {},
+  ): Promise<ArtifactPage & { building: boolean }> {
+    if (this.writable) {
+      const known = await this.known()
+      if (!this.running) {
+        const behind = this.behind(sessions, known)
+        if (behind.length) void this.begin(behind, messagesOf, false).catch(() => undefined)
+      }
+      if (this.running && !this.bulk) await this.running.catch(() => undefined)
+    }
+    const page = await this.list(query)
+    return { ...page, building: this.building }
   }
 
   private async pass(sessions: readonly SessionInfo[], messagesOf: (sessionID: string) => Promise<Message[]>): Promise<void> {
     for (const session of sessions) {
-      // subagents: a subagent's work belongs to its parent, not to a conversation of its own.
-      if (session.parentID) continue
       const fingerprint = fingerprintOf(session)
       const writes = this.dirty.get(session.id)
-      if (writes === undefined && (await this.db.get<{ fingerprint?: string }>("SELECT fingerprint FROM artifact_reconcile WHERE session_id = ?", session.id))?.fingerprint === fingerprint) continue
       let messages: Message[]
       try {
         messages = await messagesOf(session.id)
@@ -317,7 +443,6 @@ export class ArtifactStore {
       if (settled) this.dirty.delete(session.id)
       await this.reconcileSession(session, messages, settled ? fingerprint : undefined)
     }
-    await this.recheck()
   }
 
   /**
@@ -329,6 +454,7 @@ export class ArtifactStore {
     if (!this.writable) return
     const writes = this.dirty.get(sessionID)
     this.dirty.set(sessionID, (writes ?? 0) + 1)
+    this.checkpoints?.delete(sessionID)
     if (writes === undefined) void this.db.run("DELETE FROM artifact_reconcile WHERE session_id = ?", sessionID).catch(() => undefined)
   }
 
@@ -341,9 +467,9 @@ export class ArtifactStore {
    */
   private async reconcileSession(session: SessionInfo, messages: readonly Message[], fingerprint: string | undefined): Promise<void> {
     const now = Date.now()
-    await this.db.transaction(async (tx) => {
+    const checkpointed = await this.db.transaction(async (tx) => {
       // Checked inside the transaction, so a detach cannot land between the check and the writes.
-      if (await tx.get("SELECT 1 AS x FROM artifact_purged_session WHERE session_id = ?", session.id)) return
+      if (await tx.get("SELECT 1 AS x FROM artifact_purged_session WHERE session_id = ?", session.id)) return false
       const claimed = new Set<string>()
       const touched = new Set<number>()
       for (const artifact of sessionArtifacts(messages, session.directory)) {
@@ -397,7 +523,7 @@ export class ArtifactStore {
         touched.add(row.artifact_id)
       }
       for (const id of touched) await ArtifactStore.settle(tx, id, now)
-      if (fingerprint === undefined) return
+      if (fingerprint === undefined) return false
       await tx.run(
         `INSERT INTO artifact_reconcile (session_id, fingerprint, updated_at) VALUES (?, ?, ?)
          ON CONFLICT(session_id) DO UPDATE SET fingerprint = excluded.fingerprint, updated_at = excluded.updated_at`,
@@ -405,7 +531,10 @@ export class ArtifactStore {
         fingerprint,
         now,
       )
+      return true
     })
+    // A write that landed since the pass began has dropped it again, and it stays dropped.
+    if (checkpointed && fingerprint !== undefined && !this.dirty.has(session.id)) this.checkpoints?.set(session.id, fingerprint)
   }
 
   /**
@@ -448,35 +577,68 @@ export class ArtifactStore {
   }
 
   /**
-   * Asks the file system about every file it holds.
+   * Asks the file system about every file it holds, at launch.
    *
    * A conversation's record of writing a file says nothing about whether it is
    * still there: it may have been deleted, moved, or changed since by something
    * other than this app. MiMo re-checks the same way and keeps the answer in
    * `availability` with `last_checked_at`.
    *
-   * The disk is asked first and the answers written in one transaction (N11-12):
-   * one UPDATE per file, each its own commit, was a flush per file.
+   * A few files are asked about at once, and only the rows whose answer changed
+   * are written, in one transaction (N11-12). A listing asks about its own page
+   * only (`inspect`); this keeps the tabs' counts honest between launches.
    */
   async recheck(): Promise<void> {
     if (!this.writable) return
-    const rows = await this.db.all<{ id: number; absolute: string }>("SELECT id, absolute FROM artifact")
-    const now = Date.now()
-    const answers: { id: number; there: boolean; size: number | null; modified: number | null }[] = []
-    for (const row of rows) {
-      const stats = await fsp.stat(row.absolute).catch(() => undefined)
-      const there = Boolean(stats?.isFile())
-      answers.push({ id: row.id, there, size: there ? (stats?.size ?? null) : null, modified: there ? (stats?.mtimeMs ?? null) : null })
+    const rows = await this.db.all<Row>("SELECT * FROM artifact")
+    let next = 0
+    const answers: Row[] = []
+    const worker = async () => {
+      while (next < rows.length) {
+        const row = rows[next++]!
+        const answer = await ArtifactStore.ask(row)
+        if (ArtifactStore.differs(row, answer)) answers.push(answer)
+      }
     }
-    if (!answers.length) return
+    await Promise.all(Array.from({ length: Math.min(RECHECK_PARALLEL, rows.length) }, worker))
+    await this.record(answers)
+  }
+
+  /** What the disk says about one file now, as the row it would be. */
+  private static async ask(row: Row): Promise<Row> {
+    const stats = await fsp.stat(row.absolute).catch(() => undefined)
+    const there = Boolean(stats?.isFile())
+    return {
+      ...row,
+      availability: there ? "available" : "missing",
+      size_bytes: there ? (stats?.size ?? null) : null,
+      modified_at: there ? (stats?.mtimeMs ?? null) : null,
+      last_checked_at: Date.now(),
+    }
+  }
+
+  /** Whether an answer is worth writing: it changed, or it is a missing file whose last check is going stale. */
+  private static differs(row: Row, answer: Row): boolean {
+    if (row.availability !== answer.availability || row.size_bytes !== answer.size_bytes || row.modified_at !== answer.modified_at) return true
+    return answer.availability === "missing" && answer.last_checked_at - row.last_checked_at > MISSING_RECHECK_MS / 2
+  }
+
+  /** Writes the answers in one transaction; a store opened read-only keeps them in memory only. */
+  private async record(answers: readonly Row[]): Promise<void> {
+    if (!answers.length || !this.writable) return
+    // A few hundred at a time, so a listing waiting behind a launch's full check is not held for all of it.
+    for (let from = 0; from < answers.length; from += RECORD_BATCH) await this.recordBatch(answers.slice(from, from + RECORD_BATCH))
+  }
+
+  private async recordBatch(answers: readonly Row[]): Promise<void> {
     await this.db.transaction(async (tx) => {
       for (const answer of answers) {
         await tx.run(
           "UPDATE artifact SET availability = ?, size_bytes = ?, modified_at = ?, last_checked_at = ? WHERE id = ?",
-          answer.there ? "available" : "missing",
-          answer.size,
-          answer.modified,
-          now,
+          answer.availability,
+          answer.size_bytes,
+          answer.modified_at,
+          answer.last_checked_at,
           answer.id,
         )
       }
@@ -484,7 +646,8 @@ export class ArtifactStore {
   }
 
   /**
-   * Everything produced, grouped by the conversation each file is shown under.
+   * One page of what is produced and still on disk, newest first, grouped by
+   * the conversation each file is shown under (S13-3).
    *
    * A group whose conversation has been deleted keeps the title it had, so the
    * files it made are still findable - which is the whole point of storing them
@@ -494,17 +657,67 @@ export class ArtifactStore {
    * and matched against the file's title only. Three characters or more go
    * through the trigram index as one quoted phrase; shorter ones, which a
    * trigram index cannot answer, are a plain substring test.
+   *
+   * As MiMo's list does, the page's candidates are asked about on disk before
+   * they are shown, and one found gone is passed over for the next; a file
+   * already found missing is not asked about again for a while. The counts
+   * cover every file the search matches, whatever the tab, from what is stored.
    */
-  async list(query = ""): Promise<SessionArtifacts[]> {
-    const words = searchable(query.trim())
-    const rows = !words
-      ? await this.db.all<Row>("SELECT * FROM artifact ORDER BY produced_at DESC")
-      : words.length >= 3
-        ? await this.db.all<Row>(
-            "SELECT * FROM artifact WHERE id IN (SELECT artifact_id FROM artifact_fts WHERE artifact_fts MATCH ?) ORDER BY produced_at DESC",
-            `"${words.replace(/"/g, '""')}"`,
-          )
-        : await this.db.all<Row>("SELECT * FROM artifact WHERE instr(title_search, ?) > 0 ORDER BY produced_at DESC", words)
+  async list(options: ArtifactQuery = {}): Promise<ArtifactPage> {
+    const limit = Math.max(1, Math.min(ARTIFACT_LIST_LIMIT, Math.floor(options.limit ?? ARTIFACT_LIST_LIMIT)))
+    const words = searchable((options.query ?? "").trim())
+    const matched: string[] = []
+    const params: (string | number)[] = []
+    if (words.length >= 3) {
+      matched.push("id IN (SELECT artifact_id FROM artifact_fts WHERE artifact_fts MATCH ?)")
+      params.push(`"${words.replace(/"/g, '""')}"`)
+    } else if (words) {
+      matched.push("instr(title_search, ?) > 0")
+      params.push(words)
+    }
+    const where = [...matched]
+    if (options.category === "doc" || options.category === "app") where.push(categorySql(options.category))
+    else if (options.category === "other") where.push(`NOT ${categorySql("doc")} AND NOT ${categorySql("app")}`)
+    where.push("NOT (availability = 'missing' AND last_checked_at > ?)")
+
+    const shown: Row[] = []
+    let after = readCursor(options.cursor)
+    let more = true
+    while (shown.length < limit && more) {
+      const need = limit - shown.length
+      const clauses = [...where, ...(after ? ["(produced_at < ? OR (produced_at = ? AND id < ?))"] : [])]
+      const rows = await this.db.all<Row>(
+        `SELECT * FROM artifact WHERE ${clauses.join(" AND ")} ORDER BY produced_at DESC, id DESC LIMIT ?`,
+        ...params,
+        Date.now() - MISSING_RECHECK_MS,
+        ...(after ? [after.at, after.at, after.id] : []),
+        need + 1,
+      )
+      more = rows.length > need
+      const batch = rows.slice(0, need)
+      const answers = await Promise.all(batch.map((row) => ArtifactStore.ask(row)))
+      await this.record(answers.filter((answer, at) => ArtifactStore.differs(batch[at]!, answer)))
+      for (const answer of answers) if (answer.availability === "available") shown.push(answer)
+      if (batch.length) after = { at: batch[batch.length - 1]!.produced_at, id: batch[batch.length - 1]!.id }
+    }
+
+    const counted = await this.db.get<{ total: number; doc: number | null; app: number | null }>(
+      `SELECT count(*) AS total, sum(${categorySql("doc")}) AS doc, sum(${categorySql("app")}) AS app
+       FROM artifact WHERE ${[...matched, "availability <> 'missing'"].join(" AND ")}`,
+      ...params,
+    )
+    const total = Number(counted?.total ?? 0)
+    const doc = Number(counted?.doc ?? 0)
+    const app = Number(counted?.app ?? 0)
+    return {
+      artifacts: ArtifactStore.grouped(shown),
+      ...(more && after ? { nextCursor: cursorOf({ produced_at: after.at, id: after.id }) } : {}),
+      facets: { total, doc, app, other: total - doc - app },
+    }
+  }
+
+  /** Rows as the page's groups: one per conversation a file is shown under, newest first. */
+  private static grouped(rows: readonly Row[]): SessionArtifacts[] {
     const groups = new Map<string, SessionArtifacts>()
     for (const row of rows) {
       const key = row.session_id || `gone:${row.session_title}`
@@ -544,6 +757,7 @@ export class ArtifactStore {
     await this.db.transaction(async (tx) => {
       await tx.run("INSERT OR IGNORE INTO artifact_purged_session (session_id, purged_at) VALUES (?, ?)", sessionID, now)
       await tx.run("DELETE FROM artifact_reconcile WHERE session_id = ?", sessionID)
+      this.checkpoints?.delete(sessionID)
       const touched = await tx.all<{ artifact_id: number }>("SELECT DISTINCT artifact_id FROM artifact_source WHERE session_id = ?", sessionID)
       await tx.run("UPDATE artifact_source SET session_id = '' WHERE session_id = ?", sessionID)
       for (const row of touched) await ArtifactStore.settle(tx, row.artifact_id, now)

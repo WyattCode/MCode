@@ -43,12 +43,15 @@ export function findInMessages(messages: Message[], query: string): Omit<Message
 /**
  * How many conversations are read when the index cannot narrow the field.
  *
- * Only reached while the index is still being filled, or on a machine where
- * SQLite would not open at all. Without it, one keystroke read every message of
+ * Only reached on a machine where SQLite would not open at all: while the
+ * index is still catching up it names what it has (S13-5). Without it, one keystroke read every message of
  * every conversation from disk - measured at about 150,000 file reads on a
  * profile with 500 conversations - on the same thread as every running turn.
  */
 export const SCAN_LIMIT = 200
+
+/** How many transcripts a search reads at once. */
+const READ_PARALLEL = 8
 
 /**
  * One hit per conversation - its best message - best first and, between equal
@@ -58,10 +61,9 @@ export const SCAN_LIMIT = 200
  * from every list the overlay draws.
  *
  * `narrow` is the full-text index (N11-5): given the query it names the
- * conversations worth reading, and only those are read. It returns nothing when
- * it cannot help - no index, or one still being filled - and then the newest
- * SCAN_LIMIT conversations are read instead, so a search during the first
- * minutes after an upgrade is incomplete rather than ruinous.
+ * conversations worth reading, and only those are read. Without it - no
+ * index at all - the newest SCAN_LIMIT conversations are read instead, so the
+ * search is incomplete rather than ruinous.
  */
 export async function searchMessages(
   sessions: SessionInfo[],
@@ -75,10 +77,16 @@ export async function searchMessages(
   const named = await narrow?.(query)
   const candidates = named ? eligible.filter((session) => named.includes(session.id)) : eligible.slice(0, SCAN_LIMIT)
   const hits: (MessageHit & { updated: number })[] = []
-  for (const session of candidates) {
-    const found = findInMessages(await load(session.id), query)
-    if (found) hits.push({ sessionID: session.id, ...found, updated: session.updated })
+  // A few transcripts read at once (S13-5): one after another, fifty named conversations were fifty waits on the disk.
+  let next = 0
+  const reader = async () => {
+    while (next < candidates.length) {
+      const session = candidates[next++]!
+      const found = findInMessages(await load(session.id), query)
+      if (found) hits.push({ sessionID: session.id, ...found, updated: session.updated })
+    }
   }
+  await Promise.all(Array.from({ length: Math.min(READ_PARALLEL, candidates.length) }, reader))
   return hits
     .sort((a, b) => b.score - a.score || b.updated - a.updated)
     .slice(0, limit)

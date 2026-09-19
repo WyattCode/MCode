@@ -4,8 +4,9 @@
  * free of Vue and i18n so the smoke test can run it.
  */
 
-/** MiMo's three buckets: documents, pages that run as apps, and everything else. */
-export type ArtifactCategory = "doc" | "app" | "other"
+import { extensionOf } from "@shared/artifact-category"
+
+export { artifactCategory, extensionOf, type ArtifactCategory } from "@shared/artifact-category"
 
 /** MiMo's badge kinds, less its mini-app kind, which has no counterpart here. */
 export type BadgeKind = "docx" | "pptx" | "xlsx" | "pdf" | "txt" | "web" | "image" | "file"
@@ -18,20 +19,6 @@ export interface BadgeStyle {
   fg: string
   /** Lucide glyph paths (ISC licence) on the 24 grid. */
   glyph: string[]
-}
-
-export const extensionOf = (file: string) => {
-  const name = file.slice(Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\")) + 1)
-  const dot = name.lastIndexOf(".")
-  return dot > 0 ? name.slice(dot + 1).toLowerCase() : ""
-}
-
-const DOCS = new Set(["md", "markdown", "txt", "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "rtf", "csv"])
-const APPS = new Set(["html", "htm"])
-
-export function artifactCategory(file: string): ArtifactCategory {
-  const extension = extensionOf(file)
-  return DOCS.has(extension) ? "doc" : APPS.has(extension) ? "app" : "other"
 }
 
 const PAGE = "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"

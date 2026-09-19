@@ -12,6 +12,7 @@ import type {
   SessionArtifacts,
 } from "@shared/protocol"
 import { sessionFiles } from "@shared/session-files"
+import { artifactCategory } from "@shared/artifact-category"
 import { Identifier } from "@shared/id"
 import { normalizeBaseURL } from "@shared/custom-endpoint"
 import { CodedError } from "@shared/errors"
@@ -32,7 +33,6 @@ import { discoverModels } from "./provider/discover"
 import { blankProjectDirectory, scratchDirectory, scratchRoot } from "./scratch"
 import { searchMessages } from "./search"
 import { historyService } from "./history/service"
-import { SEARCH_HARD_CAP } from "./history/index"
 import { workspaceInfo } from "./workspace"
 import { systemPrompt } from "./session/prompt"
 import * as git from "./git"
@@ -333,25 +333,47 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * fallback for a profile whose store could not be opened.
        */
       const query = typeof request.query === "string" ? request.query : ""
+      const category = request.category === "doc" || request.category === "app" || request.category === "other" ? request.category : undefined
       const sessions = await runtime.sessions.list()
       if (runtime.artifacts) {
         try {
-          // Conversations that changed since the last pass are read again first, so a file written since launch is there.
-          await runtime.artifacts.reconcile(sessions, (id) => runtime.sessions.messages(id))
-          return { artifacts: await runtime.artifacts.list(query) } satisfies Handled<"artifact.list">
+          // A page of fifty, with only the conversations changed since their last pass read first (S13-3).
+          const page = await runtime.artifacts.answer(sessions, (id) => runtime.sessions.messages(id), {
+            query,
+            category,
+            cursor: typeof request.cursor === "string" ? request.cursor : undefined,
+            limit: request.limit,
+          })
+          return {
+            artifacts: page.artifacts,
+            ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+            facets: page.facets,
+            building: page.building,
+          } satisfies Handled<"artifact.list">
         } catch {
           // A store that cannot answer (a newer build's shape, a failed write) leaves the walk below.
         }
       }
-      // The same test the store makes: the file's name, trimmed, NFC-normalised and lower-cased.
+      /*
+       * The same tests the store makes: the file's name, trimmed,
+       * NFC-normalised and lower-cased, and its tab. Everything in one answer:
+       * a profile without the store has no cursor to page with.
+       */
       const words = query.trim().normalize("NFC").toLowerCase()
       const named = (file: string) => !words || (file.split(/[\\/]/).pop() ?? file).normalize("NFC").toLowerCase().includes(words)
+      const facets = { total: 0, doc: 0, app: 0, other: 0 }
       const artifacts: SessionArtifacts[] = []
       for (const session of sessions) {
         // subagents: a subagent is part of its parent's work, not a conversation of its own to list.
         if (session.parentID) continue
         const messages = await runtime.sessions.messages(session.id)
-        const produced = sessionFiles(messages, session.directory).written.filter((touch) => named(touch.path))
+        const produced = sessionFiles(messages, session.directory).written.filter((touch) => {
+          if (!named(touch.path)) return false
+          const tab = artifactCategory(touch.path)
+          facets.total += 1
+          facets[tab] += 1
+          return !category || tab === category
+        })
         if (!produced.length) continue
         const files: ArtifactFile[] = []
         for (const touch of produced) {
@@ -373,7 +395,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
           files,
         })
       }
-      return { artifacts } satisfies Handled<"artifact.list">
+      return { artifacts, facets } satisfies Handled<"artifact.list">
     }
 
     case "session.create": {
@@ -427,16 +449,12 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * The full-text index the backend already keeps names the conversations
        * worth reading (N11-5). It was serving only the model's `history` tool;
        * the overlay read every message of every conversation instead, once per
-       * keystroke. While the index is still being filled it says so, and the
-       * search falls back to a capped scan.
+       * keystroke. While it is still catching up after a launch it answers
+       * from what it holds, with the newest few it has not reached read
+       * directly (S13-5); only without an index is the search a capped scan.
        */
       const history = historyService()
-      const narrow = async (query: string): Promise<readonly string[] | undefined> => {
-        if (!history || history.index.building) return undefined
-        const found = new Set<string>()
-        for (const hit of await history.index.search({ query, limit: SEARCH_HARD_CAP })) found.add(hit.session_id)
-        return [...found]
-      }
+      const narrow = history ? (query: string) => history.index.candidates(query, sessions) : undefined
       const hits = await searchMessages(sessions, (id) => runtime.sessions.messages(id), request.query, limit, narrow)
       return { hits } satisfies Handled<"search.messages">
     }

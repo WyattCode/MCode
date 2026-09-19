@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
-import type { SessionArtifacts } from "@shared/protocol"
+import type { ArtifactFacets, SessionArtifacts } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 import { notifyFailure } from "../lib/toast"
@@ -11,16 +11,24 @@ import { previewArtifact } from "../lib/artifact-open"
  * Everything the sessions have produced, in one page - MiMo's 产物中心, built
  * on what this app actually knows: the files each stored session wrote.
  *
- * The server reads the transcripts and stats each file. A file that has since
- * been moved or deleted is left out, as MiMo's page leaves it out: there is
- * nothing to preview or download.
+ * The server answers from its artifact store, fifty files at a time, and asks
+ * the disk about each file it hands over. A file that has since been moved or
+ * deleted is left out, as MiMo's page leaves it out: there is nothing to
+ * preview or download.
  */
 const app = useApp()
 const emit = defineEmits<{ open: [sessionID: string] }>()
 
 const loaded = ref(false)
 const failed = ref(false)
+/** Every page loaded so far for the current search and tab, in order. */
 const groups = ref<SessionArtifacts[]>([])
+/** Where the next page starts; none once the last one is here. */
+const nextCursor = ref<string>()
+/** The server's counts for the tabs, which cover files not loaded yet. */
+const facets = ref<ArtifactFacets>()
+/** The store is still being filled (a first run or an upgrade): what is here is what is ready. */
+const building = ref(false)
 const query = ref("")
 const kind = ref<ArtifactCategory | "all">("all")
 
@@ -67,35 +75,25 @@ const rows = computed<Row[]>(() => {
 })
 
 /*
- * The rows are already what the search leaves, before the bucket is chosen -
- * the counts are of them. The server does the matching (MiMo's: the file's
- * name, through the store's trigram index).
+ * The server does the matching and the tab (MiMo's: the file's name, through
+ * the store's trigram index), so the rows are what is shown. The tab is
+ * checked here again only for an answer from a server that could not filter.
  */
-const shown = computed(() => (kind.value === "all" ? rows.value : rows.value.filter((row) => row.kind === kind.value)))
+const visible = computed(() => (kind.value === "all" ? rows.value : rows.value.filter((row) => row.kind === kind.value)))
 
-/* MiMo's 加载更多: fifty at a time, back to fifty when the tab or the search changes. */
-const limit = ref(ARTIFACT_PAGE)
-watch([kind, needle], () => (limit.value = ARTIFACT_PAGE))
-const visible = computed(() => shown.value.slice(0, limit.value))
-
-/* MiMo's 加载中…: the button is off, and says so, until the next fifty are drawn. */
-const loadingMore = ref(false)
-async function loadMore() {
-  if (loadingMore.value) return
-  loadingMore.value = true
-  // A frame for the disabled button to show before the next page's tiles are laid out.
-  await new Promise((resolve) => requestAnimationFrame(resolve))
-  limit.value += ARTIFACT_PAGE
-  await nextTick()
-  loadingMore.value = false
-}
-
-const counts = computed(() => ({
-  all: rows.value.length,
-  doc: rows.value.filter((row) => row.kind === "doc").length,
-  app: rows.value.filter((row) => row.kind === "app").length,
-  other: rows.value.filter((row) => row.kind === "other").length,
-}))
+/*
+ * The counts are the server's, over everything the search matches in every
+ * tab; worked out from the rows only when it sent none.
+ */
+const counts = computed(() => {
+  if (facets.value) return { all: facets.value.total, doc: facets.value.doc, app: facets.value.app, other: facets.value.other }
+  return {
+    all: rows.value.length,
+    doc: rows.value.filter((row) => row.kind === "doc").length,
+    app: rows.value.filter((row) => row.kind === "app").length,
+    other: rows.value.filter((row) => row.kind === "other").length,
+  }
+})
 
 /*
  * Grid or list, as MiMo offers both and remembers which was last used. Grid is
@@ -130,16 +128,23 @@ const FILTERS = [
 let generation = 0
 /** The search the shown rows answer - the typed one may be ahead of it. */
 const answered = ref("")
+/** What the page asks the server for: the search and the tab. */
+const asking = () => ({ type: "artifact.list" as const, query: needle.value, limit: ARTIFACT_PAGE, ...(kind.value === "all" ? {} : { category: kind.value }) })
+
+/** The first page for the current search and tab, replacing whatever was shown. */
 async function load() {
   const run = ++generation
   const asked = needle.value
   failed.value = false
   try {
-    const result = await app.client?.request({ type: "artifact.list", query: asked })
+    const result = await app.client?.request(asking())
     if (!result) throw new Error("not connected")
     // An older answer never replaces a newer search's.
     if (run !== generation) return
     groups.value = result.artifacts
+    nextCursor.value = result.nextCursor
+    facets.value = result.facets
+    building.value = result.building === true
     answered.value = asked
     loaded.value = true
   } catch {
@@ -147,8 +152,68 @@ async function load() {
   }
 }
 
+/* MiMo's 加载更多: the next fifty from the server, where the last page ended. */
+const loadingMore = ref(false)
+async function loadMore() {
+  const cursor = nextCursor.value
+  if (loadingMore.value || !cursor || failed.value) return
+  const run = generation
+  loadingMore.value = true
+  try {
+    const result = await app.client?.request({ ...asking(), cursor })
+    if (!result) throw new Error("not connected")
+    // A new search or tab since: this page belongs to the old one.
+    if (run !== generation) return
+    groups.value = [...groups.value, ...result.artifacts]
+    nextCursor.value = result.nextCursor
+    if (result.facets) facets.value = result.facets
+    building.value = result.building === true
+  } catch {
+    if (run === generation) notifyFailure(t("art.loadError"))
+  } finally {
+    // MiMo's 加载中…: the button is off, and says so, until the next fifty are drawn.
+    await nextTick()
+    loadingMore.value = false
+  }
+}
+
+/* Near the bottom of the page, the next fifty are asked for without waiting for the button. */
+const LOAD_AHEAD_PX = 240
+function onScroll(event: Event) {
+  const pane = event.target as HTMLElement
+  if (pane.scrollTop + pane.clientHeight >= pane.scrollHeight - LOAD_AHEAD_PX) void loadMore()
+}
+
+/*
+ * While the store is still being filled, the first page is asked for again
+ * every few seconds, so files appear as they are reached - unless more pages
+ * have been loaded, which a refresh would take away.
+ */
+const BUILDING_REFRESH_MS = 2000
+let refreshTimer: ReturnType<typeof setTimeout> | undefined
+let gone = false
+watch(building, (now) => {
+  if (refreshTimer) clearTimeout(refreshTimer)
+  refreshTimer = undefined
+  if (!now) return
+  const again = () => {
+    refreshTimer = setTimeout(async () => {
+      if (!nextCursor.value || groups.value.reduce((n, group) => n + group.files.length, 0) <= ARTIFACT_PAGE) {
+        if (!loadingMore.value) await load()
+      }
+      if (building.value && !gone) again()
+    }, BUILDING_REFRESH_MS)
+  }
+  again()
+})
+onBeforeUnmount(() => {
+  gone = true
+  if (refreshTimer) clearTimeout(refreshTimer)
+})
+
 onMounted(load)
-watch(needle, () => void load())
+// Switching a tab applies at once, as MiMo's does; typing waits for `needle`.
+watch([needle, kind], () => void load())
 
 /* The time is read against a clock that moves, so "just now" does not stay just now. */
 const now = ref(Date.now())
@@ -201,7 +266,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
 </script>
 
 <template>
-  <div class="artifacts">
+  <div class="artifacts" @scroll.passive="onScroll">
     <div class="drag" aria-hidden="true" />
     <div class="column">
       <h1 class="title">{{ t("art.title") }}</h1>
@@ -381,7 +446,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
         <span>{{ t("art.empty") }}</span>
       </div>
 
-      <div v-if="!failed && shown.length > visible.length" class="more">
+      <div v-if="!failed && nextCursor" class="more">
         <button type="button" class="page-btn" data-act="load-more" :disabled="loadingMore" @click="loadMore">
           {{ t(loadingMore ? "art.loadingMore" : "art.loadMore") }}
         </button>
