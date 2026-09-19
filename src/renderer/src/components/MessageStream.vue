@@ -79,7 +79,7 @@ const shownID = computed(() => (props.side ? sideKey.value : app.currentID))
 /* The project the shown conversation works in; a side conversation shares the main one's. */
 const shownDirectory = computed(() => app.current?.directory)
 const shownStreaming = computed(() => (props.side ? app.sideStreamingOf(sideKey.value) : app.streaming))
-const shownError = computed(() => (props.side ? app.sideErrorOf(sideKey.value) : app.error))
+const shownError = computed(() => (props.side ? app.sideErrorOf(sideKey.value) : app.turnError))
 /* round3-panel (P5-12/13): MiMo's side chat and floating card draw a reply with showActions false. */
 const bare = computed(() => Boolean(props.side || props.latest))
 /* The open conversation was just switched to and its messages are still on their way. */

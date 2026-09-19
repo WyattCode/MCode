@@ -47,6 +47,21 @@ export async function roundTwelveFailureChecks(check: Check, section: (name: str
       /if \(booted\)/.test(timer) && /notice\.danger\(t\("error\.connectionRecovering"\), \{ id: RECONNECT_TOAST, body: t\("error\.connectionStillDown"\)/.test(timer) && inTables("error.connectionStillDown"),
     )
   }
+
+  // ---------------------------------------------------------------- C12-4
+  {
+    const stream = await read("src/renderer/src/components/MessageStream.vue")
+    const bodyOf = (name: string) => store.slice(store.indexOf(`async function ${name}(`), store.indexOf("\n  }\n", store.indexOf(`async function ${name}(`)))
+    const send = bodyOf("send")
+    const subtask = bodyOf("subtask")
+    check("C12-4: nothing in the store but boot writes the boot-error slot", !/(^|[^\w.])error\.value =/m.test(store) && /app\.error = failure/.test(shell))
+    check(
+      "C12-4: a refused send or subtask is a failure notice (the side chat's under its transcript)",
+      /if \(onSide\) setSideError\(target, reason\)\s+else notifyFailure\(t\("common\.requestFailed"\), reason\)/.test(send) && /notifyFailure\(t\("common\.requestFailed"\)/.test(subtask) && /return false/.test(send),
+    )
+    check("C12-4: the home hero and its dock no longer hide on a failure", !/!app\.error/.test(shell) && /<SessionHero v-if="empty" \/>/.test(shell))
+    check("C12-4: a failed turn still shows under the open transcript", /app\.turnError/.test(stream) && /turnError\.value = said/.test(store))
+  }
 }
 
 /** A port nothing listens on yet. */

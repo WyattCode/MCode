@@ -161,7 +161,14 @@ export const useApp = defineStore("app", () => {
    * refusal is exactly when it would otherwise say nothing at all.
    */
   const compacting = computed(() => (currentID.value ? summarising.value.has(currentID.value) : false))
+  /**
+   * Why the app could not start: the one message the boot screen reads, and
+   * set by nothing else. A failure after boot leaves the app where it was and
+   * is said in a toast (a send, a subtask) or under the transcript (a turn).
+   */
   const error = ref<string>()
+  /** Why the open conversation's last turn ended in an error, for the banner under its transcript. */
+  const turnError = ref<string>()
 
   /*
    * Side chats: conversations started beside the open one, in the side column.
@@ -747,7 +754,7 @@ export const useApp = defineStore("app", () => {
         noteError(event.sessionID, said)
         // The banner is only for the session on screen; the record is kept for
         // all of them, so the sidebar can mark the ones that went wrong.
-        if (event.sessionID === currentID.value) error.value = said
+        if (event.sessionID === currentID.value) turnError.value = said
         if (isSide(event.sessionID)) setSideError(event.sessionID, said)
         break
       }
@@ -1222,7 +1229,7 @@ export const useApp = defineStore("app", () => {
       held.delete(sessionID)
       currentID.value = sessionID
       partIndex.clear()
-      error.value = undefined
+      turnError.value = undefined
       if (kept) {
         loadingID.value = undefined
         messages.value = kept
@@ -1250,7 +1257,7 @@ export const useApp = defineStore("app", () => {
       messages.value.forEach(reindex)
     }
     applyRetry(sessionID, messages.value)
-    error.value = undefined
+    turnError.value = undefined
     noteError(sessionID, undefined)
     /*
      * Two of the three command sources are files under the session's own
@@ -1560,11 +1567,8 @@ export const useApp = defineStore("app", () => {
     // An attachment, or a place pointed at, with no words is still something to answer.
     if (!target || (!text.trim() && !attachments.length && !annotations.length)) return false
     const onSide = isSide(target)
-    const report = (message: string | undefined) => {
-      if (onSide) setSideError(target, message)
-      else error.value = message
-    }
-    report(undefined)
+    if (onSide) setSideError(target, undefined)
+    else turnError.value = undefined
     noteError(target, undefined)
 
     /*
@@ -1610,7 +1614,14 @@ export const useApp = defineStore("app", () => {
         running.value.delete(target)
         turnStarted.delete(target)
       }
-      report(err instanceof Error ? err.message : String(err))
+      /*
+       * A message that was not accepted is a notice, as MiMo's composer says
+       * it, with the draft kept by the caller. The side chat says it under its
+       * own transcript, where the reader is looking.
+       */
+      const reason = err instanceof Error ? err.message : String(err)
+      if (onSide) setSideError(target, reason)
+      else notifyFailure(t("common.requestFailed"), reason)
       return false
     }
   }
@@ -1657,7 +1668,7 @@ export const useApp = defineStore("app", () => {
     const target = to ?? currentID.value
     if (!target || running.value.has(target)) return false
     if (isSide(target)) setSideError(target, undefined)
-    else error.value = undefined
+    else turnError.value = undefined
     noteError(target, undefined)
     running.value.add(target)
     turnStarted.set(target, Date.now())
@@ -2135,7 +2146,7 @@ export const useApp = defineStore("app", () => {
   async function subtask(text: string, command: { description: string; prompt: string }): Promise<boolean> {
     const target = currentID.value
     if (!target) return false
-    error.value = undefined
+    turnError.value = undefined
     noteError(target, undefined)
     const joined = running.value.has(target)
     running.value.add(target)
@@ -2148,7 +2159,7 @@ export const useApp = defineStore("app", () => {
         running.value.delete(target)
         turnStarted.delete(target)
       }
-      error.value = err instanceof Error ? err.message : String(err)
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
       return false
     }
   }
@@ -2212,6 +2223,7 @@ export const useApp = defineStore("app", () => {
     markReplacing,
     compacting,
     error,
+    turnError,
     config,
     providers,
     commands,
