@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue"
 import { useOfficeVersions } from "../../stores/office-versions"
-import { language, t } from "../../lib/i18n"
+import { language, t, tn } from "../../lib/i18n"
 import LucideIcon from "../LucideIcon.vue"
 
 /**
@@ -28,9 +28,9 @@ const style = computed(() => ({
 function when(ts: number) {
   const seconds = Math.floor((Date.now() - ts) / 1000)
   if (seconds < 60) return t("time.justNow")
-  if (seconds < 3600) return t("time.minutesAgo", { n: Math.floor(seconds / 60) })
-  if (seconds < 86400) return t("time.hoursAgo", { n: Math.floor(seconds / 3600) })
-  if (seconds < 7 * 86400) return t("time.daysAgo", { n: Math.floor(seconds / 86400) })
+  if (seconds < 3600) return tn("time.minutesAgo", Math.floor(seconds / 60))
+  if (seconds < 86400) return tn("time.hoursAgo", Math.floor(seconds / 3600))
+  if (seconds < 7 * 86400) return tn("time.daysAgo", Math.floor(seconds / 86400))
   // The date in the interface language, like every other date in the app, not the OS locale.
   return new Intl.DateTimeFormat(language.value).format(new Date(ts))
 }

@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { ArtifactFacets, SessionArtifacts } from "@shared/protocol"
 import { useApp } from "../stores/app"
-import { t } from "../lib/i18n"
+import { t, tn } from "../lib/i18n"
 import { notifyFailure } from "../lib/toast"
 import { ARTIFACT_PAGE, artifactAbsolute, artifactAge, artifactCategory, badgeOf, type ArtifactCategory, type BadgeStyle } from "../lib/artifact-kind"
 import { previewArtifact } from "../lib/artifact-open"
@@ -224,7 +224,7 @@ function when(at: number): string {
   const age = artifactAge(at, now.value)
   if (age.unit === "just") return t("time.justNow")
   if (age.unit === "date") return `${age.y}/${age.mo}/${age.day}`
-  return t(age.unit === "m" ? "time.minutesAgo" : age.unit === "h" ? "time.hoursAgo" : "time.daysAgo", { n: age.n })
+  return tn(age.unit === "m" ? "time.minutesAgo" : age.unit === "h" ? "time.hoursAgo" : "time.daysAgo", age.n)
 }
 
 /*

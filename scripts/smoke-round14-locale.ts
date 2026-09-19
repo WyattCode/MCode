@@ -11,7 +11,8 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { LANGUAGE_IDS, resolveLanguage, systemLanguage } from "../src/shared/locale"
-import { detectLanguage, LANGUAGES } from "../src/renderer/src/lib/i18n"
+import { ago, detectLanguage, language, LANGUAGES } from "../src/renderer/src/lib/i18n"
+import { subagentTime } from "../src/renderer/src/lib/subagents"
 import { interfaceLocale, setMachineLocale } from "../src/server/session/locale"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
@@ -82,6 +83,34 @@ export async function roundFourteenLocaleChecks(check: Check, section: (name: st
       "L14-3: both sides call the shared mapping rather than keeping their own",
       /return systemLanguage\(/.test(i18n) && /resolveLanguage\(/.test(locale) && !/hant|\bnn\b/i.test(locale.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "")),
     )
+  }
+
+  // ---------------------------------------------------------------- L14-5
+  {
+    const saved = language.value
+    language.value = "ar"
+    const minute = 60_000
+    const said = {
+      m1: ago(Date.now() - 1 * minute), m2: ago(Date.now() - 2 * minute), m3: ago(Date.now() - 3 * minute), m11: ago(Date.now() - 11 * minute),
+      h2: ago(Date.now() - 2 * 60 * minute), h5: ago(Date.now() - 5 * 60 * minute),
+      d1: ago(Date.now() - 24 * 60 * minute), d2: ago(Date.now() - 48 * 60 * minute), d7: ago(Date.now() - 7 * 24 * 60 * minute), d20: ago(Date.now() - 20 * 24 * 60 * minute),
+    }
+    check(
+      "L14-5: Arabic says one, two, a few and many minutes each in its own form",
+      said.m1 === "قبل دقيقة" && said.m2 === "قبل دقيقتين" && said.m3 === "قبل 3 دقائق" && said.m11 === "قبل 11 دقيقة",
+      said,
+    )
+    check("L14-5: and hours and days likewise", said.h2 === "قبل ساعتين" && said.h5 === "قبل 5 ساعات" && said.d1 === "قبل يوم" && said.d2 === "قبل يومين" && said.d7 === "قبل 7 أيام" && said.d20 === "قبل 20 يومًا", said)
+    const subagent = subagentTime({ id: "x", name: "", status: "completed", endedAt: 0 } as unknown as Parameters<typeof subagentTime>[0], 3 * minute)
+    check("L14-5: the subagent column's ended time is a counted key", subagent.key === "time.minutesAgo" && subagent.counted === true, subagent)
+    language.value = "en"
+    check("L14-5: English is untouched", ago(Date.now() - 1 * minute) === "1 min ago" && ago(Date.now() - 5 * 60 * minute) === "5 h ago")
+    language.value = saved
+    const sites = await Promise.all(
+      ["src/renderer/src/components/ArtifactsView.vue", "src/renderer/src/components/right/VersionHistory.vue", "src/renderer/src/components/right/RpSubagents.vue", "src/renderer/src/lib/i18n.ts"].map(read),
+    )
+    const plain = sites.filter((text) => /\bt\(\s*(["'`])time\.(minutes|hours|days)Ago\1/.test(text) || /\bt\(age\.unit/.test(text))
+    check("L14-5: every relative-time call site goes through the plural lookup", plain.length === 0 && sites.every((text) => /\btn\(/.test(text)))
   }
 
   // ---------------------------------------------------------------- L14-4

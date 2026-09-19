@@ -11,8 +11,7 @@ import { cleanLiveReply, cleanReply, isDotsOnly, saysSomething } from "../src/sh
 import { opensTurn, turnOpeners } from "../src/shared/steer"
 import { buildRows, stagesOf } from "../src/renderer/src/lib/step-rows"
 import { noOutput, stepImages, toolIcon } from "../src/renderer/src/lib/tool-meta"
-import { tn } from "../src/renderer/src/lib/plural"
-import { language } from "../src/renderer/src/lib/i18n"
+import { language, tn } from "../src/renderer/src/lib/i18n"
 import { redactText, redactValue, validCardNumber, validChineseID } from "../src/shared/display-redact"
 
 const tool = (id: string, name: string, status: ToolPart["status"] = "completed", extra: Partial<ToolPart> = {}): ToolPart =>

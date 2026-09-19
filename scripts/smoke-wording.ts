@@ -266,29 +266,39 @@ export function retiredSessionCalls(root: string): string[] {
  * differently. MiMo has one (lib.minutesAgo / hoursAgo / daysAgo / justNow).
  */
 export const TIME_KEYS = ["time.justNow", "time.minutesAgo", "time.hoursAgo", "time.daysAgo"]
+/* The counted three are stored once per plural form (tn); every form belongs to the family. */
+const PLURAL_FORMS = ["one", "few", "many", "other", "two", "zero"]
+const COUNTED = TIME_KEYS.filter((key) => key !== "time.justNow")
+const familyKey = (key: string) => TIME_KEYS.includes(key) || COUNTED.some((base) => PLURAL_FORMS.some((form) => key === `${base}_${form}`))
 const ENGLISH_TIME: Record<string, string> = {
   "time.justNow": "Just now",
-  "time.minutesAgo": "{n} min ago",
-  "time.hoursAgo": "{n} h ago",
-  "time.daysAgo": "{n} d ago",
+  "time.minutesAgo": "{count} min ago",
+  "time.hoursAgo": "{count} h ago",
+  "time.daysAgo": "{count} d ago",
 }
 
 export function relativeTimeFamilies(tables: Tables): string[] {
   const found: string[] = []
   for (const [key, value] of Object.entries(tables.zhCN ?? {})) {
-    if (TIME_KEYS.includes(key)) continue
+    if (familyKey(key)) continue
     if (value === "刚刚" || /^\{\w+\} ?(分钟?|小时|天)前$/.test(value)) found.push(`zhCN ${key} is a second relative-time string`)
   }
   for (const [key, value] of Object.entries(tables.en ?? {})) {
-    if (TIME_KEYS.includes(key)) continue
+    if (familyKey(key)) continue
     if (/^just now$/i.test(value) || /^\{\w+\} ?(m|min|minutes?|h|hours?|d|days?) ago$/i.test(value)) found.push(`en ${key} is a second relative-time string`)
   }
   for (const key of TIME_KEYS) {
-    if (tables.en?.[key] !== ENGLISH_TIME[key]) found.push(`en ${key} reads ${JSON.stringify(tables.en?.[key])}`)
-    for (const [name, entries] of Object.entries(tables)) {
-      const holes = [...(entries[key] ?? "").matchAll(/\{(\w+)\}/g)].map((m) => m[1]).join(",")
-      if (entries[key] === undefined) found.push(`${name} ${key} (missing)`)
-      else if (holes !== (key === "time.justNow" ? "" : "n")) found.push(`${name} ${key} has placeholders [${holes}]`)
+    // English has no dual or paucal, so every form of a counted key reads the one spelling.
+    const stored = key === "time.justNow" ? [key] : PLURAL_FORMS.map((form) => `${key}_${form}`)
+    for (const name of stored) {
+      if (tables.en?.[name] !== ENGLISH_TIME[key]) found.push(`en ${name} reads ${JSON.stringify(tables.en?.[name])}`)
+      for (const [table, entries] of Object.entries(tables)) {
+        const holes = [...(entries[name] ?? "").matchAll(/\{(\w+)\}/g)].map((m) => m[1]).join(",")
+        // Arabic's one and two say the count in the word itself (دقيقة / دقيقتين), so a form may drop it.
+        if (entries[name] === undefined) found.push(`${table} ${name} (missing)`)
+        else if (holes !== "" && (key === "time.justNow" || holes !== "count")) found.push(`${table} ${name} has placeholders [${holes}]`)
+        else if (holes === "" && key !== "time.justNow" && name.endsWith("_other")) found.push(`${table} ${name} does not say the count`)
+      }
     }
   }
   return found
@@ -386,11 +396,11 @@ export function wordingChecks(check: Check, section: (name: string) => void): vo
     const broken = clone(tables)
     broken.zhCN["art.timeM"] = "{n} 分钟前"
     broken.en["art.timeM"] = "{n}m ago"
-    broken.en["time.hoursAgo"] = "{n}h ago"
+    broken.en["time.hoursAgo_other"] = "{count}h ago"
     const caught = relativeTimeFamilies(broken)
     check(
       "the rule catches a second family and a second English spelling",
-      caught.includes("zhCN art.timeM is a second relative-time string") && caught.includes("en art.timeM is a second relative-time string") && caught.some((line) => line.startsWith("en time.hoursAgo reads")),
+      caught.includes("zhCN art.timeM is a second relative-time string") && caught.includes("en art.timeM is a second relative-time string") && caught.some((line) => line.startsWith("en time.hoursAgo_other reads")),
       caught,
     )
   }

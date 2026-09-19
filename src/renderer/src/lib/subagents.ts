@@ -149,7 +149,7 @@ export function targetOf(part: ToolPart): string {
  * ago it ended - in the app's one relative-time family, so this column and the
  * side column never spell the same moment two ways.
  */
-export function subagentTime(item: SubagentItem, now: number): { key: string; n?: number } {
+export function subagentTime(item: SubagentItem, now: number): { key: string; n?: number; counted?: boolean } {
   if (item.status === "running") {
     if (item.startedAt === undefined) return { key: "subagents.status.running" }
     return { key: "subagents.seconds", n: Math.max(0, Math.floor((now - item.startedAt) / 1000)) }
@@ -157,8 +157,8 @@ export function subagentTime(item: SubagentItem, now: number): { key: string; n?
   if (item.endedAt === undefined) return { key: `subagents.status.${item.status}` }
   const seconds = Math.max(0, Math.floor((now - item.endedAt) / 1000))
   if (seconds < 60) return { key: "time.justNow" }
-  if (seconds < 3600) return { key: "time.minutesAgo", n: Math.floor(seconds / 60) }
-  return { key: "time.hoursAgo", n: Math.floor(seconds / 3600) }
+  if (seconds < 3600) return { key: "time.minutesAgo", n: Math.floor(seconds / 60), counted: true }
+  return { key: "time.hoursAgo", n: Math.floor(seconds / 3600), counted: true }
 }
 
 /** The completed group shows ten until 查看全部 is pressed. */

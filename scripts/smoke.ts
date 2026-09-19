@@ -88,7 +88,7 @@ import { blankProjectDirectory } from "../src/server/scratch"
 // round 6 (L6): a thumbnail needs the attachment's bytes, which a saved draft no longer carries.
 import { preview } from "../src/renderer/src/lib/attach"
 import { blockedIPv4, blockedIPv6 } from "../src/server/tool/webfetch"
-import { ago, t } from "../src/renderer/src/lib/i18n"
+import { ago, t, tn } from "../src/renderer/src/lib/i18n"
 import {
   VOICE_EDIT_MAX,
   VOICE_EDIT_PROMPT,
@@ -6133,8 +6133,8 @@ async function main() {
   check("go to chat carries its number", shownRows[3].title === "key.label.goto-chat:3")
   check("no page row is left without a command list", PAGE_ROWS.every((row) => row.commands.length > 0))
   check("just now under a minute", ago(Date.now() - 59_000) === t("time.justNow"))
-  check("minutes are floored", ago(Date.now() - 119_000) === t("time.minutesAgo", { n: 1 }))
-  check("days up to 29", ago(Date.now() - 29 * 86_400_000 - 1000) === t("time.daysAgo", { n: 29 }))
+  check("minutes are floored", ago(Date.now() - 119_000) === tn("time.minutesAgo", 1))
+  check("days up to 29", ago(Date.now() - 29 * 86_400_000 - 1000) === tn("time.daysAgo", 29))
   check("30 days on is a date, not a relative phrase", !/ago|前/.test(ago(Date.now() - 30 * 86_400_000 - 1000)))
 
   section("round 3 settings: MCP secrets and the model form")

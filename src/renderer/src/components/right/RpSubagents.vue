@@ -4,7 +4,7 @@ import MessageStream from "../MessageStream.vue"
 import SubagentAvatar from "../parts/SubagentAvatar.vue"
 import { useApp } from "../../stores/app"
 import { useRightPanel, type RightTab } from "../../stores/right-panel"
-import { t } from "../../lib/i18n"
+import { t, tn } from "../../lib/i18n"
 import { COMPLETED_CAP, subagentItems, subagentTime, type SubagentItem } from "../../lib/subagents"
 
 /**
@@ -45,7 +45,9 @@ const statusOf = (item: SubagentItem) => t(`subagents.status.${item.status}`)
 /* MiMo leaves the summary out when it only repeats the name or the status. */
 const summaryOf = (item: SubagentItem) => (item.summary && item.summary !== nameOf(item) && item.summary !== statusOf(item) ? item.summary : "")
 function timeOf(item: SubagentItem): string {
-  const { key, n } = subagentTime(item, now.value)
+  const { key, n, counted } = subagentTime(item, now.value)
+  // The relative times are counted keys, one per plural form (tn).
+  if (counted && n !== undefined) return tn(key, n)
   return n === undefined ? t(key) : t(key, { n })
 }
 
