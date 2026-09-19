@@ -15,9 +15,10 @@ import { AGENT_NAMES, EFFORTS, type AppConfig } from "@shared/protocol"
  * stylesheet has no colours for, or - with a number where a chord should be -
  * throw while reading the shortcuts and leave every custom one dead.
  *
- * Mutates `doc` in place; answers whether anything had to change, so the
- * caller can write the corrected document back. `fallback` is the defaults,
- * which is what an unusable value becomes.
+ * Mutates `doc` in place and answers whether anything had to change.
+ * `fallback` is the defaults, which is what an unusable value becomes. The
+ * corrected copy is for this process only: the settings never write it back
+ * over the stored values by itself (L12-5, see `sanitizeHeld`).
  */
 export function sanitizeConfig(doc: AppConfig, fallback: AppConfig): boolean {
   const record = doc as unknown as Record<string, unknown>

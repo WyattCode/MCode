@@ -2,6 +2,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { app, screen, type BrowserWindow, type Rectangle } from "electron"
 import { WINDOW_MIN, firstRunSize, readSavedWindow, windowStateToSave, type SavedWindow } from "./desktop-rules"
+import { writeAtomicSync } from "./atomic-write"
 
 /**
  * Remembers where the window was and how big it was.
@@ -110,8 +111,7 @@ export function saveWindowState(window: BrowserWindow): void {
   if (!state) return
   baselines.set(window, state.bounds)
   try {
-    fs.mkdirSync(path.dirname(file()), { recursive: true })
-    fs.writeFileSync(file(), JSON.stringify(state, null, 2), "utf8")
+    writeAtomicSync(file(), JSON.stringify(state, null, 2))
   } catch {
     // Losing the remembered size is not worth interrupting anything over.
   }

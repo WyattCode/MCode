@@ -296,7 +296,8 @@ async function settingsChecks(check: Check, section: (name: string) => void): Pr
       check("a model that is not a model is the default, an optional one is dropped", JSON.stringify(got.model) === '{"provider":"","model":""}' && !("titleModel" in got), got.model)
       check("a non-list of instruction files is dropped, and a malformed custom provider left out", !("instructionFiles" in got) && JSON.stringify((got.customProviders as { id: string }[]).map((entry) => entry.id)) === '["ok"]')
       const disk = await bad.disk()
-      check("and the corrected document is what is written back", disk.theme === "system" && disk.uiFontSize === 24 && JSON.stringify(disk.keybinds) === '{"session.new":"Ctrl+K"}')
+      // L12-5: the checked copy is this process's; the stored values stay in the file even when a migration writes it.
+      check("and the stored values are what stays on disk", disk.theme === "foo" && disk.uiFontSize === 100 && JSON.stringify(disk.keybinds) === '{"session.new":"Ctrl+K","app.search":5,"view.right":null}', disk)
     }
 
     const good = { theme: "dark", reduceMotion: "on", diffMarks: "signs", uiFontSize: 16, codeFontSize: 9, effort: "xhigh", appIcon: "moss", taskDoneSound: "off", accessLevel: "auto", keybinds: { "app.search": "Ctrl+P" }, migrations: ["orphans-r9"] }

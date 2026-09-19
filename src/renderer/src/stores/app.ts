@@ -949,6 +949,10 @@ export const useApp = defineStore("app", () => {
      */
     if (settings.unreadable) notice.warning(t("error.configInvalid"), { duration: 0 })
     else if (settings.fromNewerVersion) notice.warning(t("error.configNewer"), { duration: 0 })
+    // L12-2: the keys and sign-ins are a file of their own, and their loss is said on its own.
+    if (settings.credentialsUnreadable) notice.warning(t("error.credentialsInvalid"), { duration: 0 })
+    // L12-3: MiMo refuses to save without secure storage; this keeps them in plain text and says so.
+    else if (settings.credentialsPlaintext) notice.warning(t("error.credentialsPlaintext"), { duration: 0 })
     providers.value = (await instance.request({ type: "provider.list" })).providers
     const listed = await instance.request({ type: "session.list" })
     // subagents: listed apart from both, as their own conversations are.

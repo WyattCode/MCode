@@ -271,7 +271,6 @@ const api = {
     ipcRenderer.invoke("mcode:browser-open", bounds),
   browserBounds: (bounds: { x: number; y: number; width: number; height: number }): void =>
     ipcRenderer.send("mcode:browser-bounds", bounds),
-  browserClose: (): void => ipcRenderer.send("mcode:browser-close"),
   browserNavigate: (input: string) => ipcRenderer.invoke("mcode:browser-navigate", input),
   /** Acts on the open page, or on the page `id` names when given. */
   browserAct: (what: "back" | "forward" | "reload" | "forceReload" | "stop" | "zoomIn" | "zoomOut" | "zoomReset", id?: string) =>

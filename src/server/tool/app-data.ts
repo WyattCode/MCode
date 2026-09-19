@@ -59,9 +59,9 @@ function writable(inner: string): boolean {
   return inner === "storage/agents.md"
 }
 
-/** The files holding saved sign-ins and keys. */
+/** The files holding saved sign-ins and keys; `credentials.json.` also covers a kept-aside or half-written copy. */
 function secret(inner: string): boolean {
-  return inner === "credentials.json" || inner === "storage/mcp-auth.json" || inner.startsWith("credentials.json:") || inner.startsWith("storage/mcp-auth.json:")
+  return inner === "credentials.json" || inner.startsWith("credentials.json.") || inner === "storage/mcp-auth.json" || inner.startsWith("credentials.json:") || inner.startsWith("storage/mcp-auth.json:")
 }
 
 /**
