@@ -289,6 +289,16 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
       pickers.every((picker) => /ref="root"[^>]*@focusout="onFocusOut"/.test(picker) && /if \(open\.value && next instanceof Node && !root\.value\?\.contains\(next\)\) open\.value = false/.test(picker)),
     )
   }
+
+  // ---------------------------------------------------------------- K13-11
+  {
+    const picker = await component("ProjectPicker")
+    const layer = picker.slice(picker.indexOf("useEscapeLayerWhile(\n  () => open.value,"))
+    check(
+      "K13-11: Escape in the project picker's \"add a project\" submenu closes the submenu alone and gives focus back to its row",
+      /if \(!sub\.value\) \{\s+open\.value = false\s+return\s+\}\s+sub\.value = false\s+trigger\.value\?\.focus\(\)/.test(layer.slice(0, 300)) && !/addEventListener\("keydown"/.test(picker),
+    )
+  }
 }
 
 /*

@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { t } from "../lib/i18n"
 import { isRovingKey, rovingStep } from "../lib/composer-menu"
+import { useEscapeLayerWhile } from "../lib/escape-layer"
 
 /**
  * The home screen's project chip and its menu, laid out from MiMo's.
@@ -104,12 +105,22 @@ function onFocusOut(event: FocusEvent) {
   if (open.value && next instanceof Node && !root.value?.contains(next)) open.value = false
 }
 
-function onKeydown(event: KeyboardEvent) {
-  if (open.value && event.key === "Escape") {
-    event.preventDefault()
-    open.value = false
-  }
-}
+/*
+ * Escape closes one level, as MiMo's nested menus do: the "add a project"
+ * submenu back to its row, then the picker.
+ */
+useEscapeLayerWhile(
+  () => open.value,
+  () => {
+    if (!sub.value) {
+      open.value = false
+      return
+    }
+    sub.value = false
+    trigger.value?.focus()
+  },
+  () => (open.value = false),
+)
 
 /*
  * MiMo's list keys: ArrowUp and ArrowDown walk the rows and wrap, Home and End
@@ -136,7 +147,6 @@ function onMenuKeys(event: KeyboardEvent) {
 
 /* The search box keeps its keys to itself, as MiMo's does - except Down, which steps into the list. */
 function onSearchKeys(event: KeyboardEvent) {
-  if (event.key === "Escape") return
   event.stopPropagation()
   if (event.key === "ArrowDown" && !event.altKey && !event.ctrlKey && !event.metaKey) {
     event.preventDefault()
@@ -163,11 +173,9 @@ function closeSub(event: KeyboardEvent) {
 
 onMounted(() => {
   window.addEventListener("mousedown", onPointerDown, true)
-  window.addEventListener("keydown", onKeydown)
 })
 onBeforeUnmount(() => {
   window.removeEventListener("mousedown", onPointerDown, true)
-  window.removeEventListener("keydown", onKeydown)
 })
 </script>
 
