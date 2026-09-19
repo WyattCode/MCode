@@ -10,7 +10,7 @@
 /** MiMo's smallest window, which a remembered size is also held to. */
 export const WINDOW_MIN = { width: 720, height: 640 }
 /* MiMo's preferred first size, its ceiling, and the share of the work area it takes. */
-const PREFERRED = { width: 1340, height: 880 }
+export const WINDOW_PREFERRED = { width: 1340, height: 880 }
 const CEILING = { width: 1920, height: 1200 }
 const SHARE = 0.8
 
@@ -27,10 +27,10 @@ function firstSide(area: number, preferred: number, ceiling: number, minimum: nu
  * minimum.
  */
 export function firstRunSize(area: { width: number; height: number }): { width: number; height: number } {
-  if (!(area.width > 0) || !(area.height > 0)) return { ...PREFERRED }
+  if (!(area.width > 0) || !(area.height > 0)) return { ...WINDOW_PREFERRED }
   return {
-    width: firstSide(area.width, PREFERRED.width, CEILING.width, WINDOW_MIN.width),
-    height: firstSide(area.height, PREFERRED.height, CEILING.height, WINDOW_MIN.height),
+    width: firstSide(area.width, WINDOW_PREFERRED.width, CEILING.width, WINDOW_MIN.width),
+    height: firstSide(area.height, WINDOW_PREFERRED.height, CEILING.height, WINDOW_MIN.height),
   }
 }
 
@@ -146,11 +146,18 @@ export const APP_NAME = "MCode"
  * the old folder - and only the default: a profile chosen on purpose
  * (`--user-data-dir`, or `app.setPath` before the main module runs) is left
  * alone. Returns the folder to set, or undefined to leave userData as it is.
+ *
+ * An unpackaged run gets a profile of its own, the default's name plus `-dev`
+ * (I13-1). Sharing the installed build's meant two full backends on one folder
+ * with nothing to arbitrate: every automation fired twice, each start dropped
+ * the search index the other had open, and settings went to whichever wrote
+ * last.
  */
 export const PROFILE_FOLDER = "mcode"
-export function pinnedProfile(current: string, appData: string, appName: string, join: (...parts: string[]) => string): string | undefined {
+export const DEV_PROFILE_SUFFIX = "-dev"
+export function pinnedProfile(current: string, appData: string, appName: string, join: (...parts: string[]) => string, packaged = true): string | undefined {
   if (current !== join(appData, appName)) return undefined
-  const pinned = join(appData, PROFILE_FOLDER)
+  const pinned = packaged ? join(appData, PROFILE_FOLDER) : join(appData, appName + DEV_PROFILE_SUFFIX)
   return pinned === current ? undefined : pinned
 }
 
@@ -221,4 +228,21 @@ export function quitPress(armedAt: number | undefined, now: number): { quit: boo
 export function badgeCount(raw: unknown): number {
   const value = typeof raw === "number" ? raw : Number(raw)
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+}
+
+/*
+ * Switches Chromium adds to the command line it hands the running copy, which
+ * the person never passed. Allowing file pages to read other files is not one
+ * to carry into a relaunch.
+ */
+const HANDED_OVER_SWITCHES = ["--allow-file-access-from-files", "--original-process-start-time"]
+
+/**
+ * The arguments to relaunch with for a second launch that arrived while this
+ * copy was quitting (I13-2): the second launch's own, less the executable and
+ * what Chromium added on the way. A link among them is kept, so the new copy
+ * opens it.
+ */
+export function relaunchArgs(argv: readonly string[]): string[] {
+  return argv.slice(1).filter((entry) => !HANDED_OVER_SWITCHES.some((name) => entry === name || entry.startsWith(`${name}=`)))
 }

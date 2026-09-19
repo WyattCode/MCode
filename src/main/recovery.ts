@@ -225,6 +225,17 @@ export function currentWindow(): BrowserWindow | undefined {
 }
 
 /**
+ * The current window when its page has loaded and is not loading again, so a
+ * message sent to it now is heard. Undefined while it starts or reloads, and
+ * for a renderer that has failed, whose replacement is still to come.
+ */
+export function readyWindow(): BrowserWindow | undefined {
+  const window = currentWindow()
+  if (!window || health.state(window.webContents) !== "ready" || window.webContents.isLoading()) return undefined
+  return window
+}
+
+/**
  * Attaches recovery to a new window, before anything is loaded into it: the
  * first thing that can fail is the load itself.
  */

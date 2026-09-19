@@ -36,6 +36,7 @@ import {
   currentWindow,
   markClosing,
   onRecoveryGaveUp,
+  readyWindow,
   recordProcessError,
   relaunch,
   setRecoveryHost,
@@ -48,7 +49,7 @@ import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { SOUNDFONT } from "@shared/soundfont"
 import { readSoundfont } from "./soundfont"
 import { applyZoom } from "./zoom"
-import { APP_NAME, WINDOW_MIN, badgeCount, noticeTitle, pinnedProfile, readTaskNotice, textMenuItems, wantsNotice } from "./desktop-rules"
+import { APP_NAME, WINDOW_MIN, badgeCount, noticeTitle, pinnedProfile, readTaskNotice, relaunchArgs, textMenuItems, wantsNotice } from "./desktop-rules"
 import { registerOffice } from "./office"
 import { registerComposerInput } from "./composer-input"
 import { registerPasteFiles } from "./paste-files"
@@ -78,7 +79,7 @@ import {
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
 import { fcitxEnvironment } from "./linux-ime"
 import { linuxIconSync } from "./linux-icon-sync"
-import { restore, saveWindowState, track } from "./window-state"
+import { maximizeAtStart, restore, saveWindowState, toggleMaximize, track } from "./window-state"
 import { keepWindowsOnScreen, repaintAfterWake } from "./displays"
 import { boundsOnShow, closeBounds } from "./work-area"
 import { HELPER_SWEEP_TIMEOUT_MS, createUpdater, helperSweep, staleInstallers, type AutoUpdaterLike, type UpdateState, type Updater } from "./updater"
@@ -110,11 +111,27 @@ const APP_ID = "dev.mcode.app"
 if (process.platform === "win32") app.setAppUserModelId(app.isPackaged ? APP_ID : `${APP_ID}.dev`)
 
 /*
- * The profile stays where every release kept it (see pinnedProfile), before
- * anything below reads it.
+ * The profile stays where every release kept it, and an unpackaged run keeps
+ * one of its own (see pinnedProfile), before anything below reads it.
  */
-const pinned = pinnedProfile(app.getPath("userData"), app.getPath("appData"), app.getName(), path.join)
+const pinned = pinnedProfile(app.getPath("userData"), app.getPath("appData"), app.getName(), path.join, app.isPackaged)
 if (pinned) app.setPath("userData", pinned)
+
+/*
+ * One running copy per profile, so a link clicked while the app is open lands
+ * in that copy instead of starting a second one beside it. The lock is keyed on
+ * the profile, and a development build has its own (pinnedProfile), so the two
+ * run side by side. Packaged builds only, as MiMo skips it in development: a
+ * development run is restarted by its tooling and must not find the one it
+ * replaces still holding the lock.
+ *
+ * Taken as soon as the profile is known, as MiMo takes it (I13-6): a second
+ * launch hands its arguments over and is gone before the log, the crash
+ * reporter or the environment refresh (a login shell on macOS and Linux) start.
+ * process.exit rather than app.exit, which only queues the exit and lets the
+ * rest of this module run first.
+ */
+if (app.isPackaged && !app.requestSingleInstanceLock()) process.exit(0)
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -326,14 +343,6 @@ async function removeStaleInstallers() {
 let pendingLink: string | undefined = linkInArgs(process.argv)
 
 /*
- * One running copy per profile, so a link clicked while the app is open lands
- * in that copy instead of starting a second one beside it. Packaged builds
- * only: a development build shares its profile with the installed app and must
- * not quit because the installed one happens to be open.
- */
-if (app.isPackaged && !app.requestSingleInstanceLock()) app.exit(0)
-
-/*
  * MiMo's raise: a moment always on top around the show, because Windows' focus
  * rules otherwise leave a window called up from a notification behind whatever
  * has the foreground. Any taskbar flash is spent once the window is up.
@@ -348,23 +357,52 @@ function raise(window: BrowserWindow) {
   window.flashFrame(false)
 }
 
-/** Shows a linked session in the window that is up, or keeps it for the first one. */
+/**
+ * Brings the window up for a link, as MiMo does whatever the link says, then
+ * shows the linked session in it (I13-5). A renderer that is still loading, or
+ * one that has failed and is being replaced, cannot take it yet: the link is
+ * kept, and the page asks for it once it has connected (mcode:take-link).
+ * Before the app is ready there is no window to raise; the first one takes it.
+ */
 function deliverLink(raw: string) {
   const target = parseSessionLink(raw)
+  if (!app.isReady()) {
+    if (target) pendingLink = raw
+    return
+  }
+  activate(raise)
   if (!target) return
-  const window = [...windows].find((entry) => !entry.isDestroyed())
-  if (!window || window.webContents.isLoading()) {
+  const window = readyWindow()
+  if (!window) {
     pendingLink = raw
     return
   }
-  raise(window)
   window.webContents.send("mcode:open-link", target)
 }
 
+/*
+ * A launch that arrives while this copy is quitting (I13-2). The lock is held
+ * until the process ends, and the quit holds the process for up to five seconds
+ * while the backend closes, so the new copy has already handed over and gone.
+ * Raising the window the quit has just hidden only flashed it up before the
+ * teardown took it away again, and nothing opened. Instead the launch is
+ * queued, with its own arguments (a link among them), to start once this copy
+ * has exited and let go of the lock.
+ */
+let relaunchQueued = false
+function relaunchAfterQuit(argv: readonly string[]) {
+  if (relaunchQueued) return
+  relaunchQueued = true
+  console.info("[quit] a launch arrived while quitting; it starts once the quit is done")
+  app.relaunch({ args: relaunchArgs(argv) })
+}
+
 app.on("second-instance", (_event, argv) => {
+  if (closing) return relaunchAfterQuit(argv)
   const raw = linkInArgs(argv)
   if (raw) return deliverLink(raw)
-  activate(raise)
+  // Before ready the first window is on its way up anyway, and none can be made yet.
+  if (app.isReady()) activate(raise)
 })
 
 /*
@@ -380,6 +418,7 @@ setRecoveryHost({
 // macOS delivers links as an event rather than as arguments.
 app.on("open-url", (event, url) => {
   event.preventDefault()
+  if (closing) return relaunchAfterQuit([process.execPath, url])
   deliverLink(url)
 })
 
@@ -488,8 +527,14 @@ function refreshTray(enabled: boolean): void {
     // The source is 512, so this is a reduction rather than a stretch.
     image = nativeImage.createFromPath(file).resize({ width: 16, height: 16 })
   }
-  /* MiMo's tray opens the window on a click and on a double-click alike; it never hides it. */
-  const open = () => activate(raise)
+  /*
+   * MiMo's tray opens the window on a click and on a double-click alike; it
+   * never hides it. Nothing while quitting: the window would only flash up
+   * before the teardown takes it away (I13-2).
+   */
+  const open = () => {
+    if (!closing) activate(raise)
+  }
   if (!tray) {
     tray = new Tray(image)
     tray.on("click", open)
@@ -513,6 +558,7 @@ function refreshTray(enabled: boolean): void {
           type: "radio" as const,
           checked: entry.checked,
           click: () => {
+            if (closing) return
             const window = currentWindow() ?? createWindow()
             window.webContents.send("mcode:tray-profile", entry.key)
           },
@@ -657,9 +703,9 @@ function createWindow(show = true): BrowserWindow {
 
   // Maximise before the first paint, so the window does not appear at its
   // restored size and then jump.
-  if (saved.maximized) window.maximize()
   // getNormalBounds covers the first run, where the OS picked the position. MiMo saves as the last window goes.
   const requested = saved.x !== undefined && saved.y !== undefined ? ({ x: saved.x, y: saved.y, width: saved.width, height: saved.height } as Rectangle) : window.getNormalBounds()
+  if (saved.maximized) maximizeAtStart(window, requested)
   track(window, requested, () => ![...windows].some((entry) => entry !== window && !entry.isDestroyed()))
 
   // A pinch or Ctrl+wheel scales the page without going through applyZoom, so
@@ -690,13 +736,34 @@ function createWindow(show = true): BrowserWindow {
   })
 
   /*
-   * MiMo's session-end: Windows is shutting down or logging off. That is a
+   * Windows shutting down, restarting or logging off (I13-3). Electron emits
+   * neither before-quit nor quit when Windows ends the app that way, so the
+   * teardown those run never happened: a window moved since it last hid came
+   * back at its old place after a reboot, and the final writes, the MCP
+   * children, the cron lock and a pending install were left as they were.
+   *
+   * query-session-end, the first word of it, now asks for the quit itself -
+   * without preventDefault, so the shutdown is never held up - and before-quit
+   * runs its teardown as for any quit. If another program then cancels the
+   * shutdown, MCode has still quit; Windows asks only once. Either way it is a
    * quit, so the close rule below lets the window go instead of hiding it to
-   * the tray, which would otherwise hold up the shutdown.
+   * the tray (MiMo's session-end).
+   */
+  window.on("query-session-end", () => {
+    console.info("[quit] query-session-end (OS shutdown or logoff ahead)")
+    noteOsQuit()
+    app.quit()
+  })
+  /*
+   * The last word: the process may end as soon as this returns. The window
+   * state is written now, synchronously, in case the teardown does not get
+   * that far; the teardown is started if query-session-end never came.
    */
   window.on("session-end", () => {
     console.info("[quit] session-end (OS shutdown or logoff)")
     noteOsQuit()
+    for (const each of windows) saveWindowState(each)
+    if (!closing) app.quit()
   })
 
   /*
@@ -1624,7 +1691,7 @@ app.whenReady().then(async () => {
       case "close":
         return window.close()
       case "maximize":
-        return window.isMaximized() ? window.unmaximize() : window.maximize()
+        return toggleMaximize(window)
     }
   })
 
@@ -1665,6 +1732,7 @@ app.whenReady().then(async () => {
   })
 
   app.on("activate", () => {
+    if (closing) return
     // Asked for again while leaving full screen to hide: it stays (MiMo's).
     for (const window of BrowserWindow.getAllWindows()) cancelPendingHide(window)
     // A window hidden to the tray or menu bar comes back; one whose renderer is gone is replaced.
@@ -1680,19 +1748,20 @@ app.on("window-all-closed", () => {
  * Two different questions, which used to share one flag and so answered each
  * other wrongly (N11-1).
  *
- * `osQuitting`: the OS is taking the app away - Windows session-end, or
- * powerMonitor's shutdown elsewhere. It only tells the close rule below to let
- * the last window go instead of hiding it to the tray, and tells the wake
- * repaint to stay out of the way.
+ * `osQuitting`: the OS is taking the app away - Windows query-session-end or
+ * session-end, or powerMonitor's shutdown elsewhere. It only tells the close
+ * rule below to let the last window go instead of hiding it to the tray, and
+ * tells the wake repaint to stay out of the way.
  *
  * `closing`: before-quit has already run once. It is nothing but a reentry
  * guard, so that the second app.quit() at the end of the teardown does not
- * start the teardown again.
+ * start the teardown again, and it tells a launch arriving meanwhile to wait
+ * for the quit (I13-2).
  *
- * Sharing one flag meant an OS shutdown set it through session-end and then
- * before-quit's first line returned, skipping backend.close() entirely: the
- * shells, the MCP children, the scheduler and a pending install were all left
- * where they were.
+ * This comment used to say that the shared flag made a Windows shutdown skip
+ * backend.close(). The flag was not what did it: Electron emits no before-quit
+ * at all when Windows ends the app, so the teardown never ran whatever the flag
+ * said. It runs now because query-session-end asks for the quit (I13-3).
  */
 let osQuitting = false
 let closing = false

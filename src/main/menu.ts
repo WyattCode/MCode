@@ -1,6 +1,7 @@
 import { app, dialog, Menu, BrowserWindow, type MenuItemConstructorOptions } from "electron"
 import { label } from "./labels"
 import { applyZoom } from "./zoom"
+import { toggleMaximize } from "./window-state"
 import { APP_NAME, quitPress } from "./desktop-rules"
 import pkg from "../../package.json"
 import { menuAccelerator, type MenuCommand, type MenuKeys } from "./menu-keys"
@@ -83,11 +84,9 @@ function command(item: MenuCommand): MenuItemConstructorOptions {
  * The same toggle the titlebar's own maximize button runs, so the two controls
  * cannot disagree about what state the window is in.
  */
-function toggleMaximize(): void {
+function toggleFocusedMaximize(): void {
   const window = BrowserWindow.getFocusedWindow()
-  if (!window) return
-  if (window.isMaximized()) window.unmaximize()
-  else window.maximize()
+  if (window) toggleMaximize(window)
 }
 
 /** Rebuilds the menu; new bindings (and whether one is being recorded) replace the last ones. */
@@ -222,7 +221,7 @@ export function buildMenu(next?: MenuKeys): void {
           ]
         : [
             { label: L("menu.minimize", "Minimize"), click: () => BrowserWindow.getFocusedWindow()?.minimize() },
-            { label: L("menu.zoomWindow", "Zoom"), click: toggleMaximize },
+            { label: L("menu.zoomWindow", "Zoom"), click: toggleFocusedMaximize },
           ],
     },
   ]
