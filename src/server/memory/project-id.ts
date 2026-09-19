@@ -104,19 +104,70 @@ function resolveID(directory: string, home?: string): string {
   const gitDir = mainGitDir(directory, home)
   if (!gitDir) return GLOBAL_PROJECT_ID
   const file = path.join(gitDir, PROJECT_ID_FILE)
+  const stored = readID(file)
+  if (stored.id) return stored.id
+  // One that is there and cannot be read now is not replaced: the derived id serves until it reads again.
+  if (stored.unreadable) return derivedID(gitDir)
+  return writeID(file, stored.invalid) ?? derivedID(gitDir)
+}
+
+/** What the id file holds: a usable id, something that is not one, nothing, or a file that cannot be read. */
+function readID(file: string): { id?: string; invalid?: boolean; unreadable?: boolean } {
   try {
     const stored = fs.readFileSync(file, "utf8").trim()
-    if (SAFE_ID.test(stored)) return stored
-  } catch {
-    // Not written yet.
+    return SAFE_ID.test(stored) ? { id: stored } : { invalid: true }
+  } catch (failure) {
+    return (failure as NodeJS.ErrnoException).code === "ENOENT" ? {} : { unreadable: true }
   }
-  const made = randomUUID()
+}
+
+/**
+ * Writes a fresh id so that it appears whole or not at all (L12-16).
+ *
+ * It used to be a plain write, so a write cut short left an empty file, the
+ * next launch minted another id, and the repository's project memory was
+ * orphaned under the first. And two copies of the app meeting a repository at
+ * once could each write their own. Now the id is written and flushed to a temp
+ * file of this process's, then linked into place - a link refuses to replace a
+ * file, so whichever copy links first wins - and the file is read back, so both
+ * copies answer with the same id. A file that was there and held no usable id
+ * is kept as `<file>.corrupt-<time>` before it is replaced.
+ */
+function writeID(file: string, replacing: boolean | undefined): string | undefined {
+  const temp = `${file}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`
   try {
-    fs.writeFileSync(file, made)
-    return made
+    const handle = fs.openSync(temp, "wx")
+    try {
+      fs.writeSync(handle, randomUUID())
+      fs.fsyncSync(handle)
+    } finally {
+      fs.closeSync(handle)
+    }
+    if (replacing) {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-")
+      try {
+        fs.renameSync(file, `${file}.corrupt-${stamp}`)
+      } catch (failure) {
+        // Already moved by another copy of the app is fine; anything else leaves it in place, and the link below refuses.
+        if ((failure as NodeJS.ErrnoException).code !== "ENOENT") return undefined
+      }
+    }
+    try {
+      fs.linkSync(temp, file)
+    } catch (failure) {
+      const code = (failure as NodeJS.ErrnoException).code
+      // Someone else's id got there first, which is the one to use.
+      if (code !== "EEXIST") {
+        // A file system without hard links still gets an exclusive create; only the id's bytes are no longer all-or-nothing.
+        fs.writeFileSync(file, fs.readFileSync(temp, "utf8"), { flag: "wx" })
+      }
+    }
   } catch {
-    return derivedID(gitDir)
+    // Unwritable .git, or lost a race in the fallback: whatever is there now is read below.
+  } finally {
+    fs.rmSync(temp, { force: true })
   }
+  return readID(file).id
 }
 
 /** Forgets the remembered answers, for the checks. */

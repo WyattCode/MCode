@@ -20,6 +20,7 @@ import { CronScheduler } from "../src/server/cron/scheduler"
 import type { SessionInfo } from "../src/shared/protocol"
 import { Storage, pruneQuarantined } from "../src/server/storage"
 import { IndexDatabase } from "../src/server/history/database"
+import { PROJECT_ID_FILE, forgetProjectIDs, projectMemoryID } from "../src/server/memory/project-id"
 import { Bus } from "../src/server/bus"
 import { SessionStore } from "../src/server/session/store"
 import { runImport, scanImports } from "../src/server/import"
@@ -453,6 +454,38 @@ export async function roundTwelveLifecycleChecks(check: Check, section: (name: s
     check("recent copies and their journals stay", left.has(`artifacts.db.corrupt-${stamp(2)}`) && left.has(`artifacts.db.corrupt-${stamp(2)}-wal`))
     check("the documents themselves and names that are not this app's are never touched", left.has("config.json") && left.has("notes.corrupt-by-hand"))
     check("and it says how many went", removed === 6, removed)
+  }
+
+  // ----------------------------------------------------------------- L12-16
+  section("Round 12 (L12-16): the memory project id is written whole, and a bad one is kept before it is replaced")
+  {
+    const repo = path.join(root, "memory-repo")
+    await fs.mkdir(repo, { recursive: true })
+    execFileSync("git", ["init", "-q"], { cwd: repo })
+    const gitDir = path.join(repo, ".git")
+    const file = path.join(gitDir, PROJECT_ID_FILE)
+    const home = path.join(root, "not-home")
+
+    forgetProjectIDs()
+    const made = projectMemoryID(repo, { home })
+    check("a repository met for the first time gets an id, written to its .git", /^[0-9a-f-]{36}$/.test(made) && (await fs.readFile(file, "utf8")) === made, made)
+    check("and no temp file is left beside it", !(await fs.readdir(gitDir)).some((name) => name.endsWith(".tmp")), await fs.readdir(gitDir))
+    forgetProjectIDs()
+    check("the id read back is the same one", projectMemoryID(repo, { home }) === made)
+
+    // An id file cut short or edited into something that is not an id.
+    await fs.writeFile(file, "not an id / at all")
+    forgetProjectIDs()
+    const replaced = projectMemoryID(repo, { home })
+    const kept = (await fs.readdir(gitDir)).filter((name) => name.startsWith(`${PROJECT_ID_FILE}.corrupt-`))
+    check("a file with no usable id gets a fresh one", replaced !== made && (await fs.readFile(file, "utf8")) === replaced, replaced)
+    check("and what was there is kept, byte for byte", kept.length === 1 && (await fs.readFile(path.join(gitDir, kept[0]!), "utf8")) === "not an id / at all", kept)
+
+    // An id already there, from whichever copy of the app wrote it, is the one used.
+    await fs.rm(file)
+    await fs.writeFile(file, "someone-elses-id")
+    forgetProjectIDs()
+    check("an id already there is used as it is", projectMemoryID(repo, { home }) === "someone-elses-id")
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
