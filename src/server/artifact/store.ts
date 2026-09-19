@@ -155,6 +155,9 @@ const MISSING_RECHECK_MS = 5 * 60_000
 /** How many files are asked about at once when every file is re-checked. */
 const RECHECK_PARALLEL = 16
 
+/** How many re-check answers go into one transaction. */
+const RECORD_BATCH = 200
+
 export interface ArtifactQuery {
   query?: string
   category?: ArtifactCategory
@@ -370,9 +373,11 @@ export class ArtifactStore {
   /** Starts a pass over `behind`; whether it is a long one is known before anything waits on it. */
   private begin(behind: readonly SessionInfo[], messagesOf: (sessionID: string) => Promise<Message[]>, recheck: boolean): Promise<void> {
     this.bulk = behind.length > INLINE_RECONCILE
+    // A long pass has added files nothing has asked the disk about yet; the tabs' counts would take them on trust.
+    const checkAll = recheck || this.bulk
     this.running = (async () => {
       await this.pass(behind, messagesOf)
-      if (recheck) await this.recheck()
+      if (checkAll) await this.recheck()
     })().finally(() => {
       this.running = undefined
       this.bulk = false
@@ -621,6 +626,11 @@ export class ArtifactStore {
   /** Writes the answers in one transaction; a store opened read-only keeps them in memory only. */
   private async record(answers: readonly Row[]): Promise<void> {
     if (!answers.length || !this.writable) return
+    // A few hundred at a time, so a listing waiting behind a launch's full check is not held for all of it.
+    for (let from = 0; from < answers.length; from += RECORD_BATCH) await this.recordBatch(answers.slice(from, from + RECORD_BATCH))
+  }
+
+  private async recordBatch(answers: readonly Row[]): Promise<void> {
     await this.db.transaction(async (tx) => {
       for (const answer of answers) {
         await tx.run(
