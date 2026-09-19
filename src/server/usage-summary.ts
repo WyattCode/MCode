@@ -32,9 +32,10 @@ export function localDay(at: number): string {
  * each day (on this machine's calendar, not UTC's) and each model. A request
  * that used tokens but cost nothing is counted as unpriced - the catalog had
  * no price for its model - so the page can say so rather than show $0.00.
+ * `rows` are whole days already inside the window, counted as they are.
  */
-export function summarizeUsage(records: readonly UsageRecord[], days: number, now = Date.now()): UsageSummary {
-  const since = now - days * 24 * 60 * 60 * 1000
+export function summarizeUsage(records: readonly UsageRecord[], days: number, now = Date.now(), rows: readonly UsageRow[] = []): UsageSummary {
+  const since = usageSince(days, now)
   const total = empty()
   const tally = { turns: 0, priced: 0, unpriced: 0 }
   const byDay = new Map<string, UsageBucket>()
@@ -44,28 +45,63 @@ export function summarizeUsage(records: readonly UsageRecord[], days: number, no
     if (!found) map.set(key, (found = { key, usage: empty(), turns: 0, priced: 0, unpriced: 0 }))
     return found
   }
-  for (const record of records) {
-    if (record.at < since) continue
-    const spent = record.usage.input + record.usage.output + record.usage.reasoning + record.usage.cacheRead + record.usage.cacheWrite
-    const priced = record.usage.cost > 0 ? 1 : 0
-    const unpriced = !priced && spent > 0 ? 1 : 0
-    const turns = record.turn ? 1 : 0
-    for (const into of [bucket(byDay, localDay(record.at)), bucket(byModel, `${record.model.provider}/${record.model.model}`)]) {
-      add(into.usage, record.usage)
-      into.turns += turns
-      into.priced += priced
-      into.unpriced += unpriced
+  const fold = (row: UsageRow) => {
+    for (const into of [bucket(byDay, row.day), bucket(byModel, row.model)]) {
+      add(into.usage, row.usage)
+      into.turns += row.turns
+      into.priced += row.priced
+      into.unpriced += row.unpriced
     }
-    add(total, record.usage)
-    tally.turns += turns
-    tally.priced += priced
-    tally.unpriced += unpriced
+    add(total, row.usage)
+    tally.turns += row.turns
+    tally.priced += row.priced
+    tally.unpriced += row.unpriced
   }
+  for (const record of records) if (record.at >= since) fold(rowOf(record))
+  for (const row of rows) fold(row)
   return {
     total,
     ...tally,
     days,
     byDay: [...byDay.values()].sort((a, b) => a.key.localeCompare(b.key)),
-    byModel: [...byModel.values()].sort((a, b) => b.usage.cost - a.usage.cost || b.turns - a.turns),
+    // By name last, so models that tie read in the same order however their spend was gathered.
+    byModel: [...byModel.values()].sort((a, b) => b.usage.cost - a.usage.cost || b.turns - a.turns || a.key.localeCompare(b.key)),
   }
+}
+
+/** The moment the usage page's window of `days` starts. */
+export function usageSince(days: number, now = Date.now()): number {
+  return now - days * 24 * 60 * 60 * 1000
+}
+
+/** Spend already gathered into one local day and one model ("provider/model"), as the daily totals keep it. */
+export interface UsageRow {
+  day: string
+  model: string
+  usage: Usage
+  turns: number
+  priced: number
+  unpriced: number
+}
+
+/** One request as a row of its own. */
+export function rowOf(record: UsageRecord): UsageRow {
+  const spent = record.usage.input + record.usage.output + record.usage.reasoning + record.usage.cacheRead + record.usage.cacheWrite
+  const priced = record.usage.cost > 0 ? 1 : 0
+  return {
+    day: localDay(record.at),
+    model: `${record.model.provider}/${record.model.model}`,
+    usage: { ...record.usage },
+    turns: record.turn ? 1 : 0,
+    priced,
+    unpriced: !priced && spent > 0 ? 1 : 0,
+  }
+}
+
+/** Adds one row into another of the same day and model. */
+export function addRow(into: UsageRow, from: UsageRow): void {
+  add(into.usage, from.usage)
+  into.turns += from.turns
+  into.priced += from.priced
+  into.unpriced += from.unpriced
 }

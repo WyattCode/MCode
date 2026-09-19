@@ -346,10 +346,11 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     check("and what a caller is given is its own copy", (await store.list()).every((session) => session.title !== "edited in place"))
     await store.update(first.id, { title: "renamed" })
     await store.list()
-    check("a record changing drops the cache", reads === 2, reads)
+    // S13-4: a change is patched into the cache rather than dropping it, so the folder is not read again.
+    check("a record changing is patched into the cache, not re-read", reads === 1, reads)
     check("and the new title is what comes back", (await store.list()).some((session) => session.title === "renamed"))
     await store.delete(first.id)
-    check("a deletion drops it too", (await store.list()).length === 1 && reads === 3, reads)
+    check("a deletion is patched in too", (await store.list()).length === 1 && reads === 1, reads)
     await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined)
   }
 

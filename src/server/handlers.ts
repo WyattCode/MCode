@@ -15,7 +15,7 @@ import { sessionFiles } from "@shared/session-files"
 import { Identifier } from "@shared/id"
 import { normalizeBaseURL } from "@shared/custom-endpoint"
 import { CodedError } from "@shared/errors"
-import { summarizeUsage, type UsageRecord } from "./usage-summary"
+import { summarizeUsage } from "./usage-summary"
 import { imageInputOf, type Catalog } from "@shared/models-dev"
 // A conversation as a file this app can read back, both halves of the pair.
 import { conversationDocument, conversationFileName, parseConversationDocument } from "@shared/convo-file"
@@ -799,21 +799,12 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "usage.summary": {
       const days = Math.max(1, Math.min(365, request.days ?? 30))
-      const records: UsageRecord[] = []
-      for (const session of await runtime.sessions.list()) {
-        for (const message of await runtime.sessions.messages(session.id)) {
-          if (message.role !== "assistant" || !message.usage) continue
-          /*
-           * The turn's own clock, not the session's. A conversation returned
-           * to over a fortnight would otherwise report every token it ever
-           * spent on whichever day it was last touched.
-           */
-          records.push({ at: message.time.created, model: message.model, usage: message.usage, turn: true })
-        }
-      }
+      const now = Date.now()
+      // The turns come from the daily totals rather than from every transcript (S13-2).
+      const { rows, records } = await runtime.runner.usageDays.gather(days, now)
       // Titles, Smart's routing, summaries and command reviews spend tokens too, on no message.
       for (const entry of await runtime.runner.backgroundUsage.list()) records.push({ at: entry.at, model: entry.model, usage: entry.usage, turn: false })
-      return { summary: summarizeUsage(records, days) } satisfies Handled<"usage.summary">
+      return { summary: summarizeUsage(records, days, now, rows) } satisfies Handled<"usage.summary">
     }
 
     case "voice.transcribe": {
@@ -1370,7 +1361,16 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * of replacement characters, which the panel then drew as the file.
        */
       if (request.preview) return (await readPreview(resolved)) satisfies Handled<"file.read">
-      const bytes = await fs.readFile(resolved)
+      /*
+       * Measured before it is read (S13-7). Reading first held a whole file of
+       * any size in memory to find it was over the cap, and past 2 GB the read
+       * itself failed with ERR_FS_FILE_TOO_LARGE instead of the panel saying
+       * the file is too large. Past the cap only the head is read: enough to
+       * tell what the file is, and to show a text file's opening.
+       */
+      const whole = (await fs.stat(resolved)).size <= MEDIA_LIMIT
+      const limit = 500_000
+      const bytes = whole ? await fs.readFile(resolved) : await readHead(resolved, limit * 4)
       const kind = kindFor(resolved, bytes.subarray(0, 4096))
 
       if (kind === "image" || kind === "audio" || kind === "pdf") {
@@ -1388,7 +1388,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
          * while the string for this (`rp.files.errTooBig`) already existed.
          * One figure for every kind, as MiMo has one.
          */
-        if (bytes.byteLength > MEDIA_LIMIT) {
+        if (!whole) {
           return { path: resolved, kind, content: "", truncated: false, tooBig: true } satisfies Handled<"file.read">
         }
         return {
@@ -1406,12 +1406,11 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       }
 
       const content = bytes.toString("utf8")
-      const limit = 500_000
       return {
         path: resolved,
         kind,
         content: content.slice(0, limit),
-        truncated: content.length > limit,
+        truncated: !whole || content.length > limit,
       } satisfies Handled<"file.read">
     }
 
@@ -1600,6 +1599,18 @@ export const PREVIEW_TEXT_LIMIT = 512 * 1024
  * make sense of rather than as one too large to preview.
  */
 export const MEDIA_LIMIT = 25_000_000
+
+/** A file's first `bytes` bytes, or all of it when it is shorter. */
+async function readHead(file: string, bytes: number): Promise<Buffer> {
+  const handle = await fs.open(file, "r")
+  try {
+    const buffer = Buffer.alloc(bytes)
+    const { bytesRead } = await handle.read(buffer, 0, bytes, 0)
+    return buffer.subarray(0, bytesRead)
+  } finally {
+    await handle.close()
+  }
+}
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".m4v", ".webm", ".mov", ".ogv"])
 
