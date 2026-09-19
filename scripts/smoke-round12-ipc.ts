@@ -8,8 +8,10 @@
  * at all, the source is read.
  */
 import fs from "node:fs/promises"
+import os from "node:os"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
+import { guarded } from "../src/main/office-guard"
 import { label, setLabels } from "../src/main/labels"
 import { BROWSER_ACTS, EDIT_ACTIONS, VIEW_ACTIONS, WINDOW_ACTIONS, actionOf, clipboardText, panelBounds, titlebarMode } from "../src/main/ipc-input"
 
@@ -108,6 +110,38 @@ export async function roundTwelveIpcChecks(check: Check, section: (name: string)
       const body = handlerOf(channel)
       check(`${channel}: the handler dispatches on actionOf(${name}, ...)`, body.includes(`actionOf(${name}, raw)`))
       check(`${channel}: no else-branch or default runs for an unknown action`, !/\belse\s+(?!if\b)|\bdefault\s*:/.test(body))
+    }
+  }
+
+  section("Round 12 (D12-5): an Office check that throws answers the channel's refusal")
+  {
+    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-d12-5-"))
+    try {
+      const project = path.join(scratch, "project")
+      await fs.mkdir(project, { recursive: true })
+      const refused = { ok: false, reason: "denied" }
+      let ran = 0
+      const handler = () => {
+        ran++
+        return { ok: true }
+      }
+      const small = Buffer.from("PK").toString("base64")
+      const failing = guarded("mcode:write-file-bytes", refused, async () => Promise.reject(new Error("backend is not ready")), handler)
+      let answer: unknown
+      try {
+        answer = await failing({}, project, "report.docx", small)
+      } catch (err) {
+        answer = `rejected: ${(err as Error).message}`
+      }
+      check("a working-folder lookup that throws answers { ok:false, reason } instead of rejecting", answer === refused, answer)
+      check("and the handler did not run", ran === 0)
+      const working = guarded("mcode:write-file-bytes", refused, async () => [project], handler)
+      check("the same call with the lookup answering runs the handler", JSON.stringify(await working({}, project, "report.docx", small)) === '{"ok":true}' && ran === 1)
+      check("a call of the wrong shape still gets the refusal", (await working({}, project, "report.docx", 42)) === refused && ran === 1)
+      const office = await read("src/main/office.ts")
+      check("office.ts registers every channel through guarded()", /ipcMain\.handle\(channel, guarded\(channel, refused, roots, handler\)\)/.test(office))
+    } finally {
+      await fs.rm(scratch, { recursive: true, force: true })
     }
   }
 }

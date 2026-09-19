@@ -107,3 +107,28 @@ export async function officeRefusal(channel: string, args: readonly unknown[], r
       return undefined
   }
 }
+
+/**
+ * A channel's handler behind its checks, answering `refused` - the shape the
+ * channel gives for a file it cannot use - when a check fails.
+ *
+ * A check that throws counts as failed. Some of them await the backend's list
+ * of working folders, and a hiccup there used to reject the invoke instead, a
+ * rejection the document views do not expect from these channels.
+ */
+export function guarded<E, A extends unknown[]>(
+  channel: string,
+  refused: unknown,
+  roots: WorkingRoots,
+  handler: (event: E, ...args: A) => unknown,
+): (event: E, ...args: unknown[]) => Promise<unknown> {
+  return async (event, ...args) => {
+    let refusal: Awaited<ReturnType<typeof officeRefusal>> | "threw"
+    try {
+      refusal = await officeRefusal(channel, args, roots)
+    } catch {
+      refusal = "threw"
+    }
+    return refusal ? refused : handler(event, ...(args as A))
+  }
+}

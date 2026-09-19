@@ -7,7 +7,7 @@ import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { shell, type IpcMain, type IpcMainInvokeEvent, type WebContents } from "electron"
 import { servePreview } from "./preview-server"
-import { OFFICE_BYTES_LIMIT, officeRefusal, type WorkingRoots } from "./office-guard"
+import { OFFICE_BYTES_LIMIT, guarded, type WorkingRoots } from "./office-guard"
 import { registerPaths } from "./paths"
 import { registerImageClipboard } from "./image-clipboard"
 
@@ -469,7 +469,7 @@ export function registerOffice(ipcMain: IpcMain, userData: string, roots: Workin
    * file it cannot use, so the tab shows its ordinary failure.
    */
   const checked = <A extends unknown[]>(channel: string, refused: unknown, handler: (event: IpcMainInvokeEvent, ...args: A) => unknown) => {
-    ipcMain.handle(channel, async (event, ...args: unknown[]) => ((await officeRefusal(channel, args, roots)) ? refused : handler(event, ...(args as A))))
+    ipcMain.handle(channel, guarded(channel, refused, roots, handler))
   }
 
   checked("mcode:read-file-bytes", { ok: false, reason: "denied" }, (_event, root: string, rel?: string, ifUnchanged?: { size: number; mtimeMs: number }) =>
