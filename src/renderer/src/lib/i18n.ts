@@ -40455,6 +40455,36 @@ export function sessionTitle(title: string): string {
 }
 
 /**
+ * Token counts the way a context window is talked about: 39.2K, 1.0M - one
+ * decimal, a capital K, as MiMo's composer writes them - with the interface
+ * language's decimal mark, so a count reads like the money beside it
+ * (39,2K next to 1,23 $ in German).
+ */
+export function compactTokens(count: number): string {
+  const tenths = (value: number) => {
+    try {
+      return new Intl.NumberFormat(language.value, { minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false }).format(value)
+    } catch {
+      return value.toFixed(1)
+    }
+  }
+  if (count >= 1_000_000) return `${tenths(count / 1_000_000)}M`
+  if (count >= 1_000) return `${tenths(count / 1_000)}K`
+  return String(count)
+}
+
+/** A calendar day kept as YYYY-MM-DD, as a short month and day in the interface language: "Sep 20", "9月20日". */
+export function dayLabel(key: string): string {
+  const [year, month, day] = key.split("-").map(Number)
+  if (!year || !month || !day) return key
+  try {
+    return new Intl.DateTimeFormat(language.value, { month: "short", day: "numeric" }).format(new Date(year, month - 1, day))
+  } catch {
+    return key.slice(5)
+  }
+}
+
+/**
  * Relative time, phrased by the active language rather than the OS locale.
  *
  * MiMo's rule, floored: under a minute is 刚刚, then minutes, hours and days,

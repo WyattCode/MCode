@@ -11,7 +11,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { LANGUAGE_IDS, resolveLanguage, systemLanguage } from "../src/shared/locale"
-import { ago, detectLanguage, language, LANGUAGES } from "../src/renderer/src/lib/i18n"
+import { ago, compactTokens, dayLabel, detectLanguage, language, LANGUAGES } from "../src/renderer/src/lib/i18n"
 import { subagentTime } from "../src/renderer/src/lib/subagents"
 import { interfaceLocale, setMachineLocale } from "../src/server/session/locale"
 
@@ -142,6 +142,29 @@ export async function roundFourteenLocaleChecks(check: Check, section: (name: st
     check(
       "L14-6: right to left the card opens on the rail's left, and the room is measured at the right",
       /rtl\(rail\.value\) \? railRect\.left - 14 - /.test(spine) && /rtl\(view\) \? viewRect\.right - innerRect\.right/.test(spine),
+    )
+  }
+
+  // ---------------------------------------------------------------- L14-7
+  {
+    const saved = language.value
+    const read7 = (id: typeof language.value) => {
+      language.value = id
+      const cost = new Intl.NumberFormat(id, { style: "currency", currency: "USD" }).format(1.23)
+      return { k: compactTokens(12_500), m: compactTokens(3_400_000), small: compactTokens(999), day: dayLabel("2026-09-20"), cost }
+    }
+    const en = read7("en")
+    const zh = read7("zh-CN")
+    const de = read7("de")
+    language.value = saved
+    check("L14-7: token counts read as the composer writes them - one decimal, capital K / M", en.k === "12.5K" && en.m === "3.4M" && en.small === "999" && zh.k === "12.5K", { en, zh })
+    const mark = (text: string) => (/\d,\d/.test(text) ? "," : /\d\.\d/.test(text) ? "." : "?")
+    check("L14-7: with the same decimal mark as the cost on the same row", mark(de.k) === mark(de.cost) && de.k === "12,5K" && mark(en.k) === mark(en.cost), { de, en })
+    check("L14-7: the day column is a localised month and day, not a fixed 09-20", en.day === "Sep 20" && zh.day === "9月20日" && !/^\d\d-\d\d$/.test(de.day), { en: en.day, zh: zh.day, de: de.day })
+    const [settings, composer] = await Promise.all([read("src/renderer/src/components/SettingsDialog.vue"), read("src/renderer/src/components/Composer.vue")])
+    check(
+      "L14-7: the usage page and the composer share the one formatter",
+      !/day\.key\.slice\(5\)/.test(settings) && /dayLabel\(day\.key\)/.test(settings) && !/function (tokens|compactTokens)\(/.test(settings + composer) && /compactTokens\(/.test(settings) && /compactTokens\(/.test(composer),
     )
   }
 }

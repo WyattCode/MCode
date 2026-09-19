@@ -7,7 +7,7 @@ import CustomModelDialog from "./CustomModelDialog.vue"
 import ProviderIcon from "./ProviderIcon.vue"
 import { providerLabel, quickAddGroups, waysFor, type Group } from "../lib/connect"
 import type { ProviderStatus } from "@shared/protocol"
-import { LANGUAGES, ago, language, sessionTitle, t, type Language } from "../lib/i18n"
+import { LANGUAGES, ago, compactTokens, dayLabel, language, sessionTitle, t, type Language } from "../lib/i18n"
 import { wordMatch } from "../lib/word-match"
 import { folderName, projectName } from "../lib/project"
 import { listedProjects } from "@shared/projects"
@@ -561,12 +561,6 @@ function spent(bucket: { usage: { cost: number }; priced: number; unpriced: numb
 const busiestDay = computed(() =>
   Math.max(1, ...(usage.value?.byDay ?? []).map((day) => day.usage.input + day.usage.output)),
 )
-
-function tokens(count: number): string {
-  if (count >= 1_000_000) return (count / 1_000_000).toFixed(count >= 10_000_000 ? 0 : 1) + "M"
-  if (count >= 1000) return (count / 1000).toFixed(count >= 10_000 ? 0 : 1) + "k"
-  return String(count)
-}
 
 /*
  * The environment page, laid out as MiMo's: the projects, each of which can be
@@ -2770,11 +2764,11 @@ onBeforeUnmount(() => {
                 <span class="total-name">{{ t("context.usage.cost") }}</span>
               </div>
               <div class="total">
-                <span class="total-value">{{ tokens(usage?.total.input ?? 0) }}</span>
+                <span class="total-value">{{ compactTokens(usage?.total.input ?? 0) }}</span>
                 <span class="total-name">{{ t("set.usageInput") }}</span>
               </div>
               <div class="total">
-                <span class="total-value">{{ tokens(usage?.total.output ?? 0) }}</span>
+                <span class="total-value">{{ compactTokens(usage?.total.output ?? 0) }}</span>
                 <span class="total-name">{{ t("set.usageOutput") }}</span>
               </div>
               <div class="total">
@@ -2788,7 +2782,7 @@ onBeforeUnmount(() => {
           <h3>{{ t("set.usageByDay", { n: String(usage?.days ?? 14) }) }}</h3>
           <div class="card">
             <div v-for="day in usage?.byDay ?? []" :key="day.key" class="day">
-              <span class="day-name">{{ day.key.slice(5) }}</span>
+              <span class="day-name">{{ dayLabel(day.key) }}</span>
               <span class="day-bar">
                 <span
                   class="day-fill"
@@ -2798,7 +2792,7 @@ onBeforeUnmount(() => {
                   }"
                 />
               </span>
-              <span class="day-value">{{ tokens(day.usage.input + day.usage.output) }}</span>
+              <span class="day-value">{{ compactTokens(day.usage.input + day.usage.output) }}</span>
               <span class="day-cost">{{ spent(day) }}</span>
             </div>
             <p v-if="usage && !usage.byDay.length" class="line-sub">{{ t("set.usageNone") }}</p>
@@ -2811,7 +2805,7 @@ onBeforeUnmount(() => {
                 <div class="line-title">{{ entry.key }}</div>
                 <div class="line-sub">
                   {{ t("set.usageTurnCount", { n: String(entry.turns) }) }} ·
-                  {{ tokens(entry.usage.input + entry.usage.output) }}
+                  {{ compactTokens(entry.usage.input + entry.usage.output) }}
                 </div>
               </div>
               <span class="total-value small" data-usage-model-cost>{{ spent(entry) }}</span>
@@ -4422,9 +4416,11 @@ h3 {
   padding: 4px 0;
 }
 
+/* Wide enough for the longest short month and day the tables' languages write ("20 de set.", "20. Sept."). */
 .day-name {
   flex-shrink: 0;
-  width: 44px;
+  width: 64px;
+  white-space: nowrap;
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-variant-numeric: tabular-nums;

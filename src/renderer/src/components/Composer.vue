@@ -43,7 +43,7 @@ import { useEscapeLayerWhile } from "../lib/escape-layer"
 import FullAccessDialog from "./FullAccessDialog.vue"
 import ContextRing from "./ContextRing.vue"
 import { readContext } from "./session-context"
-import { t, language } from "../lib/i18n"
+import { compactTokens, t, language } from "../lib/i18n"
 
 
 const emit = defineEmits<{
@@ -2181,13 +2181,6 @@ function onBoxClick() {
 
 /** Which pill has its menu open, if any. */
 const menu = ref<"model" | "access" | "plus" | "context">()
-
-/** Token counts the way a context window is talked about: 39.2K, 1.0M. */
-function compactTokens(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`
-  return String(count)
-}
 
 /**
  * How full the model's context is, read from the box itself.
