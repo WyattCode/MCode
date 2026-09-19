@@ -23,6 +23,8 @@ import { cutLiveStreams } from "../server/provider/stall"
 import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
 import { closeHidesToTray } from "@shared/protocol"
 import { label, setLabels } from "./labels"
+import { writeAtomicSync } from "./atomic-write"
+import { BROWSER_ACTS, EDIT_ACTIONS, VIEW_ACTIONS, WINDOW_ACTIONS, actionOf, clipboardText, directoryAsk, panelBounds, titlebarMode } from "./ipc-input"
 import { buildMenu } from "./menu"
 import { readMenuKeys } from "./menu-keys"
 import { cancelPendingHide, claimDialog, dialogParent, hideWindow, micDecision, releaseDialog } from "./native-dialogs"
@@ -64,7 +66,6 @@ import {
   act,
   clearBrowsingData,
   clearSiteData,
-  closePanel,
   closeTab,
   navigate,
   newTab,
@@ -73,8 +74,6 @@ import {
   screenshot,
   selectTab,
   setBounds,
-  type BrowserAct,
-  type BrowserBounds,
 } from "./browser"
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
 import { fcitxEnvironment } from "./linux-ime"
@@ -241,9 +240,13 @@ nativeTheme.themeSource = bootPrefs.theme
 if (!bootPrefs.hardwareAcceleration) app.disableHardwareAcceleration()
 
 /* Written for the next launch; a failed write only means the next boot uses the old choice. */
-function saveBootPrefs(patch: Partial<BootPrefs>): Promise<void> {
+function saveBootPrefs(patch: Partial<BootPrefs>): void {
   bootPrefs = { ...bootPrefs, ...patch }
-  return fs.writeFile(bootPrefsFile, writeBootPrefs(bootPrefs), "utf8").catch((error) => console.warn("[boot-prefs] not saved", error))
+  try {
+    writeAtomicSync(bootPrefsFile, writeBootPrefs(bootPrefs))
+  } catch (error) {
+    console.warn("[boot-prefs] not saved", error)
+  }
 }
 
 let backend: Backend | undefined
@@ -918,7 +921,8 @@ app.whenReady().then(async () => {
   }
 
   /* `project` is MiMo's 选择或新建项目文件夹: it opens at the default project location. */
-  ipcMain.handle("mcode:pick-directory", async (event, title: string, multiple?: boolean, project?: boolean) => {
+  ipcMain.handle("mcode:pick-directory", async (event, rawTitle: unknown, rawMultiple?: unknown, rawProject?: unknown) => {
+    const { title, multiple, project } = directoryAsk(rawTitle, rawMultiple, rawProject)
     // MiMo lets one native dialog up at a time: a second ask while one is open gets nothing.
     const asking = BrowserWindow.fromWebContents(event.sender)
     const claim = claimDialog(process.platform, asking)
@@ -957,8 +961,8 @@ app.whenReady().then(async () => {
     return within && (await insideReal(root, target)) ? target : undefined
   }
 
-  ipcMain.on("mcode:menu-labels", (_event, next: Record<string, string>) => {
-    setLabels(next)
+  ipcMain.on("mcode:menu-labels", (_event, next: unknown) => {
+    if (!setLabels(next)) return
     // Rebuilt rather than patched: Electron has no way to relabel in place.
     buildMenu()
     // The tray's menu has the same problem and the same answer.
@@ -1027,7 +1031,10 @@ app.whenReady().then(async () => {
     return raw ? parseSessionLink(raw) : undefined
   })
 
-  ipcMain.on("mcode:clipboard-write", (_event, text: string) => clipboard.writeText(text))
+  ipcMain.on("mcode:clipboard-write", (_event, raw: unknown) => {
+    const text = clipboardText(raw)
+    if (text !== undefined) clipboard.writeText(text)
+  })
 
   /*
    * A link clicked in the terminal.
@@ -1078,19 +1085,25 @@ app.whenReady().then(async () => {
     return decision === "allow"
   })
 
-  ipcMain.on(
-    "mcode:edit",
-    (event, action: "undo" | "redo" | "cut" | "copy" | "paste" | "delete" | "selectAll") => {
-      const contents = event.sender
-      if (action === "undo") contents.undo()
-      else if (action === "redo") contents.redo()
-      else if (action === "cut") contents.cut()
-      else if (action === "copy") contents.copy()
-      else if (action === "paste") contents.paste()
-      else if (action === "delete") contents.delete()
-      else contents.selectAll()
-    },
-  )
+  ipcMain.on("mcode:edit", (event, raw: unknown) => {
+    const contents = event.sender
+    switch (actionOf(EDIT_ACTIONS, raw)) {
+      case "undo":
+        return contents.undo()
+      case "redo":
+        return contents.redo()
+      case "cut":
+        return contents.cut()
+      case "copy":
+        return contents.copy()
+      case "paste":
+        return contents.paste()
+      case "delete":
+        return contents.delete()
+      case "selectAll":
+        return contents.selectAll()
+    }
+  })
 
   /*
    * The window's own view commands.
@@ -1246,18 +1259,18 @@ app.whenReady().then(async () => {
     app.quit()
   })
 
-  ipcMain.on("mcode:view", (event, action: "reload" | "devtools" | "fullscreen") => {
+  ipcMain.on("mcode:view", (event, raw: unknown) => {
     const contents = event.sender
-    if (action === "reload") {
-      contents.reload()
-      return
+    switch (actionOf(VIEW_ACTIONS, raw)) {
+      case "reload":
+        return contents.reload()
+      case "devtools":
+        return contents.toggleDevTools()
+      case "fullscreen": {
+        const window = BrowserWindow.fromWebContents(contents)
+        return window?.setFullScreen(!window.isFullScreen())
+      }
     }
-    if (action === "devtools") {
-      contents.toggleDevTools()
-      return
-    }
-    const window = BrowserWindow.fromWebContents(contents)
-    window?.setFullScreen(!window.isFullScreen())
   })
 
   /*
@@ -1403,23 +1416,20 @@ app.whenReady().then(async () => {
    * The browser panel. The window owns the layout and says where the page
    * goes; main owns the page itself, for the reasons at the top of browser.ts.
    */
-  ipcMain.handle("mcode:browser-open", (event, bounds: BrowserBounds) => {
+  ipcMain.handle("mcode:browser-open", (event, raw: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender)
-    if (!window) return undefined
+    const bounds = panelBounds(raw)
+    if (!window || !bounds) return undefined
     openPanel(window, bounds, (state) => {
       if (!window.isDestroyed()) window.webContents.send("mcode:browser-state", state)
     })
     return panelState(window)
   })
 
-  ipcMain.on("mcode:browser-bounds", (event, bounds: BrowserBounds) => {
+  ipcMain.on("mcode:browser-bounds", (event, raw: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender)
-    if (window) setBounds(window, bounds)
-  })
-
-  ipcMain.on("mcode:browser-close", (event) => {
-    const window = BrowserWindow.fromWebContents(event.sender)
-    if (window) closePanel(window)
+    const bounds = panelBounds(raw)
+    if (window && bounds) setBounds(window, bounds)
   })
 
   ipcMain.handle("mcode:browser-navigate", (event, input: string) => {
@@ -1427,9 +1437,10 @@ app.whenReady().then(async () => {
     return window ? navigate(window, String(input)) : undefined
   })
 
-  ipcMain.handle("mcode:browser-act", (event, what: BrowserAct, id?: unknown) => {
+  ipcMain.handle("mcode:browser-act", (event, raw: unknown, id?: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender)
-    return window ? act(window, what, typeof id === "string" && id ? id : undefined) : undefined
+    const what = actionOf(BROWSER_ACTS, raw)
+    return window && what ? act(window, what, typeof id === "string" && id ? id : undefined) : undefined
   })
 
   ipcMain.handle("mcode:browser-screenshot", async (event) => {
@@ -1552,17 +1563,17 @@ app.whenReady().then(async () => {
   ipcMain.handle("mcode:hardware-acceleration", () => ({ enabled: bootPrefs.hardwareAcceleration }))
 
   /* Written for the next launch; Chromium has already started with the old one. */
-  ipcMain.handle("mcode:set-hardware-acceleration", async (_event, raw: unknown) => {
+  ipcMain.handle("mcode:set-hardware-acceleration", (_event, raw: unknown) => {
     const enabled = raw !== false
-    await saveBootPrefs({ hardwareAcceleration: enabled })
+    saveBootPrefs({ hardwareAcceleration: enabled })
     return { ok: true, enabled }
   })
 
   /* Written for the next launch; the running one keeps the switches it started with. */
-  ipcMain.handle("mcode:set-display-server", async (_event, raw: unknown) => {
+  ipcMain.handle("mcode:set-display-server", (_event, raw: unknown) => {
     if (process.platform !== "linux") return { ok: false }
     const pref = displayServerPref(raw)
-    await fs.writeFile(displayServerFile, JSON.stringify({ displayServer: pref }), "utf8")
+    writeAtomicSync(displayServerFile, JSON.stringify({ displayServer: pref }))
     displayServer = pref
     return { ok: true, pref }
   })
@@ -1575,11 +1586,12 @@ app.whenReady().then(async () => {
   ipcMain.on("mcode:native-theme", (_event, raw: unknown) => {
     const theme = themePref(raw)
     if (nativeTheme.themeSource !== theme) nativeTheme.themeSource = theme
-    if (bootPrefs.theme !== theme) void saveBootPrefs({ theme })
+    if (bootPrefs.theme !== theme) saveBootPrefs({ theme })
   })
 
-  ipcMain.on("mcode:titlebar-mode", (event, mode: "dark" | "light") => {
-    setTitlebarMode(BrowserWindow.fromWebContents(event.sender), mode)
+  ipcMain.on("mcode:titlebar-mode", (event, raw: unknown) => {
+    const mode = titlebarMode(raw)
+    if (mode) setTitlebarMode(BrowserWindow.fromWebContents(event.sender), mode)
   })
 
   /* MiMo's winIsFullscreen / winExitFullscreen, answered for the window that asks. */
@@ -1603,13 +1615,17 @@ app.whenReady().then(async () => {
     if (keys) buildMenu(keys)
   })
 
-  ipcMain.on("mcode:window", (event, action: "minimize" | "maximize" | "close") => {
+  ipcMain.on("mcode:window", (event, raw: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window) return
-    if (action === "minimize") window.minimize()
-    else if (action === "close") window.close()
-    else if (window.isMaximized()) window.unmaximize()
-    else window.maximize()
+    switch (actionOf(WINDOW_ACTIONS, raw)) {
+      case "minimize":
+        return window.minimize()
+      case "close":
+        return window.close()
+      case "maximize":
+        return window.isMaximized() ? window.unmaximize() : window.maximize()
+    }
   })
 
   buildMenu()
