@@ -3015,7 +3015,7 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="keys-foot">
-            <button class="ctl-btn" data-reset-all-shortcuts @click="resetAllBindings">{{ t("set.keys.resetAll") }}</button>
+            <button class="ctl-btn" data-reset-all-shortcuts :title="t('set.keys.resetAll')" @click="resetAllBindings">{{ t("set.keys.resetAll") }}</button>
           </div>
         </div>
 
@@ -4174,6 +4174,19 @@ h3 {
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;
+}
+
+/*
+ * The foot holds this one button, so it takes the width its words need rather
+ * than the 320px other row buttons stop at - the Spanish "reset all" is 330 -
+ * and wraps inside the page before it would ever be cut.
+ */
+.keys-foot .ctl-btn {
+  max-width: 100%;
+  height: auto;
+  min-height: 28px;
+  padding-block: 4px;
+  white-space: normal;
 }
 
 /* MiMo's state tag on the AGENTS.md row: a 12px pill, green on its tint when loaded, quiet otherwise. */

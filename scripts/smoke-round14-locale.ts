@@ -83,4 +83,17 @@ export async function roundFourteenLocaleChecks(check: Check, section: (name: st
       /return systemLanguage\(/.test(i18n) && /resolveLanguage\(/.test(locale) && !/hant|\bnn\b/i.test(locale.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "")),
     )
   }
+
+  // ---------------------------------------------------------------- L14-4
+  {
+    const settings = await read("src/renderer/src/components/SettingsDialog.vue")
+    const button = settings.match(/<button[^>]*data-reset-all-shortcuts[^>]*>/)?.[0] ?? ""
+    check("L14-4: the reset-all button carries its label as a tooltip", /:title="t\('set\.keys\.resetAll'\)"/.test(button), button)
+    const rule = settings.match(/\n\.keys-foot \.ctl-btn \{([^}]*)\}/)?.[1] ?? ""
+    check(
+      "L14-4: and is not held to the 320px row-button cap, wrapping instead of cutting",
+      /max-width: (none|100%)/.test(rule) && /white-space: normal/.test(rule) && /height: auto/.test(rule),
+      rule,
+    )
+  }
 }
