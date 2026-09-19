@@ -146,11 +146,18 @@ export const APP_NAME = "MCode"
  * the old folder - and only the default: a profile chosen on purpose
  * (`--user-data-dir`, or `app.setPath` before the main module runs) is left
  * alone. Returns the folder to set, or undefined to leave userData as it is.
+ *
+ * An unpackaged run gets a profile of its own, the default's name plus `-dev`
+ * (I13-1). Sharing the installed build's meant two full backends on one folder
+ * with nothing to arbitrate: every automation fired twice, each start dropped
+ * the search index the other had open, and settings went to whichever wrote
+ * last.
  */
 export const PROFILE_FOLDER = "mcode"
-export function pinnedProfile(current: string, appData: string, appName: string, join: (...parts: string[]) => string): string | undefined {
+export const DEV_PROFILE_SUFFIX = "-dev"
+export function pinnedProfile(current: string, appData: string, appName: string, join: (...parts: string[]) => string, packaged = true): string | undefined {
   if (current !== join(appData, appName)) return undefined
-  const pinned = join(appData, PROFILE_FOLDER)
+  const pinned = packaged ? join(appData, PROFILE_FOLDER) : join(appData, appName + DEV_PROFILE_SUFFIX)
   return pinned === current ? undefined : pinned
 }
 

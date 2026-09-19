@@ -110,10 +110,10 @@ const APP_ID = "dev.mcode.app"
 if (process.platform === "win32") app.setAppUserModelId(app.isPackaged ? APP_ID : `${APP_ID}.dev`)
 
 /*
- * The profile stays where every release kept it (see pinnedProfile), before
- * anything below reads it.
+ * The profile stays where every release kept it, and an unpackaged run keeps
+ * one of its own (see pinnedProfile), before anything below reads it.
  */
-const pinned = pinnedProfile(app.getPath("userData"), app.getPath("appData"), app.getName(), path.join)
+const pinned = pinnedProfile(app.getPath("userData"), app.getPath("appData"), app.getName(), path.join, app.isPackaged)
 if (pinned) app.setPath("userData", pinned)
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -327,9 +327,11 @@ let pendingLink: string | undefined = linkInArgs(process.argv)
 
 /*
  * One running copy per profile, so a link clicked while the app is open lands
- * in that copy instead of starting a second one beside it. Packaged builds
- * only: a development build shares its profile with the installed app and must
- * not quit because the installed one happens to be open.
+ * in that copy instead of starting a second one beside it. The lock is keyed on
+ * the profile, and a development build has its own (pinnedProfile), so the two
+ * run side by side. Packaged builds only, as MiMo skips it in development: a
+ * development run is restarted by its tooling and must not find the one it
+ * replaces still holding the lock.
  */
 if (app.isPackaged && !app.requestSingleInstanceLock()) app.exit(0)
 

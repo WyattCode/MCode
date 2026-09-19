@@ -1,0 +1,52 @@
+/**
+ * Round 13 (lane I): instances and the window's life around them - which
+ * profile a run uses, what a second launch does while the app is quitting or
+ * still loading, the Windows shutdown path, and where the window opens. Kept
+ * apart from smoke.ts the way the earlier rounds are; smoke.ts calls
+ * `roundThirteenInstanceChecks` with its own check and section.
+ *
+ * Nothing here starts Electron: the rules are plain functions, and the wiring
+ * is read out of the main process's source.
+ */
+import fs from "node:fs/promises"
+import path from "node:path"
+import type { Check } from "./smoke-round5"
+import { pinnedProfile } from "../src/main/desktop-rules"
+
+const posix = (...parts: string[]) => parts.join("/")
+const win = (...parts: string[]) => parts.join("\\")
+
+export async function roundThirteenInstanceChecks(check: Check, section: (name: string) => void): Promise<void> {
+  const root = process.cwd()
+  const main = await fs.readFile(path.join(root, "src/main/index.ts"), "utf8")
+
+  // ------------------------------------------------------------------ I13-1
+  section("Round 13 (I13-1): an unpackaged run keeps a profile of its own")
+  {
+    check(
+      "the development build's default profile is the default's name plus -dev",
+      pinnedProfile("C:\\Users\\u\\AppData\\Roaming\\MCode", "C:\\Users\\u\\AppData\\Roaming", "MCode", win, false) === "C:\\Users\\u\\AppData\\Roaming\\MCode-dev" &&
+        pinnedProfile("/home/u/.config/MCode", "/home/u/.config", "MCode", posix, false) === "/home/u/.config/MCode-dev" &&
+        pinnedProfile("/Users/u/Library/Application Support/MCode", "/Users/u/Library/Application Support", "MCode", posix, false) ===
+          "/Users/u/Library/Application Support/MCode-dev",
+    )
+    check(
+      "a profile chosen on purpose (--user-data-dir, or a probe's setPath) still wins in development",
+      pinnedProfile("/tmp/probe-data", "/home/u/.config", "MCode", posix, false) === undefined &&
+        pinnedProfile("C:\\probe\\data", "C:\\Users\\u\\AppData\\Roaming", "MCode", win, false) === undefined,
+    )
+    check(
+      "the packaged build keeps the folder every release used",
+      pinnedProfile("C:\\Users\\u\\AppData\\Roaming\\MCode", "C:\\Users\\u\\AppData\\Roaming", "MCode", win, true) === "C:\\Users\\u\\AppData\\Roaming\\mcode" &&
+        pinnedProfile("/home/u/.config/MCode", "/home/u/.config", "MCode", posix) === "/home/u/.config/mcode",
+    )
+    check(
+      "the main process says which build it is",
+      /pinnedProfile\(app\.getPath\("userData"\), app\.getPath\("appData"\), app\.getName\(\), path\.join, app\.isPackaged\)/.test(main),
+    )
+    check(
+      "the single-instance lock stays per profile, packaged only, so dev and packaged run side by side",
+      /if \(app\.isPackaged && !app\.requestSingleInstanceLock\(\)\)/.test(main) && !/requestSingleInstanceLock\([^)]/.test(main),
+    )
+  }
+}
