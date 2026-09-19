@@ -7,11 +7,15 @@
  * functions and held here; where the check is that a handler uses one of them
  * at all, the source is read.
  */
+import syncFs from "node:fs"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { guarded } from "../src/main/office-guard"
+import { writeAtomicSync } from "../src/main/atomic-write"
+import { BOOT_PREFS_FILE, readBootPrefs, writeBootPrefs } from "../src/main/boot-prefs"
+import { DISPLAY_SERVER_FILE, readDisplayServerFile } from "../src/main/display-server"
 import { label, setLabels } from "../src/main/labels"
 import { BROWSER_ACTS, EDIT_ACTIONS, VIEW_ACTIONS, WINDOW_ACTIONS, actionOf, clipboardText, directoryAsk, panelBounds, titlebarMode } from "../src/main/ipc-input"
 
@@ -154,5 +158,92 @@ export async function roundTwelveIpcChecks(check: Check, section: (name: string)
     check("a title that is not text shows none", directoryAsk({ toString: () => "x" }, true, false).title === "" && directoryAsk(undefined, false, false).title === "")
     const body = handlerOf("mcode:pick-directory")
     check("mcode:pick-directory reads its arguments through directoryAsk", body.includes("directoryAsk(rawTitle, rawMultiple, rawProject)"))
+  }
+
+  section("Round 12 (D12-7): main's small settings files are replaced, never truncated")
+  {
+    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-d12-7-"))
+    const realRename = syncFs.renameSync
+    const realWrite = syncFs.writeFileSync
+    try {
+      const file = path.join(scratch, "nested", BOOT_PREFS_FILE)
+      const off = writeBootPrefs({ theme: "dark", hardwareAcceleration: false })
+      writeAtomicSync(file, off)
+      check("the first write creates its folder and the file", syncFs.readFileSync(file, "utf8") === off)
+      const strays = () => syncFs.readdirSync(path.dirname(file)).filter((name) => name !== BOOT_PREFS_FILE)
+      check("a finished write leaves no temp file beside it", strays().length === 0, strays())
+
+      // A crash mid-write: the bytes stop half-way and the process never reaches the rename.
+      syncFs.writeFileSync = ((target: number | string, data: string, options?: unknown) => {
+        realWrite(target as never, data.slice(0, 3), options as never)
+        throw Object.assign(new Error("simulated power cut"), { code: "EIO" })
+      }) as typeof syncFs.writeFileSync
+      let threw = false
+      try {
+        writeAtomicSync(file, writeBootPrefs({ theme: "light", hardwareAcceleration: true }))
+      } catch {
+        threw = true
+      }
+      syncFs.writeFileSync = realWrite
+      check("an interrupted write reports its failure", threw)
+      check("the file still holds the whole previous version, not an empty one", syncFs.readFileSync(file, "utf8") === off)
+      check("and the half-written temp was removed", strays().length === 0, strays())
+
+      // A rename that fails for good (not a passing Windows lock) leaves the old file too.
+      syncFs.renameSync = (() => {
+        throw Object.assign(new Error("simulated disk full"), { code: "ENOSPC" })
+      }) as typeof syncFs.renameSync
+      try {
+        writeAtomicSync(file, writeBootPrefs({ theme: "light", hardwareAcceleration: true }))
+      } catch {
+        // Expected.
+      }
+      syncFs.renameSync = realRename
+      check("a failed rename keeps the previous version", syncFs.readFileSync(file, "utf8") === off)
+
+      // A passing Windows lock is waited out.
+      let refusals = 0
+      syncFs.renameSync = ((from: string, to: string) => {
+        if (refusals++ < 2) throw Object.assign(new Error("locked"), { code: "EPERM" })
+        realRename(from, to)
+      }) as typeof syncFs.renameSync
+      const on = writeBootPrefs({ theme: "light", hardwareAcceleration: true })
+      let lockAnswer = "written"
+      try {
+        writeAtomicSync(file, on)
+      } catch (err) {
+        lockAnswer = (err as NodeJS.ErrnoException).code ?? "threw"
+      }
+      syncFs.renameSync = realRename
+      if (process.platform === "win32") {
+        check("on Windows a rename refused twice with EPERM is retried until it lands", lockAnswer === "written" && syncFs.readFileSync(file, "utf8") === on, lockAnswer)
+      } else {
+        check("elsewhere EPERM is not a lock and is reported at once", lockAnswer === "EPERM" && refusals === 1, lockAnswer)
+      }
+
+      // A crash between the write and the rename leaves a stray temp; readers open only the real name.
+      writeAtomicSync(file, off)
+      syncFs.writeFileSync(`${file}.99999.1.tmp`, "{", "utf8")
+      const saved = readBootPrefs(syncFs.readFileSync(file, "utf8"))
+      check("a leftover temp beside boot-prefs.json does not disturb reading it", saved.theme === "dark" && saved.hardwareAcceleration === false, saved)
+      const display = path.join(scratch, DISPLAY_SERVER_FILE)
+      writeAtomicSync(display, JSON.stringify({ displayServer: "x11" }))
+      syncFs.writeFileSync(`${display}.99999.2.tmp`, "", "utf8")
+      check("nor one beside display-server.json", readDisplayServerFile(syncFs.readFileSync(display, "utf8")) === "x11")
+      writeAtomicSync(file, on)
+      check("the next write replaces the file whatever temps lie around", syncFs.readFileSync(file, "utf8") === on)
+    } finally {
+      syncFs.renameSync = realRename
+      syncFs.writeFileSync = realWrite
+      await fs.rm(scratch, { recursive: true, force: true })
+    }
+
+    const atomicSource = await read("src/main/atomic-write.ts")
+    const fsyncAt = atomicSource.indexOf("fs.fsyncSync(handle)")
+    check("the temp's bytes are flushed before the rename", fsyncAt > 0 && fsyncAt < atomicSource.indexOf("renameOverSync(temp, file)"))
+    const windowState = await read("src/main/window-state.ts")
+    check("window.json is written through writeAtomicSync", windowState.includes("writeAtomicSync(file(),") && !/writeFileSync|\bwriteFile\(/.test(windowState))
+    check("boot-prefs.json is written through writeAtomicSync", mainSource.includes("writeAtomicSync(bootPrefsFile,") && !/writeFile\w*\(bootPrefsFile/.test(mainSource))
+    check("display-server.json is written through writeAtomicSync", mainSource.includes("writeAtomicSync(displayServerFile,") && !/writeFile\w*\(displayServerFile/.test(mainSource))
   }
 }

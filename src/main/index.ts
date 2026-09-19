@@ -22,6 +22,7 @@ import { cutLiveStreams } from "../server/provider/stall"
 import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
 import { closeHidesToTray } from "@shared/protocol"
 import { label, setLabels } from "./labels"
+import { writeAtomicSync } from "./atomic-write"
 import { BROWSER_ACTS, EDIT_ACTIONS, VIEW_ACTIONS, WINDOW_ACTIONS, actionOf, clipboardText, directoryAsk, panelBounds, titlebarMode } from "./ipc-input"
 import { buildMenu } from "./menu"
 import { readMenuKeys } from "./menu-keys"
@@ -238,9 +239,13 @@ nativeTheme.themeSource = bootPrefs.theme
 if (!bootPrefs.hardwareAcceleration) app.disableHardwareAcceleration()
 
 /* Written for the next launch; a failed write only means the next boot uses the old choice. */
-function saveBootPrefs(patch: Partial<BootPrefs>): Promise<void> {
+function saveBootPrefs(patch: Partial<BootPrefs>): void {
   bootPrefs = { ...bootPrefs, ...patch }
-  return fs.writeFile(bootPrefsFile, writeBootPrefs(bootPrefs), "utf8").catch((error) => console.warn("[boot-prefs] not saved", error))
+  try {
+    writeAtomicSync(bootPrefsFile, writeBootPrefs(bootPrefs))
+  } catch (error) {
+    console.warn("[boot-prefs] not saved", error)
+  }
 }
 
 let backend: Backend | undefined
@@ -1557,17 +1562,17 @@ app.whenReady().then(async () => {
   ipcMain.handle("mcode:hardware-acceleration", () => ({ enabled: bootPrefs.hardwareAcceleration }))
 
   /* Written for the next launch; Chromium has already started with the old one. */
-  ipcMain.handle("mcode:set-hardware-acceleration", async (_event, raw: unknown) => {
+  ipcMain.handle("mcode:set-hardware-acceleration", (_event, raw: unknown) => {
     const enabled = raw !== false
-    await saveBootPrefs({ hardwareAcceleration: enabled })
+    saveBootPrefs({ hardwareAcceleration: enabled })
     return { ok: true, enabled }
   })
 
   /* Written for the next launch; the running one keeps the switches it started with. */
-  ipcMain.handle("mcode:set-display-server", async (_event, raw: unknown) => {
+  ipcMain.handle("mcode:set-display-server", (_event, raw: unknown) => {
     if (process.platform !== "linux") return { ok: false }
     const pref = displayServerPref(raw)
-    await fs.writeFile(displayServerFile, JSON.stringify({ displayServer: pref }), "utf8")
+    writeAtomicSync(displayServerFile, JSON.stringify({ displayServer: pref }))
     displayServer = pref
     return { ok: true, pref }
   })
@@ -1580,7 +1585,7 @@ app.whenReady().then(async () => {
   ipcMain.on("mcode:native-theme", (_event, raw: unknown) => {
     const theme = themePref(raw)
     if (nativeTheme.themeSource !== theme) nativeTheme.themeSource = theme
-    if (bootPrefs.theme !== theme) void saveBootPrefs({ theme })
+    if (bootPrefs.theme !== theme) saveBootPrefs({ theme })
   })
 
   ipcMain.on("mcode:titlebar-mode", (event, raw: unknown) => {
