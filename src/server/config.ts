@@ -862,6 +862,11 @@ export class Config {
    */
   private setting: Promise<unknown> = Promise.resolve()
 
+  /** Settles the settings save and the credential write in flight, for quit (L12-6). */
+  async drain(): Promise<void> {
+    await Promise.allSettled([this.setting, this.persisting])
+  }
+
   set(patch: Partial<AppConfig>): Promise<AppConfig> {
     const next = this.setting.catch(() => undefined).then(() => this.setNow(patch))
     this.setting = next

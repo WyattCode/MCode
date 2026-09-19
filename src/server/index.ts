@@ -344,6 +344,14 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       await artifacts?.close()
       for (const client of clients) client.terminate()
       await new Promise<void>((resolve) => server.close(() => resolve()))
+      /*
+       * Last, so what the steps above saved is included (L12-6): an approval
+       * or a setting made just before quit reaches the disk before the
+       * process ends. Inside the main process's five-second bound on close.
+       */
+      await permissions.flush()
+      await config.drain()
+      await storage.drain()
     },
   }
 }

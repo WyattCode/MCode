@@ -247,6 +247,23 @@ export class Storage {
     }
   }
 
+  /**
+   * Settles every write queued so far, and any queued while waiting (L12-6).
+   *
+   * For quit: a write is atomic, so one cut off leaves the old version, but a
+   * setting or an approval made in the last moment before quit was lost with
+   * it. A failed write is not this caller's to report; its own caller was told.
+   */
+  async drain(): Promise<void> {
+    const awaited = new Set<Promise<void>>()
+    for (;;) {
+      const pending = [...this.queued.values()].filter((write) => !awaited.has(write))
+      if (!pending.length) return
+      for (const write of pending) awaited.add(write)
+      await Promise.allSettled(pending)
+    }
+  }
+
   /** A document's text as it sits on disk, or undefined when there is none. */
   async readText(key: string): Promise<string | undefined> {
     try {

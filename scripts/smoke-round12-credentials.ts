@@ -104,4 +104,44 @@ async function checks(check: Check, section: (name: string) => void): Promise<vo
     const written = JSON.parse(await fs.readFile(file, "utf8")) as Record<string, unknown>
     check("a load that migrates writes the migrations but not the checked theme", Array.isArray(written.migrations) && written.theme === "neon-future" && migrated.get().theme === "system", written.theme)
   }
+
+  section("Round 12 (L12-6): quit waits for the writes still queued")
+  {
+    const dir = await profile("drain")
+    const storage = new Storage(path.join(dir, "storage"))
+    for (let i = 0; i < 5; i++) void storage.write(`queued/${i}`, { i })
+    await storage.drain()
+    const written = await listed(path.join(dir, "storage", "queued"))
+    check("drain settles every queued write", written.length === 5, written)
+
+    const backend = await startBackend(dir)
+    const { runtime } = backend
+    /*
+     * Each save is held back well past what close() takes on its own, so only
+     * a close that waits for them finds them on disk.
+     */
+    const slow = runtime.storage as unknown as {
+      writeNow: (key: string, value: unknown, durable: boolean) => Promise<void>
+      writeText: (key: string, render: (current: string | undefined) => string) => Promise<void>
+    }
+    const writeNow = slow.writeNow.bind(slow)
+    slow.writeNow = async (key, value, durable) => {
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+      return writeNow(key, value, durable)
+    }
+    const writeText = slow.writeText.bind(slow)
+    slow.writeText = async (key, render) => {
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+      return writeText(key, render)
+    }
+    void runtime.storage.write("late", { saved: true })
+    void runtime.config.set({ uiFontSize: 17 }).catch(() => undefined)
+    const started = Date.now()
+    await backend.close()
+    const late = await fs.readFile(path.join(dir, "storage", "late.json"), "utf8").catch(() => "")
+    check("a document queued just before quit is on disk when close() returns", late.includes('"saved": true'), { late: late.length, ms: Date.now() - started })
+    const settings = await fs.readFile(path.join(dir, "storage", "config.json"), "utf8").catch(() => "")
+    check("and so is a setting changed just before quit", settings.includes('"uiFontSize": 17'))
+    check("inside the five-second bound on close", Date.now() - started < 5000, Date.now() - started)
+  }
 }
