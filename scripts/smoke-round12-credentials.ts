@@ -15,6 +15,10 @@ import { startBackend } from "../src/server/index"
 import { Bus } from "../src/server/bus"
 import { Config } from "../src/server/config"
 import { Storage } from "../src/server/storage"
+import { handle } from "../src/server/handlers"
+import { appDataRefusal } from "../src/server/tool/app-data"
+import { codeOf } from "../src/shared/errors"
+import type { Request } from "../src/shared/protocol"
 
 const scratch: string[] = []
 
@@ -143,5 +147,52 @@ async function checks(check: Check, section: (name: string) => void): Promise<vo
     const settings = await fs.readFile(path.join(dir, "storage", "config.json"), "utf8").catch(() => "")
     check("and so is a setting changed just before quit", settings.includes('"uiFontSize": 17'))
     check("inside the five-second bound on close", Date.now() - started < 5000, Date.now() - started)
+  }
+
+  section("Round 12 (L12-2): an unreadable credentials.json is kept, never written over")
+  {
+    const dir = await profile("credentials")
+    const file = path.join(dir, "credentials.json")
+    // Test values only; nothing here is a real key.
+    const damaged = '{"keys": {"openai": "test-openai-value", "anthropic": "test-anthropic-val'
+    await fs.writeFile(file, damaged)
+    const backend = await startBackend(dir).catch((error: unknown) => error)
+    const started = !(backend instanceof Error)
+    check("the backend starts over a truncated credentials.json", started, backend instanceof Error ? backend.message : undefined)
+    if (started) {
+      const { runtime } = backend as Awaited<ReturnType<typeof startBackend>>
+      const kept = (await listed(dir)).filter((name) => name.startsWith("credentials.json.corrupt-"))
+      check("the damaged file is moved aside under its own name", kept.length === 1 && !(await listed(dir)).includes("credentials.json"), await listed(dir))
+      check("with its bytes intact", kept.length === 1 && (await fs.readFile(path.join(dir, kept[0]!), "utf8")) === damaged)
+      const got = (await handle(runtime, { type: "config.get" } as Request)) as { credentialsUnreadable?: { problem: string; evidence?: string } }
+      check("config.get tells the window, with where the file went", Boolean(got.credentialsUnreadable) && got.credentialsUnreadable?.evidence === path.join(dir, kept[0] ?? "-"), got.credentialsUnreadable?.evidence)
+      check("and its reason never quotes the file", !JSON.stringify(got.credentialsUnreadable).includes("test-"))
+      check("the model's tools may not read the kept copy", (await appDataRefusal(path.join(dir, kept[0] ?? "x"), "read")) === "secret")
+      check("no key was loaded from it", runtime.config.apiKey("openai") === undefined || runtime.config.environmentKey("openai") !== undefined)
+      await runtime.config.setApiKey("openai", "test-new-value")
+      const fresh = JSON.parse(await fs.readFile(file, "utf8")) as { keys?: Record<string, string> }
+      check("a key saved afterwards starts a fresh file beside the kept one", Object.keys(fresh.keys ?? {}).join() === "openai" && (await fs.readFile(path.join(dir, kept[0]!), "utf8")) === damaged)
+
+      // A file that could not be moved aside: saving credentials is refused, the file untouched.
+      const blocked = runtime.config as unknown as { credentialsBlocked: boolean }
+      blocked.credentialsBlocked = true
+      const before = await fs.readFile(file, "utf8")
+      const refusal = await runtime.config.setApiKey("anthropic", "test-other-value").then(() => undefined, (error: unknown) => error)
+      check("while the file cannot be moved, a key save is refused with its own code", codeOf(refusal) === "error.credentialsInvalid", codeOf(refusal))
+      const tokens = await runtime.config.setTokens("openai", { access: "test-token" }).then(() => undefined, (error: unknown) => error)
+      check("and so is a sign-in", codeOf(tokens) === "error.credentialsInvalid")
+      check("and the file is left as it was", (await fs.readFile(file, "utf8")) === before && runtime.config.tokens("openai") === undefined)
+      await (backend as Awaited<ReturnType<typeof startBackend>>).close()
+    }
+
+    const legacy = await profile("legacy")
+    await fs.writeFile(path.join(legacy, "credentials.json"), JSON.stringify({ openai: "test-legacy-value" }))
+    const old = new Config(new Storage(path.join(legacy, "storage")), new Bus(), path.join(legacy, "credentials.json"))
+    await old.load()
+    check("the old bare key map still reads", old.apiKey("openai") === "test-legacy-value" && !old.credentialsUnreadable)
+    const none = await profile("none")
+    const fresh = new Config(new Storage(path.join(none, "storage")), new Bus(), path.join(none, "credentials.json"))
+    await fresh.load()
+    check("no file at all is a first run, not a damaged one", !fresh.credentialsUnreadable)
   }
 }

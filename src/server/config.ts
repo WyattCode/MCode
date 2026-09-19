@@ -1,7 +1,6 @@
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { migrateChime } from "@shared/chime"
 import { normalizeChord, retireKeybinds } from "@shared/chord"
-import fs from "node:fs/promises"
 import { watch as watchFiles, type FSWatcher } from "node:fs"
 import path from "node:path"
 import os from "node:os"
@@ -27,7 +26,8 @@ import { worktreeTop } from "./session/worktree"
 import { sanitizeConfig } from "./config-sanitize"
 import { defaultAccess, type Access } from "@shared/access"
 import type { Storage } from "./storage"
-import { writeAtomic } from "./storage"
+import { quarantine, writeAtomic } from "./storage"
+import { readCredentialFile, renderCredentials } from "./credential-file"
 import type { Bus } from "./bus"
 import {
   BUILT_IN,
@@ -641,15 +641,43 @@ export class Config {
     this.current.autoApprove = allowed(this.current.permissions)
     if ((migrated || retired) && !this.fromNewerVersion) await this.persist()
     this.discovered = await this.readDiscovered()
-    try {
-      const raw = JSON.parse(await fs.readFile(this.credentialFile, "utf8"))
-      // The file used to be a bare provider -> key map; keep those working.
-      const versioned = raw && typeof raw === "object" && ("keys" in raw || "oauth" in raw)
-      this.credentials = versioned ? (raw.keys ?? {}) : raw
-      this.oauth = versioned ? (raw.oauth ?? {}) : {}
-    } catch {
-      this.credentials = {}
-      this.oauth = {}
+    await this.loadCredentials()
+  }
+
+  /**
+   * The saved keys and sign-ins (L12-2).
+   *
+   * Any failure used to read as an empty file, and the next key saved then
+   * replaced every other key and every subscription login with nothing said.
+   * A file that is there but cannot be read is kept aside now, as a damaged
+   * config is, and the app starts without it; if it cannot even be moved,
+   * saving credentials is refused rather than writing over it.
+   */
+  private async loadCredentials(): Promise<void> {
+    const read = await readCredentialFile(this.credentialFile)
+    if (read.state === "read") {
+      this.credentials = read.credentials.keys
+      this.oauth = read.credentials.oauth
+      return
+    }
+    this.credentials = {}
+    this.oauth = {}
+    if (read.state === "absent") return
+    const aside = await quarantine(this.credentialFile)
+    this.credentialsUnreadable = { problem: read.problem, evidence: aside }
+    this.credentialsBlocked = aside === undefined
+    console.warn(`[config] ${read.problem}; ${aside ? `kept as ${path.basename(aside)}` : "it could not be moved, so saving keys is refused until it is"}`)
+  }
+
+  /** Set when credentials.json was there but could not be read, with where it was kept. */
+  credentialsUnreadable: { problem: string; evidence?: string } | undefined
+
+  /** An unreadable credential file that could not be moved aside: nothing may write over it. */
+  private credentialsBlocked = false
+
+  private writableCredentials(): void {
+    if (this.credentialsBlocked) {
+      throw new CodedError("The saved credentials could not be read and are kept as they are; nothing is written over them", "error.credentialsInvalid")
     }
   }
 
@@ -759,11 +787,7 @@ export class Config {
    */
   private async persistCredentials(): Promise<void> {
     const next = this.persisting.catch(() => {}).then(() =>
-      writeAtomic(
-        this.credentialFile,
-        JSON.stringify({ keys: this.credentials, oauth: this.oauth }, null, 2),
-        0o600,
-      ),
+      writeAtomic(this.credentialFile, renderCredentials({ keys: this.credentials, oauth: this.oauth }), 0o600),
     )
     this.persisting = next
     await next
@@ -775,6 +799,7 @@ export class Config {
   }
 
   async setTokens(provider: string, tokens: OAuthTokens | undefined): Promise<void> {
+    this.writableCredentials()
     if (tokens) this.oauth[provider] = tokens
     else delete this.oauth[provider]
     await this.persistCredentials()
@@ -1066,6 +1091,7 @@ export class Config {
   }
 
   async setApiKey(provider: string, apiKey: string): Promise<void> {
+    this.writableCredentials()
     if (apiKey) this.credentials[provider] = apiKey
     else {
       delete this.credentials[provider]
