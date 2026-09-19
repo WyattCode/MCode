@@ -48,6 +48,22 @@ export async function roundFourteenLocaleChecks(check: Check, section: (name: st
     )
   }
 
+  // ---------------------------------------------------------------- L14-2
+  {
+    const [app, html, i18n] = await Promise.all([read("src/renderer/src/App.vue"), read("src/renderer/index.html"), read("src/renderer/src/lib/i18n.ts")])
+    const watcher = app.slice(app.indexOf("() => app.config?.language"), app.indexOf("publishMenuLabels()", app.indexOf("() => app.config?.language")))
+    check("L14-2: <html lang> is set from the interface language wherever the language is set", /document\.documentElement\.lang = language\.value/.test(watcher))
+    check("L14-2: and starts as the language the window starts in", html.match(/<html lang="([^"]+)"/)?.[1] === i18n.match(/export const language = ref<Language>\("([^"]+)"\)/)?.[1])
+    const invalid = LANGUAGES.map((entry) => entry.id).filter((id) => {
+      try {
+        return Intl.getCanonicalLocales(id)[0] !== id
+      } catch {
+        return true
+      }
+    })
+    check("L14-2: every table's id is already a canonical BCP-47 tag", invalid.length === 0, invalid)
+  }
+
   // ---------------------------------------------------------------- L14-3
   {
     const cases: [string, string][] = [

@@ -875,6 +875,13 @@ watch(
     else language.value = "en"
     // Arabic reads the other way, and the layout has to turn with it.
     document.documentElement.dir = RTL_LANGUAGES.includes(language.value) ? "rtl" : "ltr"
+    /*
+     * The table's id is its BCP-47 tag. Screen readers pick their voice by it,
+     * `:lang()` and the font fallback pick Japanese or Traditional glyphs for a
+     * shared Han character by it, and echarts in a PPTX picks its own language
+     * by it.
+     */
+    document.documentElement.lang = language.value
     // The menu bar is built in the main process, which cannot read that ref.
     publishMenuLabels()
   },
