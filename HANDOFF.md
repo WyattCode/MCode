@@ -7,6 +7,7 @@
 - 对照清单（逐项实测，含百分比）：https://claude.ai/code/artifact/f149a5d1-857e-4bae-80be-ca03265d9f83
 - 最近更新：2026-09-20
 - 第十二轮（2026-09-19/20）：三个新的只读角度（数据生命周期与版本升级、主进程与界面的通信契约、失败与空状态）的审计已做完，34 项全部完成并合并入 `v2.0`，见下方「第十二轮」一节。报告在 scratchpad `round12-lifecycle.md` / `round12-ipc.md` / `round12-failure-ux.md`
+- 第十三轮（2026-09-20）：键盘与焦点、多实例与窗口生命周期、大数据量三个只读角度，37 项全部完成并合并入 `v2.0`，见下方「第十三轮」一节。报告在 scratchpad `round13-keyboard.md` / `round13-instances.md` / `round13-scale.md`
 
 ## 现在到哪了
 
@@ -462,6 +463,41 @@
   - C11-48 只有技能芯片、没有文字时照常发出（MiMo 拒发并提示「请输入内容」）。
   - C11-50 运行中发送走完整路径（命令模板、技能芯片、批注都带上；MiMo 只插「文本 + 附件」）。
 
+## 第十三轮：键盘与焦点、多实例、大数据量（2026-09-20）
+
+三份只读审计：`scratchpad/round13-keyboard.md`（17 条）、`round13-instances.md`（7 条）、`round13-scale.md`（6 条 + 小项）。用户决定：开发版用独立数据目录（记为故意不同）；其余照 MiMo；超出 MiMo 的两条（键盘打开的菜单关闭后焦点归还、看过的子代理对话记录释放）不做。四路 worktree，合并后 13 项检查 + build 通过，smoke **4632 全过**（连跑两次）；新增 `scripts/smoke-round13-keyboard.ts` / `-instances.ts` / `-scale.ts` / `-artifacts.ts`。
+
+**键盘与焦点（K13-*）**
+- K13-7 共享 Escape 帮助函数 `lib/escape-layer.ts`：一次 Escape 只关最上一层并标记已处理；PDF/Office 批注不再被上层的 Escape 清掉；InfoPanel 的 `escapeBlocked` 名单删除（`6c5fc0d`）
+- K13-1 模型页断开/删除确认框上 Escape 只关确认框；设置改为按下时检查页面上是否还有别的层（`f3914cc`）
+- K13-2 分支选择器搜索框里 Escape 能关（`93b61da`）；K13-4 搜索浮层焦点在结果行时 Escape 能关（`d3a5fce`）；K13-11 项目选择器子菜单 Escape 只关子菜单（`45871ed`）；K13-15 导入对话框 Escape 关闭（`da708df`）
+- K13-3 「+」菜单键盘操作：打开聚焦首行，上下/Home/End，Enter/Space，右键头进技能，Escape 逐层（`c01dd63`）
+- K13-5 有浮层/弹窗/预览盖住时，置顶、重命名、归档、侧聊等对话快捷键不生效（`5c92f90`）
+- K13-6 Ctrl+N 先关菜单、搜索、命令面板、预览、设置（环境有未保存修改先问），需要回答的对话框打开时不生效（`586bca7`）
+- K13-8 图片/视频/表格预览焦点限制在内、关闭归还，视频预览打开即取焦点（`bb0bfd7`）
+- K13-9 `lib/keys.ts` `composing()`：8 个输入框输入法选字时的 Enter 不再触发；smoke 扫描所有带 Enter 的输入框（`3b07275`）
+- K13-10 输入框菜单与首页选择器焦点离开即关，菜单行不再是 Tab 停靠点（`f883a67`）
+- K13-12 设置下拉框 Space 打开、1 秒内首字母跳转（`lib/type-ahead.ts`）（`0ab91d4`）
+- K13-14 点击对话空白处聚焦输入框（`264907f`）
+- K13-17（合并后发现）新建任务从未把焦点放进首页输入框：首页有自己的 Composer（HomeHero），`focusComposer` 却只聚焦对话页那个；现在首页时聚焦 HomeHero 的，侧栏「新建任务」也聚焦（`311994a`，探针实测）
+
+**多实例与窗口（I13-*）**
+- I13-1 未打包运行默认数据目录 `<默认名>-dev`（Windows `%APPDATA%\MCode-dev`），显式指定仍优先；单实例锁仍只在打包版（`6a3e255`）
+- I13-6 单实例锁在设好数据目录后立刻取，抢不到 `process.exit(0)`（`8eeec96`）
+- I13-2 退出过程中再次启动：退出完成后 `app.relaunch` 一次（带链接参数），托盘/activate 退出期间无反应（`71156fc`、`9e27f7d`）
+- I13-5 再次启动总是先激活窗口；页面加载或替换中收到的链接存着，就绪后经 `mcode:take-link` 取走（`recovery.ts` `readyWindow()`）（`b727844`）
+- I13-4 启动时保存的位置整体放回屏幕（`work-area.ts` `startBounds` + `clampToWorkAreas`）（`8067aff`）
+- I13-3 Windows `query-session-end` 直接 `app.quit()` 走完整清理，`session-end` 同步写窗口位置；N11-1 的错误注释已改。代价：别的程序取消关机时 MCode 已退出（`1bcdc22`）
+- I13-7 Linux 最大化照 MiMo 铺满工作区并记为最大化（只有单元级 smoke）（`1a5358b`）
+
+**大数据量（S13-*）**
+- S13-1 `server/diff.ts` 自写 Myers O(ND)：去掉共同开头，超过 2000 行改动或 4000 万步退成整块替换；4 万行改一行 36.6 s/6.2 GB → 约 25 ms，7 万行约 39 ms（`68b4527`）
+- S13-2 用量页读 `storage/usage-daily.json`（`session/usage-days.ts`，按会话→日→模型汇总，版本 1，损坏挪开重建）；1990 会话首建 5 s 一次，之后 7–250 ms，旧全量扫描 24 s（`54abc74`）
+- S13-3 产物列表只重读变化的对话，每页 50 条带游标与分类计数，超过 8 个变化转后台构建；产物页与搜索浮层滚到底加载更多；列表 1000 会话/3000 文件 290–390 ms → 4–5 ms；分类规则移到 `shared/artifact-category.ts`；不再返回已不存在的文件（`2040a3f`、`10f1909`）
+- S13-4 对话列表缓存就地更新（排序 `updated` 倒序、同时间按 id），冷读 32 并发；2000 会话删 100 个 100.7 s → 1.26 s（`9d04b93`、`e3a3b33`）
+- S13-5 搜索启动检查跳过记录与消息目录都早于上次索引的对话（16 并发），索引追赶期间仍从索引回答并直接读最新 20 个未索引对话；启动后首批查询 3.6–4.6 s → 10–324 ms。已知缺口：外部原地改写的消息文件启动时察觉不到（`9238e7c`、`b84017c`、`51ef923`）
+- S13-7 文件面板先 stat，超过 25 MB 只读开头 2 MB，超 2 GB 的媒体显示「过大」，文本仍显示截断的开头（`65f53e0`）
+
 ## 第十二轮：数据生命周期、失败提示、主进程契约（2026-09-20）
 
 三份只读审计：`scratchpad/round12-lifecycle.md`（22 条）、`round12-failure-ux.md`（17 条）、`round12-ipc.md`（13 条）。用户决定：凭证照 MiMo 用系统安全存储加密；卸载的技能照 MiMo 7 天清理；可选改进「MiMo 有的都做」（只做了定时任务运行记录的原因码，降级提示、无模型指路、磁盘满文案 MiMo 没有，不做）。四路 worktree 分头做，合并后 13 项检查 + build 通过，smoke **4457 全过**；新增检查文件 `scripts/smoke-round12-credentials.ts` / `smoke-round12-lifecycle.ts` / `smoke-round12-c.ts` / `smoke-round12-ipc.ts`。窗口提示用一次性配置实测过（产物库重建、对话读不出、定时任务文件损坏、凭证读不出四条中文提示都出现）。
@@ -604,7 +640,7 @@
 npm run dev          # 开发版（先结束残留的 node_modules/electron/dist/electron.exe）
 npm run typecheck
 npm run build
-npm run smoke        # 当前 4457 条（2026-09-20）
+npm run smoke        # 当前 4632 条（2026-09-20）
 npm run i18ncheck    # 18 种语言表键一致
 npm run themecheck   # 重新生成 tokens.css 并逐字节比对；也拦物理方向的 CSS
 npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监听
@@ -631,7 +667,8 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
   - 背景窗口里 `animation.finished` 可能一直不结束——产品代码里等动画都要配一个超时。
   - 打开弹窗后第一次 `capturePage` 可能是旧画面，等约 2 秒并 `invalidate()` 再截。
   - ContextMenu 当前选中项是 `.item.ticked`；侧栏底部「设置」行现在先打开菜单，再点菜单里的「设置」。
-- 开发版重启：先停旧的 `npm run dev` 任务，再结束残留 electron 进程，否则两个实例抢同一份配置（会报缓存无法创建）。
+- 开发版重启：先停旧的 `npm run dev` 任务，再结束残留 electron 进程，否则两个开发实例抢同一份配置（会报缓存无法创建）。第十三轮起未打包运行默认用独立数据目录 `%APPDATA%\MCode-dev`（I13-1），不再和安装版共用 `%APPDATA%\MCode`；探针用 `app.setPath("userData")` 或 `--user-data-dir` 仍然优先。
+- 已知不稳定检查：第五轮计划模式一节（`smoke-round5.ts`「plan mode writes one file…」）偶发 6 条一起失败，2026-09-20 四次全量里出现一次；疑似后台请求（标题生成）插进来，使 `e.bodies.at(-1)` 不是本轮请求。重跑即过，未修。
 - 版本号只在打包时递增，不要手改。WSL 永久不在范围内。
 - 对用户仓库跑 git 一律用 `server/git-process.ts` 的 `runGit`（固定环境、路径不加引号、超时、隐藏窗口）；解析路径用 `-z` 输出和 `parsePorcelain`。只有影子快照仓库（`session/snapshot.ts`）自己起进程。smoke-round10-git 会扫描 `src/server`、`src/main` 里没带 `windowsHide` 的 git 进程。
 
@@ -825,8 +862,8 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
 
 ## 下一步建议
 
-**第十二轮（数据生命周期、失败提示与空状态、主进程契约）34 项已全部完成并合并入 `v2.0`**，已知 backlog 再次清空。下一步：
+**第十三轮（键盘与焦点、多实例与窗口、大数据量）37 项已全部完成并合并入 `v2.0`**，已知 backlog 清空。下一步：
 
-1. 如要继续对照，可再换只读角度开第十三轮，例如：（a）键盘与焦点全路径（每个弹窗/菜单/面板的 Tab 顺序、Esc、焦点归还）对照 MiMo；（b）多窗口与多实例（两个 MCode 同开、同一数据目录的并发写）；（c）大数据量下的表现（上千对话、超长对话、大仓库的文件树与搜索）。
-2. 第十二轮留下的小尾巴（可选）：`update-transaction.json` 与 `composer-input.ts` 走 `writeAtomicSync`；清理崩溃留下的 `*.tmp`；提示同时超过 3 条时持久提示被挤掉的问题。
+1. 如要继续对照，可再换只读角度开第十四轮，例如：（a）网络与代理（系统代理、PAC、证书错误、离线启动、服务商超时设置）对照 MiMo；（b）国际化细节（日期/数字/相对时间格式、从右到左布局、长译文溢出）逐页实测；（c）打包与安装（安装/升级/卸载后残留、自动更新全流程、签名与图标）。
+2. 小尾巴（可选）：`update-transaction.json` 与 `composer-input.ts` 走 `writeAtomicSync`；清理崩溃留下的 `*.tmp`；提示超过 3 条时持久提示被挤掉；第五轮计划模式偶发失败的检查（见「约定与坑」）。
 3. 新页面（钩子、CLI 插件、SSH 连接）用户已决定不做。
