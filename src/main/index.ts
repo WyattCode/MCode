@@ -1732,7 +1732,6 @@ app.whenReady().then(async () => {
   })
 
   app.on("activate", () => {
-    // Clicking the Dock icon while quitting brings nothing back (I13-2).
     if (closing) return
     // Asked for again while leaving full screen to hide: it stays (MiMo's).
     for (const window of BrowserWindow.getAllWindows()) cancelPendingHide(window)

@@ -94,7 +94,7 @@ export async function roundThirteenInstanceChecks(check: Check, section: (name: 
     check("a macOS link while quitting is queued the same way", /if \(closing\) return relaunchAfterQuit\(\[process\.execPath, url\]\)/.test(body(main, 'app.on("open-url", (event, url) => {')))
     check("the tray's Open does nothing while quitting", /const open = \(\) => \{\s*if \(!closing\) activate\(raise\)/.test(main))
     check("nor does a tray profile switch, which would build a window", /click: \(\) => \{\s*if \(closing\) return\s*const window = currentWindow\(\) \?\? createWindow\(\)/.test(main))
-    check("nor does the Dock's activate", /^\{\s*\/\/[^\n]*\n\s*if \(closing\) return/.test(body(main, 'app.on("activate", () => {')))
+    check("nor does the Dock's activate", /^\{\s*if \(closing\) return/.test(body(main, 'app.on("activate", () => {')))
   }
 
   // ------------------------------------------------------------------ I13-5
