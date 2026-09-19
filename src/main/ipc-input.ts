@@ -29,6 +29,15 @@ export function panelBounds(raw: unknown): PanelBounds | undefined {
   return { x: x as number, y: y as number, width: width as number, height: height as number }
 }
 
+/**
+ * A folder picker's ask: the dialog's title, and whether it takes several
+ * folders or opens at the project location. Only `true` turns a flag on, and a
+ * title that is not text shows no title rather than whatever it stringifies to.
+ */
+export function directoryAsk(title: unknown, multiple: unknown, project: unknown): { title: string; multiple: boolean; project: boolean } {
+  return { title: typeof title === "string" ? title : "", multiple: multiple === true, project: project === true }
+}
+
 /** The caption band's colours follow the page's own theme, which is one of two. */
 export function titlebarMode(raw: unknown): "dark" | "light" | undefined {
   return raw === "dark" || raw === "light" ? raw : undefined

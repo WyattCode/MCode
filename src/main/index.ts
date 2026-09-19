@@ -22,7 +22,7 @@ import { cutLiveStreams } from "../server/provider/stall"
 import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
 import { closeHidesToTray } from "@shared/protocol"
 import { label, setLabels } from "./labels"
-import { BROWSER_ACTS, EDIT_ACTIONS, VIEW_ACTIONS, WINDOW_ACTIONS, actionOf, clipboardText, panelBounds, titlebarMode } from "./ipc-input"
+import { BROWSER_ACTS, EDIT_ACTIONS, VIEW_ACTIONS, WINDOW_ACTIONS, actionOf, clipboardText, directoryAsk, panelBounds, titlebarMode } from "./ipc-input"
 import { buildMenu } from "./menu"
 import { readMenuKeys } from "./menu-keys"
 import { cancelPendingHide, claimDialog, dialogParent, hideWindow, micDecision, releaseDialog } from "./native-dialogs"
@@ -915,7 +915,8 @@ app.whenReady().then(async () => {
   }
 
   /* `project` is MiMo's 选择或新建项目文件夹: it opens at the default project location. */
-  ipcMain.handle("mcode:pick-directory", async (event, title: string, multiple?: boolean, project?: boolean) => {
+  ipcMain.handle("mcode:pick-directory", async (event, rawTitle: unknown, rawMultiple?: unknown, rawProject?: unknown) => {
+    const { title, multiple, project } = directoryAsk(rawTitle, rawMultiple, rawProject)
     // MiMo lets one native dialog up at a time: a second ask while one is open gets nothing.
     const asking = BrowserWindow.fromWebContents(event.sender)
     const claim = claimDialog(process.platform, asking)

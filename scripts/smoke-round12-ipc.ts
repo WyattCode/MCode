@@ -13,7 +13,7 @@ import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { guarded } from "../src/main/office-guard"
 import { label, setLabels } from "../src/main/labels"
-import { BROWSER_ACTS, EDIT_ACTIONS, VIEW_ACTIONS, WINDOW_ACTIONS, actionOf, clipboardText, panelBounds, titlebarMode } from "../src/main/ipc-input"
+import { BROWSER_ACTS, EDIT_ACTIONS, VIEW_ACTIONS, WINDOW_ACTIONS, actionOf, clipboardText, directoryAsk, panelBounds, titlebarMode } from "../src/main/ipc-input"
 
 export async function roundTwelveIpcChecks(check: Check, section: (name: string) => void): Promise<void> {
   const read = (file: string) => fs.readFile(path.join(process.cwd(), file), "utf8")
@@ -143,5 +143,16 @@ export async function roundTwelveIpcChecks(check: Check, section: (name: string)
     } finally {
       await fs.rm(scratch, { recursive: true, force: true })
     }
+  }
+
+  section("Round 12 (D12-6): the folder picker reads its title and flags strictly")
+  {
+    const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+    check("a string title and true flags pass", same(directoryAsk("Pick", true, true), { title: "Pick", multiple: true, project: true }))
+    check("false and missing flags are off", same(directoryAsk("Pick", false, undefined), { title: "Pick", multiple: false, project: false }))
+    check("truthy values that are not true are off", same(directoryAsk("Pick", 1, "yes"), { title: "Pick", multiple: false, project: false }))
+    check("a title that is not text shows none", directoryAsk({ toString: () => "x" }, true, false).title === "" && directoryAsk(undefined, false, false).title === "")
+    const body = handlerOf("mcode:pick-directory")
+    check("mcode:pick-directory reads its arguments through directoryAsk", body.includes("directoryAsk(rawTitle, rawMultiple, rawProject)"))
   }
 }
