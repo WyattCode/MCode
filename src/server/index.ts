@@ -10,6 +10,7 @@ import { AuthManager } from "./auth/manager"
 import { Permissions } from "./permission"
 import { SessionStore } from "./session/store"
 import { migrateCheckpoints } from "./session/checkpoint-migrate"
+import { CHECKPOINT_PACK_EVERY_MS, CHECKPOINT_PACK_FIRST_MS } from "./session/snapshot"
 import { ArtifactStore } from "./artifact/store"
 import { readStorageLayout } from "./storage-layout"
 import { projectDirectoriesOf } from "@shared/projects"
@@ -147,6 +148,33 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       // Housekeeping must never be the reason the app fails to open.
     }
   })()
+  /*
+   * Undo's checkpoint stores, packed a minute after start and hourly after, as
+   * MiMo schedules its snapshot cleanup (L12-13) - never pruned, and never
+   * holding the process open. Every live conversation's folder, unreadable
+   * ones included.
+   */
+  let packing = false
+  const packStores = async () => {
+    if (packing) return
+    packing = true
+    try {
+      const live = [...(await sessions.list()).map((session) => session.directory), ...(await sessions.unreadableDirectories())]
+      const packed = await runner.checkpoints.pack(live)
+      if (packed) console.info(`[snapshot] packed ${packed} checkpoint store(s)`)
+    } catch {
+      // Tried again next hour.
+    } finally {
+      packing = false
+    }
+  }
+  let packEvery: ReturnType<typeof setInterval> | undefined
+  const packFirst = setTimeout(() => {
+    void packStores()
+    packEvery = setInterval(() => void packStores(), CHECKPOINT_PACK_EVERY_MS)
+    packEvery.unref?.()
+  }, CHECKPOINT_PACK_FIRST_MS)
+  packFirst.unref?.()
   // history: the search index beside the store, filled in the background.
   const history = await startHistory(dataDirectory, sessions, storage, bus)
   // skills: uninstalled skills older than a week leave the trash, as MiMo's start-up sweep removes its own (L12-12).
@@ -342,6 +370,8 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       stopBashCommands()
       catalogClosed = true
       catalog.stop()
+      clearTimeout(packFirst)
+      if (packEvery) clearInterval(packEvery)
       await shells.closeAll()
       await mcp.close()
       await scheduler.stop()

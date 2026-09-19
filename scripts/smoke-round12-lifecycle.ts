@@ -24,7 +24,7 @@ import { SessionStore } from "../src/server/session/store"
 import { runImport, scanImports } from "../src/server/import"
 import { McpAuthStore } from "../src/server/mcp-oauth"
 import { codeOf, paramsOf } from "../src/shared/errors"
-import { Snapshots } from "../src/server/session/snapshot"
+import { CHECKPOINT_PACK_EVERY_MS, CHECKPOINT_PACK_FIRST_MS, Snapshots } from "../src/server/session/snapshot"
 import { execFileSync } from "node:child_process"
 import { SKILL_TRASH_DAYS, pruneSkillTrash } from "../src/server/skill"
 
@@ -326,6 +326,48 @@ export async function roundTwelveLifecycleChecks(check: Check, section: (name: s
     check("a folder without a time in its name is not this app's and stays", left.includes("not-ours"), left)
     check("a profile with no trash is fine", (await pruneSkillTrash(path.join(root, "no-such-storage"), now)) === 0)
     check("the window is MiMo's seven days", SKILL_TRASH_DAYS === 7)
+  }
+
+  // ----------------------------------------------------------------- L12-13
+  section("Round 12 (L12-13): checkpoint stores are packed, never pruned")
+  {
+    const base = path.join(root, "packing")
+    const project = path.join(base, "project")
+    await fs.mkdir(project, { recursive: true })
+    execFileSync("git", ["init", "-q"], { cwd: project })
+    const snapshots = new Snapshots(path.join(base, "snapshot"))
+    const bodies: string[] = []
+    for (let n = 0; n < 40; n++) bodies.push(await snapshots.keep(project, Buffer.from(`undo body number ${n} ${"x".repeat(n * 50)}`)))
+    const store = path.join(base, "snapshot", (await fs.readdir(path.join(base, "snapshot"))).find((name) => /^[0-9a-f]{40}$/.test(name))!)
+    const counts = () => {
+      const text = execFileSync("git", ["--git-dir", store, "count-objects", "-v"], { encoding: "utf8" })
+      const field = (name: string) => Number(new RegExp(`^${name}: (\\d+)`, "m").exec(text)?.[1] ?? NaN)
+      return { loose: field("count"), packed: field("in-pack") }
+    }
+    const before = counts()
+    // One pass, with a body kept while it runs: the store's own queue puts one after the other.
+    const [packed, during] = await Promise.all([snapshots.pack([project, project]), snapshots.keep(project, Buffer.from("kept while packing"))])
+    const after = counts()
+    check("every body starts loose", before.loose >= 40 && before.packed === 0, before)
+    check("a pass packs the store once, however often its folder is named", packed === 1, packed)
+    check("and leaves nothing loose that was there before", after.loose <= 1 && after.packed >= 40, after)
+    const readable = await Promise.all(bodies.map(async (id, n) => (await snapshots.fetch(project, id))?.toString("utf8") === `undo body number ${n} ${"x".repeat(n * 50)}`))
+    check("every undo body - unreachable from any ref - is still there, byte for byte", readable.every(Boolean), readable.filter((ok) => !ok).length)
+    check("and so is one kept while the pack ran", (await snapshots.fetch(project, during))?.toString("utf8") === "kept while packing")
+    const again = await snapshots.pack([project])
+    check("a second pass keeps everything too", again === 1 && (await snapshots.fetch(project, bodies[7]!)) !== undefined && counts().loose === 0, counts())
+
+    const bare = path.join(base, "no-store")
+    await fs.mkdir(bare, { recursive: true })
+    const storesBefore = (await fs.readdir(path.join(base, "snapshot"))).length
+    check("a folder with no store is not given one", (await snapshots.pack([bare])) === 0 && (await fs.readdir(path.join(base, "snapshot"))).length === storesBefore)
+
+    const index = await fs.readFile(path.join(process.cwd(), "src", "server", "index.ts"), "utf8")
+    check("the first pass is a minute after start and then hourly, as MiMo's", CHECKPOINT_PACK_FIRST_MS === 60_000 && CHECKPOINT_PACK_EVERY_MS === 3_600_000)
+    check(
+      "and neither timer holds the process open, and both stop with the backend",
+      /packFirst\.unref\?\.\(\)/.test(index) && /packEvery\.unref\?\.\(\)/.test(index) && /clearTimeout\(packFirst\)/.test(index) && /clearInterval\(packEvery\)/.test(index),
+    )
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)

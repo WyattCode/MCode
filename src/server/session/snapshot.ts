@@ -631,7 +631,27 @@ class Repo {
     if (size === undefined) return undefined
     return body.subarray(end + 1, end + 1 + size)
   }
+
+  /**
+   * Packs every object into one pack, unreachable ones included (L12-13).
+   *
+   * Under this repository's lock and, when the same store is also open for
+   * scanning, under that one's too, so no photograph or kept body is written
+   * while the packs are being replaced. `--keep-unreachable` is the point: a
+   * kept body and a turn's trees are reachable from no ref by design, and a
+   * plain `-ad` would drop the ones already packed and leave the loose ones
+   * loose. Nothing is ever pruned.
+   */
+  pack(alongside?: Repo): Promise<boolean> {
+    const run = async () => (await this.git(["repack", "-a", "-d", "--keep-unreachable", "-q"])).code === 0
+    return this.lock(() => (alongside && alongside !== this ? alongside.lock(run) : run()))
+  }
 }
+
+/** When the first repack of the checkpoint stores runs after start-up, as MiMo's first snapshot cleanup does. */
+export const CHECKPOINT_PACK_FIRST_MS = 60_000
+/** And how often after that: MiMo cleans its snapshot stores hourly. */
+export const CHECKPOINT_PACK_EVERY_MS = 60 * 60_000
 
 /**
  * One turn's recording.
@@ -1307,6 +1327,37 @@ export class Snapshots {
       if (!spokenFor.has(digest)) this.ledgers.delete(file)
     }
     return removed
+  }
+
+  /**
+   * Repacks the stores of these project folders, once each (L12-13).
+   *
+   * A store is only ever added to: every turn leaves loose objects, and
+   * nothing packed them, so two conversations' stores had reached 7,000 loose
+   * objects and 58 MB. MiMo runs `git gc --prune=7.days` over its own hourly;
+   * its prune cannot be copied, because every undo body here is unreachable by
+   * design, so this packs without ever pruning. A folder with no finished store
+   * is skipped rather than given one.
+   *
+   * @returns how many stores were packed.
+   */
+  async pack(live: readonly string[]): Promise<number> {
+    let packed = 0
+    const seen = new Set<string>()
+    for (const directory of live) {
+      const digest = this.digest(directory)
+      if (seen.has(digest)) continue
+      seen.add(digest)
+      if (!(await fs.stat(path.join(this.root, digest, "info", "attributes")).catch(() => undefined))) continue
+      try {
+        const key = process.platform === "win32" ? directory.toLowerCase() : directory
+        const scanning = await this.repos.get(key)?.catch(() => undefined)
+        if (await (await this.checkpoints(directory)).pack(scanning)) packed += 1
+      } catch {
+        // A store collected or unusable right now is left for the next pass.
+      }
+    }
+    return packed
   }
 
   /**
