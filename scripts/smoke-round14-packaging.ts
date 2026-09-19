@@ -14,6 +14,7 @@ import os from "node:os"
 import path from "node:path"
 import { createRequire } from "node:module"
 import type { Check } from "./smoke-round5"
+import * as runtimesScript from "./runtimes.mjs"
 import { NsisUpdater } from "electron-updater"
 import { createUpdater, resyncInstallerBase, type AutoUpdaterLike, type FeedInfo } from "../src/main/updater"
 
@@ -349,5 +350,49 @@ export async function roundFourteenPackagingChecks(check: Check, section: (name:
     }
     const wanted = entryPoints.filter((entry) => !entry.includes("*"))
     check("every entry point a dependency declares still ships", wanted.length > 20 && wanted.every((entry) => !dropped.includes(entry)), wanted.filter((entry) => dropped.includes(entry)))
+  }
+
+  // ------------------------------------------------------------------ P14-3
+  section("Round 14 (P14-3): the bundled Python ships without its packages' test suites, as MiMo's does")
+  {
+    const script = await read("scripts/runtimes.mjs")
+    const site = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r14-site-"))
+    try {
+      const put = async (rel: string, text = "") => {
+        await fs.mkdir(path.dirname(path.join(site, rel)), { recursive: true })
+        await fs.writeFile(path.join(site, rel), text)
+      }
+      await put("numpy/__init__.py", "from . import testing\n")
+      await put("numpy/tests/test_a.py")
+      await put("numpy/lib/tests/data/x.npy")
+      await put("numpy/testing/__init__.py")
+      await put("numpy/testing/tests/test_b.py")
+      await put("pandas/_testing/__init__.py")
+      await put("pandas/tests/test_c.py")
+      await put("pkg/test/test_d.py")
+      // Imported by the package's own code, absolutely or from beside it: kept.
+      await put("pkg/helpers/tests/__init__.py")
+      await put("pkg/uses.py", "from pkg.helpers.tests import fixture\n")
+      await put("pkg/near/tests/__init__.py")
+      await put("pkg/near/__init__.py", "from .tests import thing\n")
+      // A top-level package of that name, and anything that is not a package folder: kept.
+      await put("tests/__init__.py")
+      await put("pkg-1.0.dist-info/tests/x")
+      const found = (runtimesScript.testFolders(site) as string[]).map((folder) => path.relative(site, folder).replace(/\\/g, "/")).sort()
+      check(
+        "every tests/test folder inside a package goes, and nothing else",
+        JSON.stringify(found) === JSON.stringify(["numpy/lib/tests", "numpy/testing/tests", "numpy/tests", "pandas/tests", "pkg/test"]),
+        found,
+      )
+      check("numpy.testing and pandas._testing, which the libraries import, stay", !found.some((folder) => /(^|\/)_?testing$/.test(folder)))
+      check("a tests folder the package's own code imports stays", !found.includes("pkg/helpers/tests") && !found.includes("pkg/near/tests"))
+    } finally {
+      await fs.rm(site, { recursive: true, force: true }).catch(() => undefined)
+    }
+    const build = body(script, "async function build(")
+    const pruneAt = build.indexOf("testFolders(sitePackages)")
+    const probeAt = build.indexOf("import openpyxl")
+    check("the build removes them right after the install, and only then proves the libraries import", pruneAt > build.indexOf('pipInstall("packages"') && pruneAt < probeAt && /import openpyxl[^"`]*\bnumpy\.testing, pandas\.testing\b/.test(build))
+    check("a tree built before this is rebuilt (the layout number moved on)", Number(/^const LAYOUT = (\d+)$/m.exec(script)?.[1]) >= 4)
   }
 }

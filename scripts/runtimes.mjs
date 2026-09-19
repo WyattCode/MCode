@@ -36,7 +36,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 
 export const RUNTIME_PLATFORM = "win32-x64"
 /** Raised when the way the tree is laid out changes, so an older tree is rebuilt. */
-const LAYOUT = 3
+const LAYOUT = 4
 
 export const NODE = {
   id: "node",
@@ -249,7 +249,11 @@ async function build(staging, cacheDir, log, allowDownload) {
   // pip replaces itself the ordinary way; --target would delete the package it is running from.
   pipInstall("pip", WHEELS.filter((wheel) => wheel.name === "pip"), ["--upgrade"])
   pipInstall("packages", WHEELS.filter((wheel) => wheel.name !== "pip"), ["--target", sitePackages])
-  const installed = run(python, ["-I", "-B", "-c", `import sys; sys.path.insert(0, r"${sitePackages}"); import openpyxl, docx, pptx, pypdf, pandas, lxml, PIL, reportlab, pypdfium2; print(openpyxl.__version__, pandas.__version__)`], { env: pythonEnv })
+  const tests = testFolders(sitePackages)
+  for (const folder of tests) await fs.promises.rm(folder, { recursive: true, force: true })
+  log(`removed ${tests.length} test suites from site-packages`)
+  // Checked after the removal, with the test helpers numpy and pandas import themselves.
+  const installed = run(python, ["-I", "-B", "-c", `import sys; sys.path.insert(0, r"${sitePackages}"); import openpyxl, docx, pptx, pypdf, pandas, numpy, numpy.testing, pandas.testing, lxml, PIL, reportlab, pypdfium2; print(openpyxl.__version__, pandas.__version__)`], { env: pythonEnv })
   log(`python packages import (openpyxl, pandas: ${installed.trim()})`)
 
   /*
@@ -267,6 +271,45 @@ async function build(staging, cacheDir, log, allowDownload) {
   }
   const leaks = findLocalPaths(staging, [staging, cacheDir, os.homedir()])
   if (leaks.length) throw new Error(`the runtime tree names this machine in: ${leaks.slice(0, 5).join(", ")}`)
+}
+
+/*
+ * MiMo's bundled Python has no test suites: pandas' and numpy's (about 23 MB)
+ * are pytest data, never imported by the libraries themselves. Only folders
+ * named `tests` or `test` inside an installed package are candidates - never a
+ * top-level package, never an importable module like `numpy.testing` or
+ * `pandas._testing` - and a candidate the package's own code imports (by its
+ * dotted name, or relatively from beside it) is kept.
+ */
+const TEST_FOLDER = /^tests?$/
+
+export function testFolders(sitePackages) {
+  const candidates = []
+  const walk = (directory, dotted) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      const full = path.join(directory, entry.name)
+      if (dotted && TEST_FOLDER.test(entry.name)) candidates.push({ full, dotted: `${dotted}.${entry.name}`, name: entry.name })
+      else walk(full, dotted ? `${dotted}.${entry.name}` : entry.name)
+    }
+  }
+  for (const entry of fs.readdirSync(sitePackages, { withFileTypes: true })) {
+    if (entry.isDirectory() && /^[A-Za-z_][\w]*$/.test(entry.name)) walk(path.join(sitePackages, entry.name), entry.name)
+  }
+  const inside = (file) => candidates.some((candidate) => file.startsWith(candidate.full + path.sep))
+  const sources = candidates.length ? listFiles(sitePackages).filter((file) => file.endsWith(".py") && !inside(file)) : []
+  const texts = new Map(sources.map((file) => [file, fs.readFileSync(file, "utf8")]))
+  return candidates
+    .filter(({ full, dotted, name }) => {
+      const absolute = new RegExp(`^\\s*(?:from|import)\\s+${dotted.replace(/\./g, "\\.")}\\b`, "m")
+      const relative = new RegExp(`^\\s*from\\s+\\.(?:${name}\\b|\\s+import\\s+(?:.*,\\s*)?${name}\\b)`, "m")
+      for (const [file, text] of texts) {
+        if (absolute.test(text)) return false
+        if (path.dirname(file) === path.dirname(full) && relative.test(text)) return false
+      }
+      return true
+    })
+    .map(({ full }) => full)
 }
 
 function listFiles(root) {
