@@ -736,13 +736,34 @@ function createWindow(show = true): BrowserWindow {
   })
 
   /*
-   * MiMo's session-end: Windows is shutting down or logging off. That is a
+   * Windows shutting down, restarting or logging off (I13-3). Electron emits
+   * neither before-quit nor quit when Windows ends the app that way, so the
+   * teardown those run never happened: a window moved since it last hid came
+   * back at its old place after a reboot, and the final writes, the MCP
+   * children, the cron lock and a pending install were left as they were.
+   *
+   * query-session-end, the first word of it, now asks for the quit itself -
+   * without preventDefault, so the shutdown is never held up - and before-quit
+   * runs its teardown as for any quit. If another program then cancels the
+   * shutdown, MCode has still quit; Windows asks only once. Either way it is a
    * quit, so the close rule below lets the window go instead of hiding it to
-   * the tray, which would otherwise hold up the shutdown.
+   * the tray (MiMo's session-end).
+   */
+  window.on("query-session-end", () => {
+    console.info("[quit] query-session-end (OS shutdown or logoff ahead)")
+    noteOsQuit()
+    app.quit()
+  })
+  /*
+   * The last word: the process may end as soon as this returns. The window
+   * state is written now, synchronously, in case the teardown does not get
+   * that far; the teardown is started if query-session-end never came.
    */
   window.on("session-end", () => {
     console.info("[quit] session-end (OS shutdown or logoff)")
     noteOsQuit()
+    for (const each of windows) saveWindowState(each)
+    if (!closing) app.quit()
   })
 
   /*
@@ -1728,19 +1749,20 @@ app.on("window-all-closed", () => {
  * Two different questions, which used to share one flag and so answered each
  * other wrongly (N11-1).
  *
- * `osQuitting`: the OS is taking the app away - Windows session-end, or
- * powerMonitor's shutdown elsewhere. It only tells the close rule below to let
- * the last window go instead of hiding it to the tray, and tells the wake
- * repaint to stay out of the way.
+ * `osQuitting`: the OS is taking the app away - Windows query-session-end or
+ * session-end, or powerMonitor's shutdown elsewhere. It only tells the close
+ * rule below to let the last window go instead of hiding it to the tray, and
+ * tells the wake repaint to stay out of the way.
  *
  * `closing`: before-quit has already run once. It is nothing but a reentry
  * guard, so that the second app.quit() at the end of the teardown does not
- * start the teardown again.
+ * start the teardown again, and it tells a launch arriving meanwhile to wait
+ * for the quit (I13-2).
  *
- * Sharing one flag meant an OS shutdown set it through session-end and then
- * before-quit's first line returned, skipping backend.close() entirely: the
- * shells, the MCP children, the scheduler and a pending install were all left
- * where they were.
+ * This comment used to say that the shared flag made a Windows shutdown skip
+ * backend.close(). The flag was not what did it: Electron emits no before-quit
+ * at all when Windows ends the app, so the teardown never ran whatever the flag
+ * said. It runs now because query-session-end asks for the quit (I13-3).
  */
 let osQuitting = false
 let closing = false

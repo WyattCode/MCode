@@ -150,4 +150,29 @@ export async function roundThirteenInstanceChecks(check: Check, section: (name: 
       /startBounds\(saved\.bounds, areas, MIN\)/.test(restoreBody) && /screen\.getAllDisplays\(\)\.map\(\(display\) => display\.workArea\)/.test(restoreBody) && !/overlapX|>= 120/.test(state),
     )
   }
+
+  // ------------------------------------------------------------------ I13-3
+  section("Round 13 (I13-3): a Windows shutdown or logoff runs the quit's teardown")
+  {
+    const query = body(main, 'window.on("query-session-end", () => {')
+    const end = body(main, 'window.on("session-end", () => {')
+    const beforeQuit = body(main, 'app.on("before-quit", (event) => {')
+    check("query-session-end asks for the quit, so before-quit's teardown runs", /noteOsQuit\(\)/.test(query) && /app\.quit\(\)/.test(query), query)
+    check("and never holds the shutdown up", query !== "" && !/preventDefault/.test(query))
+    check(
+      "the teardown it reaches saves the windows, closes the backend and runs a pending install",
+      /saveWindowState\(window\)/.test(beforeQuit) && /started\.close\(\)/.test(beforeQuit) && /runPendingInstall\(\)/.test(beforeQuit),
+    )
+    check(
+      "session-end writes every window's state synchronously, and starts the teardown if nothing has",
+      /for \(const each of windows\) saveWindowState\(each\)/.test(end) && /if \(!closing\) app\.quit\(\)/.test(end) && end.indexOf("saveWindowState") < end.indexOf("app.quit()"),
+      end,
+    )
+    const state = await fs.readFile(path.join(root, "src/main/window-state.ts"), "utf8")
+    check("that save is synchronous", /writeAtomicSync\(file\(\)/.test(body(state, "export function saveWindowState(window: BrowserWindow): void {")))
+    check(
+      "the comment no longer blames the shared flag for the skipped teardown",
+      !/Sharing one flag meant an OS shutdown set it through session-end and then\s*\n\s*\* before-quit's first line returned/.test(main) && /Electron emits no before-quit/.test(main),
+    )
+  }
 }
