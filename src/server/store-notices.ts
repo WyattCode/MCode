@@ -1,5 +1,6 @@
 import type { ResponseMap } from "@shared/protocol"
 import type { Runtime } from "./index"
+import { automationService } from "./automation/service"
 
 /**
  * Stored documents the backend found damaged or unreadable, said in the window.
@@ -22,6 +23,11 @@ export async function storeNotices(runtime: Runtime): Promise<StoreNotice[]> {
   // L12-11: conversations whose record would not read, left where they are.
   const unreadable = await runtime.sessions.unreadable().catch(() => [])
   if (unreadable.length) found.push({ code: "error.sessionsUnreadable", params: { count: unreadable.length, path: runtime.storage.folder("session") } })
+  // L12-14: the scheduled tasks would not read; until now only the model's `list` said so.
+  const automations = automationService()
+  await automations?.started?.catch(() => undefined)
+  const tasks = automations?.unreadable
+  if (tasks?.problem) found.push({ code: "error.automationsInvalid", params: { path: tasks.evidence ?? tasks.file } })
   const said = told.get(runtime) ?? new Set<string>()
   told.set(runtime, said)
   const fresh = found.filter((notice) => !said.has(notice.code))

@@ -30,6 +30,6 @@ export function startAutomations(dataDirectory: string, runner: SessionRunner, s
     if (event.type === "session.idle") void service.turnEnded(event.sessionID)
   })
   bindAutomations(service)
-  void service.start()
+  service.started = service.start()
   return service
 }

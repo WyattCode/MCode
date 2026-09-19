@@ -27,6 +27,7 @@ import { codeOf, paramsOf } from "../src/shared/errors"
 import { CHECKPOINT_PACK_EVERY_MS, CHECKPOINT_PACK_FIRST_MS, Snapshots } from "../src/server/session/snapshot"
 import { execFileSync } from "node:child_process"
 import { SKILL_TRASH_DAYS, pruneSkillTrash } from "../src/server/skill"
+import { AutomationService, bindAutomations, type AutomationDeps } from "../src/server/automation/service"
 
 const exists = (file: string) =>
   fs.access(file).then(
@@ -370,5 +371,58 @@ export async function roundTwelveLifecycleChecks(check: Check, section: (name: s
     )
   }
 
+  // ----------------------------------------------------------------- L12-14
+  section("Round 12 (L12-14): a damaged automations.json is said in the window at start-up")
+  {
+    const base = path.join(root, "automations")
+    await fs.mkdir(base, { recursive: true })
+    const file = path.join(base, "automations.json")
+    await fs.writeFile(file, '{ "automations": [ { "id": "daily"')
+    const service = new AutomationService(automationDeps(file))
+    bindAutomations(service)
+    try {
+      // What start.ts does: the start is kept, so a report can wait for the file to have been read.
+      service.started = service.start({ interval: false })
+      const runtime = { sessions: { unreadable: async () => [] } } as unknown as Runtime
+      const said = await storeNotices(runtime)
+      await service.started
+      const aside = service.unreadable.evidence
+      check("the file is moved aside as before", Boolean(aside) && path.basename(aside!).startsWith("automations.json.corrupt-"), aside)
+      check("and the window is told, naming where it was kept", said.length === 1 && said[0]?.code === "error.automationsInvalid" && said[0]?.params?.path === aside, said)
+      check("once", (await storeNotices(runtime)).length === 0)
+
+      const healthy = new AutomationService(automationDeps(path.join(base, "fresh.json")))
+      bindAutomations(healthy)
+      healthy.started = healthy.start({ interval: false })
+      check("a profile whose tasks read says nothing", (await storeNotices({ sessions: { unreadable: async () => [] } } as unknown as Runtime)).length === 0)
+      await healthy.stop()
+    } finally {
+      await service.stop()
+      bindAutomations(undefined)
+    }
+  }
+
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
+}
+
+/** An automation service's surroundings with nothing behind them: no model, no conversations. */
+function automationDeps(file: string): AutomationDeps {
+  return {
+    file,
+    now: () => Date.UTC(2026, 8, 20, 12),
+    sessions: {
+      get: async () => undefined,
+      create: async () => {
+        throw new Error("no conversations here")
+      },
+      messages: async () => [],
+    },
+    prompt: async () => undefined,
+    busy: () => false,
+    models: () => [],
+    agent: () => "build",
+    effort: () => undefined,
+    scratch: async () => path.dirname(file),
+    publish: () => undefined,
+  }
 }

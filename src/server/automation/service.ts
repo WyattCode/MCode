@@ -233,6 +233,8 @@ export class AutomationService {
   private reports: TerminalReport[] = []
   /** How many reports the last start replayed, for the checks. */
   replayed = 0
+  /** The start that read the saved tasks, for anything that reports on them once they are read (L12-14). */
+  started: Promise<void> | undefined
 
   constructor(private readonly deps: AutomationDeps) {}
 
@@ -904,8 +906,8 @@ export class AutomationService {
   }
 
   /** What went wrong reading the saved tasks, and where the damaged file was kept. */
-  get unreadable(): { problem?: string; evidence?: string; blocked: boolean } {
-    return { problem: this.problem, evidence: this.evidence, blocked: Boolean(this.blocked) }
+  get unreadable(): { problem?: string; evidence?: string; blocked: boolean; file: string } {
+    return { problem: this.problem, evidence: this.evidence, blocked: Boolean(this.blocked), file: this.deps.file }
   }
 }
 
