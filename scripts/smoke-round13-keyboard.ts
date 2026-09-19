@@ -324,6 +324,19 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
         /if \(open\.value\) active\.value = hit\n\s+else choose\(props\.options\[hit\]\.value\)/.test(select) && /if \(event\.key === " " && !typed\.searching\(\)\) return false/.test(select),
     )
   }
+
+  // ---------------------------------------------------------------- K13-14
+  {
+    const app = await read("src/renderer/src/App.vue")
+    const click = app.slice(app.indexOf("function onThreadClick("), app.indexOf("\n}\n", app.indexOf("function onThreadClick(")))
+    const controls = /const THREAD_CONTROLS =\s+"([^"]+)"/.exec(app)?.[1] ?? ""
+    const wanted = ["button", "a", "input", "textarea", "select", "label", "[contenteditable]", "[role=button]", "[role=textbox]", "[role=link]", "[role=menuitem]", "[role=checkbox]", "[role=tab]"]
+    check("K13-14: a click in the thread leaves MiMo's list of controls alone", wanted.every((entry) => controls.split(", ").includes(entry)), controls)
+    check(
+      "K13-14: anywhere else, with nothing selected, it puts the caret at the end of the box",
+      /<MessageStream v-else ref="stream" @click="onThreadClick" \/>/.test(app) && /if \(window\.getSelection\(\)\?\.toString\(\)\) return/.test(click) && /closest\?\.\(THREAD_CONTROLS\)\) return\n\s+composer\.value\?\.focus\(\)/.test(click),
+    )
+  }
 }
 
 /*

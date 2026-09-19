@@ -1279,6 +1279,17 @@ function isNewTaskChord(chord: string): boolean {
   return chord === "Ctrl+N" && !retiredChords.value.has(chord)
 }
 
+/* What a click in the thread leaves alone because it takes the click or the keyboard itself: MiMo's list. */
+const THREAD_CONTROLS =
+  "button, a, input, textarea, select, label, [contenteditable], [role=button], [role=textbox], [role=link], [role=menuitem], [role=checkbox], [role=tab]"
+
+/** MiMo: a click on the thread, not on a control and with nothing selected, puts the caret at the end of the box. */
+function onThreadClick(event: MouseEvent) {
+  if (window.getSelection()?.toString()) return
+  if ((event.target as Element | null)?.closest?.(THREAD_CONTROLS)) return
+  composer.value?.focus()
+}
+
 async function focusComposer() {
   await new Promise((resolve) => setTimeout(resolve, 0))
   composer.value?.focus()
@@ -3948,7 +3959,7 @@ onBeforeUnmount(() => {
           />
 
           <SessionHero v-if="empty" />
-          <MessageStream v-else ref="stream" />
+          <MessageStream v-else ref="stream" @click="onThreadClick" />
           <SessionSpine v-if="!empty" :scroller="stream?.scroller" />
           <!-- MiMo's boundaries inside the page: the info panel, and the composer's dock zone, each apart from the transcript. -->
           <ErrorBoundary :reset-key="app.currentID ?? ''">
