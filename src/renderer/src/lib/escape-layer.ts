@@ -1,4 +1,4 @@
-import { onBeforeUnmount, onMounted } from "vue"
+import { onBeforeUnmount, onMounted, onScopeDispose, watch } from "vue"
 
 /**
  * Escape for the layers that sit on top of the page: menus, confirmations and
@@ -47,6 +47,20 @@ export function useEscapeLayer(close: Layer): void {
   let release: (() => void) | undefined
   onMounted(() => (release = escapeLayer(close)))
   onBeforeUnmount(() => release?.())
+}
+
+/** `escapeLayer` while `open` holds, for a menu that lives inside an always-mounted component. */
+export function useEscapeLayerWhile(open: () => unknown, close: Layer): void {
+  let release: (() => void) | undefined
+  watch(
+    () => Boolean(open()),
+    (on) => {
+      release?.()
+      release = on ? escapeLayer(close) : undefined
+    },
+    { immediate: true },
+  )
+  onScopeDispose(() => release?.())
 }
 
 const DIALOGS = '[aria-modal="true"]'

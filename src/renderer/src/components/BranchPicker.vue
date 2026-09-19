@@ -6,6 +6,7 @@ import { notify, notifyFailure } from "../lib/toast"
 import { t } from "../lib/i18n"
 import { readBranches, switchBranch } from "../lib/branch-switch"
 import { onMenuRowKey } from "../lib/menu-keys"
+import { useEscapeLayerWhile } from "../lib/escape-layer"
 
 /**
  * The home screen's branch chip and its menu, laid out from MiMo's.
@@ -132,10 +133,6 @@ function onNewKey(event: KeyboardEvent) {
   if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229) {
     event.preventDefault()
     void create()
-  } else if (event.key === "Escape") {
-    event.preventDefault()
-    creating.value = false
-    draft.value = ""
   }
 }
 
@@ -148,28 +145,37 @@ function onMenuKey(event: KeyboardEvent) {
   onMenuRowKey(event, [...(root.value?.querySelectorAll<HTMLElement>(".menu button.row:not(:disabled)") ?? [])])
 }
 
-function onKeydown(event: KeyboardEvent) {
-  if (event.key !== "Escape") return
-  if (pending.value) {
-    event.preventDefault()
-    pending.value = undefined
-  } else if (open.value) {
-    event.preventDefault()
-    open.value = false
-  }
-}
+/*
+ * Escape closes the menu wherever focus is inside it, the search included,
+ * which is where focus lands on open; the field for a new branch backs out of
+ * creating first. The switch confirmation is a layer of its own.
+ */
+useEscapeLayerWhile(
+  () => open.value,
+  () => {
+    if (!creating.value) {
+      open.value = false
+      return
+    }
+    creating.value = false
+    draft.value = ""
+    search.value?.focus()
+  },
+)
+useEscapeLayerWhile(
+  () => pending.value,
+  () => (pending.value = undefined),
+)
 
 /* MiMo re-reads the home branch when the window comes back: a switch made in a terminal shows on return. */
 const onFocus = () => void refresh()
 
 onMounted(() => {
   window.addEventListener("mousedown", onPointerDown, true)
-  window.addEventListener("keydown", onKeydown)
   window.addEventListener("focus", onFocus)
 })
 onBeforeUnmount(() => {
   window.removeEventListener("mousedown", onPointerDown, true)
-  window.removeEventListener("keydown", onKeydown)
   window.removeEventListener("focus", onFocus)
 })
 </script>

@@ -11,7 +11,8 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
-import { dialogOpen, escapeLayer, layerOpen } from "../src/renderer/src/lib/escape-layer"
+import { effectScope, nextTick, ref } from "vue"
+import { dialogOpen, escapeLayer, layerOpen, useEscapeLayerWhile } from "../src/renderer/src/lib/escape-layer"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
 const component = (name: string) => read(`src/renderer/src/components/${name}.vue`)
@@ -114,6 +115,33 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
       "K13-1: and closes only when no layer was up and none took the key, with no hand-kept list (the models page's confirmation was missing from it)",
       /if \(event\.defaultPrevented\) return/.test(body) && /if \(layerAtPress\) return\s+requestClose\(\)/.test(body) && !/removingProject\.value \|\|/.test(body) && !/connectOpen/.test(body),
       body,
+    )
+  }
+
+  // ---------------------------------------------------------------- K13-2
+  {
+    const doc = standInDocument([])
+    ;(globalThis as { document?: unknown }).document = doc
+    const open = ref(false)
+    const scope = effectScope()
+    scope.run(() => useEscapeLayerWhile(() => open.value, () => (open.value = false)))
+    const shut = press(doc, "Escape")
+    open.value = true
+    await nextTick()
+    const taken = press(doc, "Escape")
+    await nextTick()
+    const closedByEscape = !open.value
+    open.value = true
+    await nextTick()
+    scope.stop()
+    const afterStop = press(doc, "Escape")
+    ;(globalThis as { document?: unknown }).document = saved
+    check("K13-2: a menu held by useEscapeLayerWhile takes Escape only while it is open, and lets go when its owner goes", !shut.defaultPrevented && taken.defaultPrevented && closedByEscape && !afterStop.defaultPrevented)
+
+    const picker = await component("BranchPicker")
+    check(
+      "K13-2: the branch menu closes on Escape wherever focus is in it, its search included; the switch confirmation is its own layer",
+      /useEscapeLayerWhile\(\s*\(\) => open\.value,/.test(picker) && /useEscapeLayerWhile\(\s*\(\) => pending\.value,/.test(picker) && !/addEventListener\("keydown"/.test(picker),
     )
   }
 }
