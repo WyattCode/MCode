@@ -27,6 +27,7 @@ import { localServerOf } from "@shared/browser-page"
 import type { VoiceDraft, VoiceEdit } from "@shared/protocol"
 import type { Runtime } from "./index"
 import { customModelOf } from "./config"
+import { automationService } from "./automation/service"
 import { IGNORED, insideReal, resolveInsideReal } from "./tool/fs-util"
 import { protectedFilter } from "./protected-paths"
 import { readableFile, workingRoots, writableFile } from "./file-access"
@@ -264,6 +265,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         permissions: runtime.permissions.outstanding(),
         // session chat: replayed for the same reason, so a reopened window still marks the rows.
         chatLinks: runtime.runner.chat.links(),
+        // automation: and the tasks, whose block in a row's tooltip is drawn from them.
+        automations: automationService()?.sidebar() ?? [],
         // And the waits between attempts, which live nowhere else at all (N11-17).
         retries: runtime.runner.retryRows(),
       } satisfies Handled<"session.list">

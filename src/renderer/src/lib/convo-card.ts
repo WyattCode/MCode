@@ -1,4 +1,4 @@
-import type { ChatLink } from "@shared/protocol"
+import type { AutomationTask, ChatLink } from "@shared/protocol"
 import { dateIn, language, sessionTitle, t } from "./i18n"
 import { projectName } from "./project"
 import { sessionGroup, type GroupContext } from "@shared/session-group"
@@ -40,6 +40,28 @@ export function chatLinkText(link: ChatLink): string {
 }
 
 /**
+ * automation: what a scheduled task adds to a conversation's card.
+ *
+ * MiMo names the task, and then either says this conversation is a run of it
+ * and when that run happened, or - for the conversation the task runs in -
+ * when it next runs. A conversation both a task's target and the home of an
+ * earlier run reads as the run, which is the more specific of the two.
+ */
+export function automationLines(sessionID: string, tasks: readonly AutomationTask[]): string[] {
+  const ran = tasks.find((task) => task.runs.some((run) => run.sessionID === sessionID))
+  if (ran) {
+    const at = ran.runs.find((run) => run.sessionID === sessionID)?.at ?? 0
+    return [t("convoTip.automationTask", { name: sessionTitle(ran.title) }), ...(at ? [t("convoTip.automationRun", { time: cardTime(at) })] : [])]
+  }
+  const target = tasks.find((task) => task.targetThreadId === sessionID)
+  if (!target) return []
+  return [
+    t("convoTip.automationTask", { name: sessionTitle(target.title) }),
+    ...(target.nextAt ? [t("convoTip.automationNext", { time: cardTime(target.nextAt) })] : []),
+  ]
+}
+
+/**
  * What MiMo's card says about a conversation: its title, the project it is in,
  * the folder it works in and when it last changed. A task without a project
  * has no project line.
@@ -48,11 +70,12 @@ export function chatLinkText(link: ChatLink): string {
  * conversation; given `jump`, a line whose other side still exists opens it.
  */
 export function convoCard(
-  session: { title: string; directory: string; updated: number; scratch?: boolean; group?: string },
+  session: { id?: string; title: string; directory: string; updated: number; scratch?: boolean; group?: string },
   names?: Record<string, string>,
   links: readonly ChatLink[] = [],
   jump?: (sessionID: string) => void,
   context?: GroupContext,
+  automations: readonly AutomationTask[] = [],
 ): { title: string; lines: (string | TipLine | undefined)[] } {
   // The project it is filed under, which 移动至项目 may have moved; the folder line below still says where it works.
   const group = sessionGroup(session, context)
@@ -62,6 +85,7 @@ export function convoCard(
       group ? t("convoTip.project", { name: projectName(group, names) }) : undefined,
       session.directory || undefined,
       session.updated ? t("convoTip.updatedAt", { time: cardTime(session.updated) }) : undefined,
+      ...(session.id ? automationLines(session.id, automations) : []),
       ...sortedChatLinks(links).map((link): TipLine => {
         const peer = link.peerID
         return {

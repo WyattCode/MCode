@@ -444,6 +444,25 @@ export const CHAT_TASK_STATUSES = ["idle", "working", "blocked", "done"] as cons
 export type ChatTaskStatus = (typeof CHAT_TASK_STATUSES)[number]
 
 /**
+ * automation: one scheduled task, as the side column needs it.
+ *
+ * MiMo's release build draws a task block in a conversation row's tooltip: the
+ * task's name, and either when this conversation's run happened or when the
+ * task next runs. That is the one piece of its scheduled-task interface that
+ * is not locked behind its E2E flag, so it is the only one this app draws.
+ */
+export interface AutomationTask {
+  id: string
+  title: string
+  /** The conversation it runs in, when it runs in one that already exists. */
+  targetThreadId?: string
+  /** When it next runs; absent while it is paused or has run out of occurrences. */
+  nextAt?: number
+  /** The conversations its runs went to, newest first, with when each started. */
+  runs: { sessionID: string; at: number }[]
+}
+
+/**
  * session chat: one message between two conversations, from one side's view.
  *
  * Outbound is the caller waiting on a reply; inbound is the target handling a
@@ -2261,6 +2280,8 @@ export interface ResponseMap {
     permissions: PermissionRequest[]
     /** session chat: the messages in flight, for a window that was not listening when they started. */
     chatLinks: Record<string, ChatLink[]>
+    /** automation: the scheduled tasks, replayed for the same reason the two above are. */
+    automations: AutomationTask[]
     /**
      * The turns waiting between attempts, by conversation (N11-17).
      *
@@ -2502,6 +2523,8 @@ export type ServerEvent =
     }
   /** session chat: every conversation's messages in flight, whole, whenever one changes. */
   | { type: "session.chatLinks"; links: Record<string, ChatLink[]> }
+  /** automation: the scheduled tasks as the side column's tooltips need them, whenever one of them changes. */
+  | { type: "automation.tasks"; tasks: AutomationTask[] }
   /**
    * Incremental append to a part already announced.
    *

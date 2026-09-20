@@ -27,7 +27,7 @@ import { projectName } from "../lib/project"
 import { knownFolder, listedProjects, projectsByRecency } from "@shared/projects"
 import type { GroupContext } from "@shared/session-group"
 import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fallback"
-import type { ChatLink } from "@shared/protocol"
+import type { AutomationTask, ChatLink } from "@shared/protocol"
 import { notice, notify, notifyFailure } from "../lib/toast"
 import { findModel, withoutLatest } from "../lib/model"
 import { forgetRunEnded, noteRunEnded, noteToolWrites } from "../lib/ai-touch"
@@ -68,6 +68,8 @@ export const useApp = defineStore("app", () => {
   /** session chat: each conversation's messages in flight with others, as the server last reported them. */
   const chatLinks = shallowRef<Record<string, ChatLink[]>>({})
   const chatLinksOf = (sessionID: string): ChatLink[] => chatLinks.value[sessionID] ?? []
+  /** automation: the scheduled tasks, for the block a conversation row's tooltip draws. */
+  const automationTasks = shallowRef<AutomationTask[]>([])
   /*
    * When each running turn began, as far as this window saw it, and the last
    * turn to end on its own with how long it took - which is what decides
@@ -563,6 +565,9 @@ export const useApp = defineStore("app", () => {
        * showing rolled back turns that are no longer on disk. Read again.
        */
       // session chat: always the whole picture, so it replaces what was there.
+      case "automation.tasks":
+        automationTasks.value = event.tasks
+        break
       case "session.chatLinks":
         chatLinks.value = event.links
         break
@@ -1011,6 +1016,7 @@ export const useApp = defineStore("app", () => {
      */
     pendingPermissions.value = groupPermissions(listed.permissions)
     chatLinks.value = listed.chatLinks ?? {}
+    automationTasks.value = listed.automations ?? []
     noteRetries(listed.retries)
     booted = true
     /*
@@ -1229,6 +1235,7 @@ export const useApp = defineStore("app", () => {
       // published while it was down, a permission request included.
       pendingPermissions.value = groupPermissions(listed.permissions)
       chatLinks.value = listed.chatLinks ?? {}
+      automationTasks.value = listed.automations ?? []
       noteRetries(listed.retries)
       // A fresh socket knows nothing about this window; say again what it is drawing.
       declared = ""
@@ -2293,6 +2300,7 @@ export const useApp = defineStore("app", () => {
     // session chat
     chatLinks,
     chatLinksOf,
+    automationTasks,
     finished,
     automationRuns,
     automationNotice,

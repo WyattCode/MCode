@@ -1,7 +1,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import { createHash } from "node:crypto"
-import type { AgentName, Effort, Message, ModelRef, ServerEvent, SessionInfo, UserMessage } from "@shared/protocol"
+import type { AgentName, AutomationTask, Effort, Message, ModelRef, ServerEvent, SessionInfo, UserMessage } from "@shared/protocol"
 import { quarantine, writeAtomic } from "../storage"
 import { ToolError } from "../tool/types"
 import { nextOccurrence, parseRRule, scheduleLabel } from "./rrule"
@@ -528,6 +528,31 @@ export class AutomationService {
     return this.queue.size
   }
 
+  /**
+   * The tasks as the side column's tooltips need them: the name, where the
+   * task runs, when it next runs, and which conversations its runs went to.
+   *
+   * MiMo's release build draws this and nothing else of its scheduled-task
+   * interface - everything else is behind its E2E flag.
+   */
+  sidebar(): AutomationTask[] {
+    return this.saved.automations.map((automation) => ({
+      id: automation.id,
+      title: automation.title,
+      ...(automation.targetThreadId ? { targetThreadId: automation.targetThreadId } : {}),
+      ...(this.next.has(automation.id) ? { nextAt: this.next.get(automation.id)! } : {}),
+      runs: [...(automation.runHistory ?? [])]
+        .reverse()
+        .filter((record): record is RunRecord & { resultThreadId: string } => typeof record.resultThreadId === "string" && record.resultThreadId.length > 0)
+        .map((record) => ({ sessionID: record.resultThreadId, at: record.startedAt })),
+    }))
+  }
+
+  /** Tells the window the tasks changed; sent whenever one is edited, fires, or is planned again. */
+  private publishSidebar(): void {
+    this.deps.publish({ type: "automation.tasks", tasks: this.sidebar() })
+  }
+
   private save(): Promise<void> {
     // Never written over a document that would not parse: what is in it is the
     // user's only copy, and an empty one on top makes the loss permanent.
@@ -675,6 +700,7 @@ export class AutomationService {
     const answer = async (response: unknown) => {
       const written = JSON.stringify(response)
       if (operationId) this.saved.receipts = [...this.saved.receipts, { operationId, fingerprint, response: written }].slice(-RECEIPTS_KEPT)
+      this.publishSidebar()
       await this.save()
       return written
     }
@@ -939,7 +965,10 @@ export class AutomationService {
       this.noteSettled(entry.runId)
       dirty = true
     }
-    if (dirty) await this.save()
+    if (dirty) {
+      this.publishSidebar()
+      await this.save()
+    }
   }
 
   /** Remembers a settled run id, keeping the ring at its size by dropping the oldest. */
