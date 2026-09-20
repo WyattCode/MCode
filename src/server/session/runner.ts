@@ -1959,6 +1959,8 @@ export class SessionRunner {
         // Where the MCP servers actually live, so a bulk import can be done by editing the file.
         configFile: path.join(this.dataRoot, "config.json"),
         dataRoot: this.dataRoot,
+        // The environment-check guard names the shell a command will really be handed to.
+        shell: this.config.get().shell,
       }),
       runtime,
     ]
