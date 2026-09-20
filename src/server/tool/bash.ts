@@ -12,6 +12,7 @@ import { ABORTED_TOOL } from "../provider/history"
 import { repositoryRoot, tryGit } from "../git"
 import { gitBash, platformShell, which, windowsPath } from "../shell-path"
 import { mergeConflictNotice } from "./merge-conflict"
+import { killTree } from "../kill-tree"
 
 const DEFAULT_TIMEOUT = 120_000
 
@@ -318,7 +319,7 @@ const live = new Set<ChildProcess>()
 export function stopBashCommands(): void {
   for (const child of [...live]) {
     live.delete(child)
-    stop(child)
+    killTree(child)
   }
 }
 
@@ -327,33 +328,6 @@ export function liveBashCommands(): number {
   return live.size
 }
 
-/**
- * Ends a command and everything it started.
- *
- * A shell that has launched a server is the ordinary case for a command that
- * has to be interrupted, and signalling the shell alone leaves that server
- * running. Windows offers no process groups, so its tree is walked by taskkill;
- * elsewhere the child leads a group that can be signalled as a whole.
- *
- * Failures are swallowed on purpose: by the time this runs the process may have
- * exited on its own, and there is nothing useful to say about that.
- */
-function stop(child: ChildProcess): void {
-  if (!child.pid) return
-  if (process.platform === "win32") {
-    try {
-      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true }).on("error", () => child.kill("SIGKILL"))
-    } catch {
-      child.kill("SIGKILL")
-    }
-    return
-  }
-  try {
-    process.kill(-child.pid, "SIGKILL")
-  } catch {
-    child.kill("SIGKILL")
-  }
-}
 
 export const BashTool: ToolDefinition = {
   name: "bash",
@@ -670,7 +644,7 @@ export const BashTool: ToolDefinition = {
 
       /** Stops the command and waits a little for its pipes to close, so what it printed on the way out is kept. */
       const halt = async () => {
-        stop(child)
+        killTree(child)
         let grace: ReturnType<typeof setTimeout> | undefined
         await Promise.race([closed, new Promise<void>((done) => (grace = setTimeout(done, CLOSE_GRACE_MS)))])
         clearTimeout(grace)
