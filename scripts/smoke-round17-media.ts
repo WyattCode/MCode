@@ -41,6 +41,7 @@ import type { Message } from "../src/shared/protocol"
 import { SpeakTool } from "../src/server/tool/speak"
 import { PresentFilesTool } from "../src/server/tool/present"
 import { WIDGET_FENCE } from "../src/shared/widget"
+import { annotationsBlock } from "../src/shared/annotations"
 
 /** One finished turn whose only part is a completed speak call, as the stream would hold it. */
 function spokenTurn(callID: string, text: string): Message {
@@ -430,5 +431,31 @@ export async function roundSeventeenMediaChecks(check: Check, section: (name: st
       else (globalThis as { window?: unknown }).window = held
       delete (globalThis as { SpeechSynthesisUtterance?: unknown }).SpeechSynthesisUtterance
     }
+  }
+
+  // ---------------------------------------------------------------- R17-M7
+  section("Round 17 (M7): a boxed part of a picture is something the model is told about")
+  {
+    const note = {
+      id: "ann-1",
+      kind: "image" as const,
+      path: "/pictures/plot.png",
+      name: "plot.png",
+      region: { fx: 0.25, fy: 0.1, fw: 0.5, fh: 0.4 },
+      text: "the axis here is wrong",
+    }
+    const block = annotationsBlock([note])
+    check("the file is named", block.includes("/pictures/plot.png"), block)
+    check("with the boxed part of it as percentages of the picture", /25%, 10%\) to \(75%, 50%\)/.test(block), block)
+    check("and the note under it", block.includes("the axis here is wrong"), block)
+    /* Without the kind in the union this would have fallen through to "a passage of an earlier reply". */
+    check("it is not mistaken for a passage of a reply", !block.includes("earlier assistant reply"), block)
+
+    const whole = annotationsBlock([{ ...note, region: undefined }])
+    check("a picture pointed at with no box still names the file", whole.includes("/pictures/plot.png") && !whole.includes("region"), whole)
+
+    const preview = await fs.readFile(new URL("../src/renderer/src/components/ImagePreview.vue", import.meta.url), "utf8")
+    check("the preview has a mode that boxes rather than pans", preview.includes('data-preview-tool="annotate"'), preview.length)
+    check("and draws the box inside the transform, so it follows the zoom and the turn", preview.includes('data-image-box'))
   }
 }

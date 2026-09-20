@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch } from "vue"
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue"
+import type { Annotation } from "@shared/protocol"
 import { t } from "../lib/i18n"
 import { closeImagePreview, imagePreview, imagePreviewKey, openImagePreview, originTransform, type PreviewRect } from "../lib/image-preview"
 import { copyImageFile, fileManagerName } from "../lib/path-open"
 import { notice } from "../lib/toast"
 import { useApp } from "../stores/app"
+import { useAnnotations } from "../stores/annotations"
+import { annotationId, annotationRequest, mainAnnotationScope, requestAnnotation, type AnnotationRequest } from "../lib/annotate"
 
 /**
  * MiMo's image preview.
@@ -16,8 +19,13 @@ import { useApp } from "../stores/app"
  * picture drags; the keys are - + 0 R D, Esc, and the arrows step through the
  * pictures it was opened with. A picture opened with its file's path also gets
  * "copy image" (C) and "show in the file manager" (F) after download.
+ *
+ * The pointer has MiMo's two modes: it pans the picture, or it draws a box over
+ * a part of it and asks for a note about that part - the same 框选批注 the slide,
+ * web page and video views already offer, which is the one place it was missing.
  */
 const app = useApp()
+const annotations = useAnnotations()
 
 const MIN_SCALE = 0.2
 const MAX_SCALE = 8
@@ -45,6 +53,17 @@ let drag: { x: number; y: number; ox: number; oy: number } | undefined
 let closing: number | undefined
 let settling: number | undefined
 let entered = false
+
+/** What the pointer does: MiMo's 查看 (pan) or 框选 (draw a box and annotate it). */
+const pointerMode = ref<"view" | "box">("view")
+/** The smallest drag that is a box rather than a slip, in the picture's own pixels. */
+const MIN_BOX = 6
+type Box = { left: number; top: number; w: number; h: number }
+/** The box being drawn, and the ones already noted, in the picture's own unscaled pixels. */
+const live = ref<Box | null>(null)
+const kept = ref(new Map<string, Box>())
+let boxFrom: { x: number; y: number } | undefined
+let ownRequest: AnnotationRequest | null = null
 /** The thumbnail's rect as it was when the preview opened; closing flies back to it even if the reply has scrolled. */
 let origin: PreviewRect | undefined
 
@@ -73,8 +92,14 @@ watch(
     entered = false
     settled.value = false
     pictureShown.value = false
+    /* A different picture is a different set of boxes; the pending note goes with the old one. */
+    boxFrom = undefined
+    live.value = null
+    kept.value = new Map()
+    dropRequest()
     if (!url) {
       shown.value = false
+      pointerMode.value = "view"
       return
     }
     origin = imagePreview.value?.rect
@@ -234,6 +259,15 @@ function onKey(event: KeyboardEvent) {
   if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return
   const action = imagePreviewKey(event.key, Boolean(imagePreview.value?.path))
   if (!action) return
+  /* Escape drops a box being noted first, as the video preview does, and only then closes. */
+  if (action === "close" && (ownRequest || live.value)) {
+    dropRequest()
+    live.value = null
+    boxFrom = undefined
+    event.preventDefault()
+    event.stopPropagation()
+    return
+  }
   if (action === "close") close()
   else if (action === "previous") neighbour(-1)
   else if (action === "next") neighbour(1)
@@ -253,19 +287,151 @@ function onWheel(event: WheelEvent) {
   else offset.value = bounded(offset.value.x, offset.value.y - event.deltaY)
 }
 
+/* ------------------------------------------------------- 框选批注 */
+
+/**
+ * A point on the screen as a point on the picture, in its own unscaled pixels.
+ *
+ * The picture is drawn inside `translate(...) scale(...) rotate(...)` about its
+ * own centre, so the transform is undone in that order rather than measured off
+ * a bounding box - a turned picture's bounding box is not the picture.
+ */
+function pictureAt(clientX: number, clientY: number): { x: number; y: number } | undefined {
+  const el = image.value
+  const frame = el?.parentElement
+  if (!el || !frame) return undefined
+  const box = frame.getBoundingClientRect()
+  const dx = clientX - (box.left + box.width / 2)
+  const dy = clientY - (box.top + box.height / 2)
+  const radians = (-turn.value * Math.PI) / 180
+  const x = (dx * Math.cos(radians) - dy * Math.sin(radians)) / scale.value
+  const y = (dx * Math.sin(radians) + dy * Math.cos(radians)) / scale.value
+  return { x: x + el.offsetWidth / 2, y: y + el.offsetHeight / 2 }
+}
+
+function boxTo(event: PointerEvent): Box | null {
+  const at = pictureAt(event.clientX, event.clientY)
+  if (!at || !boxFrom) return null
+  return { left: Math.min(boxFrom.x, at.x), top: Math.min(boxFrom.y, at.y), w: Math.abs(at.x - boxFrom.x), h: Math.abs(at.y - boxFrom.y) }
+}
+
+function dropRequest() {
+  if (ownRequest && annotationRequest.value === ownRequest) requestAnnotation(null)
+  ownRequest = null
+}
+
+/* The box closes with the note: whatever was drawn goes with it, unless a new drag has begun. */
+watch(annotationRequest, (current) => {
+  if (ownRequest && current !== ownRequest) {
+    ownRequest = null
+    if (!boxFrom) live.value = null
+  }
+})
+
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value))
+
+/** The drawn box back in screen coordinates, so the note opens against what was boxed. */
+function screenRect(box: Box) {
+  const el = image.value
+  const frame = el?.parentElement
+  if (!el || !frame) return { left: 0, top: 0, right: 0, bottom: 0 }
+  const area = frame.getBoundingClientRect()
+  const radians = (turn.value * Math.PI) / 180
+  const corners = [
+    [box.left, box.top],
+    [box.left + box.w, box.top],
+    [box.left, box.top + box.h],
+    [box.left + box.w, box.top + box.h],
+  ].map(([x, y]) => {
+    const dx = (x - el.offsetWidth / 2) * scale.value
+    const dy = (y - el.offsetHeight / 2) * scale.value
+    return {
+      x: area.left + area.width / 2 + dx * Math.cos(radians) - dy * Math.sin(radians),
+      y: area.top + area.height / 2 + dx * Math.sin(radians) + dy * Math.cos(radians),
+    }
+  })
+  const xs = corners.map((point) => point.x)
+  const ys = corners.map((point) => point.y)
+  return { left: Math.min(...xs), top: Math.min(...ys), right: Math.max(...xs), bottom: Math.max(...ys) }
+}
+
+function askAbout(box: Box) {
+  const el = image.value
+  const current = imagePreview.value
+  if (!el || !current) return
+  const fx = clamp01(box.left / el.offsetWidth)
+  const fy = clamp01(box.top / el.offsetHeight)
+  const region = { fx, fy, fw: clamp01((box.left + box.w) / el.offsetWidth) - fx, fh: clamp01((box.top + box.h) / el.offsetHeight) - fy }
+  const request: AnnotationRequest = {
+    rect: screenRect(box),
+    initialText: "",
+    above: true,
+    emptyEnterStashes: true,
+    make: (text): Annotation => {
+      const note: Annotation = {
+        id: annotationId(),
+        kind: "image",
+        ...(current.path ? { path: current.path } : {}),
+        name: current.name || (current.path ? current.path.split(/[\\/]/).pop() : "") || t("imagePreview.title"),
+        region,
+        text,
+      }
+      kept.value = new Map(kept.value).set(note.id, box)
+      return note
+    },
+  }
+  ownRequest = request
+  requestAnnotation(request)
+}
+
+/** The boxes already noted about this picture, numbered as the composer numbers them. */
+const markers = computed(() => {
+  const list = annotations.list(mainAnnotationScope.value)
+  const out: { id: string; num: number; box: Box }[] = []
+  list.forEach((note, index) => {
+    const box = kept.value.get(note.id)
+    if (box) out.push({ id: note.id, num: index + 1, box })
+  })
+  return out
+})
+
+const place = (box: Box) => ({ left: `${box.left}px`, top: `${box.top}px`, width: `${box.w}px`, height: `${box.h}px` })
+
 function startDrag(event: PointerEvent) {
   event.preventDefault()
   image.value?.setPointerCapture?.(event.pointerId)
+  if (pointerMode.value === "box") {
+    dropRequest()
+    boxFrom = pictureAt(event.clientX, event.clientY)
+    live.value = boxFrom ? { left: boxFrom.x, top: boxFrom.y, w: 0, h: 0 } : null
+    return
+  }
   drag = { x: event.clientX, y: event.clientY, ox: offset.value.x, oy: offset.value.y }
   dragging.value = true
 }
 
 function moveDrag(event: PointerEvent) {
+  if (boxFrom) {
+    const box = boxTo(event)
+    if (box) live.value = box
+    return
+  }
   if (!drag) return
   offset.value = bounded(drag.ox + event.clientX - drag.x, drag.oy + event.clientY - drag.y)
 }
 
-function endDrag() {
+function endDrag(event?: PointerEvent) {
+  if (boxFrom) {
+    const box = event ? boxTo(event) : live.value
+    boxFrom = undefined
+    if (!box || (box.w < MIN_BOX && box.h < MIN_BOX)) {
+      live.value = null
+      return
+    }
+    live.value = box
+    askAbout(box)
+    return
+  }
   drag = undefined
   dragging.value = false
 }
@@ -293,6 +459,7 @@ onBeforeUnmount(() => {
   window.clearTimeout(settling)
   window.removeEventListener("keydown", onKey, true)
   window.removeEventListener("resize", onResize)
+  dropRequest()
 })
 </script>
 
@@ -337,7 +504,7 @@ onBeforeUnmount(() => {
               :src="imagePreview.url"
               :alt="t('imagePreview.alt')"
               draggable="false"
-              :style="{ cursor: scale > 1 ? 'grab' : 'zoom-in' }"
+              :style="{ cursor: pointerMode === 'box' ? 'crosshair' : scale > 1 ? 'grab' : 'zoom-in' }"
               data-image-preview-image
               @load="onImageLoad"
               @error="enter"
@@ -346,6 +513,11 @@ onBeforeUnmount(() => {
               @pointerup="endDrag"
               @pointercancel="endDrag"
             />
+            <!-- The boxes sit inside the transform, so they pan, zoom and turn with the picture. -->
+            <div v-for="marker in markers" :key="marker.id" class="ip-mark" data-image-marker :style="place(marker.box)">
+              <span class="ip-badge">{{ marker.num }}</span>
+            </div>
+            <div v-if="live" class="ip-live" data-image-box :style="place(live)" />
           </div>
         </div>
       </div>
@@ -386,6 +558,24 @@ onBeforeUnmount(() => {
             </svg>
           </button>
           <span class="ip-tip">{{ t("imagePreview.reset") }}<kbd>0</kbd></span>
+        </div>
+        <span class="ip-divider" />
+        <div class="ip-tool">
+          <!-- MiMo's two pointer modes: the picture drags, or a drag boxes a part of it to write a note about. -->
+          <button
+            type="button"
+            :class="{ on: pointerMode === 'box' }"
+            :aria-pressed="pointerMode === 'box'"
+            :aria-label="t('imagePreview.annotate')"
+            data-preview-tool="annotate"
+            @click="pointerMode = pointerMode === 'box' ? 'view' : 'box'"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3" />
+              <path d="M9 12h6" />
+            </svg>
+          </button>
+          <span class="ip-tip">{{ t("imagePreview.annotate") }}</span>
         </div>
         <span class="ip-divider" />
         <div class="ip-tool">
@@ -565,6 +755,52 @@ onBeforeUnmount(() => {
 
 .ip-tool button:hover {
   background: rgb(255 255 255 / 0.15);
+}
+
+/* The boxing mode stays lit while it is on, so the crosshair is explained. */
+.ip-tool button.on {
+  background: rgb(255 255 255 / 0.26);
+}
+
+/*
+ * A box lives in the picture's own pixels inside the transform, so it pans,
+ * zooms and turns with what it points at. The border is drawn at a constant
+ * screen width by the transform it sits in, which is what a boxed region should
+ * look like at any zoom.
+ */
+.ip-mark,
+.ip-live {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid #3295fb;
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.ip-live {
+  background: rgba(50, 149, 251, 0.12);
+}
+
+.ip-mark {
+  background: rgba(50, 149, 251, 0.1);
+}
+
+.ip-badge {
+  position: absolute;
+  top: -9px;
+  left: -9px;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 4px;
+  color: #fff;
+  background: #3295fb;
+  border-radius: 999px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .ip-tool svg {

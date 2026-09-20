@@ -531,7 +531,7 @@ export interface TaskItem {
 /** One place the user pointed at: a passage of a reply, code in the files tab, or a whole file. */
 export interface Annotation {
   id: string
-  kind: "answer" | "code" | "file" | "pdf" | "docx" | "pptx" | "xlsx" | "chart" | "html" | "video"
+  kind: "answer" | "code" | "file" | "pdf" | "docx" | "pptx" | "xlsx" | "chart" | "html" | "image" | "video"
   /** The file's absolute path, for a file or code shown from one. */
   path?: string
   /** A PDF or Word selection's page, from 1. */
