@@ -17,6 +17,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { DURATION, dismiss, notice, notify, toasts } from "../src/renderer/src/lib/toast"
+import { cachedHighlight, highlight } from "../src/renderer/src/lib/highlight"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
 
@@ -158,5 +159,22 @@ export async function roundFifteenStateChecks(check: Check, section: (name: stri
       after.slice(0, 600),
     )
     check("R15-R4: and a bar that is not open is left alone", /if \(!find\.open\.value\) return/.test(after))
+  }
+
+  // ---------------------------------------------------------------- R15-R5
+  {
+    /*
+     * The colouring cache for real: four hundred blocks fill it, then the
+     * oldest is asked for again and one more block arrives. A cache that drops
+     * by last use keeps the one just asked for; one that drops by age of first
+     * sight loses it and colours it from scratch next time.
+     */
+    const of = (i: number) => `const a${i} = ${i}\n`
+    for (let i = 0; i < 400; i++) await highlight(of(i), "ts")
+    await highlight(of(0), "ts")
+    await highlight("const fresh = 1\n", "ts")
+    check("R15-R5: a coloured block asked for again is not the next one dropped", cachedHighlight(of(0), "ts") !== undefined)
+    check("R15-R5: the one that went is the least recently asked for", cachedHighlight(of(1), "ts") === undefined)
+    check("R15-R5: and the newest is in", cachedHighlight("const fresh = 1\n", "ts") !== undefined)
   }
 }
