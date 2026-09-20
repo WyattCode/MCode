@@ -162,5 +162,44 @@ export async function roundFifteenToolChecks(check: Check, section: (name: strin
     check("a refused folder creates nothing", "failure" in refused && !made.includes(os.homedir()), made)
   }
 
+  // ---------------------------------------------------------------- T15-3
+  section("Round 15 (T15-3): a cron project whose lock was held is looked at again")
+  {
+    const project = path.join(root, "locked")
+    await fs.mkdir(path.join(project, ".mcode"), { recursive: true })
+    const task = { id: "t15lock1", cron: "* * * * *", prompt: "do the thing", createdAt: 0, recurring: true, createdBySessionId: "ses_owner", durable: true }
+    await fs.writeFile(cronFile(project), JSON.stringify({ tasks: [task] }))
+    const lock = path.join(project, ".mcode", ".cron-lock")
+    /*
+     * A lock file another live process holds - what a second copy of the app
+     * leaves, and what a hard kill leaves behind for whatever inherits the pid.
+     * `process.ppid` is alive and is not us, which is the whole test takeLock
+     * makes.
+     */
+    const held = JSON.stringify({ pid: process.ppid, startedAt: Date.now() })
+    await fs.writeFile(lock, held)
+
+    const fired: string[] = []
+    const scheduler = new CronScheduler({
+      now: () => Date.now(),
+      fire: async (sessionID: string) => void fired.push(sessionID),
+      busy: () => false,
+      session: async (id: string) => (id === "ses_owner" ? session("ses_owner", project) : undefined),
+      create: async () => session("ses_owner", project),
+      directories: async () => [project],
+    })
+    await scheduler.start({ interval: false })
+    await scheduler.tick()
+    check("a task in a project another process holds does not fire", fired.length === 0, fired)
+
+    // The holder stopped without tidying up: the lock is claimed on the next pass.
+    await fs.writeFile(lock, held)
+    const old = new Date(Date.now() - 10 * 60_000)
+    await fs.utimes(lock, old, old)
+    await scheduler.tick()
+    check("a lock its holder has stopped stamping is taken over, and the task fires", fired.length === 1, fired)
+    await scheduler.stop()
+  }
+
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
 }
