@@ -142,25 +142,6 @@ async function toplevel(directory: string): Promise<string> {
   return out.trim()
 }
 
-/**
- * The last few commits, subject line only.
- *
- * For the agent's opening context rather than for the review: what a project
- * has been doing lately is the cheapest available hint about how its commits
- * are written and what part of it is currently being worked on.
- */
-export async function recentCommits(directory: string, count = 5): Promise<string[]> {
-  const out = await git(directory, [
-    "log",
-    "--max-count=" + Math.max(1, Math.min(20, count)),
-    "--pretty=format:%h %s",
-  ]).catch(() => "")
-  return out
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-}
-
 function lines(out: string): string[] {
   return out
     .split(/\r?\n/)
@@ -481,7 +462,8 @@ function checkoutFailure(err: unknown): CheckoutResult {
     return { ok: false, code: "untracked-overwrite" }
   }
   if (/local changes to the following files would be overwritten/i.test(text)) return { ok: false, code: "local-overwrite" }
-  return { ok: false, error: firstLine(text) }
+  // As commit and push already do, and as MiMo does for a checkout too: the first 300 characters, every line of them.
+  return { ok: false, error: errorText(err) }
 }
 
 const CONFLICT = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"])
@@ -737,11 +719,6 @@ export async function commitState(directory: string): Promise<CommitState> {
 function outputOf(err: unknown): string {
   const stdout = (err as { stdout?: unknown })?.stdout
   return `${typeof stdout === "string" ? stdout : ""}\n${stderrOf(err)}`
-}
-
-function firstLine(text: string): string {
-  const line = text.split("\n").map((entry) => entry.trim()).find(Boolean) ?? ""
-  return line.replace(/^(error|fatal):\s*/i, "")
 }
 
 export function commitFailure(err: unknown): CommitResult {
