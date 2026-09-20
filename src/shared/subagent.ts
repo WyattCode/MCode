@@ -79,10 +79,21 @@ export function operationInput(input: Record<string, unknown> | undefined): Reco
   return { ...rest, ...(operation as Record<string, unknown>) }
 }
 
-/** A call's action; one that names none is a blocking run, which is all the tool used to do. */
+/**
+ * A call's action; one that names none is a blocking run, which is all the tool
+ * used to do.
+ *
+ * MiMo reads `background: true` or `async: true` on an action-less call as a
+ * spawn before it falls back, and it is right to: the tool MCode renamed had a
+ * `background` parameter of its own, so a saved record and a model's habit both
+ * produce that shape - and falling back to `run` for it holds the whole
+ * conversation up waiting for work that was asked for in the background.
+ */
 export function actorAction(input: Record<string, unknown> | undefined): SubagentAction {
-  const raw = operationInput(input).action
-  return SUBAGENT_ACTIONS.find((action) => action === raw) ?? "run"
+  const flat = operationInput(input)
+  const named = SUBAGENT_ACTIONS.find((action) => action === flat.action)
+  if (named) return named
+  return flat.background === true || flat.async === true ? "spawn" : "run"
 }
 
 /** Run and spawn start a subagent; the rest act on one that exists, or list models. */
