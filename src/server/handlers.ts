@@ -1629,13 +1629,14 @@ export const TREE_IGNORED = new Set([
 export const PREVIEW_TEXT_LIMIT = 512 * 1024
 
 /**
- * The most a picture, PDF, audio or video file may weigh and still be shown.
+ * The most a picture, audio or video file may weigh and still be shown.
  *
- * One figure for every kind, as MiMo has one: its panel reads a file up to
- * 25 MB and refuses anything larger with `toobig`. This app had two - 40 MB for
- * a PDF and 8 MB for everything else - and, worse, answered a file over them by
- * calling it binary, so a 60 MB PDF was described as a file the panel could not
- * make sense of rather than as one too large to preview.
+ * One figure for every kind that is read whole, as MiMo has one: its panel
+ * reads such a file up to 25 MB and refuses anything larger with `toobig`.
+ * This app had two - 40 MB for a PDF and 8 MB for everything else - and, worse,
+ * answered a file over them by calling it binary, so a 60 MB PDF was described
+ * as a file the panel could not make sense of rather than as one too large to
+ * preview. A PDF is now streamed rather than read, so it is not measured here.
  */
 export const MEDIA_LIMIT = 25_000_000
 
@@ -1662,7 +1663,15 @@ export async function readPreview(resolved: string): Promise<Handled<"file.read"
     return { ...empty, kind: "binary", video: true }
   }
   const kind = kindFor(resolved, Buffer.alloc(0))
-  if (kind === "image" || kind === "audio" || kind === "pdf") {
+  /*
+   * A PDF has no ceiling (R17-V4): the view no longer takes its bytes, it asks
+   * the local preview server for the ranges pdf.js wants, which is how MiMo
+   * reads one and why a 40MB scan opens there. The figure below is about a
+   * read of the whole file, so it goes on applying to pictures, sound, video
+   * and the Office byte channel.
+   */
+  if (kind === "pdf") return { ...empty, kind, mime: mimeFor(resolved) }
+  if (kind === "image" || kind === "audio") {
     // Measured here as well as on the read of the bytes: this is the answer the tab draws from.
     if ((await oversized()) > MEDIA_LIMIT) return { ...empty, kind, mime: mimeFor(resolved), tooBig: true }
     return { ...empty, kind, mime: mimeFor(resolved) }

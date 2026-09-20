@@ -296,15 +296,21 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
   // A video seeks by asking for byte ranges, so those are answered as ranges rather than the whole file each time.
   const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.range ?? "")
   /*
-   * A reply's SVG file card reads the file's text as well as drawing it, from
-   * the window's own origin. Only an SVG may be read that way; every other file
-   * stays display-only to other origins.
+   * A reply's SVG file card reads the file's text as well as drawing it, and
+   * the PDF view asks pdf.js to read the document here rather than taking its
+   * bytes over IPC, which is what lets a document past the 25MB IPC limit open
+   * at all. Both read from the window, whose page is a `file:` one, so the read
+   * is cross-origin and needs saying so; every other kind of file stays
+   * display-only to other origins.
    */
   const common = {
     "Content-Type": type,
     "Cache-Control": "no-store",
     "Accept-Ranges": "bytes",
-    ...(extension === ".svg" ? { "Access-Control-Allow-Origin": "*" } : {}),
+    ...(extension === ".svg" || extension === ".pdf"
+      ? // Without the second header a cross-origin reader cannot see the range headers, and pdf.js would pull whole files.
+        { "Access-Control-Allow-Origin": "*", "Access-Control-Expose-Headers": "Accept-Ranges, Content-Range, Content-Length" }
+      : {}),
   }
   let start = 0
   let end = size - 1
