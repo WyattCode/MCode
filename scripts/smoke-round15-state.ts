@@ -115,4 +115,28 @@ export async function roundFifteenStateChecks(check: Check, section: (name: stri
     check("R15-R2: the default five seconds is unchanged", DURATION === 5000, DURATION)
     check("R15-R2: and taking them away leaves nothing behind", toasts.value.length === 0, titles())
   }
+
+  // ---------------------------------------------------------------- R15-R3
+  {
+    /*
+     * Source check: cloneNode and element animations need a document, so the
+     * Tab is pressed for real in the lane's ghost probe - 60ms after Escape,
+     * which before this landed on a button inside the aria-hidden copy and
+     * then on <body> when the copy was removed. What is read here is that the
+     * copy is marked inert when it is made.
+     */
+    const modal = await read("src/renderer/src/lib/modal.ts")
+    const exit = modal.slice(modal.indexOf("export function playDialogExit("))
+    const made = exit.indexOf("insertBefore(ghost")
+    check(
+      "R15-R3: the copy a closing dialog leaves is inert before it goes into the page (source; the Tab is in the lane probe)",
+      /ghost\.setAttribute\("inert", ""\)/.test(exit.slice(0, made)),
+      exit.slice(0, 600),
+    )
+    check("R15-R3: and it is still hidden from screen readers and tagged as a copy", /aria-hidden/.test(exit.slice(0, made)) && /data-modal-exit/.test(exit.slice(0, made)))
+    /* The two places that already skipped the copy still do, and the drop ring now joins them. */
+    const shell = await read("src/renderer/src/App.vue")
+    const drag = shell.slice(shell.indexOf("function trackDrag("), shell.indexOf("function leaveDrag("))
+    check("R15-R3: a file dragged over the thread is not held back by that copy either", /data-modal-exit/.test(drag), drag.slice(-400))
+  }
 }

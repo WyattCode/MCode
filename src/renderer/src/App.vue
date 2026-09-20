@@ -291,7 +291,11 @@ function trackDrag(event: DragEvent) {
   const target = event.target instanceof Element ? event.target : undefined
   const overBox = Boolean(target?.closest(".composer-wrap, .box"))
   const overMain = Boolean(target?.closest(".main"))
-  fileDrag.value = overMain && !overBox && !document.querySelector(".scrim, .overlay")
+  // The copy a closing dialog leaves behind carries the scrim's classes for
+  // 200ms; it is a picture of a layer, not one, and must not hold the drop
+  // ring back, as escape-layer and the click guard already know.
+  const covered = [...document.querySelectorAll(".scrim, .overlay")].some((node) => !node.closest("[data-modal-exit]"))
+  fileDrag.value = overMain && !overBox && !covered
 }
 
 function leaveDrag(event: DragEvent) {
