@@ -162,6 +162,27 @@ const TICK_MS = 1000
  * shape, and the queue holds whatever does not fit until the next second.
  */
 const STARTS_PER_TICK = 4
+/**
+ * How far the wall clock and a monotonic clock beside it may disagree, and how
+ * big a step forward is still an ordinary one - MiMo's two figures.
+ *
+ * Every due moment here is an absolute millisecond worked out from local wall
+ * clock rules, and nothing recomputed them afterwards. A laptop asleep for
+ * eight hours woke up with every task's moment in the past and let the lot off
+ * in one tick; a daylight-saving change or a new timezone left every moment an
+ * hour out until the task next fired. MiMo samples both clocks and the offset
+ * at each tick, calls any of those a discontinuity, and replans from now -
+ * dropping what was missed rather than firing it.
+ */
+const CLOCK_TOLERANCE_MS = 5_000
+const CLOCK_GAP_MS = 60_000
+
+interface ClockSample {
+  wall: number
+  monotonic: number
+  /** Minutes west of UTC at that moment, so a timezone or daylight-saving change shows up. */
+  offset: number
+}
 
 export interface AutomationDeps {
   file: string
@@ -260,6 +281,8 @@ export class AutomationService {
   replayed = 0
   /** The start that read the saved tasks, for anything that reports on them once they are read (L12-14). */
   started: Promise<void> | undefined
+  /** The clocks as the last check saw them, so this one can tell whether they jumped. */
+  private lastClock: ClockSample | undefined
 
   constructor(private readonly deps: AutomationDeps) {}
 
@@ -716,6 +739,31 @@ export class AutomationService {
     return answer({ ok: true, automation: this.view(automation) })
   }
 
+  /** Both clocks and the offset, as this check sees them; nothing when any of the three is not a number. */
+  private sampleClock(): ClockSample | undefined {
+    const wall = this.deps.now()
+    const monotonic = globalThis.performance?.now?.() ?? Date.now()
+    const offset = new Date(wall).getTimezoneOffset()
+    if (![wall, monotonic, offset].every((value) => Number.isFinite(value))) return undefined
+    return { wall, monotonic, offset }
+  }
+
+  /**
+   * Whether the clock moved in a way no ordinary second could explain: the
+   * offset changed, either clock went backwards, the two disagree about how
+   * much time passed, or one of them jumped forward past a minute. MiMo's rule,
+   * with its two figures.
+   */
+  private clockJumped(before: ClockSample, now: ClockSample): boolean {
+    if (before.offset !== now.offset) return true
+    const wall = now.wall - before.wall
+    const monotonic = now.monotonic - before.monotonic
+    const forward = Math.max(TICK_MS + CLOCK_TOLERANCE_MS, CLOCK_GAP_MS)
+    if (wall < -CLOCK_TOLERANCE_MS || monotonic < -CLOCK_TOLERANCE_MS) return true
+    if (Math.abs(wall - monotonic) > CLOCK_TOLERANCE_MS) return true
+    return wall > forward || monotonic > forward
+  }
+
   /** One check: every task that is due and can start, starts. */
   async tick(): Promise<void> {
     /*
@@ -725,6 +773,20 @@ export class AutomationService {
      */
     for (const report of this.pendingReports.splice(0)) {
       this.deps.publish({ type: "automation.run", sessionID: report.sessionID, phase: "finished", notify: report.notify, outcome: report.outcome ?? "skipped" })
+    }
+    /*
+     * A clock that jumped makes every moment already worked out meaningless, so
+     * they are worked out again from now and this check scans nothing: what was
+     * missed while the machine slept is missed, not fired all at once.
+     */
+    const clock = this.sampleClock()
+    if (clock) {
+      const jumped = this.lastClock !== undefined && this.clockJumped(this.lastClock, clock)
+      this.lastClock = clock
+      if (jumped) {
+        for (const automation of this.saved.automations) this.plan(automation)
+        return
+      }
     }
     const now = this.deps.now()
     let dirty = false
