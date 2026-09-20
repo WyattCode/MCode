@@ -193,17 +193,31 @@ export function confirmChime(): boolean {
 }
 
 /*
- * The conversation navigator's scale: the major pentatonic, climbing two octaves
- * from the first turn to the last, so where the pointer is can be heard. Passing
- * over a tick is a light touch; pressing one rings fuller.
+ * The conversation navigator's scale: the major pentatonic, climbing from the
+ * first turn to the last, so where the pointer is can be heard. Passing over a
+ * tick is a light touch; pressing one rings fuller.
+ *
+ * All four numbers are measured from MiMo's own note function: the scale is
+ * stepped 3.6 times its own length across the conversation, and the octave is
+ * taken one below the table - so the run goes from 130.8 Hz to 1568 Hz, about
+ * three and a half octaves. MCode used to step it twice and skip the octave
+ * down, which put the whole run an octave high inside two octaves, at a third
+ * of the loudness and half again too short.
  */
 const PENTATONIC = [261.63, 293.66, 329.63, 392.0, 440.0]
+const SPINE_SPAN = 3.6
+const SPINE_OCTAVE = -1
+
+/** One tick's note, as the figure it will be played as. Exported so it can be measured rather than heard. */
+export function spineTone(index: number, count: number, strong = false): Voice {
+  const step = count > 1 ? Math.round((index / (count - 1)) * PENTATONIC.length * SPINE_SPAN) : 0
+  const from = PENTATONIC[step % PENTATONIC.length] * 2 ** (Math.floor(step / PENTATONIC.length) + SPINE_OCTAVE)
+  return { from, at: 0, seconds: strong ? 0.9 : 0.42, gain: strong ? 0.3 : 0.13, type: "triangle" }
+}
 
 export function spineNote(index: number, count: number, strong = false): void {
   try {
-    const step = count > 1 ? Math.round((index / (count - 1)) * PENTATONIC.length * 2) : 0
-    const from = PENTATONIC[step % PENTATONIC.length] * 2 ** Math.floor(step / PENTATONIC.length)
-    sound(audio(), { from, at: 0, seconds: strong ? 0.7 : 0.32, gain: strong ? 0.12 : 0.05, type: "triangle" })
+    sound(audio(), spineTone(index, count, strong))
   } catch {
     // As above: silence is the right failure.
   }

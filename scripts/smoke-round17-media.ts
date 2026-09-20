@@ -23,7 +23,7 @@ import { SessionStore } from "../src/server/session/store"
 import { handle, voiceFileName, VOICE_PRECHECK_TIMEOUT_MS } from "../src/server/handlers"
 import type { Runtime } from "../src/server/index"
 import type { Request } from "../src/shared/protocol"
-import { CONFIRM_VOICES } from "../src/renderer/src/lib/sound"
+import { CONFIRM_VOICES, spineTone } from "../src/renderer/src/lib/sound"
 
 /** One fake OpenAI-compatible service: what it was asked, and what it answers. */
 interface Fake {
@@ -211,5 +211,26 @@ export async function roundSeventeenMediaChecks(check: Check, section: (name: st
     check("and a little louder, in MiMo's 0.85 : 1 ratio", Math.abs(fundamentals[0].gain / fundamentals[1].gain - 0.85) < 1e-9, fundamentals.map((voice) => voice.gain))
     check("every note is audible - a gain of zero would be the silence this replaces", fundamentals.every((voice) => voice.gain > 0))
     check("and none of it outlasts two seconds", CONFIRM_VOICES.every((voice) => voice.at + voice.seconds <= 2))
+  }
+
+  // ---------------------------------------------------------------- R17-M9
+  section("Round 17 (M9): the conversation navigator's scale spans what MiMo's does")
+  {
+    const count = 40
+    const first = spineTone(0, count)
+    const last = spineTone(count - 1, count)
+    check("the lowest tick is C3, an octave under the scale table", Math.abs(first.from - 130.815) < 0.01, first.from)
+    check("the highest is G6", Math.abs(last.from - 1568) < 0.01, last.from)
+    const octaves = Math.log2(last.from / first.from)
+    check("which is about three and a half octaves, not two", octaves > 3.4 && octaves < 3.7, octaves)
+    check("hovering is 0.13 and 0.42s", first.gain === 0.13 && first.seconds === 0.42, first)
+    const pressed = spineTone(0, count, true)
+    check("pressing is 0.3 and 0.9s", pressed.gain === 0.3 && pressed.seconds === 0.9, pressed)
+    check("the note is the same either way; only how it is struck changes", pressed.from === first.from && pressed.type === "triangle")
+    check("a lone turn takes the bottom note rather than dividing by zero", Number.isFinite(spineTone(0, 1).from) && spineTone(0, 1).from === first.from)
+    /* It has to climb: a scale that repeats one note would pass every check above but say nothing. */
+    const run = Array.from({ length: count }, (_, at) => spineTone(at, count).from)
+    check("and every tick is at least as high as the one before it", run.every((value, at) => at === 0 || value >= run[at - 1]), run)
+    check("with more distinct pitches than the five the table holds", new Set(run).size > 5, new Set(run).size)
   }
 }
