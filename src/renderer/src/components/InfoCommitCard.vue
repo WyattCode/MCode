@@ -14,7 +14,7 @@ import InfoBranchMenu from "./InfoBranchMenu.vue"
  * Nothing here runs unless the reader presses a button, and push only ever
  * sends the checked-out branch, unforced (see git.push on the server).
  */
-const props = defineProps<{ anchor?: HTMLElement; directory: string; sessionId?: string; additions: number; deletions: number }>()
+const props = defineProps<{ anchor?: HTMLElement; directory: string; sessionId?: string; additions: number; deletions: number; knownBranch?: string }>()
 const emit = defineEmits<{ close: []; mutated: [] }>()
 
 const app = useApp()
@@ -97,10 +97,16 @@ const stats = computed(() =>
     : { additions: state.value?.stagedAdditions ?? 0, deletions: state.value?.stagedDeletions ?? 0 },
 )
 
+/*
+ * MiMo's own order: a detached HEAD says so, otherwise the branch the state
+ * named, otherwise the one the environment row already knows - so opening the
+ * card does not flash the name away and back - and only with none of those a
+ * word about why. A state that came back without a branch (no HEAD yet, a read
+ * that failed) is unknownBranch; loadingBranch is for the read still running.
+ */
 const branchLabel = computed(() => {
-  if (stateLoading.value && !state.value) return t("info.loadingBranch")
   if (state.value?.isDetached) return t("info.detachedHead")
-  return state.value?.branch ?? t("info.loadingBranch")
+  return state.value?.branch ?? props.knownBranch ?? t(stateLoading.value && !state.value ? "info.loadingBranch" : "info.unknownBranch")
 })
 
 const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘⏎" : "Ctrl+⏎"

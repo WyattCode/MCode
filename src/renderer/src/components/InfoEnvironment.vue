@@ -229,6 +229,7 @@ watch(
     :session-id="sessionId"
     :additions="summary.additions"
     :deletions="summary.deletions"
+    :known-branch="summary.branch"
     @close="commitOpen = false"
     @mutated="emit('mutated')"
   />
