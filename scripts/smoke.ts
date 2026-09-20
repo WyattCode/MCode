@@ -337,6 +337,8 @@ import { roundFourteenPackagingChecks } from "./smoke-round14-packaging"
 import { roundFifteenStateChecks } from "./smoke-round15-state"
 // Round 15, lane M: the main process's second pass (M15-1 onwards).
 import { roundFifteenMainChecks } from "./smoke-round15-main"
+// Round 15, fix lane U1: the conversation UI (R15-U1-1 onwards).
+import { roundFifteenUiChatChecks } from "./smoke-round15-ui-chat"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -6972,6 +6974,7 @@ async function main() {
   await roundFourteenPackagingChecks(check, section)
   await roundFifteenStateChecks(check, section)
   await roundFifteenMainChecks(check, section)
+  await roundFifteenUiChatChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

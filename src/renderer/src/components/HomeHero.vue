@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 import { notify, notifyFailure } from "../lib/toast"
+import { reducedMotion } from "../lib/modal"
 import { SUGGESTION_ICON_PATHS, builtinSuggestions, type HomeSuggestion } from "../lib/home-suggestions"
 import ProjectPicker from "./ProjectPicker.vue"
 import type { PickerProject } from "./ProjectPicker.vue"
@@ -265,7 +266,8 @@ const HOP_MS = 560
 async function hop() {
   const mark = wordmark.value
   if (hopping.value || !mark || typeof mark.animate !== "function") return
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
+  // The appearance setting first, as everywhere else: a Web Animation is beyond the reach of the stylesheet that turns CSS motion off.
+  if (reducedMotion()) return
   hopping.value = true
   const animation = mark.animate(HOP, { duration: HOP_MS, easing: "ease-out" })
   // `finished` can be held by a throttled page, so the hop also ends on its own clock.

@@ -9,6 +9,7 @@ import { annotationId, mainAnnotationScope } from "../../lib/annotate"
 import { sendAnnotationNow } from "../../lib/annotation-send"
 import { useAnnotationFx, watchedFilesOf, type FxBox } from "../../lib/annotation-fx"
 import { aiTouch } from "../../lib/ai-touch"
+import { splitFilePath } from "../../lib/file-path"
 import type { XlsxParsed } from "../../lib/xlsx-convert"
 import { a1Of, addSheet, describeValue, editsNote, removeSheet, renameSheet, writeCellEdits, type CellEdit } from "../../lib/xlsx-writeback"
 import {
@@ -116,10 +117,7 @@ let savedView: { path: string; sheetName: string; row: number; col: number } | n
 let cleanups: (() => void)[] = []
 let links = new Map<string, string>()
 
-const splitPath = () => {
-  const cut = Math.max(props.path.lastIndexOf("/"), props.path.lastIndexOf("\\"))
-  return [props.path.slice(0, cut), props.path.slice(cut + 1)] as const
-}
+const splitPath = () => splitFilePath(props.path)
 
 function decode(base64: string) {
   const binary = atob(base64)

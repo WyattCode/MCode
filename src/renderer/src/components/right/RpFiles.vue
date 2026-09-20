@@ -1118,11 +1118,20 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   padding-bottom: calc(var(--fc-h, 96px) + 8px);
 }
 
-/* MiMo's find bar: 42 down, 14 in from the end, 6 by 10 on a 10px corner. */
+/*
+ * MiMo's find bar: 42 down, 14 in from the end, 6 by 10 on a 10px corner.
+ *
+ * It never grows past the viewer it floats over, so it cannot lie across the
+ * file tree beside it; only where even its own buttons will not fit does it
+ * reach back over the tree, rather than off the end of the panel.
+ */
 .fv-find {
   position: absolute;
   top: 42px;
   inset-inline-end: 14px;
+  /* The icon, the counter (which grows with the interface font), three 22px buttons, five 6px gaps and the sides: what the bar cannot give up. */
+  min-width: calc(15px + 42px * var(--ui-font-scale, 1) + 3 * 22px + 5 * 6px + 20px + 2px);
+  max-width: calc(100% - 28px);
   z-index: 10;
   display: flex;
   align-items: center;
@@ -1140,7 +1149,9 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 }
 
 .fv-find-input {
-  width: 150px;
+  /* 150 wide where there is room, and the first thing to give when there is not. */
+  flex: 1 1 150px;
+  min-width: 0;
   padding: 0;
   color: var(--text-base);
   background: transparent;

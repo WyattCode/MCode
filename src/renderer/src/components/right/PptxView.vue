@@ -12,6 +12,7 @@ import { annotationFlash, annotationId, mainAnnotationScope, occurrenceOf } from
 import { sendAnnotationNow } from "../../lib/annotation-send"
 import { useAnnotationFx, watchedFilesOf, type FxBox } from "../../lib/annotation-fx"
 import { aiTouch, takeCreated } from "../../lib/ai-touch"
+import { splitFilePath } from "../../lib/file-path"
 import { ENTRANCE_ITEM_MS, entranceSchedule, parseFixups, type SlideFixup } from "../../lib/pptx-parse"
 import {
   applyFixup,
@@ -87,10 +88,7 @@ let shownPath = ""
 
 const present = shallowRef<{ viewer: PptxViewer; bytes: Uint8Array; startIndex: number } | null>(null)
 
-const splitPath = () => {
-  const cut = Math.max(props.path.lastIndexOf("/"), props.path.lastIndexOf("\\"))
-  return [props.path.slice(0, cut), props.path.slice(cut + 1)] as const
-}
+const splitPath = () => splitFilePath(props.path)
 
 function decode(base64: string) {
   const binary = atob(base64)

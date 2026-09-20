@@ -9,6 +9,7 @@ import { annotationFlash, annotationId, compact, mainAnnotationScope, normalize 
 import { sendAnnotationNow } from "../../lib/annotation-send"
 import { useAnnotationFx, watchedFilesOf, type FxBox } from "../../lib/annotation-fx"
 import { aiTouch } from "../../lib/ai-touch"
+import { splitFilePath } from "../../lib/file-path"
 import {
   diffSummary,
   loadDocx,
@@ -78,11 +79,7 @@ let lastPath = ""
 let lastStat: { size: number; mtimeMs: number } | undefined
 let saved: { path: string; top: number } | null = null
 
-/* The folder keeps its trailing separator: "D:" alone resolves to the current directory on that drive, "D:\" to its root. */
-const splitPath = () => {
-  const cut = Math.max(props.path.lastIndexOf("/"), props.path.lastIndexOf("\\"))
-  return [props.path.slice(0, cut + 1), props.path.slice(cut + 1)] as const
-}
+const splitPath = () => splitFilePath(props.path)
 
 /* The watcher answers with whichever spelling it was asked with; slashes and case still name one file. */
 const samePath = (a: string, b: string) => a.replace(/\\/g, "/").toLowerCase() === b.replace(/\\/g, "/").toLowerCase()
@@ -447,7 +444,13 @@ function layoutRail() {
   const nextElbows: typeof elbows.value = []
   const hostRect = host.getBoundingClientRect()
   const corridor = hostRect.width > 0 ? hostRect.right - box.left + el.scrollLeft - 1 : el.clientWidth - RAIL_WIDTH + el.scrollLeft
-  let bottom = -Infinity
+  /*
+   * One gap above the rail's top, so a first card whose anchor could not be
+   * measured still lands at 0 rather than at -Infinity - a top CSS throws
+   * away, which would drop that card and every card after it back onto the
+   * same place.
+   */
+  let bottom = -CARD_GAP
   for (const item of railItems.value) {
     const height = cardEls.get(item.key)?.offsetHeight || CARD_DEFAULT
     const desired = Number.isFinite(item.top) ? item.top : bottom + CARD_GAP
