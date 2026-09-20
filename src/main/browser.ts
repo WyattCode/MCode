@@ -326,6 +326,16 @@ function wireWindow(window: BrowserWindow): void {
   if (wired.has(window)) return
   wired.add(window)
   window.once("closed", () => closePanel(window))
+  /*
+   * The interface loading again - the View menu's reload, or recovery putting
+   * a fresh renderer in a window whose own failed. The panel's page is a
+   * native view over that interface and outlives it, so without this it stays
+   * drawn over a window that no longer has a tab to close it with (R15-M2).
+   * did-navigate rather than the start of one: only a main frame that has
+   * committed raises it, so a navigation the window refuses (index.ts) leaves
+   * the panel alone.
+   */
+  window.webContents.on("did-navigate", () => closePanel(window))
 }
 
 /** Where the panel sits. The renderer measures it; only it knows the layout. */

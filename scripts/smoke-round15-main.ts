@@ -93,6 +93,18 @@ export async function roundFifteenMainChecks(check: Check, section: (name: strin
     check("nothing in main was left uncaught", (seen.uncaught ?? []).length === 0, seen.uncaught)
   }
 
+  section("Round 15 (M15-2): the interface loading again takes the panel's page with it")
+  {
+    const reload = seen.reload
+    check("the panel was drawing a page before the reload", (reload?.childrenBefore ?? 0) >= 1 && (reload?.tabsBefore ?? 0) >= 2, reload)
+    check("after an in-app reload no panel is left for the window", reload?.hasPanel === false, reload)
+    check("and no page of it is still drawn over the interface", reload?.children === 0, reload)
+    check("every page the panel held was closed, not only the first", (reload?.pagesBefore ?? 0) >= 2 && reload?.pagesAfter === 0, reload)
+    // The same twelve opens as M15-4, counted for the listener this item adds.
+    const listeners = seen.listeners
+    check("and twelve panels left the window with one did-navigate listener, not twelve", listeners !== undefined && listeners.navigation === listeners.navigationStart + 1, listeners)
+  }
+
   section("Round 15 (M15-4): opening the browser panel again does not pile listeners on the window")
   {
     const listeners = seen.listeners

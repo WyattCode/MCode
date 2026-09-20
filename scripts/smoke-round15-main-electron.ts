@@ -105,6 +105,27 @@ app.whenReady().then(async () => {
     }
     await wait(500)
 
+    // M15-2: the interface loading again takes the panel with it, and every
+    // page it held is closed rather than the loop stopping at a dead one.
+    const pagesOn = (name: string) => webContents.getAllWebContents().filter((contents) => !contents.isDestroyed() && contents.getURL().endsWith(name)).length
+    const living = panelState(window)?.tabs.length ?? 0
+    const before = window.contentView.children.length
+    const pagesBefore = pagesOn("keep.html")
+    window.webContents.reload()
+    await new Promise<void>((resolve) => {
+      window.webContents.once("did-finish-load", () => resolve())
+      setTimeout(resolve, 15_000)
+    })
+    await wait(1_000)
+    result.reload = {
+      tabsBefore: living,
+      childrenBefore: before,
+      hasPanel: hasPanel(window),
+      children: window.contentView.children.length,
+      /* Every page the panel held, closed with it: the loop reached them all. */
+      pagesBefore,
+      pagesAfter: pagesOn("keep.html"),
+    }
     window.destroy()
     await wait(300)
   }
