@@ -1,5 +1,6 @@
 /**
- * Round 16 (fix lane E2): a reply the output limit cut in two.
+ * Round 16 (fix lane E2): a reply the output limit cut in two, and the day the
+ * model is told it is.
  *
  * A provider that stops with `length` is asked to carry on, and what comes back
  * is the rest of the same sentence. It used to land in a message of its own,
@@ -9,6 +10,10 @@
  * after it was swallowed as a second one. The checks below run whole turns
  * through the real runner over a fake provider that can stop where it is told
  * to, and then render what was stored exactly as the conversation renders it.
+ *
+ * The second half is the runtime context's `Today:` line, which was read off
+ * UTC: east of Greenwich every conversation opened before the offset had passed
+ * was told yesterday's date.
  *
  * Kept apart from smoke.ts the way the earlier rounds are; smoke.ts calls
  * `roundSixteenContinuationChecks` with its own check and section.
@@ -29,6 +34,7 @@ import { Permissions } from "../src/server/permission"
 import { SessionStore } from "../src/server/session/store"
 import { SessionRunner } from "../src/server/session/runner"
 import { CONTINUATION_LIMITS, EMPTY_NOTE, LENGTH_NOTE } from "../src/server/session/reminders"
+import { localDay } from "../src/server/usage-summary"
 import { renderReply, type ReplyBlock } from "../src/renderer/src/lib/markdown"
 import { cleanReply } from "../src/shared/reply-clean"
 
@@ -47,6 +53,7 @@ export async function roundSixteenContinuationChecks(check: Check, section: Sect
   process.env.MCODE_GENERATE_TITLES = "0"
   try {
     await continuationChecks(check, section, root)
+    await dateChecks(check, section, root)
   } finally {
     if (titles === undefined) delete process.env.MCODE_GENERATE_TITLES
     else process.env.MCODE_GENERATE_TITLES = titles
@@ -252,5 +259,37 @@ async function continuationChecks(check: Check, section: Section, root: string):
     } finally {
       await app.close()
     }
+  }
+}
+
+async function dateChecks(check: Check, section: Section, root: string): Promise<void> {
+  section("Round 16 · the day the model is told it is")
+
+  check("a day is read off the machine's calendar as YYYY-MM-DD", /^\d{4}-\d{2}-\d{2}$/.test(localDay(Date.now())))
+
+  /*
+   * A zone where the calendar and UTC disagree right now, whatever the hour: a
+   * whole day east of Greenwich when UTC is past noon, a whole day west of it
+   * when UTC is still in the morning. The line the model is sent has to follow
+   * the machine, which is the thing that used to be wrong.
+   */
+  const zone = new Date().getUTCHours() >= 12 ? "Etc/GMT-12" : "Etc/GMT+12"
+  const held = process.env.TZ
+  process.env.TZ = zone
+  const app = await harness(root, "date")
+  try {
+    const here = localDay(Date.now())
+    const utc = new Date().toISOString().slice(0, 10)
+    check(`in ${zone} the calendar and UTC are a day apart, which is what makes this measurable`, here !== utc, { here, utc })
+    app.script([{ text: "知道了。", finish: "stop" }])
+    await app.say("今天几号")
+    const sent = JSON.stringify(app.seen[0]?.messages ?? [])
+    const told = /Today: (\d{4}-\d{2}-\d{2})/.exec(sent)?.[1]
+    check("the turn told the model a date at all", told !== undefined, sent.slice(0, 200))
+    check("and it is the machine's day, not UTC's", told === here, { told, here, utc })
+  } finally {
+    await app.close()
+    if (held === undefined) delete process.env.TZ
+    else process.env.TZ = held
   }
 }

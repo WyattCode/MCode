@@ -73,6 +73,8 @@ import { forWire } from "../provider/wire-ids"
 import { hasLinkedWorktrees, worktreeNotice, worktreeTop } from "./worktree"
 import type { ModelModalities, SessionGoal } from "@shared/protocol"
 import { costOf } from "./usage"
+// The day on this machine's calendar, which is what the runtime context tells the model.
+import { localDay } from "../usage-summary"
 import { BackgroundUsage, type BackgroundUse } from "./background-usage"
 import { UsageDays } from "./usage-days"
 import type { Usage as TurnUsage } from "@shared/protocol"
@@ -1942,10 +1944,17 @@ export class SessionRunner {
   private async runtimeNotes(session: SessionInfo, first: boolean): Promise<string[]> {
     if (session.parentID) return []
     const config = this.config.get()
-    // The date changes per turn, so it rides here rather than in the cached system prompt.
+    /*
+     * The date changes per turn, so it rides here rather than in the cached
+     * system prompt. Read off this machine's calendar rather than UTC's: east
+     * of Greenwich the UTC date is still yesterday's for the whole morning, so
+     * every conversation opened before 08:00 at UTC+8 used to be told the
+     * wrong day. MiMo's own `<env>` block carries no date at all - this line
+     * is MCode's, and so is its format (YYYY-MM-DD).
+     */
     const runtime = runtimeContext({
       language: config.language,
-      today: new Date().toISOString().slice(0, 10),
+      today: localDay(Date.now()),
       ...(first ? { directory: session.directory } : {}),
     })
     if (!first) return [runtime]
