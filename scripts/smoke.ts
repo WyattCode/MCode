@@ -333,6 +333,9 @@ import { roundThirteenInstanceChecks } from "./smoke-round13-instances"
 import { roundThirteenKeyboardChecks } from "./smoke-round13-keyboard"
 import { roundFourteenLocaleChecks } from "./smoke-round14-locale"
 import { roundFourteenPackagingChecks } from "./smoke-round14-packaging"
+// Round 15, lane R: renderer state and libraries (R15-R1 onwards).
+import { roundFifteenStateChecks } from "./smoke-round15-state"
+// Round 15, fix lane U1: the conversation UI (R15-U1-1 onwards).
 import { roundFifteenUiChatChecks } from "./smoke-round15-ui-chat"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
@@ -6967,6 +6970,7 @@ async function main() {
   await roundThirteenKeyboardChecks(check, section)
   await roundFourteenLocaleChecks(check, section)
   await roundFourteenPackagingChecks(check, section)
+  await roundFifteenStateChecks(check, section)
   await roundFifteenUiChatChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)

@@ -111,8 +111,21 @@ export function show(level: ToastLevel, heading: string, options: ToastOptions =
     toasts.value = toasts.value.map((item) => (item.id === id ? entry : item))
   } else {
     const next = [...toasts.value, entry]
-    for (const gone of next.slice(0, Math.max(0, next.length - LIMIT))) stop(gone.id)
-    toasts.value = next.slice(-LIMIT)
+    const over = next.length - LIMIT
+    if (over > 0) {
+      /*
+       * A notice with no clock stands until something takes it away - the
+       * reconnect banner, an expired sign-in, a store that would not read - so
+       * the ones on a timer make way for it rather than the other way round.
+       * Only when there is no timed notice left to drop does the oldest
+       * standing one go, which is how four storage warnings already behaved.
+       */
+      const timed = next.filter((item) => clocks.has(item.id))
+      const standing = next.filter((item) => !clocks.has(item.id))
+      const doomed = new Set([...timed, ...standing].slice(0, over))
+      for (const gone of doomed) stop(gone.id)
+      toasts.value = next.filter((item) => !doomed.has(item))
+    } else toasts.value = next
   }
   // A replacement starts its time again, as a fresh notice would.
   stop(id)

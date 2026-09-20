@@ -291,7 +291,11 @@ function trackDrag(event: DragEvent) {
   const target = event.target instanceof Element ? event.target : undefined
   const overBox = Boolean(target?.closest(".composer-wrap, .box"))
   const overMain = Boolean(target?.closest(".main"))
-  fileDrag.value = overMain && !overBox && !document.querySelector(".scrim, .overlay")
+  // The copy a closing dialog leaves behind carries the scrim's classes for
+  // 200ms; it is a picture of a layer, not one, and must not hold the drop
+  // ring back, as escape-layer and the click guard already know.
+  const covered = [...document.querySelectorAll(".scrim, .overlay")].some((node) => !node.closest("[data-modal-exit]"))
+  fileDrag.value = overMain && !overBox && !covered
 }
 
 function leaveDrag(event: DragEvent) {
@@ -323,6 +327,18 @@ try {
 const mainPane = ref<HTMLElement>()
 const find = createFind({ wrapper: () => mainPane.value, hidden: foldedMatches })
 onMounted(() => find.mount())
+
+/*
+ * The bar is mounted on the pane, and every view lives in that pane: opening
+ * another conversation, or leaving for the artifacts or plugins page, puts
+ * different text under a bar that is still counting the old one's matches and
+ * still holding ranges that have left the document. The scan is run again so
+ * the count, the highlights and 上一个/下一个 describe what is on screen.
+ */
+watch([() => app.currentID, view, () => app.messages.length], () => {
+  if (!find.open.value) return
+  void nextTick(() => find.refresh({ reset: true }))
+})
 
 /*
  * A notification that was clicked opens what it was about.
@@ -3601,6 +3617,10 @@ const subagentRunning = new Map<string, boolean>()
 watch(
   () => app.subagentSessions.map((session) => ({ session, running: session.subagent?.status === "running" })),
   (entries) => {
+    // Subagents come and go with their parent; what is no longer in the list
+    // has nothing left to announce, so its last state is dropped with it.
+    const live = new Set(entries.map(({ session }) => session.id))
+    for (const id of subagentRunning.keys()) if (!live.has(id)) subagentRunning.delete(id)
     for (const { session, running } of entries) {
       const was = subagentRunning.get(session.id)
       subagentRunning.set(session.id, running)
