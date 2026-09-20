@@ -45,6 +45,7 @@ function rangeOf(note: Annotation) {
     const seconds = Math.max(0, Math.floor(note.timeSec ?? 0))
     return t("annotations.rangeVideo", { time: `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}` })
   }
+  if (note.kind === "image") return t("annotations.rangeImage")
   if (note.kind === "html") {
     return note.quote ? t("annotations.rangeModule", { text: short(note.quote) }) : t("annotations.rangeModuleTag", { tag: note.tag ? `<${note.tag}>` : note.selector ?? "" })
   }

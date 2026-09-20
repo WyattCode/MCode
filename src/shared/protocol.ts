@@ -531,7 +531,7 @@ export interface TaskItem {
 /** One place the user pointed at: a passage of a reply, code in the files tab, or a whole file. */
 export interface Annotation {
   id: string
-  kind: "answer" | "code" | "file" | "pdf" | "docx" | "pptx" | "xlsx" | "chart" | "html" | "video"
+  kind: "answer" | "code" | "file" | "pdf" | "docx" | "pptx" | "xlsx" | "chart" | "html" | "image" | "video"
   /** The file's absolute path, for a file or code shown from one. */
   path?: string
   /** A PDF or Word selection's page, from 1. */
@@ -1285,6 +1285,26 @@ export interface VoiceDraft {
 
 /** What 智能编辑 made of one utterance: the whole new text and where the caret or selection lands. */
 export type VoiceEdit = VoiceDraft
+
+/**
+ * Why 智能编辑's pass over a transcript did not happen.
+ *
+ * `noModel`: the conversation has no chat model to rewrite with. `refused`:
+ * the model's endpoint turned the request down. `unreadable`: it answered
+ * something that is not an edit. Each degrades to the plain transcript, and
+ * each is said out loud rather than passed off as 快速输入.
+ */
+export type VoiceEditFailure = "noModel" | "refused" | "unreadable"
+
+/**
+ * Why the microphone is not worth opening, in MiMo's five kinds.
+ *
+ * `unauthorized` is a provider that wants a key and has none; `asrUnavailable`
+ * a transcription model that is not set up or not offered; `chatUnavailable`
+ * the conversation model 智能编辑 would rewrite with; `unreachable` an endpoint
+ * that did not answer the probe; `failed` anything else.
+ */
+export type VoicePrecheckFailure = "unauthorized" | "asrUnavailable" | "chatUnavailable" | "unreachable" | "failed"
 
 /**
  * MiMo's close decision for a window.
@@ -2131,7 +2151,21 @@ export type Request =
       language?: string
       /** The composer's text and selection; with it, 智能编辑 can carry out edit and caret instructions. */
       draft?: VoiceDraft
+      /**
+       * The conversation the box belongs to, so 智能编辑's rewrite runs on that
+       * conversation's model. The voice model writes the speech down and
+       * nothing else - it is usually an ASR model, which has no chat endpoint.
+       */
+      sessionID?: string
     }
+  /**
+   * Before the microphone opens: is voice input going to work at all.
+   *
+   * MiMo asks its server the same question at the same moment, and says what
+   * is wrong without recording a word. `mode` is the one about to be used,
+   * because 智能编辑 needs a chat model as well as a transcription one.
+   */
+  | { type: "voice.precheck"; mode?: VoiceMode; sessionID?: string }
   | { type: "git.status"; directory: string }
   /* The home screen's branch chip: the local branches, and switching or creating one. */
   | { type: "git.branches"; directory: string }
@@ -2426,7 +2460,18 @@ export interface ResponseMap {
   "usage.summary": { summary: UsageSummary }
   "local.servers": { servers: LocalServer[] }
   /* `edit` is 智能编辑's validated answer when a draft was sent; without it the window types `text` in. */
-  "voice.transcribe": { text: string; heard: string; edit?: VoiceEdit }
+  "voice.transcribe": {
+    text: string
+    heard: string
+    edit?: VoiceEdit
+    /**
+     * 智能编辑 was asked for and did not answer, so what came back is the plain
+     * transcript. The window says so once: the mode silently becoming 快速输入
+     * is the thing that used to leave a misconfigured setup looking fine.
+     */
+    editFailed?: VoiceEditFailure
+  }
+  "voice.precheck": { ok: true } | { ok: false; reason: VoicePrecheckFailure }
   "workspace.list": { worktrees: Worktree[] }
   /** `unapplied`: a saved change is still waiting for the next conversation (N11-27). */
   "mcp.list": { servers: McpServerState[]; unapplied?: boolean }

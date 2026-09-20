@@ -11,7 +11,7 @@ import type { ChimeName } from "@shared/chime"
 let context: AudioContext | undefined
 
 /** One oscillator: a pitch (gliding to `to` if given), when it starts, how long it rings. */
-interface Voice {
+export interface Voice {
   from: number
   to?: number
   at: number
@@ -153,17 +153,71 @@ export function chime(name: ChimeName): void {
 }
 
 /*
- * The conversation navigator's scale: the major pentatonic, climbing two octaves
- * from the first turn to the last, so where the pointer is can be heard. Passing
- * over a tick is a light touch; pressing one rings fuller.
+ * The two notes a waiting confirmation makes.
+ *
+ * Measured from MiMo's own figure, which is a pair rather than one of its eight
+ * chimes: E5 (659.25 Hz) at once and A5 (880 Hz) 0.16 s later, the second a
+ * touch louder and ringing longer - relative gains 0.85 then 1, lengths 1.1 s
+ * then 1.4 s - drawn in the 铃语 voice, a bright bar with a high fourth-harmonic
+ * ring. Those relative gains are taken against MCode's own 铃语 level, so the
+ * cue sits with the rest of this file rather than over it.
+ *
+ * Unlike the long-task chime it has no elapsed-time threshold: MiMo's does not
+ * either, because a question that arrives in the first ten seconds is waiting
+ * just as much as one that arrives after a minute.
+ */
+const CONFIRM_LEVEL = 0.045
+
+export const CONFIRM_VOICES: readonly Voice[] = [
+  ...struck(659.25, 0, 1.1, CONFIRM_LEVEL * 0.85, 4),
+  ...struck(880, 0.16, 1.4, CONFIRM_LEVEL, 4),
+]
+
+/**
+ * Plays it, and says whether it was heard.
+ *
+ * The caller marks the OS notification silent only on a true: MiMo marks its
+ * own notification silent because this sound has just played, and MCode copied
+ * the silence without ever having the sound - which turned the chime setting
+ * into a switch that muted every confirmation instead of announcing it.
+ */
+export function confirmChime(): boolean {
+  try {
+    const ctx = audio()
+    const out = chimeRoom(ctx)
+    for (const voice of CONFIRM_VOICES) sound(ctx, voice, out)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/*
+ * The conversation navigator's scale: the major pentatonic, climbing from the
+ * first turn to the last, so where the pointer is can be heard. Passing over a
+ * tick is a light touch; pressing one rings fuller.
+ *
+ * All four numbers are measured from MiMo's own note function: the scale is
+ * stepped 3.6 times its own length across the conversation, and the octave is
+ * taken one below the table - so the run goes from 130.8 Hz to 1568 Hz, about
+ * three and a half octaves. MCode used to step it twice and skip the octave
+ * down, which put the whole run an octave high inside two octaves, at a third
+ * of the loudness and half again too short.
  */
 const PENTATONIC = [261.63, 293.66, 329.63, 392.0, 440.0]
+const SPINE_SPAN = 3.6
+const SPINE_OCTAVE = -1
+
+/** One tick's note, as the figure it will be played as. Exported so it can be measured rather than heard. */
+export function spineTone(index: number, count: number, strong = false): Voice {
+  const step = count > 1 ? Math.round((index / (count - 1)) * PENTATONIC.length * SPINE_SPAN) : 0
+  const from = PENTATONIC[step % PENTATONIC.length] * 2 ** (Math.floor(step / PENTATONIC.length) + SPINE_OCTAVE)
+  return { from, at: 0, seconds: strong ? 0.9 : 0.42, gain: strong ? 0.3 : 0.13, type: "triangle" }
+}
 
 export function spineNote(index: number, count: number, strong = false): void {
   try {
-    const step = count > 1 ? Math.round((index / (count - 1)) * PENTATONIC.length * 2) : 0
-    const from = PENTATONIC[step % PENTATONIC.length] * 2 ** Math.floor(step / PENTATONIC.length)
-    sound(audio(), { from, at: 0, seconds: strong ? 0.7 : 0.32, gain: strong ? 0.12 : 0.05, type: "triangle" })
+    sound(audio(), spineTone(index, count, strong))
   } catch {
     // As above: silence is the right failure.
   }

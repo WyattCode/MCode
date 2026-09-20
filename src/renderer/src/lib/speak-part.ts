@@ -1,7 +1,7 @@
 import { watch } from "vue"
 import type { Message, ToolPart } from "@shared/protocol"
 import { language } from "./i18n"
-import { speak } from "./voice"
+import { hushSpeech, speak } from "./voice"
 
 /*
  * speak: the window's half of the speak tool.
@@ -32,7 +32,15 @@ export function spokenLine(part: ToolPart): string {
 export function followSpoken(source: { enabled: () => boolean; session: () => string | undefined; messages: () => readonly Message[] }) {
   const handled = new Set<string>()
   let since = Date.now()
-  watch(source.session, () => (since = Date.now()))
+  /* Leaving a conversation stops its narration: the line belongs to the turn that is no longer on screen. */
+  watch(source.session, () => {
+    since = Date.now()
+    hushSpeech()
+  })
+  /* And so does switching the feature off, which otherwise only stopped the next line rather than this one. */
+  watch(source.enabled, (on) => {
+    if (!on) hushSpeech()
+  })
   watch(
     () => {
       if (!source.enabled()) return []

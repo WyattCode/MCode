@@ -129,7 +129,8 @@ export const PresentFilesTool: ToolDefinition = {
   description: [
     "Hand the finished deliverables of this turn to the user in MCode: each file appears as a card under your reply, and the FIRST one opens in the preview panel by itself.",
     "Call it once, near the end of the turn, after the deliverables are done - a generated document, sheet, deck or PDF, a picture, a built web page, a report. Leave out scratch and intermediate files, dependencies, and files you only read.",
-    "Only what the user will keep, open or pass on belongs here. When the user asks for an explanation, a demonstration or a walkthrough, answer in the reply itself instead of writing a file for it.",
+    "Only what the user will keep, open or pass on belongs here. When the user asks for an explanation, a demonstration, a simulation, an adjustable chart or a walkthrough, that is not a deliverable: answer in the reply itself, using a ```sci-widget fence holding one self-contained HTML document when being able to work it is the point. Do not write it to a file, and do not hand it over with this tool.",
+    "Write an .html file and present it only when the user wants a page, a site or an app as the thing they are given - something meant to last past the reply.",
     "Files must exist; an absolute path may be anywhere, a relative one is looked for in cwd and then in the project folder. Entries that are not found are skipped and named in the result.",
   ].join("\n"),
   parameters: {

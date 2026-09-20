@@ -30,6 +30,13 @@ function where(note: Annotation): string {
     const { fx, fy, fw, fh } = note.region
     return `${slide}, the region roughly from (${pct(fx)}%, ${pct(fy)}%) to (${pct(fx + fw)}%, ${pct(fy + fh)}%) of the slide`
   }
+  if (note.kind === "image") {
+    const pct = (value: number) => Math.max(0, Math.min(100, Math.round(value * 100)))
+    const file = note.path ? `Image ${note.path}` : `An attached image${note.name ? ` (${note.name})` : ""}, whose local path is unknown`
+    if (!note.region) return file
+    const { fx, fy, fw, fh } = note.region
+    return `${file}, the region roughly from (${pct(fx)}%, ${pct(fy)}%) to (${pct(fx + fw)}%, ${pct(fy + fh)}%) of the picture`
+  }
   if (note.kind === "video") {
     const pct = (value: number) => Math.max(0, Math.min(100, Math.round(value * 100)))
     const seconds = Math.max(0, Math.floor(note.timeSec ?? 0))
