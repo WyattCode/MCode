@@ -324,9 +324,18 @@ console.log("\nThe one agent prompt every model reads")
   check("and so is the desktop part", build.length - split > 9_000 && build.length - split < 18_000, true)
   check("every agent but plan reads exactly the same text", [agentPrompt("compose"), agentPrompt(undefined), agentPrompt("general")].every((text) => text === build), true)
   const plan = agentPrompt("plan")
-  check("plan mode reads the same text with one section after it", plan.startsWith(build + "\n\n# Plan mode\n") && plan === `${build}\n\n${PLAN_SECTION}`, true)
-  check("that section is short, as the one it answers is", PLAN_SECTION.length > 400 && PLAN_SECTION.length < 1_500, true)
-  check("it asks for a stepwise plan, recorded with task, put to the user with plan_exit", ["plan in steps", "`task` tool", "plan_exit"].filter((part) => !PLAN_SECTION.includes(part)), [])
+  check("plan mode reads the same text with one section after it", plan.startsWith(build + "\n\n# \u8ba1\u5212\u6a21\u5f0f\n") && plan === `${build}\n\n${PLAN_SECTION}`, true)
+  /* The one it answers is 679 bytes of Chinese; this is in the same class, counted the same way. */
+  check("that section is short, as the one it answers is", Buffer.byteLength(PLAN_SECTION, "utf8") > 300 && Buffer.byteLength(PLAN_SECTION, "utf8") < 1_500, true)
+  check("it asks for a stepwise plan, recorded with task, put to the user with plan_exit", ["\u5206\u6b65\u65b9\u6848", "`task` \u5de5\u5177", "plan_exit"].filter((part) => !PLAN_SECTION.includes(part)), [])
+  /*
+   * R16-B2: the guard is Chinese and the two base layers are not, which is
+   * MiMo's own split. A guard that drifted back into English, or a base layer
+   * that drifted into Chinese, both fail here.
+   */
+  const cjk = /[\u4e00-\u9fff]/
+  check("the guard is written in Chinese, as MiMo's guards are", cjk.test(PLAN_SECTION), true)
+  check("and the two base layers are not", cjk.test(build), false)
   check("the prompt names this app and never the reference", plan.startsWith("You are MCode") && !/mimo/i.test(plan), true)
 }
 

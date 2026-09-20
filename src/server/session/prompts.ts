@@ -201,9 +201,15 @@ The deck must point only at local files that are really there - no web addresses
  * rules - the plan file's path, what is refused, how the turn ends - ride with
  * each message instead (session/plan.ts), because the path is per
  * conversation and this prompt is frozen for the whole of one.
+ *
+ * In Chinese, because MiMo's is: its two base layers are English and every
+ * guard around them - plan, goal, environment check - is Chinese, for every
+ * user in every locale (the user's 2026-09-20 decision). The interface keeps
+ * its own language, and so does the reply: the response language the runtime
+ * context names is what the user reads.
  */
-export const PLAN_SECTION = `# Plan mode
-This conversation is in plan mode. **Lay out a clear plan in steps first** - what has to be done, which files would change, which commands would run - and then stop and wait for the user to approve it. Until they explicitly agree, **call no tool that changes a file or runs a command** (write, edit, bash and the like) apart from writing the plan file each turn names, and do not start the implementation; read-only tools such as read, glob and grep are there to make the plan solid. As you write the plan, record its steps with the \`task\` tool (create them in the order they will be done) so the user can follow them in the task panel; the \`task\` tool changes no files, so it is allowed here. Put the plan to the user with plan_exit. Once they approve, carry it out, starting and finishing each task as you go.`
+export const PLAN_SECTION = `# 计划模式
+本会话处于计划模式。**先写出一份分步方案**:要做哪些事、会改到哪些文件、会执行哪些命令。写完就停下来,等用户确认。在用户明确同意之前,**不要调用任何会改动文件或执行命令的工具**(write、edit、bash 之类),每一轮提示里指定的那个方案文件除外;也不要提前开始实现。read、glob、grep 这类只读工具尽管用,方案要靠它们站得住。写方案的同时,用 \`task\` 工具按执行顺序把每一步登记成任务,用户就能在任务面板里跟着看;\`task\` 工具不改动文件,计划模式下可以使用。方案写好后用 plan_exit 交给用户定夺。获得批准后再动手,并且边做边把每个任务标记为开始和完成。`
 
 /** The agent prompt every model reads; plan mode adds its section after it. */
 export function agentPrompt(agent?: string): string {

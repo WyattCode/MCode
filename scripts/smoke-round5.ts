@@ -325,10 +325,10 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       const firstTurn = await told()
       check(
         "a conversation's first planning turn is told the rules and where its plan goes",
-        firstTurn.includes("Plan mode is on.") && firstTurn.includes("No plan file exists yet") && firstTurn.includes(planName),
+        firstTurn.includes("[\u8ba1\u5212\u6a21\u5f0f]") && firstTurn.includes("\u76ee\u524d\u8fd8\u6ca1\u6709\u65b9\u6848\u6587\u4ef6") && firstTurn.includes(planName),
         firstTurn.slice(0, 300),
       )
-      check("and the note reaches the model with the message", wireText(e.bodies.at(-1)).includes("Plan mode is on."))
+      check("and the note reaches the model with the message", wireText(e.bodies.at(-1)).includes("\u7528\u6237\u5f00\u542f\u4e86\u8ba1\u5212\u6a21\u5f0f"))
       check("and its folder is made, so the first write lands", await fs.stat(path.dirname(plan)).then(() => true, () => false))
 
       // A write anywhere else is refused before anyone is asked, and nothing appears on disk.
@@ -351,7 +351,7 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       await e.idle(session.id)
       check("the plan file is written", (await fs.readFile(plan, "utf8").catch(() => "")).includes("# the plan"))
       const laterTurn = await told()
-      check("a later planning turn gets the one-line reminder, not the long one", laterTurn.includes("Plan mode is still on") && !laterTurn.includes("Plan mode is on."), laterTurn.slice(0, 200))
+      check("a later planning turn gets the one-line reminder, not the long one", laterTurn.includes("\u8ba1\u5212\u6a21\u5f0f\u4ecd\u7136\u5f00\u7740") && !laterTurn.includes("\u7528\u6237\u5f00\u542f\u4e86\u8ba1\u5212\u6a21\u5f0f"), laterTurn.slice(0, 200))
 
       const asked = () => e.events.flatMap((event) => (event.type === "question.asked" ? [event.request] : []))
 

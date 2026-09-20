@@ -147,41 +147,44 @@ export function guardPlanWrite(context: ToolContext, target: string, display: st
  * allows, what it refuses before the model tries it, and how a planning turn
  * is meant to end, or the model spends turns asking for approvals that are
  * already refused.
+ *
+ * Chinese, as MiMo's per-turn plan guard is - its base prompt is English and
+ * every guard appended around it is Chinese, whatever the interface language
+ * (the user's 2026-09-20 decision). It states MiMo's rules and then MCode's
+ * own, which the plan file and plan_exit need and MiMo has no equivalent for.
  */
 export function firstPlanNote(plan: string, exists: boolean): string {
   return [
-    "Plan mode is on. The user wants this task researched and designed, not carried out yet. This note outranks any instruction that says otherwise.",
+    "[计划模式] 用户开启了计划模式:这个任务现在只研究、只设计,还不要落地。本条的效力高于任何相反的指示。",
     "",
-    "What to do",
-    "- Read as widely as you need: read, glob and grep are the way to look around, and subagents can explore parts of it in parallel.",
-    "- bash is available and follows the usual permission rules, but use it only for commands you are certain change nothing - git status, git log, git diff, listing installed packages.",
+    "可以做什么",
+    "- 想看多少就看多少:read、glob、grep 是查看项目的正途,也可以派子智能体分头去看不同的部分。",
+    "- bash 可用,照常走权限规则,但只用于你确信不会改变任何东西的命令 —— git status、git log、git diff、列出已安装的包之类。",
     "",
-    "What not to do",
-    "- Do not create or change any file but the plan file below. A write anywhere else is refused before it runs, so do not attempt one and do not ask the user to approve one.",
-    "- Do not run tests, linters, type checks, builds or similar project commands. They are not safe by default: a linter may be configured with --fix, a test may record snapshots or touch a database, a build writes artifacts. The one exception is a command whose exact configuration you have read and know changes nothing.",
-    "- Do not commit, push, install or remove packages, or change any configuration.",
-    "- When you find yourself wanting to change something to make progress, write that into the plan and carry on reading.",
+    "不要做什么",
+    "- 除下面那个方案文件外,不要新建或修改任何文件。写到别处会在执行前被直接拒绝,所以既不要去试,也不要请用户批准。",
+    "- 不要跑测试、lint、类型检查、构建或同类的项目命令。它们默认并不安全:lint 可能配了 --fix,测试可能写快照或动数据库,构建会产出文件。唯一的例外,是你已经读过其配置、确知不会改动任何东西的命令。",
+    "- 不要提交、推送、安装或卸载依赖,也不要改动任何配置。",
+    "- 当你发现「得改点什么才能往下走」时,把这件事写进方案里,然后继续看代码。",
     "",
-    "The plan file",
-    exists
-      ? `- A plan is already written at ${plan}. Read it, and edit it as your plan grows.`
-      : `- No plan file exists yet. Write your plan to ${plan} with the write tool.`,
-    "- It is the only file you may write. Build the plan up as you go rather than leaving all of it to the end.",
+    "方案文件",
+    exists ? `- ${plan} 已经写了一份方案。先读它,再随着思路的推进去修改它。` : `- 目前还没有方案文件。用 write 工具把你的方案写到 ${plan}。`,
+    "- 它是你唯一可以写的文件。边想边往里写,不要把全部内容留到最后一次性产出。",
     "",
-    "How to work through it",
-    "1. Understand the request. Read the code it touches. Send explore subagents for the looking - up to three, started together in one step, and usually one is enough. Use more only when the scope is genuinely unclear or several parts of the project are involved, and give each one its own area so they do not read the same files. Then put whatever is still ambiguous to the user with the question tool, before designing anything.",
-    "2. Design the approach. One general subagent, at most, to work an approach out against what stage 1 found; skip it for a change small enough that the design is obvious. Its prompt has to carry the background - the file paths, the call path you traced, the constraints and what the user actually asked for - because it starts knowing none of it. What comes back is a proposal, not a decision.",
-    "3. Review what you have. Read the files a subagent called critical yourself rather than trusting the summary, check the approach against what the user asked for rather than against what would be interesting to build, and ask them about anything still open.",
-    "4. Write the final plan into the plan file: the approach you recommend and not the alternatives you rejected, the paths of the files that would change, the order of the work, and a verification section saying how someone would check it end to end - which commands, which tests, what they should see. Short enough to scan, complete enough to carry out.",
-    "5. Call plan_exit.",
+    "怎么推进",
+    "1. 弄清需求。读它涉及的代码。查看的活派给 explore 子智能体 —— 最多三个,在同一步里一起发起,通常一个就够;只有在范围确实不清楚、或牵扯到项目的好几个部分时才用更多,并且给每个划定各自的范围,免得重复读同样的文件。然后在动手设计之前,用 question 工具把还含糊的地方问清楚。",
+    "2. 设计方案。至多派一个 general 子智能体,让它基于第 1 步的发现把做法想出来;改动小到设计一望即知时就跳过这步。它的提示词必须把背景带上 —— 文件路径、你追踪到的调用链、约束条件,以及用户到底要什么 —— 因为它一开始什么都不知道。它给回来的是建议,不是决定。",
+    "3. 复核手上的东西。子智能体说关键的那些文件,你自己读一遍,不要只信它的转述;拿方案去对照用户真正的要求,而不是对照「做起来有意思的东西」;还有拿不准的地方就问用户。",
+    "4. 把定稿写进方案文件:你推荐的做法(不要罗列你已经否掉的备选)、会改动的文件路径、工作的先后顺序,以及一节验证说明 —— 别人要怎样从头到尾验一遍:跑哪些命令、跑哪些测试、应该看到什么。短到能一眼扫完,全到能照着做。",
+    "5. 调用 plan_exit。",
     "",
-    "End this turn in one of two ways, and no other: ask the user what you need to know with the question tool, or - once the plan is written and nothing is left to ask - call plan_exit to put it to them for approval. Do not use the question tool to ask whether the plan is acceptable; that is what plan_exit is for.",
+    "本回合只能以两种方式收尾,没有第三种:用 question 工具问出你需要知道的事;或者 —— 方案已经写好、也没有要问的了 —— 调用 plan_exit 把它交给用户批准。不要用 question 工具去问「这个方案行不行」,那是 plan_exit 的职责。",
   ].join("\n")
 }
 
 /** Every later planning turn: the same rules in one line. */
 export function laterPlanNote(plan: string): string {
-  return `Plan mode is still on: read-only, and ${plan} is the only file you may write. Do not implement. End this turn with the question tool or with plan_exit.`
+  return `[计划模式] 计划模式仍然开着:只读,且 ${plan} 是你唯一可以写的文件。不要开始实现。本回合用 question 工具或 plan_exit 收尾。`
 }
 
 /** The note on the first turn after the conversation leaves plan mode. */

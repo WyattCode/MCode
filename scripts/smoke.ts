@@ -346,6 +346,8 @@ import { roundFifteenToolChecks } from "./smoke-round15-tools"
 import { roundFifteenSettingsUiChecks } from "./smoke-round15-ui-settings"
 // Round 15, fix lane U3: the interface font size and the boxes around the type (R15-U3-1 onwards).
 import { roundFifteenFontScaleChecks } from "./smoke-round15-font-scale"
+// Round 16, lane B: the model-facing layer - prompt language, guards and loop health (R16-B1 onwards).
+import { roundSixteenPromptChecks } from "./smoke-round16-b"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -3755,8 +3757,8 @@ async function main() {
 
     // plan: what each turn is told, in this app's own words.
     const firstNote = firstPlanNote(".mcode/plans/p.md", false)
-    check("the first planning turn is told to write the plan and how the turn may end", firstNote.includes("No plan file exists yet") && firstNote.includes(".mcode/plans/p.md") && firstNote.includes("plan_exit"), firstNote.slice(0, 120))
-    check("and is told to edit it once it is there", firstPlanNote(".mcode/plans/p.md", true).includes("A plan is already written"))
+    check("the first planning turn is told to write the plan and how the turn may end", firstNote.includes("\u76ee\u524d\u8fd8\u6ca1\u6709\u65b9\u6848\u6587\u4ef6") && firstNote.includes(".mcode/plans/p.md") && firstNote.includes("plan_exit"), firstNote.slice(0, 120))
+    check("and is told to edit it once it is there", firstPlanNote(".mcode/plans/p.md", true).includes("\u5df2\u7ecf\u5199\u4e86\u4e00\u4efd\u65b9\u6848"))
     check("later turns get one line naming the same file", laterPlanNote(".mcode/plans/p.md").includes(".mcode/plans/p.md") && laterPlanNote(".mcode/plans/p.md").split("\n").length === 1)
     check("the switch note says the mode changed and that writing is allowed again", buildSwitchNote().includes("plan mode to build mode") && buildSwitchNote().includes("no longer read-only"))
     check("and the plan is named when one exists", carryOutNote(".mcode/plans/p.md").includes(".mcode/plans/p.md"))
@@ -3788,16 +3790,16 @@ async function main() {
 
     const planPrompt = await systemPrompt({ directory: project, agent: "plan" })
     const buildPrompt = await systemPrompt({ directory: project, agent: "build" })
-    check("plan is told what mode it is in", planPrompt.includes("plan mode"), planPrompt.slice(0, 80))
+    check("plan is told what mode it is in", planPrompt.includes("\u8ba1\u5212\u6a21\u5f0f"), planPrompt.slice(0, 80))
     /*
      * Round 8: the general agent prompt describes both modes, as MiMo's
      * default prompt does, so "plan mode" appearing at all proves nothing. What
      * build must not carry is the section that says it is planning.
      */
-    check("build is not", !buildPrompt.includes("This conversation is in plan mode") && !buildPrompt.includes("# Plan mode"))
+    check("build is not", !buildPrompt.includes("\u8ba1\u5212\u6a21\u5f0f"))
     // plan: the prompt says how planning ends and what it may write; the per-turn note carries the path.
     check("plan is told how the mode ends", planPrompt.includes("plan_exit"), planPrompt.slice(0, 200))
-    check("and that one file is writable rather than that nothing is", planPrompt.includes("apart from writing the plan file each turn names") && !planPrompt.includes("are not available to you"), planPrompt.slice(0, 400))
+    check("and that one file is writable rather than that nothing is", planPrompt.includes("\u6bcf\u4e00\u8f6e\u63d0\u793a\u91cc\u6307\u5b9a\u7684\u90a3\u4e2a\u65b9\u6848\u6587\u4ef6\u9664\u5916"), planPrompt.slice(0, 400))
 
     /*
      * Standing instructions. They are the reader's own rather than the
@@ -3882,7 +3884,7 @@ async function main() {
     const stagedPlan = await systemPrompt({ directory: project, agent: "plan", staged: true })
     check(
       "plan mode is not told to build",
-      stagedPlan.includes("plan mode") && !stagedPlan.includes("## Working in stages"),
+      stagedPlan.includes("\u8ba1\u5212\u6a21\u5f0f") && !stagedPlan.includes("## Working in stages"),
     )
   }
 
@@ -6995,6 +6997,7 @@ async function main() {
   await roundFifteenToolChecks(check, section)
   await roundFifteenSettingsUiChecks(check, section)
   await roundFifteenFontScaleChecks(check, section)
+  await roundSixteenPromptChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
