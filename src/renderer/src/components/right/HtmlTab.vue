@@ -9,6 +9,7 @@ import { fileManagerName } from "../../lib/path-open"
 import { annotationId, annotationRequest, requestAnnotation, type AnnotationRequest } from "../../lib/annotate"
 import { sendAnnotationNow } from "../../lib/annotation-send"
 import { aiTouch, aiWrite, normalPath } from "../../lib/ai-touch"
+import { splitFilePath } from "../../lib/file-path"
 import { dismiss, notify, notifyFailure, toastID } from "../../lib/toast"
 import { t } from "../../lib/i18n"
 import { useAnnotations } from "../../stores/annotations"
@@ -51,10 +52,7 @@ const origin = computed(() => {
 })
 const src = computed(() => (url.value ? `${url.value}?__mcodeedit=${nonce}&__r=${reloads.value}` : ""))
 
-const splitPath = (file = path.value) => {
-  const cut = Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\"))
-  return [file.slice(0, cut), file.slice(cut + 1)] as const
-}
+const splitPath = (file = path.value) => splitFilePath(file)
 
 let lastStat: { size: number; mtimeMs: number } | undefined
 let lastComment = ""

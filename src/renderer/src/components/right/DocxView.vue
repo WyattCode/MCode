@@ -9,6 +9,7 @@ import { annotationFlash, annotationId, compact, mainAnnotationScope, normalize 
 import { sendAnnotationNow } from "../../lib/annotation-send"
 import { useAnnotationFx, watchedFilesOf, type FxBox } from "../../lib/annotation-fx"
 import { aiTouch } from "../../lib/ai-touch"
+import { splitFilePath } from "../../lib/file-path"
 import {
   diffSummary,
   loadDocx,
@@ -78,11 +79,7 @@ let lastPath = ""
 let lastStat: { size: number; mtimeMs: number } | undefined
 let saved: { path: string; top: number } | null = null
 
-/* The folder keeps its trailing separator: "D:" alone resolves to the current directory on that drive, "D:\" to its root. */
-const splitPath = () => {
-  const cut = Math.max(props.path.lastIndexOf("/"), props.path.lastIndexOf("\\"))
-  return [props.path.slice(0, cut + 1), props.path.slice(cut + 1)] as const
-}
+const splitPath = () => splitFilePath(props.path)
 
 /* The watcher answers with whichever spelling it was asked with; slashes and case still name one file. */
 const samePath = (a: string, b: string) => a.replace(/\\/g, "/").toLowerCase() === b.replace(/\\/g, "/").toLowerCase()
