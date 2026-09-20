@@ -74,6 +74,25 @@ export interface RunRecord {
   errorCode?: RunReason
   /** Set once the user has been told about a run that did not finish. */
   reported?: boolean
+  /** Where the run came from. Only the schedule starts one here; MiMo also has a "run now" button, behind its E2E flag. */
+  source?: "schedule" | "manual"
+  /**
+   * The task as it stood when this run was made.
+   *
+   * MiMo keeps one on every record, and it is the one thing a history cannot
+   * be given afterwards: by the time anything reads the history, the task has
+   * been edited and the run's own conditions are gone. Written now so that a
+   * page built later can say what a run was actually asked to do.
+   */
+  contextSnapshot?: {
+    title: string
+    prompt: string
+    runMode: RunMode
+    notification: NotificationPolicy
+    targetThreadId?: string
+    project?: string
+    model: string
+  }
 }
 
 /**
@@ -236,6 +255,19 @@ export function scheduleKey(rrule: string, label?: string): string {
     if (rule.byWeekdays.length === 1) return `weekly:${rule.byWeekdays[0]}:${time}`
   }
   return `custom:${lines}\u0000${label?.trim() ?? ""}`
+}
+
+/** The task as a run found it, kept on the run's record. */
+function snapshotOf(automation: Automation): NonNullable<RunRecord["contextSnapshot"]> {
+  return {
+    title: automation.title,
+    prompt: automation.prompt,
+    runMode: automation.runMode,
+    notification: automation.notification,
+    ...(automation.targetThreadId ? { targetThreadId: automation.targetThreadId } : {}),
+    ...(automation.project ? { project: automation.project.name } : {}),
+    model: `${automation.model.provider}/${automation.model.model}`,
+  }
 }
 
 /** Whether two tasks are the same task, on MiMo's ten fields: run history, labels on simple rules and key order do not count. */
@@ -461,6 +493,8 @@ export class AutomationService {
       error,
       ...(errorCode ? { errorCode } : {}),
       reported: true,
+      source: "schedule",
+      contextSnapshot: snapshotOf(automation),
     }
     automation.runHistory = [...(automation.runHistory ?? []), record].slice(-RUNS_KEPT)
   }
@@ -474,6 +508,8 @@ export class AutomationService {
       startedAt: at,
       status: "running",
       resultThreadId: sessionID,
+      source: "schedule",
+      contextSnapshot: snapshotOf(automation),
     }
     automation.runHistory = [...(automation.runHistory ?? []), record].slice(-RUNS_KEPT)
     void this.save()
