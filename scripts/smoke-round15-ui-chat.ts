@@ -193,7 +193,9 @@ export async function roundFifteenUiChatChecks(check: Check, section: (name: str
     const skill = heights.find((rule) => /skill-item/.test(rule.selector))
     const base = heights.find((rule) => rule.selector === ".item")
     check("both rules are still there", Boolean(skill) && Boolean(base), { skill, base })
-    check("the skill row asks for 30, the menu row for 28", skill?.value === "30px" && base?.value === "28px", { skill, base })
+    /* Read through lane U3's scaling: both are written `calc(Npx * var(--ui-font-scale, 1))`, which is Npx at the default size. */
+    const resting = (value: string | undefined) => /^(?:calc\()?([\d.]+)px/.exec(value ?? "")?.[1]
+    check("the skill row asks for 30, the menu row for 28", resting(skill?.value) === "30" && resting(base?.value) === "28", { skill, base })
     /* The cascade, not the reading of it: the modifier has to outscore the base rule, because it is written first. */
     const wins = skill && base && (specificity(skill.selector) > specificity(base.selector) || skill.at > base.at)
     check("and the skill row's rule wins the cascade over it", Boolean(wins), { skill: skill && specificity(skill.selector), base: base && specificity(base.selector), order: [skill?.at, base?.at] })

@@ -224,7 +224,7 @@ export async function roundFifteenFontScaleChecks(check: Check, section: (name: 
      * written so that a scale of 1 is the identity - `calc(Npx * var(--x, 1))`
      * and not a ratio, a clamp or a min().
      */
-    const forms = all.flatMap((rule) => (rule.body.match(/(?:line-height|min-height|height|width):[^;]*var\(--(?:ui|code)-font-scale[^;]*/g) ?? []).map((text) => ({ rule, text })))
+    const forms = all.flatMap((rule) => (rule.body.match(/(?<![\w-])(?:line-height|min-height|height|width):[^;]*var\(--(?:ui|code)-font-scale[^;]*/g) ?? []).map((text) => ({ rule, text })))
     const odd = forms.filter((entry) => !/^(line-height|min-height|height|width):\s*calc\([\d.]+px \* var\(--(ui|code)-font-scale, 1\)\)$/.test(entry.text.trim()))
     check("U3-6: every scaled box length is a plain multiple, so the default size is unchanged", odd.length === 0, odd.slice(0, 6).map((entry) => `${where(entry.rule)} -> ${entry.text.trim()}`))
     check("U3-6: the change reaches the whole renderer, not one component", new Set(forms.map((entry) => entry.rule.file)).size > 25, new Set(forms.map((entry) => entry.rule.file)).size)
