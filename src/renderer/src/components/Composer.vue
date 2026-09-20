@@ -931,10 +931,17 @@ async function hearSegment(recording: Recording, run: number) {
       mime: recording.mime,
       language: language.value,
       draft,
+      sessionID: sessionID.value,
     })
     // Cancelled while it was being written down.
     if (run !== voiceRun.value) return
     if (!result) return
+    /*
+     * 智能编辑 that did not happen. The words still land - dictation is better
+     * than nothing - but the mode quietly becoming 快速输入 is what used to hide
+     * a voice model with no chat endpoint behind it, so it is said once.
+     */
+    if (result.editFailed) showVoiceFailure({ key: `voice.smartEdit.${result.editFailed}` })
     const quick = (app.config?.voiceMode ?? "smart") === "fast"
     /* MiMo's quick input: an utterance that is only a clear word empties the box instead of being typed. */
     if (quick && isClearCommand(result.text)) {
@@ -994,6 +1001,7 @@ async function toggleVoice() {
   }
   /* MiMo's rule when another box has the microphone: that one stops, and this one starts. */
   if (voiceOwner.value && voiceOwner.value !== boxID) dropVoice()
+  saidFailures.clear()
   // MiMo's starting capsule, between the press and the microphone answering.
   voiceOwner.value = boxID
   voiceState.value = "starting"
@@ -1021,8 +1029,19 @@ function cancelVoice() {
   cueOn.value = false
 }
 
-/* MiMo's single danger toast; a denied microphone also opens the OS privacy page for it. */
+/**
+ * MiMo's single danger toast; a denied microphone also opens the OS privacy
+ * page for it.
+ *
+ * One toast of each kind per recording. The microphone stays open across a
+ * failure, so an endpoint that is down used to put the same toast on screen
+ * once for every stretch of speech - a dozen of them for one dictation.
+ */
+const saidFailures = new Set<string>()
+
 function showVoiceFailure(failure: VoiceFailure) {
+  if (saidFailures.has(failure.key)) return
+  saidFailures.add(failure.key)
   notifyFailure(t(failure.key, failure.params), failure.detail)
   if (failure.guide) window.mcode.openMicSettings()
 }
