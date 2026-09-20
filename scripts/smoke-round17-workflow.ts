@@ -46,6 +46,7 @@ export async function roundSeventeenWorkflowChecks(check: Check, section: Sectio
   try {
     diffChecks(check, section)
     noticeChecks(check, section)
+    await sourceChecks(check, section)
     await gitChecks(check, section, root)
     await automationChecks(check, section, root)
     await subagentChecks(check, section, root)
@@ -160,6 +161,63 @@ function noticeChecks(check: Check, section: Section): void {
   }
 }
 
+/* ---------------------------------------------------------------- the window's side, read from the source */
+
+/**
+ * Several of this lane's fixes are one line inside a component, which a probe
+ * measures and this cannot. What is checked here is that the line is still
+ * there and still says what it was put there to say - the same way round 11
+ * checks the shapes it left in the runner and the main process.
+ */
+async function sourceChecks(check: Check, section: Section): Promise<void> {
+  const read = (file: string) => fs.readFile(path.join(process.cwd(), file), "utf8")
+
+  section("Round 17 (R17-W2/W4/W5): the review tab and the branch menu")
+  {
+    const review = await read("src/renderer/src/components/right/RpReview.vue")
+    check(
+      "a file the reader chose clears the diff first, and a background re-read keeps it",
+      /loadPatch\(file: string \| undefined, keepStale = false\)/.test(review) && /if \(!keepStale\) patch\.value = undefined/.test(review) && /loadPatch\(selected\.value, true\)/.test(review),
+    )
+    const picker = await read("src/renderer/src/components/BranchPicker.vue")
+    const created = picker.slice(picker.indexOf("if (result.ok) {"), picker.indexOf("if (result.ok) {") + 300)
+    check("making a branch leaves the field, not the menu", created.includes("creating.value = false") && !created.includes("open.value = false"), created.slice(0, 200))
+    const switching = await read("src/renderer/src/lib/branch-switch.ts")
+    check("a branch list that came back without a repository says so", /if \(!state\?\.repo \|\| !Array\.isArray\(state\.branches\)\) error\.value = t\("info\.branchListUnavailable"\)/.test(switching))
+    const card = await read("src/renderer/src/components/InfoCommitCard.vue")
+    check("the commit card falls back to the known branch, then to unknownBranch", /props\.knownBranch \?\? t\(stateLoading\.value && !state\.value \? "info\.loadingBranch" : "info\.unknownBranch"\)/.test(card))
+    const environment = await read("src/renderer/src/components/InfoEnvironment.vue")
+    check("and the environment row hands it the branch it has already read", /:known-branch="summary\.branch"/.test(environment))
+  }
+
+  section("Round 17 (R17-W9/W13/W21): the worktree pick, the subagent panel and the run's notice")
+  {
+    const home = await read("src/renderer/src/components/HomeHero.vue")
+    const used = home.slice(home.indexOf("async function useWorktree"), home.indexOf("async function useWorktree") + 300)
+    check("a worktree switched to is added to the project list before it is picked", used.includes("app.addProject(directory, { used: true })") && used.indexOf("addProject") < used.indexOf("choose(directory)"), used)
+    const panel = await read("src/renderer/src/components/right/RpSubagents.vue")
+    const box = panel.slice(panel.indexOf(".rp-subagent-transcript {"), panel.indexOf(".rp-subagent-transcript {") + 400)
+    check("a subagent's transcript is a boxed panel of its own, scrolling inside 320", /max-height: 320px/.test(box) && /border: 1px solid/.test(box) && /overflow: auto/.test(box), box)
+    const app = await read("src/renderer/src/App.vue")
+    check(
+      "a scheduled run's notice is silent when the chime already played for it",
+      /automationChimed\.set\(turn\.sessionID, chiming\)/.test(app) && /silent: chimed/.test(app) && !/taskNotice\(\{ kind: notice\.failed \? "failed" : "done", \.\.\.noticeAbout\(notice\.sessionID\), silent: false \}\)/.test(app),
+    )
+  }
+
+  section("Round 17 (R17-W11/W16/W24): the transcript read back, and two tool descriptions")
+  {
+    const runner = await read("src/server/session/runner.ts")
+    const hit = runner.slice(runner.indexOf("private async worktreeHit("), runner.indexOf("private async worktreeHit(") + 900)
+    check("a pending worktree hit is read back out of the stored messages once", hit.includes("this.worktreeScanned") && hit.includes("await this.store.messages(sessionID)") && hit.includes("changedMainWorktree"), hit.slice(0, 200))
+    const actorTool = await read("src/server/tool/subagent.ts")
+    check("send takes MiMo's to_session_id and type rather than refusing them", /to_session_id: \{ type: "string"/.test(actorTool) && /type: \{ type: "string"/.test(actorTool))
+    check("and status names MiMo's pending", /pending \(started, still queued behind others\)/.test(actorTool))
+    const automationTool = await read("src/server/tool/automation.ts")
+    check("the automation tool says what deduplicated means, and to read the task back", /deduplicated: true/.test(automationTool) && /view the task again/.test(automationTool))
+  }
+}
+
 /* ---------------------------------------------------------------- git */
 
 function git(cwd: string, args: string[]): string {
@@ -205,6 +263,8 @@ async function automationChecks(check: Check, section: Section, root: string): P
   const messages = new Map<string, Message[]>()
   let made = 0
   let promptThrows: string | undefined
+  /** Held open so the check that started the run never reports on its queue entry. */
+  let promptHangs: Promise<void> | undefined
   const deps: AutomationDeps = {
     file: path.join(dir, "automations.json"),
     now: () => clock,
@@ -223,6 +283,11 @@ async function automationChecks(check: Check, section: Section, root: string): P
       if (promptThrows) throw new Error(promptThrows)
       prompts.push({ sessionID: input.sessionID })
       busy.add(input.sessionID)
+      if (promptHangs) {
+        const held = promptHangs
+        promptHangs = undefined
+        await held
+      }
     },
     busy: (id) => busy.has(id),
     models: () => [{ provider: "fake", id: "m", name: "M" }],
@@ -265,6 +330,59 @@ async function automationChecks(check: Check, section: Section, root: string): P
     check("the schedule moved on by itself", service.dueAt("auto-1") === new Date(2026, 0, 7, 9, 0).getTime())
     check("the record says where the run came from", record?.source === "schedule", record?.source)
     check("and what the task was asked to do at the time", record?.contextSnapshot?.prompt === "Summarise" && record?.contextSnapshot?.runMode === "existing-task" && record?.contextSnapshot?.model === "fake/m", record?.contextSnapshot)
+    busy.delete(home)
+  }
+
+  section("Round 17 (R17-W19): two runs of one task do not overlap")
+  {
+    /*
+     * The first run's turn is still going - nothing has told the service it
+     * ended - so the next occurrence finds the task still answering. The
+     * conversation itself is left idle, so the overlap is what stops it and
+     * not the busy check above.
+     */
+    clock = new Date(2026, 0, 7, 9, 0, 1).getTime()
+    await service.tick()
+    check("the first run started", prompts.at(-1)?.sessionID === home, prompts.at(-1))
+    busy.delete(home)
+    const opened = service.list()[0]?.runHistory?.length ?? 0
+    clock = new Date(2026, 0, 8, 9, 0, 1).getTime()
+    const before = prompts.length
+    await service.tick()
+    const overlapped = service.list()[0]?.runHistory?.at(-1)
+    check("the next one does not start on top of it", prompts.length === before, prompts.length - before)
+    check("and is recorded as an overlap", (service.list()[0]?.runHistory?.length ?? 0) > opened && overlapped?.errorCode === "overlap", overlapped)
+    await service.turnEnded(home)
+    busy.delete(home)
+  }
+
+  section("Round 17 (R17-W19): a lease that runs out under a working turn does not start it again")
+  {
+    /*
+     * The one way the same run could be handed out twice, which is what MiMo's
+     * ring of settled ids guards against: the prompt is held open, so the check
+     * that took the entry never reports, and thirty seconds later the entry is
+     * deliverable again. Here the run ids are `<task>-<due moment>`, so the
+     * overlap check is what settles it - and it settles it before anything can
+     * start.
+     */
+    clock = new Date(2026, 0, 9, 9, 0, 1).getTime()
+    let releasePrompt: () => void = () => {}
+    promptHangs = new Promise<void>((resolve) => (releasePrompt = resolve))
+    const started = service.tick()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const ran = prompts.length
+    check("the run started and the check that took it has not reported", ran > 0 && service.queued === 1, { ran, queued: service.queued })
+    // Past the lease, with the next occurrence still a day off.
+    clock = new Date(2026, 0, 9, 9, 0, 41).getTime()
+    await service.tick()
+    check("the run is not started a second time", prompts.length === ran, prompts.length - ran)
+    const twice = service.list()[0]?.runHistory?.at(-1)
+    check("the entry is given up on as an overlap instead", twice?.status === "skipped" && twice?.errorCode === "overlap", twice)
+    check("and nothing is left in the queue", service.queued === 0, service.queued)
+    releasePrompt()
+    await started
+    await service.turnEnded(home)
     busy.delete(home)
   }
 

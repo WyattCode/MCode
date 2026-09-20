@@ -101,6 +101,16 @@ export interface RunRecord {
  * (`automations.runReason.*`). Kept on the record here too, as data only, so a
  * history written now already says why when a page reads it. `app_interrupted`
  * is MiMo's own code for a run the app closed on.
+ *
+ * Two of MiMo's are never written here, and cannot be. `unauthenticated` has
+ * no equivalent: a model with no key is `model-unavailable`, since providers
+ * are what this app knows about. `duplicate-run` is MiMo's guard against one
+ * run being delivered twice, which needs a ring of settled ids because its own
+ * ids are not tied to an occurrence; here a run id is `<task>-<due moment>`, so
+ * the only way the same one comes round again is a lease running out under a
+ * turn that is still going - and the overlap check below settles that one
+ * before it can start. They stay in the list because a record written by a
+ * newer build, or read by a page later, may still use them.
  */
 export const RUN_REASONS = [
   "unauthenticated",
@@ -163,8 +173,6 @@ export const AUTOMATION_SCHEMA_VERSION = 1
 const RECEIPTS_KEPT = 256
 /** How many runs a task remembers. */
 const RUNS_KEPT = 20
-/** How many settled run ids are kept, so one handed out twice is recognised; MiMo's ring is the same size. */
-const SETTLED_RUNS_KEPT = 64
 /** What a run that the app ended is recorded as. */
 const CLOSED_MID_RUN = "The app closed before the run finished."
 /** What a run still in the queue is recorded as when a newer run of the same task comes due. */
@@ -298,13 +306,6 @@ export class AutomationService {
   private readonly starting = new Set<string>()
   /** Due runs waiting to start, under leases, so none is lost to a failure or a kill (N11-2). */
   private readonly queue = new RunQueue()
-  /**
-   * The last few run ids that were settled, so one handed out twice is not run
-   * twice - MiMo keeps the same bounded ring. A lease can run out while the
-   * turn it started is genuinely still going, and the entry then becomes
-   * deliverable again; without this the same run went out a second time.
-   */
-  private readonly settledRuns = new Set<string>()
   /** Runs that ended with the app and have not been reported yet; sent on the first check. */
   private readonly pendingReports: { sessionID: string; notify: boolean; outcome?: "succeeded" | "failed" | "skipped" }[] = []
   private interval: ReturnType<typeof setInterval> | undefined
@@ -940,14 +941,14 @@ export class AutomationService {
         dirty = true
         continue
       }
-      // Already settled once and handed out again - a lease that ran out while the turn was in fact still going.
-      if (this.settledRuns.has(entry.runId)) {
-        this.queue.drop(entry.runId)
-        this.skipRun(automation, "This run had already been started once.", entry, "duplicate-run")
-        dirty = true
-        continue
-      }
-      // The last run of this same task has not finished yet; MiMo refuses to lay a second one on top of it.
+      /*
+       * The last run of this same task has not finished yet; MiMo refuses to
+       * lay a second one on top of it. This is also what settles the one case
+       * that could otherwise start a run twice: a lease that ran out while the
+       * turn it began was genuinely still going puts the entry back in the
+       * queue, and the next check finds the task still answering and gives up
+       * on it rather than starting it again.
+       */
       if ([...this.runs.values()].some((running) => running.id === automation.id)) {
         this.queue.drop(entry.runId)
         this.skipRun(automation, "The previous run of this task had not finished.", entry, "overlap")
@@ -968,22 +969,11 @@ export class AutomationService {
       }
       // Started, skipped or failed: either way this entry is finished with, and the failure has been recorded.
       this.queue.report(entry.runId, entry.deliveryGeneration, "settled")
-      this.noteSettled(entry.runId)
       dirty = true
     }
     if (dirty) {
       this.publishSidebar()
       await this.save()
-    }
-  }
-
-  /** Remembers a settled run id, keeping the ring at its size by dropping the oldest. */
-  private noteSettled(runId: string): void {
-    this.settledRuns.add(runId)
-    while (this.settledRuns.size > SETTLED_RUNS_KEPT) {
-      const oldest = this.settledRuns.values().next().value
-      if (oldest === undefined) break
-      this.settledRuns.delete(oldest)
     }
   }
 
