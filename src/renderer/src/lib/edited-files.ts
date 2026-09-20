@@ -1,5 +1,5 @@
 import type { AssistantPart, ToolPart } from "@shared/protocol"
-import { createsFile, parseUnifiedDiff } from "@shared/unified-diff"
+import { parseUnifiedDiff } from "@shared/unified-diff"
 
 /*
  * What a run of tool calls did to the project's files, file by file.
@@ -24,7 +24,7 @@ export interface EditedFiles {
   del: number
 }
 
-const EDITING = new Set(["edit", "write", "patch"])
+const EDITING = new Set(["edit", "write"])
 
 function isAbsolute(file: string) {
   return file.startsWith("/") || file.startsWith("\\\\") || /^[a-zA-Z]:[\\/]/.test(file)
@@ -54,7 +54,7 @@ export function editedFiles(parts: readonly AssistantPart[], directory?: string)
       let entry = byPath.get(section.file)
       if (!entry) {
         // An edit with nothing to find creates the file as write does, and says so the same way.
-        const created = tool.name === "write" || tool.name === "edit" ? tool.metadata?.created === true : tool.name === "patch" && createsFile(section)
+        const created = tool.metadata?.created === true
         entry = { path: section.file, add: 0, del: 0, created }
         byPath.set(section.file, entry)
       }

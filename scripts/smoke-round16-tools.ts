@@ -11,7 +11,7 @@
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import type { FileDiff, ServerEvent, ToolPart } from "../src/shared/protocol"
+import type { FileDiff, Message, ServerEvent, ToolPart } from "../src/shared/protocol"
 import { DEFAULT_PERMISSIONS, PERMISSION_KINDS } from "../src/shared/protocol"
 import { calls, engine, type Check } from "./smoke-round5"
 import { INTERACTIVE_REFUSAL, bashDescription } from "../src/server/tool/bash"
@@ -25,6 +25,8 @@ import { accessAction, defaultAccess } from "../src/shared/access"
 import { Bus } from "../src/server/bus"
 import { Storage } from "../src/server/storage"
 import { Config } from "../src/server/config"
+import { turnFilePaths } from "../src/server/session/turn-revert"
+import { sessionFiles } from "../src/shared/session-files"
 
 export async function roundSixteenToolChecks(check: Check, section: (name: string) => void): Promise<void> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-round16c-"))
@@ -304,6 +306,41 @@ export async function roundSixteenToolChecks(check: Check, section: (name: strin
     check("a refusal of the network is a choice and is left alone", chosenConfig.get().permissions.webfetch === "deny", chosenConfig.get().permissions)
     await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined)
     await fs.rm(chosen, { recursive: true, force: true }).catch(() => undefined)
+  }
+
+  // ---------------------------------------------------------------- R16-C7
+  section("Round 16 (C7): nothing branches on a tool this app does not have")
+  {
+    for (const name of ["patch", "apply_patch", "todowrite", "multiedit"]) {
+      check(`${name} is not a tool here`, findTool(name) === undefined)
+    }
+    const part = (name: string, metadata: Record<string, unknown>, input: Record<string, unknown> = {}) => ({
+      type: "tool" as const,
+      id: name,
+      callID: name,
+      name,
+      status: "completed" as const,
+      input,
+      metadata,
+      time: { created: 0, completed: 0 },
+    })
+    const turn = {
+      id: "m",
+      sessionID: "s",
+      role: "assistant" as const,
+      model: { provider: "p", model: "m" },
+      agent: "build" as const,
+      time: { created: 0 },
+      parts: [
+        part("patch", { diff: unifiedDiff("from-patch.txt", "", "new\n") }),
+        part("apply_patch", { files: ["from-apply-patch.txt"] }),
+        part("edit", { diff: unifiedDiff("real.txt", "a\n", "b\n") }, { file_path: "made.txt" }),
+      ],
+    } as unknown as Message
+    const undoable = turnFilePaths(root, [turn])
+    check("the undo does not go looking for a file a tool that is not here reported", undoable.length === 1 && undoable[0].endsWith("real.txt"), undoable)
+    const touched = sessionFiles([turn], root).written.map((entry) => entry.path)
+    check("and neither does the record of what a conversation changed", touched.length === 1 && touched[0] === "made.txt", touched)
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)

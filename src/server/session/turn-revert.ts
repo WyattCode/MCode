@@ -2,10 +2,10 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import type { Message, ToolPart, TurnRevertResult } from "@shared/protocol"
 import { applyPatch, checkoutFile, isTracked, repositoryRoot } from "../git"
-import { createsFile, parseUnifiedDiff, recountedSection, sectionPatch, type DiffSection } from "@shared/unified-diff"
+import { parseUnifiedDiff, recountedSection, sectionPatch, type DiffSection } from "@shared/unified-diff"
 
 /** The tools whose calls change files and record the diff of what they did. */
-const EDITING = new Set(["edit", "write", "patch"])
+const EDITING = new Set(["edit", "write"])
 
 interface FileHistory {
   /** Where the file is on disk. */
@@ -86,7 +86,7 @@ function filesOf(directory: string, messages: Message[]): Map<string, FileHistor
           known.sections.push(section)
           continue
         }
-        const created = tool.name === "write" ? tool.metadata?.created === true : tool.name === "patch" && createsFile(section)
+        const created = tool.metadata?.created === true
         files.set(target, { target, created, sections: [section] })
       }
     }

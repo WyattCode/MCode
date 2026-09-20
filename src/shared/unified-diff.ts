@@ -3,8 +3,9 @@
  *
  * Shared because both sides need the same answer: the window counts what a turn
  * changed file by file, and the server takes a turn's changes back out of the
- * files. A tool's diff may cover several files - apply_patch joins one per file
- * - so the first job is always to split it where each file's header begins.
+ * files. A diff may carry more than one file's changes - a turn's are read
+ * together - so the first job is always to split it where each file's header
+ * begins.
  *
  * Hunks are read by their counts rather than by their prefixes. A removed line
  * that happens to read "-- x" is written "--- x", and followed by an added line
@@ -85,11 +86,6 @@ export function parseUnifiedDiff(diff: string): DiffSection[] {
     current.hunks.push(hunk)
   }
   return sections
-}
-
-/** A section that brought its file into being: nothing stood there before it. */
-export function createsFile(section: DiffSection): boolean {
-  return section.hunks.length > 0 && section.hunks.every((hunk) => hunk.oldLines.length === 0)
 }
 
 /**
