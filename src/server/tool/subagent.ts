@@ -99,7 +99,11 @@ export const ActorTool: ToolDefinition = {
             description: "run, spawn: explore only reads; general can also edit files and run commands",
           },
           model: { type: "string", description: "run, spawn: provider/model to use instead of this conversation's model; see the models action" },
-          task_id: { type: "string", description: "run, spawn: the id of the task tool's task this subagent works on (T1, T2.1), when it works on one; an id the task tool has not returned in this conversation is dropped and the call says so" },
+          task_id: {
+            type: "string",
+            description:
+              "run, spawn: the id of the task tool's task this subagent works on (T1, T2.1), when it works on one; an id the task tool has not returned in this conversation is dropped and the call says so. A subagent given one has to leave a record of its work on that task before it can finish, and is sent back for it if it does not.",
+          },
           output_schema: {
             type: "object",
             description: "run, spawn: a JSON Schema; the subagent then ends by returning one object that matches it, and that object is its result instead of prose",

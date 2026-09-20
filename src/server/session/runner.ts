@@ -16,7 +16,7 @@ import type {
   TurnAgent,
   UserMessage,
 } from "@shared/protocol"
-import { access, mkdir, readdir, rm, writeFile } from "node:fs/promises"
+import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 import { Identifier } from "@shared/id"
 import { effortToSend, menuEfforts } from "@shared/effort-menu"
@@ -61,7 +61,7 @@ import { memorySection, systemPrompt } from "./prompt"
 import { GOAL_GUARD, JUDGE_SYSTEM, MAX_GOAL_REACT, cleanGoal, goalReminder, judgeQuestion, parseVerdict, type GoalVerdict } from "./goal"
 import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf, subagentAgent } from "./plan"
 import { status as gitStatus } from "../git"
-import { memoryFilesFor } from "../history/service"
+import { historyService, memoryFilesFor, memoryWritable } from "../history/service"
 import { withAutomationNotes } from "../automation/framing"
 import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titleModelRef, titlePrompt, withoutSkillPrefix } from "./title"
 import { interfaceLocale } from "./locale"
@@ -87,6 +87,8 @@ import { CHAT_WAIT_MS, SessionChat, withChatHeaders } from "./chat"
 import { SUBAGENT_TIMERS, firstLine, isStalled, noticeText, readLegacyMessage, statusHeader, subagentOutput, type ResultStatus, type SubagentTimers } from "@shared/subagent"
 import { STRUCTURED_OUTPUT, STRUCTURED_REMINDER, STRUCTURED_RETRIES, structuredOutputTool, structuredResult } from "../tool/subagent"
 import { TASK_ID, applyTask, listedTasks } from "../tool/task"
+// tasks: the record a subagent started for a task has to leave behind before it finishes.
+import { MAX_PROGRESS_REACT, PROGRESS_SECTIONS, missingProgressSections, progressPath, progressReminder } from "./task-progress"
 import type { TaskControl } from "../tool/types"
 import type { McpServers } from "../mcp"
 
@@ -3835,6 +3837,8 @@ export class SessionRunner {
        */
       release = await this.subagentGate.acquire(controller.signal).catch(() => undefined)
       let reminded = 0
+      // tasks: how often the progress checker sent it back for its task's record.
+      let recorded = 0
       while (release) {
         await this.run(child.id, this.config.apiKey(child.model.provider) ?? "", controller)
         await this.steering.get(child.id)?.written
@@ -3861,19 +3865,44 @@ export class SessionRunner {
           continue
         }
         // tasks: MiMo's completion gate - a general subagent ending with open or started tasks in its hands is sent back, at most twice.
-        if (child.subagent?.type !== "general" || gate.turns >= TASK_GATE_TURNS) break
-        const held = (await this.heldTasks(child)).filter((task) => task.status === "open" || task.status === "in_progress")
-        if (!held.length) break
-        gate.turns++
-        await this.store.saveMessage({
-          id: Identifier.message(),
-          sessionID: child.id,
-          role: "user",
-          text: taskGateReminder(held),
-          attachments: [],
-          synthetic: true,
-          time: { created: Date.now() },
-        })
+        if (child.subagent?.type === "general" && gate.turns < TASK_GATE_TURNS) {
+          const held = (await this.heldTasks(child)).filter((task) => task.status === "open" || task.status === "in_progress")
+          if (held.length) {
+            gate.turns++
+            await this.store.saveMessage({
+              id: Identifier.message(),
+              sessionID: child.id,
+              role: "user",
+              text: taskGateReminder(held),
+              attachments: [],
+              synthetic: true,
+              time: { created: Date.now() },
+            })
+            continue
+          }
+        }
+        /*
+         * tasks: and MiMo's progress checker after it - a subagent carrying a
+         * task id may not finish until that task's record is written and whole.
+         * Sent back at most three times, as MiMo bounds it.
+         */
+        if (recorded < MAX_PROGRESS_REACT) {
+          const note = await this.missingProgress(child)
+          if (note) {
+            recorded++
+            await this.store.saveMessage({
+              id: Identifier.message(),
+              sessionID: child.id,
+              role: "user",
+              text: note,
+              attachments: [],
+              synthetic: true,
+              time: { created: Date.now() },
+            })
+            continue
+          }
+        }
+        break
       }
     } catch (err) {
       failure = err
@@ -3910,6 +3939,37 @@ export class SessionRunner {
     this.unwatch()
     if (worker.notify && current) await this.notifyParent(worker.parentID, this.noticeOf(current, outcome)).catch(() => undefined)
     return outcome
+  }
+
+  /**
+   * tasks: what a subagent that is ending without its task's record is told,
+   * or nothing when it is not owed one.
+   *
+   * Only a subagent that was given a task id, and only one that could write the
+   * file: explore has no tool that would make it, and nothing is asked while
+   * memory writing is switched off. `memory/guard.ts` lets the subagent write
+   * that folder under either the conversation it works for or its own id, so
+   * both are looked at before it is told the file is missing.
+   */
+  private async missingProgress(child: SessionInfo): Promise<string | undefined> {
+    const taskID = child.subagent?.taskID
+    if (!taskID || child.subagent?.type !== "general") return undefined
+    const root = historyService()?.memoryRoot
+    if (!root || !memoryWritable()) return undefined
+    const owners = [child.parentID, child.id].filter((id): id is string => Boolean(id))
+    let best: { file: string; missing: string[] } | undefined
+    for (const owner of owners) {
+      const file = progressPath(root, owner, taskID)
+      const body = await readFile(file, "utf8").catch(() => undefined)
+      if (body === undefined) {
+        best ??= { file, missing: [...PROGRESS_SECTIONS] }
+        continue
+      }
+      const missing = missingProgressSections(body)
+      if (!missing.length) return undefined
+      best = { file, missing }
+    }
+    return best && best.missing.length ? progressReminder(taskID, best.file, best.missing) : undefined
   }
 
   /**
