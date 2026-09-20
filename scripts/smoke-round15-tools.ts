@@ -236,5 +236,22 @@ export async function roundFifteenToolChecks(check: Check, section: (name: strin
     await scheduler.stop()
   }
 
+  // ---------------------------------------------------------------- T15-5
+  section("Round 15 (T15-5): a command that cannot start is not counted as running")
+  {
+    const project = path.join(root, "bash")
+    await fs.mkdir(project, { recursive: true })
+    const { permissions } = gate()
+    const before = liveBashCommands()
+    const failed = await BashTool.execute({ command: "echo hi" }, toolContext(project, permissions, { shell: "definitely-no-such-shell-xyz.exe" })).then(
+      () => undefined,
+      (failure: unknown) => (failure instanceof Error ? failure.message : String(failure)),
+    )
+    check("a shell that is not there fails the call in words", (failed ?? "").includes("Failed to start command"), failed)
+    // `error` and `close` fire for a spawn that never happened; `exit` never does.
+    await wait(50)
+    check("and it leaves nothing behind in the live set", liveBashCommands() === before, { before, after: liveBashCommands() })
+  }
+
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
 }

@@ -496,9 +496,16 @@ export const BashTool: ToolDefinition = {
         detached: process.platform !== "win32",
       })
 
-      // Held only while it runs: quitting ends what is still in here.
+      /*
+       * Held only while it runs: quitting ends what is still in here. `close`
+       * as well as `exit`, because a command that never started - a shell
+       * renamed or uninstalled since Settings named it - emits `error` and
+       * `close` and no `exit` at all, and used to stay in here for the life of
+       * the backend, with nothing able to take it out again.
+       */
       live.add(child)
       child.once("exit", () => live.delete(child))
+      child.once("close", () => live.delete(child))
       const closed = new Promise<void>((done) => {
         child.once("close", () => done())
         child.once("error", () => done())
