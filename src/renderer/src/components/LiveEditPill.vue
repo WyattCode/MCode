@@ -28,7 +28,7 @@ const changes = computed(() => editedFiles(latest.value, app.current?.directory)
 function toggle() {
   const diffs: string[] = []
   for (const part of latest.value) {
-    if (part.type !== "tool" || !["edit", "write", "patch"].includes(part.name) || part.status === "error") continue
+    if (part.type !== "tool" || !["edit", "write"].includes(part.name) || part.status === "error") continue
     const diff = (part as ToolPart).metadata?.diff
     if (typeof diff === "string" && diff) diffs.push(diff)
   }

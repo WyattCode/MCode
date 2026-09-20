@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto"
 import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
 import { relative, resolvePath } from "./fs-util"
-import { unifiedDiff } from "../diff"
+import { changed, unifiedDiff } from "../diff"
 import { guardPlanWrite } from "../session/plan"
 
 interface NotebookCell {
@@ -153,7 +153,7 @@ export const NotebookEditTool: ToolDefinition = {
     }
 
     const after = bom + JSON.stringify(notebook, null, 1) + (before.endsWith("\n") ? "\n" : "")
-    const diff = unifiedDiff(display, before.slice(bom.length), after.slice(bom.length))
+    const { diff, filediff } = changed(display, unifiedDiff(display, before.slice(bom.length), after.slice(bom.length)))
     await context.permissions.ask({
       sessionID: context.sessionID,
       messageID: context.messageID,
@@ -170,7 +170,7 @@ export const NotebookEditTool: ToolDefinition = {
     return {
       output: `Changed ${display}: ${change}.`,
       title: `${display} — ${change}`,
-      metadata: { path: display, diff, edit_mode: mode, cell_id: cellID },
+      metadata: { path: display, diff, filediff, edit_mode: mode, cell_id: cellID },
     }
   },
 }

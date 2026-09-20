@@ -16,6 +16,25 @@ export interface HistoryDepth {
   redo: number
 }
 
+/**
+ * 追求目标: one conversation's goal.
+ *
+ * `done` is absent while the goal is being pursued. Once the judge has
+ * answered - met, or out of reach, or out of tries - it is filled in and the
+ * goal stops driving turns, but stays on the conversation so the bar above the
+ * composer can say how it ended until the reader dismisses it.
+ */
+export interface SessionGoal {
+  /** What the user asked for, as they wrote it; the judge is asked about this sentence. */
+  condition: string
+  /** When it was set, for the bar's clock. */
+  startedAt: number
+  /** How many times the judge has sent a turn back, against `MAX_GOAL_REACT`. */
+  attempts: number
+  /** How it ended: met, or blocked - unreachable, or past the bound. */
+  done?: { status: "complete" | "blocked"; reason: string; at: number }
+}
+
 export interface SessionInfo {
   id: string
   title: string
@@ -28,23 +47,32 @@ export interface SessionInfo {
   titleSource?: "fallback" | "generated" | "user"
   /** MiMo's `auto_worktree_hint_sent`: the one note about changing a repository's main worktree has gone to the model. */
   worktreeNotice?: boolean
+  /** MiMo's `interactiveNotified`: the reader has been told once that a command wanting to be typed at was skipped. */
+  interactiveNotice?: boolean
   /** Absolute path of the project directory this session operates in. */
   directory: string
   model: ModelRef
   agent: AgentName
+  /**
+   * 追求目标: whether the plus menu's switch is on for this conversation, so
+   * the next message sent becomes its goal. Absent is off, which is what every
+   * conversation stored before this field existed reads as.
+   */
+  goalMode?: boolean
+  /**
+   * 追求目标: the goal this conversation is pursuing, and how it ended.
+   *
+   * Stored with the conversation rather than held in memory, so a goal is
+   * still being pursued after the app restarts - as MiMo's is, which keeps its
+   * own per-conversation goals in the desktop's preferences.
+   */
+  goal?: SessionGoal
   /**
    * plan: two words fixed when the conversation is made, which name its plan
    * file (`<created>-<slug>.md`) as MiMo's session slug names its own.
    * Conversations stored before this have none and fall back to their id.
    */
   slug?: string
-  /**
-   * Whether this conversation works in stages: clarify, plan, build, review.
-   *
-   * Absent is off, which is what every conversation stored before this field
-   * existed has to read as.
-   */
-  staged?: boolean
   /**
    * On Smart: the first message picks between the fast and the main model, and
    * `model` then holds the one it picked.
@@ -179,6 +207,23 @@ export interface ModelRef {
 }
 
 export type ToolStatus = "pending" | "running" | "completed" | "error"
+
+/**
+ * What an edit, a write or a notebook edit records about the file it changed,
+ * under `metadata.filediff`: MiMo's `filediff` on the same results.
+ *
+ * `patch` is the change exactly as the file has it, which is what the undo
+ * reverses - `metadata.diff` beside it is the same change with the shared
+ * indentation taken off, for showing. `additions` and `deletions` are how many
+ * lines this one call added and removed, which the turn's own counts could not
+ * say for a single step.
+ */
+export interface FileDiff {
+  file: string
+  patch: string
+  additions: number
+  deletions: number
+}
 
 export interface ToolPart {
   type: "tool"
@@ -333,6 +378,8 @@ export interface UserMessage {
    * message its plan_exit writes.
    */
   synthetic?: boolean
+  /** 追求目标: this message became the conversation's goal, which the transcript marks on it. */
+  setsGoal?: boolean
   /** Places the user pointed at with this message (MiMo's 注释); the model reads them after the text. */
   annotations?: Annotation[]
   /** Documents the user changed since the last message; the model reads them before the text, the transcript does not show them. */
@@ -1056,9 +1103,13 @@ export type Effort = (typeof EFFORTS)[number]
  *
  * The order is the order the settings screen draws, and it follows the
  * reference's own row order so the two screens read the same way down the page.
- * Two entries have no counterpart there: the reference judges every kind of
- * file change as one "edit", where this app separates creating a file from
- * changing one, and it has no notion of an MCP server at all.
+ * One entry has no counterpart there: the reference has no notion of an MCP
+ * server at all.
+ *
+ * Creating a file is judged as an edit, as the reference judges it and as
+ * OpenCode does - a `write` bucket of its own asked one question the reference
+ * never asks, which is the app being stricter than what it copies rather than
+ * equal to it (the user's decision, 2026-09-20).
  *
  * A name absent from here cannot be configured and cannot be refused, which is
  * how `read`, `list`, `glob` and `grep` came to be beyond reach: their tools
@@ -1067,7 +1118,6 @@ export type Effort = (typeof EFFORTS)[number]
 export const PERMISSION_KINDS = [
   "read",
   "edit",
-  "write",
   "glob",
   "grep",
   "list",
@@ -1087,10 +1137,14 @@ export type PermissionAction = (typeof PERMISSION_ACTIONS)[number]
 /**
  * What each bucket does when the user has never said.
  *
- * These are the behaviours this app already had, written down: looking at the
- * project happened without asking, and everything that changed a file, ran a
- * command or reached the network asked first. Naming them here rather than leaving them
+ * Looking at the project happens without asking, and everything that changes a
+ * file or runs a command asks first. Naming them here rather than leaving them
  * implicit is what lets a stored setting be told apart from an untouched one.
+ *
+ * Fetching a web page is allowed, as it is in MiMo, whose desktop makes only
+ * edits and commands ask. It had asked here, which is the app being stricter
+ * than what it copies (the user's decision, 2026-09-20); the bucket can still
+ * be set to ask or deny, and full access does not change a refusal.
  *
  * An MCP tool call runs without asking, as in MiMo, whose engine allows every
  * tool by default and whose desktop only makes edits and commands ask. The
@@ -1100,12 +1154,11 @@ export type PermissionAction = (typeof PERMISSION_ACTIONS)[number]
 export const DEFAULT_PERMISSIONS: Record<PermissionKind, PermissionAction> = {
   read: "allow",
   edit: "ask",
-  write: "ask",
   glob: "allow",
   grep: "allow",
   list: "allow",
   bash: "ask",
-  webfetch: "ask",
+  webfetch: "allow",
   outside: "ask",
   mcp: "allow",
 }
@@ -1121,7 +1174,6 @@ export const DEFAULT_PERMISSIONS: Record<PermissionKind, PermissionAction> = {
  */
 export const SELF_ASKING_KINDS: readonly PermissionKind[] = [
   "edit",
-  "write",
   "bash",
   "webfetch",
   "outside",
@@ -1145,7 +1197,7 @@ export const ENFORCED_KINDS: readonly PermissionKind[] = PERMISSION_KINDS
 export const NETWORK_KINDS: readonly PermissionKind[] = ["webfetch", "mcp"]
 
 /** Kinds that can change something outside this app's own state. */
-export const WRITING_KINDS: readonly PermissionKind[] = ["edit", "write", "bash", "outside"]
+export const WRITING_KINDS: readonly PermissionKind[] = ["edit", "bash", "outside"]
 
 /**
  * How a Model Context Protocol server is reached.
@@ -1532,8 +1584,8 @@ export interface AppConfig {
   effort: Effort
   /** Which agent preset new sessions start in. */
   agent: AgentName
-  /** Whether new sessions start in staged mode; each may then differ. */
-  staged: boolean
+  /** 追求目标: whether new conversations start with the switch on; each may then differ. */
+  goalMode: boolean
   /**
    * 导入: set once the first run has asked about conversations in other AI
    * apps, whether or not anything was taken. MiMo asks a machine once; so does
@@ -1910,8 +1962,15 @@ export type Request =
   | { type: "session.watch"; sessionIDs: string[] }
   | { type: "session.history"; sessionID: string }
   | { type: "session.agent"; sessionID: string; agent: AgentName }
+  /* 追求目标: the plus menu's switch for one conversation. */
+  | { type: "session.goalMode"; sessionID: string; on: boolean }
+  /*
+   * 追求目标: sets the goal, rewrites it, or - with null - takes it off the
+   * conversation, which is both "exit goal mode" while one is being pursued
+   * and "dismiss" once the judge has answered.
+   */
+  | { type: "session.goal"; sessionID: string; condition: string | null }
   | { type: "session.access"; sessionID: string; access: "ask" | "auto" | "full" }
-  | { type: "session.staged"; sessionID: string; staged: boolean }
   /*
    * A review restricted this conversation, or lifted it. MiMo's own review
    * reports it from the engine; here it is whatever stands in for that, and
@@ -1943,6 +2002,8 @@ export type Request =
       fileNotices?: FileNotice[]
       agent?: TurnAgent
       model?: ModelRef
+      /* 追求目标: this message is the conversation's goal from now on, set before it is written. */
+      goal?: string
     }
   | { type: "session.abort"; sessionID: string }
   /*
@@ -2242,8 +2303,9 @@ export interface ResponseMap {
    */
   "session.revert": { session: SessionInfo; files: number; history: HistoryDepth }
   "session.agent": { session: SessionInfo }
+  "session.goalMode": { session: SessionInfo }
+  "session.goal": { session: SessionInfo }
   "session.access": { session: SessionInfo }
-  "session.staged": { session: SessionInfo }
   "session.reviewRestricted": { session: SessionInfo }
   "session.delete": Record<string, never>
   "session.compact": { session: SessionInfo }
@@ -2408,6 +2470,16 @@ export type ServerEvent =
   | { type: "session.compacting"; sessionID: string; active: boolean }
   /** `errorCode`, when present, names the sentence the window shows instead of `error`. */
   | { type: "session.error"; sessionID: string; error: string; errorCode?: string; errorParams?: Record<string, string | number> }
+  /**
+   * Something happened in a conversation that the reader is told about once,
+   * and that is not a failure of the turn: MiMo's `kind: "notice"` harness
+   * event, which its window shows and then forgets.
+   *
+   * `code` names the sentence in the window's own tables rather than carrying
+   * it, so the notice is in the reader's language and no model-facing wording
+   * reaches the screen.
+   */
+  | { type: "session.notice"; sessionID: string; code: string }
   | { type: "message.updated"; message: Message }
   /**
    * Messages have left the transcript for good.

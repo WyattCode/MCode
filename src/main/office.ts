@@ -6,7 +6,7 @@ import os from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { shell, type IpcMain, type IpcMainInvokeEvent, type WebContents } from "electron"
-import { servePreview } from "./preview-server"
+import { servePreview, serveWidget } from "./preview-server"
 import { OFFICE_BYTES_LIMIT, guarded, type WorkingRoots } from "./office-guard"
 import { registerPaths } from "./paths"
 import { registerImageClipboard } from "./image-clipboard"
@@ -512,6 +512,8 @@ export function registerOffice(ipcMain: IpcMain, userData: string, roots: Workin
   checked("mcode:office-version-restore", { ok: false, reason: "invalid" }, (_event, file: string, id: string) => versions.restore(file, id))
   checked("mcode:office-convert-legacy", { ok: false, error: "invalid" }, (_event, file: string) => convertLegacy(userData, file))
   checked("mcode:office-serve", { ok: false, error: "missing" }, (_event, file: string) => servePreview(file))
+  // A reply's interactive widget: its own origin, its own policy, and no file anywhere.
+  checked("mcode:widget-serve", { ok: false, error: "missing" }, (_event, html: string, reduceMotion: boolean) => serveWidget(html, reduceMotion))
   checked("mcode:reveal-path", { ok: false, error: "not found" }, async (_event, file: string) => {
     if (typeof file !== "string" || !path.isAbsolute(file) || !existsSync(file)) return { ok: false, error: "not found" }
     shell.showItemInFolder(file)

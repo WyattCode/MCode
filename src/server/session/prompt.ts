@@ -17,8 +17,6 @@ export interface PromptContext {
   instructions?: string
   /** The global AGENTS.md, read into every conversation while it is there (switched off, it has been renamed). */
   globalAgentsFile?: string
-  /** Whether the conversation works in stages. */
-  staged?: boolean
   /**
    * MiMo's `instructions` setting: more instruction files, by glob, looked for
    * up to the repository's top, and web addresses, which are fetched.
@@ -62,27 +60,6 @@ Some notes outlast this conversation. They are markdown files you read and write
 Before asking the user something they may already have told you, search with the memory tool; use the history tool for exact past wording.`
 }
 
-/*
- * Staged mode. Four stages, named so the reader can see where the work is, and
- * each with the one thing that makes it a stage rather than a heading: what has
- * to be true before moving on. Plan mode already stops before building, so in
- * plan mode this section is left out rather than contradicted.
- */
-const STAGED = `## Working in stages
-
-The user has asked for this conversation to be worked in four stages. Name the
-stage you are in when you move into it.
-
-1. Clarify. Say back what you understand the task to be. If something the work
-   depends on is genuinely unclear, ask before going further - with the question
-   tool when it is available. Do not ask about things you can find out by reading.
-2. Plan. Write down what will change, in which files, and how you will check it.
-   Record the steps with the task tool.
-3. Build. Make the changes the plan describes. If the plan turns out to be wrong,
-   say so and revise it rather than quietly doing something else.
-4. Review. Compare what you changed against the plan, run the project's checks,
-   and report plainly what passed, what failed, and anything left undone.`
-
 /**
  * Builds the system prompt. Ordering matters for prompt caching: the static
  * base comes first, then the per-project material, which changes rarely.
@@ -99,7 +76,6 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
    * prefix opens with the same bytes whatever the model.
    */
   const sections = [agentPrompt(context.agent)]
-  if (context.agent === "build" && context.staged) sections.push(STAGED)
 
   /*
    * Before the project's own files, and said to be the reader's rather than

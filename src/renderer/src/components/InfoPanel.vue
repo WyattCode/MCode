@@ -67,7 +67,7 @@ const fileSteps = computed(
       (sum, message) =>
         sum +
         (message.role === "assistant"
-          ? message.parts.filter((part) => part.type === "tool" && part.status === "completed" && ["write", "edit", "apply_patch", "bash"].includes(part.name)).length
+          ? message.parts.filter((part) => part.type === "tool" && part.status === "completed" && ["write", "edit", "bash"].includes(part.name)).length
           : 0),
       0,
     ),

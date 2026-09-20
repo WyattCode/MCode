@@ -2,10 +2,10 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import type { Message, ToolPart, TurnRevertResult } from "@shared/protocol"
 import { applyPatch, checkoutFile, isTracked, repositoryRoot } from "../git"
-import { createsFile, parseUnifiedDiff, recountedSection, sectionPatch, type DiffSection } from "@shared/unified-diff"
+import { parseUnifiedDiff, recountedSection, sectionPatch, type DiffSection } from "@shared/unified-diff"
 
 /** The tools whose calls change files and record the diff of what they did. */
-const EDITING = new Set(["edit", "write", "patch"])
+const EDITING = new Set(["edit", "write"])
 
 interface FileHistory {
   /** Where the file is on disk. */
@@ -49,6 +49,23 @@ export function turnFilePaths(directory: string, messages: Message[]): string[] 
   return [...filesOf(directory, messages).keys()]
 }
 
+/**
+ * The patch a call left, as the file itself has it.
+ *
+ * `metadata.diff` is what the card shows, and since R16-C3 that copy has the
+ * indentation its lines share taken off - which `git apply` would refuse,
+ * because the context lines no longer match the file. `metadata.filediff.patch`
+ * is the same change untouched, and is what is reversed here. A call recorded
+ * before that has only `diff`, which was never trimmed, so it is still right
+ * for those.
+ */
+function patchOf(tool: ToolPart): string | undefined {
+  const filediff = tool.metadata?.filediff as { patch?: unknown } | undefined
+  if (filediff && typeof filediff.patch === "string" && filediff.patch) return filediff.patch
+  const diff = tool.metadata?.diff
+  return typeof diff === "string" && diff ? diff : undefined
+}
+
 function filesOf(directory: string, messages: Message[]): Map<string, FileHistory> {
   const files = new Map<string, FileHistory>()
   const root = path.resolve(directory)
@@ -59,8 +76,8 @@ function filesOf(directory: string, messages: Message[]): Map<string, FileHistor
       if (part.type !== "tool" || !EDITING.has(part.name)) continue
       const tool = part as ToolPart
       if (tool.status !== "completed") continue
-      const diff = tool.metadata?.diff
-      if (typeof diff !== "string" || !diff) continue
+      const diff = patchOf(tool)
+      if (!diff) continue
       for (const section of parseUnifiedDiff(diff)) {
         if (!section.file) continue
         const target = path.resolve(root, section.file)
@@ -69,7 +86,7 @@ function filesOf(directory: string, messages: Message[]): Map<string, FileHistor
           known.sections.push(section)
           continue
         }
-        const created = tool.name === "write" ? tool.metadata?.created === true : tool.name === "patch" && createsFile(section)
+        const created = tool.metadata?.created === true
         files.set(target, { target, created, sections: [section] })
       }
     }

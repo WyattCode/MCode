@@ -55,7 +55,8 @@ export const PAGE_ROWS: readonly PageRow[] = [
   { key: "model-picker", commands: ["view.model"] },
   { key: "toggle-voice", commands: ["voice.toggle"] },
   { key: "send-message", commands: ["composer.send"] },
-  { key: "toggle-plan", commands: ["composer.staged.toggle"] },
+  // MiMo binds this slot to its compose switch, which this app no longer has; 追求目标 is the switch that sits there now.
+  { key: "toggle-goal", commands: ["composer.goal.toggle"] },
   { key: "copy-md", commands: ["session.copyMarkdown"] },
   { key: "copy-deeplink", commands: ["session.copyLink"] },
   { key: "copy-session-id", commands: ["session.copyID"] },

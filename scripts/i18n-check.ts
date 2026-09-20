@@ -134,14 +134,17 @@ for (const family of FAMILIES) {
 /*
  * Permission row titles, and the two that must stay absent.
  *
- * Nine of the eleven buckets map onto a bucket the reference names, so those
- * nine rows carry its word instead of a lowercase identifier. `write` and `mcp`
- * have no counterpart at all - the reference judges every file change as one
- * `edit` and has no notion of an MCP server - so there is no string to adopt
- * for them, and inventing one would look harmless and be exactly the thing this
- * project does not do. Both halves are asserted: a missing title shows a raw id
- * where every other row shows a word, and a title appearing for `write` or
- * `mcp` is a hand-written string that came from nowhere.
+ * Eight of the nine buckets map onto a bucket the reference names, so those
+ * eight rows carry its word instead of a lowercase identifier. `mcp` has no
+ * counterpart at all - the reference has no notion of an MCP server - so there
+ * is no string to adopt for it, and inventing one would look harmless and be
+ * exactly the thing this project does not do. Both halves are asserted: a
+ * missing title shows a raw id where every other row shows a word, and a title
+ * appearing for `mcp` is a hand-written string that came from nowhere.
+ *
+ * `write` is checked alongside it, and for the same reason it always was: the
+ * reference judges every file change as one `edit`, and since R16-C6 so does
+ * this app, so no row is drawn for it and no title may appear.
  */
 const TITLED_BUCKETS = ["read", "edit", "glob", "grep", "list", "bash", "webfetch", "outside"]
 const UNTITLED_BUCKETS = ["write", "mcp"]

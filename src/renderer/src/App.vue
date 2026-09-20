@@ -2865,11 +2865,11 @@ const bindableCommands = computed((): AppCommand[] => {
       run: () => void app.toggleVoiceMode(),
     },
     {
-      // MiMo's 切换编排模式, unbound: for the open conversation, or on the home screen for the next task.
-      id: "composer.staged.toggle",
+      // 追求目标, unbound: for the open conversation, or on the home screen for the next task.
+      id: "composer.goal.toggle",
       group: "key.groupPrompt",
-      title: t("key.label.toggle-plan"),
-      run: () => void app.toggleComposeMode(isHome.value),
+      title: t("key.label.toggle-goal"),
+      run: () => void app.toggleGoalMode(isHome.value),
     },
     {
       id: "project.previous",

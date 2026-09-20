@@ -302,7 +302,7 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
     const e = await engine()
     try {
       // Writing is allowed outright, so what refuses a write here is the plan rule and nothing else.
-      await e.config.set({ permissions: { ...e.config.get().permissions, write: "allow", edit: "allow" } })
+      await e.config.set({ permissions: { ...e.config.get().permissions, edit: "allow" } })
       const session = await e.store.create({ directory: e.project, model: e.model, agent: "plan" })
       const plan = planFile({ directory: e.project, dataRoot: path.join(e.dir, "data", "storage"), repo: false }, { created: session.created, slug: slugOf(session) })
       const planName = path.basename(plan)
@@ -1120,7 +1120,7 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
   {
     const e = await engine()
     try {
-      await e.config.set({ permissions: { ...e.config.get().permissions, write: "allow", edit: "allow" } })
+      await e.config.set({ permissions: { ...e.config.get().permissions, edit: "allow" } })
       execFileSync("git", ["init", "-q"], { cwd: e.project })
       const session = await e.store.create({ directory: e.project, model: e.model })
       e.replies.push(calls([{ name: "write", input: { file_path: "note.txt", content: "first" } }]))

@@ -1881,7 +1881,8 @@ async function main(): Promise<void> {
     check("a bucket they approved runs without asking", kept.bash === "allow", String(kept.bash))
     check("and so does the other one", kept.outside === "allow", String(kept.outside))
     check("one they did not approve still asks", kept.edit === "ask", String(kept.edit))
-    check("and nothing is refused, because they never said so", kept.write === "ask", String(kept.write))
+    // R16-C6: `write` is no longer a bucket of its own, so what is asserted is that the old list refused nothing.
+    check("and nothing is refused, because they never said so", Object.values(kept).every((action) => action !== "deny"), JSON.stringify(kept))
     /*
      * The five that never asked are the point of this one: they are new to the
      * list, and their owner cannot have had an opinion about them. Reading an
@@ -1919,7 +1920,7 @@ async function main(): Promise<void> {
   }
 
   // Left as the rest of this run expects to find it.
-  await say({ bash: "allow", edit: "allow", write: "allow", webfetch: "allow", outside: "allow", mcp: "allow" })
+  await say({ bash: "allow", edit: "allow", webfetch: "allow", outside: "allow", mcp: "allow" })
 
   // --- disconnecting a provider the environment supplies --------------------
   console.log("disconnecting an environment-backed provider")

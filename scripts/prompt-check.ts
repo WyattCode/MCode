@@ -337,6 +337,14 @@ console.log("\nThe one agent prompt every model reads")
   check("the guard is written in Chinese, as MiMo's guards are", cjk.test(PLAN_SECTION), true)
   check("and the two base layers are not", cjk.test(build), false)
   check("the prompt names this app and never the reference", plan.startsWith("You are MCode") && !/mimo/i.test(plan), true)
+  /*
+   * The interactive widget, under "Visual explanations". The three that matter
+   * are the fence (nothing renders without it), the sizing rule (a widget laid
+   * out against the viewport collapses the card to a sliver) and that it is
+   * rendered rather than delivered.
+   */
+  const widget = build.slice(build.indexOf("## Visual explanations"), build.indexOf("## Asking clarifying questions"))
+  check("the widget's fence, sizing rule and place are all stated", ["```sci-widget", "height:100vh", "window.innerHeight", "aspect-ratio", "present_files"].filter((part) => !widget.includes(part)), [])
 }
 
 if (problems.length) {

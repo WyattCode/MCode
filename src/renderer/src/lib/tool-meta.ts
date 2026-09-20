@@ -47,7 +47,7 @@ export const OUTPUT_CAP = 3000
 // memory: named in MiMo's tables; history, cron and automation_update are not, and read through the fallbacks.
 // speak: MCode's own tool for the voice feedback MiMo does in the cloud, so its words are this app's.
 const LABELLED = new Set(["read", "edit", "write", "bash", "grep", "glob", "list", "webfetch", "todowrite", "invalid", "actor", "pdf_locate", "present_files", "contacts", "skill", "skill_search", "memory", "speak"])
-const SPEAKS_AS: Record<string, string> = { apply_patch: "edit", patch: "edit" }
+const SPEAKS_AS: Record<string, string> = { apply_patch: "edit", patch: "edit", exec_command: "bash" }
 
 /** The tools this app ships, whose titles are their own rather than their input. */
 const BUILT_IN = new Set([
@@ -179,12 +179,17 @@ export function toolIcon(name: string): StepIconName {
 
 const text = (value: unknown) => (typeof value === "string" ? value : "")
 
-/** A shell call's command and the model's description of it, when it has a command. */
+/**
+ * A shell call's command and the model's description of it, when it has a
+ * command. `exec_command` is the same row as a bash one - MiMo speaks of it as
+ * bash - only its command arrives under `cmd`, and it carries no description.
+ */
 export function bashOf(part: ToolPart): { cmd: string; desc: string } | undefined {
   if (part.name !== "bash" && part.name !== "exec_command") return undefined
-  const cmd = text(part.input?.command).trim()
+  const ran = part.name === "exec_command"
+  const cmd = (ran ? text(part.input?.cmd) || text(part.input?.command) : text(part.input?.command)).trim()
   if (!cmd) return undefined
-  return { cmd, desc: text(part.input?.description).trim() }
+  return { cmd, desc: ran ? "" : text(part.input?.description).trim() }
 }
 
 /** What a step is about, before it is shortened for the row. */
@@ -197,6 +202,9 @@ export function stepTitle(part: ToolPart): string {
       return part.title || text(input.path) || text(input.filePath) || text(input.file_path)
     case "bash":
       return text(input.description) || text(input.command) || part.title || ""
+    // A command run through `exec_command` is titled by the command alone: it has no description to lead with.
+    case "exec_command":
+      return text(input.cmd) || text(input.command) || part.title || ""
     case "glob":
     case "grep":
       return text(input.pattern) || part.title || ""

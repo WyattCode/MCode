@@ -57,7 +57,7 @@ function refusal(kind: string, subject: string): string {
  * dangerous in it. Everything else goes to the model's review.
  */
 export function autoAllows(kind: PermissionKind, subject: string): boolean {
-  if (kind === "edit" || kind === "write" || kind === "outside") return true
+  if (kind === "edit" || kind === "outside") return true
   if (kind === "bash") return !dangerousCommand(subject)
   return false
 }

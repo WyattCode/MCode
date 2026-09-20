@@ -16,11 +16,18 @@ import { killTree } from "../kill-tree"
 
 const DEFAULT_TIMEOUT = 120_000
 
-/** What a command declaring itself interactive is answered with, since there is no terminal to hand over. */
+/**
+ * What a command declaring itself interactive is answered with, since there is
+ * no terminal to hand over.
+ *
+ * Chinese, as every model-facing string of MiMo's is: this is the model's half
+ * of the conversation, and the reader never sees it. What the reader sees is a
+ * notice of its own, once per conversation, through the language tables.
+ */
 export const INTERACTIVE_REFUSAL = [
-  "This environment has no interactive terminal, so the command was not run and nothing was changed.",
-  "Run it without interaction instead: pass its confirmation flag (-y, --yes, -Force, -Confirm:$false), feed the answers in through a pipe, or use an equivalent command that needs no input.",
-].join(" ")
+  "当前环境没有交互式终端，这条命令没有执行，也没有改动任何东西。",
+  "请改用不需要输入的方式重试：带上自动确认参数（-y、--yes、-Force、-Confirm:$false），用管道把答案喂进去，或者换一条不需要人回答的等效命令。",
+].join("")
 /** How much output comes back inline when the call does not say, in MiMo's approximate tokens of four bytes. */
 const DEFAULT_MAX_OUTPUT_TOKENS = 30_000
 /** How much of the latest output the card shows while the command works. */
@@ -329,15 +336,45 @@ export function liveBashCommands(): number {
 }
 
 
-export const BashTool: ToolDefinition = {
-  name: "bash",
-  description: [
+/**
+ * How several commands are chained in the shell this machine will use.
+ *
+ * Windows PowerShell 5.1 has no `&&` at all: a line carrying one fails to
+ * parse before anything runs, and the model has no way to know that from a
+ * description written for every shell at once. MiMo swaps this sentence per
+ * shell for the same reason; `pwsh` (PowerShell 7) does have `&&` and is
+ * treated as every other shell is.
+ */
+function chainingAdvice(name: string): string {
+  if (name === "powershell") {
+    return "- To run several commands in order, do not write `&&`: Windows PowerShell 5.1 has no such operator and the whole line fails to parse before anything runs. Write `cmd1; if ($?) { cmd2 }` when the second should only run after the first succeeded, and `cmd1; cmd2` when it should run either way."
+  }
+  return "- To run several commands in order, chain them in one call with `&&`, so a failure stops the rest: `npm ci && npm test`. Use `;` only when a later command should run whatever became of the earlier one."
+}
+
+/**
+ * The shell tool's description, written for the shell this machine will
+ * actually use.
+ *
+ * MiMo builds its own the same way, substituting the operating system, the
+ * shell's name and the chaining advice into one template. The text is this
+ * app's own; what is taken from MiMo is that the description is not fixed.
+ *
+ * `configured` is the shell the settings name, so the description follows the
+ * reader's choice rather than the machine's default.
+ */
+export function bashDescription(configured?: string): string {
+  const name = shellName(shell(configured).command)
+  return [
     "Run a shell command in the project and return what it printed.",
+    "",
+    `This machine runs ${process.platform}, and the command is handed to ${name}.`,
     "",
     "What it is for",
     "Builds, tests, type checkers, linters, package managers and version control. For work on files themselves, use read, edit, write, glob and grep instead: they are faster, they do not depend on which utilities this machine has, and their output is shaped for you to act on. Reaching for `cat`, `find`, `grep`, `sed` or `type` here is almost always the slower way round.",
     "",
     "Running it",
+    chainingAdvice(name),
     "- Set workdir to choose where the command runs. Do not begin the command with `cd`: each call starts a fresh shell, so a `cd` does not carry to the next one.",
     "- A command is stopped after two minutes unless timeout allows longer. Give a long build or test run the time it needs rather than letting it be killed half way.",
     "- Output past about 30,000 tokens comes back with its middle left out and the whole of it saved to a file the result names, which you can then grep or read in parts.",
@@ -353,7 +390,13 @@ export const BashTool: ToolDefinition = {
     "",
     "Pull requests",
     "Open one only when asked. Push the branch first, target the repository's default branch unless the user names another, and write the description from the whole set of commits on the branch rather than the last one.",
-  ].join("\n"),
+  ].join("\n")
+}
+
+export const BashTool: ToolDefinition = {
+  name: "bash",
+  /* The machine's default shell; a turn whose settings name another gets its own through `toolsForTurn`. */
+  description: bashDescription(),
   permission: "bash",
   parameters: {
     type: "object",

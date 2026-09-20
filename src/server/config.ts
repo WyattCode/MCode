@@ -146,7 +146,7 @@ function defaults(): AppConfig {
     // MiMo's 中: one app-wide level, medium until someone picks another.
     effort: "medium",
     agent: "build",
-    staged: false,
+    goalMode: false,
     importOnboarded: false,
     uiFontSize: 14,
     codeFontSize: 12,
@@ -488,7 +488,7 @@ export class Config {
    * migration that did nothing this time still must not run again, or it would
    * undo a choice made after it.
    */
-  private migrate(): boolean {
+  private migrate(stored?: Partial<AppConfig>): boolean {
     const done = new Set(this.current.migrations ?? [])
     let moved = false
     const once = (name: string, apply: () => void) => {
@@ -597,6 +597,41 @@ export class Config {
       if (kept?.mcp === "ask") this.current.accessBefore = { ...kept, mcp: "allow" }
     })
 
+    /*
+     * Round sixteen, the user's 2026-09-20 decision: the two places this app
+     * was stricter than what it copies are relaxed to it.
+     *
+     * `write` is no longer a bucket of its own - MiMo and OpenCode both judge
+     * creating a file as an edit - so a stored answer for it would simply be
+     * dropped on the next save. A document that refused writes, or allowed
+     * them where edits still ask, has that answer carried onto `edit` rather
+     * than losing it: whichever of the two was stricter wins, since the reader
+     * set both to mean what may happen to their files.
+     *
+     * `webfetch` now runs without asking, as MiMo's does. A stored "ask" for
+     * it can only be the old default - the per-tool rows went in round nine and
+     * nothing since could set one - so it moves to the new default once. A
+     * refusal is a choice and stays.
+     */
+    once("write-into-edit-r16", () => {
+      const strictness = { allow: 0, ask: 1, deny: 2 }
+      const written = (stored?.permissions as Record<string, unknown> | undefined)?.write
+      const carry = (map: Partial<Record<PermissionKind, PermissionAction>> | undefined) => {
+        if (!map) return map
+        const next = { ...map }
+        if (typeof written === "string" && written in strictness) {
+          const was = written as PermissionAction
+          const now = next.edit ?? DEFAULT_PERMISSIONS.edit
+          if (strictness[was] > strictness[now]) next.edit = was
+        }
+        if (next.webfetch === "ask") next.webfetch = DEFAULT_PERMISSIONS.webfetch
+        return next
+      }
+      this.current.permissions = carry(this.current.permissions) as Record<PermissionKind, PermissionAction>
+      const kept = carry(this.current.accessBefore)
+      if (kept) this.current.accessBefore = kept
+    })
+
     if (moved) this.current.migrations = [...done]
     return moved
   }
@@ -642,7 +677,7 @@ export class Config {
      * first-install permissions would quietly change what this machine allows.
      */
     if (stored === undefined && !read.corrupt) Object.assign(this.current, firstInstall())
-    const migrated = this.migrate()
+    const migrated = this.migrate(stored)
     this.current.autoApprove = allowed(this.current.permissions)
     if ((migrated || retired) && !this.fromNewerVersion) await this.persist()
     this.discovered = await this.readDiscovered()

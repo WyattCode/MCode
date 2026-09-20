@@ -2,7 +2,7 @@ import type { ToolDefinition } from "./types"
 import { ReadTool } from "./read"
 import { EditTool, WriteTool } from "./edit"
 import { GlobTool, GrepTool } from "./search"
-import { BashTool } from "./bash"
+import { BashTool, bashDescription } from "./bash"
 import { TaskTool } from "./task"
 import { WebFetchTool } from "./webfetch"
 import { QuestionTool } from "./question"
@@ -11,6 +11,7 @@ import { ActorTool } from "./subagent"
 import { PdfLocateTool, PresentFilesTool } from "./present"
 import { GetDesktopSettingsTool, SetDesktopSettingTool } from "./desktop-settings"
 import { ContactsTool, CreateSessionTool, TalkToSessionTool, UpdateSessionTool } from "./session-chat"
+import { ListExternalSessionsTool, ReadExternalSessionTool } from "./external-session"
 import { NotebookEditTool } from "./notebook"
 import { SkillSearchTool, SkillTool } from "./skill"
 import { HistoryTool } from "./history"
@@ -73,8 +74,17 @@ export const TOOLS: ToolDefinition[] = [
   AutomationUpdateTool,
   // plan: appended after those for the same reason; offered in both modes, and effective only while planning.
   PlanExitTool,
-  // speak: appended last, and only in the turns where voice feedback is on (runner `tools`).
+  // speak: offered only in the turns where voice feedback is on (runner `tools`).
   SpeakTool,
+  /*
+   * session chat: MiMo's other two, which read another coding tool's own saved
+   * conversations. They belong with the four above and are not put there:
+   * every request already cached its prefix with that order, and moving a tool
+   * into the middle would throw all of it away. Appended, like every group
+   * since.
+   */
+  ListExternalSessionsTool,
+  ReadExternalSessionTool,
 ]
 
 /** MiMo's explore subagent: everything is denied but these, the shell among them. */
@@ -117,9 +127,16 @@ export function hasOwnToolsOnly(agent: string): boolean {
  * refuses the call instead; a tool that is simply absent costs nothing to not
  * call, and the prompt prefix is keyed on this list, so switching the setting
  * off takes the tool away from the next turn.
+ *
+ * bash: its description is written for the shell the settings name, as MiMo
+ * writes its own - a description that says to chain with `&&` is wrong on
+ * Windows PowerShell 5.1, which has no such operator. `shell` is already part
+ * of the prompt prefix key, so a changed setting rebuilds the prefix anyway.
  */
-export function toolsForTurn(agent: string, options: { voiceFeedback: boolean }): ToolDefinition[] {
-  return toolsFor(agent).filter((tool) => tool.name !== "speak" || options.voiceFeedback)
+export function toolsForTurn(agent: string, options: { voiceFeedback: boolean; shell?: string }): ToolDefinition[] {
+  return toolsFor(agent)
+    .filter((tool) => tool.name !== "speak" || options.voiceFeedback)
+    .map((tool) => (tool.name === "bash" ? { ...tool, description: bashDescription(options.shell) } : tool))
 }
 
 /**
@@ -166,6 +183,9 @@ const READS = new Set([
   "talk_to_session",
   "create_session",
   "update_session",
+  // and the two that read another tool's transcripts, which write nothing at all.
+  "list_external_sessions",
+  "read_external_session",
   // skills: loading instructions reads files, and changes none.
   "skill",
   "skill_search",

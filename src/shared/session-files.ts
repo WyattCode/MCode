@@ -53,11 +53,6 @@ export function sessionFiles(messages: readonly Message[], directory: string): S
       const target = part.input?.file_path ?? part.input?.path
       if (WRITERS.has(part.name)) {
         if (typeof target === "string") add(written, seenWritten, target, when)
-      } else if (part.name === "apply_patch") {
-        const files = part.metadata?.files
-        if (Array.isArray(files)) {
-          for (const file of files) if (typeof file === "string") add(written, seenWritten, file, when)
-        }
       } else if (part.name === "read") {
         if (typeof target === "string") add(read, seenRead, target, when)
       }
