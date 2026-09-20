@@ -12,6 +12,8 @@
  * block between the common head and tail instead of being aligned line by line.
  */
 
+import type { FileDiff } from "@shared/protocol"
+
 type Kind = "equal" | "delete" | "insert"
 
 interface Op {
@@ -246,9 +248,14 @@ export function trimDiff(diff: string): string {
  * hands to `git apply --reverse`, so it is left exactly as the file has it.
  * MiMo keeps only the shown one - its desktop does not reverse this patch to
  * undo a turn, and this app does.
+ *
+ * `additions` and `deletions` are MiMo's own two numbers beside the patch: how
+ * many lines the call added and removed. The turn's card already counted a
+ * whole turn's lines; a single step could not say what it had done.
  */
-export function changed(file: string, patch: string): { diff: string; filediff: { file: string; patch: string } } {
-  return { diff: trimDiff(patch), filediff: { file, patch } }
+export function changed(file: string, patch: string): { diff: string; filediff: FileDiff } {
+  const { added, removed } = diffStat(patch)
+  return { diff: trimDiff(patch), filediff: { file, patch, additions: added, deletions: removed } }
 }
 
 export function diffStat(diff: string): { added: number; removed: number } {

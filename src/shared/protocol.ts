@@ -182,6 +182,23 @@ export interface ModelRef {
 
 export type ToolStatus = "pending" | "running" | "completed" | "error"
 
+/**
+ * What an edit, a write or a notebook edit records about the file it changed,
+ * under `metadata.filediff`: MiMo's `filediff` on the same results.
+ *
+ * `patch` is the change exactly as the file has it, which is what the undo
+ * reverses - `metadata.diff` beside it is the same change with the shared
+ * indentation taken off, for showing. `additions` and `deletions` are how many
+ * lines this one call added and removed, which the turn's own counts could not
+ * say for a single step.
+ */
+export interface FileDiff {
+  file: string
+  patch: string
+  additions: number
+  deletions: number
+}
+
 export interface ToolPart {
   type: "tool"
   id: string

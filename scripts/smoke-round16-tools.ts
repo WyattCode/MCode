@@ -11,12 +11,12 @@
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import type { ServerEvent, ToolPart } from "../src/shared/protocol"
+import type { FileDiff, ServerEvent, ToolPart } from "../src/shared/protocol"
 import { DEFAULT_PERMISSIONS, PERMISSION_KINDS } from "../src/shared/protocol"
 import { calls, engine, type Check } from "./smoke-round5"
 import { INTERACTIVE_REFUSAL, bashDescription } from "../src/server/tool/bash"
 import { changed, trimDiff, unifiedDiff } from "../src/server/diff"
-import { EditTool } from "../src/server/tool/edit"
+import { EditTool, WriteTool } from "../src/server/tool/edit"
 import type { ToolContext } from "../src/server/tool/types"
 
 export async function roundSixteenToolChecks(check: Check, section: (name: string) => void): Promise<void> {
@@ -125,6 +125,41 @@ export async function roundSixteenToolChecks(check: Check, section: (name: strin
     })
     check("and the undo still reverses the change from the untrimmed one", applies(recorded.filediff.patch, after, deep), recorded.filediff.patch)
     check("which the trimmed one could not do", !applies(recorded.diff, after, deep), recorded.diff)
+  }
+
+  // ---------------------------------------------------------------- R16-C4
+  section("Round 16 (C4): an edit or write says how many lines it added and removed")
+  {
+    const project = path.join(root, "counts")
+    await fs.mkdir(project, { recursive: true })
+    const context = {
+      sessionID: "ses_c4",
+      messageID: "msg_c4",
+      callID: "call_c4",
+      directory: project,
+      permissions: { ask: async () => undefined },
+      questions: { ask: async () => undefined },
+      signal: new AbortController().signal,
+      progress: () => {},
+      snapshot: async () => undefined,
+    } as unknown as ToolContext
+    const countsOf = (result: { metadata?: Record<string, unknown> }) => result.metadata?.filediff as FileDiff | undefined
+
+    const made = await WriteTool.execute({ file_path: "fresh.ts", content: "one\ntwo\nthree\n" }, context)
+    check("a new file counts every line as added and none removed", countsOf(made)?.additions === 4 && countsOf(made)?.deletions === 0, countsOf(made))
+    check("and names the file it changed", countsOf(made)?.file === "fresh.ts", countsOf(made))
+
+    const swapped = await EditTool.execute({ file_path: "fresh.ts", old_string: "two", new_string: "TWO" }, context)
+    check("a one-line replacement is one added and one removed", countsOf(swapped)?.additions === 1 && countsOf(swapped)?.deletions === 1, countsOf(swapped))
+
+    const grown = await EditTool.execute({ file_path: "fresh.ts", old_string: "three", new_string: "three\nfour\nfive" }, context)
+    check("an edit that only adds lines counts them, and removes nothing", countsOf(grown)?.additions === 2 && countsOf(grown)?.deletions === 0, countsOf(grown))
+
+    const over = await WriteTool.execute({ file_path: "fresh.ts", content: "only\n" }, context)
+    check("overwriting counts what went as well as what came", (countsOf(over)?.deletions ?? 0) > (countsOf(over)?.additions ?? 0), countsOf(over))
+
+    const many = await EditTool.execute({ file_path: "fresh.ts", old_string: "only", new_string: "all" }, context)
+    check("the numbers are the diff's own, so they cannot drift from what is shown", countsOf(many)?.patch.split("\n").filter((line) => line.startsWith("+") && !line.startsWith("+++")).length === countsOf(many)?.additions, countsOf(many))
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
