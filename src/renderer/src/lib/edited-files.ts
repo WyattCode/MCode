@@ -4,7 +4,7 @@ import { parseUnifiedDiff } from "@shared/unified-diff"
 /*
  * What a run of tool calls did to the project's files, file by file.
  *
- * Read from the diffs the edit, write and patch tools record, so it describes
+ * Read from the diffs the edit, write and notebook tools record, so it describes
  * the conversation's own changes and nothing else that happened to the tree.
  * The files-changed pill counts it over the whole conversation; the card at
  * the end of a turn counts it over that turn.
@@ -24,7 +24,7 @@ export interface EditedFiles {
   del: number
 }
 
-const EDITING = new Set(["edit", "write"])
+const EDITING = new Set(["edit", "write", "notebook_edit"])
 
 function isAbsolute(file: string) {
   return file.startsWith("/") || file.startsWith("\\\\") || /^[a-zA-Z]:[\\/]/.test(file)
