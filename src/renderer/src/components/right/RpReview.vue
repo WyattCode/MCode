@@ -60,15 +60,22 @@ async function load() {
   }
   const files = entries.value.map((entry) => entry.path)
   if (!selected.value || !files.includes(selected.value)) selected.value = files[0]
-  else void loadPatch(selected.value)
+  else void loadPatch(selected.value, true)
 }
 
-async function loadPatch(file: string | undefined) {
+/*
+ * `keepStale` is MiMo's own flag: a background re-read of the same file leaves
+ * what is drawn alone, and a file the reader just chose clears it first. Without
+ * that, the previous file's hunks stayed on screen under the new file's name -
+ * wrong line numbers, wrong text - until git answered.
+ */
+async function loadPatch(file: string | undefined, keepStale = false) {
   const root = props.root
   if (!root || !file) {
     patch.value = undefined
     return
   }
+  if (!keepStale) patch.value = undefined
   const mine = ++patchSeq
   patchLoading.value = true
   try {
