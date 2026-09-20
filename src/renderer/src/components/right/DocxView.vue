@@ -444,7 +444,13 @@ function layoutRail() {
   const nextElbows: typeof elbows.value = []
   const hostRect = host.getBoundingClientRect()
   const corridor = hostRect.width > 0 ? hostRect.right - box.left + el.scrollLeft - 1 : el.clientWidth - RAIL_WIDTH + el.scrollLeft
-  let bottom = -Infinity
+  /*
+   * One gap above the rail's top, so a first card whose anchor could not be
+   * measured still lands at 0 rather than at -Infinity - a top CSS throws
+   * away, which would drop that card and every card after it back onto the
+   * same place.
+   */
+  let bottom = -CARD_GAP
   for (const item of railItems.value) {
     const height = cardEls.get(item.key)?.offsetHeight || CARD_DEFAULT
     const desired = Number.isFinite(item.top) ? item.top : bottom + CARD_GAP
