@@ -333,6 +333,8 @@ import { roundThirteenInstanceChecks } from "./smoke-round13-instances"
 import { roundThirteenKeyboardChecks } from "./smoke-round13-keyboard"
 import { roundFourteenLocaleChecks } from "./smoke-round14-locale"
 import { roundFourteenPackagingChecks } from "./smoke-round14-packaging"
+// Round 15, lane U2: the settings dialog's rows at the window's minimum width (R15-U21 onwards).
+import { roundFifteenSettingsUiChecks } from "./smoke-round15-ui-settings"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -6966,6 +6968,7 @@ async function main() {
   await roundThirteenKeyboardChecks(check, section)
   await roundFourteenLocaleChecks(check, section)
   await roundFourteenPackagingChecks(check, section)
+  await roundFifteenSettingsUiChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
