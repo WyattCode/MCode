@@ -358,6 +358,8 @@ import { roundSixteenGoalChecks } from "./smoke-round16-goal"
 import { roundSixteenWidgetChecks } from "./smoke-round16-widget"
 // Round 16, fix lane E2: a reply the output limit cut in two, and the day the model is told it is (R16-E2-1 onwards).
 import { roundSixteenContinuationChecks } from "./smoke-round16-continuation"
+// Round 17, lane V: the file tab and the document viewers (R17-V1 onwards).
+import { roundSeventeenViewerChecks } from "./smoke-round17-viewers"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7004,6 +7006,7 @@ async function main() {
   await roundSixteenGoalChecks(check, section)
   await roundSixteenWidgetChecks(check, section)
   await roundSixteenContinuationChecks(check, section)
+  await roundSeventeenViewerChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
@@ -7107,26 +7110,28 @@ async function roundSevenTimingChecks() {
 
   // ----------------------------------------------------------------- T4
   const textPart = await read("src/renderer/src/components/parts/TextPart.vue")
+  // R17-V1: the reply's body is the shared markdown component the files tab draws a .md file with.
+  const replyBody = await read("src/renderer/src/components/parts/MarkdownBody.vue")
   const stream = await read("src/renderer/src/components/MessageStream.vue")
   const revealGone = await fs.stat(path.join(process.cwd(), "src/renderer/src/lib/stream-reveal.ts")).then(() => false, () => true)
   check("the per-character reveal is gone from the tree", revealGone)
   check(
     "no reveal timer is left in the reply renderer: no frame loop, no fade tail, no stall guard",
-    !/requestAnimationFrame|useStreamReveal|fadeTail|sm-fade/.test(textPart),
+    !/requestAnimationFrame|useStreamReveal|fadeTail|sm-fade/.test(textPart + replyBody),
   )
   check(
     "a live answer is drawn from the text the store holds, as the reference appends each delta as it lands",
     // Round 10 (K10-6): the text is cleaned of leaked markup on the way, nothing more.
-    /cleanLiveReply\(props\.part\.text\) : cleanReply\(props\.part\.text\)\s+const list = renderReply\(text,/.test(textPart),
+    /live\.value \? cleanLiveReply\(props\.part\.text\) : cleanReply\(props\.part\.text\)/.test(textPart) && /const list = renderReply\(props\.text,/.test(replyBody),
   )
   check("a turn's end no longer waits for a reveal to drain", !/playingOut|revealing/.test(stream))
   check(
     "what is animated instead is the block, which is the only thing the reference animates",
-    /\.text\.streaming > \.md-block \{[\s\S]{0,80}animation: stream-block-in/.test(textPart) && /@keyframes stream-block-in/.test(textPart),
+    /\.text\.streaming > \.md-block \{[\s\S]{0,80}animation: stream-block-in/.test(replyBody) && /@keyframes stream-block-in/.test(replyBody),
   )
   check(
     "and no comment credits the reference with a per-character pacing it does not have",
-    !/MiMo's streaming reveal|MiMo paces|MiMo's fade on the live block/.test(textPart),
+    !/MiMo's streaming reveal|MiMo paces|MiMo's fade on the live block/.test(textPart + replyBody),
   )
 
   // ----------------------------------------------------------------- T5

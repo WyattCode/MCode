@@ -237,7 +237,8 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
   {
     const image = await component("ImagePreview")
     const video = await component("VideoPreview")
-    const text = await component("parts/TextPart")
+    // R17-V1: the table preview moved with the rest of the reply body into the shared markdown component.
+    const text = await component("parts/MarkdownBody")
     const imageRoot = /<div\s+v-if="imagePreview"[\s\S]*?>/.exec(image)?.[0] ?? ""
     check("K13-8: the image preview keeps Tab inside and gives focus back on close, still focusing its own root as MiMo's does", /v-modal/.test(imageRoot) && /data-modal-keep-focus/.test(imageRoot), imageRoot)
     check("K13-8: the video preview takes focus, keeps Tab inside and gives it back", /<div id="video-preview" v-modal /.test(video) && !/id="video-preview"[^>]*data-modal-keep-focus/.test(video))

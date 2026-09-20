@@ -646,7 +646,7 @@ async function egressChecks(check: Check, section: Section, root: string): Promi
     const svg = renderReply("```svg\n<svg><image href=\"https://evil.example/p.png\"/></svg>\n```", { ...options, diagrams: { streaming: false } })
     // What a drawing may fetch is decided when it is drawn (svg-safe.ts), and mdcheck replays those cases.
     check("a drawing is handed over as source, not as markup", svg.some((block) => block.kind === "diagram") && !svg.some((block) => block.kind === "html" && block.html.includes("evil.example")))
-    const textPart = await fs.readFile(path.join(process.cwd(), "src/renderer/src/components/parts/TextPart.vue"), "utf8").catch(() => "")
+    const textPart = await fs.readFile(path.join(process.cwd(), "src/renderer/src/components/parts/MarkdownBody.vue"), "utf8").catch(() => "")
     check("the reply view swaps a placeholder for its picture only on a click", /closest<HTMLElement>\("\[data-remote-src\]"\)[\s\S]{0,200}allowRemoteImage\(/.test(textPart))
   }
 

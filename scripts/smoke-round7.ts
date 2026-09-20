@@ -336,20 +336,27 @@ export async function roundSevenChecks(check: Check, section: (name: string) => 
   {
     const folder = path.join(root, "media")
     await fs.mkdir(folder, { recursive: true })
-    const big = path.join(folder, "huge.pdf")
+    const big = path.join(folder, "huge.wav")
     const handle = await fs.open(big, "w")
     // Made by length rather than by writing the bytes: the size is all that is read.
     await handle.truncate(MEDIA_LIMIT + 1_000)
     await handle.close()
     const refused = await readPreview(big)
-    check("an oversized PDF is answered as too large", refused.tooBig === true, refused)
-    check("...and keeps its own kind rather than being called binary", refused.kind === "pdf", refused.kind)
+    check("an oversized sound file is answered as too large", refused.tooBig === true, refused)
+    check("...and keeps its own kind rather than being called binary", refused.kind === "audio", refused.kind)
+    // R17-V4: a PDF is streamed by range from the preview server rather than read whole, so it has no ceiling.
+    const scan = path.join(folder, "huge.pdf")
+    const pdfHandle = await fs.open(scan, "w")
+    await pdfHandle.truncate(MEDIA_LIMIT + 1_000)
+    await pdfHandle.close()
+    const scanned = await readPreview(scan)
+    check("a PDF that big is not refused, since nothing reads it whole", !scanned.tooBig && scanned.kind === "pdf", scanned)
 
     const small = path.join(folder, "small.png")
     await fs.writeFile(small, Buffer.from(pngHeader(4, 4), "base64"))
     const fine = await readPreview(small)
     check("an ordinary picture is not refused", fine.tooBig === undefined, fine)
-    check("one figure covers every kind, as MiMo has one", MEDIA_LIMIT === 25_000_000, MEDIA_LIMIT)
+    check("one figure covers every kind that is read whole, as MiMo has one", MEDIA_LIMIT === 25_000_000, MEDIA_LIMIT)
   }
 
   // ------------------------------------------------------------------ F38

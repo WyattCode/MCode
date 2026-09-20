@@ -88,7 +88,8 @@ export async function roundFifteenUiChatChecks(check: Check, section: (name: str
     const input = /\.fv-find-input \{([^}]*)\}/.exec(source)?.[1] ?? ""
     check("the bar is capped at the viewer's width", /max-width:\s*calc\(100% - 28px\)/.test(bar), bar)
     check("and floored at what its own controls need, so it never spills off the panel", /min-width:\s*calc\(/.test(bar), bar)
-    check("its input gives way instead of holding a fixed 150px", /flex:\s*1 1 150px/.test(input) && /min-width:\s*0/.test(input) && !/(^|;)\s*width:/.test(input), input)
+    // R17-V2: the input was the only part with no floor under it, so it was the only part that gave - to 17px, and to 1px at the panel's minimum.
+    check("its input holds MiMo's fixed 150px and is not what gives", /flex:\s*none/.test(input) && /width:\s*150px/.test(input) && !/min-width:\s*0/.test(input), input)
   }
 
   // ---------------------------------------------------------------- R15-U1-3
