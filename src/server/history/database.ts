@@ -12,8 +12,12 @@ import { SqlDatabase, STORE_PRAGMAS, quarantineSqlite, removeSqlite, sqliteDamag
  * must not happen is the app failing to start over a search index.
  */
 
-/** Bumped whenever the tables change; a file at another version is rebuilt. */
-export const SCHEMA_VERSION = 1
+/**
+ * Bumped whenever the tables change; a file at another version is rebuilt.
+ * 2: the full-text tables index `search_body` - the body with CJK writing cut
+ * into characters (history/text.ts) - rather than the body itself.
+ */
+export const SCHEMA_VERSION = 2
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -27,23 +31,24 @@ CREATE TABLE IF NOT EXISTS history_part (
   kind TEXT NOT NULL,
   tool_name TEXT,
   body TEXT NOT NULL,
+  search_body TEXT NOT NULL,
   time_created INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS history_part_session ON history_part (session_id, time_created);
 CREATE INDEX IF NOT EXISTS history_part_project ON history_part (project, time_created);
 CREATE INDEX IF NOT EXISTS history_part_message ON history_part (message_id);
 CREATE VIRTUAL TABLE IF NOT EXISTS history_part_fts USING fts5(
-  body, content='history_part', content_rowid='id', tokenize='unicode61 remove_diacritics 1'
+  search_body, content='history_part', content_rowid='id', tokenize='unicode61 remove_diacritics 1'
 );
 CREATE TRIGGER IF NOT EXISTS history_part_ai AFTER INSERT ON history_part BEGIN
-  INSERT INTO history_part_fts(rowid, body) VALUES (new.id, new.body);
+  INSERT INTO history_part_fts(rowid, search_body) VALUES (new.id, new.search_body);
 END;
 CREATE TRIGGER IF NOT EXISTS history_part_ad AFTER DELETE ON history_part BEGIN
-  INSERT INTO history_part_fts(history_part_fts, rowid, body) VALUES ('delete', old.id, old.body);
+  INSERT INTO history_part_fts(history_part_fts, rowid, search_body) VALUES ('delete', old.id, old.search_body);
 END;
 CREATE TRIGGER IF NOT EXISTS history_part_au AFTER UPDATE ON history_part BEGIN
-  INSERT INTO history_part_fts(history_part_fts, rowid, body) VALUES ('delete', old.id, old.body);
-  INSERT INTO history_part_fts(rowid, body) VALUES (new.id, new.body);
+  INSERT INTO history_part_fts(history_part_fts, rowid, search_body) VALUES ('delete', old.id, old.search_body);
+  INSERT INTO history_part_fts(rowid, search_body) VALUES (new.id, new.search_body);
 END;
 CREATE TABLE IF NOT EXISTS history_session (
   session_id TEXT PRIMARY KEY,
@@ -58,23 +63,24 @@ CREATE TABLE IF NOT EXISTS memory_doc (
   scope_id TEXT NOT NULL DEFAULT '',
   type TEXT NOT NULL,
   body TEXT NOT NULL,
+  search_body TEXT NOT NULL,
   fingerprint TEXT NOT NULL,
   indexed_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS memory_doc_scope ON memory_doc (scope, scope_id);
 CREATE INDEX IF NOT EXISTS memory_doc_type ON memory_doc (type);
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_doc_fts USING fts5(
-  body, content='memory_doc', content_rowid='id', tokenize='unicode61 remove_diacritics 1'
+  search_body, content='memory_doc', content_rowid='id', tokenize='unicode61 remove_diacritics 1'
 );
 CREATE TRIGGER IF NOT EXISTS memory_doc_ai AFTER INSERT ON memory_doc BEGIN
-  INSERT INTO memory_doc_fts(rowid, body) VALUES (new.id, new.body);
+  INSERT INTO memory_doc_fts(rowid, search_body) VALUES (new.id, new.search_body);
 END;
 CREATE TRIGGER IF NOT EXISTS memory_doc_ad AFTER DELETE ON memory_doc BEGIN
-  INSERT INTO memory_doc_fts(memory_doc_fts, rowid, body) VALUES ('delete', old.id, old.body);
+  INSERT INTO memory_doc_fts(memory_doc_fts, rowid, search_body) VALUES ('delete', old.id, old.search_body);
 END;
 CREATE TRIGGER IF NOT EXISTS memory_doc_au AFTER UPDATE ON memory_doc BEGIN
-  INSERT INTO memory_doc_fts(memory_doc_fts, rowid, body) VALUES ('delete', old.id, old.body);
-  INSERT INTO memory_doc_fts(rowid, body) VALUES (new.id, new.body);
+  INSERT INTO memory_doc_fts(memory_doc_fts, rowid, search_body) VALUES ('delete', old.id, old.search_body);
+  INSERT INTO memory_doc_fts(rowid, search_body) VALUES (new.id, new.search_body);
 END;
 `
 

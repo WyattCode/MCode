@@ -158,6 +158,159 @@ export async function roundFifteenServerChecks(check: Check, section: (name: str
     check("R15-S2: and the project's checkpoint store can be collected", await snapshots.collect(project))
   }
 
+  // ------------------------------------------------------------------ R15-S3
+  section("Round 15 (R15-S3): conversation and memory search find Chinese again")
+  {
+    const dataDirectory = path.join(root, "cjk", "data")
+    const project = path.join(root, "cjk", "project")
+    await fs.mkdir(project, { recursive: true })
+    const storage = new Storage(path.join(dataDirectory, "storage"))
+    const bus = new Bus()
+    const sessions = new SessionStore(storage, bus)
+    const chinese = await sessions.create({ directory: project, model: MODEL, title: "配置" })
+    const english = await sessions.create({ directory: project, model: MODEL, title: "config" })
+    const now = Date.now()
+    await sessions.saveMessage(asked(chinese.id, "msg_cjk_1", "请把配置文件的路径改成绝对路径", now), true)
+    await sessions.saveMessage(asked(english.id, "msg_cjk_2", "the configuration file path should be absolute", now), true)
+
+    const memoryRoot = path.join(dataDirectory, "memory", "global")
+    await fs.mkdir(memoryRoot, { recursive: true })
+    await fs.writeFile(path.join(memoryRoot, "MEMORY.md"), "# 记事\n\n用户偏好把配置文件放在项目根目录。\n")
+
+    const history = (await startHistory(dataDirectory, sessions, storage, bus))!
+    try {
+      check("R15-S3: the index opened", history !== undefined)
+      // `ready` is only the comparison's promise once `start` has got that far.
+      const settled = await until(() => !history.index.building)
+      await history.index.ready
+      await history.index.flush()
+      check("R15-S3: and caught up with the conversations", settled)
+      check("R15-S3: both conversations are indexed", (await history.index.count()) >= 2, await history.index.count())
+
+      const hits = async (query: string) => (await history.index.search({ query, limit: 50 })).map((hit) => hit.session_id)
+      check("R15-S3: a Chinese word inside a sentence is found", (await hits("配置")).includes(chinese.id), await hits("配置"))
+      check("R15-S3: so is one in the middle of it", (await hits("路径")).includes(chinese.id), await hits("路径"))
+      check("R15-S3: and a single character", (await hits("径")).includes(chinese.id), await hits("径"))
+      check("R15-S3: the whole sentence still matches", (await hits("请把配置文件的路径改成绝对路径")).includes(chinese.id))
+      check("R15-S3: a Chinese word the conversation does not hold is not found", (await hits("数据库")).length === 0, await hits("数据库"))
+      check("R15-S3: English words still match whole", (await hits("configuration")).includes(english.id), await hits("configuration"))
+      check("R15-S3: and a Chinese query does not drag English conversations in", !(await hits("配置")).includes(english.id))
+
+      // The snippet is read out of the indexed column, so it must read as it was written.
+      const snippet = (await history.index.search({ query: "配置文件", limit: 1 }))[0]?.snippet ?? ""
+      check("R15-S3: the snippet reads as the message was written", snippet.replaceAll("<<", "").replaceAll(">>", "").includes("请把配置文件的路径"), snippet)
+
+      // What the overlay actually asks: the index names the conversations, and the reader scores them.
+      const listed = await sessions.list()
+      const overlay = (query: string) =>
+        searchMessages(listed, (id) => sessions.messages(id), query, 50, (text) => history.index.candidates(text, listed))
+      check("R15-S3: the search overlay finds the Chinese conversation", (await overlay("配置文件")).some((hit) => hit.sessionID === chinese.id), await overlay("配置文件"))
+      check("R15-S3: while a word is still being typed", (await overlay("配置文")).some((hit) => hit.sessionID === chinese.id))
+      check("R15-S3: and an English word being typed reaches the longer one", (await overlay("config")).some((hit) => hit.sessionID === english.id), await overlay("config"))
+      check("R15-S3: a query that is in neither finds neither", (await overlay("数据库")).length === 0)
+
+      const memory = async (query: string) => (await history.memory.search({ query })).map((hit) => path.basename(hit.path))
+      check("R15-S3: memory search finds a Chinese word inside a line", (await memory("配置文件")).includes("MEMORY.md"), await memory("配置文件"))
+      check("R15-S3: and one character of it", (await memory("根目录")).includes("MEMORY.md"), await memory("根目录"))
+      const note = (await history.memory.search({ query: "配置文件" }))[0]?.snippet ?? ""
+      check("R15-S3: whose snippet reads as the file was written", note.replaceAll("<<", "").replaceAll(">>", "").includes("把配置文件放在"), note)
+    } finally {
+      await stopHistory(history)
+    }
+
+    // The words themselves, so what the index is asked for is visible in one place.
+    check("R15-S3: a Chinese body is indexed one character at a time", searchText("配置文件") === "配 置 文 件", searchText("配置文件"))
+    check("R15-S3: English is indexed exactly as written", searchText("configuration file") === "configuration file")
+    check("R15-S3: a Chinese query is asked for as that phrase", ftsQuery("配置", "AND") === '"配 置"', ftsQuery("配置", "AND"))
+    check("R15-S3: a typed query asks for the last word as a prefix", ftsQuery("配置 lo", "AND", true) === '"配 置" AND "lo"*', ftsQuery("配置 lo", "AND", true))
+    check("R15-S3: and a snippet's markers survive being read back", plainSnippet("请 把 <<配 置>> 文 件") === "请把<<配置>>文件", plainSnippet("请 把 <<配 置>> 文 件"))
+  }
+
+  // --------------------------------------------------------------- R15-S3 (b)
+  section("Round 15 (R15-S3): the index from the older schema is rebuilt without being asked")
+  {
+    const file = path.join(root, "rebuild", "index", "search.db")
+    const first = await IndexDatabase.open(file)
+    check("R15-S3: a new index is made", first.openedAs === "created", first.openedAs)
+    await first.db.exec("PRAGMA user_version = 1")
+    await first.close()
+
+    const second = await IndexDatabase.open(file)
+    check("R15-S3: one written by the older schema is made again on its own", second.openedAs === "recreated", second.openedAs)
+    const version = Number((await second.db.get<{ user_version: number }>("PRAGMA user_version"))?.user_version ?? 0)
+    check("R15-S3: at the schema this build reads", version === 2, version)
+    await second.close()
+  }
+
+  // --------------------------------------------------------------- R15-S3 (c)
+  section("Round 15 (R15-S3): what the search costs at a few thousand messages")
+  {
+    const file = path.join(root, "bench", "index", "search.db")
+    const database = await IndexDatabase.open(file)
+    try {
+      /*
+       * The shape a search index has after a long history: a few thousand
+       * parts, some Chinese and some English. Written straight into the
+       * database, because what is being measured is the query and not the
+       * walk over the conversations that fills it.
+       */
+      const PARTS = 4000
+      const lines = [
+        "请把配置文件的路径改成绝对路径，不要用相对路径",
+        "the configuration file path should be absolute, not relative",
+        "把这个函数拆成两个，分别处理读取和写入",
+        "split this function in two, one for reading and one for writing",
+      ]
+      await database.transaction(async (tx) => {
+        for (let at = 0; at < PARTS; at++) {
+          const body = `${lines[at % lines.length]} #${at}`
+          await tx.run(
+            "INSERT INTO history_part (part_id, session_id, message_id, project, kind, tool_name, body, search_body, time_created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            `bench/${at}`,
+            `ses_${at % 200}`,
+            `msg_${at}`,
+            "bench",
+            "text",
+            null,
+            body,
+            searchText(body),
+            Date.now(),
+          )
+        }
+      })
+      // The same bodies indexed the way they were before this round, for the comparison.
+      await database.db.exec("CREATE VIRTUAL TABLE bench_old USING fts5(body, content='history_part', content_rowid='id', tokenize='unicode61 remove_diacritics 1')")
+      await database.db.exec("INSERT INTO bench_old(bench_old) VALUES ('rebuild')")
+
+      const time = async (work: () => Promise<unknown>) => {
+        await work()
+        const started = performance.now()
+        for (let at = 0; at < 10; at++) await work()
+        return (performance.now() - started) / 10
+      }
+      const query = async (table: string, expression: string) =>
+        (
+          await database.db.all<{ n: number }>(
+            `SELECT count(*) AS n FROM ${table} JOIN history_part p ON p.id = ${table}.rowid WHERE ${table} MATCH ?`,
+            expression,
+          )
+        )[0]!.n
+
+      const before = await time(() => query("bench_old", ftsQuery("configuration", "AND")!))
+      const after = await time(() => query("history_part_fts", ftsQuery("configuration", "AND")!))
+      const chinese = await time(() => query("history_part_fts", ftsQuery("配置", "AND")!))
+      const oldChinese = await query("bench_old", '"配置"')
+      const newChinese = await query("history_part_fts", ftsQuery("配置", "AND")!)
+      console.log(`  ..   ${PARTS} parts: English ${before.toFixed(2)}ms before, ${after.toFixed(2)}ms after; 配置 ${chinese.toFixed(2)}ms`)
+      check("R15-S3: the Chinese query found nothing before", oldChinese === 0, oldChinese)
+      check("R15-S3: and finds every part that holds it now", newChinese === PARTS / 4, newChinese)
+      check("R15-S3: an English search costs what it did", after < Math.max(before * 3, 25), { before, after })
+      check("R15-S3: and a Chinese one is answered by the index, not by a scan", chinese < 50, chinese)
+    } finally {
+      await database.close()
+    }
+  }
+
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
 }

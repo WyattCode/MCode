@@ -1,7 +1,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { IndexDatabase } from "../history/database"
-import { ftsQuery } from "../history/text"
+import { ftsQuery, plainSnippet, searchText } from "../history/text"
 import { memoryLocation, type MemoryScope } from "./paths"
 
 /**
@@ -73,8 +73,8 @@ export class MemoryIndex {
       pruned++
     }
     let indexed = 0
-    const upsert = `INSERT INTO memory_doc (path, scope, scope_id, type, body, fingerprint, indexed_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(path) DO UPDATE SET scope = excluded.scope, scope_id = excluded.scope_id, type = excluded.type, body = excluded.body, fingerprint = excluded.fingerprint, indexed_at = excluded.indexed_at`
+    const upsert = `INSERT INTO memory_doc (path, scope, scope_id, type, body, search_body, fingerprint, indexed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(path) DO UPDATE SET scope = excluded.scope, scope_id = excluded.scope_id, type = excluded.type, body = excluded.body, search_body = excluded.search_body, fingerprint = excluded.fingerprint, indexed_at = excluded.indexed_at`
     for (const file of files) {
       const location = memoryLocation(this.root, file)
       if (!location) continue
@@ -84,7 +84,7 @@ export class MemoryIndex {
       if (known.get(file) === fingerprint) continue
       const body = await fs.readFile(file, "utf8").catch(() => undefined)
       if (body === undefined) continue
-      await this.db.run(upsert, file, location.scope, location.scope_id, location.type, body, fingerprint, Date.now())
+      await this.db.run(upsert, file, location.scope, location.scope_id, location.type, body, searchText(body), fingerprint, Date.now())
       indexed++
     }
     return { indexed, pruned }
@@ -117,7 +117,8 @@ export class MemoryIndex {
        ORDER BY rank LIMIT ?`,
       ...params,
     )
-    const hits = rows.map(({ rank, ...row }) => ({ ...row, score: -rank }))
+    // Read back out of the indexed column, so the spaces cut into CJK writing come out of the snippet.
+    const hits = rows.map(({ rank, ...row }) => ({ ...row, snippet: plainSnippet(row.snippet), score: -rank }))
     if (!hits.length) return []
     const cutoff = hits[0]!.score * MEMORY_SCORE_FLOOR
     return hits.filter((hit, at) => at === 0 || hit.score >= cutoff).slice(0, limit)

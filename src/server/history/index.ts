@@ -9,7 +9,7 @@ import { projectMemoryID } from "../memory/project-id"
 
 /** What identifies a session's current compaction summary. */
 const summaryStamp = (session: SessionInfo): string => (session.compacted ? `${session.compacted.messageID}:${session.compacted.at}` : "")
-import { ftsQuery } from "./text"
+import { ftsQuery, plainSnippet, searchText } from "./text"
 
 /**
  * The full-text index of every conversation, as MiMo's `history` tool searches it.
@@ -67,6 +67,8 @@ export interface HistorySearch {
   after?: number
   before?: number
   limit?: number
+  /** Match the last word as a prefix: for the overlay, which searches as the user types. */
+  prefix?: boolean
 }
 
 export class HistoryIndex {
@@ -235,7 +237,7 @@ async close(): Promise<void> {
         await tx.run("DELETE FROM history_part WHERE session_id = ? AND kind = 'summary'", session.id)
         if (row) {
           await tx.run(
-            "INSERT INTO history_part (part_id, session_id, message_id, project, kind, tool_name, body, time_created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO history_part (part_id, session_id, message_id, project, kind, tool_name, body, search_body, time_created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             row.part_id,
             row.session_id,
             row.message_id,
@@ -243,6 +245,7 @@ async close(): Promise<void> {
             row.kind,
             row.tool_name,
             row.body,
+            searchText(row.body),
             row.time_created,
           )
         }
@@ -289,7 +292,7 @@ async close(): Promise<void> {
         await tx.run("DELETE FROM history_part WHERE session_id = ? AND message_id = ? AND kind != 'summary'", sessionID, message.id)
         for (const row of rowsOf(message)) {
           await tx.run(
-            "INSERT INTO history_part (part_id, session_id, message_id, project, kind, tool_name, body, time_created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO history_part (part_id, session_id, message_id, project, kind, tool_name, body, search_body, time_created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             row.part_id,
             row.session_id,
             row.message_id,
@@ -297,6 +300,7 @@ async close(): Promise<void> {
             row.kind,
             row.tool_name,
             row.body,
+            searchText(row.body),
             row.time_created,
           )
         }
@@ -406,7 +410,8 @@ async close(): Promise<void> {
    * settled one is rather than by reading hundreds of transcripts.
    */
   async candidates(query: string, sessions: readonly SessionInfo[]): Promise<string[]> {
-    const found = new Set((await this.search({ query, limit: SEARCH_HARD_CAP })).map((hit) => hit.session_id))
+    // Typed a letter at a time, so the last word is what is being typed, not a word.
+    const found = new Set((await this.search({ query, limit: SEARCH_HARD_CAP, prefix: true })).map((hit) => hit.session_id))
     if (!this.building) return [...found]
     let unseen = 0
     for (const session of sessions) {
@@ -420,7 +425,7 @@ async close(): Promise<void> {
 
   async search(input: HistorySearch): Promise<HistoryHit[]> {
     await this.flush()
-    const expression = ftsQuery(input.query, "AND")
+    const expression = ftsQuery(input.query, "AND", input.prefix)
     if (!expression) return []
     const limit = Math.max(1, Math.min(input.limit ?? SEARCH_DEFAULT, SEARCH_HARD_CAP))
     const where: string[] = []
@@ -455,7 +460,8 @@ async close(): Promise<void> {
        ORDER BY rank LIMIT ?`,
       ...params,
     )
-    return rows.map(({ rank, ...row }) => ({ ...row, score: -rank }))
+    // The snippet comes out of the indexed column, so the spaces cut into CJK writing come out of it.
+    return rows.map(({ rank, ...row }) => ({ ...row, snippet: plainSnippet(row.snippet), score: -rank }))
   }
 
   /** The conversation a message belongs to, when the index has seen it. */
