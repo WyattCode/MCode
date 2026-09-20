@@ -8769,6 +8769,19 @@ async function sessionChatChecks(root: string, project: string) {
   bus.subscribe((event) => {
     if (event.type === "session.chatLinks") announced.push(event.links)
   })
+  /*
+   * create_session's workspace is a folder of its own, outside this project,
+   * which R15-T2 made a question: the folder becomes the new conversation's
+   * project root, and everything under it would otherwise be readable without
+   * one being asked anywhere. It is answered here, and what was asked is
+   * checked where the conversation is created.
+   */
+  const workspaceAsked: string[] = []
+  bus.subscribe((event) => {
+    if (event.type !== "permission.requested" || event.request.kind !== "outside") return
+    workspaceAsked.push(event.request.subject)
+    permissions.respond(event.request.id, "once")
+  })
 
   const until = async (test: () => boolean | Promise<boolean>, ms = 15_000) => {
     const deadline = Date.now() + ms
@@ -8856,6 +8869,7 @@ async function sessionChatChecks(root: string, project: string) {
     { gamma, part: (await partsOf(alpha.id, "create_session"))[0] },
   )
   check("the new conversation starts nothing until messaged", Boolean(gamma) && (await store.messages(gamma!.id)).length === 0)
+  check("the folder it was rooted on was asked about first, being outside this project", workspaceAsked.includes(path.join(await fs.realpath(workspace), "*")), workspaceAsked)
   await runner.prompt({ sessionID: alpha.id, text: "CREATE-BAD" })
   await quiet()
   const badCreate = (await partsOf(alpha.id, "create_session")).at(-1)
