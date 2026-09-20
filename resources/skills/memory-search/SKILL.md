@@ -49,8 +49,10 @@ written.
   joined on `rowid = id`.
 - `search_body` is `body` with a space between each pair of neighbouring
   Chinese, Japanese or Korean characters, so a search for part of a word in
-  those scripts matches. Read `body`; search the `_fts` tables, and cut a query
-  in those scripts the same way - `MATCH '"配 置"'` for 配置.
+  those scripts matches; it is empty when the body has none of them, and the
+  `_fts` tables read it through a view that falls back to `body`. Read `body`;
+  search the `_fts` tables, and cut a query in those scripts the same way -
+  `MATCH '"配 置"'` for 配置.
 
 ## How to open it
 

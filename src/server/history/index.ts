@@ -9,7 +9,7 @@ import { projectMemoryID } from "../memory/project-id"
 
 /** What identifies a session's current compaction summary. */
 const summaryStamp = (session: SessionInfo): string => (session.compacted ? `${session.compacted.messageID}:${session.compacted.at}` : "")
-import { ftsQuery, plainSnippet, searchText } from "./text"
+import { ftsQuery, plainSnippet, searchColumn } from "./text"
 
 /**
  * The full-text index of every conversation, as MiMo's `history` tool searches it.
@@ -245,7 +245,7 @@ async close(): Promise<void> {
             row.kind,
             row.tool_name,
             row.body,
-            searchText(row.body),
+            searchColumn(row.body),
             row.time_created,
           )
         }
@@ -300,7 +300,7 @@ async close(): Promise<void> {
             row.kind,
             row.tool_name,
             row.body,
-            searchText(row.body),
+            searchColumn(row.body),
             row.time_created,
           )
         }

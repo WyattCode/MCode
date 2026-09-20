@@ -226,7 +226,7 @@ Take \`<data>\` as the folder that holds the memory folder named in the Memory s
 - Search index (SQLite, open read-only): \`<data>/index/search.db\`.
   - \`history_part(part_id, session_id, message_id, project, kind, tool_name, body, search_body, time_created)\`: one row per piece of a message. \`kind\` is text, reasoning, file, tool, summary or error; a tool row's body is the tool name, its input and its output or error. \`project\` is the project id the memory folder uses. Times are milliseconds since 1970.
   - \`history_session(session_id, project, indexed_at)\`, and \`memory_doc(path, scope, scope_id, type, body, search_body)\`.
-  - \`history_part_fts\` / \`memory_doc_fts\`: full-text tables over \`search_body\`, joined on \`rowid = id\`. \`search_body\` is \`body\` with a space between each pair of neighbouring Chinese, Japanese or Korean characters; cut a query in those scripts the same way (\`MATCH '"配 置"'\`).
+  - \`history_part_fts\` / \`memory_doc_fts\`: full-text tables over \`search_body\`, joined on \`rowid = id\`. \`search_body\` is \`body\` with a space between each pair of neighbouring Chinese, Japanese or Korean characters, and empty when it has none; cut a query in those scripts the same way (\`MATCH '"配 置"'\`).
 - The conversations themselves, which the index is built from: \`<data>/storage/session/<id>/info.json\` (title, folder, times) and \`<data>/storage/session/<id>/message/<message id>.json\`. A user message has \`text\`; an assistant message has \`parts\`, where a tool part has \`name\`, \`input\`, \`output\` and \`status\`. A conversation with \`parentID\` is a subagent's.
 
 This project's id is the folder name in the project memory path the Memory section gives.

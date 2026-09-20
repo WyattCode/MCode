@@ -1,7 +1,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { IndexDatabase } from "../history/database"
-import { ftsQuery, plainSnippet, searchText } from "../history/text"
+import { ftsQuery, plainSnippet, searchColumn } from "../history/text"
 import { memoryLocation, type MemoryScope } from "./paths"
 
 /**
@@ -84,7 +84,7 @@ export class MemoryIndex {
       if (known.get(file) === fingerprint) continue
       const body = await fs.readFile(file, "utf8").catch(() => undefined)
       if (body === undefined) continue
-      await this.db.run(upsert, file, location.scope, location.scope_id, location.type, body, searchText(body), fingerprint, Date.now())
+      await this.db.run(upsert, file, location.scope, location.scope_id, location.type, body, searchColumn(body), fingerprint, Date.now())
       indexed++
     }
     return { indexed, pruned }

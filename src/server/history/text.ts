@@ -42,6 +42,21 @@ export function searchText(text: string): string {
 }
 
 /**
+ * What the `search_body` column holds, which is nothing at all for a body with
+ * no CJK writing in it.
+ *
+ * The index reads that column through a view that falls back to `body`, so
+ * only a body the cutting actually changed is kept twice. Storing it for every
+ * row is a second copy of every message ever written: measured at 83% on top
+ * of a search index over 5,000 English parts, for a history that can never
+ * need it.
+ */
+export function searchColumn(text: string): string {
+  const cut = searchText(text)
+  return cut === text ? "" : cut
+}
+
+/**
  * A snippet read back out of the index, with the spaces `searchText` put in
  * taken out again - including around the markers `snippet()` wraps a match in.
  * A space someone wrote between two CJK characters themselves goes with them,

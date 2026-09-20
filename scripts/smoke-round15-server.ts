@@ -22,7 +22,7 @@ import { Snapshots } from "../src/server/session/snapshot"
 import { ArtifactStore } from "../src/server/artifact/store"
 import { IndexDatabase } from "../src/server/history/database"
 import { startHistory, stopHistory } from "../src/server/history/service"
-import { ftsQuery, plainSnippet, searchText } from "../src/server/history/text"
+import { ftsQuery, plainSnippet, searchColumn, searchText } from "../src/server/history/text"
 import { searchMessages } from "../src/server/search"
 import { startBackend } from "../src/server/index"
 
@@ -229,6 +229,15 @@ export async function roundFifteenServerChecks(check: Check, section: (name: str
       check("R15-S3: and one character of it", (await memory("根目录")).includes("MEMORY.md"), await memory("根目录"))
       const note = (await history.memory.search({ query: "配置文件" }))[0]?.snippet ?? ""
       check("R15-S3: whose snippet reads as the file was written", note.replaceAll("<<", "").replaceAll(">>", "").includes("把配置文件放在"), note)
+
+      // Only a body the cutting changed is stored twice; the index reads the rest through the view.
+      const stored = await history.database.db.all<{ body: string; search_body: string }>("SELECT body, search_body FROM history_part")
+      const cut = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u
+      check(
+        "R15-S3: an English message is indexed without a second copy of itself",
+        stored.length > 0 && stored.every((row) => (cut.test(row.body) ? row.search_body !== "" : row.search_body === "")),
+        stored.map((row) => [row.body.slice(0, 12), row.search_body.slice(0, 12)]),
+      )
     } finally {
       await stopHistory(history)
     }
@@ -239,6 +248,7 @@ export async function roundFifteenServerChecks(check: Check, section: (name: str
     check("R15-S3: a Chinese query is asked for as that phrase", ftsQuery("配置", "AND") === '"配 置"', ftsQuery("配置", "AND"))
     check("R15-S3: a typed query asks for the last word as a prefix", ftsQuery("配置 lo", "AND", true) === '"配 置" AND "lo"*', ftsQuery("配置 lo", "AND", true))
     check("R15-S3: and a snippet's markers survive being read back", plainSnippet("请 把 <<配 置>> 文 件") === "请把<<配置>>文件", plainSnippet("请 把 <<配 置>> 文 件"))
+    check("R15-S3: only a body the cutting changed is kept twice", searchColumn("configuration file") === "" && searchColumn("配置文件") === "配 置 文 件", searchColumn("configuration file"))
   }
 
   // --------------------------------------------------------------- R15-S3 (b)
@@ -288,7 +298,7 @@ export async function roundFifteenServerChecks(check: Check, section: (name: str
             "text",
             null,
             body,
-            searchText(body),
+            searchColumn(body),
             Date.now(),
           )
         }
