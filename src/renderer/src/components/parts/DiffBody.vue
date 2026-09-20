@@ -129,7 +129,8 @@ defineExpose({ reveal })
   <div ref="scroller" class="db-scroll" :class="{ fill }" data-selectable="content" data-diff-body @scroll.capture="remember">
     <pre v-if="!files.length" class="db-raw">{{ capped.text }}</pre>
     <template v-else>
-      <ol class="db-list" data-diff-file-list>
+      <!-- MiMo draws the list only where the diff fills the panel; a step's diff and a permission card's go without it. -->
+      <ol v-if="fill" class="db-list" data-diff-file-list>
         <li
           v-for="(file, index) in files"
           :key="`list:${file.name}:${index}`"
