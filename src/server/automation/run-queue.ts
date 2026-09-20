@@ -54,8 +54,19 @@ export interface QueueState {
   entries: { run: QueuedRun; attempts: number }[]
 }
 
-/** MiMo's lease: fifteen minutes, after which an entry nobody reported on is deliverable again. */
-export const LEASE_MS = 15 * 60_000
+/**
+ * MiMo's lease: thirty seconds, after which an entry nobody reported on is
+ * deliverable again.
+ *
+ * Fifteen minutes here meant a run the app was killed in the middle of taking
+ * sat unrunnable for a quarter of an hour. MiMo also keeps a ten-second timer
+ * of its own to redeliver expired leases; the once-a-second check here already
+ * does that. A hand-out that is genuinely still working when the lease runs out
+ * is not started twice: the check that takes the entry finds the same task
+ * already starting and hands it straight back, and a run that has settled is
+ * recognised by its id.
+ */
+export const LEASE_MS = 30_000
 /** How many times a run may be handed out and fail to start before it is given up on. */
 export const MAX_ATTEMPTS = 3
 

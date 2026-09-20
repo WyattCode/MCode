@@ -126,7 +126,7 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     const restored = new RunQueue()
     restored.restore(JSON.parse(JSON.stringify(keep.state)))
     check("a queue saved while a run was out comes back with that run deliverable again", restored.drain(11, 5).map((entry) => entry.runId).join() === "r1")
-    check("MiMo's lease is fifteen minutes", LEASE_MS === 15 * 60_000 && MAX_ATTEMPTS === 3)
+    check("MiMo's lease is thirty seconds (R17-W25)", LEASE_MS === 30_000 && MAX_ATTEMPTS === 3)
   }
 
   section("Round 11 (N11-2/N11-3): a run that cannot start is settled and said to be a failure")
