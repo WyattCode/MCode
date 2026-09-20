@@ -31,7 +31,7 @@ written.
 
 ### Tables in `search.db`
 
-- `history_part(part_id, session_id, message_id, project, kind, tool_name, body, time_created)`
+- `history_part(part_id, session_id, message_id, project, kind, tool_name, body, search_body, time_created)`
   - one row per indexed piece of a message;
   - `kind` is `text`, `reasoning`, `file`, `tool`, `summary` (a compaction
     summary) or `error` (what a failed reply ended with);
@@ -42,11 +42,17 @@ written.
   - `time_created` is milliseconds since 1970.
 - `history_session(session_id, project, indexed_at)` - one row per indexed
   conversation.
-- `memory_doc(path, scope, scope_id, type, body, fingerprint, indexed_at)` - one
+- `memory_doc(path, scope, scope_id, type, body, search_body, fingerprint, indexed_at)` - one
   row per memory file; `type` is `memory`, `notes`, `progress`, `checkpoint` or
   `free`.
-- `history_part_fts` and `memory_doc_fts` - full-text tables over `body`,
+- `history_part_fts` and `memory_doc_fts` - full-text tables over `search_body`,
   joined on `rowid = id`.
+- `search_body` is `body` with a space between each pair of neighbouring
+  Chinese, Japanese or Korean characters, so a search for part of a word in
+  those scripts matches; it is empty when the body has none of them, and the
+  `_fts` tables read it through a view that falls back to `body`. Read `body`;
+  search the `_fts` tables, and cut a query in those scripts the same way -
+  `MATCH '"配 置"'` for 配置.
 
 ## How to open it
 

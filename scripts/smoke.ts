@@ -333,6 +333,8 @@ import { roundThirteenInstanceChecks } from "./smoke-round13-instances"
 import { roundThirteenKeyboardChecks } from "./smoke-round13-keyboard"
 import { roundFourteenLocaleChecks } from "./smoke-round14-locale"
 import { roundFourteenPackagingChecks } from "./smoke-round14-packaging"
+// Round 15, lane S: the backend core fixes (R15-S1 onwards).
+import { roundFifteenServerChecks } from "./smoke-round15-server"
 // Round 15, lane R: renderer state and libraries (R15-R1 onwards).
 import { roundFifteenStateChecks } from "./smoke-round15-state"
 // Round 15, lane M: the main process's second pass (M15-1 onwards).
@@ -4659,13 +4661,22 @@ async function main() {
     const created = path.join(project, "brand-new.ts")
     const before = await fs.readFile(existing, "utf8")
 
-    // What the runner records as a turn edits files: the state it found them in.
+    /*
+     * What the runner records as a turn edits files: the state it found them
+     * in, as references into the project's checkpoint store, with that store
+     * named and the messages the turn answered beside them. This was written
+     * inline until round 15 - the one shape a redo never has to read the store
+     * for, so every redo of a real turn failed while this section passed.
+     */
+    const kept = await backend.runtime.runner.checkpoints.keep(project, Buffer.from(before))
     await store.pushSnapshot(undoSession.id, {
       at: Date.now(),
+      directory: project,
+      messages: ["msg_undo_1"],
       files: [
-        { path: existing, content: before },
+        { path: existing, blob: kept },
         // null is how "did not exist" is recorded.
-        { path: created, content: null },
+        { path: created, blob: null },
       ],
     })
 
@@ -4687,6 +4698,17 @@ async function main() {
 
     const afterRedo = await store.historyDepth(undoSession.id)
     check("redo returns the step to the undo stack", afterRedo.undo === 1 && afterRedo.redo === 0, afterRedo)
+    const returned = await store.peekSnapshot(undoSession.id, "undo")
+    check("and the step it returns still knows its store and its messages", returned?.directory === project && returned?.messages?.join() === "msg_undo_1", {
+      directory: returned?.directory,
+      messages: returned?.messages,
+    })
+
+    // The shape written before the checkpoint store is still read back, whole.
+    await store.pushSnapshot(undoSession.id, { at: Date.now(), files: [{ path: existing, content: "recorded inline" }] })
+    await backend.runtime.runner.undo(undoSession.id)
+    check("a step recorded before the checkpoint store still restores", (await fs.readFile(existing, "utf8")) === "recorded inline")
+    check("and can be put back again", (await backend.runtime.runner.redo(undoSession.id)) === 1)
 
     // Whole files are stored per step, so the stack cannot grow forever.
     for (let step = 0; step < 25; step++) {
@@ -6975,6 +6997,7 @@ async function main() {
   await roundThirteenKeyboardChecks(check, section)
   await roundFourteenLocaleChecks(check, section)
   await roundFourteenPackagingChecks(check, section)
+  await roundFifteenServerChecks(check, section)
   await roundFifteenStateChecks(check, section)
   await roundFifteenMainChecks(check, section)
   await roundFifteenUiChatChecks(check, section)

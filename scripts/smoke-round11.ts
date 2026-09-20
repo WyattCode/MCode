@@ -319,10 +319,11 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     const handlers = await read("src/server/handlers.ts")
     const history = await read("src/server/history/index.ts")
     // S13-5: while the index is still being filled it names what it has, plus the newest it has not reached.
+    // R15-S3: and it asks for the last word as a prefix, because the overlay searches as the user types.
     check(
       "the handler hands the index to the search, which still answers from it while it is being filled",
       /history\.index\.candidates\(query, sessions\)/.test(handlers) &&
-        /this\.search\(\{ query, limit: SEARCH_HARD_CAP \}\)/.test(history) &&
+        /this\.search\(\{ query, limit: SEARCH_HARD_CAP, prefix: true \}\)/.test(history) &&
         /if \(!this\.building\) return \[\.\.\.found\]/.test(history),
     )
   }
