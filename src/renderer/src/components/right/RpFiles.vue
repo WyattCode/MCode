@@ -5,10 +5,10 @@ import type { MenuItem } from "../../lib/menu"
 import ContextMenu from "../ContextMenu.vue"
 import PdfView from "./PdfView.vue"
 import AbcBlock from "../parts/AbcBlock.vue"
+import MarkdownBody from "../parts/MarkdownBody.vue"
 import { isAbcFile } from "../../lib/abc-play"
 import { useApp } from "../../stores/app"
 import { useRightPanel } from "../../stores/right-panel"
-import { renderMarkdown } from "../../lib/markdown"
 import { openImagePreview } from "../../lib/image-preview"
 import { highlightLines, languageForFile } from "../../lib/highlight"
 import { annotationId, requestAnnotation } from "../../lib/annotate"
@@ -793,7 +793,8 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
             </div>
             <div v-else-if="opened.kind === 'binary'" class="fv-empty"><div class="fv-empty-desc">{{ t("rp.files.errBinary") }}</div></div>
             <div v-else-if="isAbc" class="fv-doc text" data-ft-abc><AbcBlock :code="opened.content" /></div>
-            <div v-else-if="isMarkdown" class="fv-doc text" v-html="renderMarkdown(opened.content)" />
+            <!-- The reply's own markdown component, as MiMo hangs it here: links, pictures, coloured fences, copy buttons, diagrams, scores, maths. -->
+            <div v-else-if="isMarkdown" class="fv-doc" data-ft-markdown><MarkdownBody :text="opened.content" /></div>
             <div
               v-else
               class="fv-code"
