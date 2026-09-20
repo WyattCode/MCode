@@ -944,6 +944,7 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
 
 **第十五轮（二次全面复核）34 条缺陷已全部修掉并合并入 `v2.0`**，smoke 4891。下一步：
 
+0. **第十六轮已开题（用户 2026-09-20）：把编码能力从 OpenCode 的路子整体改成 MiMo 的，1:1 —— 对话方式、代码处理方式、编码时看到的界面。** 用户当天定下两条前提：「完全中文化」只指给模型看的那一层（系统提示、工具说明、每轮提醒），界面仍保持 18 种语言、回复语言仍跟随界面；改动幅度是完全照 MiMo 并舍弃多余的（MiMo 没有的工具与流程要删，不是并存）。硬约束不变：不抄 MiMo 的提示词与代码原文，只测行为与结构、用自己的话重写。三份只读对照报告：scratchpad `round16-conversation.md` / `round16-code.md` / `round16-ui.md`。OpenCode 装在 `C:\Users\Wyatt\AppData\Local\Programs\@opencode-aidesktop`，可只读对比。
 1. 用真实模型实际使用已装好的版本，按看到的问题逐条修。
 2. 已知未修的一条（第十五轮 U3 路发现）：设置导航列在默认字号下就超出自身盒子，最后一组与「应用更新」被裁掉；修法是照 MiMo 加内层滚动区 `.sn-scroll`，但会占 10px 滚动条宽、移动默认字号下每一行，需要单独一轮并重新核对默认几何。
 3. 其他小尾巴（可选）：`update-transaction.json` 与 `composer-input.ts` 走 `writeAtomicSync`；清理崩溃留下的 `*.tmp`；英文词中子串搜索（`figur` → `configuration`）仍未恢复；偶发失败的两处 smoke 检查（见「约定与坑」）。
