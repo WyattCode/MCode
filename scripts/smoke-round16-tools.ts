@@ -14,7 +14,7 @@ import path from "node:path"
 import type { ServerEvent, ToolPart } from "../src/shared/protocol"
 import { DEFAULT_PERMISSIONS, PERMISSION_KINDS } from "../src/shared/protocol"
 import { calls, engine, type Check } from "./smoke-round5"
-import { INTERACTIVE_REFUSAL } from "../src/server/tool/bash"
+import { INTERACTIVE_REFUSAL, bashDescription } from "../src/server/tool/bash"
 
 export async function roundSixteenToolChecks(check: Check, section: (name: string) => void): Promise<void> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-round16c-"))
@@ -55,6 +55,25 @@ export async function roundSixteenToolChecks(check: Check, section: (name: strin
     check("a second one in the same conversation says nothing more", noticesOf(e.events).length === 1, noticesOf(e.events))
     await e.close()
     await fs.rm(e.dir, { recursive: true, force: true }).catch(() => undefined)
+  }
+
+  // ---------------------------------------------------------------- R16-C2
+  section("Round 16 (C2): the shell tool's description follows the shell in use")
+  {
+    const powershell = bashDescription("powershell")
+    const bash = bashDescription("bash")
+    /** The line a description gives over to chaining, which is the one that has to differ. */
+    const chaining = (text: string) => text.split("\n").find((line) => line.includes("&&")) ?? ""
+    check(
+      "Windows PowerShell 5.1 is told that && is not there",
+      chaining(powershell).includes("`&&`") && /Windows PowerShell 5\.1 has no such operator/.test(chaining(powershell)),
+      chaining(powershell),
+    )
+    check("and given the form that works instead", chaining(powershell).includes("if ($?)"), chaining(powershell))
+    check("a POSIX shell is told to chain with && instead", chaining(bash).includes("&&") && !chaining(bash).includes("if ($?)"), chaining(bash))
+    check("each names the shell the command is handed to", powershell.includes("handed to powershell") && bash.includes("handed to bash"))
+    check("pwsh, which does have &&, is not treated as Windows PowerShell", !bashDescription("pwsh").includes("if ($?)"))
+    check("the two descriptions differ, so one shell's advice is not given for the other", powershell !== bash)
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)

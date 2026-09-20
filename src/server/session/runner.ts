@@ -562,7 +562,8 @@ export class SessionRunner {
    */
   private tools(agent: string, directory: string): ToolDefinition[] {
     // speak rides on the voice feedback setting; the rule itself lives with the registry.
-    const own = toolsForTurn(agent, { voiceFeedback: this.config.get().voiceFeedback !== false })
+    // bash's description is written for the shell the settings name (R16-C2).
+    const own = toolsForTurn(agent, { voiceFeedback: this.config.get().voiceFeedback !== false, shell: this.config.get().shell })
     if (hasOwnToolsOnly(agent)) return own
     return [...own, ...(this.mcp?.tools(directory) ?? [])]
   }

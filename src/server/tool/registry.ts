@@ -2,7 +2,7 @@ import type { ToolDefinition } from "./types"
 import { ReadTool } from "./read"
 import { EditTool, WriteTool } from "./edit"
 import { GlobTool, GrepTool } from "./search"
-import { BashTool } from "./bash"
+import { BashTool, bashDescription } from "./bash"
 import { TaskTool } from "./task"
 import { WebFetchTool } from "./webfetch"
 import { QuestionTool } from "./question"
@@ -117,9 +117,16 @@ export function hasOwnToolsOnly(agent: string): boolean {
  * refuses the call instead; a tool that is simply absent costs nothing to not
  * call, and the prompt prefix is keyed on this list, so switching the setting
  * off takes the tool away from the next turn.
+ *
+ * bash: its description is written for the shell the settings name, as MiMo
+ * writes its own - a description that says to chain with `&&` is wrong on
+ * Windows PowerShell 5.1, which has no such operator. `shell` is already part
+ * of the prompt prefix key, so a changed setting rebuilds the prefix anyway.
  */
-export function toolsForTurn(agent: string, options: { voiceFeedback: boolean }): ToolDefinition[] {
-  return toolsFor(agent).filter((tool) => tool.name !== "speak" || options.voiceFeedback)
+export function toolsForTurn(agent: string, options: { voiceFeedback: boolean; shell?: string }): ToolDefinition[] {
+  return toolsFor(agent)
+    .filter((tool) => tool.name !== "speak" || options.voiceFeedback)
+    .map((tool) => (tool.name === "bash" ? { ...tool, description: bashDescription(options.shell) } : tool))
 }
 
 /**
