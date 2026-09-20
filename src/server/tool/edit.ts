@@ -3,7 +3,7 @@ import path from "node:path"
 import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
 import { relative, resolvePath } from "./fs-util"
-import { unifiedDiff } from "../diff"
+import { changed, unifiedDiff } from "../diff"
 import { isMemoryPath } from "../history/service"
 import { guardPlanWrite } from "../session/plan"
 
@@ -262,7 +262,7 @@ export const WriteTool: ToolDefinition = {
 
     return locked(target, async () => {
       const previous = await currentText(target, display)
-      const diff = unifiedDiff(display, previous ?? "", content)
+      const { diff, filediff } = changed(display, unifiedDiff(display, previous ?? "", content))
 
       // memory: memory files are written without asking, as MiMo does.
       if (!isMemoryPath(target)) await context.permissions.ask({
@@ -283,7 +283,7 @@ export const WriteTool: ToolDefinition = {
       return {
         output: `${previous === undefined ? "Created" : "Overwrote"} ${display} (${content.split("\n").length} lines)`,
         title: display,
-        metadata: { path: display, diff, created: previous === undefined },
+        metadata: { path: display, diff, filediff, created: previous === undefined },
       }
     })
   },
@@ -350,7 +350,7 @@ export const EditTool: ToolDefinition = {
       // MiMo's edit with nothing to find writes the whole file.
       if (oldString === "") {
         const previous = await currentText(target, display)
-        const diff = unifiedDiff(display, previous ?? "", newString)
+        const { diff, filediff } = changed(display, unifiedDiff(display, previous ?? "", newString))
         await ask(diff)
         await context.snapshot(target)
         await fs.mkdir(path.dirname(target), { recursive: true })
@@ -358,7 +358,7 @@ export const EditTool: ToolDefinition = {
         return {
           output: `${previous === undefined ? "Created" : "Overwrote"} ${display}`,
           title: display,
-          metadata: { path: display, diff, created: previous === undefined },
+          metadata: { path: display, diff, filediff, created: previous === undefined },
         }
       }
 
@@ -368,7 +368,7 @@ export const EditTool: ToolDefinition = {
       const original = await fs.readFile(target, "utf8")
 
       const { updated, occurrences } = replaceIn(original, { oldString, newString, replaceAll }, endingOf(original), display)
-      const diff = unifiedDiff(display, original.replaceAll("\r\n", "\n"), updated.replaceAll("\r\n", "\n"))
+      const { diff, filediff } = changed(display, unifiedDiff(display, original.replaceAll("\r\n", "\n"), updated.replaceAll("\r\n", "\n")))
       await ask(diff)
       await context.snapshot(target)
       await fs.writeFile(target, updated, "utf8")
@@ -376,7 +376,7 @@ export const EditTool: ToolDefinition = {
       return {
         output: `Edited ${display}${replaceAll ? ` (${occurrences} occurrences)` : ""}`,
         title: display,
-        metadata: { path: display, diff, occurrences: replaceAll ? occurrences : 1 },
+        metadata: { path: display, diff, filediff, occurrences: replaceAll ? occurrences : 1 },
       }
     })
   },

@@ -203,6 +203,54 @@ export function unifiedDiff(filename: string, before: string, after: string): st
   return lines.join("\n")
 }
 
+/** A diff line that carries file text, rather than a header or a hunk marker. */
+function isContentLine(line: string): boolean {
+  return (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ")) && !line.startsWith("---") && !line.startsWith("+++")
+}
+
+/**
+ * The same diff with the indentation every one of its lines shares taken off,
+ * as MiMo's `trimDiff` does before a diff is shown.
+ *
+ * Code eight levels in produced a diff whose every line began with the same
+ * thirty-two spaces, which pushed the changed text off the right edge of the
+ * card and the approval dialog while the left third stayed blank. Only what
+ * carries file text is shifted, and only by the smallest indentation among the
+ * lines that have any text at all - a blank line inside the hunk does not hold
+ * the whole block at zero.
+ *
+ * For showing only. A patch that has been shifted no longer matches the file,
+ * so `git apply` would refuse it; the copy the undo uses is kept as it was.
+ */
+export function trimDiff(diff: string): string {
+  const lines = diff.split("\n")
+  let shared = Infinity
+  for (const line of lines) {
+    if (!isContentLine(line)) continue
+    const content = line.slice(1)
+    if (!content.trim()) continue
+    shared = Math.min(shared, /^\s*/.exec(content)![0].length)
+    if (shared === 0) return diff
+  }
+  if (!Number.isFinite(shared) || shared === 0) return diff
+  return lines.map((line) => (isContentLine(line) ? line[0] + line.slice(1 + shared) : line)).join("\n")
+}
+
+/**
+ * What an edit or write hands back about the file it changed: MiMo's
+ * `filediff`.
+ *
+ * Two copies of the same change, because they are wanted for opposite reasons.
+ * `diff` is what the card and the approval dialog show, so it has the
+ * indentation every line shares taken off; `filediff.patch` is what the undo
+ * hands to `git apply --reverse`, so it is left exactly as the file has it.
+ * MiMo keeps only the shown one - its desktop does not reverse this patch to
+ * undo a turn, and this app does.
+ */
+export function changed(file: string, patch: string): { diff: string; filediff: { file: string; patch: string } } {
+  return { diff: trimDiff(patch), filediff: { file, patch } }
+}
+
 export function diffStat(diff: string): { added: number; removed: number } {
   let added = 0
   let removed = 0

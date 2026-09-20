@@ -15,6 +15,9 @@ import type { ServerEvent, ToolPart } from "../src/shared/protocol"
 import { DEFAULT_PERMISSIONS, PERMISSION_KINDS } from "../src/shared/protocol"
 import { calls, engine, type Check } from "./smoke-round5"
 import { INTERACTIVE_REFUSAL, bashDescription } from "../src/server/tool/bash"
+import { changed, trimDiff, unifiedDiff } from "../src/server/diff"
+import { EditTool } from "../src/server/tool/edit"
+import type { ToolContext } from "../src/server/tool/types"
 
 export async function roundSixteenToolChecks(check: Check, section: (name: string) => void): Promise<void> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-round16c-"))
@@ -76,7 +79,85 @@ export async function roundSixteenToolChecks(check: Check, section: (name: strin
     check("the two descriptions differ, so one shell's advice is not given for the other", powershell !== bash)
   }
 
+  // ---------------------------------------------------------------- R16-C3
+  section("Round 16 (C3): the diff a card shows loses the indentation every line shares, and the one the undo uses does not")
+  {
+    const deep = "                    keep()\n                    was()\n                    keep2()\n"
+    const after = "                    keep()\n                    now()\n                    keep2()\n"
+    const patch = unifiedDiff("deep.ts", deep, after)
+    const shown = trimDiff(patch)
+    check("the shown diff starts its lines at the left", shown.split("\n").some((line) => /^[-+] {0,1}\S/.test(line)), shown)
+    check("and the file header is left alone", shown.includes("--- a/deep.ts") && shown.includes("+++ b/deep.ts"), shown)
+    check("and so are the hunk headers", shown.includes("@@ -1,4 +1,4 @@"), shown)
+    check("the same lines, only moved left", shown.split("\n").length === patch.split("\n").length)
+    check("nothing is trimmed when one line already sits at the left", trimDiff(unifiedDiff("f.ts", "a\n  b\n", "a\n  c\n")) === unifiedDiff("f.ts", "a\n  b\n", "a\n  c\n"))
+    check(
+      "a blank line inside the hunk does not hold the block at zero",
+      trimDiff(unifiedDiff("f.ts", "    a\n\n    b\n", "    a\n\n    c\n")).includes("-b"),
+      trimDiff(unifiedDiff("f.ts", "    a\n\n    b\n", "    a\n\n    c\n")),
+    )
+    const { diff, filediff } = changed("deep.ts", patch)
+    check("what an edit records for the card is the trimmed one", diff === shown)
+    check("and what it records for the undo is the file's own", filediff.patch === patch && filediff.file === "deep.ts")
+
+    const project = path.join(root, "trim")
+    await fs.mkdir(project, { recursive: true })
+    const target = path.join(project, "deep.ts")
+    await fs.writeFile(target, deep, "utf8")
+    const asked: string[] = []
+    const context = {
+      sessionID: "ses_c3",
+      messageID: "msg_c3",
+      callID: "call_c3",
+      directory: project,
+      permissions: { ask: async (question: { preview?: string }) => void asked.push(question.preview ?? "") },
+      questions: { ask: async () => undefined },
+      signal: new AbortController().signal,
+      progress: () => {},
+      snapshot: async () => undefined,
+    } as unknown as ToolContext
+    const result = await EditTool.execute({ file_path: "deep.ts", old_string: "was()", new_string: "now()" }, context)
+    const recorded = result.metadata as { diff: string; filediff: { patch: string } }
+    check("the dialog is shown the trimmed diff too", asked[0] === recorded.diff, asked[0])
+    check("the trimmed diff really is shorter than the file's own", recorded.diff.length < recorded.filediff.patch.length, {
+      shown: recorded.diff.length,
+      patch: recorded.filediff.patch.length,
+    })
+    check("and the undo still reverses the change from the untrimmed one", applies(recorded.filediff.patch, after, deep), recorded.filediff.patch)
+    check("which the trimmed one could not do", !applies(recorded.diff, after, deep), recorded.diff)
+  }
+
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
   void DEFAULT_PERMISSIONS
   void PERMISSION_KINDS
+}
+
+/**
+ * Whether reversing `patch` turns `after` back into `before`, the way the undo
+ * hands it to `git apply --reverse` - the context and removed lines have to
+ * match the file as it stands.
+ */
+function applies(patch: string, after: string, before: string): boolean {
+  const lines = after.split("\n")
+  const out: string[] = []
+  let at = 0
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("---") || line.startsWith("+++")) continue
+    const hunk = /^@@ -(\d+),\d+ \+(\d+),\d+ @@/.exec(line)
+    if (hunk) {
+      while (at < Number(hunk[2]) - 1) out.push(lines[at++])
+      continue
+    }
+    if (line.startsWith("+")) {
+      if (lines[at] !== line.slice(1)) return false
+      at += 1
+    } else if (line.startsWith("-")) {
+      out.push(line.slice(1))
+    } else if (line.startsWith(" ")) {
+      if (lines[at] !== line.slice(1)) return false
+      out.push(lines[at++])
+    }
+  }
+  while (at < lines.length) out.push(lines[at++])
+  return out.join("\n") === before
 }
