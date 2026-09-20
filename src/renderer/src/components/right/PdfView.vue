@@ -128,6 +128,9 @@ function release() {
 
 async function load() {
   const mine = ++generation
+  // The last load's restore loop stops here, or two of them would fight over scrollTop after two writes in a row.
+  stopRestore?.()
+  stopRestore = undefined
   if (saved && saved.path === props.path && saved.top > 0) {
     restoring.value = true
     if (scroller.value) scroller.value.style.visibility = "hidden"
