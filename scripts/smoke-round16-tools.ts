@@ -21,6 +21,10 @@ import type { ToolContext } from "../src/server/tool/types"
 import { ListExternalSessionsTool, ReadExternalSessionTool } from "../src/server/tool/external-session"
 import { CLAUDE_CODE_AGENT } from "../src/server/external-sessions"
 import { findTool, reachOf } from "../src/server/tool/registry"
+import { accessAction, defaultAccess } from "../src/shared/access"
+import { Bus } from "../src/server/bus"
+import { Storage } from "../src/server/storage"
+import { Config } from "../src/server/config"
 
 export async function roundSixteenToolChecks(check: Check, section: (name: string) => void): Promise<void> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-round16c-"))
@@ -249,9 +253,60 @@ export async function roundSixteenToolChecks(check: Check, section: (name: strin
     }
   }
 
+  // ---------------------------------------------------------------- R16-C6
+  section("Round 16 (C6): creating a file is judged as an edit, and fetching a page no longer asks")
+  {
+    check("there is no write bucket any more", !(PERMISSION_KINDS as readonly string[]).includes("write"), PERMISSION_KINDS)
+    check("and the write tool is judged by the edit one", WriteTool.permission === "edit" && EditTool.permission === "edit")
+    check("fetching a page runs without asking", DEFAULT_PERMISSIONS.webfetch === "allow", DEFAULT_PERMISSIONS)
+    check("while changing a file and running a command still ask", DEFAULT_PERMISSIONS.edit === "ask" && DEFAULT_PERMISSIONS.bash === "ask")
+    check("so the default level is still the default level, not full access", defaultAccess({ permissions: { ...DEFAULT_PERMISSIONS } }) === "ask")
+    check("a refusal of edits refuses a creation too", accessAction("edit", "ask", { permissions: { ...DEFAULT_PERMISSIONS, edit: "deny" } }) === "deny")
+    check("and full access does not undo a refusal of the network", accessAction("webfetch", "full", { permissions: { ...DEFAULT_PERMISSIONS, webfetch: "deny" } }) === "deny")
+
+    const project = path.join(root, "buckets")
+    await fs.mkdir(project, { recursive: true })
+    const asked: string[] = []
+    const context = {
+      sessionID: "ses_c6",
+      messageID: "msg_c6",
+      callID: "call_c6",
+      directory: project,
+      permissions: { ask: async (question: { kind: string }) => void asked.push(question.kind) },
+      questions: { ask: async () => undefined },
+      signal: new AbortController().signal,
+      progress: () => {},
+      snapshot: async () => undefined,
+    } as unknown as ToolContext
+    await WriteTool.execute({ file_path: "made.ts", content: "x\n" }, context)
+    await EditTool.execute({ file_path: "made.ts", old_string: "x", new_string: "y" }, context)
+    check("both calls put their question in the same bucket", asked.join(",") === "edit,edit", asked)
+
+    // A config carrying the answers the two buckets used to have.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r16c6-"))
+    const storage = new Storage(path.join(dir, "storage"))
+    await storage.write("config", {
+      migrations: ["orphans-r9", "mcp-allow-r9"],
+      permissions: { ...DEFAULT_PERMISSIONS, edit: "ask", write: "deny", webfetch: "ask" },
+    })
+    const config = new Config(storage, new Bus(), path.join(dir, "credentials.json"))
+    await config.load()
+    const after = config.get().permissions
+    check("a refusal of writes becomes a refusal of edits rather than vanishing", after.edit === "deny", after)
+    check("and the old default for the network moves to the new one", after.webfetch === "allow", after)
+    check("nothing on disk still says write", !JSON.stringify(JSON.parse(await fs.readFile(path.join(dir, "storage", "config.json"), "utf8")).permissions).includes("write"), await fs.readFile(path.join(dir, "storage", "config.json"), "utf8"))
+
+    const chosen = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r16c6b-"))
+    const chosenStorage = new Storage(path.join(chosen, "storage"))
+    await chosenStorage.write("config", { migrations: ["orphans-r9", "mcp-allow-r9"], permissions: { ...DEFAULT_PERMISSIONS, webfetch: "deny" } })
+    const chosenConfig = new Config(chosenStorage, new Bus(), path.join(chosen, "credentials.json"))
+    await chosenConfig.load()
+    check("a refusal of the network is a choice and is left alone", chosenConfig.get().permissions.webfetch === "deny", chosenConfig.get().permissions)
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined)
+    await fs.rm(chosen, { recursive: true, force: true }).catch(() => undefined)
+  }
+
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
-  void DEFAULT_PERMISSIONS
-  void PERMISSION_KINDS
 }
 
 /**

@@ -19,6 +19,7 @@ const props = defineProps<{ part: ToolPart; record: PermissionRecord }>()
 const VERBS: Record<string, string> = {
   bash: "perm.verb.bash",
   edit: "perm.verb.edit",
+  // Creating a file has been judged as an edit since R16-C6; kept for records written before that.
   write: "perm.verb.write",
   outside: "perm.verb.outside",
   webfetch: "perm.verb.webfetch",

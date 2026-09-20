@@ -1058,9 +1058,13 @@ export type Effort = (typeof EFFORTS)[number]
  *
  * The order is the order the settings screen draws, and it follows the
  * reference's own row order so the two screens read the same way down the page.
- * Two entries have no counterpart there: the reference judges every kind of
- * file change as one "edit", where this app separates creating a file from
- * changing one, and it has no notion of an MCP server at all.
+ * One entry has no counterpart there: the reference has no notion of an MCP
+ * server at all.
+ *
+ * Creating a file is judged as an edit, as the reference judges it and as
+ * OpenCode does - a `write` bucket of its own asked one question the reference
+ * never asks, which is the app being stricter than what it copies rather than
+ * equal to it (the user's decision, 2026-09-20).
  *
  * A name absent from here cannot be configured and cannot be refused, which is
  * how `read`, `list`, `glob` and `grep` came to be beyond reach: their tools
@@ -1069,7 +1073,6 @@ export type Effort = (typeof EFFORTS)[number]
 export const PERMISSION_KINDS = [
   "read",
   "edit",
-  "write",
   "glob",
   "grep",
   "list",
@@ -1089,10 +1092,14 @@ export type PermissionAction = (typeof PERMISSION_ACTIONS)[number]
 /**
  * What each bucket does when the user has never said.
  *
- * These are the behaviours this app already had, written down: looking at the
- * project happened without asking, and everything that changed a file, ran a
- * command or reached the network asked first. Naming them here rather than leaving them
+ * Looking at the project happens without asking, and everything that changes a
+ * file or runs a command asks first. Naming them here rather than leaving them
  * implicit is what lets a stored setting be told apart from an untouched one.
+ *
+ * Fetching a web page is allowed, as it is in MiMo, whose desktop makes only
+ * edits and commands ask. It had asked here, which is the app being stricter
+ * than what it copies (the user's decision, 2026-09-20); the bucket can still
+ * be set to ask or deny, and full access does not change a refusal.
  *
  * An MCP tool call runs without asking, as in MiMo, whose engine allows every
  * tool by default and whose desktop only makes edits and commands ask. The
@@ -1102,12 +1109,11 @@ export type PermissionAction = (typeof PERMISSION_ACTIONS)[number]
 export const DEFAULT_PERMISSIONS: Record<PermissionKind, PermissionAction> = {
   read: "allow",
   edit: "ask",
-  write: "ask",
   glob: "allow",
   grep: "allow",
   list: "allow",
   bash: "ask",
-  webfetch: "ask",
+  webfetch: "allow",
   outside: "ask",
   mcp: "allow",
 }
@@ -1123,7 +1129,6 @@ export const DEFAULT_PERMISSIONS: Record<PermissionKind, PermissionAction> = {
  */
 export const SELF_ASKING_KINDS: readonly PermissionKind[] = [
   "edit",
-  "write",
   "bash",
   "webfetch",
   "outside",
@@ -1147,7 +1152,7 @@ export const ENFORCED_KINDS: readonly PermissionKind[] = PERMISSION_KINDS
 export const NETWORK_KINDS: readonly PermissionKind[] = ["webfetch", "mcp"]
 
 /** Kinds that can change something outside this app's own state. */
-export const WRITING_KINDS: readonly PermissionKind[] = ["edit", "write", "bash", "outside"]
+export const WRITING_KINDS: readonly PermissionKind[] = ["edit", "bash", "outside"]
 
 /**
  * How a Model Context Protocol server is reached.

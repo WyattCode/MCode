@@ -243,7 +243,7 @@ export const WriteTool: ToolDefinition = {
     "- Follow the project's own conventions - imports, naming, formatting - rather than the ones you would choose on a blank page. Read a file beside it first when you are not sure what they are.",
     "The result is a diff of what changed, and the user sees it; there is no need to repeat the file back in your reply.",
   ].join("\n"),
-  permission: "write",
+  permission: "edit",
   parameters: {
     type: "object",
     properties: {
@@ -269,7 +269,8 @@ export const WriteTool: ToolDefinition = {
         sessionID: context.sessionID,
         messageID: context.messageID,
         callID: context.callID,
-        kind: "write",
+        // Creating a file is judged as an edit, as MiMo and OpenCode judge it (R16-C6).
+        kind: "edit",
         directory: context.directory,
         title: previous === undefined ? "Create file" : "Overwrite file",
         subject: display,
