@@ -228,6 +228,6 @@ export async function roundSixteenWidgetChecks(check: Check, section: (name: str
     const prompt = read("src/server/session/prompts.ts")
     check("the model is told the fence", prompt.includes(WIDGET_FENCE))
     check("and told to size the card by its content", prompt.includes("window.innerHeight") && prompt.includes("height:100vh"))
-    check("and told it is not a file", prompt.includes("present_files 交付"))
+    check("and told it is not a file", /do not write it to a file[^.]*present_files/.test(prompt))
   }
 }
