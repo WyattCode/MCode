@@ -16,6 +16,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
+import { DURATION, dismiss, notice, notify, toasts } from "../src/renderer/src/lib/toast"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
 
@@ -46,5 +47,72 @@ export async function roundFifteenStateChecks(check: Check, section: (name: stri
       return at > 0 && /currentID\.value !== sessionID/.test(store.slice(at, at + 3000))
     })
     check("R15-R1: open() and reread() still check the same way", guarded)
+  }
+
+  // ---------------------------------------------------------------- R15-R2
+  {
+    /*
+     * The shipped notice module, driven as the app drives it. A notice with no
+     * duration stands until something takes it away - the reconnect banner is
+     * raised once, cannot be closed by hand, and nothing re-raises it - so it
+     * must not be pushed out by ordinary notices arriving behind it.
+     */
+    /* Every notice taken away with its clock, so one case does not colour the next. */
+    const clearNotices = () => {
+      for (const entry of [...toasts.value]) dismiss(entry.id)
+    }
+    const titles = () => toasts.value.map((entry) => entry.title)
+    clearNotices()
+    const RECONNECT = "app-reconnect"
+    notice.danger("Reconnecting", { id: RECONNECT, body: "backend still down", duration: 0, closable: false })
+    notify("Folder copied")
+    notify("Conversation id copied")
+    notify("Preference not saved")
+    check("R15-R2: the standing reconnect banner survives three ordinary notices", toasts.value.some((entry) => entry.id === RECONNECT), titles())
+    check("R15-R2: and the ordinary ones on screen are the newest two, so the stack is still three", toasts.value.length === 3, titles())
+    check(
+      "R15-R2: the oldest ordinary notice is the one that went, order kept",
+      titles().join("|") === "Reconnecting · backend still down|Conversation id copied|Preference not saved",
+      titles(),
+    )
+
+    /* With nothing standing, MiMo's limit of three is unchanged. */
+    clearNotices()
+    notify("one")
+    notify("two")
+    notify("three")
+    notify("four")
+    check("R15-R2: ordinary notices alone still cap at MiMo's three, oldest first out", titles().join("|") === "two|three|four", titles())
+
+    /*
+     * Four standing notices have nothing on a timer to give way, so the oldest
+     * goes, which is what a damaged config, damaged credentials and two store
+     * problems already did at boot.
+     */
+    clearNotices()
+    notice.warning("config unreadable", { duration: 0 })
+    notice.warning("credentials unreadable", { duration: 0 })
+    notice.warning("storage problem A", { duration: 0 })
+    notice.warning("storage problem B", { duration: 0 })
+    check(
+      "R15-R2: four standing notices still drop the oldest rather than pile up",
+      titles().join("|") === "credentials unreadable|storage problem A|storage problem B",
+      titles(),
+    )
+
+    /* And a timed one arriving behind two standing ones takes the timed slot. */
+    clearNotices()
+    notice.warning("expired sign-in", { duration: 0 })
+    notice.warning("config unreadable", { duration: 0 })
+    notify("Folder copied")
+    notify("Conversation id copied")
+    check(
+      "R15-R2: a timed notice arriving behind two standing ones replaces the timed one, not a standing one",
+      titles().join("|") === "expired sign-in|config unreadable|Conversation id copied",
+      titles(),
+    )
+    clearNotices()
+    check("R15-R2: the default five seconds is unchanged", DURATION === 5000, DURATION)
+    check("R15-R2: and taking them away leaves nothing behind", toasts.value.length === 0, titles())
   }
 }
