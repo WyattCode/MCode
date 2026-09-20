@@ -15,8 +15,10 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
+import type { ToolPart } from "../src/shared/protocol"
 import { displayName, markWords, parseDiffFiles, splitRows, type DiffLine } from "../src/renderer/src/lib/diff-view"
 import { WORD_MARK_MAX, markPair, wordTokens } from "../src/renderer/src/lib/diff-words"
+import { bashOf, stepTitle, toolIcon, toolVerb, type StepState } from "../src/renderer/src/lib/tool-meta"
 import { LANGUAGES } from "../src/renderer/src/lib/i18n"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
@@ -26,6 +28,9 @@ const shown = (marks: readonly { text: string; changed: boolean }[] | undefined)
   marks === undefined ? undefined : marks.map((mark) => (mark.changed ? `[${mark.text}]` : mark.text)).join("")
 
 const line = (kind: DiffLine["kind"], text: string): DiffLine => ({ kind, text })
+
+const toolPart = (name: string, input: Record<string, unknown>): ToolPart =>
+  ({ id: "p", callID: "c", name, status: "completed", input }) as unknown as ToolPart
 
 /** Every language table in i18n.ts, as key -> value. */
 async function tables(): Promise<Record<string, Record<string, string>>> {
@@ -170,5 +175,23 @@ export async function roundSixteenDiffChecks(check: Check, section: (name: strin
     const tools = await read("src/renderer/src/lib/right-tools.ts")
     const listed = [...tools.matchAll(/^ {2}(\w+): \{$/gm)].map((found) => found[1]!)
     check("every tool the launcher can draw has a description", listed.every((tool) => strings.en![`launch.${tool}Desc`]), listed)
+  }
+
+  // ----------------------------------------------------------------- R16-D6
+  section("Round 16 (R16-D6): a command run through exec_command reads as a command row")
+  {
+    const states: StepState[] = ["completed", "running", "error", "rejected", "skipped"]
+    const same = states.every((state) => toolVerb("exec_command", state) === toolVerb("bash", state))
+    check("it is spoken of as bash in every state, rather than by its own name", same, states.map((state) => toolVerb("exec_command", state)))
+    check("which is a word, not the tool's identifier", toolVerb("exec_command", "completed") !== "exec_command", toolVerb("exec_command", "completed"))
+    check("its mark is the terminal, as bash's is", toolIcon("exec_command") === toolIcon("bash"))
+
+    const part = toolPart("exec_command", { cmd: "npm run build" })
+    check("the command is read from cmd, where this tool puts it", bashOf(part)?.cmd === "npm run build", bashOf(part))
+    check("and it carries no description, so the row shows the command itself", bashOf(part)?.desc === "", bashOf(part))
+    check("the step is titled by the command", stepTitle(part) === "npm run build", stepTitle(part))
+    check("a call that spells it command is read too", bashOf(toolPart("exec_command", { command: "ls" }))?.cmd === "ls")
+    check("bash itself still leads with the model's description", bashOf(toolPart("bash", { command: "ls", description: "list" }))?.desc === "list")
+    check("and a call with no command at all is still no command row", bashOf(toolPart("exec_command", {})) === undefined)
   }
 }
