@@ -1,13 +1,13 @@
 import type { ModelRef, Usage } from "@shared/protocol"
 import type { Storage } from "../storage"
 
-/** A request made for a conversation outside its turns: its title, Smart's routing, a compaction summary, a command review. */
+/** A request made for a conversation outside its turns: its title, Smart's routing, a compaction summary, a command review, a goal verdict. */
 export interface BackgroundUse {
   at: number
   sessionID: string
   model: ModelRef
   usage: Usage
-  kind: "title" | "smart" | "compaction" | "review"
+  kind: "title" | "smart" | "compaction" | "review" | "goal"
 }
 
 const KEY = "usage-background"

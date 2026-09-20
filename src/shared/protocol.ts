@@ -16,6 +16,25 @@ export interface HistoryDepth {
   redo: number
 }
 
+/**
+ * 追求目标: one conversation's goal.
+ *
+ * `done` is absent while the goal is being pursued. Once the judge has
+ * answered - met, or out of reach, or out of tries - it is filled in and the
+ * goal stops driving turns, but stays on the conversation so the bar above the
+ * composer can say how it ended until the reader dismisses it.
+ */
+export interface SessionGoal {
+  /** What the user asked for, as they wrote it; the judge is asked about this sentence. */
+  condition: string
+  /** When it was set, for the bar's clock. */
+  startedAt: number
+  /** How many times the judge has sent a turn back, against `MAX_GOAL_REACT`. */
+  attempts: number
+  /** How it ended: met, or blocked - unreachable, or past the bound. */
+  done?: { status: "complete" | "blocked"; reason: string; at: number }
+}
+
 export interface SessionInfo {
   id: string
   title: string
@@ -35,18 +54,25 @@ export interface SessionInfo {
   model: ModelRef
   agent: AgentName
   /**
+   * 追求目标: whether the plus menu's switch is on for this conversation, so
+   * the next message sent becomes its goal. Absent is off, which is what every
+   * conversation stored before this field existed reads as.
+   */
+  goalMode?: boolean
+  /**
+   * 追求目标: the goal this conversation is pursuing, and how it ended.
+   *
+   * Stored with the conversation rather than held in memory, so a goal is
+   * still being pursued after the app restarts - as MiMo's is, which keeps its
+   * own per-conversation goals in the desktop's preferences.
+   */
+  goal?: SessionGoal
+  /**
    * plan: two words fixed when the conversation is made, which name its plan
    * file (`<created>-<slug>.md`) as MiMo's session slug names its own.
    * Conversations stored before this have none and fall back to their id.
    */
   slug?: string
-  /**
-   * Whether this conversation works in stages: clarify, plan, build, review.
-   *
-   * Absent is off, which is what every conversation stored before this field
-   * existed has to read as.
-   */
-  staged?: boolean
   /**
    * On Smart: the first message picks between the fast and the main model, and
    * `model` then holds the one it picked.
@@ -352,6 +378,8 @@ export interface UserMessage {
    * message its plan_exit writes.
    */
   synthetic?: boolean
+  /** 追求目标: this message became the conversation's goal, which the transcript marks on it. */
+  setsGoal?: boolean
   /** Places the user pointed at with this message (MiMo's 注释); the model reads them after the text. */
   annotations?: Annotation[]
   /** Documents the user changed since the last message; the model reads them before the text, the transcript does not show them. */
@@ -1539,8 +1567,8 @@ export interface AppConfig {
   effort: Effort
   /** Which agent preset new sessions start in. */
   agent: AgentName
-  /** Whether new sessions start in staged mode; each may then differ. */
-  staged: boolean
+  /** 追求目标: whether new conversations start with the switch on; each may then differ. */
+  goalMode: boolean
   /**
    * 导入: set once the first run has asked about conversations in other AI
    * apps, whether or not anything was taken. MiMo asks a machine once; so does
@@ -1917,8 +1945,15 @@ export type Request =
   | { type: "session.watch"; sessionIDs: string[] }
   | { type: "session.history"; sessionID: string }
   | { type: "session.agent"; sessionID: string; agent: AgentName }
+  /* 追求目标: the plus menu's switch for one conversation. */
+  | { type: "session.goalMode"; sessionID: string; on: boolean }
+  /*
+   * 追求目标: sets the goal, rewrites it, or - with null - takes it off the
+   * conversation, which is both "exit goal mode" while one is being pursued
+   * and "dismiss" once the judge has answered.
+   */
+  | { type: "session.goal"; sessionID: string; condition: string | null }
   | { type: "session.access"; sessionID: string; access: "ask" | "auto" | "full" }
-  | { type: "session.staged"; sessionID: string; staged: boolean }
   /*
    * A review restricted this conversation, or lifted it. MiMo's own review
    * reports it from the engine; here it is whatever stands in for that, and
@@ -1950,6 +1985,8 @@ export type Request =
       fileNotices?: FileNotice[]
       agent?: TurnAgent
       model?: ModelRef
+      /* 追求目标: this message is the conversation's goal from now on, set before it is written. */
+      goal?: string
     }
   | { type: "session.abort"; sessionID: string }
   /*
@@ -2249,8 +2286,9 @@ export interface ResponseMap {
    */
   "session.revert": { session: SessionInfo; files: number; history: HistoryDepth }
   "session.agent": { session: SessionInfo }
+  "session.goalMode": { session: SessionInfo }
+  "session.goal": { session: SessionInfo }
   "session.access": { session: SessionInfo }
-  "session.staged": { session: SessionInfo }
   "session.reviewRestricted": { session: SessionInfo }
   "session.delete": Record<string, never>
   "session.compact": { session: SessionInfo }

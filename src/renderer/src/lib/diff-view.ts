@@ -4,6 +4,8 @@
  * side-by-side view needs. No window is needed, so the smoke test covers it.
  */
 
+import { markPair, type LineMark } from "./diff-words"
+
 /* MiMo's cap: past this many lines only the start of a patch is drawn. */
 export const DIFF_LINE_CAP = 1200
 
@@ -26,6 +28,8 @@ export interface DiffLine {
   old?: number
   new?: number
   text: string
+  /** What the line shares with the one it is paired with, and what only it has. */
+  marks?: readonly LineMark[]
 }
 
 export interface DiffHunkView {
@@ -162,6 +166,67 @@ export function reviewRows(diff: string): ReviewRow[] {
       })),
     ]),
   )
+}
+
+/*
+ * A hunk's lines with the word marks filled in.
+ *
+ * MiMo pairs a run of removals with the run of additions after it, row for row,
+ * and marks a pair that has both sides; a removal with no addition against it,
+ * and an addition that follows no removal, stay plain. The pairing is the one
+ * `splitRows` draws with, so the same words light up in either layout.
+ */
+export function markWords(lines: readonly DiffLine[]): DiffLine[] {
+  const marked = lines.map((line) => ({ ...line }))
+  let index = 0
+  while (index < marked.length) {
+    if (marked[index]!.kind === "ctx") {
+      index++
+      continue
+    }
+    const removed: DiffLine[] = []
+    const added: DiffLine[] = []
+    while (index < marked.length && marked[index]!.kind === "del") removed.push(marked[index++]!)
+    while (index < marked.length && marked[index]!.kind === "add") added.push(marked[index++]!)
+    for (let row = 0; row < Math.min(removed.length, added.length); row++) {
+      const pair = markPair(removed[row]!.text, added[row]!.text)
+      if (!pair) continue
+      removed[row]!.marks = pair.old
+      added[row]!.marks = pair.next
+    }
+  }
+  return marked
+}
+
+/**
+ * A renamed file's two names in one, MiMo's braced form: the parts of the path
+ * they share stay put and only the part that moved is written `{old → new}`.
+ * Anything else - a file that was not renamed, or one side being /dev/null -
+ * is its own name.
+ */
+export function displayName(file: Pick<DiffFileView, "name" | "oldName">): string {
+  const before = file.oldName
+  if (!before || before === file.name || before.includes("dev/null") || file.name.includes("dev/null")) return file.name
+  const from = before.split("/")
+  const to = file.name.split("/")
+  const head: string[] = []
+  const tail: string[] = []
+  let start = 0
+  let endFrom = from.length - 1
+  let endTo = to.length - 1
+  while (start < endFrom && start < endTo && from[start] === to[start]) head.push(to[start++]!)
+  while (endFrom > start && endTo > start && from[endFrom] === to[endTo]) {
+    tail.unshift(to[endTo]!)
+    endFrom--
+    endTo--
+  }
+  const moved = `{${from.slice(start, endFrom + 1).join("/")} → ${to.slice(start, endTo + 1).join("/")}}`
+  const above = head.join("/")
+  const below = tail.join("/")
+  if (above && below) return `${above}/${moved}/${below}`
+  if (above) return `${above}/${moved}`
+  if (below) return `${moved}/${below}`
+  return `${before} → ${file.name}`
 }
 
 export interface SplitRow {

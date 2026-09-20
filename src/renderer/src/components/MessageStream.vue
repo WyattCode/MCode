@@ -151,6 +151,8 @@ interface Turn {
   inbox?: MessageSource
   /** When the user sent it, for the footer under their own message. */
   asked?: number
+  /** 追求目标: this question became the conversation's goal, which the bubble says above itself. */
+  setsGoal?: boolean
   parts: AssistantPart[]
   /** subagents: news of background subagents that reached the turn while it ran, drawn where it landed. */
   steers: Steer[]
@@ -230,6 +232,7 @@ const turns = computed<Turn[]>(() => {
         notices: message.notices,
         inbox: message.inbox,
         asked: message.time.created,
+        setsGoal: message.setsGoal,
         parts: [],
         steers: [],
         waiting: [],
@@ -765,6 +768,20 @@ const lastAsked = computed(() => {
   return undefined
 })
 
+const lastTurnID = computed(() => turns.value.at(-1)?.id)
+
+/*
+ * 追求目标: how long a met goal took, which the last reply says. Only a goal
+ * the judge passed leaves this note - one given up on, or out of tries, says
+ * so in the bar above the box instead.
+ */
+const goalAchieved = computed(() => {
+  const goal = shownSession.value?.goal
+  if (!goal?.done || goal.done.status !== "complete") return undefined
+  const seconds = Math.max(0, Math.round((goal.done.at - goal.startedAt) / 1000))
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+})
+
 // A question that stops being the last one (another was sent) is no longer editable.
 watch(lastAsked, (id) => {
   if (editingAsked.value && editingAsked.value !== id) editingAsked.value = undefined
@@ -1100,6 +1117,20 @@ defineExpose({ stepMessage, scroller })
             </template>
           </div>
           <!--
+            追求目标: MiMo puts a target chip where the question's slash command
+            would be drawn, because the question that set the goal was its
+            `/goal` line. Nothing is typed here, so the chip stands over the
+            bubble on its own.
+          -->
+          <div v-if="turn.setsGoal" class="goal-tag" data-goal-tag>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <circle cx="12" cy="12" r="8" />
+              <circle cx="12" cy="12" r="4" />
+              <circle cx="12" cy="12" r="0.8" fill="currentColor" />
+            </svg>
+            <span>{{ t("stream.setAsGoal") }}</span>
+          </div>
+          <!--
             MiMo folds a long question: its first 264px under a fade, and a
             button beneath that says how many lines there are. Kept on one line
             each - the bubble keeps its whitespace, so any between these shows.
@@ -1376,6 +1407,13 @@ defineExpose({ stepMessage, scroller })
                 <path d="M6 7.2v9.6M18 10.2c0 4-3.4 5.2-8.3 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
               </svg>
             </button>
+            <!-- 追求目标: the one word a met goal leaves in the transcript, on the reply that met it. -->
+            <span v-if="goalAchieved && turn.id === lastTurnID" class="goal-done" data-goal-achieved>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+                <path d="M4 12.6 9 17.5 20 6.5" />
+              </svg>
+              {{ t("stream.goalAchieved", { dur: goalAchieved }) }}
+            </span>
             <span v-if="completedAt(turn)" class="msg-time" data-msg-time>{{ completedAt(turn) }}</span>
           </div>
         </div>
@@ -1525,6 +1563,48 @@ defineExpose({ stepMessage, scroller })
 .msg.assistant:hover .msg-time,
 .msg.assistant:focus-within .msg-time {
   opacity: 1;
+}
+
+/* 追求目标: the met-goal note in the action row, behind the same hairline the time has. */
+.goal-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-inline-start: 6px;
+  padding-inline-start: 9px;
+  color: var(--text-weak);
+  border-inline-start: 1px solid var(--border-weak);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.goal-done svg {
+  width: 14px;
+  height: 14px;
+  color: var(--text-success);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* 追求目标: the chip over the question that set the goal, on the question's own side. */
+.goal-tag {
+  display: inline-flex;
+  align-self: flex-end;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 6px;
+  padding: 1.5px 7px;
+  color: var(--text-strong);
+  background: var(--surface-layer);
+  border-radius: 6px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 500;
+  line-height: calc(16px * var(--ui-font-scale, 1));
+}
+
+.goal-tag svg {
+  width: 11px;
+  height: 11px;
+  flex: none;
 }
 
 /* MiMo's fork-row: 12 apart, 26 above the first question. */

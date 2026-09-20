@@ -429,6 +429,7 @@ defineExpose({
           <path v-for="d in TOOL_INFO[tool].icon" :key="d" :d="d" />
         </svg>
         <span class="lc-name">{{ t(TOOL_INFO[tool].label) }}</span>
+        <span class="lc-desc" data-launch-desc>{{ t(`launch.${tool}Desc`) }}</span>
         <kbd v-if="LAUNCH_HINTED.includes(tool) && hints[tool]" class="lc-kbd">{{ shownChord(hints[tool]!) }}</kbd>
       </button>
     </div>
@@ -785,6 +786,17 @@ body.resizing .right-panel {
   color: color-mix(in srgb, var(--text-strong) 80%, transparent);
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 400;
+  white-space: nowrap;
+}
+
+/* What the tool is for, after its name: dimmer, and cut rather than pushing the key cap out of a narrow panel. */
+.lc-desc {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--text-strong) 45%, transparent);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

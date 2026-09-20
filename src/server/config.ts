@@ -146,7 +146,7 @@ function defaults(): AppConfig {
     // MiMo's 中: one app-wide level, medium until someone picks another.
     effort: "medium",
     agent: "build",
-    staged: false,
+    goalMode: false,
     importOnboarded: false,
     uiFontSize: 14,
     codeFontSize: 12,
