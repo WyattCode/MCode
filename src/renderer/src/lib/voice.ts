@@ -580,13 +580,30 @@ export function speak(text: string, language: string): boolean {
   const line = text.trim()
   if (!line || typeof window.speechSynthesis === "undefined") return false
   try {
-    window.speechSynthesis.cancel()
+    hushSpeech()
     const utterance = new SpeechSynthesisUtterance(line.slice(0, 240))
     utterance.lang = language
     window.speechSynthesis.speak(utterance)
     return true
   } catch {
     return false
+  }
+}
+
+/**
+ * Stops whatever is being said aloud, at once.
+ *
+ * MiMo's spoken line is one blocking bridge call with a timeout, cut short when
+ * the window goes; MCode's is the OS engine, which keeps reading until the
+ * sentence ends unless it is told otherwise. 停止, leaving the conversation and
+ * turning voice feedback off all have to be able to shut it up - without this,
+ * pressing stop left the machine still narrating a turn that had ended.
+ */
+export function hushSpeech(): void {
+  try {
+    window.speechSynthesis?.cancel()
+  } catch {
+    // No engine, or one that refused: nothing was being said.
   }
 }
 

@@ -34,9 +34,34 @@ import {
   precheckFailure,
   speechFloor,
 } from "../src/renderer/src/lib/voice"
+import { hushSpeech } from "../src/renderer/src/lib/voice"
+import { followSpoken } from "../src/renderer/src/lib/speak-part"
+import { nextTick, ref } from "vue"
+import type { Message } from "../src/shared/protocol"
 import { SpeakTool } from "../src/server/tool/speak"
 import { PresentFilesTool } from "../src/server/tool/present"
 import { WIDGET_FENCE } from "../src/shared/widget"
+
+/** One finished turn whose only part is a completed speak call, as the stream would hold it. */
+function spokenTurn(callID: string, text: string): Message {
+  return {
+    id: `msg-${callID}`,
+    sessionID: "probe",
+    role: "assistant",
+    time: { created: Date.now() },
+    parts: [
+      {
+        type: "tool",
+        callID,
+        name: "speak",
+        status: "completed",
+        input: { text },
+        metadata: { text },
+        time: { created: Date.now(), completed: Date.now() },
+      },
+    ],
+  } as unknown as Message
+}
 
 /** One fake OpenAI-compatible service: what it was asked, and what it answers. */
 interface Fake {
@@ -349,5 +374,61 @@ export async function roundSeventeenMediaChecks(check: Check, section: (name: st
     check("present_files names the fence a demonstration belongs in", presents.includes(WIDGET_FENCE), presents)
     check("and says not to write it to a file or hand it over", /Do not write it to a file, and do not hand it over/i.test(presents))
     check("while still allowing a page that is genuinely the deliverable", /page, a site or an app as the thing they are given/i.test(presents))
+  }
+
+  // ---------------------------------------------------------------- R17-M8
+  section("Round 17 (M8): a line being read aloud can be cut off")
+  {
+    /*
+     * The OS speech engine reads to the end of the sentence unless it is told
+     * not to, and the only `cancel` in the app was the one at the start of the
+     * next line - so 停止, leaving the conversation and switching the feature
+     * off all left the machine talking. Driven here over a stub of the engine.
+     */
+    const engine = { spoken: [] as string[], cancels: 0 }
+    const held = (globalThis as { window?: unknown }).window
+    ;(globalThis as { window?: unknown }).window = {
+      speechSynthesis: {
+        cancel: () => engine.cancels++,
+        speak: (utterance: { text: string }) => engine.spoken.push(utterance.text),
+      },
+    }
+    ;(globalThis as { SpeechSynthesisUtterance?: unknown }).SpeechSynthesisUtterance = class {
+      lang = ""
+      constructor(public text: string) {}
+    }
+    try {
+      const session = ref<string | undefined>("one")
+      const on = ref(true)
+      const messages = ref<Message[]>([])
+      followSpoken({ enabled: () => on.value, session: () => session.value, messages: () => messages.value })
+      messages.value = [spokenTurn("call-1", "starting now")]
+      await nextTick()
+      check("a completed speak call is read aloud", engine.spoken.includes("starting now"), engine.spoken)
+
+      const beforeSwitch = engine.cancels
+      session.value = "two"
+      await nextTick()
+      check("leaving the conversation cuts the line off", engine.cancels > beforeSwitch, { beforeSwitch, now: engine.cancels })
+
+      const beforeOff = engine.cancels
+      on.value = false
+      await nextTick()
+      check("and so does switching voice feedback off", engine.cancels > beforeOff, { beforeOff, now: engine.cancels })
+
+      const quiet = engine.spoken.length
+      messages.value = [spokenTurn("call-2", "still going")]
+      await nextTick()
+      check("with the feature off nothing new is said", engine.spoken.length === quiet, engine.spoken)
+
+      /* 停止: the store's abort hushes before it even reaches the socket. */
+      const beforeStop = engine.cancels
+      hushSpeech()
+      check("hushSpeech, which 停止 calls, reaches the engine", engine.cancels > beforeStop)
+    } finally {
+      if (held === undefined) delete (globalThis as { window?: unknown }).window
+      else (globalThis as { window?: unknown }).window = held
+      delete (globalThis as { SpeechSynthesisUtterance?: unknown }).SpeechSynthesisUtterance
+    }
   }
 }
