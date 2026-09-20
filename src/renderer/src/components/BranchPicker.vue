@@ -114,7 +114,9 @@ async function create() {
     const result = await app.client?.request({ type: "git.checkout", directory, branch, create: true })
     if (!result) return
     if (result.ok) {
-      open.value = false
+      // MiMo leaves the menu up and redraws it with the new branch ticked; only the field goes.
+      creating.value = false
+      draft.value = ""
       notify(t("home.branchCreated", { branch }))
       app.branchesChanged()
       await refresh()
