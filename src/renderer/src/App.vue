@@ -3559,6 +3559,8 @@ function watching(sessionID: string) {
 }
 
 const heldNotices = new Set<string>()
+/* automation: whether the completion chime played for a scheduled run, so its own notice does not sound a second time. */
+const automationChimed = new Map<string, boolean>()
 
 function flushNotices() {
   for (const sessionID of [...heldNotices]) {
@@ -3597,8 +3599,17 @@ watch(
     const done = t("notify.done")
     if (app.currentID === turn.sessionID) announce(done)
     else if (about.title !== undefined) announce(`${about.title} · ${done}`)
-    // automation: a scheduled task's run is told about by its own policy, below.
-    if (app.automationRuns.has(turn.sessionID)) return
+    /*
+     * automation: a scheduled task's run is told about by its own policy,
+     * below - but the chime above has already played for it, so whether it did
+     * is carried across. Every other notice here passes `silent: chiming` for
+     * the same reason; the run's notice passed `silent: false` and a long
+     * scheduled run therefore both chimed and sounded the system notification.
+     */
+    if (app.automationRuns.has(turn.sessionID)) {
+      automationChimed.set(turn.sessionID, chiming)
+      return
+    }
     if (chiming && watching(turn.sessionID)) {
       heldNotices.add(turn.sessionID)
       return
@@ -3632,12 +3643,22 @@ watch(
   },
 )
 
-/* automation: MiMo tells the user about a scheduled task's run when the task's notification policy says to, failures included. */
+/*
+ * automation: MiMo tells the user about a scheduled task's run when the task's
+ * notification policy says to, failures included.
+ *
+ * `session.idle` always reaches this window before the run's own end does - the
+ * backend settles the run on that very event - so whether the completion chime
+ * played for this conversation is already known by the time the notice lands.
+ * A run with no record of a chime never had one.
+ */
 watch(
   () => app.automationNotice,
   (notice) => {
     if (!notice) return
-    window.mcode.taskNotice({ kind: notice.failed ? "failed" : "done", ...noticeAbout(notice.sessionID), silent: false })
+    const chimed = automationChimed.get(notice.sessionID) === true
+    automationChimed.delete(notice.sessionID)
+    window.mcode.taskNotice({ kind: notice.failed ? "failed" : "done", ...noticeAbout(notice.sessionID), silent: chimed })
   },
 )
 
