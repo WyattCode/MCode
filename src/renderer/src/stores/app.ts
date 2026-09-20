@@ -30,7 +30,7 @@ import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fa
 import type { ChatLink } from "@shared/protocol"
 import { notice, notify, notifyFailure } from "../lib/toast"
 import { findModel, withoutLatest } from "../lib/model"
-import { noteRunEnded, noteToolWrites } from "../lib/ai-touch"
+import { forgetRunEnded, noteRunEnded, noteToolWrites } from "../lib/ai-touch"
 import { endOfficeWatches } from "../lib/annotation-fx"
 import { noteDeliveryTurnEnded, noteDeliveryUpdate } from "../lib/delivered"
 import { readLegacyMessage } from "@shared/subagent"
@@ -401,6 +401,10 @@ export const useApp = defineStore("app", () => {
 
     if (running.value.delete(sessionID)) running.value = new Set(running.value)
     turnStarted.delete(sessionID)
+    answeredAnother.delete(sessionID)
+    noticeWoken.delete(sessionID)
+    liveRetries.delete(sessionID)
+    forgetRunEnded(sessionID)
     if (unseen.value.has(sessionID)) {
       const next = new Set(unseen.value)
       next.delete(sessionID)

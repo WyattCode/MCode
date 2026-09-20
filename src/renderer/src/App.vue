@@ -3617,6 +3617,10 @@ const subagentRunning = new Map<string, boolean>()
 watch(
   () => app.subagentSessions.map((session) => ({ session, running: session.subagent?.status === "running" })),
   (entries) => {
+    // Subagents come and go with their parent; what is no longer in the list
+    // has nothing left to announce, so its last state is dropped with it.
+    const live = new Set(entries.map(({ session }) => session.id))
+    for (const id of subagentRunning.keys()) if (!live.has(id)) subagentRunning.delete(id)
     for (const { session, running } of entries) {
       const was = subagentRunning.get(session.id)
       subagentRunning.set(session.id, running)

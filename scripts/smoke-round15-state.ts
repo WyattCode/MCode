@@ -177,4 +177,19 @@ export async function roundFifteenStateChecks(check: Check, section: (name: stri
     check("R15-R5: the one that went is the least recently asked for", cachedHighlight(of(1), "ts") === undefined)
     check("R15-R5: and the newest is in", cachedHighlight("const fresh = 1\n", "ts") !== undefined)
   }
+
+  // ---------------------------------------------------------------- R15-R6
+  {
+    /* Source check: the store's per-session collections are private to it. */
+    const store = await read("src/renderer/src/stores/app.ts")
+    const forget = store.slice(store.indexOf("function forgetSession("))
+    const body = forget.slice(0, forget.indexOf("\n  }\n"))
+    const missed = ["answeredAnother", "noticeWoken", "liveRetries", "forgetRunEnded", "turnStarted", "held"].filter((name) => !body.includes(name))
+    check("R15-R6: forgetSession drops every collection keyed by the session it is forgetting", missed.length === 0, missed)
+    const touch = await read("src/renderer/src/lib/ai-touch.ts")
+    check("R15-R6: and the module holding when a run ended offers a way to forget one", /export function forgetRunEnded\(/.test(touch))
+    const shell = await read("src/renderer/src/App.vue")
+    const sub = shell.slice(shell.indexOf("const subagentRunning = new Map"), shell.indexOf("const subagentRunning = new Map") + 900)
+    check("R15-R6: the subagent announcer forgets a subagent that has left the list", /subagentRunning\.delete\(id\)/.test(sub), sub.slice(0, 400))
+  }
 }
