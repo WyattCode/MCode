@@ -952,7 +952,15 @@ export class SessionRunner {
     // Restore first: if this throws, both stacks are still as they were and the
     // same undo can be tried again.
     const swapped = await this.restore(snapshot)
-    await this.store.moveSnapshot(sessionID, "undo", "redo", { at: snapshot.at, files: swapped })
+    /*
+     * The turn's own record, with the files swapped for what they replaced.
+     * Only `files` differs: `directory` names the checkpoint store both sides
+     * of the swap live in, and without it a redo has no store to read the
+     * bodies back from; `messages` is what a rollback needs to know which turn
+     * a message belongs to. Rebuilding the entry from `at` and `files` alone
+     * dropped both, so every redo failed and the entry stuck on the stack.
+     */
+    await this.store.moveSnapshot(sessionID, "undo", "redo", { ...snapshot, files: swapped })
     await this.noteRestore(sessionID, snapshot.files)
     return snapshot.files.length
   }
@@ -1163,7 +1171,8 @@ export class SessionRunner {
     if (!snapshot) throw new Error("Nothing to redo")
     await this.guardOthers(sessionID, snapshot.at, snapshot.files)
     const swapped = await this.restore(snapshot)
-    await this.store.moveSnapshot(sessionID, "redo", "undo", { at: snapshot.at, files: swapped })
+    // The same swap the other way; see undo() for why the rest of the record goes with it.
+    await this.store.moveSnapshot(sessionID, "redo", "undo", { ...snapshot, files: swapped })
     await this.noteRestore(sessionID, snapshot.files)
     return snapshot.files.length
   }
