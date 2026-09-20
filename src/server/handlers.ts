@@ -1703,38 +1703,48 @@ const TREE_SEARCH_NODES = 4000
 
 /*
  * The files tab's search, MiMo's `searchFiles`: breadth first, each folder's
- * entries folders first by name, a file matching when its own name holds the
- * query. It stops at 50 results or 4000 entries seen, and says so.
+ * entries folders first by name, every file scored against the query by
+ * `rankFileHit` and the best 50 kept.
+ *
+ * Scored on the whole relative path, not on the name alone (R17-V3): a query
+ * with a slash in it - `src/right/RpFiles`, the shape anyone reading code
+ * types - matched nothing at all while this looked only at `entry.name`, and
+ * with more than 50 hits what came back was the fifty shallowest rather than
+ * the fifty most alike. The walk runs to its 4000-entry budget either way,
+ * which is what it takes to rank at all.
  */
 export async function searchTree(directory: string, query: string): Promise<Handled<"file.search">> {
   const { target } = await insideProject(directory)
-  const needle = query.toLowerCase()
-  const entries: Handled<"file.search">["entries"] = []
-  if (!needle) return { entries, truncated: false }
+  const needle = query.trim().toLowerCase()
+  if (!needle) return { entries: [], truncated: false }
   // MiMo's protected folders, when the project is the home folder.
   const shielded = protectedFilter(target)
+  const scored: { entry: Handled<"file.search">["entries"][number]; score: number }[] = []
   const queue = [{ absolute: target, rel: "", depth: 0 }]
   let seen = 0
-  while (queue.length) {
+  let spent = false
+  while (queue.length && !spent) {
     const folder = queue.shift()!
     const listed = await fs.readdir(folder.absolute, { withFileTypes: true }).catch(() => [])
     listed.sort((a, b) => (a.isDirectory() === b.isDirectory() ? a.name.localeCompare(b.name) : a.isDirectory() ? -1 : 1))
     for (const entry of listed) {
       if (TREE_IGNORED.has(entry.name)) continue
       if (entry.isDirectory() && shielded(path.join(folder.absolute, entry.name))) continue
-      if (++seen > TREE_SEARCH_NODES) return { entries, truncated: true }
+      if (++seen > TREE_SEARCH_NODES) {
+        spent = true
+        break
+      }
       const rel = folder.rel ? `${folder.rel}/${entry.name}` : entry.name
-      const isDirectory = entry.isDirectory()
-      if (!isDirectory && entry.name.toLowerCase().includes(needle)) {
-        entries.push({ name: entry.name, rel, dir: folder.rel })
-        if (entries.length >= TREE_SEARCH_RESULTS) return { entries, truncated: true }
+      if (entry.isDirectory()) {
+        if (folder.depth < TREE_SEARCH_DEPTH) queue.push({ absolute: path.join(folder.absolute, entry.name), rel, depth: folder.depth + 1 })
+        continue
       }
-      if (isDirectory && folder.depth < TREE_SEARCH_DEPTH) {
-        queue.push({ absolute: path.join(folder.absolute, entry.name), rel, depth: folder.depth + 1 })
-      }
+      const score = rankFileHit(rel, needle)
+      if (score !== undefined) scored.push({ entry: { name: entry.name, rel, dir: folder.rel }, score })
     }
   }
-  return { entries, truncated: false }
+  scored.sort((a, b) => b.score - a.score || (a.entry.rel < b.entry.rel ? -1 : a.entry.rel > b.entry.rel ? 1 : 0))
+  return { entries: scored.slice(0, TREE_SEARCH_RESULTS).map((hit) => hit.entry), truncated: spent || scored.length > TREE_SEARCH_RESULTS }
 }
 
 const SEARCH_LIMIT = 50

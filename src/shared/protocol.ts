@@ -2156,8 +2156,8 @@ export type Request =
   | { type: "file.listDir"; directory: string; sub?: string; all?: boolean }
   /*
    * Files under `sub` whose path holds the query, for the @ menu's search.
-   * `nameOnly`: the files tab's search, matching the file name alone, MiMo's
-   * breadth-first walk capped at 50 results, depth 16 and 4000 entries.
+   * `nameOnly`: the files tab's search - the same breadth-first walk over 4000
+   * entries to depth 16, scored on the whole relative path, best 50 returned.
    */
   | { type: "file.search"; directory: string; query: string; sub?: string; limit?: number; nameOnly?: boolean }
   /* Where the files tab browses with no project: the default project location. */
