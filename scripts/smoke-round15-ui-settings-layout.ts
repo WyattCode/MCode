@@ -7,8 +7,8 @@
  * source text match plain markup as they are - and dropped onto a page holding
  * the two rows that break at the window's 720px minimum, in a card as wide as
  * the card measured there. What comes back is geometry and computed values, so
- * a check can say "the label is drawn over the buttons" about what the rows
- * really do instead of about the source text.
+ * a check can say "the label is drawn over the buttons" and "this path is
+ * 11.5px" about the real cascade instead of about the source text.
  *
  * Bundled to a .cjs and started as Electron's main script by
  * smoke-round15-ui-settings.ts, which passes the .vue file and the file to
@@ -85,6 +85,11 @@ const BODY = `
       </div>
     </div>
   </div>
+  <div class="card empty-card" id="ecard"><div class="empty-title">a</div></div>
+  <div class="card wt-empty" id="wcard"><div class="wt-empty-title">a</div></div>
+  <div class="line-sub config-path" id="cpath">/tmp/mcode.json</div>
+  <div class="line-sub path" id="spath">/tmp/proj</div>
+  <div class="line-sub" id="plainsub">plain</div>
 </div>`
 
 /** Geometry and computed values, read in the page. */
@@ -121,6 +126,7 @@ const READ = `(function () {
     return Math.round(byId(groupId).getBoundingClientRect().right - inner)
   }
   const clipped = (cardId) => Math.round(byId(cardId).scrollWidth - byId(cardId).clientWidth)
+  const font = (id) => getComputedStyle(byId(id)).fontSize
   return {
     cardWidth: Math.round(byId("pcard").getBoundingClientRect().width),
     provider: {
@@ -145,6 +151,11 @@ const READ = `(function () {
       cardClipsX: clipped("scard"),
       titleLines: Math.round(rect("stitle").h / parseFloat(getComputedStyle(byId("stitle")).lineHeight)),
     },
+    padding: {
+      emptyCard: getComputedStyle(byId("ecard")).padding,
+      wtEmpty: getComputedStyle(byId("wcard")).padding,
+    },
+    fontSize: { configPath: font("cpath"), subPath: font("spath"), lineSub: font("plainsub") },
   }
 })()`
 

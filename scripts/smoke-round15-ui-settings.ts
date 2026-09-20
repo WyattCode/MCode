@@ -1,11 +1,12 @@
 /**
- * Round 15, lane U2: the settings dialog's rows at the window's own minimum.
+ * Round 15, lane U2: the settings dialog's rows at the window's own minimum,
+ * and two declarations that were being read over by a later rule.
  *
- * The readings come from Chromium: smoke-round15-ui-settings-layout.ts lifts
- * `SettingsDialog.vue`'s stylesheet, lays the two rows out in a card as wide as
- * the one measured at 720px, and sends back geometry. So "the label is drawn
- * over the buttons" and "Entfernen is cut off by the card" are measured here,
- * not spelt.
+ * The four readings come from Chromium: smoke-round15-ui-settings-layout.ts
+ * lifts `SettingsDialog.vue`'s stylesheet, lays the two rows out in a card as
+ * wide as the one measured at 720px, and sends back geometry and computed
+ * values. So "the label is drawn over the buttons", "Entfernen is cut off by
+ * the card" and "this path is 11.5px" are measured here, not spelt.
  *
  * The markup laid out there stands in for the template, so each check is paired
  * with a reading of the template it copies: a row that stops nesting that way
@@ -26,6 +27,8 @@ interface Layout {
   provider?: { tagOverButtons: number; nameOverButtons: number; buttonsPastCard: number; cardClipsX: number; rowHeight: number }
   mcp?: { titleOverControl: number; controlPastCard: number; cardClipsX: number; titleHeight: number; titleLines: number }
   shortButtons?: { titleOverControl: number; controlPastCard: number; cardClipsX: number; titleLines: number }
+  padding?: { emptyCard: string; wtEmpty: string }
+  fontSize?: { configPath: string; subPath: string; lineSub: string }
 }
 
 /** Runs the layout helper under Electron and returns what it measured. */
@@ -114,5 +117,22 @@ export async function roundFifteenSettingsUiChecks(check: Check, section: (name:
     check("rows wrap rather than overflow", /flex-wrap:\s*wrap/.test(rule(".prow")) && /flex-wrap:\s*wrap/.test(rule(".line")))
     check("and both control groups keep to the end of the row once they have", /margin-inline-start:\s*auto/.test(rule(".ctl-pair")) && /margin-inline-start:\s*auto/.test(rule(".mcp-ctrl")))
     check("the text column asks for a readable width before a control may sit beside it", /min-width:\s*min\(/.test(rule(".line-text")) && /min-width:\s*min\(/.test(rule(".ptext")))
+  }
+
+  // ----------------------------------------------------------------- R15-U22
+  section("Round 15 (R15-U22): the config path keeps its 11.5px, and the empty worktree card the rows' 17")
+  {
+    const f = layout.fontSize
+    check("the models page's config path is the 11.5px it asks for", f?.configPath === "11.5px", f?.configPath)
+    check("the same size the environment page's project path already got", f?.configPath === f?.subPath, { configPath: f?.configPath, subPath: f?.subPath })
+    check("which is not .line-sub's own size, so the rule is doing something", f?.lineSub !== f?.configPath, { lineSub: f?.lineSub })
+    check("it wins by being written against both classes, the way .line-sub.path is", rule(".line-sub.config-path") !== "" && rule(".config-path") === "", {
+      both: rule(".line-sub.config-path").slice(0, 40),
+      plain: rule(".config-path").slice(0, 40),
+    })
+
+    const pad = layout.padding
+    check("the empty worktree card sits on the same padding as the models page's empty card", pad?.wtEmpty === pad?.emptyCard, pad)
+    check("and that is the rows' 16 above and below, 17 aside", pad?.wtEmpty === "16px 17px", pad?.wtEmpty)
   }
 }

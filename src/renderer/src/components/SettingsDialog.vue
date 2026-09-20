@@ -4923,8 +4923,13 @@ h3 {
   }
 }
 
-/* MiMo draws the config path as a single line that ends in an ellipsis. */
-.config-path {
+/*
+ * MiMo draws the config path as a single line that ends in an ellipsis.
+ * Written against `.line-sub` as well, the way `.line-sub.path` is: the element
+ * wears both classes, and the `.line-sub` rule further down reads later at the
+ * same weight, so a bare `.config-path` loses its 11.5px to that rule's 12.
+ */
+.line-sub.config-path {
   overflow: hidden;
   font-family: var(--font-mono);
   font-size: calc(11.5px * var(--ui-font-scale, 1));
@@ -5493,8 +5498,9 @@ h3 {
   font-weight: 500;
 }
 
+/* The other sentence-in-a-card on this page, on the same 16/17 rhythm as `.empty-card`. */
 .card.wt-empty {
-  padding: 16px 18px;
+  padding: 16px 17px;
 }
 
 .wt-empty-title {
