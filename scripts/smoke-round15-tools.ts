@@ -1,0 +1,257 @@
+/**
+ * Round 15 (lane T): the tool, MCP, cron and shell fixes, measured against the
+ * real code - a stub server started the way a published MCP server is started,
+ * a scheduler over a throwaway project, and the tools themselves with a
+ * permission gate that records what it was asked. Kept apart from smoke.ts the
+ * way the earlier rounds are; smoke.ts calls `roundFifteenToolChecks` with its
+ * own check and section.
+ */
+import { spawn } from "node:child_process"
+import fs from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
+import type { SessionInfo } from "@shared/protocol"
+import type { Check } from "./smoke-round5"
+import { terminate, windowsLaunch } from "../src/server/mcp-launch"
+import { liveProbes, probeTools } from "../src/server/mcp-probe"
+import { CronScheduler, bindScheduler } from "../src/server/cron/scheduler"
+import { cronFile } from "../src/server/cron/tasks"
+import { CronTool } from "../src/server/tool/cron"
+import { CreateSessionTool } from "../src/server/tool/session-chat"
+import { BashTool, liveBashCommands } from "../src/server/tool/bash"
+import type { ToolContext } from "../src/server/tool/types"
+
+const wait = (ms: number) => new Promise<void>((done) => setTimeout(done, ms))
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (failure) {
+    return (failure as NodeJS.ErrnoException).code === "EPERM"
+  }
+}
+
+/** Waits for a process to go, so a kill that is on its way is not read as one that never happened. */
+async function gone(pid: number, within = 5000): Promise<boolean> {
+  for (let waited = 0; waited < within; waited += 100) {
+    if (!alive(pid)) return true
+    await wait(100)
+  }
+  return !alive(pid)
+}
+
+/** A permission gate that answers as told and keeps what it was asked. */
+function gate(answer: "allow" | "deny" = "allow") {
+  const asked: { kind: string; scope?: string; subject?: string }[] = []
+  const permissions = {
+    allowsOutside: () => false,
+    async ask(request: { kind: string; scope?: string; subject?: string }) {
+      asked.push({ kind: request.kind, scope: request.scope, subject: request.subject })
+      if (answer === "deny") throw new Error(`refused: ${request.kind}`)
+    },
+  }
+  return { asked, permissions: permissions as unknown as ToolContext["permissions"] }
+}
+
+function toolContext(directory: string, permissions: ToolContext["permissions"], extra: Partial<ToolContext> = {}): ToolContext {
+  return {
+    sessionID: "ses_t15",
+    messageID: "msg_t15",
+    callID: "call_t15",
+    directory,
+    permissions,
+    signal: new AbortController().signal,
+    progress: () => {},
+    snapshot: async () => {},
+    ...extra,
+  } as unknown as ToolContext
+}
+
+const session = (id: string, directory: string) => ({ id, directory, title: id, model: "m", createdAt: 0, updatedAt: 0 }) as unknown as SessionInfo
+
+export async function roundFifteenToolChecks(check: Check, section: (name: string) => void): Promise<void> {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r15t-"))
+
+  // ---------------------------------------------------------------- T15-1
+  if (process.platform === "win32") {
+    section("Round 15 (T15-1): a local MCP server started through cmd.exe is stopped with the tree under it")
+    /*
+     * The npx-style case: the command is a .cmd, so it runs under a cmd.exe of
+     * its own and the server is that shell's child. The stub writes its pid
+     * down, ignores its input closing and never answers, which is what a server
+     * holding a port looks like from here.
+     */
+    const stubs = path.join(root, "mcp-stub")
+    await fs.mkdir(stubs, { recursive: true })
+    const script = path.join(stubs, "server.js")
+    const launcher = path.join(stubs, "server.cmd")
+    const pidFile = (name: string) => path.join(stubs, `${name}.pid`)
+    await fs.writeFile(
+      script,
+      [
+        "const fs = require('node:fs')",
+        "fs.writeFileSync(process.argv[2], String(process.pid))",
+        "process.stdin.resume()",
+        "process.stdin.on('end', () => {})",
+        "setInterval(() => {}, 1000)",
+        "",
+      ].join("\n"),
+    )
+    await fs.writeFile(launcher, ["@echo off", `node "${script}" %*`, ""].join("\r\n"))
+
+    /** The pid the stub wrote, once it is there. */
+    const startedPid = async (name: string): Promise<number> => {
+      for (let waited = 0; waited < 20_000; waited += 100) {
+        const text = await fs.readFile(pidFile(name), "utf8").catch(() => undefined)
+        if (text && Number.isInteger(Number(text))) return Number(text)
+        await wait(100)
+      }
+      return 0
+    }
+
+    const launch = windowsLaunch(launcher, [pidFile("terminate")])
+    check("a .cmd server is launched through cmd.exe, so kill() alone would only reach the shell", launch.command === "cmd.exe" && launch.verbatim)
+    const child = spawn(launch.command, launch.args, { stdio: ["pipe", "pipe", "ignore"], windowsHide: true, windowsVerbatimArguments: launch.verbatim })
+    const served = await startedPid("terminate")
+    check("the stub server is running under that shell", served > 0 && alive(served))
+    await terminate(child, 300)
+    const stopped = await gone(served)
+    check("terminate() ends the server itself, not only the cmd.exe wrapper", stopped, { pid: served })
+    if (!stopped) process.kill(served, "SIGKILL")
+
+    const probed = await probeTools({ type: "local", command: [launcher, pidFile("probe")] } as never, { timeoutMs: 1500 })
+    const probedPid = await startedPid("probe")
+    check("a probe of a server that never answers gives up in words", "error" in probed && probed.error.includes("no answer"), probed)
+    const reaped = await gone(probedPid)
+    check("and the server it started is reaped, though nothing else holds it", reaped, { pid: probedPid })
+    if (!reaped) process.kill(probedPid, "SIGKILL")
+    check("no probe is left registered as running", liveProbes() === 0)
+  }
+
+  // ---------------------------------------------------------------- T15-2
+  section("Round 15 (T15-2): create_session asks before rooting a conversation outside the project")
+  {
+    const project = path.join(root, "project-a")
+    const inside = path.join(project, "packages", "ui")
+    const elsewhere = path.join(root, "not-a-project")
+    await fs.mkdir(inside, { recursive: true })
+    await fs.mkdir(elsewhere, { recursive: true })
+
+    const made: string[] = []
+    const chat = { create: async (input: { name: string; workspace: string }) => (made.push(input.workspace), { ok: true, session: { id: "ses_new", title: input.name } }) }
+    const run = async (workspace: string, answer: "allow" | "deny") => {
+      const { asked, permissions } = gate(answer)
+      const result = await CreateSessionTool.execute({ name: "n", purpose: "p", workspace }, toolContext(project, permissions, { chat: chat as never })).then(
+        (output) => ({ output }),
+        (failure: unknown) => ({ failure }),
+      )
+      return { asked, ...result }
+    }
+
+    const near = await run(inside, "allow")
+    check("a workspace inside this conversation's project asks nothing", near.asked.length === 0 && made.includes(inside), near.asked)
+    const away = await run(elsewhere, "allow")
+    check(
+      "one outside it goes through the outside question, scoped to that folder",
+      away.asked.length === 1 && away.asked[0]?.kind === "outside" && away.asked[0]?.scope === (await fs.realpath(elsewhere)),
+      away.asked,
+    )
+    check("and the conversation is created once that is allowed", made.filter((workspace) => workspace === elsewhere).length === 1, made)
+    const refused = await run(path.join(os.homedir()), "deny")
+    check("a refused folder creates nothing", "failure" in refused && !made.includes(os.homedir()), made)
+  }
+
+  // ---------------------------------------------------------------- T15-3
+  section("Round 15 (T15-3): a cron project whose lock was held is looked at again")
+  {
+    const project = path.join(root, "locked")
+    await fs.mkdir(path.join(project, ".mcode"), { recursive: true })
+    const task = { id: "t15lock1", cron: "* * * * *", prompt: "do the thing", createdAt: 0, recurring: true, createdBySessionId: "ses_owner", durable: true }
+    await fs.writeFile(cronFile(project), JSON.stringify({ tasks: [task] }))
+    const lock = path.join(project, ".mcode", ".cron-lock")
+    /*
+     * A lock file another live process holds - what a second copy of the app
+     * leaves, and what a hard kill leaves behind for whatever inherits the pid.
+     * `process.ppid` is alive and is not us, which is the whole test takeLock
+     * makes.
+     */
+    const held = JSON.stringify({ pid: process.ppid, startedAt: Date.now() })
+    await fs.writeFile(lock, held)
+
+    const fired: string[] = []
+    const scheduler = new CronScheduler({
+      now: () => Date.now(),
+      fire: async (sessionID: string) => void fired.push(sessionID),
+      busy: () => false,
+      session: async (id: string) => (id === "ses_owner" ? session("ses_owner", project) : undefined),
+      create: async () => session("ses_owner", project),
+      directories: async () => [project],
+    })
+    await scheduler.start({ interval: false })
+    await scheduler.tick()
+    check("a task in a project another process holds does not fire", fired.length === 0, fired)
+
+    // The holder stopped without tidying up: the lock is claimed on the next pass.
+    await fs.writeFile(lock, held)
+    const old = new Date(Date.now() - 10 * 60_000)
+    await fs.utimes(lock, old, old)
+    await scheduler.tick()
+    check("a lock its holder has stopped stamping is taken over, and the task fires", fired.length === 1, fired)
+    await scheduler.stop()
+  }
+
+  // ---------------------------------------------------------------- T15-4
+  section("Round 15 (T15-4): cron cannot write another project's task file")
+  {
+    const here = path.join(root, "cron-here")
+    const there = path.join(root, "cron-there")
+    await fs.mkdir(here, { recursive: true })
+    await fs.mkdir(there, { recursive: true })
+    const scheduler = new CronScheduler({
+      now: () => Date.now(),
+      fire: async () => {},
+      busy: () => false,
+      session: async (id: string) => (id === "ses_here" ? session("ses_here", here) : id === "ses_there" ? session("ses_there", there) : undefined),
+      create: async () => session("ses_here", here),
+      directories: async () => [here],
+    })
+    bindScheduler(scheduler)
+    const { permissions } = gate()
+    const call = (operation: Record<string, unknown>) =>
+      CronTool.execute({ operation }, toolContext(here, permissions, { sessionID: "ses_here" })).then(
+        (output) => ({ output }),
+        (failure: unknown) => ({ failure: failure instanceof Error ? failure.message : String(failure) }),
+      )
+
+    const own = await call({ action: "schedule", cron: "*/10 * * * *", prompt: "build", durable: true })
+    check("a durable job in this project is scheduled and written here", "output" in own && (await fs.readFile(cronFile(here), "utf8")).includes("build"), own)
+    const next = await call({ action: "schedule", cron: "*/10 * * * *", prompt: "read their secrets", durable: true, session_id: "ses_there" })
+    const wrote = await fs.readFile(cronFile(there), "utf8").catch(() => "")
+    check("naming a conversation in another project is refused in words", "failure" in next && next.failure.includes("another project"), next)
+    check("and nothing is written there", wrote === "", wrote)
+    const listed = await call({ action: "list", session_id: "ses_there" })
+    check("the same holds for reading that project's jobs", "failure" in listed, listed)
+    bindScheduler(undefined)
+    await scheduler.stop()
+  }
+
+  // ---------------------------------------------------------------- T15-5
+  section("Round 15 (T15-5): a command that cannot start is not counted as running")
+  {
+    const project = path.join(root, "bash")
+    await fs.mkdir(project, { recursive: true })
+    const { permissions } = gate()
+    const before = liveBashCommands()
+    const failed = await BashTool.execute({ command: "echo hi" }, toolContext(project, permissions, { shell: "definitely-no-such-shell-xyz.exe" })).then(
+      () => undefined,
+      (failure: unknown) => (failure instanceof Error ? failure.message : String(failure)),
+    )
+    check("a shell that is not there fails the call in words", (failed ?? "").includes("Failed to start command"), failed)
+    // `error` and `close` fire for a spawn that never happened; `exit` never does.
+    await wait(50)
+    check("and it leaves nothing behind in the live set", liveBashCommands() === before, { before, after: liveBashCommands() })
+  }
+
+  await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
+}
