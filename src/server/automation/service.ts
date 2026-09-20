@@ -660,6 +660,16 @@ export class AutomationService {
     const automation = structuredClone(found)
     if (mode === "pause" || mode === "resume") {
       automation.enabled = mode === "resume"
+      /*
+       * Coming back from paused, the schedule is counted from now.
+       *
+       * `plan(automation, true)` counts from the later of lastFiredAt and
+       * anchorAt, so resuming a 09:00 daily task at 14:00 worked out "today at
+       * 09:00", found it already past, and let a run off in the same second.
+       * MiMo's PATCH moves the anchor whenever a paused task is made active
+       * again, and counts the first occurrence from there.
+       */
+      if (mode === "resume" && !found.enabled) automation.anchorAt = now
     } else {
       // An empty title or prompt is refused, as MiMo's check refuses it, rather than quietly ignored (T10-53).
       for (const field of ["title", "prompt"] as const) {
@@ -683,6 +693,8 @@ export class AutomationService {
       if (input.scheduleLabel !== undefined) automation.label = text(input.scheduleLabel)
       if (input.project !== undefined) automation.project = project
       if (status) automation.enabled = status === "active"
+      // The same move of the anchor as resume, since an update may be the thing that makes a paused task active.
+      if (automation.enabled && !found.enabled) automation.anchorAt = now
       const before = automation.runMode
       if (runMode) automation.runMode = runMode as RunMode
       // MiMo's defaults when the run target changes and nothing else was said.
@@ -700,7 +712,7 @@ export class AutomationService {
     automation.revision++
     automation.updatedAt = now
     this.saved.automations = this.saved.automations.map((entry) => (entry.id === found.id ? automation : entry))
-    this.plan(automation, mode === "resume")
+    this.plan(automation, automation.enabled && !found.enabled)
     return answer({ ok: true, automation: this.view(automation) })
   }
 
