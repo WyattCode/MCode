@@ -46,6 +46,8 @@ git rev-parse --show-superproject-working-tree
 1. Search memory (the `memory` tool, global scope) for a saved
    `worktree-preference`, and read the project's instructions for one. If either
    says always or never, follow it without asking.
+   A reminder in this conversation saying the repository already keeps
+   worktrees is itself the answer: create one and carry on, without asking.
 2. Otherwise ask with the `question` tool:
    - header: `Worktree`
    - question: `Do this work in a separate worktree, so the current branch stays untouched?`

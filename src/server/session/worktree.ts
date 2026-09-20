@@ -64,9 +64,32 @@ export async function mainWorktreeRoots(targets: readonly string[]): Promise<str
   return [...roots]
 }
 
-/** MiMo's auto-worktree notice, in MCode's words: once per conversation, after a change to a repository's main worktree. */
+/**
+ * MiMo's auto-worktree notice, in MCode's words: once per conversation, after a
+ * change to a repository's main worktree.
+ *
+ * Four things MiMo says and this used to leave out, so the model was told what
+ * to notice without being told what to do about it:
+ *
+ *  - why it matters, which is the same in both wordings: other agents and the
+ *    user's own uncommitted work are writing in that folder at the same time;
+ *  - in a repository that already keeps worktrees, that the answer is not a
+ *    question - move first, then write - so the model stops stopping to ask;
+ *  - in a repository that does not, what each answer means, since a model told
+ *    to ask and not told what either answer leads to picks for itself;
+ *  - in both, that the rule is about repositories, not about this one path.
+ */
 export function worktreeNotice(root: string, linked: boolean): string {
+  const opening = `You are changing files in ${root}, the main worktree of a git repository${linked ? " that already keeps worktrees" : ""}. Writing, editing or running git there at the same time as other agents, or on top of changes the user has not committed, gets in their way.`
   return linked
-    ? `You are changing files in ${root}, the main worktree of a git repository that already has other worktrees. Keep this task's changes apart: create a new worktree for the task and carry on there instead of in the main worktree.`
-    : `You are changing files in ${root}, the main worktree of a git repository. Do not create a worktree on your own; before changing more files here, ask the user whether to carry on in the main worktree, and treat other repositories the same way.`
+    ? [
+        opening,
+        "You do not need to ask about this: before your next write or edit, make a worktree for this task and move into it, then carry on there.",
+        "This is not only about the folder above. Whenever you start writing to another repository that keeps worktrees, isolate the work there the same way, again without asking.",
+      ].join(" ")
+    : [
+        opening,
+        "Do not make a worktree on your own. Before your next write or edit, ask the user whether this task should be isolated in one. If they say yes, make the worktree, move into it, and carry on there; if they say no, carry on as planned and do not make one.",
+        "This is not only about the folder above: ask the same question the first time you start writing to another repository's main worktree.",
+      ].join(" ")
 }
