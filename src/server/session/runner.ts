@@ -58,6 +58,7 @@ import { pruneLevelFor, prunedHistory, type PruneLevel } from "./prune"
 import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, shrinkLargeToolResults, touchedFiles, type CompactionTrigger } from "./summary"
 import { memorySection, repositoryState, systemPrompt } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
+import { GOAL_GUARD, JUDGE_SYSTEM, MAX_GOAL_REACT, goalReminder, judgeQuestion, parseVerdict, type GoalVerdict } from "./goal"
 import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf, subagentAgent } from "./plan"
 import { status as gitStatus } from "../git"
 import { memoryFilesFor } from "../history/service"
@@ -70,7 +71,7 @@ import { settleAttachments, withAttachmentData, type AttachmentCache } from "./a
 import type { ModelEntry } from "../provider/catalog"
 import { forWire } from "../provider/wire-ids"
 import { hasLinkedWorktrees, worktreeNotice, worktreeTop } from "./worktree"
-import type { ModelModalities } from "@shared/protocol"
+import type { ModelModalities, SessionGoal } from "@shared/protocol"
 import { costOf } from "./usage"
 import { BackgroundUsage, type BackgroundUse } from "./background-usage"
 import { UsageDays } from "./usage-days"
@@ -234,6 +235,12 @@ const VERDICT_TOOL: ToolDefinition = {
     return { output: "" }
   },
 }
+
+/** How long a goal verdict may take before the turn is let go. */
+const GOAL_JUDGE_TIMEOUT_MS = 90_000
+
+/** What the bar says when no verdict came back at all; the reader sees it in their own language, keyed off this. */
+const GOAL_JUDGE_FAILED = "judge-failed"
 
 /** How long a title may take before the fallback is kept. */
 const TITLE_TIMEOUT_MS = 60_000
@@ -449,7 +456,7 @@ export class SessionRunner {
         create: async ({ directory, title }) => {
           const settings = config.get()
           await config.adoptProjects([directory], { byRepository: true })
-          return store.create({ directory, title, model: settings.model, agent: settings.agent, ...(settings.smart ? { smart: true } : {}) })
+          return store.create({ directory, title, model: settings.model, agent: settings.agent, goalMode: settings.goalMode, ...(settings.smart ? { smart: true } : {}) })
         },
       },
       CHAT_WAIT_MS,
@@ -1367,7 +1374,17 @@ export class SessionRunner {
       return { system: [base, SUBAGENT_NOTE, ...(outputSchema ? [STRUCTURED_NOTE] : session.subagent?.type === "general" ? [RETURN_NOTE] : [])].join("\n\n") }
     }
     const memory = memoryFilesFor(session.directory, session.id)
-    return memory ? { system: base, systemTail: memorySection(memory) } : { system: base }
+    /*
+     * 追求目标: one line telling the model to work the goal to its end, beside
+     * the memory note rather than inside the cached prefix - a goal set or met
+     * mid-conversation would otherwise start the provider's cache over.
+     *
+     * Left out in plan mode, as MiMo leaves it out: planning is meant to stop
+     * and show a plan, which is the one thing this line forbids.
+     */
+    const pursuing = session.goal && !session.goal.done && session.agent !== "plan" ? [GOAL_GUARD] : []
+    const tail = [...(memory ? [memorySection(memory)] : []), ...pursuing]
+    return tail.length ? { system: base, systemTail: tail.join("\n\n") } : { system: base }
   }
 
   /**
@@ -2049,6 +2066,141 @@ export class SessionRunner {
   }
 
   /**
+   * 追求目标: whether this turn has to carry on.
+   *
+   * Called where a turn would end. The conversation's goal is read again from
+   * the store rather than from the turn's copy, because the bar above the
+   * composer can take the goal off while the turn runs, and a goal the reader
+   * has just abandoned must not send the turn back.
+   *
+   * MiMo's order, kept: judge, then decide. Met - or out of reach - ends the
+   * goal and lets the turn stop. Anything else counts one re-entry against
+   * `MAX_GOAL_REACT`, writes the judge's reason where the user's next message
+   * would go, and returns true so the loop asks the model again. A judge that
+   * could not answer lets the turn stop; a conversation held open by a request
+   * that keeps failing would be the worse failure of the two.
+   *
+   * A subagent never has a goal of its own: it works for a parent turn, and
+   * that turn's goal is judged when the parent's own turn ends.
+   */
+  private async goalGate(session: TurnSession, stopped: AbortSignal): Promise<boolean> {
+    if (session.parentID || stopped.aborted) return false
+    const sessionID = session.id
+    const current = await this.store.get(sessionID)
+    const goal = current?.goal
+    if (!goal || goal.done) return false
+
+    const verdict = await this.judgeGoal(session, goal.condition, stopped)
+    // Stop landed while the judge was reading: the goal stands, untouched, for the next turn.
+    if (stopped.aborted) return false
+    if (!verdict) {
+      await this.endGoal(sessionID, { status: "blocked", reason: GOAL_JUDGE_FAILED, at: Date.now() })
+      return false
+    }
+    if (verdict.ok || verdict.impossible) {
+      await this.endGoal(sessionID, { status: verdict.ok ? "complete" : "blocked", reason: verdict.reason, at: Date.now() })
+      return false
+    }
+
+    const attempts = goal.attempts + 1
+    if (attempts > MAX_GOAL_REACT) {
+      await this.endGoal(sessionID, { status: "blocked", reason: verdict.reason, at: Date.now() })
+      return false
+    }
+    await this.store.update(sessionID, { goal: { ...goal, attempts } })
+    const reminder: UserMessage = {
+      id: Identifier.message(),
+      sessionID,
+      role: "user",
+      text: goalReminder(goal.condition, verdict.reason),
+      attachments: [],
+      // The app's word, not the reader's: the transcript leaves it out, as it leaves out an approved plan's.
+      synthetic: true,
+      time: { created: Date.now() },
+    }
+    await this.store.saveMessage(reminder)
+    return true
+  }
+
+  /** 追求目标: the goal stops driving turns but stays on the conversation, so the bar can say how it ended. */
+  private async endGoal(sessionID: string, done: NonNullable<SessionGoal["done"]>): Promise<void> {
+    const current = await this.store.get(sessionID)
+    if (!current?.goal || current.goal.done) return
+    await this.store.update(sessionID, { goal: { ...current.goal, done } })
+  }
+
+  /**
+   * 追求目标: one judge request - the transcript, then the one question.
+   *
+   * The conversation's own model answers it, as MiMo's does: the judge has to
+   * read the same work the turn produced, and a model too small to follow it
+   * would wave through turns that did nothing. It is asked out of band, at the
+   * cheap profile and without tools, and the answer is JSON rather than prose
+   * so "met" cannot be read out of a hedge. Nothing usable, a failure, or a
+   * timeout all return nothing, which the caller treats as a judge that failed.
+   */
+  private async judgeGoal(session: TurnSession, condition: string, stopped: AbortSignal): Promise<GoalVerdict | undefined> {
+    const model = session.model
+    const definition = this.config.definition(model.provider)
+    if (!definition || !this.config.usable(model.provider) || stopped.aborted) return undefined
+    const adapter: ProviderAdapter =
+      definition.kind === "anthropic" ? AnthropicAdapter : definition.kind === "chatgpt" ? ChatGPTSubscription : OpenAICompatible
+    const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
+    const entry = this.config.modelEntry(model)
+    const controller = new AbortController()
+    const stop = () => controller.abort()
+    stopped.addEventListener("abort", stop, { once: true })
+    if (stopped.aborted) stop()
+    const timer = setTimeout(stop, GOAL_JUDGE_TIMEOUT_MS)
+    const sessionID = session.id
+    let answer = ""
+    try {
+      const stored = await this.store.messages(sessionID)
+      const transcript = forWire(this.contextFor(session, stored), model)
+      const outcome = await adapter.stream(
+        {
+          apiKey: tokens?.access ?? this.config.apiKey(definition.id) ?? "",
+          model,
+          system: JUDGE_SYSTEM,
+          history: [
+            ...transcript,
+            {
+              id: `${sessionID}:goal:${Date.now()}`,
+              sessionID,
+              role: "user" as const,
+              text: judgeQuestion(condition),
+              attachments: [],
+              time: { created: Date.now() },
+            },
+          ],
+          tools: [],
+          ...smallRequest(model.provider, model.model),
+          variants: this.config.variants(model),
+          signal: controller.signal,
+          baseURL: definition.baseURL,
+          headers: definition.headers,
+          accountId: tokens?.accountId,
+          maxOutput: maxOutputTokens(model, entry),
+          outputLimit: entry?.maxOutput,
+          // A verdict is a reading of the record, not a piece of writing: no room for a warmer answer.
+          sampling: { ...samplingFor(model.model, false), ...(entry?.temperature ? { temperature: 0 } : {}) },
+        },
+        (event) => {
+          if (event.type === "text.delta") answer += event.text
+        },
+      )
+      this.noteBackground(sessionID, model, outcome.usage, "goal")
+    } catch {
+      return undefined
+    } finally {
+      clearTimeout(timer)
+      stopped.removeEventListener("abort", stop)
+    }
+    if (controller.signal.aborted) return undefined
+    return parseVerdict(answer)
+  }
+
+  /**
    * MiMo's settling of calls a stopped or closed turn left unfinished: at the
    * next prompt, while nothing is running, each is stored as an error saying it
    * was aborted, marked interrupted and aborted so the transcript draws it
@@ -2572,8 +2724,21 @@ export class SessionRunner {
          * and cannot fall between the two. A turn that ends over the line is
          * compacted when the next one starts, as MiMo's is.
          */
-        if (!this.steered(sessionID)) return
-        continue
+        if (this.steered(sessionID)) continue
+        /*
+         * 追求目标: the last thing between a finished turn and an idle
+         * conversation. A judge reads the transcript; a goal it says is not met
+         * writes a reminder and the turn runs on, at most MAX_GOAL_REACT times.
+         * Anything the user typed meanwhile is read again first, since the
+         * judge request takes a moment and the answer they typed during it
+         * belongs to this turn.
+         */
+        if (await this.goalGate(session, controller.signal)) {
+          if (this.steered(sessionID)) continue
+          if (overflowing) session = (await this.compactForOverflow(session, controller.signal)) ?? session
+          continue
+        }
+        return
       }
 
       /*

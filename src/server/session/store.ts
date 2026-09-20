@@ -243,6 +243,7 @@ export class SessionStore {
     directory: string
     model: ModelRef
     agent?: AgentName
+    goalMode?: boolean
     smart?: boolean
     scratch?: boolean
     /** MiMo's grouping label, carried by a branch so it is listed beside what it came from. */
@@ -274,6 +275,7 @@ export class SessionStore {
       agent: input.agent ?? "build",
       // plan: fixed now, so every turn of this conversation finds the same plan file.
       slug: newSlug(),
+      ...(input.goalMode ? { goalMode: true } : {}),
       ...(input.smart ? { smart: true } : {}),
       ...(input.scratch ? { scratch: true } : {}),
       ...(input.group !== undefined ? { group: input.group } : {}),
@@ -695,7 +697,8 @@ export class SessionStore {
       directory: origin.directory,
       model: origin.model,
       agent: origin.agent,
-      // A branch works in the same kind of folder as its origin.
+      // A branch works the way its origin did, and in the same kind of folder.
+      goalMode: origin.goalMode,
       scratch: origin.scratch,
       // ...and is filed where its origin is filed, so a branch does not jump out of its project's group.
       group: origin.group,

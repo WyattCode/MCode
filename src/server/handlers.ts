@@ -10,12 +10,14 @@ import type {
   ResponseMap,
   LocalServer,
   SessionArtifacts,
+  SessionGoal,
 } from "@shared/protocol"
 import { sessionFiles } from "@shared/session-files"
 import { artifactCategory } from "@shared/artifact-category"
 import { Identifier } from "@shared/id"
 import { normalizeBaseURL } from "@shared/custom-endpoint"
 import { CodedError } from "@shared/errors"
+import { cleanGoal } from "./session/goal"
 import { summarizeUsage } from "./usage-summary"
 import { imageInputOf, type Catalog } from "@shared/models-dev"
 // A conversation as a file this app can read back, both halves of the pair.
@@ -418,6 +420,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         // The last choice made is the starting point for the next session, the
         // same way the model is.
         agent: config.agent,
+        goalMode: config.goalMode,
         ...(config.smart ? { smart: true } : {}),
         title: request.title,
       })
@@ -613,6 +616,26 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "session.agent":
       return { session: await runtime.sessions.update(request.sessionID, { agent: request.agent }) }
+
+    /*
+     * 追求目标: the switch, and the goal itself.
+     *
+     * Turning the switch off leaves a goal already being pursued alone - the
+     * bar's own 退出目标模式 clears it - because the two are different asks:
+     * one says "stop aiming the next message at a goal", the other "give up on
+     * this one".
+     */
+    case "session.goalMode":
+      return { session: await runtime.sessions.update(request.sessionID, { goalMode: request.on }) }
+
+    case "session.goal": {
+      if (request.condition === null) return { session: await runtime.sessions.update(request.sessionID, { goal: undefined }) }
+      const condition = cleanGoal(request.condition)
+      if (!condition) throw new CodedError("A goal needs some words", "error.badRequest")
+      /* Any goal written here is a fresh one - its clock and its count start over - which is what MiMo's own set does. */
+      const goal: SessionGoal = { condition, startedAt: Date.now(), attempts: 0 }
+      return { session: await runtime.sessions.update(request.sessionID, { goal }) }
+    }
 
     case "session.access":
       return { session: await runtime.sessions.setAccess(request.sessionID, request.access) }
