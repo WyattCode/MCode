@@ -105,10 +105,14 @@ export interface RuntimeInput {
   directory?: string
   /** The date the message was sent, as YYYY-MM-DD. */
   today?: string
-  /** The repository's state as the message was sent (prompt.ts `repositoryState`), kept out of the cached system prompt. */
-  repository?: string
 }
 
+/**
+ * MiMo's runtime context holds the working directory and the reply language
+ * and nothing else - no branch, no working tree, no model name. MCode adds the
+ * date, which no model can work out for itself; the repository block that used
+ * to follow this one is gone (the user's 2026-09-20 decision).
+ */
 export function runtimeContext(input: RuntimeInput): string {
   const locale = interfaceLocale(input.language)
   const lines = ["# Runtime context"]
@@ -117,8 +121,7 @@ export function runtimeContext(input: RuntimeInput): string {
     `Response language: ${localeName(locale)}. Reply in this language unless the user's message or their custom instructions ask for another.`,
   )
   if (input.today) lines.push(`Today: ${input.today}`)
-  const block = lines.join("\n")
-  return input.repository ? `${block}\n\n${input.repository}` : block
+  return lines.join("\n")
 }
 
 export interface SessionNoteInput {

@@ -36,7 +36,7 @@ import { snippetOf } from "../src/shared/search-score"
 import type { ClientFrame, Request, ServerEvent, ServerFrame } from "../src/shared/protocol"
 import { PERMISSION_KINDS } from "../src/shared/protocol"
 import { TOOLS, findTool, toolsFor } from "../src/server/tool/registry"
-import { repositoryState, systemPrompt } from "../src/server/session/prompt"
+import { systemPrompt } from "../src/server/session/prompt"
 // plan: where a plan lives, what planning may write, and what each planning turn is told.
 import {
   buildSwitchNote,
@@ -282,7 +282,7 @@ import type { ChatLink, Message as ChatMessage, UserMessage as ChatUserMessage }
 import { roundFiveChecks } from "./smoke-round5"
 // round 6: the eight differences the user decided on 2026-09-16 to close.
 import { roundSixChecks } from "./smoke-round6"
-// Round 7: what the model actually receives - the local estimate, pruning, the environment block, provider fields.
+// Round 7: what the model actually receives - the local estimate, pruning, the prompt prefix, provider fields.
 import { roundSevenChecks } from "./smoke-round7"
 // Round 8: the attack surface - who may reach the backend, what the tools may touch.
 import { roundEightSecurityChecks } from "./smoke-round8-security"
@@ -3821,8 +3821,8 @@ async function main() {
       withStanding.slice(0, 120),
     )
     check(
-      "they come before the environment block",
-      withStanding.indexOf("## Standing instructions") < withStanding.indexOf("## Environment"),
+      "they come before the project's own instruction files",
+      withStanding.indexOf("## Standing instructions") < withStanding.indexOf("## Instructions"),
     )
     check("writing none adds no section", !buildPrompt.includes("## Standing instructions"))
     const blankStanding = await systemPrompt({
@@ -5278,41 +5278,30 @@ async function main() {
   check("a committed change is not a working-tree change", !worktree.changed.includes("feature.txt"), worktree.changed)
 
   /*
-   * The agent's opening context. Until this existed it began every session
-   * blind: not knowing it was in a repository, which branch it was on, what
-   * was already dirty, or how this project is built - all of which it would
-   * otherwise spend its first turn discovering.
+   * R16-B1: the prompt describes neither the machine nor the working tree.
+   * MiMo's engine can write such a block, but its desktop leaves the flag that
+   * produces one off, so this asserts the absence: a repository with scripts, a
+   * dirty file and a branch of its own, and not a word of any of it in what the
+   * model is sent.
    */
   await fs.writeFile(path.join(repoRoot, "loose.txt"), "not committed")
   await fs.writeFile(
     path.join(repoRoot, "package.json"),
     JSON.stringify({ name: "fixture", scripts: { build: "tsc", smoke: "node t.js" } }),
   )
-  // round 5 (E10): the repository's state now travels with each prompt, out of the cached system prompt.
-  const situated = (await repositoryState(repoRoot)) ?? ""
-  check("the per-prompt repository note names the branch", situated.includes("Branch: feature"), situated.slice(-400))
-  check(
-    "and what was already dirty before the turn",
-    situated.includes("loose.txt") && situated.includes("Already modified"),
-    situated.slice(-400),
-  )
-  check("and the last commits", situated.includes("two"), situated.slice(-300))
   const situatedPrompt = await systemPrompt({ directory: repoRoot, agent: "build" })
   check(
-    "the system prompt says how this project is built",
-    situatedPrompt.includes("npm run <name>") && situatedPrompt.includes("build, smoke"),
+    "no environment, repository or build-and-test block reaches the model",
+    ["## Environment", "## Repository", "## Building and testing"].every((heading) => !situatedPrompt.includes(heading)),
+    situatedPrompt.slice(-400),
+  )
+  check(
+    "nor the facts they used to carry",
+    !/Project directory:|Is a git repository:|Branch: feature|loose\.txt|npm run <name>|Today:/.test(situatedPrompt),
     situatedPrompt.slice(-600),
   )
-  check("and carries no repository state or date of its own", !situatedPrompt.includes("## Repository") && !situatedPrompt.includes("Today:"), situatedPrompt.slice(-400))
   await fs.rm(path.join(repoRoot, "loose.txt"))
   await fs.rm(path.join(repoRoot, "package.json"))
-
-  /* A folder that is not a repository says nothing about one. */
-  const noRepo = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-plain-"))
-  const bare = await systemPrompt({ directory: noRepo, agent: "build" })
-  check("a plain folder gets no repository note", (await repositoryState(noRepo)) === undefined)
-  check("and no build section it cannot support", !bare.includes("## Building and testing"), bare.slice(-200))
-  await fs.rm(noRepo, { recursive: true, force: true })
 
   check(
     "a committed file shows nothing against the working tree",

@@ -204,11 +204,10 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
       process.env.SHELL = "/usr/bin/fish"
       const picked = commandShell().command
       check("M10-9: a login shell of fish does not run commands", !/fish/i.test(picked), picked)
+      // R16-B1: the prompt names no shell at all now, so what the bash tool picks is all there is to check.
       const prompt = await systemPrompt({ directory: scratch, agent: "build" })
-      const line = /^Shell: (.*)$/m.exec(prompt)?.[1]
-      check("M10-9: the prompt names the shell commands really run in", line === picked, line)
-      const chosen = await systemPrompt({ directory: scratch, agent: "build", shell: "cmd.exe" })
-      check("M10-9: a configured shell is the one the prompt names", /^Shell: .*cmd(\.exe)?$/im.test(chosen), /^Shell: (.*)$/m.exec(chosen)?.[1])
+      check("M10-9: the prompt names no shell, as MiMo's names none", !/^Shell: /m.test(prompt), prompt.slice(-200))
+      check("M10-9: a configured shell is still the one commands run in", commandShell("cmd.exe").command.toLowerCase().includes("cmd"), commandShell("cmd.exe").command)
       process.env.SHELL = "/usr/bin/nu"
       check("M10-9: nor does nu", !/\bnu\b/i.test(commandShell().command), commandShell().command)
     } finally {

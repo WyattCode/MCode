@@ -832,7 +832,9 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       check("the system prompt is sent unchanged after the working tree moved", typeof firstSystem === "string" && later?.messages?.[0]?.content === firstSystem, String(later?.messages?.[0]?.content).slice(-300))
       check("it carries neither the date nor the repository", !String(firstSystem).includes("Today:") && !String(firstSystem).includes("## Repository"))
       const lastUser = (later?.messages as Record<string, any>[]).filter((m) => m.role === "user").at(-1)
-      check("the prompt that follows the change carries them instead", String(lastUser?.content).includes("Today:") && String(lastUser?.content).includes("Branch:") && String(lastUser?.content).includes("README.md"), String(lastUser?.content).slice(0, 500))
+      // R16-B1: the date still rides on the message; the working tree reaches the model nowhere at all.
+      check("the prompt that follows the change carries the date", String(lastUser?.content).includes("Today:"), String(lastUser?.content).slice(0, 500))
+      check("and no repository block anywhere", !String(lastUser?.content).includes("Branch:") && !String(lastUser?.content).includes("## Repository"), String(lastUser?.content).slice(0, 500))
       check("and the conversation's requests carry its session affinity", e.headers.at(-1)?.["x-session-affinity"] === session.id)
     } finally {
       await e.close()

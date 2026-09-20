@@ -2,9 +2,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
 import { pathToFileURL } from "node:url"
-import { defaultBranch, gitUser, recentCommits, status } from "../git"
 import { globToRegExp } from "../tool/ignore"
-import { shell } from "../tool/bash"
 import { foldersUp } from "./worktree"
 import { modelInvocable, type SkillInfo } from "../skill"
 import { agentPrompt } from "./prompts"
@@ -34,18 +32,6 @@ export interface PromptContext {
   skills?: SkillInfo[]
   /** memory: the memory files a top-level conversation keeps; absent for a subagent. */
   memory?: { project: string; global: string; notes: string }
-  /** Which model this is, so the environment block can say so (MiMo names it there). */
-  model?: PromptModel
-  /** The shell setting, so the environment block names the shell commands really run in. */
-  shell?: string
-}
-
-/** The model as the environment block names it. */
-export interface PromptModel {
-  /** Its display name, where the catalog knows one. */
-  name?: string
-  provider: string
-  id: string
 }
 
 /*
@@ -76,11 +62,6 @@ Some notes outlast this conversation. They are markdown files you read and write
 Before asking the user something they may already have told you, search with the memory tool; use the history tool for exact past wording.`
 }
 
-/**
- * Builds the system prompt. Ordering matters for prompt caching: the static
- * base comes first, then per-project material that changes rarely, then the
- * volatile environment block last.
- */
 /*
  * Staged mode. Four stages, named so the reader can see where the work is, and
  * each with the one thing that makes it a stage rather than a heading: what has
@@ -102,6 +83,15 @@ stage you are in when you move into it.
 4. Review. Compare what you changed against the plan, run the project's checks,
    and report plainly what passed, what failed, and anything left undone.`
 
+/**
+ * Builds the system prompt. Ordering matters for prompt caching: the static
+ * base comes first, then the per-project material, which changes rarely.
+ *
+ * Nothing here describes the machine, the working tree or this model. MiMo's
+ * engine can write such a block, but its desktop leaves the flag that produces
+ * one switched off, so no MiMo user's model ever reads one; MCode sends none
+ * either (the user's 2026-09-20 decision).
+ */
 export async function systemPrompt(context: PromptContext): Promise<string> {
   /*
    * The one agent prompt every model reads (session/prompts.ts), with plan
@@ -135,19 +125,7 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
     )
   }
 
-  const commands = await projectCommands(context.directory)
-  if (commands) sections.push(commands)
-
-  // skills: rarely changes, so before the environment and the repository.
   if (context.skills) sections.push(skillsSection(context.skills))
-
-  /*
-   * Then the environment, which changes per project. The repository's state
-   * and the date change per turn, so they travel with each prompt instead
-   * (session/context.ts) and this prompt stays the same for the conversation,
-   * as MiMo freezes its own.
-   */
-  sections.push(await environment(context.directory, context.model, context.shell))
 
   // memory: names this conversation's own notes file, so last - where a request carries it, outside the cached prefix.
   if (context.memory) sections.push(memorySection(context.memory))
@@ -312,153 +290,9 @@ async function projectInstructions(
   return [...local, ...remote].join("\n\n")
 }
 
-/**
- * The environment block, memoised for the day.
- *
- * MiMo caches its own per (directory, date, provider, model id) and this does
- * the same: everything here is a fact that holds for a day at a time - which
- * model this is, whether the folder is a repository, which branch a pull
- * request should target, who git will credit - so rebuilding it per turn would
- * only spend a `git` call to print the same words.
- *
- * What genuinely moves while the conversation runs - the current branch, what
- * is dirty, the recent commits, the date - is deliberately NOT here. It travels
- * with each prompt instead (`repositoryState`, session/context.ts), so the
- * cached prefix stays byte-identical across a turn while the model still reads
- * a current working tree. MiMo folds the volatile half in here too and lets it
- * go stale, telling the model in so many words that it is "a snapshot in time";
- * MCode keeps the fresher answer.
- */
-const environments = new Map<string, string>()
-const ENVIRONMENTS_KEPT = 64
-
-async function environment(directory: string, model?: PromptModel, configured?: string, today = new Date().toISOString().slice(0, 10)): Promise<string> {
-  // The shell the bash tool will pick: a login shell of fish or nu is not it.
-  const commandShell = shell(configured).command
-  const key = [path.resolve(directory), today, model?.provider ?? "", model?.id ?? "", commandShell].join("|")
-  const cached = environments.get(key)
-  if (cached !== undefined) return cached
-
-  const entries = await fs
-    .readdir(directory, { withFileTypes: true })
-    .then((list) =>
-      list
-        .filter((entry) => !entry.name.startsWith("."))
-        .slice(0, 40)
-        .map((entry) => entry.name + (entry.isDirectory() ? "/" : ""))
-        .join(", "),
-    )
-    .catch(() => "(unreadable)")
-
-  const repo = (await status(directory).catch(() => undefined))?.repo === true
-  const [trunk, who] = repo
-    ? await Promise.all([defaultBranch(directory).catch(() => undefined), gitUser(directory).catch(() => undefined)])
-    : [undefined, undefined]
-
-  const lines = [
-    "## Environment",
-    "",
-    `Project directory: ${directory}`,
-    `Is a git repository: ${repo}`,
-    `Platform: ${process.platform} (${os.release()})`,
-    `Shell: ${commandShell}`,
-  ]
-  // Which model this is: without it a model cannot answer "which model am I".
-  if (model) lines.push(`Model: ${model.name ? `${model.name}, ` : ""}${model.provider}/${model.id}`)
-  if (trunk) lines.push(`Default branch: ${trunk}. Target a pull request at this branch unless the user asks for another.`)
-  if (who) lines.push(`Git user: ${who}`)
-  lines.push("", `Top level of the project: ${entries}`)
-
-  const block = lines.join("\n")
-  // Keyed by the date among other things, so it grows by a day's worth of entries every day; kept to the recent ones (N11-37).
-  if (environments.size >= ENVIRONMENTS_KEPT) environments.delete(environments.keys().next().value!)
-  environments.set(key, block)
-  return block
-}
-
-/**
- * How this project is built and tested, read off the files that say so.
- *
- * The agent is told to check its work, which is no help if finding the check
- * costs it a turn of grepping. Only names that are actually declared appear
- * here - a script this lists can be run, and one this omits may simply not
- * exist rather than being hidden.
- */
-async function projectCommands(directory: string): Promise<string | undefined> {
-  const lines: string[] = []
-
-  const manifest = await readJSON(path.join(directory, "package.json"))
-  if (manifest && typeof manifest.scripts === "object" && manifest.scripts) {
-    const names = Object.keys(manifest.scripts as Record<string, string>)
-    if (names.length) {
-      /* The runner is whichever lockfile is on disk; npm is the fallback,
-         because running pnpm's scripts through npm mostly works and guessing
-         pnpm where there is none does not. */
-      const runner = (await exists(path.join(directory, "pnpm-lock.yaml")))
-        ? "pnpm"
-        : (await exists(path.join(directory, "yarn.lock")))
-          ? "yarn"
-          : (await exists(path.join(directory, "bun.lockb")))
-            ? "bun"
-            : "npm"
-      const shown = names.slice(0, 24).join(", ")
-      lines.push(`package.json scripts (\`${runner} run <name>\`): ${shown}`)
-    }
-  }
-
-  if (await exists(path.join(directory, "Cargo.toml"))) lines.push("Cargo project: `cargo build`, `cargo test`")
-  if (await exists(path.join(directory, "go.mod"))) lines.push("Go module: `go build ./...`, `go test ./...`")
-  if (await exists(path.join(directory, "pyproject.toml"))) lines.push("pyproject.toml is present")
-  if (await exists(path.join(directory, "Makefile"))) lines.push("Makefile is present")
-
-  if (!lines.length) return undefined
-  return `## Building and testing\n\n${lines.join("\n")}`
-}
-
-/**
- * The repository, as it stands this turn.
- *
- * Which branch, what is already dirty, and what the last few commits were. The
- * first two keep the agent from committing to the wrong place or claiming
- * credit for changes that were there before it started; the third is the
- * cheapest look at how this project writes its history.
- */
-export async function repositoryState(directory: string): Promise<string | undefined> {
-  const state = await status(directory).catch(() => undefined)
-  if (!state?.repo) return undefined
-
-  const lines: string[] = []
-  lines.push(`Branch: ${state.branch || "(no commits yet)"}`)
-
-  if (!state.changed.length) lines.push("Working tree: clean")
-  else {
-    const shown = state.entries.slice(0, 12).map((entry) => `  ${entry.kind}: ${entry.path}`)
-    const rest = state.entries.length - shown.length
-    lines.push(`Already modified before this turn (${state.entries.length}):`)
-    lines.push(...shown)
-    if (rest > 0) lines.push(`  ...and ${rest} more`)
-  }
-
-  const commits = await recentCommits(directory, 5).catch(() => [])
-  if (commits.length) lines.push("Recent commits:", ...commits.map((line) => `  ${line}`))
-
-  return `## Repository\n\n${lines.join("\n")}`
-}
-
 async function exists(file: string): Promise<boolean> {
   return fs
     .access(file)
     .then(() => true)
     .catch(() => false)
-}
-
-async function readJSON(file: string): Promise<Record<string, unknown> | undefined> {
-  const raw = await fs.readFile(file, "utf8").catch(() => undefined)
-  if (!raw) return undefined
-  try {
-    const parsed = JSON.parse(raw)
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : undefined
-  } catch {
-    return undefined
-  }
 }

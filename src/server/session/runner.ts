@@ -56,7 +56,7 @@ import { isOverflowByCount, isOverflowError, maxOutputTokens, underPressure } fr
 // MiMo's pruning: what a turn re-sends of its older tool output once the prompt cache has gone cold.
 import { pruneLevelFor, prunedHistory, type PruneLevel } from "./prune"
 import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, shrinkLargeToolResults, touchedFiles, type CompactionTrigger } from "./summary"
-import { memorySection, repositoryState, systemPrompt } from "./prompt"
+import { memorySection, systemPrompt } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
 import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf, subagentAgent } from "./plan"
 import { status as gitStatus } from "../git"
@@ -1319,8 +1319,10 @@ export class SessionRunner {
    * The system prompt a conversation's requests carry: built once and reused,
    * as MiMo's prefix snapshot is, so a new file or a changed working tree does
    * not start its cache over. Rebuilt only when what it was built for changes -
-   * the agent, the mode, the instructions, the model, or the tools. A compaction
-   * sends the same one, so its request reads from that cache too.
+   * the agent, the mode, the instructions, the tools or the skills. The model
+   * is not among them: no section of the prompt names it any more, since the
+   * environment block went. A compaction sends the same one, so its request
+   * reads from that cache too.
    *
    * memory: a conversation's own turns are told about its memory files, a
    * subagent's are not, as MiMo does. That text names this conversation's notes
@@ -1335,9 +1337,6 @@ export class SessionRunner {
       session.staged === true,
       config.instructions ?? "",
       config.instructionFiles ?? [],
-      session.model.provider,
-      session.model.model,
-      config.shell ?? "",
       this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory).map((tool) => tool.name),
       // skills: a skill added or removed changes the list the prompt carries.
       skills.map((skill) => skill.name),
@@ -1354,13 +1353,6 @@ export class SessionRunner {
             globalAgentsFile: this.globalAgents,
             instructionFiles: config.instructionFiles,
             skills,
-            // MiMo names the model in its environment block; the prefix key already turns on it.
-            model: {
-              ...(this.config.modelEntry(session.model)?.name ? { name: this.config.modelEntry(session.model)!.name } : {}),
-              provider: session.model.provider,
-              id: session.model.model,
-            },
-            shell: config.shell,
           })
     this.prefixes.set(session.id, { key, system: base })
     // subagents: a subagent is told what it is, after what its agent would be told anyway.
@@ -1916,12 +1908,10 @@ export class SessionRunner {
   private async runtimeNotes(session: SessionInfo, first: boolean): Promise<string[]> {
     if (session.parentID) return []
     const config = this.config.get()
-    // The date and the repository's state change per turn, so they ride here rather than in the cached system prompt.
-    const repository = await repositoryState(session.directory).catch(() => undefined)
+    // The date changes per turn, so it rides here rather than in the cached system prompt.
     const runtime = runtimeContext({
       language: config.language,
       today: new Date().toISOString().slice(0, 10),
-      ...(repository ? { repository } : {}),
       ...(first ? { directory: session.directory } : {}),
     })
     if (!first) return [runtime]

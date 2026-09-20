@@ -467,8 +467,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     /*
      * Built here rather than cached with the session: it reads the project's
-     * own instruction files and lists its top level, so the answer changes as
-     * the project does and a stored copy would go stale without saying so.
+     * own instruction files and the skills it can reach, so the answer changes
+     * as the project does and a stored copy would go stale without saying so.
      */
     case "session.systemPrompt": {
       const session = await runtime.sessions.require(request.sessionID)
