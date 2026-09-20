@@ -1,5 +1,5 @@
 import type { AssistantPart, ToolPart } from "@shared/protocol"
-import { parseUnifiedDiff } from "@shared/unified-diff"
+import { createdFile, parseUnifiedDiff } from "@shared/unified-diff"
 
 /*
  * What a run of tool calls did to the project's files, file by file.
@@ -41,7 +41,13 @@ export function inProject(file: string, directory?: string): boolean {
   return lower.startsWith(`${root.toLowerCase()}\\`) || lower.startsWith(`${root.toLowerCase()}/`)
 }
 
-export function editedFiles(parts: readonly AssistantPart[], directory?: string): EditedFiles {
+/**
+ * `outside` keeps the files the run reached beyond the project. The card sets
+ * it, because the undo behind its 撤销 works on those too and counts what it
+ * could not put back as 项目外 - a number about rows the card had never shown.
+ * The pill leaves it off: it counts what changed in the project.
+ */
+export function editedFiles(parts: readonly AssistantPart[], directory?: string, options: { outside?: boolean } = {}): EditedFiles {
   const byPath = new Map<string, EditedFile>()
   for (const part of parts) {
     if (part.type !== "tool" || !EDITING.has(part.name)) continue
@@ -50,11 +56,12 @@ export function editedFiles(parts: readonly AssistantPart[], directory?: string)
     const diff = tool.metadata?.diff
     if (typeof diff !== "string" || !diff) continue
     for (const section of parseUnifiedDiff(diff)) {
-      if (!section.file.trim() || !inProject(section.file, directory)) continue
+      if (!section.file.trim()) continue
+      if (!options.outside && !inProject(section.file, directory)) continue
       let entry = byPath.get(section.file)
       if (!entry) {
         // An edit with nothing to find creates the file as write does, and says so the same way.
-        const created = tool.metadata?.created === true
+        const created = createdFile(tool.metadata?.created, section)
         entry = { path: section.file, add: 0, del: 0, created }
         byPath.set(section.file, entry)
       }

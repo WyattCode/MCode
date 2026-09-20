@@ -28,7 +28,36 @@ export interface DiffHunk {
 export interface DiffSection {
   /** The path as the diff names it, without git's `b/` prefix. */
   file: string
+  /** The old side's path, without the `a/` prefix: `/dev/null` for a patch that creates the file. */
+  oldFile: string
   hunks: DiffHunk[]
+}
+
+/**
+ * Whether this section's change brought the file into being, read from the
+ * patch rather than from what the call recorded beside it.
+ *
+ * MiMo asks the same of every patch it is about to reverse, because a file its
+ * `created` flag has lost would otherwise have a create-patch applied backwards
+ * and be left empty instead of being deleted. Git writes `--- /dev/null` there;
+ * this app's own differ names the file on both sides and says the same thing by
+ * counting from nothing - one hunk that starts at the top and removes no lines.
+ *
+ * `createdFile` is the question both callers actually ask: what the call
+ * recorded, and only where it recorded nothing, what the patch says. A call
+ * that recorded `created: false` had a file on disk to read, empty or not, so
+ * its word beats the patch's shape.
+ */
+export function createdFile(recorded: unknown, section: DiffSection): boolean {
+  if (typeof recorded === "boolean") return recorded
+  return sectionCreates(section)
+}
+
+export function sectionCreates(section: DiffSection): boolean {
+  if (section.oldFile === "/dev/null") return true
+  if (section.hunks.length !== 1) return false
+  const hunk = section.hunks[0]!
+  return hunk.oldLines.length === 0 && hunk.oldStart <= 1
 }
 
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/
@@ -41,7 +70,11 @@ export function parseUnifiedDiff(diff: string): DiffSection[] {
   while (index < lines.length) {
     const line = lines[index]!
     if (line.startsWith("--- ") && lines[index + 1]?.startsWith("+++ ")) {
-      current = { file: lines[index + 1]!.slice(4).replace(/^b\//, "").trim(), hunks: [] }
+      current = {
+        file: lines[index + 1]!.slice(4).replace(/^b\//, "").trim(),
+        oldFile: line.slice(4).replace(/^a\//, "").trim(),
+        hunks: [],
+      }
       sections.push(current)
       index += 2
       continue
@@ -173,7 +206,7 @@ export function recountedSection(content: string, section: DiffSection): DiffSec
     hunks.push({ ...hunk, newStart: at + 1, oldStart: at + 1 + drift })
     drift += hunk.oldLines.length - hunk.newLines.length
   }
-  return { file: section.file, hunks }
+  return { file: section.file, oldFile: section.oldFile, hunks }
 }
 
 function locate(lines: string[], block: string[], expected: number): number {

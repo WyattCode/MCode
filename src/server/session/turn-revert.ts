@@ -2,7 +2,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import type { Message, ToolPart, TurnRevertResult } from "@shared/protocol"
 import { applyPatch, checkoutFile, isTracked, repositoryRoot } from "../git"
-import { parseUnifiedDiff, recountedSection, sectionPatch, type DiffSection } from "@shared/unified-diff"
+import { createdFile, parseUnifiedDiff, recountedSection, sectionPatch, type DiffSection } from "@shared/unified-diff"
 
 /** The tools whose calls change files and record the diff of what they did. */
 const EDITING = new Set(["edit", "write", "notebook_edit"])
@@ -75,7 +75,13 @@ function filesOf(directory: string, messages: Message[]): Map<string, FileHistor
     for (const part of message.parts) {
       if (part.type !== "tool" || !EDITING.has(part.name)) continue
       const tool = part as ToolPart
-      if (tool.status !== "completed") continue
+      /*
+       * The same test the card makes. Asking for "completed" instead let a call
+       * that ended rejected, skipped or cut short draw a row on the card that
+       * the undo then silently passed over, so the undo reported fewer files
+       * than the reader had just been shown.
+       */
+      if (tool.status === "error") continue
       const diff = patchOf(tool)
       if (!diff) continue
       for (const section of parseUnifiedDiff(diff)) {
@@ -86,8 +92,7 @@ function filesOf(directory: string, messages: Message[]): Map<string, FileHistor
           known.sections.push(section)
           continue
         }
-        const created = tool.metadata?.created === true
-        files.set(target, { target, created, sections: [section] })
+        files.set(target, { target, created: createdFile(tool.metadata?.created, section), sections: [section] })
       }
     }
   }

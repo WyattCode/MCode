@@ -30,7 +30,7 @@ const props = defineProps<{
 
 const app = useApp()
 const rp = useRightPanel()
-const edited = computed(() => editedFiles(props.parts, props.directory))
+const edited = computed(() => editedFiles(props.parts, props.directory, { outside: true }))
 const files = computed(() => edited.value.files)
 const single = computed(() => (files.value.length === 1 ? files.value[0] : undefined))
 
