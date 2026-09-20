@@ -109,6 +109,55 @@ export async function roundFifteenServerChecks(check: Check, section: (name: str
     }
   }
 
+  // ------------------------------------------------------------------ R15-S2
+  section("Round 15 (R15-S2): a turn whose closing photograph failed stops recording")
+  {
+    const store = path.join(root, "snap", "store")
+    const project = path.join(root, "snap", "project")
+    await fs.mkdir(store, { recursive: true })
+    await fs.mkdir(project, { recursive: true })
+    await fs.writeFile(path.join(project, "a.txt"), "one\n")
+    await run("git", ["init", "-q"], { cwd: project })
+    const snapshots = new Snapshots(store)
+
+    /** One turn that ran something silent and changed a file, as the runner records it. */
+    const turn = async (write: () => Promise<void>) => {
+      const recording = snapshots.begin(project)
+      await recording.ready()
+      recording.opaque()
+      await write()
+      return recording.finish()
+    }
+
+    // The first turn's project is taken away under it, so its closing photograph throws.
+    const first = await turn(async () => {
+      await fs.writeFile(path.join(project, "a.txt"), "two\n")
+      await fs.rm(project, { recursive: true, force: true })
+    })
+    check("R15-S2: that turn is reported as one that cannot be taken back", first.unavailable !== undefined, first.unavailable)
+
+    await fs.mkdir(project, { recursive: true })
+    await run("git", ["init", "-q"], { cwd: project })
+    await fs.writeFile(path.join(project, "a.txt"), "two\n")
+
+    // The next turns are alone in the project, and must be recorded as such.
+    const second = await turn(() => fs.writeFile(path.join(project, "b.txt"), "written by a shell command\n"))
+    check("R15-S2: the next turn is still recorded", second.files.map((file) => path.basename(file.path)).join() === "b.txt", {
+      files: second.files.map((file) => path.basename(file.path)),
+      refused: second.refused,
+      unavailable: second.unavailable,
+    })
+    check("R15-S2: and is not refused as another conversation's work", second.refused === undefined, second.refused)
+    const third = await turn(() => fs.writeFile(path.join(project, "c.txt"), "and another\n"))
+    check("R15-S2: nor the one after it", third.files.map((file) => path.basename(file.path)).join() === "c.txt" && third.refused === undefined, {
+      files: third.files.map((file) => path.basename(file.path)),
+      refused: third.refused,
+    })
+
+    // Nothing is recording any more, so the project's store can be taken away with its last conversation.
+    check("R15-S2: and the project's checkpoint store can be collected", await snapshots.collect(project))
+  }
+
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
 }
