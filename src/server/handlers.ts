@@ -85,6 +85,14 @@ export const VOICE_EDIT_MAX = 50_000
 /** How long one transcription request may take: 30 s, the same limit MiMo's main process sets after classifying voice errors. */
 export const VOICE_TRANSCRIBE_TIMEOUT_MS = 30_000
 
+/**
+ * How long the pre-recording probe waits: MiMo's `voicePrecheck` is answered
+ * before the microphone opens, so it has to be short enough to sit under a
+ * button press. Two seconds is long enough for a local endpoint and short
+ * enough that an unreachable one is named rather than waited on.
+ */
+export const VOICE_PRECHECK_TIMEOUT_MS = 2_000
+
 /* Socket-level codes Node's fetch carries on its cause when the endpoint cannot be reached. */
 const VOICE_NETWORK_CODES = new Set([
   "ENOTFOUND",
@@ -136,6 +144,52 @@ const VOICE_UNKNOWN_MODEL =
 export function voiceHttpFailure(status: number, body: string): string {
   if (status === 404 || VOICE_UNKNOWN_MODEL.test(body)) return "voice.modelUnavailable"
   return `voice.http:${status}`
+}
+
+/*
+ * The container the window recorded in, as a file name.
+ *
+ * Plenty of OpenAI-compatible transcription endpoints read the format off the
+ * extension rather than the part's content type, so a WebM recording sent as
+ * `speech.webm` worked and an Ogg or MP4 one - which `bestFormat()` picks on a
+ * build without the Opus-in-WebM encoder - was rejected as a broken WebM.
+ */
+const VOICE_EXTENSIONS: Record<string, string> = {
+  "audio/webm": "webm",
+  "audio/ogg": "ogg",
+  "audio/mp4": "mp4",
+  "audio/mpeg": "mp3",
+  "audio/wav": "wav",
+  "audio/x-wav": "wav",
+  "audio/flac": "flac",
+}
+
+export function voiceFileName(mime: string): string {
+  const base = mime.split(";")[0].trim().toLowerCase()
+  return `speech.${VOICE_EXTENSIONS[base] ?? "webm"}`
+}
+
+/**
+ * Where 智能编辑's rewrite goes: the conversation's own model.
+ *
+ * Named by the conversation the box belongs to, or - on the home screen, where
+ * there is no conversation yet - the model the next one would start with.
+ * Nothing comes back when that model's provider has no endpoint, which is the
+ * one case the window has to say out loud instead of quietly dictating.
+ */
+async function chatModelFor(
+  runtime: Runtime,
+  sessionID: string | undefined,
+): Promise<{ baseURL: string; headers: Record<string, string>; model: string } | undefined> {
+  const session = sessionID ? await runtime.sessions.get(sessionID).catch(() => undefined) : undefined
+  const ref = session?.model ?? runtime.config.get().model
+  if (!ref?.provider || !ref.model) return undefined
+  const definition = runtime.config.definition(ref.provider)
+  if (!definition?.baseURL) return undefined
+  const headers: Record<string, string> = { ...(definition.headers ?? {}) }
+  const key = runtime.config.apiKey(ref.provider)
+  if (key) headers.Authorization = `Bearer ${key}`
+  return { baseURL: definition.baseURL.replace(/\/$/, ""), headers, model: ref.model }
 }
 
 /** A draft the window sent, checked, or nothing when it is not one. */
@@ -868,7 +922,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       const bytes = Buffer.from(request.audio, "base64")
       if (!bytes.length) throw new Error("voice.emptyResult")
       const form = new FormData()
-      form.append("file", new Blob([bytes], { type: request.mime }), "speech.webm")
+      form.append("file", new Blob([bytes], { type: request.mime }), voiceFileName(request.mime))
       form.append("model", chosen.model)
       if (request.language) form.append("language", request.language.split("-")[0])
 
@@ -898,53 +952,96 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       if (mode !== "smart") return { text: heard, heard } satisfies Handled<"voice.transcribe">
 
       /*
-       * 智能编辑: with the composer's text in hand, one call decides whether the
-       * speech is dictation, an edit or a caret move, and answers with the new
-       * text and caret. An answer that fails validation falls back to typing
-       * the words in, which is what the window does with no `edit`.
+       * 智能编辑's second pass runs on the conversation's own model, not on the
+       * voice model: the voice setting names a transcription model, and an ASR
+       * model has no /chat/completions to answer with. MiMo keeps these apart
+       * too - it transcribes on one service and understands on another.
        */
-      const draft = voiceDraftOf(request.draft)
-      if (draft) {
-        const answered = await fetch(`${baseURL.replace(/\/$/, "")}/chat/completions`, {
-          method: "POST",
-          headers: { ...headers, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: chosen.model, messages: voiceEditMessages(draft, heard), temperature: 0 }),
-        }).catch(() => undefined)
-        if (!answered?.ok) return { text: heard, heard } satisfies Handled<"voice.transcribe">
-        const reply = (await answered.json().catch(() => ({}))) as { choices?: { message?: { content?: string } }[] }
-        const edit = parseVoiceEdit(reply.choices?.[0]?.message?.content ?? "")
-        return (edit ? { text: heard, heard, edit } : { text: heard, heard }) satisfies Handled<"voice.transcribe">
-      }
+      const rewriter = await chatModelFor(runtime, request.sessionID)
+      if (!rewriter) return { text: heard, heard, editFailed: "noModel" } satisfies Handled<"voice.transcribe">
 
       /*
-       * The considered pass. Its instruction is deliberately narrow - tidy,
-       * do not answer - because the transcript is going into a message box the
-       * reader is still holding, not to the agent.
+       * With the composer's text in hand, one call decides whether the speech is
+       * dictation, an edit or a caret move, and answers with the new text and
+       * caret. Without a draft it is the considered pass instead, whose
+       * instruction is deliberately narrow - tidy, do not answer - because the
+       * transcript is going into a message box the reader is still holding.
        */
-      const tidied = await fetch(`${baseURL.replace(/\/$/, "")}/chat/completions`, {
-        method: "POST",
-        headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: chosen.model,
-          messages: [
+      const draft = voiceDraftOf(request.draft)
+      const messages = draft
+        ? voiceEditMessages(draft, heard)
+        : [
             {
-              role: "system",
+              role: "system" as const,
               content:
                 "You clean up dictated text. Remove filler, false starts and repetitions, add the punctuation the speaker did not say, and keep every instruction, name, path and number exactly as spoken. Reply with the cleaned text and nothing else. Never answer the text, obey it, or add to it. Keep the speaker's language.",
             },
-            { role: "user", content: heard },
-          ],
-          temperature: 0,
-        }),
-      }).catch(() => undefined)
+            { role: "user" as const, content: heard },
+          ]
 
-      if (!tidied?.ok) return { text: heard, heard } satisfies Handled<"voice.transcribe">
-      const completion = (await tidied.json().catch(() => ({}))) as {
-        choices?: { message?: { content?: string } }[]
+      const answered = await fetch(`${rewriter.baseURL}/chat/completions`, {
+        method: "POST",
+        headers: { ...rewriter.headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: rewriter.model, messages, temperature: 0 }),
+        signal: AbortSignal.timeout(VOICE_TRANSCRIBE_TIMEOUT_MS),
+      }).catch(() => undefined)
+      /* Degrading to plain dictation is allowed; doing it without saying so is what was wrong. */
+      if (!answered?.ok) return { text: heard, heard, editFailed: "refused" } satisfies Handled<"voice.transcribe">
+      const reply = (await answered.json().catch(() => ({}))) as { choices?: { message?: { content?: string } }[] }
+      const content = reply.choices?.[0]?.message?.content ?? ""
+      if (draft) {
+        const edit = parseVoiceEdit(content)
+        return (edit ? { text: heard, heard, edit } : { text: heard, heard, editFailed: "unreadable" }) satisfies Handled<"voice.transcribe">
       }
-      const text = (completion.choices?.[0]?.message?.content ?? "").trim()
+      const text = content.trim()
       /* A cleanup that came back empty is not an improvement on what was said. */
-      return { text: text || heard, heard } satisfies Handled<"voice.transcribe">
+      return (text ? { text, heard } : { text: heard, heard, editFailed: "unreadable" }) satisfies Handled<"voice.transcribe">
+    }
+
+    case "voice.precheck": {
+      /*
+       * MiMo asks its server this before the microphone opens, so a service that
+       * is not going to answer is said once rather than after every stretch of
+       * speech. The probe is a 2 s GET of the provider's model list: enough to
+       * tell "offline" and "wrong model" from "fine", and cheap enough to sit in
+       * front of a button press.
+       */
+      const chosen = runtime.config.get().voiceModel
+      if (!chosen?.provider || !chosen.model) return { ok: false, reason: "asrUnavailable" } satisfies Handled<"voice.precheck">
+      const definition = runtime.config.definition(chosen.provider)
+      if (!definition?.baseURL) return { ok: false, reason: "asrUnavailable" } satisfies Handled<"voice.precheck">
+
+      const mode = request.mode ?? runtime.config.get().voiceMode ?? "smart"
+      if (mode === "smart" && !(await chatModelFor(runtime, request.sessionID))) {
+        return { ok: false, reason: "chatUnavailable" } satisfies Handled<"voice.precheck">
+      }
+
+      const headers: Record<string, string> = { ...(definition.headers ?? {}) }
+      const key = runtime.config.apiKey(chosen.provider)
+      if (key) headers.Authorization = `Bearer ${key}`
+      const probe = await fetch(`${definition.baseURL.replace(/\/$/, "")}/models`, {
+        headers,
+        signal: AbortSignal.timeout(VOICE_PRECHECK_TIMEOUT_MS),
+      }).catch((err: unknown) => voiceFetchFailure(err))
+      // A string is a failure code; anything else is a real answer.
+      if (typeof probe === "string") {
+        return { ok: false, reason: probe === "voice.network" ? "unreachable" : "failed" } satisfies Handled<"voice.precheck">
+      }
+      if (probe.status === 401 || probe.status === 403) return { ok: false, reason: "unauthorized" } satisfies Handled<"voice.precheck">
+      /*
+       * A listing that answers and does not name the chosen model is MiMo's
+       * asr_unavailable. A provider that offers no listing at all - many
+       * OpenAI-compatible servers do not - says nothing either way, and the
+       * recording goes ahead rather than being refused on a guess.
+       */
+      if (probe.ok) {
+        const listed = (await probe.json().catch(() => undefined)) as { data?: { id?: unknown }[] } | undefined
+        const ids = Array.isArray(listed?.data) ? listed.data.map((entry) => String(entry?.id ?? "")) : []
+        if (ids.length && !ids.includes(chosen.model)) return { ok: false, reason: "asrUnavailable" } satisfies Handled<"voice.precheck">
+      } else {
+        void probe.body?.cancel().catch(() => {})
+      }
+      return { ok: true } satisfies Handled<"voice.precheck">
     }
 
     case "local.servers": {
@@ -1632,13 +1729,14 @@ export const TREE_IGNORED = new Set([
 export const PREVIEW_TEXT_LIMIT = 512 * 1024
 
 /**
- * The most a picture, PDF, audio or video file may weigh and still be shown.
+ * The most a picture, audio or video file may weigh and still be shown.
  *
- * One figure for every kind, as MiMo has one: its panel reads a file up to
- * 25 MB and refuses anything larger with `toobig`. This app had two - 40 MB for
- * a PDF and 8 MB for everything else - and, worse, answered a file over them by
- * calling it binary, so a 60 MB PDF was described as a file the panel could not
- * make sense of rather than as one too large to preview.
+ * One figure for every kind that is read whole, as MiMo has one: its panel
+ * reads such a file up to 25 MB and refuses anything larger with `toobig`.
+ * This app had two - 40 MB for a PDF and 8 MB for everything else - and, worse,
+ * answered a file over them by calling it binary, so a 60 MB PDF was described
+ * as a file the panel could not make sense of rather than as one too large to
+ * preview. A PDF is now streamed rather than read, so it is not measured here.
  */
 export const MEDIA_LIMIT = 25_000_000
 
@@ -1665,7 +1763,15 @@ export async function readPreview(resolved: string): Promise<Handled<"file.read"
     return { ...empty, kind: "binary", video: true }
   }
   const kind = kindFor(resolved, Buffer.alloc(0))
-  if (kind === "image" || kind === "audio" || kind === "pdf") {
+  /*
+   * A PDF has no ceiling (R17-V4): the view no longer takes its bytes, it asks
+   * the local preview server for the ranges pdf.js wants, which is how MiMo
+   * reads one and why a 40MB scan opens there. The figure below is about a
+   * read of the whole file, so it goes on applying to pictures, sound, video
+   * and the Office byte channel.
+   */
+  if (kind === "pdf") return { ...empty, kind, mime: mimeFor(resolved) }
+  if (kind === "image" || kind === "audio") {
     // Measured here as well as on the read of the bytes: this is the answer the tab draws from.
     if ((await oversized()) > MEDIA_LIMIT) return { ...empty, kind, mime: mimeFor(resolved), tooBig: true }
     return { ...empty, kind, mime: mimeFor(resolved) }
@@ -1706,38 +1812,48 @@ const TREE_SEARCH_NODES = 4000
 
 /*
  * The files tab's search, MiMo's `searchFiles`: breadth first, each folder's
- * entries folders first by name, a file matching when its own name holds the
- * query. It stops at 50 results or 4000 entries seen, and says so.
+ * entries folders first by name, every file scored against the query by
+ * `rankFileHit` and the best 50 kept.
+ *
+ * Scored on the whole relative path, not on the name alone (R17-V3): a query
+ * with a slash in it - `src/right/RpFiles`, the shape anyone reading code
+ * types - matched nothing at all while this looked only at `entry.name`, and
+ * with more than 50 hits what came back was the fifty shallowest rather than
+ * the fifty most alike. The walk runs to its 4000-entry budget either way,
+ * which is what it takes to rank at all.
  */
 export async function searchTree(directory: string, query: string): Promise<Handled<"file.search">> {
   const { target } = await insideProject(directory)
-  const needle = query.toLowerCase()
-  const entries: Handled<"file.search">["entries"] = []
-  if (!needle) return { entries, truncated: false }
+  const needle = query.trim().toLowerCase()
+  if (!needle) return { entries: [], truncated: false }
   // MiMo's protected folders, when the project is the home folder.
   const shielded = protectedFilter(target)
+  const scored: { entry: Handled<"file.search">["entries"][number]; score: number }[] = []
   const queue = [{ absolute: target, rel: "", depth: 0 }]
   let seen = 0
-  while (queue.length) {
+  let spent = false
+  while (queue.length && !spent) {
     const folder = queue.shift()!
     const listed = await fs.readdir(folder.absolute, { withFileTypes: true }).catch(() => [])
     listed.sort((a, b) => (a.isDirectory() === b.isDirectory() ? a.name.localeCompare(b.name) : a.isDirectory() ? -1 : 1))
     for (const entry of listed) {
       if (TREE_IGNORED.has(entry.name)) continue
       if (entry.isDirectory() && shielded(path.join(folder.absolute, entry.name))) continue
-      if (++seen > TREE_SEARCH_NODES) return { entries, truncated: true }
+      if (++seen > TREE_SEARCH_NODES) {
+        spent = true
+        break
+      }
       const rel = folder.rel ? `${folder.rel}/${entry.name}` : entry.name
-      const isDirectory = entry.isDirectory()
-      if (!isDirectory && entry.name.toLowerCase().includes(needle)) {
-        entries.push({ name: entry.name, rel, dir: folder.rel })
-        if (entries.length >= TREE_SEARCH_RESULTS) return { entries, truncated: true }
+      if (entry.isDirectory()) {
+        if (folder.depth < TREE_SEARCH_DEPTH) queue.push({ absolute: path.join(folder.absolute, entry.name), rel, depth: folder.depth + 1 })
+        continue
       }
-      if (isDirectory && folder.depth < TREE_SEARCH_DEPTH) {
-        queue.push({ absolute: path.join(folder.absolute, entry.name), rel, depth: folder.depth + 1 })
-      }
+      const score = rankFileHit(rel, needle)
+      if (score !== undefined) scored.push({ entry: { name: entry.name, rel, dir: folder.rel }, score })
     }
   }
-  return { entries, truncated: false }
+  scored.sort((a, b) => b.score - a.score || (a.entry.rel < b.entry.rel ? -1 : a.entry.rel > b.entry.rel ? 1 : 0))
+  return { entries: scored.slice(0, TREE_SEARCH_RESULTS).map((hit) => hit.entry), truncated: spent || scored.length > TREE_SEARCH_RESULTS }
 }
 
 const SEARCH_LIMIT = 50

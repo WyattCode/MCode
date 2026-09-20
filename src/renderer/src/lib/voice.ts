@@ -14,7 +14,7 @@
  */
 
 import { ref } from "vue"
-import type { VoiceDraft, VoiceEdit } from "@shared/protocol"
+import type { VoiceDraft, VoiceEdit, VoiceMode, VoicePrecheckFailure } from "@shared/protocol"
 
 /**
  * Where one stretch of speech ends: this long without a voice in it.
@@ -23,10 +23,50 @@ import type { VoiceDraft, VoiceEdit } from "@shared/protocol"
  * writes each piece down while the microphone stays open, so a long dictation
  * appears in the box as it is spoken. This used to record whole and stop itself
  * after a minute, which cut a long message off in the middle of a sentence.
+ *
+ * The two waits are MiMo's own: 1.2 s in 智能编辑, where a pause is often part of
+ * an instruction, and 0.8 s in 快速输入, where the point is to see the words
+ * quickly. MCode waited 1.2 s in both, so quick input was 0.4 s slower than the
+ * reference at every cut.
  */
-const SILENCE_MS = 1_200
-/* Above this the microphone is hearing a voice rather than the room. */
-const SPEECH_LEVEL = 0.06
+export const SILENCE_MS: Record<VoiceMode, number> = { smart: 1_200, fast: 800 }
+
+/**
+ * The longest one stretch may run, MiMo's `maxSegmentS = 60`.
+ *
+ * Someone who talks for five minutes without a pause long enough to cut on
+ * used to get nothing written down until they pressed stop; this cuts anyway.
+ */
+export const MAX_SEGMENT_MS = 60_000
+
+/*
+ * Above this the microphone is hearing a voice rather than the room.
+ *
+ * MiMo runs a voice-activity detector over each 16 kHz frame; MCode has no such
+ * model and does not add one, so the line is drawn against the room instead of
+ * at a fixed height. The first third of a second after the microphone opens is
+ * the room: whatever it measures, a voice is several times louder than that.
+ * A single number - 0.06 - used to sit below a noisy room's own level, and then
+ * no cut was ever made and the whole dictation waited for the stop button.
+ */
+export const FLOOR_SAMPLE_MS = 300
+const FLOOR_FACTOR = 3.5
+/** Held between these: a silent room must not make every breath a word, and a loud one must still be speakable over. */
+export const MIN_SPEECH_LEVEL = 0.02
+export const MAX_SPEECH_LEVEL = 0.25
+/**
+ * Speech ends a little below where it starts, so one wavering syllable does not
+ * cut a sentence in two. MiMo's detector opens at 0.8 and closes at 0.7, which
+ * is this ratio.
+ */
+const END_RATIO = 0.875
+
+/** The level a voice has to pass, given how loud the room was found to be. */
+export function speechFloor(noise: number): number {
+  const measured = Number.isFinite(noise) ? Math.max(0, noise) * FLOOR_FACTOR : MIN_SPEECH_LEVEL
+  return Math.max(MIN_SPEECH_LEVEL, Math.min(MAX_SPEECH_LEVEL, measured))
+}
+
 /* How often the level is read while looking for the end of a stretch. */
 const WATCH_MS = 50
 /* No cut is made before this much has been recorded: a container needs a moment of audio to be readable. */
@@ -37,6 +77,23 @@ const MIN_SEGMENT_MS = 700
  * waiting for the microphone, listening, or having it written down.
  */
 export type VoiceState = "idle" | "starting" | "recording" | "working"
+
+/**
+ * And what is happening to one stretch inside that, which is what MiMo's
+ * capsule actually says: waiting for a voice, hearing one, writing it down or
+ * understanding it, and how that ended.
+ *
+ * MCode's capsule read 录音中 for the whole recording, so none of the work
+ * going on behind it - a stretch being transcribed while the next is spoken -
+ * was visible.
+ */
+export type VoiceStatus = "listening" | "recording" | "transcribing" | "understanding" | "transcribed" | "understood" | "noContent" | "failed"
+
+/** The four that are an outcome rather than a state; each shows briefly and gives way to waiting again. */
+const SETTLED: readonly VoiceStatus[] = ["transcribed", "understood", "noContent", "failed"]
+
+/** How long an outcome stays on the capsule before it goes back to waiting, as MiMo holds it. */
+export const STATUS_SETTLE_MS = 2_000
 
 export interface Recording {
   /** The audio, base64, ready for the protocol - which is JSON and takes no bytes. */
@@ -84,6 +141,17 @@ export class VoiceRecorder {
   private quietSince = 0
   /** True while a cut is being made, so the watcher does not start a second one on top of it. */
   private cutting = false
+  /** How long to wait for silence before cutting, from the mode this recording was started in. */
+  private silenceMs = SILENCE_MS.smart
+  /** The room, measured over the first `FLOOR_SAMPLE_MS`: the readings, then the level they set. */
+  private floorUntil = 0
+  private floorReadings: number[] = []
+  private speechLevel = MIN_SPEECH_LEVEL
+  /** Whether a voice is being heard right now, so the capsule can say which. */
+  private speaking = false
+
+  /** Told each time a voice starts or stops, so the capsule can show waiting and hearing apart. */
+  onActive?: (speaking: boolean) => void
 
   /**
    * Each stretch of speech, as soon as the silence after it ends it.
@@ -132,15 +200,37 @@ export class VoiceRecorder {
    * reader must be told about, and the message the browser gives - a denied
    * permission, no device at all - is the useful part.
    */
-  async start(): Promise<void> {
+  async start(mode: VoiceMode = "smart"): Promise<void> {
     if (this.running) return
     const mime = bestFormat()
     if (!mime) throw new Error("voice.noRecorder")
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    /*
+     * The three constraints MiMo asks for. One channel because the recording is
+     * downmixed anyway; the other two because a room's own noise and the
+     * machine's own speakers are exactly what makes the level meter below
+     * useless, and Chromium will do both in the capture pipeline for free.
+     */
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } })
     this.stream = stream
     this.mime = mime
+    this.silenceMs = SILENCE_MS[mode] ?? SILENCE_MS.smart
     this.active = true
-    this.listen(stream)
+    /*
+     * Without the level meter nothing can be cut on silence: the whole
+     * dictation would wait for the stop button and a minute of it would be
+     * thrown away by the cap below. MiMo refuses to record when its detector
+     * will not start, and so does this, rather than recording into a mode that
+     * no longer works.
+     */
+    if (!this.listen(stream)) {
+      this.release()
+      this.active = false
+      throw new Error("voice.vadFailed")
+    }
+    this.speaking = false
+    this.floorUntil = Date.now() + FLOOR_SAMPLE_MS
+    this.floorReadings = []
+    this.speechLevel = MIN_SPEECH_LEVEL
     this.begin()
     this.watch = window.setInterval(() => this.tick(), WATCH_MS)
   }
@@ -161,23 +251,52 @@ export class VoiceRecorder {
     this.recorder = recorder
   }
 
+  /** Whether a voice is being heard at this moment, for a capsule that says which. */
+  get hearing(): boolean {
+    return this.speaking
+  }
+
+  /** The level a voice has to pass right now, once the room has been measured. */
+  get threshold(): number {
+    return this.speechLevel
+  }
+
+  private setSpeaking(speaking: boolean) {
+    if (this.speaking === speaking) return
+    this.speaking = speaking
+    this.onActive?.(speaking)
+  }
+
   /** Watches for the silence that ends a stretch, and cuts there. */
   private tick() {
     if (!this.active || this.cutting) return
     const rms = this.rms()
     if (rms === undefined) return
     const now = Date.now()
-    if (rms >= SPEECH_LEVEL) {
-      this.spoke = true
-      this.quietSince = 0
+    /* The room first: until it has been measured nothing counts as a voice. */
+    if (now < this.floorUntil) {
+      this.floorReadings.push(rms)
       return
     }
+    if (this.floorReadings.length) {
+      this.speechLevel = speechFloor(this.floorReadings.reduce((sum, value) => sum + value, 0) / this.floorReadings.length)
+      this.floorReadings = []
+    }
+    /* A stretch that has run on past the cap is cut wherever it is, as MiMo cuts it. */
+    if (this.spoke && now - this.startedAt >= MAX_SEGMENT_MS) return void this.cut()
+    if (rms >= (this.speaking ? this.speechLevel * END_RATIO : this.speechLevel)) {
+      this.spoke = true
+      this.quietSince = 0
+      this.setSpeaking(true)
+      return
+    }
+    this.setSpeaking(false)
     if (!this.spoke) return
     if (!this.quietSince) {
       this.quietSince = now
       return
     }
-    if (now - this.quietSince < SILENCE_MS || now - this.startedAt < MIN_SEGMENT_MS) return
+    if (now - this.quietSince < this.silenceMs || now - this.startedAt < MIN_SEGMENT_MS) return
     void this.cut()
   }
 
@@ -187,6 +306,7 @@ export class VoiceRecorder {
       const spoke = this.spoke
       const recording = await this.finish()
       if (!this.active) return
+      this.setSpeaking(false)
       if (recording && spoke) this.onSegment?.(recording)
       this.begin()
     } finally {
@@ -212,8 +332,8 @@ export class VoiceRecorder {
     return { audio: await base64Of(blob), mime: recorder.mimeType, ms }
   }
 
-  /* The level meter; a machine without Web Audio still records, with a flat waveform. */
-  private listen(stream: MediaStream) {
+  /* The level meter, which is both the waveform and the thing that decides where a stretch ends. */
+  private listen(stream: MediaStream): boolean {
     try {
       const audio = new AudioContext()
       const analyser = audio.createAnalyser()
@@ -223,10 +343,12 @@ export class VoiceRecorder {
       this.analyser = analyser
       this.samples = new Uint8Array(new ArrayBuffer(analyser.fftSize))
       this.smoothed = 0
+      return true
     } catch {
       this.audio = undefined
       this.analyser = undefined
       this.samples = undefined
+      return false
     }
   }
 
@@ -263,6 +385,9 @@ export class VoiceRecorder {
     this.mime = undefined
     this.spoke = false
     this.quietSince = 0
+    this.speaking = false
+    this.floorReadings = []
+    this.floorUntil = 0
     void this.audio?.close().catch(() => {})
     this.audio = undefined
     this.analyser = undefined
@@ -297,11 +422,31 @@ export function micFailure(err: unknown): VoiceFailure {
   const name = nameOf(err)
   const message = messageOf(err)
   if (message === "voice.noRecorder") return { key: "voice.noRecorder" }
+  if (message === "voice.vadFailed") return { key: "voice.vadFailed" }
   if (name === "NotAllowedError" || name === "SecurityError" || name === "PermissionDeniedError") return { key: "voice.micDenied", guide: true }
   if (name === "NotFoundError" || name === "OverconstrainedError" || name === "DevicesNotFoundError") return { key: "voice.micNotFound" }
   // The device exists but would not start: another program holds it.
   if (name === "NotReadableError" || name === "TrackStartError" || name === "AbortError") return { key: "voice.micInUse" }
   return { key: "voice.micAccessFailed", params: { msg: message || name } }
+}
+
+/**
+ * Why the microphone was not opened, from the pre-recording check.
+ *
+ * MiMo's five kinds each get their own line; the point of asking before the
+ * microphone opens is that the reader is told now rather than after speaking a
+ * sentence into an endpoint that was never going to answer.
+ */
+const PRECHECK_KEYS: Record<VoicePrecheckFailure, string> = {
+  unauthorized: "voice.loginRequired",
+  asrUnavailable: "voice.asrUnavailable",
+  chatUnavailable: "voice.controlUnavailable",
+  unreachable: "voice.networkUnreachable",
+  failed: "voice.startFailed",
+}
+
+export function precheckFailure(reason: VoicePrecheckFailure): VoiceFailure {
+  return { key: PRECHECK_KEYS[reason] ?? "voice.startFailed" }
 }
 
 /** A transcription that failed, from the code the server threw, as MiMo names it. */
@@ -435,13 +580,30 @@ export function speak(text: string, language: string): boolean {
   const line = text.trim()
   if (!line || typeof window.speechSynthesis === "undefined") return false
   try {
-    window.speechSynthesis.cancel()
+    hushSpeech()
     const utterance = new SpeechSynthesisUtterance(line.slice(0, 240))
     utterance.lang = language
     window.speechSynthesis.speak(utterance)
     return true
   } catch {
     return false
+  }
+}
+
+/**
+ * Stops whatever is being said aloud, at once.
+ *
+ * MiMo's spoken line is one blocking bridge call with a timeout, cut short when
+ * the window goes; MCode's is the OS engine, which keeps reading until the
+ * sentence ends unless it is told otherwise. 停止, leaving the conversation and
+ * turning voice feedback off all have to be able to shut it up - without this,
+ * pressing stop left the machine still narrating a turn that had ended.
+ */
+export function hushSpeech(): void {
+  try {
+    window.speechSynthesis?.cancel()
+  } catch {
+    // No engine, or one that refused: nothing was being said.
   }
 }
 
@@ -471,6 +633,29 @@ export function nextVoiceBox(): string {
 /** What the microphone is doing. Only the owner draws it. */
 export const voiceState = ref<VoiceState>("idle")
 
+/**
+ * What is happening to the stretch of speech in hand, which is what the capsule
+ * says while `voiceState` is "recording". Nothing while the microphone is shut.
+ */
+export const voiceStatus = ref<VoiceStatus | undefined>(undefined)
+
+let settle: ReturnType<typeof setTimeout> | undefined
+
+/**
+ * Sets it, and - for the four that are outcomes rather than states - puts the
+ * capsule back to waiting two seconds later, as MiMo does, since the microphone
+ * is still open and the next sentence can start at any moment.
+ */
+export function reportVoiceStatus(status: VoiceStatus | undefined): void {
+  clearTimeout(settle)
+  settle = undefined
+  voiceStatus.value = status
+  if (!status || !SETTLED.includes(status)) return
+  settle = setTimeout(() => {
+    if (voiceStatus.value === status) voiceStatus.value = "listening"
+  }, STATUS_SETTLE_MS)
+}
+
 /** Bumped whenever a recording is abandoned, so a transcription already on its way lands nowhere. */
 export const voiceRun = ref(0)
 
@@ -478,8 +663,10 @@ export const voiceRun = ref(0)
 export function dropVoice(): void {
   voiceRun.value += 1
   recorder.onSegment = undefined
+  recorder.onActive = undefined
   recorder.cancel()
   voiceState.value = "idle"
+  reportVoiceStatus(undefined)
   voiceOwner.value = undefined
 }
 

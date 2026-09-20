@@ -495,9 +495,20 @@ async function load() {
   }
 }
 
-/* Back to the sheet and scroll position the grid was left at, tried until it holds or the reader moves. */
+/*
+ * Back to the sheet and scroll position the grid was left at, tried until it
+ * holds or the reader moves.
+ *
+ * The retries watch the scroll state they themselves produced (R17-V7): the
+ * only thing that used to stop them was the active sheet changing, so for the
+ * first second after a reload - after the assistant wrote the file, after an
+ * undo, after an outside change - a reader who scrolled was dragged back.
+ */
 function restoreView(root: SheetApiRoot, view: { sheetName: string; row: number; col: number }, alive: () => boolean) {
+  // Nothing to put back: the grid opens at the first cell anyway.
+  if (view.row <= 0 && view.col <= 0) return
   let done = false
+  let ours: { row: number; col: number } | undefined
   for (const delay of [0, 120, 400, 900]) {
     setTimeout(() => {
       if (done || !alive()) return
@@ -509,6 +520,14 @@ function restoreView(root: SheetApiRoot, view: { sheetName: string; row: number;
           done = true
           return
         }
+        if (ours) {
+          // Where the grid sits now is not where the last try left it, so it was the reader who moved it.
+          const now = book.getActiveSheet()?.getScrollState?.()
+          if (now && (now.sheetViewStartRow !== ours.row || now.sheetViewStartColumn !== ours.col)) {
+            done = true
+            return
+          }
+        }
         book.setActiveSheet(sheet)
         book.scrollToCell?.(view.row, view.col)
         const active = book.getActiveSheet()
@@ -517,6 +536,7 @@ function restoreView(root: SheetApiRoot, view: { sheetName: string; row: number;
         const freeze = active?.getFreeze?.()
         const row = scroll?.sheetViewStartRow
         const col = scroll?.sheetViewStartColumn
+        if (row !== undefined && col !== undefined) ours = { row, col }
         if (row !== undefined && col !== undefined && row + (freeze?.ySplit ?? 0) === view.row && col + (freeze?.xSplit ?? 0) === view.col) done = true
       } catch (err) {
         // The early tries can come before the grid has drawn; only the last one's failure is worth a word.

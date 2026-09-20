@@ -5,10 +5,10 @@ import type { MenuItem } from "../../lib/menu"
 import ContextMenu from "../ContextMenu.vue"
 import PdfView from "./PdfView.vue"
 import AbcBlock from "../parts/AbcBlock.vue"
+import MarkdownBody from "../parts/MarkdownBody.vue"
 import { isAbcFile } from "../../lib/abc-play"
 import { useApp } from "../../stores/app"
 import { useRightPanel } from "../../stores/right-panel"
-import { renderMarkdown } from "../../lib/markdown"
 import { openImagePreview } from "../../lib/image-preview"
 import { highlightLines, languageForFile } from "../../lib/highlight"
 import { annotationId, requestAnnotation } from "../../lib/annotate"
@@ -150,6 +150,8 @@ watch([filter, root], ([query]) => {
 })
 
 function choose(rel: string) {
+  // The row already open reads again, as MiMo's does: the emit alone leaves viewFile unchanged, so nothing would happen at all.
+  if (rel === props.viewFile && !editing.value) void readFile(rel, true)
   emit("view", rel)
 }
 
@@ -226,7 +228,8 @@ const isMarkdown = computed(() => /\.(md|markdown)$/i.test(props.viewFile ?? "")
 /* MiMo draws an .abc file as a score, with the same block a reply's abc fence gets. */
 const isAbc = computed(() => isAbcFile(props.viewFile))
 const isHtml = computed(() => /\.(html?|xhtml)$/i.test(props.viewFile ?? ""))
-const isText = computed(() => opened.value?.kind === "text" && !opened.value.tooBig)
+/* Editable is markdown or code, as MiMo has it - never the score a .abc file is drawn as, which "edit" turned into a textarea. */
+const isText = computed(() => opened.value?.kind === "text" && !opened.value.tooBig && !isAbc.value)
 const lines = computed(() => (opened.value?.content ?? "").replace(/\n+$/, "").split("\n"))
 
 /* The same lines in MiMo's syntax colours, once the highlighter answers; plain until then. */
@@ -793,7 +796,8 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
             </div>
             <div v-else-if="opened.kind === 'binary'" class="fv-empty"><div class="fv-empty-desc">{{ t("rp.files.errBinary") }}</div></div>
             <div v-else-if="isAbc" class="fv-doc text" data-ft-abc><AbcBlock :code="opened.content" /></div>
-            <div v-else-if="isMarkdown" class="fv-doc text" v-html="renderMarkdown(opened.content)" />
+            <!-- The reply's own markdown component, as MiMo hangs it here: links, pictures, coloured fences, copy buttons, diagrams, scores, maths. -->
+            <div v-else-if="isMarkdown" class="fv-doc" data-ft-markdown><MarkdownBody :text="opened.content" /></div>
             <div
               v-else
               class="fv-code"
@@ -1129,8 +1133,8 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   position: absolute;
   top: 42px;
   inset-inline-end: 14px;
-  /* The icon, the counter (which grows with the interface font), three 22px buttons, five 6px gaps and the sides: what the bar cannot give up. */
-  min-width: calc(15px + 42px * var(--ui-font-scale, 1) + 3 * 22px + 5 * 6px + 20px + 2px);
+  /* The icon, the 150px field, the counter (which grows with the interface font), three 22px buttons, five 6px gaps and the sides: what the bar cannot give up. */
+  min-width: calc(15px + 150px + 42px * var(--ui-font-scale, 1) + 3 * 22px + 5 * 6px + 20px + 2px);
   max-width: calc(100% - 28px);
   z-index: 10;
   display: flex;
@@ -1149,9 +1153,15 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 }
 
 .fv-find-input {
-  /* 150 wide where there is room, and the first thing to give when there is not. */
-  flex: 1 1 150px;
-  min-width: 0;
+  /*
+   * 150 wide, as MiMo writes it, and it never gives that up.
+   *
+   * It used to be the bar's flexible part with no floor under it, so at the
+   * panel's default width the field was 17px and at its minimum under 1px -
+   * a find bar counting matches nobody could read the query of.
+   */
+  flex: none;
+  width: 150px;
   padding: 0;
   color: var(--text-base);
   background: transparent;

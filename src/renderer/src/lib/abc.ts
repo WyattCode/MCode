@@ -65,6 +65,23 @@ export async function renderScore(target: HTMLElement, source: string): Promise<
     const clean = sanitizeAbcSvg(scratch.innerHTML)
     if (!/<svg[\s>]/i.test(clean)) throw new Error("abc: no score survived sanitising")
     target.innerHTML = clean
+    /*
+     * abcjs's "resize" mode lays the score out for a container of its own - the
+     * score is `position: absolute` at its top left, and the container carries
+     * the height as a padding ratio. Only the score itself survives sanitising,
+     * so that positioning had nothing to hold it: the staff was drawn over
+     * whatever the nearest positioned ancestor was, which in the conversation
+     * is the message list and in the files tab is the view, where it landed on
+     * top of the document's first heading. Put back in the flow it sizes itself
+     * from its viewBox, under the `max-width: 100%; height: auto` the block's
+     * stylesheet gives it.
+     */
+    const drawn = target.querySelector("svg")
+    if (drawn) {
+      drawn.style.position = "static"
+      drawn.style.top = ""
+      drawn.style.left = ""
+    }
     const from = [...scratch.querySelectorAll("[class]")]
     const to = [...target.querySelectorAll("[class]")]
     const copies = new Map<Element, Element>()

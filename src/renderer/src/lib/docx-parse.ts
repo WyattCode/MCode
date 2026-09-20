@@ -37,7 +37,21 @@ export function decodeXml(value: string): string {
 }
 
 const attrOf = (tag: string, name: string) => tag.match(new RegExp(`${name}="([^"]*)"`))?.[1] ?? ""
-const textsOf = (xml: string, tag: string) => [...xml.matchAll(new RegExp(`<w:${tag}\\b[^>]*>([\\s\\S]*?)</w:${tag}>`, "g"))].map((match) => match[1]).join("")
+
+/** A literal in a pattern: an id out of the document is a string, and `w:id="a.b"` is not a character class. */
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+/*
+ * The text of every `w:t` (or `w:delText`) in a run of XML.
+ *
+ * Attributes must start with whitespace and the content may hold no `<` at all
+ * (R17-V8). `[^>]*` counted the slash of a self-closing `<w:t/>` as an
+ * attribute, so an empty run opened a match that ran on to the *next* closing
+ * tag and dragged `</w:r><w:r><w:t>` into the extracted text - and with it into
+ * the revision rail, the comment cards and every version note.
+ */
+const textsOf = (xml: string, tag: string) =>
+  [...xml.matchAll(new RegExp(`<w:${tag}(?:\\s[^>]*)?>([^<]*)</w:${tag}>`, "g"))].map((match) => match[1]).join("")
 
 export function loadDocx(bytes: Uint8Array) {
   return JSZip.loadAsync(bytes)
@@ -114,9 +128,10 @@ export function parseComments(commentsXml: string, documentXml: string): DocComm
     if (comment && comment.paragraphIndex < 0) comment.paragraphIndex = paragraphs - 1
   }
   for (const comment of out) {
-    const start = documentXml.search(new RegExp(`<w:commentRangeStart\\b[^>]*w:id="${comment.id}"[^>]*/>`))
+    const id = escapeRegExp(comment.id)
+    const start = documentXml.search(new RegExp(`<w:commentRangeStart\\b[^>]*w:id="${id}"[^>]*/>`))
     if (start < 0) continue
-    const endPattern = new RegExp(`<w:commentRangeEnd\\b[^>]*w:id="${comment.id}"`, "g")
+    const endPattern = new RegExp(`<w:commentRangeEnd\\b[^>]*w:id="${id}"`, "g")
     endPattern.lastIndex = start
     const end = endPattern.exec(documentXml)
     if (!end) continue

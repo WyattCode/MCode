@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch 
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask, TextLayer } from "pdfjs-dist"
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url"
 import type { Annotation } from "@shared/protocol"
+import { collapse } from "@shared/annotations"
 import { useApp } from "../../stores/app"
 import { useAnnotations } from "../../stores/annotations"
 import { useAnnotationBatch } from "../../stores/annotation-batch"
@@ -127,6 +128,9 @@ function release() {
 
 async function load() {
   const mine = ++generation
+  // The last load's restore loop stops here, or two of them would fight over scrollTop after two writes in a row.
+  stopRestore?.()
+  stopRestore = undefined
   if (saved && saved.path === props.path && saved.top > 0) {
     restoring.value = true
     if (scroller.value) scroller.value.style.visibility = "hidden"
@@ -145,20 +149,19 @@ async function load() {
   // Every load returns to 100%, as MiMo's does after a write, an outside change, undo or a restore (the user's choice).
   zoom.value = 1
   try {
-    const [dir, base] = splitPath()
-    const [lib, read] = await Promise.all([library(), window.mcode.readFileBytes(dir, base)])
+    /*
+     * The bytes come off the local preview server rather than through an IPC
+     * read (R17-V4). The read caps a document at 25MB, which shut out the very
+     * files a reader most wants a viewer for - a scanned report, a printed
+     * book - while MiMo, which fetches its own scheme, opens them; and pdf.js
+     * asks the server for the ranges it needs instead of holding the whole
+     * file twice over in base64 and in an array.
+     */
+    const [lib, served] = await Promise.all([library(), window.mcode.officeServe(props.path)])
     if (mine !== generation) return
-    if (!read.ok || read.unchanged) {
-      const reason = read.ok ? "" : read.reason
-      // Every other reason (denied, a folder, unsupported) is the files tab's "cannot read", in the reader's language.
-      return fail(reason === "noent" ? t("office.fileMissing") : reason === "toobig" ? t("rp.files.errTooBig") : t("rp.files.errCannotRead"))
-    }
-    lastBase64 = read.base64
-    const binary = atob(read.base64)
-    const data = new Uint8Array(binary.length)
-    for (let at = 0; at < binary.length; at++) data[at] = binary.charCodeAt(at)
+    if (!served.ok) return fail(served.error === "missing" ? t("office.fileMissing") : t("rp.files.errCannotRead"))
     task = lib.getDocument({
-      data,
+      url: served.url,
       cMapUrl: assets("cmaps"),
       cMapPacked: true,
       standardFontDataUrl: assets("standard_fonts"),
@@ -168,13 +171,28 @@ async function load() {
     })
     const pdf = await task.promise
     if (mine !== generation) return void pdf.destroy()
-    // The file as opened becomes the first version (or the next, when it changed while closed), so undo and history have something to hold.
-    const { ai, prompt } = aiTouch(props.path, 60_000)
-    void versions.init(props.path, read.base64, { assumeAi: ai, note: ai ? prompt.trim() : t("office.versionNoteExternal") })
+    void firstVersion()
     await loaded(pdf, mine)
   } catch (err) {
     if (mine === generation) fail(err)
   }
+}
+
+/*
+ * The file as opened becomes the first version (or the next, when it changed
+ * while closed), so undo and history have something to hold.
+ *
+ * The store keeps whole copies, so it still reads the bytes over IPC and still
+ * stops at the document limit: a document too large to version is shown all
+ * the same, with nothing behind undo until it is written to.
+ */
+async function firstVersion() {
+  const [dir, base] = splitPath()
+  const read = await window.mcode.readFileBytes(dir, base).catch(() => undefined)
+  if (!read?.ok || read.unchanged) return
+  lastBase64 = read.base64
+  const { ai, prompt } = aiTouch(props.path, 60_000)
+  await versions.init(props.path, read.base64, { assumeAi: ai, note: ai ? prompt.trim() : t("office.versionNoteExternal") })
 }
 
 async function loaded(pdf: PDFDocumentProxy, mine: number) {
@@ -795,7 +813,9 @@ function anchorOfSelection(): { occ: number; occTotal: number; rect?: NonNullabl
 
 function buildNote(userText: string): Annotation {
   const where = anchorOfSelection()
-  const quote = selectedText.length > 400 ? selectedText.slice(0, 400) : selectedText || "(空)"
+  // Folded and cut with an ellipsis, as the Word and slide views fold theirs: a selection across lines reaches the model as one passage.
+  const folded = collapse(selectedText)
+  const quote = folded ? (folded.length > 400 ? `${folded.slice(0, 400)}…` : folded) : "(空)"
   return {
     id: annotationId(),
     kind: "pdf",
@@ -931,7 +951,8 @@ const noteInside = (target: Node) => Boolean(rootEl.value?.contains(target))
 
 <template>
   <div ref="rootEl" class="pdf-view" data-pdf-view @pointerup="onPointerUp" @wheel.passive="onWheel">
-    <div ref="scroller" class="office-sel" data-pdf-scroll @scroll="onScroll">
+    <!-- The pages are content, as MiMo marks them: Ctrl+A takes the document, not the whole window. -->
+    <div ref="scroller" class="office-sel" data-selectable="content" data-pdf-scroll @scroll="onScroll">
       <div v-if="count > 0" ref="pagesEl" class="pdf-pages">
         <div
           v-for="(height, index) in heights"

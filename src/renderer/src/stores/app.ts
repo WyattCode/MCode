@@ -24,6 +24,7 @@ import { language, sessionTitle, t } from "../lib/i18n"
 import { mcpNeedsSignIn } from "../lib/mcp-status"
 import { visibleChatOrder } from "../lib/visible-chats"
 import { projectName } from "../lib/project"
+import { hushSpeech } from "../lib/voice"
 import { knownFolder, listedProjects, projectsByRecency } from "@shared/projects"
 import type { GroupContext } from "@shared/session-group"
 import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fallback"
@@ -1689,6 +1690,8 @@ export const useApp = defineStore("app", () => {
   async function abort(to?: string) {
     const target = to ?? currentID.value
     if (!target) return
+    // 停止 stops the narration too: a line already being read out belongs to the turn being stopped.
+    hushSpeech()
     // Before the request: the idle that follows a stop may arrive ahead of its answer.
     turnStarted.delete(target)
     let failure: unknown

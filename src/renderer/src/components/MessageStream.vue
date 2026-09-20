@@ -92,7 +92,8 @@ const loadingHere = computed(() => !props.side && !props.latest && !props.subage
 const emptyHere = computed(() => !props.side && !props.latest && !props.subagent && !loadingHere.value && !shownBusy.value && turns.value.length === 0)
 /* speak: a completed call of the speak tool is read aloud, with the machine's own voice. */
 followSpoken({
-  enabled: () => !props.side && !props.latest && !props.subagent,
+  // The setting is read here as well as on the backend, so switching it off cuts off the line being read.
+  enabled: () => !props.side && !props.latest && !props.subagent && (app.config?.voiceFeedback ?? true),
   session: () => shownID.value,
   messages: () => shownMessages.value,
 })
