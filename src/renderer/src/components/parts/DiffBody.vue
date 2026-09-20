@@ -8,9 +8,11 @@ import { t } from "../../lib/i18n"
  *
  * MiMo has a single diff component: the 审阅 tab fills the pane with it, and a
  * turn's step and a permission card draw the same component unfilled. This is
- * that component - the file list, a header per file that folds it away, line
- * numbers on both sides, and MiMo's note once a patch runs past its cap - so a
- * patch reads the same in a step as it does in the tab.
+ * that component - a header per file that folds it away, the words only one
+ * side of a changed pair has, line numbers on both sides, and MiMo's note once
+ * a patch runs past its cap - so a patch reads the same in a step as it does in
+ * the tab. The list of files above them belongs to the filled tab alone, as it
+ * does in MiMo.
  *
  * Each file's sideways scroll is remembered by name and put back after the
  * patch is drawn again, as MiMo restores `scrollLeft` per file: a turn that
