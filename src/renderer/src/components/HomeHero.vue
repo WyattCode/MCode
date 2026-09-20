@@ -168,9 +168,19 @@ function choose(directory: string) {
   box.value?.focus()
 }
 
-/* A branch already checked out in another worktree: the next task goes into that worktree. */
-function useWorktree(directory: string) {
+/**
+ * A branch already checked out in another worktree: the next task goes into
+ * that worktree.
+ *
+ * MiMo's scope store adds the worktree to the project list before it browses to
+ * it. Without that step the folder was only this screen's pick: it left the
+ * picker the moment the home screen did, never appeared on the environment
+ * page, and conversations started in it were filed under the main repository
+ * instead of under the worktree, which is a project of its own in MiMo.
+ */
+async function useWorktree(directory: string) {
   added.value = directory
+  await app.addProject(directory, { used: true }).catch(() => {})
   choose(directory)
 }
 
