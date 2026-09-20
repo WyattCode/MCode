@@ -1130,8 +1130,8 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   position: absolute;
   top: 42px;
   inset-inline-end: 14px;
-  /* The icon, the counter (which grows with the interface font), three 22px buttons, five 6px gaps and the sides: what the bar cannot give up. */
-  min-width: calc(15px + 42px * var(--ui-font-scale, 1) + 3 * 22px + 5 * 6px + 20px + 2px);
+  /* The icon, the 150px field, the counter (which grows with the interface font), three 22px buttons, five 6px gaps and the sides: what the bar cannot give up. */
+  min-width: calc(15px + 150px + 42px * var(--ui-font-scale, 1) + 3 * 22px + 5 * 6px + 20px + 2px);
   max-width: calc(100% - 28px);
   z-index: 10;
   display: flex;
@@ -1150,9 +1150,15 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 }
 
 .fv-find-input {
-  /* 150 wide where there is room, and the first thing to give when there is not. */
-  flex: 1 1 150px;
-  min-width: 0;
+  /*
+   * 150 wide, as MiMo writes it, and it never gives that up.
+   *
+   * It used to be the bar's flexible part with no floor under it, so at the
+   * panel's default width the field was 17px and at its minimum under 1px -
+   * a find bar counting matches nobody could read the query of.
+   */
+  flex: none;
+  width: 150px;
   padding: 0;
   color: var(--text-base);
   background: transparent;
