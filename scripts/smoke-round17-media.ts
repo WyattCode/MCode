@@ -24,6 +24,16 @@ import { handle, voiceFileName, VOICE_PRECHECK_TIMEOUT_MS } from "../src/server/
 import type { Runtime } from "../src/server/index"
 import type { Request } from "../src/shared/protocol"
 import { CONFIRM_VOICES, spineTone } from "../src/renderer/src/lib/sound"
+import {
+  MAX_SEGMENT_MS,
+  MAX_SPEECH_LEVEL,
+  MIN_SPEECH_LEVEL,
+  SILENCE_MS,
+  STATUS_SETTLE_MS,
+  micFailure,
+  precheckFailure,
+  speechFloor,
+} from "../src/renderer/src/lib/voice"
 
 /** One fake OpenAI-compatible service: what it was asked, and what it answers. */
 interface Fake {
@@ -232,5 +242,95 @@ export async function roundSeventeenMediaChecks(check: Check, section: (name: st
     const run = Array.from({ length: count }, (_, at) => spineTone(at, count).from)
     check("and every tick is at least as high as the one before it", run.every((value, at) => at === 0 || value >= run[at - 1]), run)
     check("with more distinct pitches than the five the table holds", new Set(run).size > 5, new Set(run).size)
+  }
+
+  // ---------------------------------------------------------------- R17-M4
+  section("Round 17 (M4): the microphone is not opened when the service is not going to answer")
+  {
+    const service = await fakeVoiceService()
+    try {
+      const { runtime, sessions, project } = await voiceRuntime(root, "m4", service.port)
+      const session = await sessions.create({ directory: project, model: { provider: "fake", model: "chat-1" } })
+      const ready = (await ask(runtime, { type: "voice.precheck", mode: "smart", sessionID: session.id })) as { ok: boolean }
+      check("a service that lists the chosen model is fine", ready.ok === true, ready)
+
+      /* The model the setting names is not one the provider offers. */
+      service.models = ["something-else"]
+      const missing = (await ask(runtime, { type: "voice.precheck", mode: "smart", sessionID: session.id })) as { ok: boolean; reason?: string }
+      check("a model the provider does not list is named before recording", missing.ok === false && missing.reason === "asrUnavailable", missing)
+
+      /* A listing that is not offered at all says nothing either way, and recording goes ahead. */
+      service.models = []
+      const silent = (await ask(runtime, { type: "voice.precheck", mode: "smart", sessionID: session.id })) as { ok: boolean }
+      check("a provider with no model listing is not refused on a guess", silent.ok === true, silent)
+    } finally {
+      await service.close()
+    }
+
+    /* Offline: nothing is listening on that port at all. */
+    {
+      const dead = await fakeVoiceService()
+      const port = dead.port
+      await dead.close()
+      const { runtime } = await voiceRuntime(root, "m4b", port)
+      const started = Date.now()
+      const gone = (await ask(runtime, { type: "voice.precheck", mode: "fast" })) as { ok: boolean; reason?: string }
+      check("an endpoint that is not there is 'unreachable', not a dozen toasts later", gone.ok === false && gone.reason === "unreachable", gone)
+      check("and the answer comes back inside the probe's own budget", Date.now() - started < VOICE_PRECHECK_TIMEOUT_MS + 3_000, Date.now() - started)
+    }
+
+    /* 智能编辑 with nothing to rewrite with. */
+    {
+      const service2 = await fakeVoiceService()
+      try {
+        const { runtime, config } = await voiceRuntime(root, "m4c", service2.port)
+        await config.set({ model: { provider: "nothing-here", model: "gone" } })
+        const answer = (await ask(runtime, { type: "voice.precheck", mode: "smart" })) as { ok: boolean; reason?: string }
+        check("智能编辑 with no conversation model is refused as chatUnavailable", answer.ok === false && answer.reason === "chatUnavailable", answer)
+        const quick = (await ask(runtime, { type: "voice.precheck", mode: "fast" })) as { ok: boolean }
+        check("while 快速输入, which needs no rewrite, still goes ahead", quick.ok === true, quick)
+      } finally {
+        await service2.close()
+      }
+    }
+
+    check("each of the five kinds has a line of its own", new Set((["unauthorized", "asrUnavailable", "chatUnavailable", "unreachable", "failed"] as const).map((reason) => precheckFailure(reason).key)).size === 5)
+    check("and none of them falls through to the plain voice failure", (["unauthorized", "asrUnavailable", "chatUnavailable", "unreachable"] as const).every((reason) => precheckFailure(reason).key !== "voice.failed"))
+  }
+
+  // ---------------------------------------------------------------- R17-M5
+  section("Round 17 (M5): where one stretch of speech ends")
+  {
+    check("快速输入 cuts at 0.8s, as MiMo does", SILENCE_MS.fast === 800, SILENCE_MS)
+    check("智能编辑 waits 1.2s, where a pause is often part of the instruction", SILENCE_MS.smart === 1_200, SILENCE_MS)
+    check("no stretch runs past a minute, whatever the speaker does", MAX_SEGMENT_MS === 60_000, MAX_SEGMENT_MS)
+
+    /*
+     * The line is drawn against the room rather than at a fixed height: 0.06
+     * sat below a noisy room's own level, and then no cut was ever made.
+     */
+    check("a silent room is still held to a floor, so breathing is not speech", speechFloor(0) === MIN_SPEECH_LEVEL, speechFloor(0))
+    check("a quiet room lowers the line under the old fixed 0.06", speechFloor(0.004) < 0.06, speechFloor(0.004))
+    check("a noisy room raises it above its own level", speechFloor(0.05) > 0.05, speechFloor(0.05))
+    check("and a room louder than any voice is held to a ceiling", speechFloor(5) === MAX_SPEECH_LEVEL, speechFloor(5))
+    check("the line always rises with the room", [0, 0.01, 0.03, 0.06].every((noise, at, all) => at === 0 || speechFloor(noise) >= speechFloor(all[at - 1])))
+    check("nothing unmeasurable gets past it", speechFloor(Number.NaN) === MIN_SPEECH_LEVEL && speechFloor(-1) === MIN_SPEECH_LEVEL)
+
+    check("a level meter that will not start is a named failure, not a silent recording", micFailure(new Error("voice.vadFailed")).key === "voice.vadFailed")
+  }
+
+  // ---------------------------------------------------------------- R17-M3
+  section("Round 17 (M3): the capsule says what is happening to the stretch in hand")
+  {
+    /* Nine words, each with a line in every table - the capsule used to have three. */
+    const words = ["starting", "listening", "recording", "transcribing", "understanding", "transcribed", "understood", "noContent", "failed"]
+    const table = await fs.readFile(new URL("../src/renderer/src/lib/i18n.ts", import.meta.url), "utf8")
+    const tables = table.match(/^const [A-Za-z0-9]+: Table = \{/gm)?.length ?? 0
+    check("there are eighteen language tables to fill", tables === 18, tables)
+    for (const word of words) {
+      const found = table.match(new RegExp(`^  "voice\\.${word}": `, "gm"))?.length ?? 0
+      check(`voice.${word} is in every one of them`, found === tables, { word, found })
+    }
+    check("an outcome gives way to waiting again after two seconds, as MiMo holds it", STATUS_SETTLE_MS === 2_000, STATUS_SETTLE_MS)
   }
 }

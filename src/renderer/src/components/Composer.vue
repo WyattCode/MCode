@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
-import { applyVoiceResult, dropVoice, editCue, isClearCommand, micFailure, nextVoiceBox, recorder, transcribeFailure, voiceOwner, voiceRun, voiceState, type Recording, type VoiceCue, type VoiceFailure, type VoiceState } from "../lib/voice"
+import { applyVoiceResult, dropVoice, editCue, isClearCommand, micFailure, nextVoiceBox, precheckFailure, recorder, reportVoiceStatus, transcribeFailure, voiceOwner, voiceRun, voiceState, voiceStatus, type Recording, type VoiceCue, type VoiceFailure, type VoiceState } from "../lib/voice"
 import type { Ref } from "vue"
 import type { Attachment, CommandInfo, DirEntry, Effort, FileHit, Message, ModelInfo, SessionInfo } from "@shared/protocol"
 import { interruptedTurn } from "@shared/resume"
@@ -858,6 +858,18 @@ const voiceLevel = ref(0)
 
 const voiceConfigured = computed(() => Boolean(app.config?.voiceModel?.model))
 
+/*
+ * What the capsule says, MiMo's nine words: 启动中 between the press and the
+ * microphone, then the stretch in hand - 等待语音 until a voice is heard, 录音中
+ * while it is, 转写中 or 理解中 while it is written down, and 已转写 / 已识别 /
+ * 无内容 / 失败 for a moment after. Draining after the stop button is 转写中.
+ */
+const voiceLabel = computed(() => {
+  if (voice.value === "starting") return t("voice.starting")
+  if (voice.value === "working") return t(`voice.${voiceStatus.value ?? "transcribing"}`)
+  return t(`voice.${voiceStatus.value ?? "listening"}`)
+})
+
 let levelFrame = 0
 
 function followLevel() {
@@ -924,6 +936,9 @@ async function hearSegment(recording: Recording, run: number) {
     selectionStart: input.value?.selectionStart ?? text.value.length,
     selectionEnd: input.value?.selectionEnd ?? text.value.length,
   }
+  const quickMode = (app.config?.voiceMode ?? "smart") === "fast"
+  /* MiMo names these two apart, because one is a model reading and the other one thinking. */
+  if (run === voiceRun.value) reportVoiceStatus(quickMode ? "transcribing" : "understanding")
   try {
     const result = await app.client?.request({
       type: "voice.transcribe",
@@ -942,9 +957,9 @@ async function hearSegment(recording: Recording, run: number) {
      * a voice model with no chat endpoint behind it, so it is said once.
      */
     if (result.editFailed) showVoiceFailure({ key: `voice.smartEdit.${result.editFailed}` })
-    const quick = (app.config?.voiceMode ?? "smart") === "fast"
+    reportVoiceStatus(result.text.trim() ? (quickMode ? "transcribed" : "understood") : "noContent")
     /* MiMo's quick input: an utterance that is only a clear word empties the box instead of being typed. */
-    if (quick && isClearCommand(result.text)) {
+    if (quickMode && isClearCommand(result.text)) {
       rewrite("")
       await nextTick(resize)
       // The user pressed a button to start this, so the keyboard is on the button: the box is given it back.
@@ -962,7 +977,7 @@ async function hearSegment(recording: Recording, run: number) {
     input.value?.focus({ preventScroll: true })
     input.value?.setSelectionRange(next.selectionStart, next.selectionEnd)
     /* As in MiMo, the spoken "send" belongs to the considered mode only; quick input just types. */
-    const sendsByVoice = (app.config?.voiceSend ?? false) && !quick
+    const sendsByVoice = (app.config?.voiceSend ?? false) && !quickMode
     if (next.send && sendsByVoice && text.value.trim()) {
       dropVoice()
       // MiMo sends at once and then says so; a send is named over a rewrite heard in the same breath.
@@ -972,28 +987,42 @@ async function hearSegment(recording: Recording, run: number) {
     }
     if (edited) showCue(edited)
   } catch (err) {
-    if (run === voiceRun.value) showVoiceFailure(transcribeFailure(err))
+    if (run !== voiceRun.value) return
+    const failure = transcribeFailure(err)
+    reportVoiceStatus("failed")
+    showVoiceFailure(failure)
+    /*
+     * Nothing heard is a benign miss and the microphone stays open for the next
+     * sentence, as MiMo's does. Anything else - an endpoint that is down, a
+     * model that is not there - will fail the same way for every stretch after
+     * it, so the recording is stopped rather than left running into nothing.
+     */
+    if (failure.key !== "voice.emptyResult") stopVoice(run)
+  }
+}
+
+/** 停止: the last stretch is written down with the rest, then the capsule closes. */
+async function stopVoice(run: number) {
+  if (!mine.value || voiceState.value !== "recording") return
+  voiceState.value = "working"
+  reportVoiceStatus("transcribing")
+  try {
+    // Whatever is left since the last cut is the last stretch; the earlier ones are already in the queue.
+    const last = await recorder.stop()
+    if (last) queueSegment(last, run)
+    await voiceQueue
+  } finally {
+    if (run === voiceRun.value) {
+      voiceState.value = "idle"
+      reportVoiceStatus(undefined)
+      voiceOwner.value = undefined
+    }
   }
 }
 
 async function toggleVoice() {
   if (mine.value && (voice.value === "working" || voice.value === "starting")) return
-  if (mine.value && voice.value === "recording") {
-    voiceState.value = "working"
-    const run = voiceRun.value
-    try {
-      // Whatever is left since the last cut is the last stretch; the earlier ones are already in the queue.
-      const last = await recorder.stop()
-      if (last) queueSegment(last, run)
-      await voiceQueue
-    } finally {
-      if (run === voiceRun.value) {
-        voiceState.value = "idle"
-        voiceOwner.value = undefined
-      }
-    }
-    return
-  }
+  if (mine.value && voice.value === "recording") return void (await stopVoice(voiceRun.value))
 
   if (!voiceConfigured.value) {
     notifyFailure(t("voice.notConfigured"))
@@ -1005,18 +1034,40 @@ async function toggleVoice() {
   // MiMo's starting capsule, between the press and the microphone answering.
   voiceOwner.value = boxID
   voiceState.value = "starting"
+  reportVoiceStatus(undefined)
   const run = voiceRun.value
+  const mode = app.config?.voiceMode ?? "smart"
   try {
+    /*
+     * MiMo's voicePrecheck, before the microphone is touched: a service that
+     * is not going to answer - offline, no key, a model the provider does not
+     * offer - is said now. Without it the reader spoke a whole sentence into
+     * nothing and got a toast for every stretch of it.
+     */
+    const ready = await app.client?.request({ type: "voice.precheck", mode, sessionID: sessionID.value })
+    if (run !== voiceRun.value) return
+    if (ready && !ready.ok) {
+      voiceState.value = "idle"
+      voiceOwner.value = undefined
+      showVoiceFailure(precheckFailure(ready.reason))
+      return
+    }
     // MiMo's micAccess before capture: a refusal from the OS is a denial like getUserMedia's.
     if (!(await window.mcode.micAccess())) throw new DOMException("", "NotAllowedError")
     recorder.onSegment = (recording) => queueSegment(recording, run)
-    await recorder.start()
+    // Only on becoming a voice, as MiMo does: what ends a stretch is said by the stretch's own progress.
+    recorder.onActive = (speaking) => {
+      if (speaking && run === voiceRun.value) reportVoiceStatus("recording")
+    }
+    await recorder.start(mode)
     if (run !== voiceRun.value) return
     voiceState.value = "recording"
+    reportVoiceStatus("listening")
     followLevel()
   } catch (err) {
     if (run === voiceRun.value) {
       voiceState.value = "idle"
+      reportVoiceStatus(undefined)
       voiceOwner.value = undefined
     }
     showVoiceFailure(micFailure(err))
@@ -3629,7 +3680,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               <span class="voice-wave" aria-hidden="true">
                 <i v-for="(height, bar) in waveHeights" :key="bar" :style="{ height }" />
               </span>
-              <span class="voice-label">{{ t("voice.recording") }}</span>
+              <span class="voice-label" data-voice-status>{{ voiceLabel }}</span>
               <span
                 class="mic-x"
                 role="button"
@@ -3648,7 +3699,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             </span>
             <span v-else-if="voice === 'working'" class="mic-live">
               <span class="mic-spinner" aria-hidden="true" />
-              <span class="voice-label">{{ t("voice.transcribing") }}</span>
+              <span class="voice-label" data-voice-status>{{ voiceLabel }}</span>
               <span
                 class="mic-x"
                 role="button"
@@ -3667,7 +3718,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             </span>
             <span v-else-if="voice === 'starting'" class="mic-live">
               <span class="mic-spinner" aria-hidden="true" />
-              <span class="voice-label">{{ t("voice.starting") }}</span>
+              <span class="voice-label" data-voice-status>{{ voiceLabel }}</span>
             </span>
             <svg v-else width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
               <rect x="7.4" y="2.6" width="5.2" height="9.2" rx="2.6" stroke="currentColor" stroke-width="1.3" />
