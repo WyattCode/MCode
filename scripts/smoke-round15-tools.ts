@@ -201,5 +201,40 @@ export async function roundFifteenToolChecks(check: Check, section: (name: strin
     await scheduler.stop()
   }
 
+  // ---------------------------------------------------------------- T15-4
+  section("Round 15 (T15-4): cron cannot write another project's task file")
+  {
+    const here = path.join(root, "cron-here")
+    const there = path.join(root, "cron-there")
+    await fs.mkdir(here, { recursive: true })
+    await fs.mkdir(there, { recursive: true })
+    const scheduler = new CronScheduler({
+      now: () => Date.now(),
+      fire: async () => {},
+      busy: () => false,
+      session: async (id: string) => (id === "ses_here" ? session("ses_here", here) : id === "ses_there" ? session("ses_there", there) : undefined),
+      create: async () => session("ses_here", here),
+      directories: async () => [here],
+    })
+    bindScheduler(scheduler)
+    const { permissions } = gate()
+    const call = (operation: Record<string, unknown>) =>
+      CronTool.execute({ operation }, toolContext(here, permissions, { sessionID: "ses_here" })).then(
+        (output) => ({ output }),
+        (failure: unknown) => ({ failure: failure instanceof Error ? failure.message : String(failure) }),
+      )
+
+    const own = await call({ action: "schedule", cron: "*/10 * * * *", prompt: "build", durable: true })
+    check("a durable job in this project is scheduled and written here", "output" in own && (await fs.readFile(cronFile(here), "utf8")).includes("build"), own)
+    const next = await call({ action: "schedule", cron: "*/10 * * * *", prompt: "read their secrets", durable: true, session_id: "ses_there" })
+    const wrote = await fs.readFile(cronFile(there), "utf8").catch(() => "")
+    check("naming a conversation in another project is refused in words", "failure" in next && next.failure.includes("another project"), next)
+    check("and nothing is written there", wrote === "", wrote)
+    const listed = await call({ action: "list", session_id: "ses_there" })
+    check("the same holds for reading that project's jobs", "failure" in listed, listed)
+    bindScheduler(undefined)
+    await scheduler.stop()
+  }
+
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
 }
