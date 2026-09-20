@@ -10,6 +10,7 @@
 - 第十三轮（2026-09-20）：键盘与焦点、多实例与窗口生命周期、大数据量三个只读角度，37 项全部完成并合并入 `v2.0`，见下方「第十三轮」一节。报告在 scratchpad `round13-keyboard.md` / `round13-instances.md` / `round13-scale.md`
 - 第十四轮（2026-09-20）：网络与代理、本地化格式与从右到左、打包安装与自动更新三个只读角度，16 项全部完成并合并入 `v2.0`，见下方「第十四轮」一节。报告在 scratchpad `round14-network.md` / `round14-locale.md` / `round14-packaging.md`
 - 第十五轮（2026-09-20，用户要求「二次复核所有代码，检查BUG，包括界面细节」）：六路只读复核 + 七路修复，34 条缺陷全部修掉并合并入 `v2.0`，见下方「第十五轮」一节。报告在 scratchpad `round15-main.md` / `-server-core.md` / `-tools.md` / `-renderer-state.md` / `-ui-chat.md` / `-ui-settings.md`
+- 第十六轮（2026-09-20/21）：**编码能力整体改为 MiMo 的路子**（对话方式、代码处理、编码界面），五路完成并合并入 `v2.0`，见下方「第十六轮」一节。只读对照报告 scratchpad `round16-conversation.md` / `round16-code.md` / `round16-ui.md`
 
 ## 现在到哪了
 
@@ -443,6 +444,9 @@
 
 ## 与 MiMo 故意不同的地方（用户定的，不要改回去）
 
+- 第十六轮新增：内联交互组件的来源大小上限 512KB（MiMo 渲染层无上限）；内联组件由主进程在独立来源上提供并下发策略头（MiMo 直接内嵌，因其渲染层没有 CSP）；`metadata.filediff.patch` 存未裁剪补丁（撤销需要）；快捷键表里「切换编排模式」改为「切换目标模式」（该模式已删）。
+- 第十六轮撤销：`write` 单独成桶、webfetch 默认询问这两条**不再是故意不同**，已按用户决定放松到 MiMo。
+
 - **`create_session` 的工作目录要审批（第十五轮 R15-T2）**：MiMo 对此零检查（渲染端直接 `POST /session?directory=`，连目录存在都不验）；MCode 在项目（或其仓库根）外时走既有「项目外」审批，否则模型可零弹窗读遍家目录。
 
 - 侧栏顶部一排按钮全部靠左（MiMo 从 x=65 开始、铃铛在最右）；macOS 仍留出红绿灯位置。
@@ -466,6 +470,50 @@
   - C11-46 斜杠高亮的命令名接受 `[^\s/]+`（MiMo 只接受 `[A-Za-z0-9_-]+`）：MCode 的 MCP 提示命令名是 `服务:提示`，收严会让这类命令不再高亮；高亮本来就要求命令在缓存列表里，不会误标。
   - C11-48 只有技能芯片、没有文字时照常发出（MiMo 拒发并提示「请输入内容」）。
   - C11-50 运行中发送走完整路径（命令模板、技能芯片、批注都带上；MiMo 只插「文本 + 附件」）。
+
+## 第十六轮：编码能力照 MiMo 重做（2026-09-20/21）
+
+用户要求：编码能力不再跟 OpenCode，改为和 MiMo 1:1——对话方式、代码处理方式、编码时看到的界面。三份只读对照后分五路修，合并后 13 项检查 + build 通过，smoke **5246 全过**（两遍）。新增 `scripts/smoke-round16-{goal,prompts,tools,diff,widget,b}.ts`。
+
+**对照得出的三条底层事实（下一轮不必重查）**
+- **MiMo 的引擎本身就是 OpenCode 的分支**：`r12-node.mjs` 里 183 处 `opencode`、服务标签 `@opencode/…`、`MIMOCODE_SERVER_USERNAME:"opencode"`。所以「不跟 OpenCode 跟 MiMo」在代码处理层不是换实现，而是换配置——MCode 每一处跟的**已经是 MiMo 那一列**（蛇形参数、`actor`/`task` 分工、bash 六参数、编辑默认精确匹配而非 OpenCode 的无条件模糊）。
+- **MiMo 的提示词是 asar 里的普通文件**（`electron/prompts/*.txt|md`），已只读提取到 scratchpad `r16-prompts/`。
+- **四个看似最大的差距全是假的**：26 个格式化器、38 个语言服务器 + 诊断回流、bash 输出清洗流水线、同目录并发检测——代码都在 MiMo 包里，但它桌面端生成的引擎配置不写 `formatter`/`lsp`、清洗挂在未设的实验旗帜上、并发检测只有桌面从不调用的实验路由。**MCode 一个都没做，结果与 MiMo 桌面一致。**
+
+**用户 2026-09-20/21 的决定**：①「完全中文化」只指给模型看的那一层，界面保持 18 语言、回复语言仍跟随界面；② 完全照 MiMo 并舍弃多余的；③ 做目标模式、删编排模式；④ 删三个环境信息块；⑤ 差异做词级高亮与文件头，标签走我们自己的 18 语言表；⑥ 两处比 MiMo 严的审批放松到 MiMo；⑦ 中英分层照 MiMo 的分法（基础提示英文、护栏中文、工具说明英文）。
+
+**A 目标模式（R16-A）**
+- 加号菜单里 MiMo 放「追求目标」的那一格改为目标模式开关＋目标栏；回合将结束时把整段记录交给裁判判定（**同一个对话模型**、温度 0、无工具、结构化 JSON），未达成则注入系统提醒重入循环，上限 **12**（`r12-node.mjs:369047` 核对）。裁判失败放行停止；Stop 连裁判一起中断、目标保留；子智能体不判定；目标存在会话上，重启仍在。计划模式同时开时 MiMo 只是不注入那一句护栏、裁判照跑，照搬（`b4cb55c`、`478bc56`、`6bcce78`、`4765eb7`）
+- **删掉 MCode 自有的编排（compose/staged）模式**：代码、18 张表的文案、检查一并清除（`123c8ae`）
+- 唯一偏离 MiMo 快捷键表的地方：MiMo 那一格是「切换编排模式」，模式删除后改为「切换目标模式」（同样未绑定按键）
+
+**B 模型层（R16-B）**
+- 按 MiMo 的实际分层逐段核对后改：`claude.txt`/`desktop-base.md` 英文 → CORE/DESKTOP 保持英文；`plan-addendum`/`guard-plan`/`guard-envcheck`/MCP 配置段中文 → 对应段落改写为中文（我们自己的措辞）。汉字占比与 MiMo 逐文件对齐（MiMo 0.25%/67%/67%/29%，MCode 1.7%/70%/71%/31%）（`4c30ba0`、`5f4f972`）
+- **三个环境块删除**（`## Environment` / `## Repository` / `## Building and testing`）连同喂它们的 git/shell 调用与 `PromptModel`；提示词不再随模型变化，前缀缓存键去掉 model/shell。原来把这归功于 MiMo 的注释已更正（`f1fd288`）
+- 环路检测补到 MiMo 的四类 + 跨步重复文本 + **把重复片段从请求里裁掉**（`src/server/session/loop-health.ts`，阈值读自引擎并在声明处写明）（`afa9b6b`）
+- 便宜五项：SVG 设计令牌、Windows 工具链护栏、标题提示词、PPT 配图分支；多技能编排提醒**第十轮早已有**（审计写错）（`383aaaa`）
+- `prompt-check` 改为断言语言分层本身，`tool-check` 新增「工具描述必须是英文」（与 MiMo 一致）（`4985ab7`）
+- 内联组件那段提示按分法改回英文行文、保留中文触发词（`1d74656`）
+- 审计对 `TryBestMonitor` 的判断有误：它挂在 `MIMOCODE_ENABLE_TRY_BEST_HANDOFF` 后而桌面端不设该变量；仍按简报实现并接到已有的询问上
+
+**C 工具与审批（R16-C）**
+- 交互式命令拒绝语改中文并新增 `session.notice` 事件（只带 key，窗口用 18 语言说），每会话一次（`340217d`）；bash 说明随 shell 变化，PowerShell 5.1 明说无 `&&` 并给 `cmd1; if ($?) { cmd2 }`（`023a703`）
+- `trimDiff` 去公共缩进（`9af1b5a`）；edit/write 结果带加减行数（`e8544ab`）。**内部差异**：`metadata.filediff.patch` 存未裁剪补丁（MiMo 存裁剪过的），因为撤销要 `git apply --reverse`
+- 新增只读的 `list_external_sessions` / `read_external_session`，参数/上限/拒绝照 MiMo；说明保持英文（MiMo 这两个本身英文）（`6640a0d`）
+- **`write` 桶并入 `edit`、webfetch 默认 `allow`**，带迁移 `write-into-edit-r16`（旧配置取更严者落到 `edit`，用户设过的 `deny` 不动）（`1e1ac36`）
+- 清掉不存在的 `patch` / `apply_patch` 分支（`a9420a3`）。顺带发现未修：`notebook_edit` 不在 `EDITING` 里，笔记本改动进不了撤销
+
+**D 差异界面（R16-D）**
+- 词级高亮：照 diff2html 的 `diffStyle:"word"` 重写分词与记号比对（未抄代码），用 MiMo 包里那份当基准跑 4000 组随机对比 **0 处不一致**；配对沿用 `splitRows`，单栏与左右对照点亮同样的词；1200 行上限与折叠不变。**一处刻意保护**：记号比对走满 1000 次编辑仍不收敛就整行画平（MiMo 会一路算完，压缩文件上会卡数秒）（`409fbf3`）
+- 文件头：状态图标 + 状态标签 + 「已查看」勾选 + 重命名 `{old → new}`；标签走 18 语言表。**`+N -M` 从文件头移走**（MiMo 只在文件列表里显示）。「已查看」只记在这一次绘制上，不折叠、不存储、重绘即清——MiMo 未加载 diff2html-ui，行为如此（`10d7695`）
+- 文件列表只在整页差异标签绘制（`9bb0d6c`）；右面板启动卡补说明行（`395cd1b`）；`exec_command` 按 bash 说话、命令读 `input.cmd`（`6c2ee80`）
+- 两处从代码定不了、保持现状：深色差异配色与每文件边框；以及 MiMo 那个「已查看」勾选框是否可见（diff2html 自带样式把它设为 `display:none`，只有 diff2html-ui 才显出来）——要真截一次 MiMo 才能定
+
+**E 内联交互组件（R16-E）**
+- 复刻 `sci-widget`：围栏 + 自包含 HTML，沙箱 `allow-scripts`，流式时一行占位，**没有任何按钮、渲染层没有尺寸上限、没有错误处理**（MiMo 的减法照做）（`d121f84`、`c1c8849`）
+- **一处必须不同**：MiMo 渲染层无 CSP，MCode 有。实测在我们的策略下 `srcdoc` 框被整个拒绝、脚本永不执行，因此文档改由主进程在**不可猜测的 `<token>.localhost:<port>` 独立来源**上提供，策略作为真正的响应头下发，窗口自身 CSP 未动。实测：本地存储、父窗口、`parent.mcode`、顶层跳转、fetch/XHR/远程图片全部被拒
+- MCode 比 MiMo 多一个来源大小上限 `WIDGET_SOURCE_LIMIT` 512KB（超过则保持代码块），记为故意不同
+- 探针发现并修掉一个缺陷：按视口布局的组件会与外框互相撑大、无限震荡（一轮两帧、上千次），现在锁定后只有窗口缩放才重算
 
 ## 第十五轮：二次全面复核与修复（2026-09-20）
 
@@ -720,7 +768,7 @@
 npm run dev          # 开发版（先结束残留的 node_modules/electron/dist/electron.exe）
 npm run typecheck
 npm run build
-npm run smoke        # 当前 4891 条（2026-09-20）
+npm run smoke        # 当前 5246 条（2026-09-21）
 npm run i18ncheck    # 18 种语言表键一致
 npm run themecheck   # 重新生成 tokens.css 并逐字节比对；也拦物理方向的 CSS
 npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监听
@@ -944,7 +992,7 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
 
 **第十五轮（二次全面复核）34 条缺陷已全部修掉并合并入 `v2.0`**，smoke 4891。下一步：
 
-0. **第十六轮已开题（用户 2026-09-20）：把编码能力从 OpenCode 的路子整体改成 MiMo 的，1:1 —— 对话方式、代码处理方式、编码时看到的界面。** 用户当天定下两条前提：「完全中文化」只指给模型看的那一层（系统提示、工具说明、每轮提醒），界面仍保持 18 种语言、回复语言仍跟随界面；改动幅度是完全照 MiMo 并舍弃多余的（MiMo 没有的工具与流程要删，不是并存）。硬约束不变：不抄 MiMo 的提示词与代码原文，只测行为与结构、用自己的话重写。三份只读对照报告：scratchpad `round16-conversation.md` / `round16-code.md` / `round16-ui.md`。OpenCode 装在 `C:\Users\Wyatt\AppData\Local\Programs\@opencode-aidesktop`，可只读对比。
+0. **第十六轮已完成**（编码能力照 MiMo 重做，见上一节）。剩下的尾巴：MiMo 的「已查看」勾选框是否可见、深色差异配色与每文件边框，这三条要真截一次 MiMo 才能定；`notebook_edit` 的改动进不了撤销（`EDITING` 里没有它）；设置导航列在默认字号下就超出自身盒子（第十五轮 U3 路发现，修法是照 MiMo 加内层滚动区，会移动默认字号下每一行）。
 1. 用真实模型实际使用已装好的版本，按看到的问题逐条修。
 2. 已知未修的一条（第十五轮 U3 路发现）：设置导航列在默认字号下就超出自身盒子，最后一组与「应用更新」被裁掉；修法是照 MiMo 加内层滚动区 `.sn-scroll`，但会占 10px 滚动条宽、移动默认字号下每一行，需要单独一轮并重新核对默认几何。
 3. 其他小尾巴（可选）：`update-transaction.json` 与 `composer-input.ts` 走 `writeAtomicSync`；清理崩溃留下的 `*.tmp`；英文词中子串搜索（`figur` → `configuration`）仍未恢复；偶发失败的两处 smoke 检查（见「约定与坑」）。
