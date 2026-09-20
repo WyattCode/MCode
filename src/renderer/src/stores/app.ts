@@ -1375,7 +1375,15 @@ export const useApp = defineStore("app", () => {
   const history = ref<{ undo: number; redo: number }>({ undo: 0, redo: 0 })
 
   async function refreshHistory(sessionID: string) {
-    history.value = (await api().request({ type: "session.history", sessionID })).history
+    const result = await api().request({ type: "session.history", sessionID })
+    /*
+     * Left for another conversation while this one was read: its depth is not
+     * this screen's. Two switches in a row issue two reads, and the backend
+     * answers each as it finishes, so the slower one used to land last and
+     * offer the conversation on screen an undo belonging to the one left.
+     */
+    if (currentID.value !== sessionID) return
+    history.value = result.history
   }
 
   /**
