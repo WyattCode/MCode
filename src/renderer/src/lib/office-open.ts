@@ -25,12 +25,21 @@ export function legacyTypeOf(name: string): OfficeType | null {
 /**
  * A file outside the Office tab: the files tab, as MiMo opens one.
  *
- * Inside the project it is shown under the project root. Outside it - an
- * attachment dragged in from the desktop, a path the model named - MiMo still
- * opens the files tab, rooted at the file's own folder
+ * Inside the project it is shown under the project root, with the tree still
+ * on the project. Outside it - an attachment dragged in from the desktop, a
+ * path the model named - the tab moves to the file's own folder
  * (`openFileInViewer(folder, name)`), and the viewer itself says when the file
- * is not there or cannot be previewed. Only a name with no folder at all is
- * left to the system.
+ * is not there or cannot be previewed; a file straight off a drive root moves
+ * the tree to that root. Only a name with no folder at all is left to the
+ * system.
+ *
+ * MiMo moves the tree for every absolute path, the project's own files
+ * included; keeping the project root for those is the user's choice of
+ * 2026-09-21, and it is in HANDOFF's list of deliberate differences.
+ *
+ * The tab is named after the file however it was opened - from the tree, from
+ * an attachment card, from a step row, from an info card - which is what MiMo
+ * does in the one effect behind all of them.
  */
 export function openFileInViewer(file: string, directory?: string) {
   const rp = useRightPanel()
@@ -40,14 +49,17 @@ export function openFileInViewer(file: string, directory?: string) {
     const base = `${norm(directory)}/`
     if (full.toLowerCase().startsWith(base.toLowerCase())) {
       const tab = rp.openTool("files")
-      rp.update(tab.id, { viewFile: full.slice(base.length), fileRoot: undefined })
+      const rel = full.slice(base.length)
+      rp.update(tab.id, { viewFile: rel, fileRoot: undefined, name: nameOf(rel) })
       return
     }
   }
   const cut = full.lastIndexOf("/")
-  if (cut > 0) {
+  if (cut >= 0) {
+    // A drive letter or the posix root is a folder only with its separator on it.
+    const folder = cut === 0 ? "/" : full.slice(0, cut)
     const tab = rp.openTool("files")
-    rp.update(tab.id, { viewFile: full.slice(cut + 1), fileRoot: full.slice(0, cut) })
+    rp.update(tab.id, { viewFile: full.slice(cut + 1), fileRoot: /^[a-zA-Z]:$/.test(folder) ? `${folder}/` : folder, name: nameOf(full) })
     return
   }
   void window.mcode.revealPath(file)
