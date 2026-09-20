@@ -3816,6 +3816,7 @@ export class SessionRunner {
       activity: Date.now(),
       stalledNoticed: false,
       settled: Promise.resolve({ kind: "cancelled" }),
+      admitted: false,
     }
     this.workers.set(child.id, worker)
     worker.settled = this.childTurn(child, worker, controller)
@@ -3836,6 +3837,7 @@ export class SessionRunner {
        * refused - and one stopped while it waits simply never takes a permit.
        */
       release = await this.subagentGate.acquire(controller.signal).catch(() => undefined)
+      worker.admitted = Boolean(release)
       let reminded = 0
       // tasks: how often the progress checker sent it back for its task's record.
       let recorded = 0
@@ -4167,8 +4169,16 @@ export class SessionRunner {
   private snapshotOf(child: SessionInfo): Record<string, unknown> {
     const state = child.subagent
     const running = this.running.has(child.id)
+    /*
+     * MiMo's three: a subagent that has been started but is still queued behind
+     * the process-wide gate is pending, not running. Saying "running" for one
+     * that has not made a single request yet is what made a model wait on a
+     * subagent it had, in fact, only put in a queue.
+     */
+    const worker = this.workers.get(child.id)
+    const pending = running && worker !== undefined && !worker.admitted
     return {
-      status: running ? "running" : "idle",
+      status: pending ? "pending" : running ? "running" : "idle",
       actor_id: state?.id ?? child.id,
       description: child.title,
       agent: state?.type,
@@ -4460,6 +4470,8 @@ interface Worker {
   stalledNoticed: boolean
   /** Settles once the turn is over and recorded. */
   settled: Promise<ChildOutcome>
+  /** False until it has a permit from the subagent gate: started, but not running yet. */
+  admitted: boolean
 }
 
 type ChildOutcome =

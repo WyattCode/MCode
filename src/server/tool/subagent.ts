@@ -61,7 +61,7 @@ export const ActorTool: ToolDefinition = {
     "",
     "- spawn (the usual choice): start a subagent in the background and get its actor_id straight away. You keep working while it runs, and several can run at once. When it finishes, fails, is cancelled or seems stuck, a notification arrives in this conversation, and if you have already finished your reply it starts a new turn. Needs description, prompt and subagent_type; model, task_id, output_schema and command are optional.",
     "- run: start a subagent and wait for its final message, which comes back as this call's result. It holds up this turn, so keep it for a short lookup whose answer you need before you can decide anything else. Needs description, prompt and subagent_type; model, timeout_ms (default 600000), task_id, output_schema and command are optional. A call without an action is a run.",
-    "- status: where a subagent stands, without waiting. Needs actor_id.",
+    "- status: where a subagent stands, without waiting: pending (started, still queued behind others), running, idle (finished, with how it ended) or unknown. Needs actor_id.",
     "- wait: wait until a subagent is idle and get its result, or a timeout status after timeout_ms (default 600000). Needs actor_id. Only wait when you have nothing else to do until it answers.",
     "- cancel: stop a running subagent. Needs actor_id; cancelling one that is idle changes nothing.",
     "- send: give a subagent more work. The message joins its own history, so it keeps everything it has done, and an idle subagent takes another turn; you are notified when that turn ends. Needs to_actor_id and content.",
