@@ -105,6 +105,14 @@ export async function roundFifteenMainChecks(check: Check, section: (name: strin
     check("and twelve panels left the window with one did-navigate listener, not twelve", listeners !== undefined && listeners.navigation === listeners.navigationStart + 1, listeners)
   }
 
+  section("Round 15 (M15-3): an in-app reload lets go of the office file watches")
+  {
+    const watch = seen.watch
+    check("the watch was taken, and a change reached the page that asked (the control)", watch?.watching === true && (watch?.before ?? []).length >= 1, watch)
+    check("the same web contents carries the new page, so a leaked watch would still reach it", watch?.renderer === false, watch)
+    check("after the reload a change reaches nobody: the watch went with the page that asked", (watch?.after ?? ["leaked"]).length === 0, watch)
+  }
+
   section("Round 15 (M15-4): opening the browser panel again does not pile listeners on the window")
   {
     const listeners = seen.listeners

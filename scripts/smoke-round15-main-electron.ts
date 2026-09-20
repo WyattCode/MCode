@@ -153,5 +153,50 @@ app.whenReady().then(async () => {
     await wait(300)
   }
 
+  // ------------------------------------------------------------------- M15-3
+  {
+    const preload = path.join(work, "preload.js")
+    fs.writeFileSync(
+      preload,
+      [
+        'const { ipcRenderer } = require("electron")',
+        "window.hits = []",
+        'window.listen = () => ipcRenderer.on("mcode:file-changed", (_event, spelling) => window.hits.push(spelling))',
+        "window.ask = (channel, ...args) => ipcRenderer.invoke(channel, ...args)",
+      ].join("\n"),
+      "utf8",
+    )
+    registerOffice(ipcMain, path.join(work, "office"), async () => [work])
+    const watched = path.join(work, "paper.docx")
+    fs.writeFileSync(watched, "one")
+    const window = new BrowserWindow({ show: false, width: 400, height: 300, webPreferences: { preload, contextIsolation: false, sandbox: false } })
+    await window.loadURL(host)
+    const js = (code: string) => window.webContents.executeJavaScript(code)
+    const touch = async () => {
+      fs.writeFileSync(watched, `${Date.now()} ${Math.random()}`)
+      await wait(1_500)
+    }
+    const watching = await js(`window.ask("mcode:watch-file", ${JSON.stringify(watched)})`)
+    // The control: while the page that asked is on show, a change reaches it.
+    await touch()
+    const before = (await js("window.hits")) as string[]
+    window.webContents.reload()
+    await new Promise<void>((resolve) => {
+      window.webContents.once("did-finish-load", () => resolve())
+      setTimeout(resolve, 15_000)
+    })
+    await wait(500)
+    await touch()
+    result.watch = {
+      watching,
+      before,
+      /* The page that asked is gone; the watch must have gone with it. */
+      after: (await js("window.hits")) as string[],
+      renderer: window.webContents.isDestroyed(),
+    }
+    window.destroy()
+    await wait(300)
+  }
+
   finish()
 })
