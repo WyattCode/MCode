@@ -421,7 +421,8 @@ function measureRail() {
       text: comment.text,
       top: contentTop(paragraph),
       anchor: paragraph,
-      source: host.querySelector<HTMLElement>(`.docx-comment-ref[data-comment-id="${comment.id}"]`) ?? paragraph,
+      // `w:id` is a string in the document, so it is escaped before it stands in a selector.
+      source: host.querySelector<HTMLElement>(`.docx-comment-ref[data-comment-id="${CSS.escape(comment.id)}"]`) ?? paragraph,
       range,
     })
   }
