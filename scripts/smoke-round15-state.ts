@@ -139,4 +139,24 @@ export async function roundFifteenStateChecks(check: Check, section: (name: stri
     const drag = shell.slice(shell.indexOf("function trackDrag("), shell.indexOf("function leaveDrag("))
     check("R15-R3: a file dragged over the thread is not held back by that copy either", /data-modal-exit/.test(drag), drag.slice(-400))
   }
+
+  // ---------------------------------------------------------------- R15-R4
+  {
+    /*
+     * Source check: the bar scans real Ranges in a real document, so it is
+     * driven for real in the lane's find probe - typing on one conversation
+     * and switching to another, which before this left "1/3" and highlights on
+     * ranges that had left the page. What is read here is that the switch asks
+     * for a fresh scan.
+     */
+    const shell = await read("src/renderer/src/App.vue")
+    const at = shell.indexOf("const find = createFind(")
+    const after = shell.slice(at, at + 1200)
+    check(
+      "R15-R4: the find bar is scanned again when the conversation or the view changes (source; the switch is in the lane probe)",
+      /watch\(\[[^\]]*app\.currentID[^\]]*\]/.test(after) && /find\.refresh\(\{ reset: true \}\)/.test(after),
+      after.slice(0, 600),
+    )
+    check("R15-R4: and a bar that is not open is left alone", /if \(!find\.open\.value\) return/.test(after))
+  }
 }

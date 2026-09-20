@@ -329,6 +329,18 @@ const find = createFind({ wrapper: () => mainPane.value, hidden: foldedMatches }
 onMounted(() => find.mount())
 
 /*
+ * The bar is mounted on the pane, and every view lives in that pane: opening
+ * another conversation, or leaving for the artifacts or plugins page, puts
+ * different text under a bar that is still counting the old one's matches and
+ * still holding ranges that have left the document. The scan is run again so
+ * the count, the highlights and 上一个/下一个 describe what is on screen.
+ */
+watch([() => app.currentID, view, () => app.messages.length], () => {
+  if (!find.open.value) return
+  void nextTick(() => find.refresh({ reset: true }))
+})
+
+/*
  * A notification that was clicked opens what it was about.
  *
  * The main process only ever raises one while the window is in the background,
