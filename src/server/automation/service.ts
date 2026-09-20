@@ -146,6 +146,8 @@ export const AUTOMATION_SCHEMA_VERSION = 1
 const RECEIPTS_KEPT = 256
 /** How many runs a task remembers. */
 const RUNS_KEPT = 20
+/** How many settled run ids are kept, so one handed out twice is recognised; MiMo's ring is the same size. */
+const SETTLED_RUNS_KEPT = 64
 /** What a run that the app ended is recorded as. */
 const CLOSED_MID_RUN = "The app closed before the run finished."
 /** What a run waiting on a busy conversation is recorded as once a newer run of the same task comes due. */
@@ -264,6 +266,13 @@ export class AutomationService {
   private readonly queue = new RunQueue()
   /** Runs already announced as waiting, so a busy conversation is said once rather than every second. */
   private readonly announcedQueued = new Set<string>()
+  /**
+   * The last few run ids that were settled, so one handed out twice is not run
+   * twice - MiMo keeps the same bounded ring. A lease can run out while the
+   * turn it started is genuinely still going, and the entry then becomes
+   * deliverable again; without this the same run went out a second time.
+   */
+  private readonly settledRuns = new Set<string>()
   /** Runs that ended with the app and have not been reported yet; sent on the first check. */
   private readonly pendingReports: { sessionID: string; notify: boolean; outcome?: "succeeded" | "failed" | "skipped" }[] = []
   private interval: ReturnType<typeof setInterval> | undefined
@@ -835,8 +844,23 @@ export class AutomationService {
 
     for (const entry of this.queue.drain(now, STARTS_PER_TICK)) {
       const automation = this.saved.automations.find((candidate) => candidate.id === entry.automationID)
+      /*
+       * The queue is on disk and comes back with the app, so an entry may
+       * outlive the task it belongs to or the state it was made under. MiMo
+       * checks all four of these again at the moment of delivery, by name, and
+       * so does its renderer before it dispatches.
+       */
       if (!automation) {
+        // Deleted under it. Nothing is left to hold the record, so it is only logged.
         this.queue.drop(entry.runId)
+        console.warn(`[automation] run ${entry.runId} was dropped: its task no longer exists`)
+        dirty = true
+        continue
+      }
+      // Paused under it - by the user or by the model - between being queued and being handed out.
+      if (!automation.enabled) {
+        this.queue.drop(entry.runId)
+        this.skipRun(automation, "The task was paused before this run could start.", entry, "paused")
         dirty = true
         continue
       }
@@ -844,6 +868,21 @@ export class AutomationService {
       if (entry.scheduleFingerprint && entry.scheduleFingerprint !== scheduleKey(automation.rrule, automation.label)) {
         this.queue.drop(entry.runId)
         this.skipRun(automation, "The task was rescheduled before this run could start.", entry, "schedule-changed")
+        dirty = true
+        continue
+      }
+      // Already settled once and handed out again - a lease that ran out while the turn was in fact still going.
+      if (this.settledRuns.has(entry.runId)) {
+        this.queue.drop(entry.runId)
+        this.skipRun(automation, "This run had already been started once.", entry, "duplicate-run")
+        dirty = true
+        continue
+      }
+      // The last run of this same task has not finished yet; MiMo refuses to lay a second one on top of it.
+      if ([...this.runs.values()].some((running) => running.id === automation.id)) {
+        this.queue.drop(entry.runId)
+        this.skipRun(automation, "The previous run of this task had not finished.", entry, "overlap")
+        this.tellAbout(automation, automation.targetThreadId, "skipped")
         dirty = true
         continue
       }
@@ -869,9 +908,20 @@ export class AutomationService {
       this.announcedQueued.delete(entry.runId)
       // Started, skipped or failed: either way this entry is finished with, and the failure has been recorded.
       this.queue.report(entry.runId, entry.deliveryGeneration, "settled")
+      this.noteSettled(entry.runId)
       dirty = true
     }
     if (dirty) await this.save()
+  }
+
+  /** Remembers a settled run id, keeping the ring at its size by dropping the oldest. */
+  private noteSettled(runId: string): void {
+    this.settledRuns.add(runId)
+    while (this.settledRuns.size > SETTLED_RUNS_KEPT) {
+      const oldest = this.settledRuns.values().next().value
+      if (oldest === undefined) break
+      this.settledRuns.delete(oldest)
+    }
   }
 
   /** Records a run that waited for a busy conversation until it was too late, and tells the user by the task's policy. */
