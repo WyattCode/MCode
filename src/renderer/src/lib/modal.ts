@@ -60,7 +60,13 @@ export function playDialogExit(el: HTMLElement): void {
   ghost.setAttribute("data-modal-exit", "")
   ghost.removeAttribute("id")
   for (const node of ghost.querySelectorAll("[id]")) node.removeAttribute("id")
-  ghost.style.pointerEvents = "none"
+  /*
+   * The copy is a picture, not a dialog: inert takes its buttons out of the
+   * tab order as well as out of hit-testing, so a Tab right after Escape goes
+   * on to the next real control instead of into a dead copy that is then
+   * removed under the focus, leaving the reader on <body>.
+   */
+  ghost.setAttribute("inert", "")
   // No entry animation on the copy: it starts where the real one stood.
   ghost.style.animation = "none"
   root.parentNode.insertBefore(ghost, root.nextSibling)

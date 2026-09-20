@@ -30,7 +30,7 @@ import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fa
 import type { ChatLink } from "@shared/protocol"
 import { notice, notify, notifyFailure } from "../lib/toast"
 import { findModel, withoutLatest } from "../lib/model"
-import { noteRunEnded, noteToolWrites } from "../lib/ai-touch"
+import { forgetRunEnded, noteRunEnded, noteToolWrites } from "../lib/ai-touch"
 import { endOfficeWatches } from "../lib/annotation-fx"
 import { noteDeliveryTurnEnded, noteDeliveryUpdate } from "../lib/delivered"
 import { readLegacyMessage } from "@shared/subagent"
@@ -401,6 +401,10 @@ export const useApp = defineStore("app", () => {
 
     if (running.value.delete(sessionID)) running.value = new Set(running.value)
     turnStarted.delete(sessionID)
+    answeredAnother.delete(sessionID)
+    noticeWoken.delete(sessionID)
+    liveRetries.delete(sessionID)
+    forgetRunEnded(sessionID)
     if (unseen.value.has(sessionID)) {
       const next = new Set(unseen.value)
       next.delete(sessionID)
@@ -1375,7 +1379,15 @@ export const useApp = defineStore("app", () => {
   const history = ref<{ undo: number; redo: number }>({ undo: 0, redo: 0 })
 
   async function refreshHistory(sessionID: string) {
-    history.value = (await api().request({ type: "session.history", sessionID })).history
+    const result = await api().request({ type: "session.history", sessionID })
+    /*
+     * Left for another conversation while this one was read: its depth is not
+     * this screen's. Two switches in a row issue two reads, and the backend
+     * answers each as it finishes, so the slower one used to land last and
+     * offer the conversation on screen an undo belonging to the one left.
+     */
+    if (currentID.value !== sessionID) return
+    history.value = result.history
   }
 
   /**

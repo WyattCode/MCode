@@ -333,6 +333,8 @@ import { roundThirteenInstanceChecks } from "./smoke-round13-instances"
 import { roundThirteenKeyboardChecks } from "./smoke-round13-keyboard"
 import { roundFourteenLocaleChecks } from "./smoke-round14-locale"
 import { roundFourteenPackagingChecks } from "./smoke-round14-packaging"
+// Round 15, lane R: renderer state and libraries (R15-R1 onwards).
+import { roundFifteenStateChecks } from "./smoke-round15-state"
 // Round 15, lane U2: the settings dialog's rows at the window's minimum width (R15-U21 onwards).
 import { roundFifteenSettingsUiChecks } from "./smoke-round15-ui-settings"
 // skills: discovery, frontmatter and the slash list.
@@ -6968,6 +6970,7 @@ async function main() {
   await roundThirteenKeyboardChecks(check, section)
   await roundFourteenLocaleChecks(check, section)
   await roundFourteenPackagingChecks(check, section)
+  await roundFifteenStateChecks(check, section)
   await roundFifteenSettingsUiChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
