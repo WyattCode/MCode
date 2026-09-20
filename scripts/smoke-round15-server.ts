@@ -156,6 +156,21 @@ export async function roundFifteenServerChecks(check: Check, section: (name: str
 
     // Nothing is recording any more, so the project's store can be taken away with its last conversation.
     check("R15-S2: and the project's checkpoint store can be collected", await snapshots.collect(project))
+
+    /*
+     * The mirror of the same hole, in the opening photograph. Read out of the
+     * source rather than measured: it only happens when the caller gives up
+     * mid-photograph, and the queue's own patience is a minute and a half - an
+     * hour and a half of checks to see it happen once.
+     */
+    const source = await fs.readFile(path.join(process.cwd(), "src", "server", "session", "snapshot.ts"), "utf8")
+    const joining = source.slice(source.indexOf("private joinNow("), source.indexOf("leave(recording: Recording)"))
+    const asks = [...joining.matchAll(/abandoned\(\)/g)].length
+    check("R15-S2: the opening photograph asks again before it starts recording", asks === 2, asks)
+    check(
+      "R15-S2: and asks after the photograph, not only before it",
+      joining.lastIndexOf("abandoned()") > joining.indexOf("this.treeNow()") && joining.lastIndexOf("abandoned()") < joining.indexOf("this.live.add"),
+    )
   }
 
   // ------------------------------------------------------------------ R15-S3
