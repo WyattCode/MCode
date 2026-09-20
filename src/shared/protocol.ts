@@ -353,6 +353,14 @@ export interface UserMessage {
    */
   context?: string[]
   /**
+   * The repeated spans of assistant steps that were taken out of the request
+   * after this message (session/loop-health.ts). Remembered here so a later
+   * turn keeps them out too: once a stretch of the conversation is known to be
+   * a model going round in circles, sending it again only invites more of it.
+   * The transcript is untouched - the user still sees every step.
+   */
+  crops?: MessageCrop[]
+  /**
    * subagents: written by the runner, not the user - what became of background
    * subagents. `text` is what the model reads; the transcript draws pills.
    */
@@ -363,6 +371,15 @@ export interface UserMessage {
    * conversation, named by its title, with its id and whether it asks or answers.
    */
   inbox?: MessageSource
+}
+
+/** A span of assistant steps left out of the request because they repeated one another. */
+export interface MessageCrop {
+  /** The first and last step of the span, inclusive; message ids sort chronologically. */
+  from: string
+  to: string
+  /** What the span shared (session/loop-health.ts `streakKey`); only steps that still match it are dropped. */
+  key: string
 }
 
 export interface MessageSource {

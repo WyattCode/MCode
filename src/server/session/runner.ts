@@ -77,6 +77,7 @@ import { UsageDays } from "./usage-days"
 import type { Usage as TurnUsage } from "@shared/protocol"
 import { ABORTED_TOOL } from "../provider/history"
 import { LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, recallHint, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
+import { LoopMonitor, TEXT_LOOP_BUFFER, applyCrops, describeLoop, detectStreak, stepDigest, textLoopNoteFor, type LoopIncident } from "./loop-health"
 import { interruptedTurn } from "@shared/resume"
 // session chat
 import { CHAT_WAIT_MS, SessionChat, withChatHeaders } from "./chat"
@@ -2272,6 +2273,13 @@ export class SessionRunner {
     const continued = { length: 0, textTool: 0, empty: 0 }
     /* MiMo's n-gram check: how many times this turn has been told to stop repeating itself. */
     let repeated = 0
+    /*
+     * The two checks that watch across steps rather than inside one reply: the
+     * digests of the recent steps, and how many times this turn has been pulled
+     * out of writing the same step again (session/loop-health.ts).
+     */
+    const digests: string[] = []
+    let textLooped = 0
     /* Files attached by path, read once for this turn. */
     const attachmentData: AttachmentCache = new Map()
     for (let step = 0; ; step++) {
@@ -2308,7 +2316,15 @@ export class SessionRunner {
       // session chat: a message from another conversation says so, in the request only; automation: a scheduled task's run says so too.
       // MiMo's pruning comes first, so the older tool output is already trimmed before anything is framed around it.
       // MiMo's recall hint: a conversation with memory or tasks is told, each step, where to look before asking.
-      const chatted = withRecallHint(withAutomationNotes(withChatHeaders(prunedHistory(this.contextFor(session, stored), pruneLevel))), await this.recallFor(session))
+      /*
+       * MiMo's loop-streak crop: a stretch of steps that all did the same thing
+       * is dropped from the request before anything else is built around it.
+       * Telling a model to change course in a request three quarters made of
+       * the course it is on rarely lands; taking the repetition out does.
+       */
+      const crops = stored.flatMap((message) => (message.role === "user" ? (message.crops ?? []) : []))
+      const cropped = applyCrops(this.contextFor(session, stored), crops)
+      const chatted = withRecallHint(withAutomationNotes(withChatHeaders(prunedHistory(cropped, pruneLevel))), await this.recallFor(session))
       // MiMo: from a turn's second step on, what the user sent meanwhile is framed as sent mid-task;
       // skills: what a message loaded follows it, after the framing so it is never taken for typed words;
       // this turn's continuation notes follow the replies they answer; and three identical steps
@@ -2541,6 +2557,24 @@ export class SessionRunner {
         await this.store.saveMessage(assistant)
         return
       }
+
+      /*
+       * MiMo's text-loop recovery, which watches whole steps where the n-gram
+       * check watches inside one: the same step written out again, three times
+       * over, is a model that has run out of ideas rather than one making slow
+       * progress. Two notes at most, then the streak crop below takes over.
+       */
+      if (replied.trim()) {
+        digests.push(stepDigest(replied))
+        if (digests.length > TEXT_LOOP_BUFFER) digests.shift()
+        const textNote = textLoopNoteFor(digests, textLooped)
+        if (textNote) {
+          textLooped += 1
+          notes.set(assistant.id, [...(notes.get(assistant.id) ?? []), textNote])
+          digests.length = 0
+        }
+      }
+      await this.cropStreak(sessionID)
 
       const pending = assistant.parts.filter((part): part is ToolPart => part.type === "tool")
       if (outcome.stop !== "tool_use" || pending.length === 0) {
@@ -3218,20 +3252,56 @@ export class SessionRunner {
   /** Tools a conversation said to always let repeat, by session: MiMo's `always` on its doom-loop ask. */
   private readonly repeatsAllowed = new Map<string, Set<string>>()
 
+  /** What each running conversation's tool calls are adding up to (session/loop-health.ts). */
+  private readonly loopMonitors = new Map<string, LoopMonitor>()
+
   /**
-   * MiMo's doom-loop check. The third call in a row with the same tool and the
-   * same input stops and asks: once lets it run, always lets that tool repeat
-   * for the rest of the conversation, and a refusal - or typed feedback, or
-   * dismissing the question - refuses the call, which stops the turn as a
-   * refused permission does.
+   * The crop MiMo makes once a turn has been going round for three finished
+   * steps: the whole repeated span is remembered on the user message that
+   * opened it, and every request from here on leaves it out. Nothing is
+   * deleted - the transcript still shows every step the model took.
+   */
+  private async cropStreak(sessionID: string): Promise<void> {
+    const session = await this.store.get(sessionID)
+    if (!session) return
+    const stored = this.liveMessages(session, await this.store.messages(sessionID))
+    const finished = stored.filter(
+      (message): message is AssistantMessage => message.role === "assistant" && (message.finish !== undefined || message.time.completed !== undefined),
+    )
+    const span = detectStreak(finished)
+    if (!span) return
+    const anchor = [...stored].reverse().find((message): message is UserMessage => message.role === "user" && message.id < span.from)
+    if (!anchor) return
+    if ((anchor.crops ?? []).some((crop) => crop.from === span.from && crop.to === span.to && crop.key === span.key)) return
+    await this.store.saveMessage({ ...anchor, crops: [...(anchor.crops ?? []), span] })
+  }
+
+  /**
+   * MiMo's doom-loop check, in its four kinds.
+   *
+   * MCode used to notice only the first of them - three calls in a row with
+   * byte-identical arguments - which never catches the two that actually cost
+   * a user their turn: the same fix written to one file over and over with
+   * cosmetic differences, and one failing command retried after every attempt
+   * to appease it. The fourth kind, four fruitless actions of one sort in a
+   * row, catches a turn hunting for a file that is not there.
+   *
+   * All four raise the same question: once lets it run, always lets that tool
+   * repeat for the rest of the conversation, and a refusal - or typed
+   * feedback, or dismissing the question - refuses the call, which stops the
+   * turn as a refused permission does.
    */
   private async checkRepeated(part: ToolPart, assistant: AssistantMessage, sessionID: string, signal: AbortSignal): Promise<void> {
-    if (!repeatsCall(assistant.parts, part) || this.repeatsAllowed.get(sessionID)?.has(part.name)) return
+    const monitor = this.loopMonitors.get(sessionID) ?? this.loopMonitors.set(sessionID, new LoopMonitor()).get(sessionID)!
+    const incident: LoopIncident | undefined = repeatsCall(assistant.parts, part) ? { kind: "same-call", tool: part.name } : monitor.consume(part)
+    if (!incident || this.repeatsAllowed.get(sessionID)?.has(part.name)) return
+    // Asked once per incident: the count starts again whatever the answer, so one `once` does not ask again immediately.
+    monitor.reset()
     const [answer] = await this.questions.ask({
       sessionID,
       questions: [
         {
-          question: `${part.name} has been called three times in a row with the same input. Let it run again?`,
+          question: `${describeLoop(incident)} Let it run again?`,
           header: part.name,
           options: [
             { label: LOOP_ANSWERS.once, description: "" },
@@ -3929,6 +3999,7 @@ export class SessionRunner {
     this.taskQueues.delete(sessionID)
     this.retrying.delete(sessionID)
     this.repeatsAllowed.delete(sessionID)
+    this.loopMonitors.delete(sessionID)
     // Dropped in deliverWorktreeNotice, but only for a conversation that got as far as being told.
     this.worktreeHits.delete(sessionID)
     for (const key of [...this.numbering.keys()]) if (key.startsWith(`${sessionID}:`)) this.numbering.delete(key)
