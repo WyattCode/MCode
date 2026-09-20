@@ -346,6 +346,8 @@ import { roundFifteenToolChecks } from "./smoke-round15-tools"
 import { roundFifteenSettingsUiChecks } from "./smoke-round15-ui-settings"
 // Round 15, fix lane U3: the interface font size and the boxes around the type (R15-U3-1 onwards).
 import { roundFifteenFontScaleChecks } from "./smoke-round15-font-scale"
+// Round 16, lane C: the remaining code-handling gaps and the two approval relaxations (R16-C1 onwards).
+import { roundSixteenToolChecks } from "./smoke-round16-tools"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7006,6 +7008,7 @@ async function main() {
   await roundFifteenToolChecks(check, section)
   await roundFifteenSettingsUiChecks(check, section)
   await roundFifteenFontScaleChecks(check, section)
+  await roundSixteenToolChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

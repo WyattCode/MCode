@@ -16,11 +16,18 @@ import { killTree } from "../kill-tree"
 
 const DEFAULT_TIMEOUT = 120_000
 
-/** What a command declaring itself interactive is answered with, since there is no terminal to hand over. */
+/**
+ * What a command declaring itself interactive is answered with, since there is
+ * no terminal to hand over.
+ *
+ * Chinese, as every model-facing string of MiMo's is: this is the model's half
+ * of the conversation, and the reader never sees it. What the reader sees is a
+ * notice of its own, once per conversation, through the language tables.
+ */
 export const INTERACTIVE_REFUSAL = [
-  "This environment has no interactive terminal, so the command was not run and nothing was changed.",
-  "Run it without interaction instead: pass its confirmation flag (-y, --yes, -Force, -Confirm:$false), feed the answers in through a pipe, or use an equivalent command that needs no input.",
-].join(" ")
+  "当前环境没有交互式终端，这条命令没有执行，也没有改动任何东西。",
+  "请改用不需要输入的方式重试：带上自动确认参数（-y、--yes、-Force、-Confirm:$false），用管道把答案喂进去，或者换一条不需要人回答的等效命令。",
+].join("")
 /** How much output comes back inline when the call does not say, in MiMo's approximate tokens of four bytes. */
 const DEFAULT_MAX_OUTPUT_TOKENS = 30_000
 /** How much of the latest output the card shows while the command works. */

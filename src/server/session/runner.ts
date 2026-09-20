@@ -3128,6 +3128,8 @@ export class SessionRunner {
       if (result.attachments?.length) part.attachments = result.attachments
       // MiMo's auto-worktree notice: the first change a conversation makes to a repository's main worktree is noted.
       await this.noteWorktreeChange(owner, part, input.session.directory)
+      // MiMo's interactive notice: the reader is told once why a command that wanted to be typed at was skipped.
+      await this.noteInteractiveRefusal(owner, part)
     } catch (err) {
       part.status = "error"
       // Tool failures are told to the model as text so it can adapt; only
@@ -3164,6 +3166,26 @@ export class SessionRunner {
      */
     // subagents: a refusal inside a subagent stops the turn it works for, and so every subagent in it.
     if (refusedByUser) this.abort(owner)
+  }
+
+  /**
+   * MiMo's interactive notice: a command that declared itself interactive was
+   * answered rather than run, and the reader is told so once per conversation.
+   *
+   * The model already has its own sentence in the tool result. What was missing
+   * was the reader's half: the card said the command failed and nothing said
+   * why, or that it was this app's doing rather than the command's. MiMo pushes
+   * one `kind: "notice"` per engine session on the first such call and sets
+   * `interactiveNotified`; this is the same, kept on the conversation so a
+   * reload does not bring it back, and filed under the owner so a subagent's
+   * refusal does not raise a second one.
+   */
+  private async noteInteractiveRefusal(sessionID: string, part: ToolPart): Promise<void> {
+    if (part.name !== "bash" || part.metadata?.interactive !== true) return
+    const session = await this.store.get(sessionID)
+    if (!session || session.interactiveNotice) return
+    await this.store.update(sessionID, { interactiveNotice: true })
+    this.bus.publish({ type: "session.notice", sessionID, code: "toast.bashInteractive" })
   }
 
   /** A conversation's first change to a repository's main worktree, waiting for the next step to note it. */

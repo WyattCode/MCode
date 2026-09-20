@@ -28,6 +28,8 @@ export interface SessionInfo {
   titleSource?: "fallback" | "generated" | "user"
   /** MiMo's `auto_worktree_hint_sent`: the one note about changing a repository's main worktree has gone to the model. */
   worktreeNotice?: boolean
+  /** MiMo's `interactiveNotified`: the reader has been told once that a command wanting to be typed at was skipped. */
+  interactiveNotice?: boolean
   /** Absolute path of the project directory this session operates in. */
   directory: string
   model: ModelRef
@@ -2391,6 +2393,16 @@ export type ServerEvent =
   | { type: "session.compacting"; sessionID: string; active: boolean }
   /** `errorCode`, when present, names the sentence the window shows instead of `error`. */
   | { type: "session.error"; sessionID: string; error: string; errorCode?: string; errorParams?: Record<string, string | number> }
+  /**
+   * Something happened in a conversation that the reader is told about once,
+   * and that is not a failure of the turn: MiMo's `kind: "notice"` harness
+   * event, which its window shows and then forgets.
+   *
+   * `code` names the sentence in the window's own tables rather than carrying
+   * it, so the notice is in the reader's language and no model-facing wording
+   * reaches the screen.
+   */
+  | { type: "session.notice"; sessionID: string; code: string }
   | { type: "message.updated"; message: Message }
   /**
    * Messages have left the transcript for good.

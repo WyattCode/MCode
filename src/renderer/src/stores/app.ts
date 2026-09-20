@@ -762,6 +762,16 @@ export const useApp = defineStore("app", () => {
         if (isSide(event.sessionID)) setSideError(event.sessionID, said)
         break
       }
+      /*
+       * A notice the backend raised for a conversation, said in the reader's
+       * language: MiMo's `kind: "notice"` harness event. The backend raises
+       * each at most once per conversation, and the id keeps a second window
+       * from stacking a duplicate of the same one.
+       */
+      case "session.notice": {
+        notice.warning(t(event.code), { id: `${event.code}:${event.sessionID}` })
+        break
+      }
       case "permission.requested": {
         // subagents: filed under the conversation a subagent works for, so its dock and its row show it.
         const key = rootOf(event.request.sessionID)

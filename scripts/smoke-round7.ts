@@ -163,7 +163,8 @@ export async function roundSevenChecks(check: Check, section: (name: string) => 
     const took = Date.now() - at
     check("it comes back at once rather than after two minutes", took < 2000, took)
     check("the model is told there is no terminal to hand over", answer.output === INTERACTIVE_REFUSAL, answer.output)
-    check("and told what to do instead", INTERACTIVE_REFUSAL.includes("--yes") && INTERACTIVE_REFUSAL.includes("pipe"))
+    // R16-C1: the sentence the model reads is Chinese now, as MiMo's is; the reader's half is a notice of its own.
+    check("and told what to do instead", INTERACTIVE_REFUSAL.includes("--yes") && INTERACTIVE_REFUSAL.includes("管道"))
     check("it is recorded as a command that failed", answer.metadata?.exit === 1, answer.metadata)
     check("and nothing was run", answer.metadata?.interactive === true)
   }
