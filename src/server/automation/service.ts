@@ -206,6 +206,8 @@ interface ClockSample {
 export interface AutomationDeps {
   file: string
   now(): number
+  /** How often the service checks; the checks shorten it. */
+  tickMs?: number
   sessions: {
     get(sessionID: string): Promise<SessionInfo | undefined>
     create(input: { directory: string; model: ModelRef; agent?: AgentName; title?: string; scratch?: boolean }): Promise<SessionInfo>
@@ -448,7 +450,7 @@ export class AutomationService {
     if (settled) void this.save()
     for (const automation of this.saved.automations) this.plan(automation, true)
     if (options.interval === false) return
-    this.interval = setInterval(() => void this.tick(), TICK_MS)
+    this.interval = setInterval(() => void this.tick(), this.deps.tickMs ?? TICK_MS)
     this.interval.unref?.()
   }
 
@@ -852,8 +854,12 @@ export class AutomationService {
      * A clock that jumped makes every moment already worked out meaningless, so
      * they are worked out again from now and this check scans nothing: what was
      * missed while the machine slept is missed, not fired all at once.
+     *
+     * Only while the checks are the service's own, once a second. A caller that
+     * drives `tick()` itself decides when each check happens, so the gap
+     * between two of them says nothing about the clock.
      */
-    const clock = this.sampleClock()
+    const clock = this.interval ? this.sampleClock() : undefined
     if (clock) {
       const jumped = this.lastClock !== undefined && this.clockJumped(this.lastClock, clock)
       this.lastClock = clock

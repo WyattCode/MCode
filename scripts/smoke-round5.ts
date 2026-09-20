@@ -1141,7 +1141,11 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       e.replies.push(calls([{ name: "write", input: { file_path: "other.txt", content: "x" } }]))
       await e.runner.prompt({ sessionID: linked.id, text: "WORKTREE linked" })
       await e.idle(linked.id)
-      check("with linked worktrees already there, it says to work in a new one", wireText(e.bodies.at(-1)).includes("create a new worktree for the task"))
+      // R17-W10: with worktrees already in use it is told to move without asking, and to move before writing.
+      check(
+        "with linked worktrees already there, it says to make one and move into it without asking",
+        wireText(e.bodies.at(-1)).includes("make a worktree for this task and move into it") && wireText(e.bodies.at(-1)).includes("do not need to ask"),
+      )
 
       const reads = await e.store.create({ directory: e.project, model: e.model })
       e.replies.push(calls([{ name: "glob", input: { pattern: "*" } }]))

@@ -470,7 +470,7 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     const runner = await read("src/server/session/runner.ts")
     check("only the streaming half-second saves skip the flush", /if \(durable\) await handle\.sync\(\)/.test(storageSource) && /void this\.store\.saveMessage\(assistant, true, false\)/.test(runner) && (runner.match(/saveMessage\([^)]*, false\)/g) ?? []).length === 1)
     const handlers = await read("src/server/handlers.ts")
-    const forget = runner.slice(runner.indexOf("forgetSession(sessionID: string): void {"), runner.indexOf("forgetSession(sessionID: string): void {") + 500)
+    const forget = runner.slice(runner.indexOf("forgetSession(sessionID: string): void {"), runner.indexOf("forgetSession(sessionID: string): void {") + 700)
     check(
       "a deleted conversation's per-conversation state goes with it",
       ["turnPrune", "turnAgents", "prefixes", "taskQueues", "numbering"].every((field) => forget.includes(`this.${field}`)) && /runtime\.runner\.forgetSession\(request\.sessionID\)/.test(handlers),

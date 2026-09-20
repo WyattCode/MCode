@@ -358,6 +358,8 @@ import { roundSixteenGoalChecks } from "./smoke-round16-goal"
 import { roundSixteenWidgetChecks } from "./smoke-round16-widget"
 // Round 16, fix lane E2: a reply the output limit cut in two, and the day the model is told it is (R16-E2-1 onwards).
 import { roundSixteenContinuationChecks } from "./smoke-round16-continuation"
+// Round 17, lane W: version control, review, worktrees, subagents and scheduled tasks (R17-W1 onwards).
+import { roundSeventeenWorkflowChecks } from "./smoke-round17-workflow"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -2230,7 +2232,9 @@ async function main() {
       parts: [
         tool("t1", "edit", { path: "kept.txt", diff: unifiedDiff("kept.txt", "one\n2\nthree\n", "one\ntwo\nthree\n") }),
         tool("t2", "write", { path: "made.txt", created: true, diff: unifiedDiff("made.txt", "", "brand new\n") }),
-        tool("t3", "write", { path: "../escape.txt", diff: unifiedDiff("../escape.txt", "", "x\n") }),
+        // An edit outside the project: nothing here can put it back, so it is left and counted (R17-W6 reads
+        // a create-shaped patch as a creation now, so this one is shaped like the edit it is meant to be).
+        tool("t3", "edit", { path: "../escape.txt", diff: unifiedDiff("../escape.txt", "old\n", "x\n") }),
       ],
       time: { created: 0 },
     }
@@ -2270,7 +2274,7 @@ async function main() {
         tool("g2", "edit", { path: "moved.txt", diff: unifiedDiff("moved.txt", "alpha\nbeta\ngamma\n", "alpha\nBETA\ngamma\n") }),
         tool("g3", "edit", { path: "gone.txt", diff: unifiedDiff("gone.txt", "first\nsecond\n", "first\nSECOND\n") }),
         tool("g4", "write", { path: "made.txt", created: true, diff: unifiedDiff("made.txt", "", "brand new\n") }),
-        tool("g5", "write", { path: "../escape.txt", diff: unifiedDiff("../escape.txt", "", "x\n") }),
+        tool("g5", "edit", { path: "../escape.txt", diff: unifiedDiff("../escape.txt", "old\n", "x\n") }),
       ],
     }
     /* Since the turn: lines added above one file's hunk, and another rewritten past recognising. */
@@ -7004,6 +7008,7 @@ async function main() {
   await roundSixteenGoalChecks(check, section)
   await roundSixteenWidgetChecks(check, section)
   await roundSixteenContinuationChecks(check, section)
+  await roundSeventeenWorkflowChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
