@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue"
+import { turnOpeners } from "@shared/steer"
 import { useApp } from "../stores/app"
 import { renderMarkdown } from "../lib/markdown"
 import { spineNote } from "../lib/sound"
@@ -50,24 +51,34 @@ function firstSentence(text: string): string {
 
 /*
  * Grouped the way the transcript groups them, so tick N is the Nth element
- * carrying data-turn: a user message opens a turn, and assistant messages
- * before any user message open one of their own.
+ * carrying data-turn: assistant messages before any user message open a turn
+ * of their own, and of the user's messages only the ones the transcript opens
+ * a turn with do - never the app's own synthetic word that a plan was
+ * approved, and never news of a subagent, which stays inside the turn it
+ * reached. A tick for either would point at nothing and would show the
+ * reader what the runner wrote to the model as though it were a question.
  */
 const stops = computed<Stop[]>(() => {
   const out: Stop[] = []
+  const openers = turnOpeners(app.visible, !app.busy)
+  let current: Stop | undefined
   for (const message of app.visible) {
     if (message.role === "user") {
-      out.push({ id: message.id, question: (message.text ?? "").trim().split("\n")[0].slice(0, 140), answer: "", tools: [] })
+      if (message.synthetic) continue
+      if (current && !openers.has(message.id)) continue
+      // A notice is the runner's words to the model, not a question: the card leaves it out as the transcript does.
+      const text = message.notices?.length ? "" : (message.text ?? "")
+      current = { id: message.id, question: text.trim().split("\n")[0].slice(0, 140), answer: "", tools: [] }
+      out.push(current)
       continue
     }
-    let stop = out[out.length - 1]
-    if (!stop) {
-      stop = { id: message.id, question: "", answer: "", tools: [] }
-      out.push(stop)
+    if (!current) {
+      current = { id: message.id, question: "", answer: "", tools: [] }
+      out.push(current)
     }
     for (const part of message.parts) {
-      if (part.type === "text" && !stop.answer && part.text.trim()) stop.answer = firstSentence(part.text)
-      else if (part.type === "tool" && !stop.tools.includes(part.name)) stop.tools.push(part.name)
+      if (part.type === "text" && !current.answer && part.text.trim()) current.answer = firstSentence(part.text)
+      else if (part.type === "tool" && !current.tools.includes(part.name)) current.tools.push(part.name)
     }
   }
   return out
