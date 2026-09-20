@@ -119,4 +119,23 @@ export async function roundFifteenMainChecks(check: Check, section: (name: strin
     check("twelve panels came and went without the panel outliving its last tab", listeners?.hasPanel === false, listeners)
     check("the window gained one closed listener for all of them", listeners !== undefined && listeners.closed === listeners.start + 1, listeners)
   }
+
+  section("Round 15 (M15-5): the tray's profile switch waits for a page that can hear it")
+  {
+    const tray = seen.tray
+    check("a message sent at a window that has just been made is lost (why this is needed)", (tray?.lost ?? ["kept"]).length === 0, tray)
+    check("the same message sent once the page has loaded arrives", (tray?.arrived ?? []).length === 1, tray)
+
+    // The tray's menu is module-local, so this one is read rather than driven.
+    const main = await read("src/main/index.ts")
+    const click = /click: \(\) => \{\s*if \(closing\) return\s*deliverTrayProfile\(entry\.key\)\s*\}/.test(main)
+    check("the tray's profile rows hand the key to deliverTrayProfile (source check)", click, main.match(/if \(closing\) return[\s\S]{0,120}/)?.[0])
+    const body = main.slice(main.indexOf("function deliverTrayProfile"), main.indexOf("function deliverTrayProfile") + 600)
+    check(
+      "which sends at a ready window, and otherwise waits for the new one's did-finish-load (source check)",
+      /const ready = readyWindow\(\)/.test(body) && /currentWindow\(\) \?\? createWindow\(\)/.test(body) && /once\("did-finish-load"/.test(body),
+      body.slice(0, 400),
+    )
+    check("and nothing else sends mcode:tray-profile straight at a window it just made", (main.match(/send\("mcode:tray-profile"/g) ?? []).length === 2, main.match(/.{60}send\("mcode:tray-profile".{20}/g))
+  }
 }

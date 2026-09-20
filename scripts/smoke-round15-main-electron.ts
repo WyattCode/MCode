@@ -3,7 +3,7 @@
  * and the office file watches, driven through the real `src/main/browser.ts`
  * and `src/main/office.ts` rather than read as text.
  *
- * Bundled to a .cjs and started as Electron's main script by
+ * Bundled to a .mjs and started as Electron's main script by
  * smoke-round15-main.ts, with a throwaway user-data folder. What happened is
  * written as JSON to the file named in argv: a GUI process has no stdout the
  * parent can read.
@@ -196,6 +196,39 @@ app.whenReady().then(async () => {
     }
     window.destroy()
     await wait(300)
+  }
+
+  // ------------------------------------------------------------------- M15-5
+  {
+    /*
+     * Why the tray's switch may not be sent at the window it has just made:
+     * a page that is not there yet hears nothing, and Electron queues no
+     * message for it. The same send from did-finish-load arrives.
+     */
+    const straight = new BrowserWindow({ show: false, width: 400, height: 300, webPreferences: { preload: path.join(work, "preload.js"), contextIsolation: false, sandbox: false } })
+    void straight.loadURL(host)
+    straight.webContents.send("mcode:file-changed", "sent-at-once")
+    await new Promise<void>((resolve) => {
+      straight.webContents.once("did-finish-load", () => resolve())
+      setTimeout(resolve, 15_000)
+    })
+    await wait(300)
+    const lost = (await straight.webContents.executeJavaScript("window.hits")) as string[]
+
+    const queued = new BrowserWindow({ show: false, width: 400, height: 300, webPreferences: { preload: path.join(work, "preload.js"), contextIsolation: false, sandbox: false } })
+    void queued.loadURL(host)
+    queued.webContents.once("did-finish-load", () => queued.webContents.send("mcode:file-changed", "sent-when-loaded"))
+    await new Promise<void>((resolve) => {
+      queued.webContents.once("did-finish-load", () => resolve())
+      setTimeout(resolve, 15_000)
+    })
+    await wait(300)
+    result.tray = {
+      lost,
+      arrived: (await queued.webContents.executeJavaScript("window.hits")) as string[],
+    }
+    straight.destroy()
+    queued.destroy()
   }
 
   finish()

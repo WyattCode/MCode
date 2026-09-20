@@ -93,7 +93,11 @@ export async function roundThirteenInstanceChecks(check: Check, section: (name: 
     check("queued once, as app.relaunch with the handed-over arguments", /if \(relaunchQueued\) return/.test(queue) && /app\.relaunch\(\{ args: relaunchArgs\(argv\) \}\)/.test(queue), queue)
     check("a macOS link while quitting is queued the same way", /if \(closing\) return relaunchAfterQuit\(\[process\.execPath, url\]\)/.test(body(main, 'app.on("open-url", (event, url) => {')))
     check("the tray's Open does nothing while quitting", /const open = \(\) => \{\s*if \(!closing\) activate\(raise\)/.test(main))
-    check("nor does a tray profile switch, which would build a window", /click: \(\) => \{\s*if \(closing\) return\s*const window = currentWindow\(\) \?\? createWindow\(\)/.test(main))
+    // The window that switch may build is deliverTrayProfile's now (R15-M5); the guard is still the row's own.
+    check(
+      "nor does a tray profile switch, which would build a window",
+      /click: \(\) => \{\s*if \(closing\) return\s*deliverTrayProfile\(entry\.key\)/.test(main) && /function deliverTrayProfile[\s\S]{0,400}currentWindow\(\) \?\? createWindow\(\)/.test(main),
+    )
     check("nor does the Dock's activate", /^\{\s*if \(closing\) return/.test(body(main, 'app.on("activate", () => {')))
   }
 
