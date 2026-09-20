@@ -945,7 +945,8 @@ const noteInside = (target: Node) => Boolean(rootEl.value?.contains(target))
 
 <template>
   <div ref="rootEl" class="pdf-view" data-pdf-view @pointerup="onPointerUp" @wheel.passive="onWheel">
-    <div ref="scroller" class="office-sel" data-pdf-scroll @scroll="onScroll">
+    <!-- The pages are content, as MiMo marks them: Ctrl+A takes the document, not the whole window. -->
+    <div ref="scroller" class="office-sel" data-selectable="content" data-pdf-scroll @scroll="onScroll">
       <div v-if="count > 0" ref="pagesEl" class="pdf-pages">
         <div
           v-for="(height, index) in heights"
