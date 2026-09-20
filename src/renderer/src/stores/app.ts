@@ -700,8 +700,6 @@ export const useApp = defineStore("app", () => {
         break
       }
       case "automation.run": {
-        // A run that is only waiting for a busy conversation has not started and has not ended.
-        if (event.phase === "queued") break
         const runs = new Set(automationRuns.value)
         if (event.phase === "started") runs.add(event.sessionID)
         else {

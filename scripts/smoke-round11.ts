@@ -184,22 +184,26 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     check("and the window is told it was a failure, not a completion", told.at(-1)?.type === "automation.run" && told.at(-1)?.outcome === "failed" && told.at(-1)?.notify === true, told.at(-1))
     check("the schedule still moved on rather than retrying the same minute for ever", (service.dueAt(id) ?? 0) > clock)
 
-    // A run that waits for a busy conversation, until the next one comes due.
+    /*
+     * A busy conversation is a run that did not happen (R17-W20): MiMo records
+     * it as skipped for target-busy at the first attempt rather than holding it
+     * for a conversation that may never fall idle. The schedule still moves on
+     * by itself, which is what N11-22 was about.
+     */
     promptThrows = undefined
     busy = true
     events.length = 0
+    const beforeBusy = service.list()[0]?.runHistory?.length ?? 0
     clock = (service.dueAt(id) ?? 0) + 1000
     await service.tick()
-    check("a busy conversation makes the run wait and say so", events.some((event) => event.type === "automation.run" && event.phase === "queued"))
-    const waitingRecords = service.list()[0]?.runHistory?.length ?? 0
-    clock = (service.dueAt(id) ?? 0) + 1000
-    await service.tick()
-    const gaveUp = service.list()[0]?.runHistory?.at(-1)
+    const skipped = service.list()[0]?.runHistory?.at(-1)
     check(
-      "and once the next run comes due the waiting one is given up on, recorded and reported",
-      (service.list()[0]?.runHistory?.length ?? 0) > waitingRecords && gaveUp?.status === "skipped" && /stayed busy/.test(gaveUp?.error ?? ""),
-      gaveUp,
+      "a busy conversation skips the run at once, recorded under MiMo's reason",
+      (service.list()[0]?.runHistory?.length ?? 0) > beforeBusy && skipped?.status === "skipped" && skipped?.errorCode === "target-busy",
+      skipped,
     )
+    check("and it is not left in the queue for later", service.queued === 0, service.queued)
+    check("the schedule moved on by itself", (service.dueAt(id) ?? 0) > clock)
     await service.stop()
 
     // What is on disk is enough to start the waiting run again after a quit.

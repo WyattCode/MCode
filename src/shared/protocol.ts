@@ -2495,8 +2495,7 @@ export type ServerEvent =
   | {
       type: "automation.run"
       sessionID: string
-      /** `queued` says the run is due but its conversation is busy, so it is waiting rather than lost (N11-22). */
-      phase: "started" | "queued" | "finished"
+      phase: "started" | "finished"
       notify?: boolean
       /** What became of the run, so the notification can say a failure is a failure (N11-3). */
       outcome?: "succeeded" | "failed" | "skipped"

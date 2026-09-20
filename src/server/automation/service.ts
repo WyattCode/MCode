@@ -74,8 +74,6 @@ export interface RunRecord {
   errorCode?: RunReason
   /** Set once the user has been told about a run that did not finish. */
   reported?: boolean
-  /** Set on a record opened while the run was still waiting for a busy conversation (N11-22). */
-  queuedAt?: number
 }
 
 /**
@@ -150,8 +148,8 @@ const RUNS_KEPT = 20
 const SETTLED_RUNS_KEPT = 64
 /** What a run that the app ended is recorded as. */
 const CLOSED_MID_RUN = "The app closed before the run finished."
-/** What a run waiting on a busy conversation is recorded as once a newer run of the same task comes due. */
-const TARGET_STAYED_BUSY = "The conversation this task runs in stayed busy until the next run came due."
+/** What a run still in the queue is recorded as when a newer run of the same task comes due. */
+const OVERTAKEN = "A newer run of this task came due before this one could start."
 /** What a run that could never be started is recorded as, once its attempts are used up. */
 const COULD_NOT_START = "The run could not be started."
 const TICK_MS = 1000
@@ -264,8 +262,6 @@ export class AutomationService {
   private readonly starting = new Set<string>()
   /** Due runs waiting to start, under leases, so none is lost to a failure or a kill (N11-2). */
   private readonly queue = new RunQueue()
-  /** Runs already announced as waiting, so a busy conversation is said once rather than every second. */
-  private readonly announcedQueued = new Set<string>()
   /**
    * The last few run ids that were settled, so one handed out twice is not run
    * twice - MiMo keeps the same bounded ring. A lease can run out while the
@@ -487,6 +483,11 @@ export class AutomationService {
 
   dueAt(id: string): number | undefined {
     return this.next.get(id)
+  }
+
+  /** How many runs are still waiting to start, for the checks. */
+  get queued(): number {
+    return this.queue.size
   }
 
   private save(): Promise<void> {
@@ -817,8 +818,7 @@ export class AutomationService {
       // A run still waiting when the next one comes due has waited long enough; it is given up on and said so.
       for (const waiting of this.queue.forAutomation(id)) {
         this.queue.drop(waiting.runId)
-        this.announcedQueued.delete(waiting.runId)
-        this.settleQueuedRecord(automation, waiting, TARGET_STAYED_BUSY)
+        this.settleQueuedRecord(automation, waiting, OVERTAKEN)
         dirty = true
       }
       this.queue.enqueue({ runId: RunQueue.runIdFor(id, at), automationID: id, scheduledFor: at, scheduleFingerprint: fingerprint, source: "schedule" })
@@ -838,7 +838,6 @@ export class AutomationService {
         this.skipRun(automation, COULD_NOT_START, gone)
         this.tellAbout(automation, undefined, "skipped")
       }
-      this.announcedQueued.delete(gone.runId)
       dirty = true
     }
 
@@ -891,21 +890,12 @@ export class AutomationService {
         continue
       }
       this.starting.add(entry.automationID)
-      let outcome: "started" | "skipped" | "waiting" | "failed" = "failed"
+      let outcome: "started" | "skipped" | "failed" = "failed"
       try {
         outcome = await this.run(automation, entry)
       } finally {
         this.starting.delete(entry.automationID)
       }
-      if (outcome === "waiting") {
-        this.queue.report(entry.runId, entry.deliveryGeneration, "later")
-        if (!this.announcedQueued.has(entry.runId)) {
-          this.announcedQueued.add(entry.runId)
-          this.deps.publish({ type: "automation.run", sessionID: automation.targetThreadId ?? "", phase: "queued" })
-        }
-        continue
-      }
-      this.announcedQueued.delete(entry.runId)
       // Started, skipped or failed: either way this entry is finished with, and the failure has been recorded.
       this.queue.report(entry.runId, entry.deliveryGeneration, "settled")
       this.noteSettled(entry.runId)
@@ -924,9 +914,9 @@ export class AutomationService {
     }
   }
 
-  /** Records a run that waited for a busy conversation until it was too late, and tells the user by the task's policy. */
+  /** Records a run a newer one of the same task overtook, and tells the user by the task's policy. */
   private settleQueuedRecord(automation: Automation, run: QueuedRun, why: string): void {
-    this.skipRun(automation, why, run, "target-busy")
+    this.skipRun(automation, why, run, "overlap")
     this.tellAbout(automation, automation.targetThreadId, "skipped")
   }
 
@@ -973,7 +963,7 @@ export class AutomationService {
     return offered ? undefined : "model-unavailable"
   }
 
-  private async run(automation: Automation, entry: QueuedRun): Promise<"started" | "skipped" | "waiting" | "failed"> {
+  private async run(automation: Automation, entry: QueuedRun): Promise<"started" | "skipped" | "failed"> {
     const inbox = { from: automation.title, automationID: automation.id }
     if (automation.runMode === "existing-task") {
       const target = automation.targetThreadId ? await this.deps.sessions.get(automation.targetThreadId) : undefined
@@ -982,7 +972,19 @@ export class AutomationService {
         this.tellAbout(automation, automation.targetThreadId, "skipped")
         return "skipped"
       }
-      if (this.deps.busy(target.id)) return "waiting"
+      /*
+       * MiMo skips this run rather than holding it. A conversation that is busy
+       * at the minute the task asked for is a run that did not happen, and the
+       * sentence it shows the user says so - 本次已跳过, 请稍后重试. Holding it
+       * meant the run could land minutes or hours after the time the user
+       * chose, and only if the conversation happened to fall idle before the
+       * next occurrence came due.
+       */
+      if (this.deps.busy(target.id)) {
+        this.skipRun(automation, "The conversation this task runs in was busy.", entry, "target-busy")
+        this.tellAbout(automation, target.id, "skipped")
+        return "skipped"
+      }
       this.runs.set(target.id, structuredClone(automation))
       this.openRun(automation, target.id, entry)
       this.deps.publish({ type: "automation.run", sessionID: target.id, phase: "started" })

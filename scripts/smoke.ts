@@ -9842,21 +9842,25 @@ async function automationChecks(root: string, project: string) {
   check("resume plans the next one", service.dueAt("auto-1") === new Date(2026, 0, 3, 9, 0).getTime())
   check("view shows one task and an unknown id is refused", (await call({ mode: "view", id: "auto-1" })).automation.title === "Daily digest" && (await fails({ mode: "view", id: "auto-9" }, /no scheduled task/i)))
 
-  // Runs: in the existing conversation, waiting while it is busy; a new conversation; a missing target skipped.
+  // Runs: in the existing conversation, skipped while it is busy; a new conversation; a missing target skipped.
   clock = new Date(2026, 0, 3, 9, 0, 1).getTime()
   busy.add(home.id)
   await service.tick()
-  // N11-2/N11-22: the run waits in the queue and says so, while the schedule itself moves on to the next occurrence.
+  // R17-W20: a conversation busy at the minute the task asked for is a run that did not happen, as MiMo records it.
   check(
-    "a run waits while its conversation is busy",
-    prompts.length === 0 && service.dueAt("auto-1") === new Date(2026, 0, 4, 9, 0).getTime() && events.some((event) => event.type === "automation.run" && event.phase === "queued"),
-    { due: service.dueAt("auto-1"), events: events.filter((event) => event.type === "automation.run") },
+    "a run whose conversation is busy is skipped at once, and the schedule moves on",
+    prompts.length === 0 &&
+      service.dueAt("auto-1") === new Date(2026, 0, 4, 9, 0).getTime() &&
+      service.list()[0]?.runHistory?.at(-1)?.errorCode === "target-busy" &&
+      service.queued === 0,
+    { due: service.dueAt("auto-1"), last: service.list()[0]?.runHistory?.at(-1) },
   )
   busy.delete(home.id)
+  clock = new Date(2026, 0, 4, 9, 0, 1).getTime()
   await service.tick()
   check(
-    "then runs its prompt there, marked as the task's, and plans the next day",
-    prompts.length === 1 && prompts[0]?.sessionID === home.id && prompts[0]?.text === "Summarise the day" && JSON.stringify(prompts[0]?.inbox) === JSON.stringify({ from: "Daily digest", automationID: "auto-1" }) && service.dueAt("auto-1") === new Date(2026, 0, 4, 9, 0).getTime(),
+    "the next day's run goes to its prompt there, marked as the task's, and plans the day after",
+    prompts.length === 1 && prompts[0]?.sessionID === home.id && prompts[0]?.text === "Summarise the day" && JSON.stringify(prompts[0]?.inbox) === JSON.stringify({ from: "Daily digest", automationID: "auto-1" }) && service.dueAt("auto-1") === new Date(2026, 0, 5, 9, 0).getTime(),
     prompts,
   )
   check("its start is announced", events.some((event) => event.type === "automation.run" && event.phase === "started" && event.sessionID === home.id))
@@ -9864,7 +9868,7 @@ async function automationChecks(root: string, project: string) {
   await service.turnEnded(home.id)
   check("a reply in an existing conversation is an important update", events.at(-1)?.phase === "finished" && events.at(-1)?.notify === true, events.at(-1))
   await call({ mode: "update", id: "auto-1", runMode: "new-task", project: "none" })
-  clock = new Date(2026, 0, 4, 9, 0, 1).getTime()
+  clock = new Date(2026, 0, 5, 9, 0, 1).getTime()
   await service.tick()
   const opened = (await store.list()).find((session) => session.title === "Daily digest")
   check(
@@ -9876,15 +9880,15 @@ async function automationChecks(root: string, project: string) {
   await call({ mode: "update", id: "auto-1", runMode: "existing-task", targetThreadId: doomed.id })
   await store.delete(doomed.id)
   const before = prompts.length
-  clock = new Date(2026, 0, 5, 9, 0, 1).getTime()
+  clock = new Date(2026, 0, 6, 9, 0, 1).getTime()
   await service.tick()
-  check("a run whose conversation is gone is skipped and the schedule moves on", prompts.length === before && service.dueAt("auto-1") === new Date(2026, 0, 6, 9, 0).getTime())
+  check("a run whose conversation is gone is skipped and the schedule moves on", prompts.length === before && service.dueAt("auto-1") === new Date(2026, 0, 7, 9, 0).getTime())
   check("and the skip is on the task's record (T10-22)", service.list()[0]?.runHistory?.at(-1)?.status === "skipped" && Boolean(service.list()[0]?.runHistory?.at(-1)?.error), service.list()[0]?.runHistory?.at(-1))
 
   // Kept in the data folder; a run missed while closed happens once at start.
   await service.stop()
   const saved = JSON.parse(await fs.readFile(file, "utf8")) as { automations: { id: string; lastFiredAt?: number }[] }
-  check("tasks are kept in automations.json with their last run", saved.automations.length === 1 && saved.automations[0]?.lastFiredAt === new Date(2026, 0, 5, 9, 0, 1).getTime())
+  check("tasks are kept in automations.json with their last run", saved.automations.length === 1 && saved.automations[0]?.lastFiredAt === new Date(2026, 0, 6, 9, 0, 1).getTime())
   clock = new Date(2026, 0, 9, 12, 0).getTime()
   const reopened = new AutomationService(deps)
   await reopened.start({ interval: false })
