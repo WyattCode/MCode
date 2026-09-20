@@ -267,10 +267,15 @@ onBeforeUnmount(() => {
   background: var(--surface-hover);
 }
 
-.rp-subagent-row:focus-visible,
 .rp-subagent-back:focus-visible {
   outline: 2px solid var(--interactive);
   outline-offset: 1px;
+}
+
+/* Drawn inside the row: it fills the group, which clips, so a ring set outside it is cut away all round. */
+.rp-subagent-row:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: -2px;
 }
 
 .rp-subagent-copy {

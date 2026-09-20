@@ -339,6 +339,9 @@ import { roundFifteenServerChecks } from "./smoke-round15-server"
 import { roundFifteenStateChecks } from "./smoke-round15-state"
 // Round 15, lane M: the main process's second pass (M15-1 onwards).
 import { roundFifteenMainChecks } from "./smoke-round15-main"
+// Round 15, fix lane U1: the conversation UI (R15-U1-1 onwards).
+import { roundFifteenUiChatChecks } from "./smoke-round15-ui-chat"
+import { roundFifteenToolChecks } from "./smoke-round15-tools"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -6995,6 +6998,8 @@ async function main() {
   await roundFifteenServerChecks(check, section)
   await roundFifteenStateChecks(check, section)
   await roundFifteenMainChecks(check, section)
+  await roundFifteenUiChatChecks(check, section)
+  await roundFifteenToolChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
@@ -8796,6 +8801,19 @@ async function sessionChatChecks(root: string, project: string) {
   bus.subscribe((event) => {
     if (event.type === "session.chatLinks") announced.push(event.links)
   })
+  /*
+   * create_session's workspace is a folder of its own, outside this project,
+   * which R15-T2 made a question: the folder becomes the new conversation's
+   * project root, and everything under it would otherwise be readable without
+   * one being asked anywhere. It is answered here, and what was asked is
+   * checked where the conversation is created.
+   */
+  const workspaceAsked: string[] = []
+  bus.subscribe((event) => {
+    if (event.type !== "permission.requested" || event.request.kind !== "outside") return
+    workspaceAsked.push(event.request.subject)
+    permissions.respond(event.request.id, "once")
+  })
 
   const until = async (test: () => boolean | Promise<boolean>, ms = 15_000) => {
     const deadline = Date.now() + ms
@@ -8883,6 +8901,7 @@ async function sessionChatChecks(root: string, project: string) {
     { gamma, part: (await partsOf(alpha.id, "create_session"))[0] },
   )
   check("the new conversation starts nothing until messaged", Boolean(gamma) && (await store.messages(gamma!.id)).length === 0)
+  check("the folder it was rooted on was asked about first, being outside this project", workspaceAsked.includes(path.join(await fs.realpath(workspace), "*")), workspaceAsked)
   await runner.prompt({ sessionID: alpha.id, text: "CREATE-BAD" })
   await quiet()
   const badCreate = (await partsOf(alpha.id, "create_session")).at(-1)

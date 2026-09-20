@@ -24,7 +24,7 @@ import { ToolError, type ToolDefinition } from "./tool/types"
 import { resolveServers, type ResolvedServer } from "./mcp-sources"
 import { browserTarget } from "./open-url"
 import { terminate, windowsLaunch } from "./mcp-launch"
-import { probeTools, type ProbeResult } from "./mcp-probe"
+import { probeTools, stopProbes, type ProbeResult } from "./mcp-probe"
 import { wildcardMatch } from "./permission"
 
 /**
@@ -1490,6 +1490,8 @@ export class McpServers {
 
   /** Every server stopped; settles once the local ones have exited. */
   async close(): Promise<void> {
+    // A probe's server is held by no group, so quitting has to end it by itself.
+    stopProbes()
     const stopping = [...this.groups.values()].flatMap((group) => [...group.connections.values()].map((connection) => connection.stop()))
     this.groups.clear()
     await Promise.all(stopping)

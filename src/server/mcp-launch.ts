@@ -1,4 +1,5 @@
 import { execFile, type ChildProcess } from "node:child_process"
+import { killTree } from "./kill-tree"
 
 /** How long a stopping server gets after its input closes, and again after it is asked to terminate. */
 export const STOP_GRACE_MS = 2_000
@@ -27,6 +28,12 @@ async function descendants(pid: number): Promise<number[]> {
  * asked to terminate (not on Windows), its input is closed so a well-behaved
  * server can finish, and only if it is still running two seconds later is it
  * asked to terminate, and two seconds after that killed.
+ *
+ * On Windows that second step ends the tree rather than the process. A `.cmd`
+ * or `.bat` server - npx and most published ones - runs under a `cmd.exe` this
+ * launches, and `kill()` there is a TerminateProcess on `cmd.exe` alone: the
+ * shell really did exit, so stopping looked done, while the server itself kept
+ * its ports, its file locks and its memory with no window left to stop it.
  */
 export async function terminate(child: ChildProcess, grace = STOP_GRACE_MS): Promise<void> {
   const running = () => child.exitCode === null && child.signalCode === null
@@ -44,6 +51,11 @@ export async function terminate(child: ChildProcess, grace = STOP_GRACE_MS): Pro
   const within = (ms: number) => Promise.race([exited.then(() => true), new Promise<boolean>((resolve) => setTimeout(() => resolve(false), ms).unref())])
   child.stdin?.end()
   if (await within(grace)) return
+  if (process.platform === "win32") {
+    killTree(child)
+    await within(grace)
+    return
+  }
   child.kill("SIGTERM")
   if (await within(grace)) return
   child.kill("SIGKILL")

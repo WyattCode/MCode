@@ -9,6 +9,7 @@ import { useAnnotationBatch } from "../../stores/annotation-batch"
 import { annotationFlash, annotationId, compact, mainAnnotationScope, normalize, pdfLocate } from "../../lib/annotate"
 import { useOfficeVersions } from "../../stores/office-versions"
 import { aiTouch } from "../../lib/ai-touch"
+import { splitFilePath } from "../../lib/file-path"
 import { sendAnnotationNow } from "../../lib/annotation-send"
 import { useAnnotationFx, type FxBox } from "../../lib/annotation-fx"
 import { notifyFailure } from "../../lib/toast"
@@ -68,11 +69,7 @@ const pagesEl = ref<HTMLElement>()
 const layerEls: (HTMLElement | undefined)[] = []
 
 let lastBase64 = ""
-/* The folder keeps its trailing separator: "D:" alone resolves to the current directory on that drive, "D:\" to its root. */
-const splitPath = () => {
-  const cut = Math.max(props.path.lastIndexOf("/"), props.path.lastIndexOf("\\"))
-  return [props.path.slice(0, cut + 1), props.path.slice(cut + 1)] as const
-}
+const splitPath = () => splitFilePath(props.path)
 /* The watcher answers with whichever spelling it was asked with; slashes and case still name one file. */
 const samePath = (a: string, b: string) => a.replace(/\\/g, "/").toLowerCase() === b.replace(/\\/g, "/").toLowerCase()
 const doc = shallowRef<PDFDocumentProxy>()

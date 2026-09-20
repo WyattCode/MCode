@@ -45,6 +45,10 @@ export const KEEPALIVE_DELAY_SECONDS = 1200
 const TICK_MS = 1000
 /** How often the list of project folders is read again. */
 const DIRECTORIES_MS = 30_000
+/** How often the holder of a project's lock stamps it. */
+const LOCK_STAMP_MS = 30_000
+/** How long after its last stamp a lock is treated as one a stopped run left behind. */
+const LOCK_STALE_MS = 5 * 60_000
 
 interface LoopState {
   ownerID: string
@@ -81,6 +85,7 @@ export class CronScheduler {
   private knownAt = -Infinity
   private interval: ReturnType<typeof setInterval> | undefined
   private ticking = false
+  private stampedAt = -Infinity
   private readonly startedAt = Date.now()
 
   constructor(private readonly host: SchedulerHost) {}
@@ -135,10 +140,35 @@ export class CronScheduler {
     if (created) return true
     const held = await fs.readFile(file, "utf8").then((raw) => JSON.parse(raw) as { pid?: unknown; startedAt?: unknown }).catch(() => undefined)
     if (held && held.pid === process.pid && held.startedAt === this.startedAt) return true
-    if (held && typeof held.pid === "number" && held.pid !== process.pid && alive(held.pid)) return false
+    /*
+     * A pid that is alive is not proof that the app holding this lock is: the
+     * file outlives a hard kill or a power loss (only `stop()` removes it), and
+     * Windows hands a dead run's pid on to something unrelated soon enough. So
+     * a lock is only respected while its holder keeps stamping it, which a
+     * running scheduler does on every pass (`stampLocks`).
+     */
+    if (held && typeof held.pid === "number" && held.pid !== process.pid && alive(held.pid)) {
+      // The file's own clock, so a host with a scripted `now()` is not what decides this.
+      const stamped = await fs.stat(file).then((info) => info.mtimeMs, () => 0)
+      if (Date.now() - stamped < LOCK_STALE_MS) return false
+    }
     // A lock nobody holds any more, or one that cannot be read, is taken over.
     await fs.writeFile(file, mine).catch(() => undefined)
     return true
+  }
+
+  /**
+   * Keeps this process's locks stamped, so another copy can tell one that is
+   * held from one a killed run left behind.
+   */
+  private async stampLocks(): Promise<void> {
+    const now = Date.now()
+    if (now - this.stampedAt < LOCK_STAMP_MS) return
+    this.stampedAt = now
+    const at = new Date(now)
+    for (const [directory, state] of this.durable) {
+      if (state.owned) await fs.utimes(this.lockFile(directory), at, at).catch(() => undefined)
+    }
   }
 
   private async releaseLock(directory: string): Promise<void> {
@@ -165,7 +195,7 @@ export class CronScheduler {
     }
     if (cached && cached.mtimeMs === stat.mtimeMs) return cached
     const tasks = (await readCronTasks(directory)).map((task) => ({ ...task, durable: true }))
-    const owned = cached?.owned ?? (await this.takeLock(directory))
+    const owned = cached?.owned === true ? true : await this.takeLock(directory)
     const state = { mtimeMs: stat.mtimeMs, tasks, owned }
     this.durable.set(directory, state)
     return state
@@ -179,7 +209,7 @@ export class CronScheduler {
     await writeCronTasks(directory, next)
     const stat = await fs.stat(cronFile(directory)).catch(() => undefined)
     const state = this.durable.get(directory)
-    this.durable.set(directory, { mtimeMs: stat?.mtimeMs ?? 0, tasks: next.map((task) => ({ ...task, durable: true })), owned: state?.owned ?? (await this.takeLock(directory)) })
+    this.durable.set(directory, { mtimeMs: stat?.mtimeMs ?? 0, tasks: next.map((task) => ({ ...task, durable: true })), owned: state?.owned === true ? true : await this.takeLock(directory) })
   }
 
   private fireAt(task: CronTask, from: number): number {
@@ -193,8 +223,17 @@ export class CronScheduler {
     this.ticking = true
     try {
       await this.refreshDirectories()
+      await this.stampLocks()
       const entries: { task: CronTask; directory?: string }[] = []
       for (const [directory, state] of this.durable) {
+        /*
+         * A lock somebody else holds is tried again on every pass. It used to
+         * be asked for once and the refusal kept for the life of the process,
+         * so a lock file a killed run left behind - or one whose pid had been
+         * handed on - stopped every durable task in that project for good, with
+         * nothing said on screen or in the log.
+         */
+        if (!state.owned) state.owned = await this.takeLock(directory)
         if (!state.owned) continue
         const fresh = await this.load(directory)
         for (const task of fresh?.tasks ?? []) entries.push({ task, directory })

@@ -4864,7 +4864,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   overflow-y: auto;
 }
 
-.skill-item {
+/* Two taller than a menu row, level with the search box above it. Written against `.item` because the base rule is further down. */
+.item.skill-item {
   flex: none;
   height: 30px;
 }
