@@ -1,6 +1,7 @@
 import path from "node:path"
 import { attachmentKind, extensionOf } from "@shared/attachment-kind"
 import { interfaceLocale, localeName } from "./locale"
+import { activeShellName } from "../tool/bash"
 
 /** Office documents a model cannot read as text, and what opens each of them. */
 const OFFICE_TOOLS: Record<string, string> = {
@@ -134,6 +135,8 @@ export interface SessionNoteInput {
   /** Where this app keeps its data, which is where a global skill goes. */
   dataRoot: string
   platform?: NodeJS.Platform
+  /** The shell this machine hands a command to, so the guard names the one in use. */
+  shell?: string
 }
 
 /**
@@ -176,7 +179,7 @@ export function sessionNote(input: SessionNoteInput): string {
     "- When the user has to choose between options, ask with the question tool instead of listing the options in prose, and set multiple when more than one answer can apply - the flag, not the wording, is what lets them pick more than one.",
   )
 
-  lines.push("", environmentGuard(platform))
+  lines.push("", environmentGuard(platform, activeShellName(input.shell)))
   return lines.join("\n")
 }
 
@@ -195,7 +198,8 @@ export function sessionNote(input: SessionNoteInput): string {
  * check you announced inside this turn, and do not change your mind about it
  * from turn to turn.
  */
-export function environmentGuard(platform: NodeJS.Platform): string {
+export function environmentGuard(platform: NodeJS.Platform, shell = "powershell"): string {
+  const posh = shell === "powershell" || shell === "pwsh"
   const shared = [
     "查到了就用全路径**把测试或构建真正跑起来**,而不是退回到只读代码、只做静态分析。",
     "还有两条与路径无关:你一旦说了要做某项检查(「我来跑一下类型检查」之类),就在**本回合内**做完再收尾,不要只宣布打算就停下;也不要在后续回合里反复改口、原地打转。",
@@ -203,14 +207,18 @@ export function environmentGuard(platform: NodeJS.Platform): string {
   ]
   if (platform === "win32") {
     return [
-      "[环境检测] 本机是 **Windows**,不是 macOS 或 Linux,命令跑在 PowerShell 里。判断某个工具链(Node.js/npm/pnpm/yarn、Python/pip 等)在不在、装在哪里时,一律按 Windows 的方式来:",
+      `[环境检测] 本机是 **Windows**,不是 macOS 或 Linux,命令交给 ${shell} 执行。判断某个工具链(Node.js/npm/pnpm/yarn、Python/pip 等)在不在、装在哪里时,一律按 Windows 的方式来:`,
       "- 不要用 `/bin/zsh`、`bash -lc`、`zsh -lc` 这类登录 shell,Windows 默认没有;也不要去找 `/usr/local/bin`、`/opt/homebrew/bin`、`~/.nvm/...` 这些 Unix 路径,它们在这里不存在。",
-      "- 不要只凭一条裸命令(比如 `node -v`)在当前 PATH 上失败,就断定「没装 / 跑不了测试或构建」。用 PowerShell 的 `Get-Command node` 或 `where.exe node` 去定位,不要用 `which`。",
+      posh
+        ? "- 不要只凭一条裸命令(比如 `node -v`)在当前 PATH 上失败,就断定「没装 / 跑不了测试或构建」。用 PowerShell 的 `Get-Command node` 或 `where.exe node` 去定位,不要用 `which`。"
+        : "- 不要只凭一条裸命令(比如 `node -v`)在当前 PATH 上失败,就断定「没装 / 跑不了测试或构建」。用 `where.exe node` 去定位,它在任何 Windows shell 里都能用。",
       "- Node 常见的落脚处:`C:\\Program Files\\nodejs`、nvm-windows(`%APPDATA%\\nvm` 或 `%NVM_HOME%`)、fnm、volta(`%USERPROFILE%\\.volta\\bin`)、scoop(`%USERPROFILE%\\scoop\\shims`)、chocolatey(`C:\\ProgramData\\chocolatey\\bin`)。Python 常走 py 启动器、`%LOCALAPPDATA%\\Programs\\Python`,或者 conda/uv 的环境。",
       `- ${shared[0]}`,
       `- ${shared[1]}`,
       `- ${shared[2]}`,
-      "写 PowerShell 而不是 bash:变量用 `$env:NAME`,带空格的路径用 `& \"路径\"` 调用,也不要假定 GNU 那套命令行工具在这里。",
+      posh
+        ? "写 PowerShell 而不是 bash:变量用 `$env:NAME`,带空格的路径用 `& \"路径\"` 调用,也不要假定 GNU 那套命令行工具在这里。"
+        : `命令按 ${shell} 的语法写,不要假定另一种 shell 的写法在这里能用。`,
     ].join("\n")
   }
   const unix = platform === "darwin" ? "macOS" : "Linux"

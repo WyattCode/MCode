@@ -109,6 +109,21 @@ export async function roundSixteenPromptChecks(check: Check, section: (name: str
       check(`${name}: and only then may it say something is missing`, guard.includes("\u672c\u673a\u7f3a\u5c11 X"))
     }
 
+    /*
+     * The guard names the shell the command is really handed to. The
+     * end-to-end run against a real model found the two halves disagreeing:
+     * started from Git Bash, the shell tool's description said the command
+     * goes to bash while this guard, in the same request, said to write
+     * PowerShell.
+     */
+    const winBash = environmentGuard("win32", "bash")
+    check("windows: the guard names the shell in use, not PowerShell by default", winBash.includes("交给 bash 执行") && windows.includes("交给 powershell 执行"), winBash.slice(0, 120))
+    check("windows: PowerShell's own advice is left out for another shell", !winBash.includes("写 PowerShell 而不是 bash") && windows.includes("写 PowerShell 而不是 bash"))
+    check("windows: and where.exe is still the way to locate a tool", winBash.includes("where.exe node"))
+    const runnerSource = await fs.readFile(path.join(process.cwd(), "src/server/session/runner.ts"), "utf8")
+    const contextSource = await fs.readFile(path.join(process.cwd(), "src/server/session/context.ts"), "utf8")
+    check("windows: the shell reaches the guard from the turn's settings", runnerSource.includes("shell: this.config.get().shell,") && contextSource.includes("environmentGuard(platform, activeShellName(input.shell))"))
+
     const winPlaces = ["C:\\Program Files\\nodejs", "%APPDATA%\\nvm", "volta", "scoop", "chocolatey"].filter((place) => !windows.includes(place))
     check("windows looks where Windows keeps Node", winPlaces.length === 0, winPlaces)
     check("and names PowerShell's own way of looking", windows.includes("Get-Command node") && windows.includes("where.exe node") && windows.includes("\u4e0d\u8981\u7528 `which`"))

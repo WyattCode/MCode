@@ -363,8 +363,13 @@ function chainingAdvice(name: string): string {
  * `configured` is the shell the settings name, so the description follows the
  * reader's choice rather than the machine's default.
  */
+/** The name of the shell this machine will hand a command to, for whoever has to describe it. */
+export function activeShellName(configured?: string): string {
+  return shellName(shell(configured).command)
+}
+
 export function bashDescription(configured?: string): string {
-  const name = shellName(shell(configured).command)
+  const name = activeShellName(configured)
   return [
     "Run a shell command in the project and return what it printed.",
     "",
