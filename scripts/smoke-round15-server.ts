@@ -345,6 +345,29 @@ export async function roundFifteenServerChecks(check: Check, section: (name: str
     }
   }
 
+  // ------------------------------------------------------------------ R15-S5
+  section("Round 15 (R15-S5): usage after a deleted message is put right by the next step")
+  {
+    const storage = new Storage(path.join(root, "usage", "storage"))
+    const store = new SessionStore(storage, new Bus())
+    const session = await store.create({ directory: path.join(root, "usage", "project"), model: MODEL })
+    await store.saveMessage(asked(session.id, "msg_u1", "one", Date.now()), true)
+    const before = (await store.require(session.id)).updated
+
+    await store.deleteMessage(session.id, "msg_u1")
+    const deleted = (await store.require(session.id)).updated
+    /*
+     * Deleting a message leaves the record's own stamp where it was - which is
+     * why the usage page's in-memory "count this one again" mark is the only
+     * signal until the next step. It is not persisted, because the next step
+     * always moves the stamp: every turn ends in addUsage, and an edit or a
+     * retry is a delete followed immediately by one.
+     */
+    check("R15-S5: deleting a message does not move the record's stamp", deleted === before, { before, deleted })
+    await store.addUsage(session.id, { input: 1, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 })
+    const after = (await store.require(session.id)).updated
+    check("R15-S5: and the next step does, so the conversation is counted again", after > deleted, { deleted, after })
+  }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
 }
