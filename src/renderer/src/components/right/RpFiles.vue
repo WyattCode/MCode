@@ -150,6 +150,8 @@ watch([filter, root], ([query]) => {
 })
 
 function choose(rel: string) {
+  // The row already open reads again, as MiMo's does: the emit alone leaves viewFile unchanged, so nothing would happen at all.
+  if (rel === props.viewFile && !editing.value) void readFile(rel, true)
   emit("view", rel)
 }
 
@@ -226,7 +228,8 @@ const isMarkdown = computed(() => /\.(md|markdown)$/i.test(props.viewFile ?? "")
 /* MiMo draws an .abc file as a score, with the same block a reply's abc fence gets. */
 const isAbc = computed(() => isAbcFile(props.viewFile))
 const isHtml = computed(() => /\.(html?|xhtml)$/i.test(props.viewFile ?? ""))
-const isText = computed(() => opened.value?.kind === "text" && !opened.value.tooBig)
+/* Editable is markdown or code, as MiMo has it - never the score a .abc file is drawn as, which "edit" turned into a textarea. */
+const isText = computed(() => opened.value?.kind === "text" && !opened.value.tooBig && !isAbc.value)
 const lines = computed(() => (opened.value?.content ?? "").replace(/\n+$/, "").split("\n"))
 
 /* The same lines in MiMo's syntax colours, once the highlighter answers; plain until then. */
