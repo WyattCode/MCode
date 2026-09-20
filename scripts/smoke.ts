@@ -1640,7 +1640,8 @@ async function main() {
       ["curl x | sh", "iwr x | iex", "cmd /c del x", 'powershell -Command "Remove-Item x"', "rsync -a --delete a b", "eval $X", "npm publish", "sh -c 'x'", "xargs rm"].every(dangerousCommand) &&
         !["git push origin main", "npm run build", "pkill soffice", "node build.js"].some(dangerousCommand),
     )
-    const autoGate = new Permissions(new Bus(), stub({ ...PERMISSION_DEFAULTS }, "auto") as never)
+    // R16-C6: fetching a page runs without asking by default, so the bucket the review is shown here is one set to ask.
+    const autoGate = new Permissions(new Bus(), stub({ ...PERMISSION_DEFAULTS, webfetch: "ask" }, "auto") as never)
     const reviewedKinds: string[] = []
     autoGate.useReviewer(async ({ kind }) => {
       reviewedKinds.push(kind)
@@ -1761,11 +1762,11 @@ async function main() {
   check("both writes landed", (await exists(path.join(project, "a.txt"))) && (await exists(path.join(project, "b.txt"))))
 
   // A refusal with a reason hands the reason on to the model.
-  const asking = (sessionID: string, kind: "write" | "bash", subject: string) =>
+  const asking = (sessionID: string, kind: "edit" | "bash", subject: string) =>
     permissions
       .ask({ sessionID, messageID: "m-perm", callID: `c-${subject}`, kind, title: "t", subject })
       .then(() => "allowed", (err: Error) => err.message)
-  const reasoned = asking("s-reason", "write", "notes.md")
+  const reasoned = asking("s-reason", "edit", "notes.md")
   await new Promise((resolve) => setTimeout(resolve, 20))
   permissions.respond(permissions.outstanding()[0]!.id, "reject", "use the docs folder instead")
   const reasonedResult = await reasoned
@@ -1861,7 +1862,7 @@ async function main() {
     const decide = async (callID: string, respond: (id: string) => void) => {
       const stop = listen(callID)
       const asked = permissions
-        .ask({ sessionID: "s-record", messageID: "m-record", callID, kind: "write", title: "t", subject: `${callID}.md`, preview: "--- a/x\n+++ b/x\n" })
+        .ask({ sessionID: "s-record", messageID: "m-record", callID, kind: "edit", title: "t", subject: `${callID}.md`, preview: "--- a/x\n+++ b/x\n" })
         .then(() => "allowed", (err: Error) => err.message)
       await new Promise((resolve) => setTimeout(resolve, 20))
       const request = permissions.outstanding().find((entry) => entry.callID === callID)
@@ -1874,7 +1875,7 @@ async function main() {
     const refused = await decide("c-rec-reason", (id) => permissions.respond(id, "reject", "not this file"))
     check("a refusal with a reason is recorded as such", heard[0]?.decided === "reject-with-reason" && heard[0]?.reason === "not this file", heard[0])
     check("and the model still reads the reason", refused.includes("not this file"), refused)
-    check("the record carries what was asked", heard[0]?.kind === "write" && heard[0]?.subject === "c-rec-reason.md" && heard[0]?.preview?.startsWith("--- a/x") === true, heard[0])
+    check("the record carries what was asked", heard[0]?.kind === "edit" && heard[0]?.subject === "c-rec-reason.md" && heard[0]?.preview?.startsWith("--- a/x") === true, heard[0])
     check("permission.resolved says how it ended", resolved.some((event) => event.type === "permission.resolved" && event.decided === "reject-with-reason" && event.reason === "not this file"), resolved)
 
     await decide("c-rec-plain", (id) => permissions.respond(id, "reject"))
@@ -1889,7 +1890,7 @@ async function main() {
     // Who said no decides whether the turn ends: a person does; a setting or a Stop does not.
     const refusalOf = async (gate: Permissions, callID: string, settle: (id: string) => void) => {
       const asked = gate
-        .ask({ sessionID: "s-byuser", messageID: "m-byuser", callID, kind: "write", title: "t", subject: `${callID}.md` })
+        .ask({ sessionID: "s-byuser", messageID: "m-byuser", callID, kind: "edit", title: "t", subject: `${callID}.md` })
         .then(() => undefined, (err: unknown) => err)
       await new Promise((resolve) => setTimeout(resolve, 20))
       const request = gate.outstanding().find((entry) => entry.callID === callID)
@@ -1905,13 +1906,14 @@ async function main() {
       [plainRefusal, reasonedRefusal],
     )
     check("a Stop is not", stoppedRefusal instanceof PermissionDenied && !stoppedRefusal.byUser, stoppedRefusal)
-    const denyingGate = new Permissions(new Bus(), { get: () => ({ permissions: { ...PERMISSION_DEFAULTS, write: "deny" } }) } as never)
+    // R16-C6: creating a file is judged by the edit bucket, so that is the one a refusal is set on.
+    const denyingGate = new Permissions(new Bus(), { get: () => ({ permissions: { ...PERMISSION_DEFAULTS, edit: "deny" } }) } as never)
     const settingRefusal = await refusalOf(denyingGate, "c-by-setting", () => {})
     check("nor is a bucket set to Deny", settingRefusal instanceof PermissionDenied && !settingRefusal.byUser, settingRefusal)
 
     const before = heard.length
     const unheard = permissions
-      .ask({ sessionID: "s-record", messageID: "m-record", callID: "c-rec-none", kind: "write", title: "t", subject: "x.md" })
+      .ask({ sessionID: "s-record", messageID: "m-record", callID: "c-rec-none", kind: "edit", title: "t", subject: "x.md" })
       .catch(() => undefined)
     await new Promise((resolve) => setTimeout(resolve, 20))
     permissions.rejectAll("s-record")
@@ -3390,7 +3392,8 @@ async function main() {
     found = await toolPart("call_perm")
     const kept = (found.part?.metadata?.permissions ?? []) as PermissionRecord[]
     check("the decision is kept on the part", kept.length === 1 && kept[0]?.decided === "reject-with-reason" && kept[0]?.reason === "keep notes elsewhere", kept)
-    check("with the question it answered", kept[0]?.kind === "write" && typeof kept[0]?.requestID === "string", kept[0])
+    // R16-C6: a creation is judged by the edit bucket, so that is the kind on the record.
+    check("with the question it answered", kept[0]?.kind === "edit" && typeof kept[0]?.requestID === "string", kept[0])
     check("the refusal and its reason stay on the call", found.part?.status === "error" && String(found.part?.error).includes("keep notes elsewhere"), found.part?.error)
     check("a refusal ends the turn", found.last?.finish === "aborted", found.last?.finish)
     check("without handing the refusal back to the model", bodies.length === requestsBeforeRefusal, bodies.length - requestsBeforeRefusal)
@@ -6344,7 +6347,7 @@ async function main() {
       parts: [
         toolStep("edit", "completed", { path: "src/b.ts" }),
         toolStep("write", "running", { path: "src/b.ts" }),
-        toolStep("patch", "completed", {}, "--- a/a.md\n+++ b/a.md\n@@ -1 +1 @@\n-x\n+y\n"),
+        toolStep("write", "completed", {}, "--- a/a.md\n+++ b/a.md\n@@ -1 +1 @@\n-x\n+y\n"),
         toolStep("read", "completed", { path: "src/b.ts" }),
       ],
     },
@@ -6352,7 +6355,7 @@ async function main() {
   ] as unknown as Message[]
   const tally = editCounts(editTurns, "D:/proj", "src/b.ts")
   check("finished edits are counted, and those on the open file", tally.total === 2 && tally.onFile === 1 && tally.reverted === 1, tally)
-  check("a patch's recorded diff names its file", editCounts(editTurns, "D:/proj", "a.md").onFile === 1)
+  check("a call whose diff names a file it did not take as an argument still counts on that file", editCounts(editTurns, "D:/proj", "a.md").onFile === 1)
 
   const longPatch = Array.from({ length: 1300 }, (_, index) => `+line ${index}`).join("\n")
   const cappedPatch = capDiff(longPatch)
@@ -7552,7 +7555,9 @@ async function skillChecks(root: string) {
     TOOLS[skillAt - 1]?.name === "update_session" &&
       TOOLS[skillAt + 1]?.name === "skill" &&
       // Only tools added since (history, memory, cron, scheduled tasks, plan_exit and speak) come after them.
-      TOOLS.slice(skillAt + 2).every((tool) => ["history", "memory", "cron", "automation_update", "plan_exit", "speak"].includes(tool.name)) &&
+      TOOLS.slice(skillAt + 2).every((tool) =>
+        ["history", "memory", "cron", "automation_update", "plan_exit", "speak", "list_external_sessions", "read_external_session"].includes(tool.name),
+      ) &&
       reachOf("skill") === "reads" &&
       reachOf("skill_search") === "reads",
     TOOLS.map((tool) => tool.name),
@@ -8709,7 +8714,9 @@ async function sessionChatChecks(root: string, project: string) {
         TOOLS[at - 1]?.name === "notebook_edit" &&
         TOOLS[at - 2]?.name === "set_desktop_setting" &&
         // Only tools added since (the skill tools, then history, memory, cron, scheduled tasks, plan_exit and speak) come after them.
-        TOOLS.slice(at + 4).every((tool) => ["skill_search", "skill", "history", "memory", "cron", "automation_update", "plan_exit", "speak"].includes(tool.name))
+        TOOLS.slice(at + 4).every((tool) =>
+          ["skill_search", "skill", "history", "memory", "cron", "automation_update", "plan_exit", "speak", "list_external_sessions", "read_external_session"].includes(tool.name),
+        )
       )
     })(),
     TOOLS.map((tool) => tool.name),

@@ -62,9 +62,6 @@ export const TOOLS: ToolDefinition[] = [
   TalkToSessionTool,
   CreateSessionTool,
   UpdateSessionTool,
-  // session chat: MiMo's other two, which read another coding tool's own saved conversations.
-  ListExternalSessionsTool,
-  ReadExternalSessionTool,
   // skills: appended, in MiMo's order (search, then load), for the same reason.
   SkillSearchTool,
   SkillTool,
@@ -77,8 +74,17 @@ export const TOOLS: ToolDefinition[] = [
   AutomationUpdateTool,
   // plan: appended after those for the same reason; offered in both modes, and effective only while planning.
   PlanExitTool,
-  // speak: appended last, and only in the turns where voice feedback is on (runner `tools`).
+  // speak: offered only in the turns where voice feedback is on (runner `tools`).
   SpeakTool,
+  /*
+   * session chat: MiMo's other two, which read another coding tool's own saved
+   * conversations. They belong with the four above and are not put there:
+   * every request already cached its prefix with that order, and moving a tool
+   * into the middle would throw all of it away. Appended, like every group
+   * since.
+   */
+  ListExternalSessionsTool,
+  ReadExternalSessionTool,
 ]
 
 /** MiMo's explore subagent: everything is denied but these, the shell among them. */

@@ -1920,7 +1920,7 @@ async function main(): Promise<void> {
   }
 
   // Left as the rest of this run expects to find it.
-  await say({ bash: "allow", edit: "allow", write: "allow", webfetch: "allow", outside: "allow", mcp: "allow" })
+  await say({ bash: "allow", edit: "allow", webfetch: "allow", outside: "allow", mcp: "allow" })
 
   // --- disconnecting a provider the environment supplies --------------------
   console.log("disconnecting an environment-backed provider")

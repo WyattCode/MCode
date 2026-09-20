@@ -17,6 +17,7 @@ import { Config } from "../src/server/config"
 import { Bus } from "../src/server/bus"
 import { startBackend } from "../src/server/index"
 import { belowFullMap, defaultAccess } from "../src/shared/access"
+import { DEFAULT_PERMISSIONS, PERMISSION_KINDS } from "../src/shared/protocol"
 import { stepTarget, visibleChatOrder } from "../src/renderer/src/lib/visible-chats"
 import { fontScale } from "../src/renderer/src/lib/font-scale"
 
@@ -36,9 +37,17 @@ async function loaded(stored: Record<string, unknown> | undefined): Promise<{ co
   return { config, dir, disk: async () => JSON.parse(await fsp.readFile(store.fileOf("config"), "utf8")) }
 }
 
-const ALL_ALLOW = { read: "allow", edit: "allow", write: "allow", glob: "allow", grep: "allow", list: "allow", bash: "allow", webfetch: "allow", outside: "allow", mcp: "allow" }
-// MCP calls run without asking by default since round nine (M-3, the user's decision of 2026-09-17).
-const DEFAULTS = { read: "allow", edit: "ask", write: "ask", glob: "allow", grep: "allow", list: "allow", bash: "ask", webfetch: "ask", outside: "ask", mcp: "allow" }
+/*
+ * Read from the protocol rather than written out here.
+ *
+ * They were written out, which made this file a second declaration of which
+ * buckets there are: R16-C6 folded `write` into `edit` and let `webfetch`
+ * through by default, and every comparison below failed on the shape rather
+ * than on what it was checking. What these checks are about is what a stored
+ * document turns into, not what the list happens to hold.
+ */
+const ALL_ALLOW = Object.fromEntries(PERMISSION_KINDS.map((kind) => [kind, "allow"])) as Record<string, string>
+const DEFAULTS = { ...DEFAULT_PERMISSIONS } as Record<string, string>
 
 export async function roundNineSettingsChecks(check: Check, section: (name: string) => void): Promise<void> {
   try {
