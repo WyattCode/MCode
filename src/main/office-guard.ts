@@ -1,6 +1,7 @@
 import path from "node:path"
 import { insideReal } from "../server/tool/fs-util"
 import { appDataRefusal } from "../server/tool/app-data"
+import { WIDGET_SOURCE_LIMIT } from "@shared/widget"
 
 /*
  * What the Office tab's channels accept, declared per channel and checked
@@ -36,6 +37,8 @@ const base64: Rule = (value) => typeof value === "string" && value.length <= Mat
 const flag: Rule = (value) => typeof value === "boolean"
 const note: Rule = (value) => value === undefined || (typeof value === "string" && value.length <= NOTE_LIMIT)
 const source: Rule = (value) => typeof value === "string" && (VERSION_SOURCES as readonly string[]).includes(value)
+/* One interactive widget's source, from a reply's ```sci-widget fence. */
+const widgetSource: Rule = (value) => typeof value === "string" && value.length > 0 && value.length <= WIDGET_SOURCE_LIMIT
 /* The ids the version store makes: `v` and base-36 time and hex. */
 const versionID: Rule = (value) => typeof value === "string" && /^v[0-9a-z]{1,40}$/.test(value)
 
@@ -50,6 +53,7 @@ export const OFFICE_SCHEMAS: Record<string, readonly Rule[]> = {
   "mcode:office-version-restore": [absolutePath, versionID],
   "mcode:office-convert-legacy": [absolutePath],
   "mcode:office-serve": [absolutePath],
+  "mcode:widget-serve": [widgetSource, flag],
   "mcode:reveal-path": [absolutePath],
 }
 

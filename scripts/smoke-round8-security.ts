@@ -392,7 +392,7 @@ async function officeChannelChecks(check: Check, section: Section, root: string)
   const source = await fs.readFile(path.join(process.cwd(), "src/main/office.ts"), "utf8").catch(() => "")
   const registered = [...source.matchAll(/checked\("(mcode:[\w-]+)"/g)].map((match) => match[1]!)
   check("office.ts registers no channel around the checks", !/ipcMain\.handle\("mcode:/.test(source), source.match(/ipcMain\.handle\("mcode:[\w-]+/g))
-  check("every channel it registers has a declared schema", registered.length === 11 && registered.every((channel) => OFFICE_SCHEMAS[channel]), registered)
+  check("every channel it registers has a declared schema", registered.length === 12 && registered.every((channel) => OFFICE_SCHEMAS[channel]), registered)
 
   // Shapes: wrong types, missing arguments, oversize values, extra arguments.
   check("a restore with no file is refused", (await refused("mcode:office-version-restore", undefined, "v1")) === "shape")

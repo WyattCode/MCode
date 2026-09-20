@@ -1,5 +1,6 @@
 import katex from "katex"
 import { ABC_SOURCE_LIMIT } from "./abc-play"
+import { WIDGET_FENCE, WIDGET_SOURCE_LIMIT } from "@shared/widget"
 
 /**
  * Small markdown renderer for assistant output.
@@ -70,6 +71,8 @@ export type ReplyBlock =
   | { kind: "diagram"; mode: "mermaid" | "svg"; code: string }
   | { kind: "abc"; code: string }
   | { kind: "svg-loading" }
+  | { kind: "widget"; code: string }
+  | { kind: "widget-loading" }
 
 interface Context {
   options: MarkdownOptions
@@ -520,6 +523,7 @@ function blockHtml(block: ReplyBlock, options: MarkdownOptions): string {
   if (block.kind === "html") return block.html
   if (block.kind === "diagram") return codeBlock(block.mode, block.code, options)
   if (block.kind === "abc") return codeBlock("abc", block.code, options)
+  if (block.kind === "widget") return codeBlock(WIDGET_FENCE, block.code, options)
   return ""
 }
 
@@ -531,13 +535,22 @@ function fenceBlock(language: string, body: string[], closed: boolean, ctx: Cont
   if ((lang === "mermaid" || lang === "svg") && options.diagrams && !options.diagrams.streaming && closed && top && code.trim()) {
     return { kind: "diagram", mode: lang, code }
   }
+  /*
+   * MiMo's interactive widget. While the reply is still arriving it is a line
+   * saying so rather than a half-written document in a frame; a fence that was
+   * never closed, or one past the cap, stays code.
+   */
+  if (lang === WIDGET_FENCE && options.diagrams && top && code.trim() && code.length <= WIDGET_SOURCE_LIMIT) {
+    if (options.diagrams.streaming) return { kind: "widget-loading" }
+    if (closed) return { kind: "widget", code }
+  }
   // MiMo's score block, under the same rule as a diagram and its cap on the source's length.
   if (lang === "abc" && options.diagrams && !options.diagrams.streaming && closed && top && code.trim() && code.length <= ABC_SOURCE_LIMIT) {
     return { kind: "abc", code }
   }
   // A fence holding nothing but one path is that path, as MiMo reads it.
   const filled = body.filter((line) => line.trim())
-  if (options.paths && filled.length === 1 && lang !== "mermaid" && lang !== "svg" && lang !== "abc") {
+  if (options.paths && filled.length === 1 && lang !== "mermaid" && lang !== "svg" && lang !== "abc" && lang !== WIDGET_FENCE) {
     const hit = detectPath(filled[0])
     if (hit) return { kind: "html", html: `<p class="md-p">${pathHtml(hit, options.paths)}</p>` }
   }

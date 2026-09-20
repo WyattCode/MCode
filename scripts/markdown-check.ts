@@ -22,6 +22,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { detectPath, renderMarkdown, renderReply, type MarkdownOptions } from "../src/renderer/src/lib/markdown"
 import { ABC_SOURCE_LIMIT } from "../src/renderer/src/lib/abc-play"
+import { WIDGET_SOURCE_LIMIT } from "../src/shared/widget"
 import {
   COVER_LIMIT,
   coverAnswer,
@@ -411,6 +412,35 @@ for (const [name, source, options, want] of abcBlockCases) {
   if (!ok) problems.push(`${name}: blocks were ${kinds}`)
 }
 if (!/<pre class="md-code md-lined" data-lang="abc">/.test(renderMarkdown(ABC_TUNE, REPLY))) problems.push("an abc fence no longer falls back to a code block in the string form")
+
+/*
+ * The interactive widget. The document never becomes markup in the window -
+ * it leaves as a block a component frames - so what is asserted here is that
+ * nothing turns it into markup, and that everything the frame cannot be trusted
+ * with (a half-written one, an oversized one, one nested in a list) stays code.
+ */
+const WIDGET = "```sci-widget\n<div id=d>hi</div>\n<script>document.title='x'</script>\n```"
+const widgetCases: [string, string, MarkdownOptions, "widget" | "widget-loading" | "code"][] = [
+  ["a sci-widget fence is a widget", WIDGET, REPLY, "widget"],
+  ["a SCI-WIDGET fence in capitals is a widget", WIDGET.replace("```sci-widget", "```SCI-WIDGET"), REPLY, "widget"],
+  ["a sci-widget fence says so while streaming", WIDGET, OPTIONS[2][1], "widget-loading"],
+  ["a sci-widget fence says so while live", WIDGET, LIVE, "widget-loading"],
+  ["an unclosed sci-widget fence stays code", "```sci-widget\n<div>half", REPLY, "code"],
+  ["a sci-widget fence in a list stays code", "- a\n\n  ```sci-widget\n  <div>x</div>\n  ```", REPLY, "code"],
+  ["a sci-widget fence past the cap stays code", "```sci-widget\n<div>" + "x".repeat(WIDGET_SOURCE_LIMIT) + "</div>\n```", REPLY, "code"],
+]
+for (const [name, source, options, want] of widgetCases) {
+  const blocks = renderReply(source, options)
+  const kinds = blocks.map((block) => block.kind).join(" ")
+  // A live reply also holds its last line back as plain text, so the widget is the first block rather than the only one.
+  const ok = want === "code" ? blocks.length > 0 && blocks.every((block) => block.kind === "html") : blocks[0]?.kind === want
+  if (!ok) problems.push(`${name}: blocks were ${kinds}`)
+}
+/* The string form has no component to hand it to, so it falls back to showing the source. */
+if (!/<pre class="md-code md-lined" data-lang="sci-widget">/.test(renderMarkdown(WIDGET, REPLY))) {
+  problems.push("a sci-widget fence no longer falls back to a code block in the string form")
+}
+if (/<script|<div id=d>/.test(renderMarkdown(WIDGET, REPLY))) problems.push("a sci-widget fence's document reached the page as markup")
 
 const PLATFORM_LINKS: [string, string | undefined][] = [
   ["https://www.bilibili.com/video/BV1GJ411x7h7", "bilibili"],

@@ -334,6 +334,9 @@ const api = {
   savePng: (suggested: string, base64: string): Promise<string | undefined> => ipcRenderer.invoke("mcode:save-png", suggested, base64),
   /** A loopback address a web page is served at, with its folder beside it. */
   officeServe: (target: string): Promise<{ ok: true; url: string } | { ok: false; error: string }> => ipcRenderer.invoke("mcode:office-serve", target),
+  /* One interactive widget from a reply, served on an origin of its own so the frame can run it without reaching anything. */
+  widgetServe: (html: string, reduceMotion: boolean): Promise<{ ok: true; url: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("mcode:widget-serve", html, reduceMotion),
   /** Watches an open document so its view can reload when it changes on disk. */
   watchFile: (target: string): Promise<boolean> => ipcRenderer.invoke("mcode:watch-file", target),
   unwatchFile: (target: string): Promise<void> => ipcRenderer.invoke("mcode:unwatch-file", target),
