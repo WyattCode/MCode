@@ -67,6 +67,13 @@ export function useBranchSwitch(directory: () => string | undefined, onMutated: 
       if (directory() !== root) return
       branches.value = state?.branches ?? []
       current.value = state?.detached ? undefined : state?.branch
+      /*
+       * An answer that resolved but holds no repository - a folder outside one,
+       * a bare repository, a `for-each-ref` the server swallowed - used to leave
+       * the submenu blank and silent. MiMo says so for any answer it cannot read
+       * as a branch list, not only for one that threw.
+       */
+      if (!state?.repo || !Array.isArray(state.branches)) error.value = t("info.branchListUnavailable")
     } catch {
       if (directory() === root) error.value = t("info.branchListUnavailable")
     } finally {
