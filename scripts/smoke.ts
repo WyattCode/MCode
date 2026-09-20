@@ -333,6 +333,7 @@ import { roundThirteenInstanceChecks } from "./smoke-round13-instances"
 import { roundThirteenKeyboardChecks } from "./smoke-round13-keyboard"
 import { roundFourteenLocaleChecks } from "./smoke-round14-locale"
 import { roundFourteenPackagingChecks } from "./smoke-round14-packaging"
+import { roundFifteenUiChatChecks } from "./smoke-round15-ui-chat"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -6966,6 +6967,7 @@ async function main() {
   await roundThirteenKeyboardChecks(check, section)
   await roundFourteenLocaleChecks(check, section)
   await roundFourteenPackagingChecks(check, section)
+  await roundFifteenUiChatChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
