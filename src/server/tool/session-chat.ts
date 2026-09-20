@@ -1,7 +1,9 @@
+import { isAbsolute } from "node:path"
 import { CHAT_TASK_STATUSES, type ChatTaskStatus } from "@shared/protocol"
 import type { ChatContact } from "../session/chat"
 import type { ToolContext, ToolDefinition } from "./types"
 import { ToolError } from "./types"
+import { resolvePath } from "./fs-util"
 
 /*
  * session chat: the four tools a conversation uses to reach the others, as
@@ -123,10 +125,27 @@ export const CreateSessionTool: ToolDefinition = {
     additionalProperties: false,
   },
   async execute(input, context) {
+    const workspace = text(input.workspace) ?? ""
+    /*
+     * A new conversation's workspace is its project root, and everything under
+     * a project root is read and written without asking. So `create_session`
+     * was a way past the sandbox with no question anywhere in it: a workspace
+     * of C:\Users\<name> made a conversation that could be told - by the model,
+     * or by text the model read somewhere - to go through the whole user
+     * folder, and read, glob and grep would each call it inside the project.
+     *
+     * MiMo asks nothing here either (its renderer POSTs /session?directory= with
+     * whatever came in), but the rest of this app does not leave a folder open
+     * on the strength of a tool argument, so the folder goes through the same
+     * question every path outside the project goes through: one inside this
+     * conversation's project (or its repository) is ordinary, one outside asks
+     * once and is then remembered for that folder.
+     */
+    if (isAbsolute(workspace)) await resolvePath(context, workspace)
     const made = await chatOf(context).create({
       name: text(input.name) ?? "",
       purpose: text(input.purpose) ?? "",
-      workspace: text(input.workspace) ?? "",
+      workspace,
       task: text(input.task),
     })
     if (!made.ok) return { output: `会话没有创建：${made.error}`, metadata: { created: false } }

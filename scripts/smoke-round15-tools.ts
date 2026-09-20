@@ -129,5 +129,38 @@ export async function roundFifteenToolChecks(check: Check, section: (name: strin
     check("no probe is left registered as running", liveProbes() === 0)
   }
 
+  // ---------------------------------------------------------------- T15-2
+  section("Round 15 (T15-2): create_session asks before rooting a conversation outside the project")
+  {
+    const project = path.join(root, "project-a")
+    const inside = path.join(project, "packages", "ui")
+    const elsewhere = path.join(root, "not-a-project")
+    await fs.mkdir(inside, { recursive: true })
+    await fs.mkdir(elsewhere, { recursive: true })
+
+    const made: string[] = []
+    const chat = { create: async (input: { name: string; workspace: string }) => (made.push(input.workspace), { ok: true, session: { id: "ses_new", title: input.name } }) }
+    const run = async (workspace: string, answer: "allow" | "deny") => {
+      const { asked, permissions } = gate(answer)
+      const result = await CreateSessionTool.execute({ name: "n", purpose: "p", workspace }, toolContext(project, permissions, { chat: chat as never })).then(
+        (output) => ({ output }),
+        (failure: unknown) => ({ failure }),
+      )
+      return { asked, ...result }
+    }
+
+    const near = await run(inside, "allow")
+    check("a workspace inside this conversation's project asks nothing", near.asked.length === 0 && made.includes(inside), near.asked)
+    const away = await run(elsewhere, "allow")
+    check(
+      "one outside it goes through the outside question, scoped to that folder",
+      away.asked.length === 1 && away.asked[0]?.kind === "outside" && away.asked[0]?.scope === (await fs.realpath(elsewhere)),
+      away.asked,
+    )
+    check("and the conversation is created once that is allowed", made.filter((workspace) => workspace === elsewhere).length === 1, made)
+    const refused = await run(path.join(os.homedir()), "deny")
+    check("a refused folder creates nothing", "failure" in refused && !made.includes(os.homedir()), made)
+  }
+
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
 }
