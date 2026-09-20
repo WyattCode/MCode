@@ -594,7 +594,9 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
         run.sent.length === 2 && wireText(run.sent[1]).includes("reached the output limit") && run.last?.finish === "end_turn",
         { requests: run.sent.length, finish: run.last?.finish },
       )
-      check("the note is in the request only", run.all.length === 2 && !(await e.store.messages(run.all[0]!.sessionID)).some((m) => m.role === "user" && m.text.includes("output limit")))
+      // R16-E2-1: the rest of a cut-off sentence stays in the reply that started it, so this is one message, not two.
+      check("the continuation carries on inside the same reply", run.all.length === 1, run.all.length)
+      check("and the note is in the request only", !(await e.store.messages(run.all[0]!.sessionID)).some((m) => m.role === "user" && m.text.includes("output limit")))
 
       e.replies.push(say("1", "length"), say("2", "length"), say("3", "length"), say("4", "length"))
       run = await turn("LENGTH four")
