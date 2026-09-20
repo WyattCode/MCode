@@ -15,8 +15,9 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
-import { markWords, splitRows, type DiffLine } from "../src/renderer/src/lib/diff-view"
+import { displayName, markWords, parseDiffFiles, splitRows, type DiffLine } from "../src/renderer/src/lib/diff-view"
 import { WORD_MARK_MAX, markPair, wordTokens } from "../src/renderer/src/lib/diff-words"
+import { LANGUAGES } from "../src/renderer/src/lib/i18n"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
 
@@ -25,6 +26,20 @@ const shown = (marks: readonly { text: string; changed: boolean }[] | undefined)
   marks === undefined ? undefined : marks.map((mark) => (mark.changed ? `[${mark.text}]` : mark.text)).join("")
 
 const line = (kind: DiffLine["kind"], text: string): DiffLine => ({ kind, text })
+
+/** Every language table in i18n.ts, as key -> value. */
+async function tables(): Promise<Record<string, Record<string, string>>> {
+  const source = await read("src/renderer/src/lib/i18n.ts")
+  const out: Record<string, Record<string, string>> = {}
+  for (const found of source.matchAll(/^const ([A-Za-z0-9]+): Table = \{/gm)) {
+    const start = found.index!
+    const body = source.slice(start, source.indexOf("\n}", start))
+    const entries: Record<string, string> = {}
+    for (const entry of body.matchAll(/^ {2}"([^"]+)":\s*"((?:[^"\\]|\\.)*)",?\s*$/gm)) entries[entry[1]!] = JSON.parse(`"${entry[2]}"`) as string
+    out[found[1]!] = entries
+  }
+  return out
+}
 
 export async function roundSixteenDiffChecks(check: Check, section: (name: string) => void): Promise<void> {
   // ----------------------------------------------------------------- R16-D1
@@ -93,5 +108,37 @@ export async function roundSixteenDiffChecks(check: Check, section: (name: strin
     check("and in the side-by-side view", /v-for="\(mark, m\) in pair\[side\]!\.marks"/.test(body))
     check("the marked line steps back so the marked words are what stands out", /\.db-row\.add\.marked[\s\S]{0,140}background: color-mix/.test(body) && /\.db-row\.add \.db-mark \{[\s\S]{0,140}background: color-mix/.test(body))
     check("and the signs-only setting still paints nothing", /html\[data-diff-marks="signs"\][^{]*\.db-mark \{\s*background: transparent/.test(body))
+  }
+
+  // ----------------------------------------------------------------- R16-D3
+  section("Round 16 (R16-D3): a file's header says what happened to it, and a rename says both names")
+  {
+    check("a file that moved is written with the part that moved in braces", displayName({ name: "src/lib/new.ts", oldName: "src/lib/old.ts" }) === "src/lib/{old.ts → new.ts}", displayName({ name: "src/lib/new.ts", oldName: "src/lib/old.ts" }))
+    check("the folders above and below the move stay where they are", displayName({ name: "src/two/keep.ts", oldName: "src/one/keep.ts" }) === "src/{one → two}/keep.ts", displayName({ name: "src/two/keep.ts", oldName: "src/one/keep.ts" }))
+    check("two names with nothing in common are written out in full", displayName({ name: "b.ts", oldName: "a.ts" }) === "a.ts → b.ts", displayName({ name: "b.ts", oldName: "a.ts" }))
+    check("a file that did not move is its own name", displayName({ name: "src/a.ts" }) === "src/a.ts")
+    check("and a file written from nothing keeps the one name it has", displayName({ name: "src/a.ts", oldName: "/dev/null" }) === "src/a.ts")
+
+    const patch = ["diff --git a/src/old.ts b/src/new.ts", "rename from src/old.ts", "rename to src/new.ts", "--- a/src/old.ts", "+++ b/src/new.ts", "@@ -1 +1 @@", "-a", "+b"].join("\n")
+    const parsed = parseDiffFiles(patch)
+    check("a renamed file parses with both names and the renamed status", parsed[0]?.status === "renamed" && parsed[0]?.oldName === "src/old.ts" && parsed[0]?.name === "src/new.ts", parsed[0])
+
+    const body = await read("src/renderer/src/components/parts/DiffBody.vue")
+    check("the header carries a mark for what the patch did to the file", /<svg class="db-status"[\s\S]{0,300}:data-diff-status="file\.status"/.test(body))
+    check("and the word for it, from this app's own tables rather than diff2html's English", /class="db-tag"[\s\S]{0,80}t\(`rp\.diff\.tag\.\$\{file\.status\}`\)/.test(body))
+    check("with the tick beside it, which does not fold the file it sits in", /class="db-viewed" data-diff-viewed @click\.stop @keydown\.stop/.test(body))
+    check("the header is still a Tab stop that folds, which the tick did not take away", /class="db-head"\s+role="button"\s+tabindex="0"\s+:aria-expanded="!collapsed\.has\(file\.name\)"/.test(body))
+    check("a tick is remembered for this drawing of this patch only: a new patch, or the other layout, clears it", /watch\(\s*\(\) => `\$\{props\.layout \?\? ""\}:\$\{capped\.value\.text\}`,\s*\(\) => \{\s*viewed\.value = new Set\(\)/.test(body))
+    check("the header no longer carries the counts, which MiMo shows in the file list only", !/class="db-head"[\s\S]{0,900}db-stats/.test(body))
+
+    const strings = await tables()
+    const names = Object.keys(strings)
+    check(`all ${LANGUAGES.length} language tables were read`, names.length === LANGUAGES.length, names)
+    for (const key of ["rp.diff.tag.added", "rp.diff.tag.deleted", "rp.diff.tag.renamed", "rp.diff.tag.changed", "rp.diff.viewed"]) {
+      const absent = names.filter((name) => !strings[name]![key])
+      check(`${key} is written in every language`, absent.length === 0, absent)
+    }
+    const english = strings.en!
+    check("and the words are the tables' own, not the identifiers", english["rp.diff.tag.renamed"] !== "renamed" && english["rp.diff.viewed"] !== "viewed")
   }
 }

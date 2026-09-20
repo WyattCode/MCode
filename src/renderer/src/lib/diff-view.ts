@@ -198,6 +198,37 @@ export function markWords(lines: readonly DiffLine[]): DiffLine[] {
   return marked
 }
 
+/**
+ * A renamed file's two names in one, MiMo's braced form: the parts of the path
+ * they share stay put and only the part that moved is written `{old → new}`.
+ * Anything else - a file that was not renamed, or one side being /dev/null -
+ * is its own name.
+ */
+export function displayName(file: Pick<DiffFileView, "name" | "oldName">): string {
+  const before = file.oldName
+  if (!before || before === file.name || before.includes("dev/null") || file.name.includes("dev/null")) return file.name
+  const from = before.split("/")
+  const to = file.name.split("/")
+  const head: string[] = []
+  const tail: string[] = []
+  let start = 0
+  let endFrom = from.length - 1
+  let endTo = to.length - 1
+  while (start < endFrom && start < endTo && from[start] === to[start]) head.push(to[start++]!)
+  while (endFrom > start && endTo > start && from[endFrom] === to[endTo]) {
+    tail.unshift(to[endTo]!)
+    endFrom--
+    endTo--
+  }
+  const moved = `{${from.slice(start, endFrom + 1).join("/")} → ${to.slice(start, endTo + 1).join("/")}}`
+  const above = head.join("/")
+  const below = tail.join("/")
+  if (above && below) return `${above}/${moved}/${below}`
+  if (above) return `${above}/${moved}`
+  if (below) return `${moved}/${below}`
+  return `${before} → ${file.name}`
+}
+
 export interface SplitRow {
   left?: DiffLine
   right?: DiffLine

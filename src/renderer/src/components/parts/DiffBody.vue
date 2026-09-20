@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue"
-import { capDiff, markWords, parseDiffFiles, splitPath, splitRows, type DiffLayout } from "../../lib/diff-view"
+import { capDiff, displayName, markWords, parseDiffFiles, splitPath, splitRows, type DiffLayout } from "../../lib/diff-view"
 import { t } from "../../lib/i18n"
 
 /**
@@ -27,7 +27,7 @@ const capped = computed(() => capDiff(props.diff))
 const files = computed(() =>
   parseDiffFiles(capped.value.text).map((file) => ({
     ...file,
-    path: splitPath(file.name),
+    path: splitPath(displayName(file)),
     rows: file.hunks.map((hunk) => {
       const lines = markWords(hunk.lines)
       return { header: hunk.header, lines, split: splitRows(lines) }
@@ -35,8 +35,42 @@ const files = computed(() =>
   })),
 )
 
+/* The mark in front of a file's name, for what the patch does to it. */
+const SHEET = "M4 2.5h5.5L12.5 5.5v8H4z"
+const CORNER = "M9.5 2.5v3h3"
+const STATUS_ICON: Record<string, string[]> = {
+  added: [SHEET, CORNER, "M8 7.6v4M6 9.6h4"],
+  deleted: [SHEET, CORNER, "M6 9.6h4"],
+  renamed: [SHEET, CORNER, "M6 9.6h4M8.6 8.2 10 9.6l-1.4 1.4"],
+  changed: [SHEET, CORNER, "M6 8.6h4M6 11h2.6"],
+}
+
 /* Folded files, by name, so a new patch for the same tab keeps what was folded. */
 const collapsed = ref(new Set<string>())
+
+/*
+ * The files ticked off as read.
+ *
+ * MiMo's tick is diff2html's own checkbox and nothing more: it is not written
+ * down anywhere, it does not fold the file, and the whole diff is drawn again
+ * whenever the patch or the layout changes, which clears every tick. So it is
+ * held here for this drawing of this patch alone.
+ */
+const viewed = ref(new Set<string>())
+
+function markViewed(name: string, on: boolean) {
+  const next = new Set(viewed.value)
+  if (on) next.add(name)
+  else next.delete(name)
+  viewed.value = next
+}
+
+watch(
+  () => `${props.layout ?? ""}:${capped.value.text}`,
+  () => {
+    viewed.value = new Set()
+  },
+)
 
 function toggle(name: string) {
   const next = new Set(collapsed.value)
@@ -105,7 +139,7 @@ defineExpose({ reveal })
           @click="reveal(index)"
           @keydown.enter.space.self.prevent="reveal(index, true)"
         >
-          <span class="db-name" :title="file.name">
+          <span class="db-name" :title="`${file.path.dir}${file.path.base}`">
             <span v-if="file.path.dir" class="db-dir">{{ file.path.dir }}</span><span class="db-base">{{ file.path.base }}</span>
           </span>
           <span class="db-stats">
@@ -131,14 +165,18 @@ defineExpose({ reveal })
           @keydown.enter.space.self.prevent="toggle(file.name)"
         >
           <span class="db-name-wrap">
-            <span class="db-name" :title="file.name">
+            <svg class="db-status" :class="file.status" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round" :data-diff-status="file.status" aria-hidden="true">
+              <path v-for="d in STATUS_ICON[file.status]" :key="d" :d="d" />
+            </svg>
+            <span class="db-name" :title="`${file.path.dir}${file.path.base}`">
               <span v-if="file.path.dir" class="db-dir">{{ file.path.dir }}</span><span class="db-base">{{ file.path.base }}</span>
             </span>
+            <span class="db-tag" :class="file.status" data-diff-tag>{{ t(`rp.diff.tag.${file.status}`) }}</span>
           </span>
-          <span class="db-stats">
-            <span class="db-added">+{{ file.added }}</span>
-            <span class="db-deleted">-{{ file.deleted }}</span>
-          </span>
+          <label class="db-viewed" data-diff-viewed @click.stop @keydown.stop>
+            <input type="checkbox" :checked="viewed.has(file.name)" @change="markViewed(file.name, ($event.target as HTMLInputElement).checked)" />
+            {{ t("rp.diff.viewed") }}
+          </label>
         </div>
 
         <div v-if="!collapsed.has(file.name) && layout !== 'split'" class="db-body" :data-diff-scroll="`${file.name}\u0000u`">
@@ -389,6 +427,61 @@ defineExpose({ reveal })
 
 [dir="rtl"] .db-file.collapsed .db-name-wrap::before {
   transform: rotate(0);
+}
+
+/* The file's mark, in the colour of what the patch did to it. */
+.db-status {
+  flex: none;
+  margin-inline-end: 6px;
+  opacity: 0.75;
+}
+
+.db-status.added {
+  color: var(--d2h-ins-label);
+}
+
+.db-status.deleted {
+  color: var(--d2h-del-label);
+}
+
+/* The word for what the patch did, beside the name. */
+.db-tag {
+  flex: none;
+  margin-inline-start: 8px;
+  padding: 1px 6px;
+  border: 1px solid currentcolor;
+  border-radius: 6px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  line-height: 1.5;
+  text-transform: uppercase;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+.db-tag.added {
+  color: var(--d2h-ins-label);
+}
+
+.db-tag.deleted {
+  color: var(--d2h-del-label);
+}
+
+/* Ticked off as read: MiMo's own box, which does nothing but stay ticked. */
+.db-viewed {
+  display: flex;
+  flex: none;
+  gap: 5px;
+  align-items: center;
+  margin-inline-start: auto;
+  color: var(--d2h-dim);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  cursor: pointer;
+  user-select: none;
+}
+
+.db-viewed input {
+  margin: 0;
+  cursor: pointer;
 }
 
 .db-body,
