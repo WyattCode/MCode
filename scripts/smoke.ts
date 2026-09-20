@@ -333,7 +333,7 @@ import { roundThirteenInstanceChecks } from "./smoke-round13-instances"
 import { roundThirteenKeyboardChecks } from "./smoke-round13-keyboard"
 import { roundFourteenLocaleChecks } from "./smoke-round14-locale"
 import { roundFourteenPackagingChecks } from "./smoke-round14-packaging"
-// Round 15, lane S: the backend core fixes (S15-1 onwards).
+// Round 15, lane S: the backend core fixes (R15-S1 onwards).
 import { roundFifteenServerChecks } from "./smoke-round15-server"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
