@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue"
-import { capDiff, parseDiffFiles, splitPath, splitRows, type DiffLayout } from "../../lib/diff-view"
+import { capDiff, markWords, parseDiffFiles, splitPath, splitRows, type DiffLayout } from "../../lib/diff-view"
 import { t } from "../../lib/i18n"
 
 /**
@@ -28,7 +28,10 @@ const files = computed(() =>
   parseDiffFiles(capped.value.text).map((file) => ({
     ...file,
     path: splitPath(file.name),
-    rows: file.hunks.map((hunk) => ({ header: hunk.header, lines: hunk.lines, split: splitRows(hunk.lines) })),
+    rows: file.hunks.map((hunk) => {
+      const lines = markWords(hunk.lines)
+      return { header: hunk.header, lines, split: splitRows(lines) }
+    }),
   })),
 )
 
@@ -145,10 +148,10 @@ defineExpose({ reveal })
                 <span class="db-ln" /><span class="db-ln" />
                 <span class="db-code">{{ hunk.header }}</span>
               </div>
-              <div v-for="(line, l) in hunk.lines" :key="`${h}:${l}`" class="db-row" :class="line.kind">
+              <div v-for="(line, l) in hunk.lines" :key="`${h}:${l}`" class="db-row" :class="[line.kind, { marked: Boolean(line.marks) }]">
                 <span class="db-ln">{{ line.old ?? "" }}</span>
                 <span class="db-ln">{{ line.new ?? "" }}</span>
-                <span class="db-code"><span class="db-prefix">{{ line.kind === "add" ? "+" : line.kind === "del" ? "-" : " " }}</span>{{ line.text }}</span>
+                <span class="db-code"><span class="db-prefix">{{ line.kind === "add" ? "+" : line.kind === "del" ? "-" : " " }}</span><template v-if="line.marks"><span v-for="(mark, m) in line.marks" :key="m" :class="{ 'db-mark': mark.changed }">{{ mark.text }}</span></template><template v-else>{{ line.text }}</template></span>
               </div>
             </template>
           </div>
@@ -166,10 +169,10 @@ defineExpose({ reveal })
                   v-for="(pair, p) in hunk.split"
                   :key="`${h}:${p}`"
                   class="db-row"
-                  :class="pair[side] ? pair[side]!.kind : 'empty'"
+                  :class="[pair[side] ? pair[side]!.kind : 'empty', { marked: Boolean(pair[side]?.marks) }]"
                 >
                   <span class="db-ln">{{ pair[side] ? (side === "left" ? pair[side]!.old : pair[side]!.new) : "" }}</span>
-                  <span class="db-code"><span class="db-prefix">{{ pair[side]?.kind === "add" ? "+" : pair[side]?.kind === "del" ? "-" : " " }}</span>{{ pair[side]?.text ?? "" }}&#8203;</span>
+                  <span class="db-code"><span class="db-prefix">{{ pair[side]?.kind === "add" ? "+" : pair[side]?.kind === "del" ? "-" : " " }}</span><template v-if="pair[side]?.marks"><span v-for="(mark, m) in pair[side]!.marks" :key="m" :class="{ 'db-mark': mark.changed }">{{ mark.text }}</span></template><template v-else>{{ pair[side]?.text ?? "" }}</template>&#8203;</span>
                 </div>
               </template>
             </div>
@@ -465,6 +468,31 @@ defineExpose({ reveal })
   border-color: var(--d2h-del-border);
 }
 
+/*
+ * A pair that was marked word by word: the line itself steps back so the words
+ * only one side has are what the eye lands on, MiMo's own emphasis drawn in
+ * this app's diff colours.
+ */
+.db-row.add.marked,
+.db-row.add.marked .db-ln {
+  background: color-mix(in srgb, var(--d2h-ins-bg) 55%, var(--d2h-bg));
+}
+
+.db-row.del.marked,
+.db-row.del.marked .db-ln {
+  background: color-mix(in srgb, var(--d2h-del-bg) 55%, var(--d2h-bg));
+}
+
+.db-row.add .db-mark {
+  background: color-mix(in srgb, var(--d2h-ins-label) 32%, transparent);
+  border-radius: 0.2em;
+}
+
+.db-row.del .db-mark {
+  background: color-mix(in srgb, var(--d2h-del-label) 32%, transparent);
+  border-radius: 0.2em;
+}
+
 .db-row.info,
 .db-row.info .db-ln {
   color: var(--d2h-dim);
@@ -483,7 +511,9 @@ html[data-diff-marks="color"] .db-prefix {
 }
 
 html[data-diff-marks="signs"] .db-row.add,
-html[data-diff-marks="signs"] .db-row.del {
+html[data-diff-marks="signs"] .db-row.del,
+html[data-diff-marks="signs"] .db-row.marked,
+html[data-diff-marks="signs"] .db-mark {
   background: transparent;
 }
 

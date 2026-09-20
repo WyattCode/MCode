@@ -4,6 +4,8 @@
  * side-by-side view needs. No window is needed, so the smoke test covers it.
  */
 
+import { markPair, type LineMark } from "./diff-words"
+
 /* MiMo's cap: past this many lines only the start of a patch is drawn. */
 export const DIFF_LINE_CAP = 1200
 
@@ -26,6 +28,8 @@ export interface DiffLine {
   old?: number
   new?: number
   text: string
+  /** What the line shares with the one it is paired with, and what only it has. */
+  marks?: readonly LineMark[]
 }
 
 export interface DiffHunkView {
@@ -162,6 +166,36 @@ export function reviewRows(diff: string): ReviewRow[] {
       })),
     ]),
   )
+}
+
+/*
+ * A hunk's lines with the word marks filled in.
+ *
+ * MiMo pairs a run of removals with the run of additions after it, row for row,
+ * and marks a pair that has both sides; a removal with no addition against it,
+ * and an addition that follows no removal, stay plain. The pairing is the one
+ * `splitRows` draws with, so the same words light up in either layout.
+ */
+export function markWords(lines: readonly DiffLine[]): DiffLine[] {
+  const marked = lines.map((line) => ({ ...line }))
+  let index = 0
+  while (index < marked.length) {
+    if (marked[index]!.kind === "ctx") {
+      index++
+      continue
+    }
+    const removed: DiffLine[] = []
+    const added: DiffLine[] = []
+    while (index < marked.length && marked[index]!.kind === "del") removed.push(marked[index++]!)
+    while (index < marked.length && marked[index]!.kind === "add") added.push(marked[index++]!)
+    for (let row = 0; row < Math.min(removed.length, added.length); row++) {
+      const pair = markPair(removed[row]!.text, added[row]!.text)
+      if (!pair) continue
+      removed[row]!.marks = pair.old
+      added[row]!.marks = pair.next
+    }
+  }
+  return marked
 }
 
 export interface SplitRow {
