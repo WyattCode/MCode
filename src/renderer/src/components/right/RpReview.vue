@@ -31,19 +31,32 @@ let restTimer: ReturnType<typeof setTimeout> | undefined
 
 const entries = computed<GitChange[]>(() => status.value?.entries ?? [])
 
+/*
+ * Several watchers ask for the list, and the project under the tab can change
+ * while git is still answering, so every read carries a number: an answer that
+ * is no longer the newest, or that is for a project the tab has left, is
+ * dropped rather than drawn over what came after it. The files tab beside it
+ * guards its reads the same way.
+ */
+let readSeq = 0
+let patchSeq = 0
+
 async function load() {
   const root = props.root
   if (!root) return
+  const mine = ++readSeq
   loading.value = true
   try {
     const next = await app.gitStatus(root)
+    if (mine !== readSeq || props.root !== root) return
     // A status git could not produce is a failure to show, never a clean tree.
     status.value = next.error === undefined ? next : undefined
     failure.value = next.error
   } catch (err) {
+    if (mine !== readSeq || props.root !== root) return
     failure.value = err instanceof Error ? err.message : String(err)
   } finally {
-    loading.value = false
+    if (mine === readSeq) loading.value = false
   }
   const files = entries.value.map((entry) => entry.path)
   if (!selected.value || !files.includes(selected.value)) selected.value = files[0]
@@ -56,14 +69,15 @@ async function loadPatch(file: string | undefined) {
     patch.value = undefined
     return
   }
+  const mine = ++patchSeq
   patchLoading.value = true
   try {
     const text = await app.gitDiff(root, file)
-    if (selected.value === file) patch.value = text
+    if (mine === patchSeq && props.root === root && selected.value === file) patch.value = text
   } catch {
-    if (selected.value === file) patch.value = ""
+    if (mine === patchSeq && props.root === root && selected.value === file) patch.value = ""
   } finally {
-    patchLoading.value = false
+    if (mine === patchSeq) patchLoading.value = false
   }
 }
 
@@ -79,6 +93,9 @@ const edits = computed(() => editCounts(app.messages).total)
 
 watch(selected, (file) => void loadPatch(file))
 watch(() => props.root, () => {
+  // Whatever the old project's git is still working on is no longer wanted, even if this project has none to read.
+  readSeq++
+  patchSeq++
   status.value = undefined
   selected.value = undefined
   void load()
