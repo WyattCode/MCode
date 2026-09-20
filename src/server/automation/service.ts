@@ -191,6 +191,8 @@ export interface AutomationDeps {
     get(sessionID: string): Promise<SessionInfo | undefined>
     create(input: { directory: string; model: ModelRef; agent?: AgentName; title?: string; scratch?: boolean }): Promise<SessionInfo>
     messages(sessionID: string): Promise<Message[]>
+    /** Takes away a conversation this service made for a run that then would not start. */
+    delete?(sessionID: string): Promise<unknown>
   }
   prompt(input: { sessionID: string; text: string; inbox: UserMessage["inbox"] }): Promise<unknown>
   busy(sessionID: string): boolean
@@ -932,9 +934,19 @@ export class AutomationService {
    * `prompt()` can throw for real reasons - a full disk on the first save, a
    * routing call that failed - and its rejection used to be swallowed, leaving
    * the record "running" for ever and the user told nothing (N11-2).
+   *
+   * `opened` says this run made the conversation it was to run in. One that
+   * never got as far as a message is taken away again, so a task that cannot
+   * start does not leave an untitled empty conversation in the side column on
+   * every occurrence. MiMo does the same by building the conversation
+   * unpublished and discarding it on every failing path.
    */
-  private failRun(automation: Automation, sessionID: string, cause: unknown): void {
+  private async failRun(automation: Automation, sessionID: string, cause: unknown, opened = false): Promise<void> {
     this.runs.delete(sessionID)
+    if (opened) {
+      const empty = (await this.deps.sessions.messages(sessionID).catch(() => [])).length === 0
+      if (empty) await this.deps.sessions.delete?.(sessionID).catch(() => undefined)
+    }
     const saved = this.saved.automations.find((entry) => entry.id === automation.id)
     const record = [...(saved?.runHistory ?? [])].reverse().find((entry) => entry.resultThreadId === sessionID && entry.status === "running")
     if (record) {
@@ -991,7 +1003,7 @@ export class AutomationService {
       try {
         await this.deps.prompt({ sessionID: target.id, text: automation.prompt, inbox })
       } catch (cause) {
-        this.failRun(automation, target.id, cause)
+        await this.failRun(automation, target.id, cause)
         return "failed"
       }
       return "started"
@@ -1023,7 +1035,7 @@ export class AutomationService {
     try {
       await this.deps.prompt({ sessionID: session.id, text: automation.prompt, inbox })
     } catch (cause) {
-      this.failRun(automation, session.id, cause)
+      await this.failRun(automation, session.id, cause, true)
       return "failed"
     }
     return "started"
