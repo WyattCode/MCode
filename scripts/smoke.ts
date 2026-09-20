@@ -3883,8 +3883,8 @@ async function main() {
     /* MiMo has no four-stage mode of its own, and neither has this app any more (R16-A1). */
     check("no stage section survives anywhere", !buildPrompt.includes("## Working in stages"))
     /* R16-B2: and plan mode says so in Chinese, where build says nothing about it. */
-    const planned = await systemPrompt({ directory: project, agent: "plan" })
-    check("plan mode is told what mode it is in, in Chinese", planned.includes("\u8ba1\u5212\u6a21\u5f0f") && !buildPrompt.includes("\u8ba1\u5212\u6a21\u5f0f"))
+    const planModePrompt = await systemPrompt({ directory: project, agent: "plan" })
+    check("plan mode is told what mode it is in, in Chinese", planModePrompt.includes("\u8ba1\u5212\u6a21\u5f0f") && !buildPrompt.includes("\u8ba1\u5212\u6a21\u5f0f"))
   }
 
   section("Voice")

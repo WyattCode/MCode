@@ -330,12 +330,14 @@ console.log("\nThe one agent prompt every model reads")
   check("it asks for a stepwise plan, recorded with task, put to the user with plan_exit", ["\u5206\u6b65\u65b9\u6848", "`task` \u5de5\u5177", "plan_exit"].filter((part) => !PLAN_SECTION.includes(part)), [])
   /*
    * R16-B2: the guard is Chinese and the two base layers are not, which is
-   * MiMo's own split. A guard that drifted back into English, or a base layer
-   * that drifted into Chinese, both fail here.
+   * MiMo's own split - and a share rather than an absence, since its own
+   * `desktop-base.md` carries Chinese trigger words inside English prose
+   * (0.25% Han, against 67% in `plan-addendum.md`). A guard that drifted back
+   * into English, or a base layer that was translated, both fail here.
    */
-  const cjk = /[\u4e00-\u9fff]/
-  check("the guard is written in Chinese, as MiMo's guards are", cjk.test(PLAN_SECTION), true)
-  check("and the two base layers are not", cjk.test(build), false)
+  const han = (text: string) => (text.match(/[\u4e00-\u9fff]/g)?.length ?? 0) / text.length
+  check("the guard is written in Chinese, as MiMo's guards are", han(PLAN_SECTION) > 0.25, true)
+  check("and the two base layers are not", han(build) < 0.05, true)
   check("the prompt names this app and never the reference", plan.startsWith("You are MCode") && !/mimo/i.test(plan), true)
   /*
    * The interactive widget, under "Visual explanations". The three that matter

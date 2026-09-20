@@ -45,6 +45,16 @@ import type { AssistantMessage, ToolPart } from "../src/shared/protocol"
 /** Any Han character: what tells a Chinese layer from an English one. */
 const CJK = /[\u4e00-\u9fff]/
 
+/**
+ * How much of a layer is Han.
+ *
+ * The split is a share rather than an absence: MiMo's own English base carries
+ * Chinese trigger words (`desktop-base.md`, 0.25%) while its guards are wholly
+ * Chinese (`plan-addendum.md` 67%, `guard-envcheck-win32.md` 29% - lower only
+ * because it is half Windows paths).
+ */
+const han = (text: string) => (text.match(/[\u4e00-\u9fff]/g)?.length ?? 0) / text.length
+
 export async function roundSixteenPromptChecks(check: Check, section: (name: string) => void): Promise<void> {
   section("Round 16 (R16-B2): the guards are Chinese and the base layers are not, as MiMo splits them")
   {
@@ -55,14 +65,14 @@ export async function roundSixteenPromptChecks(check: Check, section: (name: str
      * that split, asserted from both sides so neither can drift.
      */
     const build = agentPrompt("build")
-    check("the two base layers are English", !CJK.test(build), build.slice(0, 120))
-    check("the plan-mode addendum is Chinese", CJK.test(PLAN_SECTION) && PLAN_SECTION.startsWith("# \u8ba1\u5212\u6a21\u5f0f"), PLAN_SECTION.slice(0, 40))
+    check("the two base layers are English", han(build) < 0.05, `${(han(build) * 100).toFixed(2)}% Han`)
+    check("the plan-mode addendum is Chinese", han(PLAN_SECTION) > 0.25 && PLAN_SECTION.startsWith("# \u8ba1\u5212\u6a21\u5f0f"), PLAN_SECTION.slice(0, 40))
     const planRules = ["\u5206\u6b65\u65b9\u6848", "write\u3001edit\u3001bash", "`task` \u5de5\u5177", "plan_exit"].filter((part) => !PLAN_SECTION.includes(part))
     check("and it still states every rule MiMo's states", planRules.length === 0, planRules)
 
     const first = firstPlanNote("/p/.mcode/plans/x.md", false)
     const later = laterPlanNote("/p/.mcode/plans/x.md")
-    check("the per-turn plan guard is Chinese and marked as MiMo marks it", CJK.test(first) && first.startsWith("[\u8ba1\u5212\u6a21\u5f0f]") && later.startsWith("[\u8ba1\u5212\u6a21\u5f0f]"), first.slice(0, 40))
+    check("the per-turn plan guard is Chinese and marked as MiMo marks it", han(first) > 0.25 && first.startsWith("[\u8ba1\u5212\u6a21\u5f0f]") && later.startsWith("[\u8ba1\u5212\u6a21\u5f0f]"), `${(han(first) * 100).toFixed(2)}% Han`)
     check("both name the plan file, which is what the turn may write", first.includes("/p/.mcode/plans/x.md") && later.includes("/p/.mcode/plans/x.md"))
     /*
      * The switch out of plan mode is English in MiMo too (`build-switch.txt`,
@@ -70,6 +80,12 @@ export async function roundSixteenPromptChecks(check: Check, section: (name: str
      * read a Chinese guard and then an English switch.
      */
     check("the switch back to build stays English, as MiMo's does", !CJK.test(buildSwitchNote()), buildSwitchNote())
+    /*
+     * The shares MiMo's own files carry, for scale: claude.txt 0%,
+     * desktop-base.md 0.25%, plan-addendum.md 67%, guard-plan.md 67%,
+     * guard-envcheck-win32.md 29%. MCode's land in the same places.
+     */
+    check("the guards are as Chinese as MiMo's, not merely marked", han(PLAN_SECTION) > 0.5 && han(first) > 0.5, [han(PLAN_SECTION), han(first)].map((share) => `${(share * 100).toFixed(1)}%`))
   }
 
   section("Round 16 (R16-B3): the environment-check guard, once per conversation")
@@ -86,7 +102,7 @@ export async function roundSixteenPromptChecks(check: Check, section: (name: str
     const linux = environmentGuard("linux")
 
     for (const [name, guard] of [["windows", windows], ["macOS", mac], ["Linux", linux]] as const) {
-      check(`${name}: the guard is Chinese and marked`, CJK.test(guard) && guard.startsWith("[\u73af\u5883\u68c0\u6d4b]"), guard.slice(0, 30))
+      check(`${name}: the guard is Chinese and marked`, han(guard) > 0.2 && guard.startsWith("[\u73af\u5883\u68c0\u6d4b]"), `${(han(guard) * 100).toFixed(1)}% Han`)
       check(`${name}: one failed probe is not a verdict`, guard.includes("node -v") && guard.includes("\u5c31\u65ad\u5b9a\u300c\u6ca1\u88c5"), guard.slice(0, 400))
       check(`${name}: the full path is then used to really run the tests`, guard.includes("\u771f\u6b63\u8dd1\u8d77\u6765") && guard.includes("\u9759\u6001\u5206\u6790"))
       check(`${name}: a promised check is finished inside this turn`, guard.includes("**\u672c\u56de\u5408\u5185**"))
