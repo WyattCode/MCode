@@ -3506,6 +3506,8 @@ export class SessionRunner {
 
   /** A conversation's first change to a repository's main worktree, waiting for the next step to note it. */
   private readonly worktreeHits = new Map<string, { root: string; linked: boolean }>()
+  /** Conversations whose transcript has already been read back for a hit this app never delivered. */
+  private readonly worktreeScanned = new Set<string>()
 
   /**
    * MiMo's auto-worktree notice, first half: a completed write, edit or patch
@@ -3544,12 +3546,43 @@ export class SessionRunner {
   }
 
   /**
+   * The hit waiting to be delivered: the one this app watched land, or - once
+   * per conversation - one read back out of the transcript.
+   *
+   * The watched hit lives in memory only, so a turn that was stopped, or an app
+   * that was closed straight after a write, lost it and the conversation was
+   * not told until it changed the main worktree a second time. MiMo keeps
+   * nothing in memory at all: every turn it re-reads the stored messages for
+   * the first such change, and treats a notice already in the transcript as
+   * sent. The stored `worktreeNotice` flag says that here, so the read-back is
+   * wanted once per conversation per run of the app rather than every step.
+   */
+  private async worktreeHit(sessionID: string): Promise<{ root: string; linked: boolean } | undefined> {
+    const watched = this.worktreeHits.get(sessionID)
+    if (watched) return watched
+    if (this.worktreeScanned.has(sessionID)) return undefined
+    this.worktreeScanned.add(sessionID)
+    const session = await this.store.get(sessionID)
+    if (!session || session.parentID || session.worktreeNotice) return undefined
+    for (const message of await this.store.messages(sessionID)) {
+      if (message.role !== "assistant") continue
+      for (const part of message.parts) {
+        if (part.type !== "tool" || part.status !== "completed") continue
+        const root = await this.changedMainWorktree(part, session.directory)
+        if (!root) continue
+        return { root, linked: await hasLinkedWorktrees(root) }
+      }
+    }
+    return undefined
+  }
+
+  /**
    * Second half: at the next step the note is added to the latest user message
    * - stored, as MiMo stores it - and the conversation is marked so it is never
    * told twice.
    */
   private async deliverWorktreeNotice(sessionID: string): Promise<void> {
-    const hit = this.worktreeHits.get(sessionID)
+    const hit = await this.worktreeHit(sessionID)
     if (!hit) return
     this.worktreeHits.delete(sessionID)
     const session = await this.store.get(sessionID)
@@ -4316,6 +4349,7 @@ export class SessionRunner {
     this.loopMonitors.delete(sessionID)
     // Dropped in deliverWorktreeNotice, but only for a conversation that got as far as being told.
     this.worktreeHits.delete(sessionID)
+    this.worktreeScanned.delete(sessionID)
     for (const key of [...this.numbering.keys()]) if (key.startsWith(`${sessionID}:`)) this.numbering.delete(key)
   }
 
