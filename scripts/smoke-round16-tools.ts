@@ -18,6 +18,9 @@ import { INTERACTIVE_REFUSAL, bashDescription } from "../src/server/tool/bash"
 import { changed, trimDiff, unifiedDiff } from "../src/server/diff"
 import { EditTool, WriteTool } from "../src/server/tool/edit"
 import type { ToolContext } from "../src/server/tool/types"
+import { ListExternalSessionsTool, ReadExternalSessionTool } from "../src/server/tool/external-session"
+import { CLAUDE_CODE_AGENT } from "../src/server/external-sessions"
+import { findTool, reachOf } from "../src/server/tool/registry"
 
 export async function roundSixteenToolChecks(check: Check, section: (name: string) => void): Promise<void> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-round16c-"))
@@ -160,6 +163,90 @@ export async function roundSixteenToolChecks(check: Check, section: (name: strin
 
     const many = await EditTool.execute({ file_path: "fresh.ts", old_string: "only", new_string: "all" }, context)
     check("the numbers are the diff's own, so they cannot drift from what is shown", countsOf(many)?.patch.split("\n").filter((line) => line.startsWith("+") && !line.startsWith("+++")).length === countsOf(many)?.additions, countsOf(many))
+  }
+
+  // ---------------------------------------------------------------- R16-C5
+  section("Round 16 (C5): another coding tool's saved conversations can be listed and read, and nothing else of its can")
+  {
+    const project = path.join(root, "外部 project")
+    const elsewhere = path.join(root, "other")
+    await fs.mkdir(project, { recursive: true })
+    await fs.mkdir(elsewhere, { recursive: true })
+    const config = path.join(root, "claude-home")
+    const folderOf = (dir: string) => path.resolve(dir).replace(/[^A-Za-z0-9-]/g, "-")
+    const write = async (dir: string, id: string, rows: unknown[]) => {
+      const folder = path.join(config, "projects", folderOf(dir))
+      await fs.mkdir(folder, { recursive: true })
+      await fs.writeFile(path.join(folder, `${id}.jsonl`), rows.map((row) => JSON.stringify(row)).join("\n") + "\n", "utf8")
+    }
+    const said = (role: "user" | "assistant", body: string, at: string, extra: Record<string, unknown> = {}) => ({
+      type: role,
+      cwd: undefined as string | undefined,
+      timestamp: at,
+      message: { content: [{ type: "text", text: body }] },
+      ...extra,
+    })
+    await write(project, "sess-one", [
+      { ...said("user", "<system-reminder>ignore me</system-reminder>make it work", "2026-09-01T10:00:00Z"), cwd: project },
+      said("assistant", "done", "2026-09-01T10:00:05Z"),
+      { type: "user", timestamp: "2026-09-01T10:00:06Z", toolUseResult: { ok: true }, message: { content: [{ type: "tool_result", content: "secret-path" }] } },
+      { type: "assistant", timestamp: "2026-09-01T10:00:07Z", message: { content: [{ type: "tool_use", name: "bash", input: { command: "rm -rf /" } }] } },
+      "{ this line is broken",
+    ])
+    await write(elsewhere, "sess-two", [{ ...said("user", "somewhere else", "2026-09-02T10:00:00Z"), cwd: elsewhere }])
+
+    const previous = process.env.CLAUDE_CONFIG_DIR
+    process.env.CLAUDE_CONFIG_DIR = config
+    try {
+      const context = (directory: string) =>
+        ({
+          sessionID: "ses_c5",
+          messageID: "msg_c5",
+          callID: "call_c5",
+          directory,
+          permissions: { ask: async () => undefined },
+          questions: { ask: async () => undefined },
+          signal: new AbortController().signal,
+          progress: () => {},
+          snapshot: async () => undefined,
+        }) as unknown as ToolContext
+
+      const listed = await ListExternalSessionsTool.execute({ agent_id: CLAUDE_CODE_AGENT }, context(project))
+      check("this project's session is listed", listed.output.includes("session_id=sess-one"), listed.output)
+      check("and another project's is not", !listed.output.includes("sess-two"), listed.output)
+      check("the first thing the user said is there, without the harness's own text", listed.output.includes("make it work") && !listed.output.includes("ignore me"), listed.output)
+      check("and the damaged line cost only itself", (listed.metadata as { count: number }).count === 1, listed.metadata)
+
+      const everywhere = await ListExternalSessionsTool.execute({ agent_id: CLAUDE_CODE_AGENT, all_projects: true }, context(project))
+      check("all_projects reaches the other project too", everywhere.output.includes("sess-two"), everywhere.output)
+
+      const stranger = await ListExternalSessionsTool.execute({ agent_id: "ext:something-else" }, context(project))
+      check("an agent this app cannot read is answered, not failed", stranger.output.includes(CLAUDE_CODE_AGENT) && stranger.output.startsWith("No external agent"), stranger.output)
+
+      const read = await ReadExternalSessionTool.execute({ agent_id: CLAUDE_CODE_AGENT, session_id: "sess-one" }, context(project))
+      check("reading gives back what was said", read.output.includes("make it work") && read.output.includes("done"), read.output)
+      check("and leaves the tool calls out by default", !read.output.includes("rm -rf /") && !read.output.includes("secret-path"), read.output)
+
+      const withTools = await ReadExternalSessionTool.execute({ agent_id: CLAUDE_CODE_AGENT, session_id: "sess-one", include_tools: true }, context(project))
+      check("include_tools hands them over when asked for", withTools.output.includes("rm -rf /") && withTools.output.includes("secret-path"), withTools.output)
+
+      const capped = await ReadExternalSessionTool.execute({ agent_id: CLAUDE_CODE_AGENT, session_id: "sess-one", max_messages: 1 }, context(project))
+      check("max_messages holds the answer down and says it was cut", capped.output.includes("done") === false && capped.output.includes("Cut at the size limit"), capped.output)
+
+      const foreign = await ReadExternalSessionTool.execute({ agent_id: CLAUDE_CODE_AGENT, session_id: "sess-two" }, context(project))
+      check("a session from another project is not readable from this one", foreign.output.startsWith("No Claude Code conversation") && foreign.output.includes("this project"), foreign.output)
+
+      const traversal = await ReadExternalSessionTool.execute({ agent_id: CLAUDE_CODE_AGENT, session_id: "../../../etc/passwd" }, context(project))
+      check("an id that is really a path finds nothing", traversal.output.includes("No Claude Code conversation"), traversal.output)
+
+      const noProject = await ListExternalSessionsTool.execute({ agent_id: CLAUDE_CODE_AGENT }, context(""))
+      check("a conversation with no project folder is told to say so rather than sweeping the machine", noProject.output.includes("all_projects"), noProject.output)
+
+      check("both tools are offered, and both only read", findTool("list_external_sessions") !== undefined && reachOf("read_external_session") === "reads")
+    } finally {
+      if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
+      else process.env.CLAUDE_CONFIG_DIR = previous
+    }
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)

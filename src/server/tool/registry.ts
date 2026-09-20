@@ -11,6 +11,7 @@ import { ActorTool } from "./subagent"
 import { PdfLocateTool, PresentFilesTool } from "./present"
 import { GetDesktopSettingsTool, SetDesktopSettingTool } from "./desktop-settings"
 import { ContactsTool, CreateSessionTool, TalkToSessionTool, UpdateSessionTool } from "./session-chat"
+import { ListExternalSessionsTool, ReadExternalSessionTool } from "./external-session"
 import { NotebookEditTool } from "./notebook"
 import { SkillSearchTool, SkillTool } from "./skill"
 import { HistoryTool } from "./history"
@@ -61,6 +62,9 @@ export const TOOLS: ToolDefinition[] = [
   TalkToSessionTool,
   CreateSessionTool,
   UpdateSessionTool,
+  // session chat: MiMo's other two, which read another coding tool's own saved conversations.
+  ListExternalSessionsTool,
+  ReadExternalSessionTool,
   // skills: appended, in MiMo's order (search, then load), for the same reason.
   SkillSearchTool,
   SkillTool,
@@ -173,6 +177,9 @@ const READS = new Set([
   "talk_to_session",
   "create_session",
   "update_session",
+  // and the two that read another tool's transcripts, which write nothing at all.
+  "list_external_sessions",
+  "read_external_session",
   // skills: loading instructions reads files, and changes none.
   "skill",
   "skill_search",
