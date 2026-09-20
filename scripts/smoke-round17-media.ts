@@ -34,6 +34,9 @@ import {
   precheckFailure,
   speechFloor,
 } from "../src/renderer/src/lib/voice"
+import { SpeakTool } from "../src/server/tool/speak"
+import { PresentFilesTool } from "../src/server/tool/present"
+import { WIDGET_FENCE } from "../src/shared/widget"
 
 /** One fake OpenAI-compatible service: what it was asked, and what it answers. */
 interface Fake {
@@ -332,5 +335,19 @@ export async function roundSeventeenMediaChecks(check: Check, section: (name: st
       check(`voice.${word} is in every one of them`, found === tables, { word, found })
     }
     check("an outcome gives way to waiting again after two seconds, as MiMo holds it", STATUS_SETTLE_MS === 2_000, STATUS_SETTLE_MS)
+  }
+
+  // ---------------------------------------------------------------- R17-M6
+  section("Round 17 (M6): what the two tool descriptions claim")
+  {
+    const said = SpeakTool.description
+    check("speak no longer states the user asked for narration as a fact", !/^.*The user has asked to be kept up to date/m.test(said), said.slice(0, 160))
+    check("it makes the call conditional on their having asked in the conversation", /only when the user has asked/i.test(said), said.slice(0, 200))
+    check("and says the setting is permission rather than a request", /permission to speak, not a request/i.test(said))
+
+    const presents = PresentFilesTool.description
+    check("present_files names the fence a demonstration belongs in", presents.includes(WIDGET_FENCE), presents)
+    check("and says not to write it to a file or hand it over", /Do not write it to a file, and do not hand it over/i.test(presents))
+    check("while still allowing a page that is genuinely the deliverable", /page, a site or an app as the thing they are given/i.test(presents))
   }
 }

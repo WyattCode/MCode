@@ -4,16 +4,21 @@ import { ToolError } from "./types"
 /**
  * MiMo's spoken progress, as a tool the model calls.
  *
- * MiMo's 语音反馈 setting tells the agent the reader wants to be kept up to date
- * by ear, and its engine says it with a cloud `tts_speech` call. This app speaks
- * with the machine's own voice instead - the window's speech synthesis, through
- * `lib/voice.ts` - so a line said here never leaves the computer and no service
- * is asked anything.
+ * MiMo's 语音反馈 setting lets the agent speak, and its engine says the line with
+ * a cloud `tts_speech` call. This app speaks with the machine's own voice
+ * instead - the window's speech synthesis, through `lib/voice.ts` - so a line
+ * said here never leaves the computer and no service is asked anything.
  *
  * It is offered only while the setting is on (the runner builds the turn's tool
- * list that way), which is also how the model learns it may speak at all. MiMo
- * instead keeps the tool in every turn and refuses the call when the setting is
- * off; a tool that is simply absent costs the model nothing to not call.
+ * list that way). MiMo instead keeps the tool in every turn and refuses the call
+ * when the setting is off; a tool that is simply absent costs the model nothing
+ * to not call.
+ *
+ * The switch is on out of the box, so the description must not treat it as the
+ * reader having asked for narration: MiMo's own wording limits the call to a
+ * reader who said in the conversation that they want 语音反馈, and the setting's
+ * description tells them to say so. Told otherwise, a model narrates every turn
+ * at someone who only ever left a default alone.
  */
 
 /** As long a line as the window will speak; anything past this would be cut off mid-sentence. */
@@ -23,7 +28,8 @@ export const SpeakTool: ToolDefinition = {
   name: "speak",
   description: [
     "Say one short line aloud on the user's machine, in MCode's own voice.",
-    "The user has asked to be kept up to date by ear, so use this to report progress as you work: what you have just finished, what you are starting next, and that the task is done at the end.",
+    "Use it only when the user has asked in this conversation to be kept up to date by ear - audio feedback, spoken progress, \"tell me as you go\". The setting that offers you this tool is only permission to speak, not a request: do not call it just to get the user's attention.",
+    "Once they have asked, report progress as you work: what you have just finished, what you are starting next, and that the task is done at the end.",
     "One plain sentence. No markup, no code, no file paths, no lists - it is heard rather than read. Say it in the language the user is writing in.",
     "It tells you nothing back and changes nothing on disk, so carry straight on with the work in the same turn.",
   ].join("\n"),
