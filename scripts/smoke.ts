@@ -335,6 +335,10 @@ import { roundFourteenLocaleChecks } from "./smoke-round14-locale"
 import { roundFourteenPackagingChecks } from "./smoke-round14-packaging"
 // Round 15, lane S: the backend core fixes (R15-S1 onwards).
 import { roundFifteenServerChecks } from "./smoke-round15-server"
+// Round 15, lane R: renderer state and libraries (R15-R1 onwards).
+import { roundFifteenStateChecks } from "./smoke-round15-state"
+// Round 15, lane M: the main process's second pass (M15-1 onwards).
+import { roundFifteenMainChecks } from "./smoke-round15-main"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -6989,6 +6993,8 @@ async function main() {
   await roundFourteenLocaleChecks(check, section)
   await roundFourteenPackagingChecks(check, section)
   await roundFifteenServerChecks(check, section)
+  await roundFifteenStateChecks(check, section)
+  await roundFifteenMainChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

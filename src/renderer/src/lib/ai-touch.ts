@@ -97,6 +97,11 @@ export function noteRunEnded(sessionID: string) {
   ended.set(sessionID, Date.now())
 }
 
+/** A conversation that no longer exists: the moment its last run ended is of no further use. */
+export function forgetRunEnded(sessionID: string) {
+  ended.delete(sessionID)
+}
+
 export function aiTouch(file: string, windowMs = 3000): { ai: boolean; prompt: string } {
   const app = useApp()
   const now = Date.now()

@@ -334,6 +334,17 @@ function watchFile(sender: WebContents, file: string): boolean {
   if (!tracked.has(sender)) {
     tracked.add(sender)
     sender.once("destroyed", () => releaseSender(sender))
+    /*
+     * A renderer that loads again - the View menu's reload, or recovery
+     * putting a fresh page in the window - is not a destroyed web contents,
+     * and the views' unmount hooks do not run either, so every watch the old
+     * page held would be kept for the life of the process: a directory handle
+     * Windows will not let go of, and file-changed sent on for a page that
+     * cannot know the spellings (R15-M3). The new page asks for what it shows.
+     * did-navigate is only raised by a main frame that has committed, and
+     * before the new document runs, so nothing it asks for is let go again.
+     */
+    sender.on("did-navigate", () => releaseSender(sender))
   }
   return true
 }
