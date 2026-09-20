@@ -92,4 +92,11 @@ export async function roundFifteenMainChecks(check: Check, section: (name: strin
     )
     check("nothing in main was left uncaught", (seen.uncaught ?? []).length === 0, seen.uncaught)
   }
+
+  section("Round 15 (M15-4): opening the browser panel again does not pile listeners on the window")
+  {
+    const listeners = seen.listeners
+    check("twelve panels came and went without the panel outliving its last tab", listeners?.hasPanel === false, listeners)
+    check("the window gained one closed listener for all of them", listeners !== undefined && listeners.closed === listeners.start + 1, listeners)
+  }
 }

@@ -109,5 +109,28 @@ app.whenReady().then(async () => {
     await wait(300)
   }
 
+  // ------------------------------------------------------------------- M15-4
+  {
+    const window = new BrowserWindow({ show: false, width: 400, height: 300 })
+    await window.loadURL(host)
+    const start = window.listenerCount("closed")
+    const navigation = window.webContents.listenerCount("did-navigate")
+    for (let round = 0; round < 12; round++) {
+      const state = openPanel(window, { x: 0, y: 0, width: 300, height: 200 }, () => undefined)
+      // Closing the last tab takes the panel down, so the next round opens a new one.
+      for (const tab of state.tabs) closeTab(window, tab.id)
+    }
+    result.listeners = {
+      start,
+      closed: window.listenerCount("closed"),
+      navigationStart: navigation,
+      navigation: window.webContents.listenerCount("did-navigate"),
+      warned: uncaught.length,
+      hasPanel: hasPanel(window),
+    }
+    window.destroy()
+    await wait(300)
+  }
+
   finish()
 })

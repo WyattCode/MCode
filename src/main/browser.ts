@@ -310,8 +310,22 @@ export function openPanel(
   panel.active = first.id
   panels.set(window.id, panel)
   show(window, panel)
-  window.once("closed", () => closePanel(window))
+  wireWindow(window)
   return stateOf(panel)
+}
+
+/**
+ * The window's side of a panel, wired once for the window's whole life.
+ *
+ * A panel comes and goes - closing the last tab takes it down, and the next
+ * open builds a new one - so registering here per panel would pile a listener
+ * on the window each time, and the ninth would trip Node's warning (R15-M4).
+ */
+const wired = new WeakSet<BrowserWindow>()
+function wireWindow(window: BrowserWindow): void {
+  if (wired.has(window)) return
+  wired.add(window)
+  window.once("closed", () => closePanel(window))
 }
 
 /** Where the panel sits. The renderer measures it; only it knows the layout. */
