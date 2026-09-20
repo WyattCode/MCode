@@ -210,6 +210,11 @@ export type Continuation = { note?: string; error?: { message: string; code?: st
  * asked for again, and an empty or reasoning-only reply is asked to answer,
  * each up to its limit, after which the step ends in error. A GPT model's
  * reasoning-only reply is taken as final.
+ *
+ * `said` is what the message already held before this step - a reply the
+ * output limit cut off carries on inside the same message - so that what this
+ * step wrote is what gets judged, and a continuation that answered with
+ * nothing is still an empty reply.
  */
 export function continuationFor(
   message: AssistantMessage,
@@ -217,12 +222,14 @@ export function continuationFor(
   finishReason: string | undefined,
   modelID: string,
   counts: { length: number; textTool: number; empty: number },
+  said = "",
 ): Continuation {
   if (message.parts.some((part) => part.type === "tool")) return {}
   const text = message.parts
     .filter((part) => part.type === "text")
     .map((part) => (part.type === "text" ? part.text : ""))
     .join("")
+    .slice(said.length)
     .trim()
   if (stop === "max_tokens") {
     if (counts.length >= CONTINUATION_LIMITS.length) return { error: { message: "The reply reached the output limit again after three continuations.", code: "error.outputLength" } }

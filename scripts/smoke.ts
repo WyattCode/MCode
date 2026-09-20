@@ -356,6 +356,8 @@ import { roundSixteenDiffChecks } from "./smoke-round16-diff"
 import { roundSixteenGoalChecks } from "./smoke-round16-goal"
 // Round 16, lane E: the inline interactive widget (R16-E1 onwards).
 import { roundSixteenWidgetChecks } from "./smoke-round16-widget"
+// Round 16, fix lane E2: a reply the output limit cut in two, and the day the model is told it is (R16-E2-1 onwards).
+import { roundSixteenContinuationChecks } from "./smoke-round16-continuation"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7001,6 +7003,7 @@ async function main() {
   await roundSixteenDiffChecks(check, section)
   await roundSixteenGoalChecks(check, section)
   await roundSixteenWidgetChecks(check, section)
+  await roundSixteenContinuationChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

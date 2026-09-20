@@ -77,7 +77,7 @@ import { BackgroundUsage, type BackgroundUse } from "./background-usage"
 import { UsageDays } from "./usage-days"
 import type { Usage as TurnUsage } from "@shared/protocol"
 import { ABORTED_TOOL } from "../provider/history"
-import { LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, recallHint, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
+import { LENGTH_NOTE, LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, recallHint, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
 import { LoopMonitor, TEXT_LOOP_BUFFER, applyCrops, describeLoop, detectStreak, stepDigest, textLoopNoteFor, type LoopIncident } from "./loop-health"
 import { interruptedTurn } from "@shared/resume"
 // session chat
@@ -2450,6 +2450,21 @@ export class SessionRunner {
     let textLooped = 0
     /* Files attached by path, read once for this turn. */
     const attachmentData: AttachmentCache = new Map()
+    /*
+     * The reply a continuation carries on writing.
+     *
+     * A step that stopped at the output limit is asked to continue, and what
+     * comes back is the rest of the same sentence - so it belongs in the same
+     * message, welded onto the same text part, not in a message of its own.
+     * Split in two, a fence cut by the limit is an unclosed fence in one
+     * message and a stray closing one in the next: the widget renders as a code
+     * block and the prose after it is swallowed as a second one, and copying
+     * the reply inserts a blank line into the middle of a word. Every other
+     * reason to continue a turn (a tool call written as prose, an empty reply)
+     * is a fresh attempt rather than the rest of a sentence, and keeps its own
+     * message.
+     */
+    let continuing: AssistantMessage | undefined
     for (let step = 0; ; step++) {
       if (controller.signal.aborted) return
       // The reference's `isLastStep`: no tools, and an instruction to write.
@@ -2512,16 +2527,32 @@ export class SessionRunner {
        */
       const effort = effortToSend(menuEfforts(session.model.model, this.config.modelEntry(session.model)?.name), config.effort)
 
-      const assistant: AssistantMessage = {
-        id: Identifier.message(),
-        sessionID,
-        role: "assistant",
-        model: session.model,
-        agent: session.agent,
-        effort,
-        parts: [],
-        time: { created: Date.now() },
+      const assistant: AssistantMessage =
+        continuing ??
+        ({
+          id: Identifier.message(),
+          sessionID,
+          role: "assistant",
+          model: session.model,
+          agent: session.agent,
+          effort,
+          parts: [],
+          time: { created: Date.now() },
+        } satisfies AssistantMessage)
+      /*
+       * The reply is open again: the limit it hit is not how it ends, and it
+       * has no completion time until it stops for a reason of its own.
+       */
+      const carried = continuing !== undefined
+      if (carried) {
+        assistant.finish = undefined
+        assistant.time.completed = undefined
       }
+      /* What the reply already says, so this step's own words can be told apart from it below. */
+      const said = carried ? textOf(assistant) : ""
+      const before = carried ? assistant.usage : undefined
+      // Set again below, and only there: every other way out of this step starts a message of its own.
+      continuing = undefined
       await this.store.saveMessage(assistant)
 
       /*
@@ -2627,7 +2658,7 @@ export class SessionRunner {
         // MiMo's family sampling and provider switches.
         sampling: samplingFor(session.model.model, this.config.modelEntry(session.model)?.temperature === true),
         extra: providerExtras(session.model.provider, this.config.modelEntry(session.model)?.reasoning === true, sessionID),
-      }, monitor)
+      }, monitor, carried)
       } catch (failure) {
         /*
          * A provider that refuses the request as too long is answered the way
@@ -2644,6 +2675,8 @@ export class SessionRunner {
           if (!compacted) throw failure
           session = compacted
           step -= 1
+          // The step is run again into the same message, so a reply being continued is not left half-written.
+          continuing = carried ? assistant : undefined
           continue
         }
         throw failure
@@ -2658,7 +2691,23 @@ export class SessionRunner {
 
       // MiMo's cost: cache reads and writes at their own prices, reasoning at the output price.
       const usage = { ...outcome.usage, cost: costOf(outcome.usage, this.config.modelEntry(session.model)) }
-      assistant.usage = usage
+      /*
+       * A continued reply carries both requests' figures. The words it wrote
+       * add up, and so does what they cost; what was sent does not - the second
+       * request was the same conversation over again, and the context ring
+       * reads the message's input to say how full the window is, so adding the
+       * two would have it report twice the context that exists.
+       */
+      assistant.usage = before
+        ? {
+            input: usage.input,
+            cacheRead: usage.cacheRead,
+            cacheWrite: usage.cacheWrite,
+            output: before.output + usage.output,
+            reasoning: before.reasoning + usage.reasoning,
+            cost: before.cost + usage.cost,
+          }
+        : usage
       await this.store.addUsage(sessionID, usage)
       /*
        * MiMo's count trigger: once the tokens the provider reports reach 90%
@@ -2700,7 +2749,8 @@ export class SessionRunner {
        * continuation notes are, and it never ends a turn by itself - a step
        * that called tools carries on regardless.
        */
-      const replied = assistant.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("")
+      // What this step wrote, which on a continuation is the reply so far minus what it already said.
+      const replied = textOf(assistant).slice(said.length)
       /* The stream was cut mid-reply for repeating itself, as MiMo cuts its own. */
       const looped = outcome.finishReason === LOOP_FINISH
       if (looped) {
@@ -2746,8 +2796,15 @@ export class SessionRunner {
 
       const pending = assistant.parts.filter((part): part is ToolPart => part.type === "tool")
       if (outcome.stop !== "tool_use" || pending.length === 0) {
-        const next = continuationFor(assistant, outcome.stop, outcome.finishReason, session.model.model, continued)
-        if (next.note) notes.set(assistant.id, [...(notes.get(assistant.id) ?? []), next.note])
+        const next = continuationFor(assistant, outcome.stop, outcome.finishReason, session.model.model, continued, said)
+        /*
+         * One copy of each note per message. A reply cut twice hangs both of
+         * its notes off the same message now that a continuation stays in it,
+         * and the same sentence twice over reads as a fault rather than as
+         * emphasis.
+         */
+        const had = notes.get(assistant.id) ?? []
+        if (next.note && !had.includes(next.note)) notes.set(assistant.id, [...had, next.note])
         if (next.error) {
           assistant.error = next.error.message
           if (next.error.code) assistant.errorCode = next.error.code
@@ -2756,6 +2813,8 @@ export class SessionRunner {
         assistant.time.completed = Date.now()
         await this.store.saveMessage(assistant)
         if ((next.note || repeatNote) && !lastStep) {
+          // The rest of a sentence the limit cut belongs to the reply that started it.
+          if (next.note === LENGTH_NOTE) continuing = assistant
           if (overflowing) session = (await this.compactForOverflow(session, controller.signal)) ?? session
           continue
         }
@@ -2863,6 +2922,12 @@ export class SessionRunner {
     assistant: AssistantMessage,
     request: Parameters<ProviderAdapter["stream"]>[0],
     monitor?: { append(text: string): boolean },
+    /*
+     * This request continues a reply the output limit cut off, so its first
+     * words are the rest of a sentence already on screen: they are appended to
+     * the text part that holds it rather than starting one of their own.
+     */
+    carryOn = false,
   ): Promise<TurnOutcome | undefined> {
     /*
      * MiMo cuts a repeating reply where it is, with a `takeUntil` over its own
@@ -2892,6 +2957,17 @@ export class SessionRunner {
     // tools are keyed by call id, since only the provider knows how those
     // interleave with the rest of the turn.
     const blocks = new Map<number, TextPart | ReasoningPart>()
+    /*
+     * The message as this attempt found it, so a retry puts it back rather than
+     * emptying it. Everything here belongs to an earlier step of the same
+     * reply, which this request is not going to stream again.
+     */
+    const base = [...assistant.parts]
+    /* The part a continuation writes into, and how much of it was there before. */
+    const carried = carryOn ? assistant.parts.findLast((part): part is TextPart => part.type === "text") : undefined
+    const carriedAt = carried?.text.length ?? 0
+    /* Whether this attempt has already taken the carried part; only the reply's first block continues it. */
+    let taken = false
     let dirty = false
     const flush = setInterval(() => {
       if (!dirty) return
@@ -2924,6 +3000,23 @@ export class SessionRunner {
     const emit = (event: TurnEvent) => {
       streamed = true
       if (event.type === "text.start") {
+        // The rest of the cut-off sentence goes back into the part that holds its beginning.
+        if (carried && !taken) {
+          taken = true
+          blocks.set(event.index, carried)
+          /*
+           * And that part moves to the end of the reply, so the thinking this
+           * step did sits before the words rather than after the answer - both
+           * in the transcript and in what is sent back to the model.
+           */
+          const at = assistant.parts.indexOf(carried)
+          if (at >= 0 && at < assistant.parts.length - 1) {
+            assistant.parts.splice(at, 1)
+            assistant.parts.push(carried)
+            this.bus.publish({ type: "message.updated", message: structuredClone(assistant) })
+          }
+          return
+        }
         const part: TextPart = { type: "text", id: Identifier.part(), text: "" }
         blocks.set(event.index, part)
         announce(part)
@@ -3045,7 +3138,14 @@ export class SessionRunner {
            * it again. The retry itself rides on the published copy only, so the
            * next update for the message clears the row without anything to undo.
            */
-          assistant.parts = []
+          /*
+           * Back to where this attempt began, not to nothing: a reply being
+           * continued past the output limit already holds the words an earlier
+           * step wrote, and this request is not going to stream those again.
+           */
+          assistant.parts = [...base]
+          if (carried) carried.text = carried.text.slice(0, carriedAt)
+          taken = false
           blocks.clear()
           dirty = false
           const retry = { attempt, message: describe(err), next: Date.now() + decision.wait, kind: decision.kind, max: decision.max }
@@ -4268,6 +4368,17 @@ type TaskGate = { turns: number; said?: string }
 /** tasks: an answer with the tasks its subagent left unfinished named after it. */
 function unfinishedNamed(answer: string, ids: readonly string[]): string {
   return `${answer}\n\n**Unfinished tasks**: ${ids.join(", ")}`
+}
+
+/**
+ * A reply's words, exactly as they were written.
+ *
+ * Joined with nothing between them: a reply continued past the output limit
+ * carries on in the middle of whatever it was writing, so anything inserted at
+ * the seam lands inside a word or inside a fence.
+ */
+function textOf(message: AssistantMessage): string {
+  return message.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("")
 }
 
 type NoticeEntry = { notice: SubagentNotice; result?: string; partial?: string }
