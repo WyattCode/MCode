@@ -195,6 +195,8 @@ async function sourceChecks(check: Check, section: Section): Promise<void> {
     const home = await read("src/renderer/src/components/HomeHero.vue")
     const used = home.slice(home.indexOf("async function useWorktree"), home.indexOf("async function useWorktree") + 300)
     check("a worktree switched to is added to the project list before it is picked", used.includes("app.addProject(directory, { used: true })") && used.indexOf("addProject") < used.indexOf("choose(directory)"), used)
+    const editedCard = await read("src/renderer/src/components/EditedFilesCard.vue")
+    check("the card lists the files a run reached outside the project, which its undo reports on", /editedFiles\(props\.parts, props\.directory, \{ outside: true \}\)/.test(editedCard))
     const panel = await read("src/renderer/src/components/right/RpSubagents.vue")
     const box = panel.slice(panel.indexOf(".rp-subagent-transcript {"), panel.indexOf(".rp-subagent-transcript {") + 400)
     check("a subagent's transcript is a boxed panel of its own, scrolling inside 320", /max-height: 320px/.test(box) && /border: 1px solid/.test(box) && /overflow: auto/.test(box), box)
@@ -209,7 +211,11 @@ async function sourceChecks(check: Check, section: Section): Promise<void> {
   {
     const runner = await read("src/server/session/runner.ts")
     const hit = runner.slice(runner.indexOf("private async worktreeHit("), runner.indexOf("private async worktreeHit(") + 900)
-    check("a pending worktree hit is read back out of the stored messages once", hit.includes("this.worktreeScanned") && hit.includes("await this.store.messages(sessionID)") && hit.includes("changedMainWorktree"), hit.slice(0, 200))
+    check(
+      "a pending worktree hit is read back out of the stored messages once",
+      /if \(this\.worktreeScanned\.has\(sessionID\)\) return undefined/.test(hit) && /this\.worktreeScanned\.add\(sessionID\)/.test(hit) && hit.includes("await this.store.messages(sessionID)") && hit.includes("changedMainWorktree"),
+      hit.slice(0, 200),
+    )
     const actorTool = await read("src/server/tool/subagent.ts")
     check("send takes MiMo's to_session_id and type rather than refusing them", /to_session_id: \{ type: "string"/.test(actorTool) && /type: \{ type: "string"/.test(actorTool))
     check("and status names MiMo's pending", /pending \(started, still queued behind others\)/.test(actorTool))
