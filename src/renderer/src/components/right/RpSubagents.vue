@@ -436,11 +436,22 @@ onBeforeUnmount(() => {
   background: #8b918b;
 }
 
+/*
+ * MiMo's `hs-subagent`: the transcript is a boxed panel of its own rather than
+ * the rest of the tab - 6 under the head, 8 rounded, a hairline round it, 12/8
+ * in, and it scrolls inside 320 instead of stretching the tab.
+ */
 .rp-subagent-transcript {
   display: flex;
-  flex: 1;
+  flex: none;
   flex-direction: column;
-  min-height: 0;
+  box-sizing: border-box;
+  max-height: 320px;
+  margin-top: 6px;
+  padding: 8px 12px;
+  overflow: auto;
+  border: 1px solid var(--border-weak);
+  border-radius: 8px;
 }
 
 .rp-subagent-note {
