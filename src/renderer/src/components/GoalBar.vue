@@ -20,6 +20,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch, useTemplateRef } from "vue"
 import type { SessionInfo } from "@shared/protocol"
 import { useApp } from "../stores/app"
+import { composing } from "../lib/keys"
 import { t } from "../lib/i18n"
 
 const props = defineProps<{ sessionID: string }>()
@@ -154,7 +155,7 @@ async function rerun() {
             spellcheck="false"
             data-goal-edit-box
             @blur="commitEdit"
-            @keydown.enter="commitEdit"
+            @keydown.enter="!composing($event) && commitEdit()"
             @keydown.esc="editing = false"
           />
           <span v-else ref="lineEl" class="goal-line" :class="{ open: expanded }" :title="reason || goal.condition">
