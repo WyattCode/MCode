@@ -340,6 +340,8 @@ import { roundFifteenMainChecks } from "./smoke-round15-main"
 // Round 15, fix lane U1: the conversation UI (R15-U1-1 onwards).
 import { roundFifteenUiChatChecks } from "./smoke-round15-ui-chat"
 import { roundFifteenToolChecks } from "./smoke-round15-tools"
+// Round 15, lane U2: the settings dialog's rows at the window's minimum width (R15-U21 onwards).
+import { roundFifteenSettingsUiChecks } from "./smoke-round15-ui-settings"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -6977,6 +6979,7 @@ async function main() {
   await roundFifteenMainChecks(check, section)
   await roundFifteenUiChatChecks(check, section)
   await roundFifteenToolChecks(check, section)
+  await roundFifteenSettingsUiChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

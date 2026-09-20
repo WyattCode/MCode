@@ -3558,8 +3558,17 @@ h3 {
  * Twenty above and below, nothing at the sides - the card carries the side
  * inset so the divider runs the full width of it rather than stopping short.
  */
+/*
+ * Wrapping is what keeps a row inside the card at the window's 720px minimum.
+ * The text column is `flex: 1` off a zero basis, so it never asks for room of
+ * its own and the control alone decides whether the row fits; when it does not,
+ * the control drops to a second line instead of being sliced off by the card's
+ * `overflow: hidden`. A row that fits is laid out exactly as before - the text
+ * column still swallows all the free space, so there is nothing to wrap.
+ */
 .line {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
@@ -3594,7 +3603,14 @@ h3 {
   flex: 1;
   flex-direction: column;
   gap: 8px;
-  min-width: 0;
+  /*
+   * A column off a zero basis asks for nothing, so a control that fits beside
+   * it is kept there however little is left for the words - in Chinese, at the
+   * 720px minimum, a server's name was set one syllable to the line next to
+   * three short buttons. Asking for this much first sends the control to a line
+   * of its own instead, and `100%` keeps the ask inside a narrower card.
+   */
+  min-width: min(180px, 100%);
 }
 
 .line-title {
@@ -3672,10 +3688,20 @@ h3 {
   inset-inline-start: 10px;
 }
 
+/*
+ * The buttons keep their own width while the row has room for them, and the
+ * pair is pushed to the end by its auto margin rather than by whatever grew
+ * beside it - so it still sits at the right once it has wrapped onto a line of
+ * its own. Shrinking is left on: the only time there is a deficit to shrink
+ * against is a line the pair is alone on and still too wide for, and then it
+ * breaks between buttons instead of running out of the card.
+ */
 .ctl-pair {
   display: flex;
-  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
+  margin-inline-start: auto;
 }
 
 .ctl-btn {
@@ -3764,11 +3790,14 @@ h3 {
   border-color: color-mix(in srgb, var(--text-warning) 35%, transparent);
 }
 
+/* The switch and its buttons, held to the end of the row the way `.ctl-pair` is. */
 .mcp-ctrl {
   display: flex;
-  flex-shrink: 0;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
+  margin-inline-start: auto;
 }
 
 .mcp-tools-panel {
@@ -4724,14 +4753,11 @@ h3 {
    eleven permanent input boxes was a wall, not a list. */
 .prow {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   padding: 17px 0;
   border-bottom: 0.5px solid var(--border-weaker);
-}
-
-.prow:last-child {
-  border-bottom: none;
 }
 
 .prow:last-child {
@@ -4743,15 +4769,24 @@ h3 {
   background: var(--text-strong);
 }
 
+/* The same ask as `.line-text`, for the same reason: a provider's name before its buttons. */
 .ptext {
   flex: 1;
-  min-width: 0;
+  min-width: min(180px, 100%);
 }
 
+/*
+ * A provider name and its tag are two flex items that will not shrink below
+ * their own words, so without somewhere to go they are drawn straight over the
+ * buttons. `wrap` puts the tag under the name, and `anywhere` lets a name with
+ * no spaces in it break, which is also what makes the text column shrinkable.
+ */
 .pname {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  overflow-wrap: anywhere;
   color: var(--text-strong);
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
@@ -4888,8 +4923,13 @@ h3 {
   }
 }
 
-/* MiMo draws the config path as a single line that ends in an ellipsis. */
-.config-path {
+/*
+ * MiMo draws the config path as a single line that ends in an ellipsis.
+ * Written against `.line-sub` as well, the way `.line-sub.path` is: the element
+ * wears both classes, and the `.line-sub` rule further down reads later at the
+ * same weight, so a bare `.config-path` loses its 11.5px to that rule's 12.
+ */
+.line-sub.config-path {
   overflow: hidden;
   font-family: var(--font-mono);
   font-size: calc(11.5px * var(--ui-font-scale, 1));
@@ -5182,7 +5222,9 @@ h3 {
   gap: 3px;
 }
 
+/* An MCP server's name is the user's string and can be one long word; it breaks rather than pushing its row apart. */
 .line-title {
+  overflow-wrap: anywhere;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 22.4px;
@@ -5456,8 +5498,9 @@ h3 {
   font-weight: 500;
 }
 
+/* The other sentence-in-a-card on this page, on the same 16/17 rhythm as `.empty-card`. */
 .card.wt-empty {
-  padding: 16px 18px;
+  padding: 16px 17px;
 }
 
 .wt-empty-title {
