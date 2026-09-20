@@ -359,6 +359,8 @@ export interface UserMessage {
    * message its plan_exit writes.
    */
   synthetic?: boolean
+  /** 追求目标: this message became the conversation's goal, which the transcript marks on it. */
+  setsGoal?: boolean
   /** Places the user pointed at with this message (MiMo's 注释); the model reads them after the text. */
   annotations?: Annotation[]
   /** Documents the user changed since the last message; the model reads them before the text, the transcript does not show them. */
@@ -1959,6 +1961,8 @@ export type Request =
       fileNotices?: FileNotice[]
       agent?: TurnAgent
       model?: ModelRef
+      /* 追求目标: this message is the conversation's goal from now on, set before it is written. */
+      goal?: string
     }
   | { type: "session.abort"; sessionID: string }
   /*

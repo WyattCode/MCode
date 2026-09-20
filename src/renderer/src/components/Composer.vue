@@ -42,6 +42,7 @@ import { focusRow } from "../lib/menu-keys"
 import { useEscapeLayerWhile } from "../lib/escape-layer"
 import FullAccessDialog from "./FullAccessDialog.vue"
 import ContextRing from "./ContextRing.vue"
+import GoalBar from "./GoalBar.vue"
 import { readContext } from "./session-context"
 import { compactTokens, t, language } from "../lib/i18n"
 
@@ -1042,6 +1043,23 @@ function terminalFromMenu() {
   emit("terminal")
 }
 
+/*
+ * 追求目标 as the plus menu shows it: the open conversation's setting when
+ * there is one, the default the next conversation will start with when there
+ * is not.
+ *
+ * In a conversation it is that conversation's value and nothing else, with
+ * absent meaning off - the server reads the same field when it decides whether
+ * a message carries a goal.
+ */
+const goalMode = computed(() => (sessionID.value ? (session.value?.goalMode ?? false) : (app.config?.goalMode ?? false)))
+
+/* A switch rather than a command, because it stays on; the menu stays open, as MiMo's does. */
+async function toggleGoalMode() {
+  await app.setGoalMode(!goalMode.value, sessionID.value)
+  notify(t(goalMode.value ? "toast.goalOn" : "toast.goalOff"))
+}
+
 /* MiMo's skill chip: a picked skill waits above the text and goes with the next message. */
 function addSkill(name: string) {
   menu.value = undefined
@@ -1226,6 +1244,13 @@ async function submit() {
     }
   }
 
+  /*
+   * 追求目标: with the switch on, what was typed becomes the goal the turn is
+   * judged against. The words as typed, not the body that is sent - a body
+   * standing in for attachments would make a goal nobody wrote.
+   */
+  const goalOnSend = !props.side && goalMode.value && value.trim() ? value.trim() : undefined
+
   const named = await mentionAttachments(value, carried, target)
   const filled = await fillCommand(value, target)
   /*
@@ -1246,7 +1271,7 @@ async function submit() {
     ? false
     : subtask
       ? await app.subtask(value, subtask)
-      : await app.send(withSkills(body, chips), [...sent, ...named, ...commandFiles], target, pointed, filled.command)
+      : await app.send(withSkills(body, chips), [...sent, ...named, ...commandFiles], target, pointed, filled.command, goalOnSend)
   if (!accepted) {
     text.value = value
     attachments.value = sent
@@ -2941,6 +2966,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 <template>
   <div class="composer" :class="{ noted: sessionID && !side, side }" :data-compacting="compactingHere || undefined">
     <div class="shell">
+      <!-- 追求目标: the goal and how it is going, above the box, as MiMo puts it. -->
+      <GoalBar v-if="!side && sessionID" :session-i-d="sessionID" />
       <!-- MiMo's cue drawer: tucked behind the box's top edge, it slides up with the command a recording was heard as. -->
       <div class="voice-cues" :class="{ on: cueOn }" data-voice-cues>
         <div class="voice-drawer" role="status">
@@ -3224,6 +3251,15 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                   </svg>
                   <span class="item-name">{{ t("composer.menuTerminal") }}</span>
                 </button>
+                <div class="rule" />
+                <!-- 追求目标: a switch, not a command - what is typed next becomes the goal and the turn is judged against it. -->
+                <button class="item goal-row" role="switch" tabindex="-1" data-mode="goal" :aria-checked="goalMode" @click="toggleGoalMode">
+                  <span class="goal-text">
+                    <span class="item-name">{{ t("composer.goal") }}</span>
+                    <span class="goal-sub">{{ t("composer.goalSub") }}</span>
+                  </span>
+                  <span class="goal-switch" :class="{ on: goalMode }"><span class="goal-knob" /></span>
+                </button>
               </template>
               <div class="rule" />
               <!-- MiMo's 技能 ›: a submenu with a search box, beside the row. -->
@@ -3351,6 +3387,21 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               <path d="M5.5 8h5M5.5 10.5h3.5" />
             </svg>
             <span class="mode-label">{{ t("composer.planChip") }}</span>
+          </button>
+          <!-- 追求目标: its own chip beside the mode's, since the two are not alternatives; pressing it turns the switch off. -->
+          <button
+            v-if="!side && goalMode"
+            class="mode-chip"
+            data-mode="goal"
+            v-tip="{ label: t('composer.goalChipTip') }"
+            @click="toggleGoalMode"
+          >
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="8" cy="8" r="5.4" />
+              <circle cx="8" cy="8" r="2.6" />
+              <circle cx="8" cy="8" r="0.6" fill="currentColor" stroke="none" />
+            </svg>
+            <span class="mode-label">{{ t("composer.goalChip") }}</span>
           </button>
           </div>
 
@@ -4857,6 +4908,59 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   line-height: calc(16px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A two-line row with a switch at its end. */
+.item.goal-row {
+  height: auto;
+  padding-block: 6px;
+}
+
+.goal-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.goal-sub {
+  overflow: hidden;
+  color: var(--text-weak);
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
+  line-height: calc(15px * var(--ui-font-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goal-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 28px;
+  height: 16px;
+  background: color-mix(in srgb, var(--text-strong) 22%, var(--surface-raised));
+  border-radius: 999px;
+  transition: background-color 0.15s;
+}
+
+.goal-switch.on {
+  background: var(--icon-base);
+}
+
+.goal-knob {
+  position: absolute;
+  top: 2px;
+  width: 12px;
+  height: 12px;
+  background: var(--icon-base);
+  border-radius: 50%;
+  inset-inline-start: 2px;
+  transition: inset-inline-start 0.15s, background-color 0.15s;
+}
+
+.goal-switch.on .goal-knob {
+  background: var(--surface-raised);
+  inset-inline-start: 14px;
 }
 
 /* MiMo's mode chip: a filled 12/500 label with its mark, 3 by 8 at a 7px corner. */

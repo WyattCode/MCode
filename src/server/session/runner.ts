@@ -58,7 +58,7 @@ import { pruneLevelFor, prunedHistory, type PruneLevel } from "./prune"
 import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, shrinkLargeToolResults, touchedFiles, type CompactionTrigger } from "./summary"
 import { memorySection, repositoryState, systemPrompt } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
-import { GOAL_GUARD, JUDGE_SYSTEM, MAX_GOAL_REACT, goalReminder, judgeQuestion, parseVerdict, type GoalVerdict } from "./goal"
+import { GOAL_GUARD, JUDGE_SYSTEM, MAX_GOAL_REACT, cleanGoal, goalReminder, judgeQuestion, parseVerdict, type GoalVerdict } from "./goal"
 import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf, subagentAgent } from "./plan"
 import { status as gitStatus } from "../git"
 import { memoryFilesFor } from "../history/service"
@@ -161,6 +161,8 @@ type PromptInput = {
   /* What a slash command named, for this turn only: MiMo runs the turn as the agent and model the command names. */
   agent?: TurnAgent
   model?: SessionInfo["model"]
+  /* 追求目标: this message sets the conversation's goal - the composer sends it while the switch is on. */
+  goal?: string
 }
 
 /**
@@ -1649,7 +1651,11 @@ export class SessionRunner {
      */
     if (extra.notices?.length) this.turn(input.sessionID).messages.push(user.id)
 
+    // 追求目标: a message typed into a running turn sets the goal too, before it reaches the transcript.
+    if (input.goal) user.setsGoal = true
     const written = steering.written.then(async () => {
+      const goal = input.goal ? cleanGoal(input.goal) : ""
+      if (goal) await this.store.update(input.sessionID, { goal: { condition: goal, startedAt: Date.now(), attempts: 0 } })
       // Settled in the same chain, so messages still reach the transcript in the order they were typed.
       if (user.attachments.some((file) => file.byPath)) {
         const session = await this.store.get(input.sessionID)
@@ -1874,6 +1880,15 @@ export class SessionRunner {
     // check here - the bearer is resolved (and refreshed) at turn time.
     const apiKey = this.config.apiKey(session.model.provider) ?? ""
 
+    /*
+      * 追求目标: the goal is written before the message that set it, so the
+      * turn this starts is already carrying the guard and is judged when it
+      * ends. A fresh goal each time, as MiMo's own set is: its clock and its
+      * count of re-entries start over.
+      */
+    const goal = input.goal ? cleanGoal(input.goal) : ""
+    if (goal) session = await this.store.update(session.id, { goal: { condition: goal, startedAt: Date.now(), attempts: 0 } })
+
     // MiMo's runtime context rides on what the user sends; a first message also gets the app note and the directory.
     const stored = await this.store.messages(session.id)
     const first = stored.length === 0
@@ -1897,6 +1912,8 @@ export class SessionRunner {
       ...(input.fileNotices?.length ? { fileNotices: input.fileNotices } : {}),
       // session chat
       ...(input.inbox ? { inbox: input.inbox } : {}),
+      // 追求目标: the transcript marks the message that set the goal.
+      ...(goal ? { setsGoal: true } : {}),
       // skills
       ...(reminders.length ? { reminders } : {}),
       ...(context.length ? { context } : {}),

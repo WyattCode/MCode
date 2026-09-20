@@ -1593,6 +1593,8 @@ export const useApp = defineStore("app", () => {
     annotations: import("@shared/protocol").Annotation[] = [],
     /* What a slash command named, for the turn this starts only. */
     command?: { agent?: import("@shared/protocol").TurnAgent; model?: import("@shared/protocol").ModelRef },
+    /* 追求目标: this message is the goal the conversation is judged against from now on. */
+    goal?: string,
   ): Promise<boolean> {
     const target = to ?? currentID.value
     // An attachment, or a place pointed at, with no words is still something to answer.
@@ -1637,6 +1639,7 @@ export const useApp = defineStore("app", () => {
         ...(fileNotices.length ? { fileNotices } : {}),
         ...(command?.agent ? { agent: command.agent } : {}),
         ...(command?.model ? { model: command.model } : {}),
+        ...(goal ? { goal } : {}),
       })
       return true
     } catch (err) {
@@ -1782,6 +1785,47 @@ export const useApp = defineStore("app", () => {
       if (at >= 0) sessions.value[at] = result.session
     }
     await patchConfig({ agent })
+  }
+
+  /*
+   * 追求目标: the plus menu's switch, the same shape as the agent - set on the
+   * open conversation if there is one, and written as the default either way so
+   * the next conversation starts where this choice left off.
+   */
+  async function setGoalMode(on: boolean, to?: string) {
+    const target = to ?? currentID.value
+    if (target) {
+      const result = await api().request({ type: "session.goalMode", sessionID: target, on })
+      const at = sessions.value.findIndex((entry) => entry.id === result.session.id)
+      if (at >= 0) sessions.value[at] = result.session
+    }
+    await patchConfig({ goalMode: on })
+  }
+
+  /** 追求目标: on or off for the open conversation, or - from the home screen - for the next task. */
+  async function toggleGoalMode(home = false) {
+    const target = home ? undefined : currentID.value
+    const session = target ? sessions.value.find((entry) => entry.id === target) : undefined
+    const next = !(session ? (session.goalMode ?? false) : (config.value?.goalMode ?? false))
+    await setGoalMode(next, target)
+    notify(t(next ? "toast.goalOn" : "toast.goalOff"))
+  }
+
+  /** 追求目标: writes the goal itself, or - with null - takes it off the conversation. */
+  async function setGoal(sessionID: string, condition: string | null) {
+    const result = await api().request({ type: "session.goal", sessionID, condition })
+    const at = sessions.value.findIndex((entry) => entry.id === result.session.id)
+    if (at >= 0) sessions.value[at] = result.session
+  }
+
+  /*
+   * 追求目标: 退出目标模式 from the bar - the goal goes and the switch goes with
+   * it, because the reader pressed it while one was being pursued and means
+   * both. Turning the switch off from the menu leaves a live goal alone.
+   */
+  async function leaveGoal(sessionID: string) {
+    await setGoal(sessionID, null)
+    await setGoalMode(false, sessionID)
   }
 
   /* MiMo's shortcut: voice input flips between 智能编辑 and 快速输入. */
@@ -2224,6 +2268,10 @@ export const useApp = defineStore("app", () => {
     commandsState,
     refreshCommands,
     toggleVoiceMode,
+    setGoalMode,
+    toggleGoalMode,
+    setGoal,
+    leaveGoal,
     permission,
     permissionQueue,
     revertTurn,

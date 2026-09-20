@@ -658,6 +658,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         attachments: request.attachments,
         annotations: request.annotations,
         fileNotices: request.fileNotices,
+        // 追求目标: what this message sets the conversation aiming at.
+        goal: request.goal,
         // What a slash command named, for the turn this starts.
         agent: request.agent,
         model: request.model,

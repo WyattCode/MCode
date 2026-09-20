@@ -185,6 +185,8 @@ export async function roundFifteenFontScaleChecks(check: Check, section: (name: 
       ["Sidebar.vue", ".task-label", "line-height"],
       ["HomeHero.vue", ".sug", "line-height"],
       ["Composer.vue", ".item-name", "line-height"],
+      ["Composer.vue", ".goal-sub", "line-height"],
+      ["GoalBar.vue", ".goal-line", "line-height"],
       ["SessionHero.vue", ".chip-name", "line-height"],
       ["SessionHeader.vue", ".open-with", "height"],
     ]

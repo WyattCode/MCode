@@ -2865,6 +2865,13 @@ const bindableCommands = computed((): AppCommand[] => {
       run: () => void app.toggleVoiceMode(),
     },
     {
+      // 追求目标, unbound: for the open conversation, or on the home screen for the next task.
+      id: "composer.goal.toggle",
+      group: "key.groupPrompt",
+      title: t("key.label.toggle-goal"),
+      run: () => void app.toggleGoalMode(isHome.value),
+    },
+    {
       id: "project.previous",
       group: "key.groupGeneral",
       title: t("key.prevProject"),
