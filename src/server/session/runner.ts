@@ -3938,6 +3938,9 @@ export class SessionRunner {
     this.prefixes.delete(sessionID)
     this.taskQueues.delete(sessionID)
     this.retrying.delete(sessionID)
+    this.repeatsAllowed.delete(sessionID)
+    // Dropped in deliverWorktreeNotice, but only for a conversation that got as far as being told.
+    this.worktreeHits.delete(sessionID)
     for (const key of [...this.numbering.keys()]) if (key.startsWith(`${sessionID}:`)) this.numbering.delete(key)
   }
 

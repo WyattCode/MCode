@@ -311,6 +311,40 @@ export async function roundFifteenServerChecks(check: Check, section: (name: str
     }
   }
 
+  // ------------------------------------------------------------------ R15-S4
+  section("Round 15 (R15-S4): a deleted conversation leaves nothing behind in memory")
+  {
+    const artifacts = (await ArtifactStore.open(path.join(root, "detach", "artifacts.db")))!
+    const dirty = () => (artifacts as unknown as { dirty: Map<string, number> }).dirty
+    artifacts.touched("ses_gone")
+    artifacts.touched("ses_kept")
+    check("R15-S4: a conversation that wrote is marked for the next pass", dirty().size === 2, dirty().size)
+    await artifacts.detach("ses_gone")
+    check("R15-S4: and a deleted one loses its mark", !dirty().has("ses_gone") && dirty().has("ses_kept"), [...dirty().keys()])
+    await artifacts.close()
+
+    const dataDirectory = path.join(root, "forget", "data")
+    await fs.mkdir(path.join(dataDirectory, "storage"), { recursive: true })
+    await fs.writeFile(path.join(dataDirectory, "storage", "config.json"), "{}")
+    const backend = await startBackend(dataDirectory)
+    try {
+      const runner = backend.runtime.runner as unknown as {
+        repeatsAllowed: Map<string, Set<string>>
+        worktreeHits: Map<string, unknown>
+        forgetSession: (sessionID: string) => void
+      }
+      runner.repeatsAllowed.set("ses_gone", new Set(["bash"]))
+      runner.worktreeHits.set("ses_gone", { root: "/tmp/repo", linked: false })
+      runner.repeatsAllowed.set("ses_kept", new Set(["bash"]))
+      backend.runtime.runner.forgetSession("ses_gone")
+      check("R15-S4: the tools a deleted conversation let repeat go with it", !runner.repeatsAllowed.has("ses_gone"), [...runner.repeatsAllowed.keys()])
+      check("R15-S4: so does the worktree it was told about", !runner.worktreeHits.has("ses_gone"), [...runner.worktreeHits.keys()])
+      check("R15-S4: and another conversation's own keeps its place", runner.repeatsAllowed.has("ses_kept"))
+    } finally {
+      await backend.close()
+    }
+  }
+
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
 }

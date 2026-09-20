@@ -753,6 +753,13 @@ export class ArtifactStore {
    */
   async detach(sessionID: string): Promise<void> {
     if (!this.writable || !sessionID) return
+    /*
+     * Only a pass over the conversations that are still listed clears this, so
+     * one deleted between its last write and the next pass stayed marked for
+     * the life of the process - and its mark made every later pass believe a
+     * conversation nobody can read still owes a reconcile.
+     */
+    this.dirty.delete(sessionID)
     const now = Date.now()
     await this.db.transaction(async (tx) => {
       await tx.run("INSERT OR IGNORE INTO artifact_purged_session (session_id, purged_at) VALUES (?, ?)", sessionID, now)
