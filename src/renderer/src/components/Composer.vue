@@ -42,6 +42,7 @@ import { focusRow } from "../lib/menu-keys"
 import { useEscapeLayerWhile } from "../lib/escape-layer"
 import FullAccessDialog from "./FullAccessDialog.vue"
 import ContextRing from "./ContextRing.vue"
+import GoalBar from "./GoalBar.vue"
 import { readContext } from "./session-context"
 import { compactTokens, t, language } from "../lib/i18n"
 
@@ -770,7 +771,6 @@ const placeholder = computed(() => {
   if (compactingHere.value) return t("composer.compact.starting")
   if (restrictedHere.value) return t("composer.reviewRestricted")
   if (!props.side && agent.value === "plan") return t("composer.placeholderPlan")
-  if (!props.side && staged.value) return t("composer.stagedSub")
   return t("composer.placeholder")
 })
 
@@ -1044,32 +1044,20 @@ function terminalFromMenu() {
 }
 
 /*
- * Staged mode as the plus menu shows it: the open conversation's setting when
+ * 追求目标 as the plus menu shows it: the open conversation's setting when
  * there is one, the default the next conversation will start with when there
  * is not.
  *
  * In a conversation it is that conversation's value and nothing else, with
- * absent meaning off - which is what the server reads when it builds the
- * prompt. Falling back to the default here made the switch lie: with the
- * default turned on, every conversation from before the setting existed showed
- * "on" while its turns ran without the section at all.
+ * absent meaning off - the server reads the same field when it decides whether
+ * a message carries a goal.
  */
-const staged = computed(() =>
-  sessionID.value ? (session.value?.staged ?? false) : (app.config?.staged ?? false),
-)
+const goalMode = computed(() => (sessionID.value ? (session.value?.goalMode ?? false) : (app.config?.goalMode ?? false)))
 
-async function toggleStaged() {
-  const next = !staged.value
-  const before = app.modeOf(sessionID.value)
-  // MiMo's modes are one at a time: turning compose on leaves plan. The menu stays open.
-  if (next && agent.value === "plan") {
-    if (sessionID.value) await app.setAgent("build")
-    else await app.patchConfig({ agent: "build" })
-  }
-  // A box starting a new task sets what that task will start with.
-  if (!sessionID.value) await app.patchConfig({ staged: next })
-  else await app.setStaged(next)
-  app.announceMode(before, sessionID.value)
+/* A switch rather than a command, because it stays on; the menu stays open, as MiMo's does. */
+async function toggleGoalMode() {
+  await app.setGoalMode(!goalMode.value, sessionID.value)
+  notify(t(goalMode.value ? "toast.goalOn" : "toast.goalOff"))
 }
 
 /* MiMo's skill chip: a picked skill waits above the text and goes with the next message. */
@@ -1256,6 +1244,13 @@ async function submit() {
     }
   }
 
+  /*
+   * 追求目标: with the switch on, what was typed becomes the goal the turn is
+   * judged against. The words as typed, not the body that is sent - a body
+   * standing in for attachments would make a goal nobody wrote.
+   */
+  const goalOnSend = !props.side && goalMode.value && value.trim() ? value.trim() : undefined
+
   const named = await mentionAttachments(value, carried, target)
   const filled = await fillCommand(value, target)
   /*
@@ -1276,7 +1271,7 @@ async function submit() {
     ? false
     : subtask
       ? await app.subtask(value, subtask)
-      : await app.send(withSkills(body, chips), [...sent, ...named, ...commandFiles], target, pointed, filled.command)
+      : await app.send(withSkills(body, chips), [...sent, ...named, ...commandFiles], target, pointed, filled.command, goalOnSend)
   if (!accepted) {
     text.value = value
     attachments.value = sent
@@ -2971,6 +2966,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 <template>
   <div class="composer" :class="{ noted: sessionID && !side, side }" :data-compacting="compactingHere || undefined">
     <div class="shell">
+      <!-- 追求目标: the goal and how it is going, above the box, as MiMo puts it. -->
+      <GoalBar v-if="!side && sessionID" :session-i-d="sessionID" />
       <!-- MiMo's cue drawer: tucked behind the box's top edge, it slides up with the command a recording was heard as. -->
       <div class="voice-cues" :class="{ on: cueOn }" data-voice-cues>
         <div class="voice-drawer" role="status">
@@ -3255,13 +3252,13 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                   <span class="item-name">{{ t("composer.menuTerminal") }}</span>
                 </button>
                 <div class="rule" />
-                <!-- Compose mode: a switch rather than a command, because it stays on; the menu stays open. -->
-                <button class="item staged-row" role="switch" tabindex="-1" data-mode="staged" :aria-checked="staged" @click="toggleStaged">
-                  <span class="staged-text">
-                    <span class="item-name">{{ t("composer.staged") }}</span>
-                    <span class="staged-sub">{{ t("composer.stagedSub") }}</span>
+                <!-- 追求目标: a switch, not a command - what is typed next becomes the goal and the turn is judged against it. -->
+                <button class="item goal-row" role="switch" tabindex="-1" data-mode="goal" :aria-checked="goalMode" @click="toggleGoalMode">
+                  <span class="goal-text">
+                    <span class="item-name">{{ t("composer.goal") }}</span>
+                    <span class="goal-sub">{{ t("composer.goalSub") }}</span>
                   </span>
-                  <span class="staged-switch" :class="{ on: staged }"><span class="staged-knob" /></span>
+                  <span class="goal-switch" :class="{ on: goalMode }"><span class="goal-knob" /></span>
                 </button>
               </template>
               <div class="rule" />
@@ -3376,30 +3373,35 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             </div>
           </div>
 
-          <!--
-            MiMo's one mode chip: plan or compose, whichever is on. Pressing it
-            turns that mode off, back to build.
-          -->
+          <!-- MiMo's one mode chip: shown while plan mode is on; pressing it goes back to build. -->
           <button
-            v-if="!side && (agent === 'plan' || staged)"
+            v-if="!side && agent === 'plan'"
             class="mode-chip"
-            :data-mode="agent === 'plan' ? 'plan' : 'staged'"
-            v-tip="{
-              label: t('composer.modeChipTip', { mode: agent === 'plan' ? t('composer.planMode') : t('composer.staged') }),
-            }"
-            @click="agent === 'plan' ? chooseAgent('build') : toggleStaged()"
+            data-mode="plan"
+            v-tip="{ label: t('composer.modeChipTip', { mode: t('composer.planMode') }) }"
+            @click="chooseAgent('build')"
           >
-            <svg v-if="agent === 'plan'" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M5.5 2.5h5v2h-5z" />
               <path d="M5 3.5H3.5v10h9v-10H11" />
               <path d="M5.5 8h5M5.5 10.5h3.5" />
             </svg>
-            <svg v-else viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M4.5 4v6a2 2 0 0 0 2 2h4" />
-              <path d="M4.5 1.8a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 0 0 0-3.2z" />
-              <path d="M12.2 10.4a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 0 0 0-3.2z" />
+            <span class="mode-label">{{ t("composer.planChip") }}</span>
+          </button>
+          <!-- 追求目标: its own chip beside the mode's, since the two are not alternatives; pressing it turns the switch off. -->
+          <button
+            v-if="!side && goalMode"
+            class="mode-chip"
+            data-mode="goal"
+            v-tip="{ label: t('composer.goalChipTip') }"
+            @click="toggleGoalMode"
+          >
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="8" cy="8" r="5.4" />
+              <circle cx="8" cy="8" r="2.6" />
+              <circle cx="8" cy="8" r="0.6" fill="currentColor" stroke="none" />
             </svg>
-            <span class="mode-label">{{ agent === "plan" ? t("composer.planChip") : t("composer.composeChip") }}</span>
+            <span class="mode-label">{{ t("composer.goalChip") }}</span>
           </button>
           </div>
 
@@ -4909,9 +4911,56 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 }
 
 /* A two-line row with a switch at its end. */
-.item.staged-row {
+.item.goal-row {
   height: auto;
   padding-block: 6px;
+}
+
+.goal-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.goal-sub {
+  overflow: hidden;
+  color: var(--text-weak);
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
+  line-height: calc(15px * var(--ui-font-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goal-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 28px;
+  height: 16px;
+  background: color-mix(in srgb, var(--text-strong) 22%, var(--surface-raised));
+  border-radius: 999px;
+  transition: background-color 0.15s;
+}
+
+.goal-switch.on {
+  background: var(--icon-base);
+}
+
+.goal-knob {
+  position: absolute;
+  top: 2px;
+  width: 12px;
+  height: 12px;
+  background: var(--icon-base);
+  border-radius: 50%;
+  inset-inline-start: 2px;
+  transition: inset-inline-start 0.15s, background-color 0.15s;
+}
+
+.goal-switch.on .goal-knob {
+  background: var(--surface-raised);
+  inset-inline-start: 14px;
 }
 
 /* MiMo's mode chip: a filled 12/500 label with its mark, 3 by 8 at a 7px corner. */
@@ -4941,58 +4990,18 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   height: 13px;
 }
 
-.mode-chip svg path {
+/* The mark is drawn in lines, whichever shape carries them - plan's is paths, the goal's is rings. */
+.mode-chip svg path,
+.mode-chip svg circle {
   stroke: currentColor;
   stroke-width: 1.2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
-.staged-text {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.staged-sub {
-  overflow: hidden;
-  color: var(--text-weak);
-  font-size: calc(11.5px * var(--ui-font-scale, 1));
-  line-height: calc(15px * var(--ui-font-scale, 1));
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.staged-switch {
-  position: relative;
-  flex-shrink: 0;
-  width: 28px;
-  height: 16px;
-  background: color-mix(in srgb, var(--text-strong) 22%, var(--surface-raised));
-  border-radius: 999px;
-  transition: background-color 0.15s;
-}
-
-.staged-switch.on {
-  background: var(--icon-base);
-}
-
-.staged-knob {
-  position: absolute;
-  top: 2px;
-  width: 12px;
-  height: 12px;
-  background: var(--icon-base);
-  border-radius: 50%;
-  inset-inline-start: 2px;
-  transition: inset-inline-start 0.15s, background-color 0.15s;
-}
-
-.staged-switch.on .staged-knob {
-  background: var(--surface-raised);
-  inset-inline-start: 14px;
+/* ...except the goal's pupil, which is the one filled part of it. */
+.mode-chip svg circle[stroke="none"] {
+  stroke: none;
 }
 
 /* MiMo's model menu: under the chip at its end, 210 and up, rows of mark, name and check. */

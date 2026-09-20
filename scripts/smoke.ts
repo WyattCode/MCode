@@ -346,6 +346,10 @@ import { roundFifteenToolChecks } from "./smoke-round15-tools"
 import { roundFifteenSettingsUiChecks } from "./smoke-round15-ui-settings"
 // Round 15, fix lane U3: the interface font size and the boxes around the type (R15-U3-1 onwards).
 import { roundFifteenFontScaleChecks } from "./smoke-round15-font-scale"
+// Round 16, lane D: the diff and the code step rows (R16-D1 onwards).
+import { roundSixteenDiffChecks } from "./smoke-round16-diff"
+// Round 16, lane A: 追求目标 and the four-stage mode it replaced (R16-A1 onwards).
+import { roundSixteenGoalChecks } from "./smoke-round16-goal"
 // Round 16, lane E: the inline interactive widget (R16-E1 onwards).
 import { roundSixteenWidgetChecks } from "./smoke-round16-widget"
 // skills: discovery, frontmatter and the slash list.
@@ -3869,23 +3873,8 @@ async function main() {
     await deleteAgents(globalAgents)
     check("deleting removes it even while it is off", (await agentsState(globalAgents)) === "none")
 
-    /*
-     * Staged mode. The section is there when asked for, names its stages, and
-     * is kept out of plan mode - which already stops before building, and would
-     * otherwise be told both to stop and to build.
-     */
-    const staged = await systemPrompt({ directory: project, agent: "build", staged: true })
-    check("staged mode reaches the prompt", staged.includes("## Working in stages"), staged.slice(0, 120))
-    check(
-      "and names all four stages",
-      ["Clarify.", "Plan.", "Build.", "Review."].every((stage) => staged.includes(stage)),
-    )
-    check("off by default", !buildPrompt.includes("## Working in stages"))
-    const stagedPlan = await systemPrompt({ directory: project, agent: "plan", staged: true })
-    check(
-      "plan mode is not told to build",
-      stagedPlan.includes("plan mode") && !stagedPlan.includes("## Working in stages"),
-    )
+    /* MiMo has no four-stage mode of its own, and neither has this app any more (R16-A1). */
+    check("no stage section survives anywhere", !buildPrompt.includes("## Working in stages"))
   }
 
   section("Voice")
@@ -7008,6 +6997,8 @@ async function main() {
   await roundFifteenToolChecks(check, section)
   await roundFifteenSettingsUiChecks(check, section)
   await roundFifteenFontScaleChecks(check, section)
+  await roundSixteenDiffChecks(check, section)
+  await roundSixteenGoalChecks(check, section)
   await roundSixteenWidgetChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
