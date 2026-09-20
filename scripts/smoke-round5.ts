@@ -659,7 +659,7 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       check("and the generated title replaces it", await e.until(async () => (await e.store.get(session.id))?.title === "Deploy pipeline repair"), await e.store.get(session.id))
       check("once", (await e.store.get(session.id))?.titleSource === "generated" && e.titleBodies.length === 1, e.titleBodies.length)
       const asked = wireText(e.titleBodies[0])
-      check("the request quotes the first message as data, with the interface language as a hint", asked.includes("The deploy pipeline fails") && asked.includes("<conversation>") && asked.includes("prefer de"), asked.slice(0, 500))
+      check("the request quotes the first message as data, with the interface language as a hint", asked.includes("The deploy pipeline fails") && asked.includes("<conversation>") && asked.includes("use de"), asked.slice(0, 500))
       await e.runner.prompt({ sessionID: session.id, text: "second message" })
       await e.idle(session.id)
       check("a later prompt asks for no title", e.titleBodies.length === 1)
