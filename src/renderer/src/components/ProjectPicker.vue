@@ -316,7 +316,7 @@ svg path {
   border-radius: 8px;
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 400;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
 /* Hover only: MiMo's chip goes back to rest once the pointer is in its menu. */
@@ -440,7 +440,7 @@ svg path {
   border-radius: 11px;
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 400;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   text-align: start;
   cursor: default;
 }

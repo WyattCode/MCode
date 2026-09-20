@@ -425,7 +425,7 @@ function startResize(event: PointerEvent) {
   align-items: center;
   gap: 7px;
   max-width: 180px;
-  height: 28px;
+  height: calc(28px * var(--ui-font-scale, 1));
   padding-block: 0;
   padding-inline: 11px;
   color: var(--text-strong);
@@ -433,7 +433,7 @@ function startResize(event: PointerEvent) {
   border-radius: 7px;
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 400;
-  line-height: 18px;
+  line-height: calc(18px * var(--ui-font-scale, 1));
   /* What the button it used to be gave it. */
   text-align: center;
   cursor: pointer;
@@ -515,7 +515,7 @@ function startResize(event: PointerEvent) {
   color: var(--text-weak);
   border-radius: 4px;
   font-size: calc(13px * var(--ui-font-scale, 1));
-  line-height: 18px;
+  line-height: calc(18px * var(--ui-font-scale, 1));
 }
 
 .tab-close:hover {

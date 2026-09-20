@@ -439,7 +439,7 @@ watch(
   resize: none;
   font-family: inherit;
   font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 18px;
+  line-height: calc(18px * var(--ui-font-scale, 1));
 }
 
 .ann-send,

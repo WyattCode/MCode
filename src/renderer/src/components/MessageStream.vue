@@ -1700,7 +1700,7 @@ defineExpose({ stepMessage, scroller })
   resize: none;
   font-family: inherit;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
 .asked-edit-actions {
@@ -1857,7 +1857,7 @@ defineExpose({ stepMessage, scroller })
    * the thing being read and run at fourteen.
    */
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 21px;
+  line-height: calc(21px * var(--ui-font-scale, 1));
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
@@ -2016,7 +2016,7 @@ defineExpose({ stepMessage, scroller })
   background: color-mix(in srgb, var(--text-strong) 9.5%, var(--surface-raised));
   border-radius: 16px;
   font-weight: 500;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
 .asked-text {
@@ -2161,14 +2161,14 @@ defineExpose({ stepMessage, scroller })
 .run-label {
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 18px;
+  line-height: calc(18px * var(--ui-font-scale, 1));
 }
 
 .run-time {
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 16px;
+  line-height: calc(16px * var(--ui-font-scale, 1));
 }
 
 .run-time {

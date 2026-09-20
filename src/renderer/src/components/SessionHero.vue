@@ -179,7 +179,7 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
   color: var(--text-strong);
   font-size: calc(18px * var(--ui-font-scale, 1));
   font-weight: 600;
-  line-height: 28.8px;
+  line-height: calc(28.8px * var(--ui-font-scale, 1));
   letter-spacing: 0.4px;
   text-align: center;
 }
@@ -226,7 +226,7 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
 .chip-name {
   overflow: hidden;
   min-width: 0;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -237,8 +237,8 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: calc(16px * var(--ui-font-scale, 1));
+  height: calc(16px * var(--ui-font-scale, 1));
   color: #fff;
   background: hsl(var(--h) 42% 46%);
   border-radius: var(--radius-sm);

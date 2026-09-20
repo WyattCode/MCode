@@ -398,7 +398,7 @@ defineExpose({ focus: () => box.value?.focus() })
   color: var(--text-strong);
   font-size: calc(18px * var(--ui-font-scale, 1));
   font-weight: 600;
-  line-height: 28.8px;
+  line-height: calc(28.8px * var(--ui-font-scale, 1));
   letter-spacing: 0.4px;
   text-align: center;
 }
@@ -458,7 +458,7 @@ defineExpose({ focus: () => box.value?.focus() })
   border: 0;
   font-family: inherit;
   font-size: calc(13px * var(--ui-font-scale, 1));
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   text-align: start;
   cursor: pointer;
 }

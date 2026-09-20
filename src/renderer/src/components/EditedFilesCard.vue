@@ -357,7 +357,7 @@ async function pickMenu(key: string) {
   min-width: 0;
   color: var(--text-strong);
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
 .fc-prefix {
@@ -400,7 +400,7 @@ async function pickMenu(key: string) {
   gap: 6px;
   font-family: var(--font-mono);
   font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 18px;
+  line-height: calc(18px * var(--ui-font-scale, 1));
 }
 
 /* MiMo writes the card's counts in these two colours whatever the theme. */
@@ -425,11 +425,11 @@ async function pickMenu(key: string) {
   display: inline-flex;
   flex: none;
   align-items: center;
-  height: 26px;
+  height: calc(26px * var(--ui-font-scale, 1));
   color: var(--text-base);
   font: inherit;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   border-radius: 8px;
   cursor: pointer;
 }
@@ -493,7 +493,7 @@ async function pickMenu(key: string) {
   overflow: hidden;
   color: #151c1399;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -507,7 +507,7 @@ async function pickMenu(key: string) {
   color: var(--text-base);
   font: inherit;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   background: transparent;
   border: 0;
   border-radius: 6px;

@@ -488,7 +488,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   color: var(--text-strong);
   font-size: calc(24px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 30px;
+  line-height: calc(30px * var(--ui-font-scale, 1));
 }
 
 .subtitle {
@@ -496,7 +496,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 400;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
 /* MiMo's CSS gives 36px; an older measurement here said 38, so recheck on a live window. */
@@ -531,7 +531,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   border: 0;
   outline: none;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 22.4px;
+  line-height: calc(22.4px * var(--ui-font-scale, 1));
 }
 
 .search input:not(:placeholder-shown) {
@@ -595,7 +595,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
+  height: calc(26px * var(--ui-font-scale, 1));
   padding: 0 10px;
   color: var(--text-weak);
   border-radius: 10px;
@@ -682,7 +682,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   border-radius: 9999px;
   font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 600;
-  line-height: 16px;
+  line-height: calc(16px * var(--ui-font-scale, 1));
   white-space: nowrap;
 }
 
@@ -746,7 +746,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   color: var(--text-strong);
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 600;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -756,7 +756,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   flex-shrink: 0;
   color: var(--text-weaker);
   font-size: calc(11px * var(--ui-font-scale, 1));
-  line-height: 16px;
+  line-height: calc(16px * var(--ui-font-scale, 1));
 }
 
 /* The list: one framed row per file, 10 apart on a 10px corner, as MiMo's list is. */
@@ -817,7 +817,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   padding: 40px 0;
   color: var(--text-weak);
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 22.4px;
+  line-height: calc(22.4px * var(--ui-font-scale, 1));
   text-align: center;
 }
 
@@ -837,7 +837,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   min-height: 60vh;
   color: var(--text-weak);
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 22.4px;
+  line-height: calc(22.4px * var(--ui-font-scale, 1));
   text-align: center;
 }
 
@@ -875,7 +875,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
 }
 
 .page-btn {
-  height: 34px;
+  height: calc(34px * var(--ui-font-scale, 1));
   padding: 0 18px;
   color: var(--text-strong);
   border: 1px solid var(--border-weak);

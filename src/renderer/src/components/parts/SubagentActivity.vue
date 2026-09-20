@@ -104,7 +104,7 @@ const pills = computed(() => {
   gap: 7px;
   min-width: 0;
   max-width: 240px;
-  height: 30px;
+  height: calc(30px * var(--ui-font-scale, 1));
   padding-block: 3px;
   padding-inline: 5px 10px;
   color: color-mix(in srgb, var(--text-strong) 60%, transparent);

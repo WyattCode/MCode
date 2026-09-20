@@ -545,8 +545,8 @@ defineExpose({
 .rb-zoom-reset {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: calc(24px * var(--ui-font-scale, 1));
+  height: calc(24px * var(--ui-font-scale, 1));
   padding: 0;
   color: #5c5c57;
   background: transparent;
@@ -583,7 +583,7 @@ defineExpose({
   flex: none;
   align-items: center;
   gap: 6px;
-  height: 34px;
+  height: calc(34px * var(--ui-font-scale, 1));
   padding: 0 10px;
   color: #151c13cc;
   background: #fffefd;
@@ -611,7 +611,7 @@ defineExpose({
   border-radius: 5px;
   font-family: var(--font-mono);
   font-size: calc(11px * var(--code-font-scale, 1));
-  line-height: 18px;
+  line-height: calc(18px * var(--code-font-scale, 1));
 }
 
 /* MiMo's page frame: 10 below the bar, 14 in, on a 10px corner. The error covers it exactly. */

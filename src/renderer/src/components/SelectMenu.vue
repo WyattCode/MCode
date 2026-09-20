@@ -266,7 +266,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 4px;
-  height: 24px;
+  height: calc(24px * var(--ui-font-scale, 1));
   padding: 4px 4px 4px 8px;
   color: var(--text-strong);
   background: transparent;
@@ -292,7 +292,7 @@ onBeforeUnmount(() => {
 .label {
   overflow: hidden;
   font-weight: 530;
-  line-height: 16px;
+  line-height: calc(16px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -358,7 +358,7 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 400;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   white-space: nowrap;
 }
 

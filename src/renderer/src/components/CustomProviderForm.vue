@@ -574,13 +574,13 @@ defineExpose({ submit, canSave, busy })
   color: var(--text-weak);
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
 .cpin {
   box-sizing: border-box;
   width: 100%;
-  height: 40px;
+  height: calc(40px * var(--ui-font-scale, 1));
   padding: 0 12px;
   color: var(--text-strong);
   background: var(--surface-raised);
@@ -776,7 +776,7 @@ defineExpose({ submit, canSave, busy })
 }
 
 .cppill {
-  height: 32px;
+  height: calc(32px * var(--ui-font-scale, 1));
   padding: 0 6px;
   min-width: 44px;
   color: var(--text-weak);

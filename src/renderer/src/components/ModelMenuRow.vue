@@ -121,7 +121,7 @@ function levelTitle(level: Effort): string | undefined {
   border-radius: 11px;
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 400;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   cursor: default;
 }
 
@@ -154,7 +154,7 @@ function levelTitle(level: Effort): string | undefined {
   border: 1px solid var(--border-weaker);
   border-radius: 4px;
   font-size: calc(10px * var(--ui-font-scale, 1));
-  line-height: 15px;
+  line-height: calc(15px * var(--ui-font-scale, 1));
 }
 
 svg path {

@@ -536,8 +536,8 @@ const Actions: FunctionalComponent = () => {
 }
 
 .q-num {
-  width: 22px;
-  height: 22px;
+  width: calc(22px * var(--ui-font-scale, 1));
+  height: calc(22px * var(--ui-font-scale, 1));
   color: #909091;
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 600;
@@ -648,7 +648,7 @@ const Actions: FunctionalComponent = () => {
   color: var(--text-strong);
   font-family: inherit;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 22px;
+  line-height: calc(22px * var(--ui-font-scale, 1));
   background: transparent;
   border: 0;
   outline: none;
@@ -675,7 +675,7 @@ const Actions: FunctionalComponent = () => {
   display: flex;
   flex: none;
   align-items: center;
-  height: 30px;
+  height: calc(30px * var(--ui-font-scale, 1));
   padding: 0 14px;
   color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));

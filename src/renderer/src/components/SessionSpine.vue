@@ -536,7 +536,7 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   font-family: var(--font-mono);
   font-size: calc(11px * var(--code-font-scale, 1));
-  line-height: 16px;
+  line-height: calc(16px * var(--code-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }

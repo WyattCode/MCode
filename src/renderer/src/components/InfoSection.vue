@@ -52,7 +52,7 @@ const emit = defineEmits<{ toggle: [] }>()
   font: inherit;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 18px;
+  line-height: calc(18px * var(--ui-font-scale, 1));
   text-align: start;
 }
 
@@ -70,7 +70,7 @@ const emit = defineEmits<{ toggle: [] }>()
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 400;
   font-variant-numeric: tabular-nums;
-  line-height: 16px;
+  line-height: calc(16px * var(--ui-font-scale, 1));
 }
 
 /* MiMo's --color-done, one value in both schemes; restated for dark so a theme cannot tint it. */

@@ -218,7 +218,7 @@ onBeforeUnmount(() => {
 /* MiMo's capsule: 24 tall, 6 round, 12px on 8px of side padding. */
 .update-pill {
   box-sizing: border-box;
-  height: 24px;
+  height: calc(24px * var(--ui-font-scale, 1));
   padding: 0 8px;
   color: #fff;
   background: #0077fa;
@@ -398,7 +398,7 @@ onBeforeUnmount(() => {
 
 /* Both buttons: 28 tall pills with 16px of side padding. */
 .update-bubble .ub-btn {
-  height: 28px;
+  height: calc(28px * var(--ui-font-scale, 1));
   padding: 0 16px;
   border: 1px solid transparent;
   border-radius: 999px;

@@ -3313,7 +3313,7 @@ onBeforeUnmount(() => {
 .size-input {
   box-sizing: border-box;
   width: 64px;
-  height: 26px;
+  height: calc(26px * var(--ui-font-scale, 1));
   padding: 0 10px;
   color: var(--text-strong);
   background: #ffffff;
@@ -3427,12 +3427,12 @@ onBeforeUnmount(() => {
  * a shade fainter than the reference's, and its groups on a different beat.
  */
 .nav-group {
-  height: 24px;
+  min-height: calc(24px * var(--ui-font-scale, 1));
   padding: 0 0 0 4px;
   color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 24px;
+  line-height: calc(24px * var(--ui-font-scale, 1));
 }
 
 /* 12 from the last tab of one section to the next title: the 6 the list
@@ -3460,7 +3460,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   width: 100%;
-  height: 28px;
+  min-height: calc(28px * var(--ui-font-scale, 1));
   padding: 0 6px;
   color: var(--text-base);
   text-align: start;
@@ -3612,7 +3612,7 @@ h3 {
   color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
 /* Pill switch: filled and light when on, hollow when off. */
@@ -3681,7 +3681,7 @@ h3 {
 .ctl-btn {
   flex-shrink: 0;
   max-width: 320px;
-  height: 30px;
+  height: calc(30px * var(--ui-font-scale, 1));
   padding: 0 10px;
   color: var(--text-strong);
   background: var(--surface-base);
@@ -4346,7 +4346,7 @@ h3 {
 
 .key-in {
   flex: 1;
-  height: 30px;
+  height: calc(30px * var(--ui-font-scale, 1));
   padding: 0 10px;
   color: var(--text-strong);
   background: var(--surface-base);
@@ -4393,20 +4393,20 @@ h3 {
   color: var(--text-strong);
   font-size: calc(20px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 26px;
+  line-height: calc(26px * var(--ui-font-scale, 1));
   font-variant-numeric: tabular-nums;
 }
 
 .total-value.small {
   flex-shrink: 0;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
 .total-name {
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 16px;
+  line-height: calc(16px * var(--ui-font-scale, 1));
 }
 
 .day {
@@ -4565,7 +4565,7 @@ h3 {
   margin: -4px 0 14px;
   color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
 /* MiMo's app icon grid: a block under its own section heading, between the two cards. */
@@ -4608,7 +4608,7 @@ h3 {
 .tile-name {
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 16px;
+  line-height: calc(16px * var(--ui-font-scale, 1));
 }
 
 .tile.on .tile-name {
@@ -4625,7 +4625,7 @@ h3 {
   display: inline-flex;
   flex-shrink: 0;
   box-sizing: border-box;
-  height: 26px;
+  height: calc(26px * var(--ui-font-scale, 1));
   overflow: hidden;
   background: var(--surface-raised);
   border: 1px solid #f3efeb;
@@ -4686,7 +4686,7 @@ h3 {
 .tag {
   display: inline-flex;
   align-items: center;
-  height: 16px;
+  height: calc(16px * var(--ui-font-scale, 1));
   margin-inline-start: 8px;
   padding: 0 4px;
   color: var(--text-base);
@@ -4695,7 +4695,7 @@ h3 {
   box-shadow: inset 0 0 0 0.5px var(--border-weak);
   font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 530;
-  line-height: 11px;
+  line-height: calc(11px * var(--ui-font-scale, 1));
   letter-spacing: 0.05px;
   vertical-align: middle;
 }
@@ -4765,7 +4765,7 @@ h3 {
   color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -4832,7 +4832,7 @@ h3 {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  height: 34px;
+  height: calc(34px * var(--ui-font-scale, 1));
   padding: 0 10px;
   color: var(--text-strong);
   background: transparent;
@@ -4847,8 +4847,8 @@ h3 {
 }
 
 .preset-mark {
-  width: 18px;
-  height: 18px;
+  width: calc(18px * var(--ui-font-scale, 1));
+  height: calc(18px * var(--ui-font-scale, 1));
   border-radius: 5px;
   font-size: calc(10px * var(--ui-font-scale, 1));
 }
@@ -5016,6 +5016,12 @@ h3 {
   width: 241px;
   min-width: 241px;
   padding: 19px 11px 12px;
+  /* The column is a fixed width, so a row whose label outgrows it used to
+     paint over the page beside it - the page has an opaque background, so the
+     label simply disappeared under it. MiMo's settings-nav clips the same way.
+     `clip` rather than `hidden` so the other axis stays `visible` instead of
+     turning into a scroller, which would reserve scrollbar width here. */
+  overflow-x: clip;
   background: #f8f7f5;
   border-inline-end: 1px solid #f3efeb;
 }
@@ -5052,24 +5058,24 @@ h3 {
 
 .nav-title {
   flex-shrink: 0;
-  height: 36px;
+  min-height: calc(36px * var(--ui-font-scale, 1));
   padding: 0 11px;
   color: var(--text-strong);
   font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 600;
-  line-height: 36px;
+  line-height: calc(36px * var(--ui-font-scale, 1));
 }
 
 .nav-group {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  height: 35px;
+  min-height: calc(35px * var(--ui-font-scale, 1));
   padding: 0 11px;
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 400;
-  line-height: 19.2px;
+  line-height: calc(19.2px * var(--ui-font-scale, 1));
 }
 
 .nav-title + .nav-group,
@@ -5079,13 +5085,17 @@ h3 {
 
 .nav-item {
   gap: 10px;
-  height: 36px;
+  min-height: calc(36px * var(--ui-font-scale, 1));
   padding: 0 11px;
   color: var(--text-strong);
   border-radius: 8px;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
+  /* A label wider than the column wraps onto a second line, and a single word
+     that cannot wrap - German's "Tastenkombinationen" at the largest interface
+     font size - breaks rather than being drawn over the page beside it. */
+  overflow-wrap: anywhere;
 }
 
 /* MiMo's nav icons are 17 square in the label's own strong colour, on every row. */
@@ -5128,14 +5138,14 @@ h2 {
   margin: 0 0 27px;
   font-size: calc(24px * var(--ui-font-scale, 1));
   font-weight: 400;
-  line-height: 38.4px;
+  line-height: calc(38.4px * var(--ui-font-scale, 1));
 }
 
 h3 {
   margin: 27px 0 4px;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 22.4px;
+  line-height: calc(22.4px * var(--ui-font-scale, 1));
 }
 
 /* MiMo's set-card: white on the white page in light, a faint warm rule between; #282828 on #1f1f1f in dark. */
@@ -5185,7 +5195,7 @@ h3 {
 .line-title {
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 22.4px;
+  line-height: calc(22.4px * var(--ui-font-scale, 1));
   letter-spacing: 0;
 }
 
@@ -5193,7 +5203,7 @@ h3 {
   margin-block: 0;
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 18.6px;
+  line-height: calc(18.6px * var(--ui-font-scale, 1));
 }
 
 /*
@@ -5232,7 +5242,7 @@ h3 {
 
 /* MiMo's secondary sm button: 28 tall, 8 round, 0 12, the secondary fill. */
 .ctl-btn {
-  height: 28px;
+  height: calc(28px * var(--ui-font-scale, 1));
   padding: 0 12px;
   color: #151c13;
   background: #f1f1f1;
@@ -5249,7 +5259,7 @@ h3 {
 /* MiMo's select trigger in a settings row: 28 tall, a 1px input border, transparent in light. */
 .content :deep(.trigger) {
   gap: 8px;
-  height: 28px;
+  height: calc(28px * var(--ui-font-scale, 1));
   padding: 0 8px 0 12px;
   background: transparent;
   border: 1px solid #e3e3e0;
@@ -5265,7 +5275,7 @@ h3 {
 
 .content :deep(.trigger .label) {
   font-weight: 500;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
 .content :deep(.trigger .caret) {
@@ -5344,7 +5354,7 @@ h3 {
 /* The column's search field: MiMo's 36 tall with an 8px corner and a quiet rule. */
 .nav-search {
   flex-shrink: 0;
-  height: 36px;
+  height: calc(36px * var(--ui-font-scale, 1));
   margin-top: 6px;
   padding: 0 14px;
   color: var(--text-strong);
@@ -5353,7 +5363,7 @@ h3 {
   border-radius: 8px;
   outline: none;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 22.4px;
+  line-height: calc(22.4px * var(--ui-font-scale, 1));
 }
 
 .nav-search::placeholder {
@@ -5406,7 +5416,7 @@ h3 {
   display: grid;
   place-items: center;
   min-width: 34px;
-  height: 26px;
+  height: calc(26px * var(--ui-font-scale, 1));
   padding: 0;
 }
 

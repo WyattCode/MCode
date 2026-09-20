@@ -145,7 +145,7 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   font: inherit;
   font-size: calc(13px * var(--ui-font-scale, 1));
-  line-height: 18px;
+  line-height: calc(18px * var(--ui-font-scale, 1));
   text-align: start;
 }
 

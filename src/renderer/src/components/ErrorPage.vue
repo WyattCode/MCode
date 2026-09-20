@@ -277,7 +277,7 @@ h1 {
   color: var(--text-strong);
   font-size: calc(18px * var(--ui-font-scale, 1));
   font-weight: 530;
-  line-height: 24px;
+  line-height: calc(24px * var(--ui-font-scale, 1));
 }
 
 header p {

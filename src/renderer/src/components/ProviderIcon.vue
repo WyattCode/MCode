@@ -43,8 +43,8 @@ const color = computed(() => providerColor(props.id))
   display: grid;
   flex-shrink: 0;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: calc(26px * var(--ui-font-scale, 1));
+  height: calc(26px * var(--ui-font-scale, 1));
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
   /* Sized to sit level with a drawn mark rather than to fit the box. */
@@ -59,8 +59,8 @@ const color = computed(() => providerColor(props.id))
 }
 
 .mark.big {
-  width: 30px;
-  height: 30px;
+  width: calc(30px * var(--ui-font-scale, 1));
+  height: calc(30px * var(--ui-font-scale, 1));
   font-size: calc(17px * var(--ui-font-scale, 1));
 }
 

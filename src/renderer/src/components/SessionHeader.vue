@@ -213,7 +213,7 @@ function openMenu(event: MouseEvent) {
   border-radius: 6px;
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
-  line-height: 16px;
+  line-height: calc(16px * var(--ui-font-scale, 1));
   letter-spacing: -0.04px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -273,13 +273,13 @@ function openMenu(event: MouseEvent) {
 
 /* MiMo's title: 14 on regular weight in a 26px line, no padding, at most 320 wide. */
 .title {
-  height: 26px;
+  height: calc(26px * var(--ui-font-scale, 1));
   max-width: 320px;
   padding: 0;
   border-radius: 0;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 400;
-  line-height: 26px;
+  line-height: calc(26px * var(--ui-font-scale, 1));
   letter-spacing: 0;
 }
 
@@ -331,7 +331,7 @@ function openMenu(event: MouseEvent) {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  height: 24px;
+  height: calc(24px * var(--ui-font-scale, 1));
   overflow: hidden;
   border: 1px solid var(--border-weak);
   border-radius: 10px;

@@ -248,7 +248,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
 .brand {
   display: flex;
   align-items: center;
-  height: 28px;
+  height: calc(28px * var(--ui-font-scale, 1));
   padding: 0 12px;
   color: var(--text-weak);
   font-size: calc(13px * var(--ui-font-scale, 1));
@@ -259,7 +259,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 28px;
+  height: calc(28px * var(--ui-font-scale, 1));
   padding: 0 12px;
   color: var(--text-strong);
   border-radius: 4px;
@@ -309,7 +309,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
   justify-content: space-between;
   gap: 16px;
   width: 100%;
-  height: 28px;
+  height: calc(28px * var(--ui-font-scale, 1));
   padding: 0 12px;
   color: var(--text-strong);
   border-radius: 4px;

@@ -534,7 +534,7 @@ useEscapeLayer(dismiss)
   color: var(--text-strong);
   font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 530;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   letter-spacing: -0.13px;
 }
 
@@ -544,7 +544,7 @@ useEscapeLayer(dismiss)
   color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   letter-spacing: -0.04px;
 }
 
@@ -661,8 +661,8 @@ useEscapeLayer(dismiss)
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: calc(22px * var(--ui-font-scale, 1));
+  height: calc(22px * var(--ui-font-scale, 1));
   flex-shrink: 0;
   color: var(--text-base);
   background: var(--surface-raised-hover);
@@ -671,8 +671,8 @@ useEscapeLayer(dismiss)
 }
 
 .row-mark.big {
-  width: 34px;
-  height: 34px;
+  width: calc(34px * var(--ui-font-scale, 1));
+  height: calc(34px * var(--ui-font-scale, 1));
   font-size: calc(17px * var(--ui-font-scale, 1));
 }
 
@@ -735,7 +735,7 @@ useEscapeLayer(dismiss)
 
 .field {
   width: 100%;
-  height: 38px;
+  height: calc(38px * var(--ui-font-scale, 1));
   padding: 0 12px;
   color: var(--text-strong);
   background: color-mix(in srgb, var(--surface-layer) 60%, transparent);
@@ -756,7 +756,7 @@ useEscapeLayer(dismiss)
 }
 
 .secret .field {
-  height: 40px;
+  height: calc(40px * var(--ui-font-scale, 1));
   padding-inline-end: 36px;
   font-family: var(--font-sans);
   font-size: calc(14px * var(--ui-font-scale, 1));
@@ -787,7 +787,7 @@ useEscapeLayer(dismiss)
 }
 
 .go {
-  height: 34px;
+  height: calc(34px * var(--ui-font-scale, 1));
   padding: 0 18px;
   color: var(--surface-base);
   background: var(--text-strong);

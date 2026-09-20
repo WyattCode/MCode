@@ -430,7 +430,7 @@ function onError(event: Event) {
 .text {
   overflow-wrap: anywhere;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 22.4px;
+  line-height: calc(22.4px * var(--ui-font-scale, 1));
 }
 
 /*
@@ -603,7 +603,7 @@ function onError(event: Event) {
 .text .md-code-lang {
   color: #151c1399;
   font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 18px;
+  line-height: calc(18px * var(--ui-font-scale, 1));
   text-transform: lowercase;
 }
 
@@ -611,7 +611,7 @@ function onError(event: Event) {
   display: flex;
   align-items: center;
   gap: 4px;
-  height: 22px;
+  height: calc(22px * var(--ui-font-scale, 1));
   padding: 0 6px;
   color: var(--text-weak);
   background: transparent;
@@ -749,7 +749,7 @@ function onError(event: Event) {
 .text {
   color: color-mix(in srgb, var(--text-strong) 95%, transparent);
   font-weight: 500;
-  line-height: 23.8px;
+  line-height: calc(23.8px * var(--ui-font-scale, 1));
 }
 
 .text .md-p {

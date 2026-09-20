@@ -14,7 +14,7 @@
   align-items: flex-start;
   padding: 5px 0;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 21px;
+  line-height: calc(21px * var(--ui-font-scale, 1));
 }
 
 .hstep.indent {
@@ -41,7 +41,7 @@
   font: inherit;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 21px;
+  line-height: calc(21px * var(--ui-font-scale, 1));
   text-align: start;
   background: transparent;
   border: 0;
@@ -146,7 +146,7 @@
   overflow: hidden;
   color: #909091;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 19px;
+  line-height: calc(19px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
   background: var(--surface-hover);
@@ -487,7 +487,7 @@ html[data-motion="on"] .hs-collapse {
   margin: 6px 0;
   padding: 10px 12px;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 21px;
+  line-height: calc(21px * var(--ui-font-scale, 1));
   background: color-mix(in srgb, var(--surface-hover) 30%, transparent);
   border: 1px solid var(--border-weak);
   border-radius: 10px;
@@ -549,11 +549,11 @@ html[data-motion="on"] .hs-collapse {
   box-sizing: border-box;
   align-items: center;
   gap: 4px;
-  height: 20px;
+  height: calc(20px * var(--ui-font-scale, 1));
   padding: 1px 6px;
   color: #909091;
   font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 18px;
+  line-height: calc(18px * var(--ui-font-scale, 1));
   background: var(--surface-hover);
   border-radius: 6px;
 }

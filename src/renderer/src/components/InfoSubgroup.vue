@@ -44,7 +44,7 @@ const emit = defineEmits<{ toggle: [] }>()
   font: inherit;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 18px;
+  line-height: calc(18px * var(--ui-font-scale, 1));
   text-align: start;
 }
 

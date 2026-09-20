@@ -309,13 +309,13 @@ async function pick(key: string) {
   color: var(--text-strong);
   font-weight: 600;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
 .dl-meta {
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 18px;
+  line-height: calc(18px * var(--ui-font-scale, 1));
 }
 
 /* 打开方式: a 9-cornered outline button, 6/12 inside, 13px, its chevron dim. */
@@ -328,7 +328,7 @@ async function pick(key: string) {
   color: var(--text-base);
   font: inherit;
   font-size: calc(13px * var(--ui-font-scale, 1));
-  line-height: 18px;
+  line-height: calc(18px * var(--ui-font-scale, 1));
   background: transparent;
   border: 1px solid #f0ebe5;
   border-radius: 9px;

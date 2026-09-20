@@ -197,7 +197,7 @@ h2 {
   color: var(--text-strong);
   font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 530;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   letter-spacing: -0.13px;
 }
 
@@ -225,7 +225,7 @@ h2 {
    * `--radius-md` here. Focus used to move a border colour that no longer
    * exists.
    */
-  height: 36px;
+  height: calc(36px * var(--ui-font-scale, 1));
   padding: 0 12px;
   color: var(--text-strong);
   background: color-mix(in srgb, var(--surface-layer) 60%, transparent);
@@ -257,8 +257,8 @@ h2 {
 }
 
 .preview {
-  width: 68px;
-  height: 68px;
+  width: calc(68px * var(--ui-font-scale, 1));
+  height: calc(68px * var(--ui-font-scale, 1));
   font-size: calc(26px * var(--ui-font-scale, 1));
   border: 1px solid transparent;
 }
@@ -295,8 +295,8 @@ h2 {
 }
 
 .swatch {
-  width: 40px;
-  height: 40px;
+  width: calc(40px * var(--ui-font-scale, 1));
+  height: calc(40px * var(--ui-font-scale, 1));
   font-size: calc(15px * var(--ui-font-scale, 1));
   border: 2px solid transparent;
 }
@@ -318,7 +318,7 @@ footer {
 }
 
 .ghost {
-  height: 32px;
+  height: calc(32px * var(--ui-font-scale, 1));
   padding: 0 14px;
   color: var(--text-base);
   border-radius: var(--radius-md);
@@ -331,7 +331,7 @@ footer {
 }
 
 .go {
-  height: 32px;
+  height: calc(32px * var(--ui-font-scale, 1));
   padding: 0 18px;
   color: var(--surface-base);
   background: var(--text-strong);

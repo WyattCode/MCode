@@ -70,7 +70,7 @@ function toggle() {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  height: 32px;
+  height: calc(32px * var(--ui-font-scale, 1));
   padding: 0 14px;
   color: #151c1399;
   font-size: calc(13px * var(--ui-font-scale, 1));

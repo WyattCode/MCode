@@ -201,7 +201,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 28px;
+  height: calc(28px * var(--ui-font-scale, 1));
   padding: 0 8px 0 12px;
   color: var(--text-strong);
   background: transparent;
@@ -318,7 +318,7 @@ onBeforeUnmount(() => {
   border: 0;
   border-radius: 8px;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   white-space: nowrap;
 }
 

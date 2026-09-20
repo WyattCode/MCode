@@ -268,7 +268,7 @@ function onEditKey(event: KeyboardEvent) {
   align-items: center;
   gap: 5px;
   max-width: 480px;
-  height: 24px;
+  height: calc(24px * var(--ui-font-scale, 1));
   padding: 0 6px 0 8px;
   overflow: hidden;
   white-space: nowrap;

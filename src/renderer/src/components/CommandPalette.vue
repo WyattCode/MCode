@@ -304,7 +304,7 @@ onMounted(() => {
 
 .search-in {
   width: 100%;
-  height: 36px;
+  height: calc(36px * var(--ui-font-scale, 1));
   padding: 0 12px;
   color: var(--text-strong);
   /*
@@ -377,7 +377,7 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   width: 17px;
-  height: 15px;
+  height: calc(15px * var(--ui-font-scale, 1));
   flex-shrink: 0;
   border-radius: 3px;
   font-family: var(--font-mono);

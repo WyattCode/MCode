@@ -524,7 +524,7 @@ function pickFilter(key: string) {
   color: var(--text-strong);
   font-size: calc(24px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 30px;
+  line-height: calc(30px * var(--ui-font-scale, 1));
 }
 
 .subtitle {
@@ -532,7 +532,7 @@ function pickFilter(key: string) {
   color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 400;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
 /* The title with its actions at the far end: 16 apart, the row at least 30 tall. */
@@ -628,7 +628,7 @@ function pickFilter(key: string) {
   border: 0;
   outline: none;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 22.4px;
+  line-height: calc(22.4px * var(--ui-font-scale, 1));
 }
 
 .search input::placeholder {
@@ -646,14 +646,14 @@ function pickFilter(key: string) {
   color: var(--text-strong);
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 22.4px;
+  line-height: calc(22.4px * var(--ui-font-scale, 1));
 }
 
 .manage {
   margin-inline-start: auto;
   color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
-  line-height: 17px;
+  line-height: calc(17px * var(--ui-font-scale, 1));
 }
 
 .manage:hover {
@@ -691,7 +691,7 @@ function pickFilter(key: string) {
 /* MiMo's row actions: a small outlined button, or a bare "…" square. */
 .enable {
   flex-shrink: 0;
-  height: 28px;
+  height: calc(28px * var(--ui-font-scale, 1));
   padding: 0 12px;
   color: var(--text-strong);
   font-size: calc(13px * var(--ui-font-scale, 1));
@@ -723,7 +723,7 @@ function pickFilter(key: string) {
   color: var(--text-strong);
   font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 21px;
+  line-height: calc(21px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -732,7 +732,7 @@ function pickFilter(key: string) {
   overflow: hidden;
   color: var(--text-base);
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 18.9px;
+  line-height: calc(18.9px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -745,7 +745,7 @@ function pickFilter(key: string) {
   flex-shrink: 0;
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 16px;
+  line-height: calc(16px * var(--ui-font-scale, 1));
 }
 
 /* The same round switch the settings page uses, so one control reads one way. */
@@ -791,7 +791,7 @@ function pickFilter(key: string) {
   margin: 14px 0 0;
   color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
-  line-height: 20.8px;
+  line-height: calc(20.8px * var(--ui-font-scale, 1));
 }
 
 .failed {

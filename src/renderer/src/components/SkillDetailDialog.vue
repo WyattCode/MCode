@@ -287,7 +287,7 @@ useEscapeLayer(() => emit("close"))
 
 .configure,
 .try {
-  height: 32px;
+  height: calc(32px * var(--ui-font-scale, 1));
   padding: 0 14px;
   font-size: calc(13px * var(--ui-font-scale, 1));
   border-radius: 8px;

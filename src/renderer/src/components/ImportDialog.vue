@@ -317,8 +317,8 @@ onMounted(() => void scan())
   display: grid;
   flex: none;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: calc(32px * var(--code-font-scale, 1));
+  height: calc(32px * var(--code-font-scale, 1));
   color: var(--text-weak);
   font-family: var(--font-mono);
   font-size: calc(13px * var(--code-font-scale, 1));

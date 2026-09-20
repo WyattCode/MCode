@@ -1995,7 +1995,7 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
 .badge {
   display: inline-flex;
   align-items: center;
-  height: 16px;
+  height: calc(16px * var(--ui-font-scale, 1));
   padding: 0 7px;
   color: #ffffff;
   background: #2a3f52;
@@ -2055,14 +2055,14 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
   overflow: hidden;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .row-label.plain {
   font-weight: 400;
-  line-height: 22px;
+  line-height: calc(22px * var(--ui-font-scale, 1));
 }
 
 .lists {
@@ -2101,7 +2101,7 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 16px;
+  line-height: calc(16px * var(--ui-font-scale, 1));
 }
 
 /*
@@ -2164,7 +2164,7 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
   overflow: hidden;
   color: var(--text-weak);
   font-size: calc(11px * var(--ui-font-scale, 1));
-  line-height: 22px;
+  line-height: calc(22px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2230,7 +2230,7 @@ button.section-head:focus-visible {
 .task-label {
   color: color-mix(in srgb, var(--text-strong) 80%, transparent);
   font-weight: 400;
-  line-height: 22px;
+  line-height: calc(22px * var(--ui-font-scale, 1));
 }
 
 /*
@@ -2249,7 +2249,7 @@ button.section-head:focus-visible {
   padding: 7px 9px;
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 19.2px;
+  line-height: calc(19.2px * var(--ui-font-scale, 1));
 }
 
 /* Recent's heading actions, which MiMo keeps hidden until the heading is hovered. */
@@ -2755,14 +2755,14 @@ button.section-head:focus-visible {
 }
 
 .status-pill {
-  height: 17px;
+  height: calc(17px * var(--ui-font-scale, 1));
   padding: 0 7px;
   color: #fff;
   background: #6b7280;
   border-radius: 999px;
   font-size: calc(10px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 17px;
+  line-height: calc(17px * var(--ui-font-scale, 1));
   white-space: nowrap;
 }
 /*

@@ -3881,8 +3881,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 .at-enter {
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  width: calc(20px * var(--ui-font-scale, 1));
+  height: calc(20px * var(--ui-font-scale, 1));
   color: var(--text-weak);
   font-size: calc(14px * var(--ui-font-scale, 1));
 }
@@ -4059,7 +4059,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   resize: none;
   outline: none;
   font-size: calc(13px * var(--ui-font-scale, 1));
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
 .input::placeholder {
@@ -4161,7 +4161,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   border: 1px solid var(--border-weak);
   border-radius: 9px;
   font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 16px;
+  line-height: calc(16px * var(--ui-font-scale, 1));
 }
 
 .att-file.openable {
@@ -4242,7 +4242,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   align-items: center;
   gap: 5px;
   max-width: 480px;
-  height: 24px;
+  height: calc(24px * var(--ui-font-scale, 1));
   padding-block: 0;
   padding-inline: 8px 6px;
   overflow: hidden;
@@ -4321,7 +4321,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 .mode-tag {
   display: inline-flex;
   align-items: center;
-  height: 16px;
+  height: calc(16px * var(--ui-font-scale, 1));
   padding: 0 4px;
   color: var(--text-base);
   background: var(--surface-layer-02);
@@ -4554,7 +4554,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   background: var(--surface-layer);
   border-radius: 16px 16px 0 0;
   font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 16px;
+  line-height: calc(16px * var(--ui-font-scale, 1));
   transform: translateY(105%);
   transition: transform 0.34s;
 }
@@ -4685,13 +4685,13 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
+  height: calc(28px * var(--ui-font-scale, 1));
   padding: 0 11px;
   color: var(--text-base);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   font-size: calc(13px * var(--ui-font-scale, 1));
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   transition: background 0.12s, color 0.12s;
 }
 
@@ -4846,7 +4846,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
 .skill-search {
   flex: none;
-  height: 30px;
+  height: calc(30px * var(--ui-font-scale, 1));
   margin: 2px 2px 4px;
   padding-inline: 8px;
   color: var(--text-strong);
@@ -4902,7 +4902,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   overflow: hidden;
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 16px;
+  line-height: calc(16px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -4927,7 +4927,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   border-radius: 7px;
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 18px;
+  line-height: calc(18px * var(--ui-font-scale, 1));
 }
 
 .mode-chip:hover {
@@ -4959,7 +4959,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   overflow: hidden;
   color: var(--text-weak);
   font-size: calc(11.5px * var(--ui-font-scale, 1));
-  line-height: 15px;
+  line-height: calc(15px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -5023,7 +5023,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   padding: 6px 10px;
   border-radius: 11px;
   font-weight: 400;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
 .model-menu .model-item.on {
@@ -5145,7 +5145,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   padding: 8px 10px;
   color: var(--text-weak);
   font-size: calc(13px * var(--ui-font-scale, 1));
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
 /* Bleeds past the two pixels of padding on the band above and below it. */
@@ -5159,7 +5159,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   align-items: center;
   gap: 8px;
   width: 100%;
-  height: 28px;
+  height: calc(28px * var(--ui-font-scale, 1));
   padding: 0 12px;
   color: var(--text-strong);
   text-align: start;
@@ -5200,7 +5200,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
 /*
@@ -5243,7 +5243,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   color: var(--text-weak);
   font-size: calc(10px * var(--ui-font-scale, 1));
   font-weight: 400;
-  line-height: 14px;
+  line-height: calc(14px * var(--ui-font-scale, 1));
   text-align: center;
 }
 
@@ -5326,7 +5326,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   background: transparent;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 400;
-  line-height: 21px;
+  line-height: calc(21px * var(--ui-font-scale, 1));
 }
 
 /* MiMo sets what is written at 500; its placeholder stays at the regular weight. */
@@ -5453,13 +5453,13 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
 .pill {
   gap: 4px;
-  height: 32px;
+  height: calc(32px * var(--ui-font-scale, 1));
   padding: 7px 6px;
   border: 0;
   border-radius: 8px;
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 400;
-  line-height: 18px;
+  line-height: calc(18px * var(--ui-font-scale, 1));
 }
 
 /* Full access is the one setting on this bar worth noticing, so it is coloured. */
