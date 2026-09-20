@@ -112,6 +112,15 @@ export const ActorTool: ToolDefinition = {
           actor_id: { type: "string", description: "status, wait, cancel: the actor_id that spawn or run returned, such as explore-1" },
           to_actor_id: { type: "string", description: "send: the actor_id of the subagent to send to" },
           content: { type: "string", description: "send: the follow-up for the subagent" },
+          /*
+           * MiMo's send also takes a conversation to send into and a kind of
+           * message. Neither can mean anything here - a subagent belongs to the
+           * conversation that started it, and there are no peer conversations to
+           * address - but a model writing from MiMo's description would have the
+           * whole call refused over a field the schema did not know.
+           */
+          to_session_id: { type: "string", description: "send: the conversation the subagent is in; this app has only the one, so it is ignored" },
+          type: { type: "string", description: "send: the kind of message; this app sends text either way, so it is ignored" },
           timeout_ms: { type: "number", description: "run, wait: how long to wait, in milliseconds" },
           vision: { type: "boolean", description: "models: only models that read images" },
           limit: { type: "number", description: "models: at most this many" },
