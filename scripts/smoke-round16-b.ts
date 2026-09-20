@@ -9,6 +9,8 @@
  *
  * Nothing here reads the user's profile, calls a model or reaches the network.
  */
+import fs from "node:fs/promises"
+import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { environmentGuard, sessionNote } from "../src/server/session/context"
 import { firstPlanNote, laterPlanNote, buildSwitchNote } from "../src/server/session/plan"
@@ -347,5 +349,29 @@ export async function roundSixteenPromptChecks(check: Check, section: (name: str
     const redone = [step("msg_1", "look at the resolver"), step("msg_2", "try the other import"), step("msg_3", "actually read the error"), step("msg_4", "try the other import")]
     check("only what still matches the key is dropped", span !== undefined && JSON.stringify(applyCrops(redone, [span]).map((message) => message.id)) === JSON.stringify(["msg_1", "msg_3"]), span && applyCrops(redone, [span]).map((message) => message.id))
     check("and no crops means no change", applyCrops(stuck, []).length === stuck.length)
+  }
+
+  section("Round 16 (R16-B11): the built-in skills stay English, as MiMo's do")
+  {
+    /*
+     * The other half of the language decision. MiMo's eight built-in skills
+     * are written in English - only a trigger phrase in a description, and the
+     * odd example, is Chinese - so MCode's stay English too. Asserted as a
+     * share of each file rather than as a ban, because an example like
+     * `MATCH '"配 置"'` is the point of the paragraph it sits in.
+     */
+    const root = path.join(process.cwd(), "resources", "skills")
+    const folders = (await fs.readdir(root, { withFileTypes: true })).filter((entry) => entry.isDirectory())
+    const han = /[一-鿿]/g
+    const translated: string[] = []
+    for (const folder of folders) {
+      const file = path.join(root, folder.name, "SKILL.md")
+      const body = await fs.readFile(file, "utf8").catch(() => "")
+      if (!body) continue
+      const share = (body.match(han)?.length ?? 0) / body.length
+      if (share > 0.02) translated.push(`${folder.name} ${(share * 100).toFixed(1)}%`)
+    }
+    check("there are built-in skills to have checked", folders.length > 10, String(folders.length))
+    check("none of them has been translated", translated.length === 0, translated.join(", "))
   }
 }

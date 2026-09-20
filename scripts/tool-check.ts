@@ -501,6 +501,24 @@ async function main(): Promise<void> {
     shells.close(id)
   }
 
+  /*
+   * R16-B11: which language the tool surface is written in.
+   *
+   * Round 16 moved MCode's guards into Chinese because MiMo's are. Its tool
+   * descriptions are NOT: every tool the desktop adds to its engine
+   * (present_files, get_desktop_settings, the session-chat tools) describes
+   * itself in English and only its run-time messages are Chinese. That is a
+   * deliberate line, so it is asserted from both sides rather than left to
+   * drift with whoever edits a tool next.
+   */
+  {
+    const han = /[\u4e00-\u9fff]/
+    const described = TOOLS.map((tool) => ({ name: tool.name, text: `${tool.description}${JSON.stringify(tool.parameters)}` }))
+    const chinese = described.filter((tool) => han.test(tool.text)).map((tool) => tool.name)
+    check("every tool describes itself and its arguments in English, as MiMo's do", chinese.length === 0, chinese.join(", "))
+    check("and there are tools to have checked", described.length > 10, String(described.length))
+  }
+
   console.log("")
   if (problems.length) {
     console.error(`FAILED with ${problems.length} problem(s):`)
