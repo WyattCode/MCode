@@ -399,7 +399,11 @@ const place = (box: Box) => ({ left: `${box.left}px`, top: `${box.top}px`, width
 
 function startDrag(event: PointerEvent) {
   event.preventDefault()
-  image.value?.setPointerCapture?.(event.pointerId)
+  try {
+    image.value?.setPointerCapture?.(event.pointerId)
+  } catch {
+    // A pointer that is no longer active cannot be captured; the drag still works without it.
+  }
   if (pointerMode.value === "box") {
     dropRequest()
     boxFrom = pictureAt(event.clientX, event.clientY)
