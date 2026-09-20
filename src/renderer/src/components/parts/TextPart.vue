@@ -15,6 +15,7 @@ import { localPathOf, openPathLink, pathMenuItems, resolvePathTarget, runPathMen
 import ContextMenu from "../ContextMenu.vue"
 import AbcBlock from "./AbcBlock.vue"
 import DiagramBlock from "./DiagramBlock.vue"
+import WidgetBlock from "./WidgetBlock.vue"
 import LocalMedia from "./LocalMedia.vue"
 import { mediaPath } from "../../lib/delivered"
 import { allowRemoteImage, showAllowedRemoteImages } from "../../lib/remote-images"
@@ -100,7 +101,8 @@ const rendered = computed<ReplyBlock[]>(() => {
 })
 
 /* A block keeps its element while it is unchanged, so only the one being written is redrawn. */
-const blockKey = (block: ReplyBlock, index: number) => `${block.kind === "diagram" ? "d" : block.kind === "abc" ? "a" : block.kind === "html" ? "h" : "s"}${index}`
+const blockKey = (block: ReplyBlock, index: number) =>
+  `${block.kind === "diagram" ? "d" : block.kind === "abc" ? "a" : block.kind === "widget" ? "w" : block.kind === "html" ? "h" : "s"}${index}`
 
 /*
  * MiMo's video card: a web, data or blob address plays as it is; a file on
@@ -391,6 +393,8 @@ function onError(event: Event) {
     <template v-for="(block, index) in rendered" :key="blockKey(block, index)">
       <DiagramBlock v-if="block.kind === 'diagram'" class="md-block" :mode="block.mode" :code="block.code" />
       <AbcBlock v-else-if="block.kind === 'abc'" class="md-block" :code="block.code" />
+      <WidgetBlock v-else-if="block.kind === 'widget'" class="md-block" :code="block.code" />
+      <div v-else-if="block.kind === 'widget-loading'" class="md-block md-svg-loading" data-widget-loading>{{ t("widget.generating") }}</div>
       <div v-else-if="block.kind === 'svg-loading'" class="md-block md-svg-loading" data-svg-loading>{{ t("svgLoading.generating") }}</div>
       <div v-else class="md-block" v-html="block.html" />
     </template>

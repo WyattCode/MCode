@@ -352,6 +352,8 @@ import { roundSixteenToolChecks } from "./smoke-round16-tools"
 import { roundSixteenDiffChecks } from "./smoke-round16-diff"
 // Round 16, lane A: 追求目标 and the four-stage mode it replaced (R16-A1 onwards).
 import { roundSixteenGoalChecks } from "./smoke-round16-goal"
+// Round 16, lane E: the inline interactive widget (R16-E1 onwards).
+import { roundSixteenWidgetChecks } from "./smoke-round16-widget"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7003,6 +7005,7 @@ async function main() {
   await roundSixteenToolChecks(check, section)
   await roundSixteenDiffChecks(check, section)
   await roundSixteenGoalChecks(check, section)
+  await roundSixteenWidgetChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

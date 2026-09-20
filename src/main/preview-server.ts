@@ -1,8 +1,9 @@
-import { randomBytes } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 import { createReadStream, statSync } from "node:fs"
 import fs from "node:fs/promises"
 import http from "node:http"
 import path from "node:path"
+import { WIDGET_CSP, WIDGET_SOURCE_LIMIT, widgetDocument } from "@shared/widget"
 
 /*
  * MiMo's page preview server: one loopback-only HTTP server for the app,
@@ -64,6 +65,18 @@ let port = 0
 let starting: Promise<number> | undefined
 const tokenOfDir = new Map<string, string>()
 const dirOfToken = new Map<string, string>()
+
+/*
+ * A reply's interactive widgets, by the token that is their origin. They are
+ * documents the model wrote, never files, so they are held here rather than put
+ * on disk. The oldest goes when the room runs out: a conversation scrolled far
+ * enough that a card is gone no longer needs its document, and a card still on
+ * screen asks for its own again whenever it is drawn.
+ */
+const WIDGETS_HELD = 64
+const widgetOfToken = new Map<string, string>()
+/** The path a widget's origin answers on; anything else on it is a 404. */
+const WIDGET_PATH = "/widget.html"
 
 /** The script put into a served page in edit mode; the nonce ties its messages to one view. */
 function agentSource(nonce: string): string {
@@ -215,7 +228,20 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
   }
   // Each folder is its own origin, <token>.localhost:<port>; any other Host (a bare address, a rebound name) is refused.
   const host = /^([0-9a-f]{24})\.localhost:(\d+)$/.exec((request.headers.host ?? "").toLowerCase())
-  const dir = host && Number(host[2]) === port ? dirOfToken.get(host[1]) : undefined
+  const token = host && Number(host[2]) === port ? host[1] : undefined
+  /*
+   * A widget's origin holds one document and nothing else, under the policy
+   * that lets it run itself and reach nothing: no network, no frames, no form,
+   * and sandboxed, so opening its address anywhere else is no different.
+   */
+  const widget = token ? widgetOfToken.get(token) : undefined
+  if (widget !== undefined) {
+    if ((request.url ?? "/").split("?")[0] !== WIDGET_PATH) return fail(404, "not found")
+    response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Content-Security-Policy": WIDGET_CSP })
+    response.end(request.method === "HEAD" ? undefined : widget)
+    return
+  }
+  const dir = token ? dirOfToken.get(token) : undefined
   if (!dir) return fail(404, "not found")
   let url: URL
   try {
@@ -396,4 +422,33 @@ export async function servePreview(file: string): Promise<{ ok: true; url: strin
     dirOfToken.set(token, dir)
   }
   return { ok: true, url: `http://${token}.localhost:${listening}/${encodeURIComponent(path.basename(absolute))}` }
+}
+
+/* Salted, so the same widget keeps one address while the app runs and no other program can work out what it is. */
+const widgetSalt = randomBytes(16)
+
+/**
+ * An address for one interactive widget from a reply.
+ *
+ * The same source asks for the same address, so a card that is redrawn - a
+ * theme change, a scroll that took it out of the list and back - keeps its
+ * frame instead of reloading and losing whatever the user had set in it.
+ */
+export async function serveWidget(html: unknown, reduceMotion: unknown): Promise<{ ok: true; url: string } | { ok: false; error: "missing" | "serverFailed" }> {
+  if (typeof html !== "string" || !html.trim() || html.length > WIDGET_SOURCE_LIMIT) return { ok: false, error: "missing" }
+  const listening = await start()
+  if (!listening) {
+    starting = undefined
+    return { ok: false, error: "serverFailed" }
+  }
+  const damped = reduceMotion === true
+  const token = createHash("sha256").update(widgetSalt).update(damped ? "1" : "0").update(html).digest("hex").slice(0, 24)
+  // Asking again moves it back to the end of the line, so the widgets still on screen are the ones that are kept.
+  widgetOfToken.delete(token)
+  widgetOfToken.set(token, widgetDocument(html, { reduceMotion: damped }))
+  for (const oldest of widgetOfToken.keys()) {
+    if (widgetOfToken.size <= WIDGETS_HELD) break
+    widgetOfToken.delete(oldest)
+  }
+  return { ok: true, url: `http://${token}.localhost:${listening}${WIDGET_PATH}` }
 }
