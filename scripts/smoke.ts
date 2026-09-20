@@ -7269,6 +7269,7 @@ async function roundSixVisualChecks() {
     "parts/QuestionForm.vue",
     "parts/SubagentActivity.vue",
     "parts/SvgFileCard.vue",
+    "parts/MarkdownBody.vue",
     "parts/TextPart.vue",
     "right/RpSubagents.vue",
   ]
