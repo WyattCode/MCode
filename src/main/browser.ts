@@ -1,4 +1,4 @@
-import { BrowserWindow, WebContentsView, clipboard, session } from "electron"
+import { BrowserWindow, WebContentsView, clipboard, session, type WebContents } from "electron"
 import { addressToURL, pageMayNavigate } from "@shared/web-address"
 import { pageFavicon, stepZoom } from "@shared/browser-page"
 import { wirePage } from "./browser-page"
@@ -102,20 +102,33 @@ function activeTab(panel: Panel): Tab | undefined {
   return tabOf(panel, panel.active) ?? panel.tabs[0]
 }
 
+/**
+ * The tab's page, while it has one.
+ *
+ * A page that closes itself leaves its view empty rather than holding a
+ * destroyed web contents: `view.webContents` is then `undefined`, and every
+ * call on it throws. The tab is dropped when that happens (makeTab below), but
+ * the answer is the same wherever one is still in hand (R15-M1).
+ */
+function contentsOf(tab: Tab): WebContents | undefined {
+  const contents = tab.view.webContents as WebContents | undefined
+  return contents && !contents.isDestroyed() ? contents : undefined
+}
+
 function describe(tab: Tab): BrowserTab {
-  const contents = tab.view.webContents
+  const contents = contentsOf(tab)
   return {
     id: tab.id,
-    title: contents.getTitle(),
-    url: contents.getURL(),
-    loading: contents.isLoading(),
+    title: contents?.getTitle() ?? "",
+    url: contents?.getURL() ?? "",
+    loading: contents?.isLoading() ?? false,
     ...(tab.favicon ? { favicon: tab.favicon } : {}),
   }
 }
 
 function stateOf(panel: Panel): BrowserState {
   const tab = activeTab(panel)
-  const contents = tab?.view.webContents
+  const contents = tab && contentsOf(tab)
   return {
     url: contents?.getURL() ?? "",
     title: contents?.getTitle() ?? "",
@@ -200,7 +213,46 @@ function makeTab(panel: Panel): Tab {
     tab.favicon = pageFavicon(favicons)
     panel.publish()
   })
+  /*
+   * A page that ends itself. Blink lets a top-level page with one entry in its
+   * history call window.close(), which is exactly what a sign-in callback or a
+   * "you may close this window" page does, and a tab opened from a page is
+   * always that. The row is told, here, rather than keeping a tab whose page
+   * every later call would trip over (R15-M1).
+   */
+  contents.once("destroyed", () => dropTab(panel, tab))
   return tab
+}
+
+/**
+ * A tab whose page has gone, taken out of the row.
+ *
+ * The neighbour to the right takes over, as it does when the reader closes a
+ * tab; the last one leaves the panel with nothing to be a frame around, so the
+ * panel goes too and the window hears an empty state.
+ */
+function dropTab(panel: Panel, tab: Tab): void {
+  const at = panel.tabs.indexOf(tab)
+  if (at === -1) return
+  panel.tabs.splice(at, 1)
+  const { window } = panel
+  if (window.isDestroyed()) return
+  try {
+    window.contentView.removeChildView(tab.view)
+  } catch {
+    /* Already detached, which is the state this wanted anyway. */
+  }
+  /* The panel is already being taken down (closePanel closes every page it holds). */
+  if (panels.get(window.id) !== panel) return
+  if (!panel.tabs.length) {
+    const publish = panel.publish
+    closePanel(window)
+    publish()
+    return
+  }
+  if (panel.active === tab.id) panel.active = (panel.tabs[at] ?? panel.tabs[at - 1]).id
+  show(window, panel)
+  panel.publish()
 }
 
 /**
@@ -258,8 +310,32 @@ export function openPanel(
   panel.active = first.id
   panels.set(window.id, panel)
   show(window, panel)
-  window.once("closed", () => closePanel(window))
+  wireWindow(window)
   return stateOf(panel)
+}
+
+/**
+ * The window's side of a panel, wired once for the window's whole life.
+ *
+ * A panel comes and goes - closing the last tab takes it down, and the next
+ * open builds a new one - so registering here per panel would pile a listener
+ * on the window each time, and the ninth would trip Node's warning (R15-M4).
+ */
+const wired = new WeakSet<BrowserWindow>()
+function wireWindow(window: BrowserWindow): void {
+  if (wired.has(window)) return
+  wired.add(window)
+  window.once("closed", () => closePanel(window))
+  /*
+   * The interface loading again - the View menu's reload, or recovery putting
+   * a fresh renderer in a window whose own failed. The panel's page is a
+   * native view over that interface and outlives it, so without this it stays
+   * drawn over a window that no longer has a tab to close it with (R15-M2).
+   * did-navigate rather than the start of one: only a main frame that has
+   * committed raises it, so a navigation the window refuses (index.ts) leaves
+   * the panel alone.
+   */
+  window.webContents.on("did-navigate", () => closePanel(window))
 }
 
 /** Where the panel sits. The renderer measures it; only it knows the layout. */
@@ -285,7 +361,7 @@ function closePanel(window: BrowserWindow): void {
     } catch {
       /* The window may already be gone; the views go with it either way. */
     }
-    tab.view.webContents.close()
+    contentsOf(tab)?.close()
   }
 }
 
@@ -326,7 +402,7 @@ export function closeTab(window: BrowserWindow, id: string): BrowserState | unde
   } catch {
     /* Already detached, which is the state this wanted anyway. */
   }
-  gone.view.webContents.close()
+  contentsOf(gone)?.close()
   if (!panel.tabs.length) {
     closePanel(window)
     return EMPTY
@@ -342,7 +418,7 @@ export function navigate(window: BrowserWindow, input: string): BrowserState | u
   const tab = activeTab(panel)
   const url = addressToURL(input)
   if (!tab || !url) return stateOf(panel)
-  void tab.view.webContents.loadURL(url).catch(() => {
+  void contentsOf(tab)?.loadURL(url).catch(() => {
     /* A page that will not load says so in the view itself, which is where a
        reader is already looking; there is nothing useful to add out here. */
   })
@@ -355,7 +431,8 @@ type BrowserAct = (typeof BROWSER_ACTS)[number]
 export function act(window: BrowserWindow, what: BrowserAct, id?: string): BrowserState | undefined {
   const panel = panels.get(window.id)
   if (!panel) return undefined
-  const contents = (id ? tabOf(panel, id) : activeTab(panel))?.view.webContents
+  const named = id ? tabOf(panel, id) : activeTab(panel)
+  const contents = named && contentsOf(named)
   if (!contents) return stateOf(panel)
   if (what === "back" && contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack()
   if (what === "forward" && contents.navigationHistory.canGoForward()) contents.navigationHistory.goForward()
@@ -371,7 +448,8 @@ export function act(window: BrowserWindow, what: BrowserAct, id?: string): Brows
 /** The open page, as it is drawn, onto the clipboard. False when there is nothing to take. */
 export async function screenshot(window: BrowserWindow): Promise<boolean> {
   const panel = panels.get(window.id)
-  const contents = panel ? activeTab(panel)?.view.webContents : undefined
+  const tab = panel && activeTab(panel)
+  const contents = tab && contentsOf(tab)
   if (!contents) return false
   const image = await contents.capturePage()
   if (image.isEmpty()) return false
@@ -395,9 +473,7 @@ const SITE_STORAGES: ("cookies" | "localstorage" | "indexdb" | "websql" | "servi
 /* Every page in the panel, in every window, loaded again so none is left holding what was cleared. */
 function reloadAllPages(): void {
   for (const panel of panels.values()) {
-    for (const tab of panel.tabs) {
-      if (!tab.view.webContents.isDestroyed()) tab.view.webContents.reload()
-    }
+    for (const tab of panel.tabs) contentsOf(tab)?.reload()
   }
 }
 

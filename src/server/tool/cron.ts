@@ -2,6 +2,7 @@ import { cronScheduler, type CronScheduler } from "../cron/scheduler"
 import { nextCronRun, parseCron, LOOP_MAX_SECONDS, LOOP_MIN_SECONDS } from "../cron/expr"
 import type { ToolContext, ToolDefinition } from "./types"
 import { ToolError } from "./types"
+import { insideReal, repositoryRoot } from "./fs-util"
 
 /**
  * cron: MiMo's scheduled prompts - schedule a prompt on a cron expression,
@@ -54,7 +55,29 @@ async function ownerOf(scheduler: CronScheduler, context: ToolContext, named: st
   const id = named ?? caller?.parentID ?? context.sessionID
   const owner = await scheduler.session(id)
   if (!owner) throw new ToolError(`There is no session ${id}.`)
+  /*
+   * session_id names a conversation, and `contacts` hands out the id and the
+   * working directory of every conversation in the app - including those of
+   * other projects. The owner's directory is what a job is scoped to and where
+   * a durable one is written, and none of that goes through `resolvePath`: a
+   * call naming a conversation next door created `<that project>/.mcode/`,
+   * wrote its task file and installed a prompt that would later start a turn
+   * there, without the write or the outside question being asked once. A job
+   * belongs to the project the call is made in, as the tool's own description
+   * says ("Schedule prompts to run later in this project").
+   */
+  if (!(await insideProject(context, owner.directory))) {
+    throw new ToolError(`Session ${id} works in another project (${owner.directory}), and a job belongs to the project it is scheduled from.`)
+  }
   return owner
+}
+
+/** Whether a conversation's project is this call's own, by the test `resolvePath` makes for a path. */
+async function insideProject(context: ToolContext, directory: string): Promise<boolean> {
+  if (!directory) return false
+  if (await insideReal(context.directory, directory)) return true
+  const repository = await repositoryRoot(context.directory)
+  return repository ? insideReal(repository, directory) : false
 }
 
 export const CronTool: ToolDefinition = {

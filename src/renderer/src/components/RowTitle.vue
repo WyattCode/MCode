@@ -5,6 +5,7 @@
  * is hovered or focused. Double-clicking it asks for a rename.
  */
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { reducedMotion } from "../lib/modal"
 
 const props = defineProps<{
   text: string
@@ -35,17 +36,9 @@ function measure() {
   distance.value = Math.max(0, Math.ceil(line.scrollWidth - room))
 }
 
-/* The appearance setting first; left to the system, the system's preference. */
-function reduced() {
-  const motion = document.documentElement.getAttribute("data-motion")
-  if (motion === "on") return true
-  if (motion === "off") return false
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches
-}
-
 function slide() {
   const line = inner.value
-  if (run || !line || distance.value <= 0 || reduced()) return
+  if (run || !line || distance.value <= 0 || reducedMotion()) return
   const shift = getComputedStyle(line).direction === "rtl" ? distance.value : -distance.value
   run = line.animate([{ transform: "translateX(0)" }, { transform: `translateX(${shift}px)` }], {
     duration: Math.round(Math.min(LONGEST, Math.max(SHORTEST, (distance.value / SPEED) * 1000))),

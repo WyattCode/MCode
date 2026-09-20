@@ -1,7 +1,8 @@
-import { spawn } from "node:child_process"
+import { spawn, type ChildProcess } from "node:child_process"
 import pkg from "../../package.json"
 import type { McpServerConfig, McpToolInfo } from "@shared/protocol"
-import { windowsLaunch } from "./mcp-launch"
+import { terminate, windowsLaunch } from "./mcp-launch"
+import { killTree } from "./kill-tree"
 
 /**
  * The settings page's 工具 list, as MiMo's desktop gets it: a connection of
@@ -17,6 +18,29 @@ const LOCAL_LAST_ID = 12
 const REMOTE_PAGES = 10
 
 export type ProbeResult = { tools: McpToolInfo[] } | { error: string }
+
+/**
+ * The servers a probe has running right now.
+ *
+ * A probe's server belongs to nobody: it is not one of the connections a
+ * conversation holds, so no reconcile, no idle sweep and no quit ever reached
+ * it. Every path out of `probeLocal` now ends its child, and one still being
+ * probed when the app quits is ended here.
+ */
+const probing = new Set<ChildProcess>()
+
+/** Ends every server a probe still has running, for the quit path. */
+export function stopProbes(): void {
+  for (const child of [...probing]) {
+    probing.delete(child)
+    killTree(child)
+  }
+}
+
+/** How many are running, for the checks. */
+export function liveProbes(): number {
+  return probing.size
+}
 
 interface Frame {
   id?: unknown
@@ -67,6 +91,7 @@ async function probeLocal(config: McpServerConfig, cwd: string | undefined, time
     windowsHide: true,
     windowsVerbatimArguments: launch.verbatim,
   })
+  probing.add(child)
   return new Promise<ProbeResult>((resolve) => {
     let done = false
     let buffer = ""
@@ -77,8 +102,15 @@ async function probeLocal(config: McpServerConfig, cwd: string | undefined, time
       if (done) return
       done = true
       clearTimeout(timer)
-      child.stdin.end()
-      child.kill()
+      probing.delete(child)
+      /*
+       * The stop a connection gets, rather than a bare `kill()`: the server is
+       * given its two seconds to finish on its input closing, and one still
+       * there after that is ended with the tree under it - on Windows the child
+       * here is the `cmd.exe` an npx-style server runs under, and killing that
+       * leaves the server itself running.
+       */
+      void terminate(child).catch(() => undefined)
       resolve(result)
     }
     const timer = setTimeout(() => finish({ error: `no answer within ${seconds(timeoutMs)}` }), timeoutMs)

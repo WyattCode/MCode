@@ -464,6 +464,13 @@ class Repo {
       // Nothing was added to the live set yet, so an abandoned join has nothing to undo.
       if (abandoned()) throw new Error(QUEUE_GAVE_UP)
       const tree = await this.treeNow()
+      /*
+       * Asked again once the photograph is in: the caller may have stopped
+       * waiting while it was being taken, and a turn whose join was refused
+       * gathers nothing - so it never calls leave, and a recording added here
+       * would count as live for the rest of the process.
+       */
+      if (abandoned()) throw new Error(QUEUE_GAVE_UP)
       const shared = this.live.size >= 2
       for (const other of this.live) {
         other.mark(tree, shared)
@@ -488,11 +495,24 @@ class Repo {
         this.live.delete(recording)
         throw new Error(QUEUE_GAVE_UP)
       }
-      const tree = await this.treeNow()
-      const shared = this.live.size >= 2
-      for (const other of this.live) other.mark(tree, shared)
-      this.live.delete(recording)
-      return tree
+      /*
+       * Out of the live set however this ends. A photograph that throws - the
+       * project folder renamed under the turn, a stale index.lock left by a
+       * killed subprocess, a full disk - used to leave the turn recording for
+       * the life of the process, where `gather()` reports only that one turn as
+       * unavailable. Every later turn in the project then saw a second live
+       * recording: each stretch counted as shared, every change no tool had
+       * named was handed to "another conversation", and `retire()` - so
+       * `collect()` - could never take the project's store away.
+       */
+      try {
+        const tree = await this.treeNow()
+        const shared = this.live.size >= 2
+        for (const other of this.live) other.mark(tree, shared)
+        return tree
+      } finally {
+        this.live.delete(recording)
+      }
     })
   }
 

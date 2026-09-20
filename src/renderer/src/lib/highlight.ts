@@ -93,12 +93,28 @@ function remember(key: string, value: string) {
   cache.set(key, value)
 }
 
+/**
+ * What the cache holds for this key, moved back to the young end.
+ *
+ * A Map drops in insertion order, so without the move a block asked for over
+ * and over still ages out on when it was first seen: the cache kept its four
+ * hundred by age rather than by use, and a block the reader keeps coming back
+ * to was coloured again after every scroll past it.
+ */
+function recall(key: string): string | undefined {
+  const known = cache.get(key)
+  if (known === undefined) return undefined
+  cache.delete(key)
+  cache.set(key, known)
+  return known
+}
+
 /** The coloured inside of a `<code>` for this source, or nothing when it cannot be coloured. */
 export async function highlight(code: string, lang: string | null | undefined): Promise<string | undefined> {
   const id = languageOf(lang)
   if (!id || !code || code.length > LIMIT) return undefined
   const key = keyOf(id, code)
-  const known = cache.get(key)
+  const known = recall(key)
   if (known !== undefined) return known
   try {
     const html = (await highlighter()).codeToHtml(code, { lang: id, themes: { light: "github-light", dark: "github-dark" } })
@@ -122,12 +138,7 @@ export function cachedHighlight(code: string, lang: string | null | undefined): 
   const id = languageOf(lang)
   if (!id || !code || code.length > LIMIT) return undefined
   const key = keyOf(id, code)
-  const known = cache.get(key)
-  if (known !== undefined) {
-    cache.delete(key)
-    cache.set(key, known)
-  }
-  return known
+  return recall(key)
 }
 
 /** The same source, coloured, one entry per line. */

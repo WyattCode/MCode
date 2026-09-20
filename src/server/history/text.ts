@@ -17,16 +17,74 @@ export const PAGE_MAX = 8000
 export const PAGE_BYTES = 16000
 
 /**
+ * Chinese, Japanese and Korean writing, which is written without spaces.
+ *
+ * FTS5's `unicode61` splits on anything that is not a letter or a digit, and
+ * every one of these is a letter - so a whole run of them is one token, and
+ * 「配置」 matched 「配置文件的路径」 only when the query was that entire run.
+ */
+const CJK = "\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}\\p{Script=Hangul}"
+const BETWEEN_CJK = new RegExp(`(?<=[${CJK}])(?=[${CJK}])`, "gu")
+const JOINED_CJK = new RegExp(`([${CJK}])(>>)? (<<)?(?=[${CJK}])`, "gu")
+
+/**
+ * What is indexed for a body: the text with one space put between each pair of
+ * neighbouring CJK characters, so each becomes a token of its own.
+ *
+ * A query is cut the same way and matched as a phrase, which is what makes a
+ * substring of a Chinese sentence findable again - and of any length, where a
+ * trigram index would need three characters and most Chinese words are two.
+ * Text in a spaced script goes through unchanged, so nothing about an English
+ * search - its tokens, its ranking or its cost - moves.
+ */
+export function searchText(text: string): string {
+  return text.replace(BETWEEN_CJK, " ")
+}
+
+/**
+ * What the `search_body` column holds, which is nothing at all for a body with
+ * no CJK writing in it.
+ *
+ * The index reads that column through a view that falls back to `body`, so
+ * only a body the cutting actually changed is kept twice. Storing it for every
+ * row is a second copy of every message ever written: measured at 83% on top
+ * of a search index over 5,000 English parts, for a history that can never
+ * need it.
+ */
+export function searchColumn(text: string): string {
+  const cut = searchText(text)
+  return cut === text ? "" : cut
+}
+
+/**
+ * A snippet read back out of the index, with the spaces `searchText` put in
+ * taken out again - including around the markers `snippet()` wraps a match in.
+ * A space someone wrote between two CJK characters themselves goes with them,
+ * which nothing but the look of the line depends on.
+ */
+export function plainSnippet(text: string): string {
+  return text.replace(JOINED_CJK, "$1$2$3")
+}
+
+/**
  * The words of a query as an FTS5 expression, or nothing when it has none.
  *
  * Only runs of letters, digits and underscores count, each quoted so an FTS
  * operator typed by the model is searched for rather than obeyed. History
  * wants every word (`AND`); memory ranks documents holding any of them (`OR`).
+ * A word of CJK characters is quoted as the phrase of its characters, matching
+ * the way the body was indexed.
+ *
+ * `prefixLast` marks the last word as a prefix, for a search that runs while
+ * it is being typed: 「配」 while 「配置」 is meant, or `config` for
+ * `configuration`. The model's own searches are whole words, as MiMo's are.
  */
-export function ftsQuery(raw: string, joiner: "AND" | "OR"): string | undefined {
+export function ftsQuery(raw: string, joiner: "AND" | "OR", prefixLast = false): string | undefined {
   const words = raw.match(/[\p{L}\p{N}_]+/gu) ?? []
   if (!words.length) return undefined
-  return words.map((word) => `"${word.replaceAll('"', "")}"`).join(` ${joiner} `)
+  return words
+    .map((word, at) => `"${searchText(word.replaceAll('"', ""))}"${prefixLast && at === words.length - 1 ? "*" : ""}`)
+    .join(` ${joiner} `)
 }
 
 /**

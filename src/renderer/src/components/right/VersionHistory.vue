@@ -71,8 +71,15 @@ function onKey(event: KeyboardEvent) {
   if (event.key === "Escape") emit("close")
 }
 
+/*
+ * A press anywhere else closes the list - except on the history button, which
+ * closes it itself. Closing here first would leave that button's own click
+ * looking at a shut list and open it again, so the button could never shut it.
+ */
 function onDown(event: MouseEvent) {
-  if (!(event.target as Element | null)?.closest?.("[data-version-pop]")) emit("close")
+  const target = event.target as Element | null
+  if (target?.closest?.("[data-version-pop]") || target?.closest?.("[data-office-history]")) return
+  emit("close")
 }
 
 onMounted(() => {

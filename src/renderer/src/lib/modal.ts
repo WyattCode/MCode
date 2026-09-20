@@ -38,7 +38,8 @@ const cleanups = new WeakMap<HTMLElement, () => void>()
 export const DIALOG_EXIT_MS = 200
 const SCRIM_EXIT_MS = 150
 
-function reducedMotion(): boolean {
+/** Whether motion is turned down: the appearance setting first; left to the system, the system's preference. */
+export function reducedMotion(): boolean {
   const motion = document.documentElement.getAttribute("data-motion")
   if (motion === "on") return true
   if (motion === "off") return false
@@ -60,7 +61,13 @@ export function playDialogExit(el: HTMLElement): void {
   ghost.setAttribute("data-modal-exit", "")
   ghost.removeAttribute("id")
   for (const node of ghost.querySelectorAll("[id]")) node.removeAttribute("id")
-  ghost.style.pointerEvents = "none"
+  /*
+   * The copy is a picture, not a dialog: inert takes its buttons out of the
+   * tab order as well as out of hit-testing, so a Tab right after Escape goes
+   * on to the next real control instead of into a dead copy that is then
+   * removed under the focus, leaving the reader on <body>.
+   */
+  ghost.setAttribute("inert", "")
   // No entry animation on the copy: it starts where the real one stood.
   ghost.style.animation = "none"
   root.parentNode.insertBefore(ghost, root.nextSibling)

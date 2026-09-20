@@ -497,6 +497,25 @@ interface TrayProfile {
 let trayProfiles: TrayProfile[] = []
 
 /**
+ * A profile the tray picked, delivered to a window that can hear it.
+ *
+ * A window made for the occasion has no page yet, and Electron does not queue
+ * a message for one, so sending straight at it drops the switch on the floor
+ * (R15-M5). The key waits for the page instead, as a session link does.
+ */
+function deliverTrayProfile(key: string) {
+  const ready = readyWindow()
+  if (ready) {
+    ready.webContents.send("mcode:tray-profile", key)
+    return
+  }
+  const window = currentWindow() ?? createWindow()
+  window.webContents.once("did-finish-load", () => {
+    if (!window.isDestroyed()) window.webContents.send("mcode:tray-profile", key)
+  })
+}
+
+/**
  * Builds or rebuilds the tray.
  *
  * Electron cannot relabel a tray menu in place any more than it can a menu bar,
@@ -560,8 +579,7 @@ function refreshTray(enabled: boolean): void {
           checked: entry.checked,
           click: () => {
             if (closing) return
-            const window = currentWindow() ?? createWindow()
-            window.webContents.send("mcode:tray-profile", entry.key)
+            deliverTrayProfile(entry.key)
           },
         })),
       ])
