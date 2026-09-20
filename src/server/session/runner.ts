@@ -449,7 +449,7 @@ export class SessionRunner {
         create: async ({ directory, title }) => {
           const settings = config.get()
           await config.adoptProjects([directory], { byRepository: true })
-          return store.create({ directory, title, model: settings.model, agent: settings.agent, staged: settings.staged, ...(settings.smart ? { smart: true } : {}) })
+          return store.create({ directory, title, model: settings.model, agent: settings.agent, ...(settings.smart ? { smart: true } : {}) })
         },
       },
       CHAT_WAIT_MS,
@@ -1332,7 +1332,6 @@ export class SessionRunner {
     const skills = await this.skillsFor(session.directory)
     const key = JSON.stringify([
       session.agent,
-      session.staged === true,
       config.instructions ?? "",
       config.instructionFiles ?? [],
       session.model.provider,
@@ -1349,7 +1348,6 @@ export class SessionRunner {
         : await systemPrompt({
             directory: session.directory,
             agent: session.agent,
-            staged: session.staged,
             instructions: config.instructions,
             globalAgentsFile: this.globalAgents,
             instructionFiles: config.instructionFiles,

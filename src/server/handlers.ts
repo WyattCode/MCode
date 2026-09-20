@@ -418,7 +418,6 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         // The last choice made is the starting point for the next session, the
         // same way the model is.
         agent: config.agent,
-        staged: config.staged,
         ...(config.smart ? { smart: true } : {}),
         title: request.title,
       })
@@ -617,9 +616,6 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "session.access":
       return { session: await runtime.sessions.setAccess(request.sessionID, request.access) }
-
-    case "session.staged":
-      return { session: await runtime.sessions.update(request.sessionID, { staged: request.staged }) }
 
     case "session.reviewRestricted":
       return { session: await runtime.sessions.setReviewRestricted(request.sessionID, request.restricted) }

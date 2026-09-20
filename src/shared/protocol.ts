@@ -39,13 +39,6 @@ export interface SessionInfo {
    */
   slug?: string
   /**
-   * Whether this conversation works in stages: clarify, plan, build, review.
-   *
-   * Absent is off, which is what every conversation stored before this field
-   * existed has to read as.
-   */
-  staged?: boolean
-  /**
    * On Smart: the first message picks between the fast and the main model, and
    * `model` then holds the one it picked.
    */
@@ -1515,8 +1508,6 @@ export interface AppConfig {
   effort: Effort
   /** Which agent preset new sessions start in. */
   agent: AgentName
-  /** Whether new sessions start in staged mode; each may then differ. */
-  staged: boolean
   /**
    * 导入: set once the first run has asked about conversations in other AI
    * apps, whether or not anything was taken. MiMo asks a machine once; so does
@@ -1894,7 +1885,6 @@ export type Request =
   | { type: "session.history"; sessionID: string }
   | { type: "session.agent"; sessionID: string; agent: AgentName }
   | { type: "session.access"; sessionID: string; access: "ask" | "auto" | "full" }
-  | { type: "session.staged"; sessionID: string; staged: boolean }
   /*
    * A review restricted this conversation, or lifted it. MiMo's own review
    * reports it from the engine; here it is whatever stands in for that, and
@@ -2226,7 +2216,6 @@ export interface ResponseMap {
   "session.revert": { session: SessionInfo; files: number; history: HistoryDepth }
   "session.agent": { session: SessionInfo }
   "session.access": { session: SessionInfo }
-  "session.staged": { session: SessionInfo }
   "session.reviewRestricted": { session: SessionInfo }
   "session.delete": Record<string, never>
   "session.compact": { session: SessionInfo }

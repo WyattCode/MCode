@@ -1784,41 +1784,9 @@ export const useApp = defineStore("app", () => {
     await patchConfig({ agent })
   }
 
-  /*
-   * Staged mode, the same shape as the agent: set on the open conversation if
-   * there is one, and written as the default either way so the next
-   * conversation starts where this choice left off.
-   */
-  async function setStaged(staged: boolean) {
-    if (currentID.value) {
-      const result = await api().request({ type: "session.staged", sessionID: currentID.value, staged })
-      const at = sessions.value.findIndex((entry) => entry.id === result.session.id)
-      if (at >= 0) sessions.value[at] = result.session
-    }
-    await patchConfig({ staged })
-  }
-
   /* MiMo's shortcut: voice input flips between 智能编辑 and 快速输入. */
   async function toggleVoiceMode() {
     await patchConfig({ voiceMode: (config.value?.voiceMode ?? "smart") === "fast" ? "smart" : "fast" })
-  }
-
-  /*
-   * MiMo's shortcut for 编排 (compose) mode: on or off for the open
-   * conversation, or - from the home screen (`home`) - for the next task. As
-   * the plus menu's switch does, turning it on leaves plan mode.
-   */
-  async function toggleComposeMode(home = false) {
-    const session = home ? undefined : current.value
-    const before = modeOf(session?.id)
-    const next = !(session ? (session.staged ?? false) : (config.value?.staged ?? false))
-    if (next && (session?.agent ?? config.value?.agent) === "plan") {
-      if (session) await setAgent("build")
-      else await patchConfig({ agent: "build" })
-    }
-    if (session) await setStaged(next)
-    else await patchConfig({ staged: next })
-    announceMode(before, session?.id)
   }
 
   /*
@@ -1846,19 +1814,17 @@ export const useApp = defineStore("app", () => {
     notify(t("toast.permPrefix", { perm: t(key) }))
   }
 
-  /* MiMo's three modes, one at a time: 计划 is the plan agent, 编排 is staged, anything else builds. */
-  function modeOf(sessionID?: string): "build" | "plan" | "compose" {
+  /* MiMo's modes, one at a time: 计划 is the plan agent, anything else builds. */
+  function modeOf(sessionID?: string): "build" | "plan" {
     const session = sessionID ? sessions.value.find((entry) => entry.id === sessionID) : undefined
     const agent = session ? session.agent : (config.value?.agent ?? "build")
-    const staged = session ? (session.staged ?? false) : (config.value?.staged ?? false)
-    return agent === "plan" ? "plan" : staged ? "compose" : "build"
+    return agent === "plan" ? "plan" : "build"
   }
 
-  function announceMode(before: "build" | "plan" | "compose", sessionID?: string) {
+  function announceMode(before: "build" | "plan", sessionID?: string) {
     const after = modeOf(sessionID)
     if (after === before) return
-    const label = after === "plan" ? "composer.planMode" : after === "compose" ? "composer.staged" : "composer.buildMode"
-    notify(t("toast.switchedMode", { mode: t(label) }))
+    notify(t("toast.switchedMode", { mode: t(after === "plan" ? "composer.planMode" : "composer.buildMode") }))
   }
 
   /*
@@ -2258,7 +2224,6 @@ export const useApp = defineStore("app", () => {
     commandsState,
     refreshCommands,
     toggleVoiceMode,
-    toggleComposeMode,
     permission,
     permissionQueue,
     revertTurn,
@@ -2333,7 +2298,6 @@ export const useApp = defineStore("app", () => {
     setEffort,
     setAccess,
     setAgent,
-    setStaged,
     patchConfig,
     fsNonce,
     groupContext,

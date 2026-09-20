@@ -2865,13 +2865,6 @@ const bindableCommands = computed((): AppCommand[] => {
       run: () => void app.toggleVoiceMode(),
     },
     {
-      // MiMo's 切换编排模式, unbound: for the open conversation, or on the home screen for the next task.
-      id: "composer.staged.toggle",
-      group: "key.groupPrompt",
-      title: t("key.label.toggle-plan"),
-      run: () => void app.toggleComposeMode(isHome.value),
-    },
-    {
       id: "project.previous",
       group: "key.groupGeneral",
       title: t("key.prevProject"),

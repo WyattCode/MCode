@@ -3867,23 +3867,8 @@ async function main() {
     await deleteAgents(globalAgents)
     check("deleting removes it even while it is off", (await agentsState(globalAgents)) === "none")
 
-    /*
-     * Staged mode. The section is there when asked for, names its stages, and
-     * is kept out of plan mode - which already stops before building, and would
-     * otherwise be told both to stop and to build.
-     */
-    const staged = await systemPrompt({ directory: project, agent: "build", staged: true })
-    check("staged mode reaches the prompt", staged.includes("## Working in stages"), staged.slice(0, 120))
-    check(
-      "and names all four stages",
-      ["Clarify.", "Plan.", "Build.", "Review."].every((stage) => staged.includes(stage)),
-    )
-    check("off by default", !buildPrompt.includes("## Working in stages"))
-    const stagedPlan = await systemPrompt({ directory: project, agent: "plan", staged: true })
-    check(
-      "plan mode is not told to build",
-      stagedPlan.includes("plan mode") && !stagedPlan.includes("## Working in stages"),
-    )
+    /* MiMo has no four-stage mode of its own, and neither has this app any more (R16-A1). */
+    check("no stage section survives anywhere", !buildPrompt.includes("## Working in stages"))
   }
 
   section("Voice")
