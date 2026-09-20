@@ -4990,11 +4990,18 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   height: 13px;
 }
 
-.mode-chip svg path {
+/* The mark is drawn in lines, whichever shape carries them - plan's is paths, the goal's is rings. */
+.mode-chip svg path,
+.mode-chip svg circle {
   stroke: currentColor;
   stroke-width: 1.2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* ...except the goal's pupil, which is the one filled part of it. */
+.mode-chip svg circle[stroke="none"] {
+  stroke: none;
 }
 
 /* MiMo's model menu: under the chip at its end, 210 and up, rows of mark, name and check. */
