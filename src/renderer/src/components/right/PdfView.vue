@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch 
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask, TextLayer } from "pdfjs-dist"
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url"
 import type { Annotation } from "@shared/protocol"
+import { collapse } from "@shared/annotations"
 import { useApp } from "../../stores/app"
 import { useAnnotations } from "../../stores/annotations"
 import { useAnnotationBatch } from "../../stores/annotation-batch"
@@ -809,7 +810,9 @@ function anchorOfSelection(): { occ: number; occTotal: number; rect?: NonNullabl
 
 function buildNote(userText: string): Annotation {
   const where = anchorOfSelection()
-  const quote = selectedText.length > 400 ? selectedText.slice(0, 400) : selectedText || "(空)"
+  // Folded and cut with an ellipsis, as the Word and slide views fold theirs: a selection across lines reaches the model as one passage.
+  const folded = collapse(selectedText)
+  const quote = folded ? (folded.length > 400 ? `${folded.slice(0, 400)}…` : folded) : "(空)"
   return {
     id: annotationId(),
     kind: "pdf",
