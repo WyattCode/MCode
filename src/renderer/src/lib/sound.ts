@@ -11,7 +11,7 @@ import type { ChimeName } from "@shared/chime"
 let context: AudioContext | undefined
 
 /** One oscillator: a pitch (gliding to `to` if given), when it starts, how long it rings. */
-interface Voice {
+export interface Voice {
   from: number
   to?: number
   at: number
@@ -149,6 +149,46 @@ export function chime(name: ChimeName): void {
     for (const voice of CHIME_VOICES[name]) sound(ctx, voice, out)
   } catch {
     // No audio device, or a context the browser refused: silence is the right failure.
+  }
+}
+
+/*
+ * The two notes a waiting confirmation makes.
+ *
+ * Measured from MiMo's own figure, which is a pair rather than one of its eight
+ * chimes: E5 (659.25 Hz) at once and A5 (880 Hz) 0.16 s later, the second a
+ * touch louder and ringing longer - relative gains 0.85 then 1, lengths 1.1 s
+ * then 1.4 s - drawn in the 铃语 voice, a bright bar with a high fourth-harmonic
+ * ring. Those relative gains are taken against MCode's own 铃语 level, so the
+ * cue sits with the rest of this file rather than over it.
+ *
+ * Unlike the long-task chime it has no elapsed-time threshold: MiMo's does not
+ * either, because a question that arrives in the first ten seconds is waiting
+ * just as much as one that arrives after a minute.
+ */
+const CONFIRM_LEVEL = 0.045
+
+export const CONFIRM_VOICES: readonly Voice[] = [
+  ...struck(659.25, 0, 1.1, CONFIRM_LEVEL * 0.85, 4),
+  ...struck(880, 0.16, 1.4, CONFIRM_LEVEL, 4),
+]
+
+/**
+ * Plays it, and says whether it was heard.
+ *
+ * The caller marks the OS notification silent only on a true: MiMo marks its
+ * own notification silent because this sound has just played, and MCode copied
+ * the silence without ever having the sound - which turned the chime setting
+ * into a switch that muted every confirmation instead of announcing it.
+ */
+export function confirmChime(): boolean {
+  try {
+    const ctx = audio()
+    const out = chimeRoom(ctx)
+    for (const voice of CONFIRM_VOICES) sound(ctx, voice, out)
+    return true
+  } catch {
+    return false
   }
 }
 

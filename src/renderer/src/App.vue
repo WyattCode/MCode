@@ -72,7 +72,7 @@ import AnnotationMarkers from "./components/AnnotationMarkers.vue"
 import { HOME_SCOPE, useAnnotations } from "./stores/annotations"
 import { mainAnnotationScope } from "./lib/annotate"
 import { createFind, openFind } from "./lib/find"
-import { chime } from "./lib/sound"
+import { chime, confirmChime } from "./lib/sound"
 import { stepTarget } from "./lib/visible-chats"
 import { fontScale } from "./lib/font-scale"
 import { announce } from "./lib/announce"
@@ -3537,9 +3537,10 @@ const disabledMenuItems = computed(() => {
  * the task finished, and a permission or a question arriving for any
  * conversation says it needs a confirmation. The main process titles them
  * "project · conversation" and drops them while the window is in front. They are
- * silent only when a chime plays instead: a finish past a minute with the chime
- * on, or any confirmation with the chime on. A long finish in the conversation
- * on screen is held while it stays there, and sent once it is left.
+ * silent only when this app made a sound of its own instead: a finish past a
+ * minute with the chime on, or a confirmation whose two-tone cue was heard. A
+ * long finish in the conversation on screen is held while it stays there, and
+ * sent once it is left.
  *
  * MiMo has no switch for either notice, and neither does this.
  */
@@ -3656,7 +3657,13 @@ watch(awaitingConfirm, (entries) => {
   for (const entry of entries) {
     if (announcedConfirms.has(entry.id)) continue
     announcedConfirms.add(entry.id)
-    window.mcode.taskNotice({ kind: "confirm", ...noticeAbout(entry.sessionID), silent: chimeOn() })
+    /*
+     * The two-tone cue first, then the notice - and the notice is silent only
+     * because the cue was heard. Not bounded by the long-task threshold, as
+     * MiMo's is not: a question is waiting however quickly it arrived.
+     */
+    const cued = chimeOn() && confirmChime()
+    window.mcode.taskNotice({ kind: "confirm", ...noticeAbout(entry.sessionID), silent: cued })
   }
 })
 

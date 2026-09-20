@@ -23,6 +23,7 @@ import { SessionStore } from "../src/server/session/store"
 import { handle, voiceFileName, VOICE_PRECHECK_TIMEOUT_MS } from "../src/server/handlers"
 import type { Runtime } from "../src/server/index"
 import type { Request } from "../src/shared/protocol"
+import { CONFIRM_VOICES } from "../src/renderer/src/lib/sound"
 
 /** One fake OpenAI-compatible service: what it was asked, and what it answers. */
 interface Fake {
@@ -191,5 +192,24 @@ export async function roundSeventeenMediaChecks(check: Check, section: (name: st
     } finally {
       await babbling.close()
     }
+  }
+
+  // ---------------------------------------------------------------- R17-M2
+  section("Round 17 (M2): a waiting confirmation has a sound of its own")
+  {
+    /*
+     * The figure, not the sound: each note is an oscillator with a pitch, a
+     * start, a length and a gain, and what MiMo's pair is measured to be is
+     * E5 then A5 0.16 s later, the second longer and a little louder.
+     */
+    const fundamentals = CONFIRM_VOICES.filter((_, index) => index % 2 === 0)
+    check("it is two struck notes, each with its own partial", CONFIRM_VOICES.length === 4, CONFIRM_VOICES.length)
+    check("the first is E5", Math.abs(fundamentals[0].from - 659.25) < 0.01, fundamentals[0])
+    check("the second is A5", Math.abs(fundamentals[1].from - 880) < 0.01, fundamentals[1])
+    check("and lands 0.16s after it, as MiMo's does", Math.abs(fundamentals[1].at - 0.16) < 1e-9 && fundamentals[0].at === 0, fundamentals.map((voice) => voice.at))
+    check("the second rings longer: 1.1s then 1.4s", fundamentals[0].seconds === 1.1 && fundamentals[1].seconds === 1.4, fundamentals.map((voice) => voice.seconds))
+    check("and a little louder, in MiMo's 0.85 : 1 ratio", Math.abs(fundamentals[0].gain / fundamentals[1].gain - 0.85) < 1e-9, fundamentals.map((voice) => voice.gain))
+    check("every note is audible - a gain of zero would be the silence this replaces", fundamentals.every((voice) => voice.gain > 0))
+    check("and none of it outlasts two seconds", CONFIRM_VOICES.every((voice) => voice.at + voice.seconds <= 2))
   }
 }
