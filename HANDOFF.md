@@ -9,6 +9,7 @@
 - 第十二轮（2026-09-19/20）：三个新的只读角度（数据生命周期与版本升级、主进程与界面的通信契约、失败与空状态）的审计已做完，34 项全部完成并合并入 `v2.0`，见下方「第十二轮」一节。报告在 scratchpad `round12-lifecycle.md` / `round12-ipc.md` / `round12-failure-ux.md`
 - 第十三轮（2026-09-20）：键盘与焦点、多实例与窗口生命周期、大数据量三个只读角度，37 项全部完成并合并入 `v2.0`，见下方「第十三轮」一节。报告在 scratchpad `round13-keyboard.md` / `round13-instances.md` / `round13-scale.md`
 - 第十四轮（2026-09-20）：网络与代理、本地化格式与从右到左、打包安装与自动更新三个只读角度，16 项全部完成并合并入 `v2.0`，见下方「第十四轮」一节。报告在 scratchpad `round14-network.md` / `round14-locale.md` / `round14-packaging.md`
+- 第十五轮（2026-09-20，用户要求「二次复核所有代码，检查BUG，包括界面细节」）：六路只读复核 + 七路修复，34 条缺陷全部修掉并合并入 `v2.0`，见下方「第十五轮」一节。报告在 scratchpad `round15-main.md` / `-server-core.md` / `-tools.md` / `-renderer-state.md` / `-ui-chat.md` / `-ui-settings.md`
 
 ## 现在到哪了
 
@@ -442,6 +443,8 @@
 
 ## 与 MiMo 故意不同的地方（用户定的，不要改回去）
 
+- **`create_session` 的工作目录要审批（第十五轮 R15-T2）**：MiMo 对此零检查（渲染端直接 `POST /session?directory=`，连目录存在都不验）；MCode 在项目（或其仓库根）外时走既有「项目外」审批，否则模型可零弹窗读遍家目录。
+
 - 侧栏顶部一排按钮全部靠左（MiMo 从 x=65 开始、铃铛在最右）；macOS 仍留出红绿灯位置。
 - 侧栏内容（字标以下）整体下移 4px。
 - 首页保留 MCode 自己的静态字标，不做 MiMo 的可换图标按钮（做过后撤销，`18d888b` → `6c32812`）；点击字标会跳动一下（`ea62985`）。
@@ -463,6 +466,49 @@
   - C11-46 斜杠高亮的命令名接受 `[^\s/]+`（MiMo 只接受 `[A-Za-z0-9_-]+`）：MCode 的 MCP 提示命令名是 `服务:提示`，收严会让这类命令不再高亮；高亮本来就要求命令在缓存列表里，不会误标。
   - C11-48 只有技能芯片、没有文字时照常发出（MiMo 拒发并提示「请输入内容」）。
   - C11-50 运行中发送走完整路径（命令模板、技能芯片、批注都带上；MiMo 只插「文本 + 附件」）。
+
+## 第十五轮：二次全面复核与修复（2026-09-20）
+
+六个只读复核代理（主进程、后端核心、工具/MCP/定时、界面状态层、对话界面、设置与弹窗）各自写报告，再由七路 worktree 修复。合并后 13 项检查 + build 通过，smoke **4891 全过**；新增 `scripts/smoke-round15-{{server,tools,main,state,ui-chat,ui-settings,font-scale}}.ts`（另有两个在 Electron 里跑的辅助文件）。每路都做了「把修复还原，检查必须失败」。
+
+**后端核心（R15-S）**
+- S1 重做必定失败：`runner.ts` 两处 `moveSnapshot` 只搬 `files`，丢了 `directory` / `messages`，正文搬进 per-project store 后就再也读不回来，条目还卡在 redo 栈。smoke 原来的 Undo 段用的是旧的内联形态所以看不见，已改成今天的 blob 形态（`e54bf19`）
+- S2 收尾照片失败（目录被删/改名、git 超时、磁盘满）后 Recording 永远留在 `live`：之后该会话每回合都被记成不可撤销、理由是假的「另一个对话改了 X」，store 永不回收。清理移进 `finally`，开头照片的镜像洞也补上（`6a89a77`、`cc59258`）
+- S3 中文搜不到（第十一轮改索引搜索引入）：`unicode61` 不切分连续汉字。改为另存一列 `search_body`（相邻 CJK 之间插空格）供 FTS 索引，查询同样切分后按短语匹配，浮层最后一个词当前缀；只有被切过的正文才存第二份——纯英文档案索引 +0%、全中文 +67%。`SCHEMA_VERSION` 2，旧索引启动自动重建。4000 条 parts 下英文 0.13→0.12ms，`配置` 0→1000 条命中。仍未恢复的是英文词中子串（`figur` 搜不到 `configuration`）（`94b723c`、`a858ca1`）
+- S4 删会话后残留的 `ArtifactStore.dirty` / `repeatsAllowed` / `worktreeHits`（`24d270c`）；S5 用量「脏」标记确认自愈，改为用检查钉住（`ff33463`）
+
+**工具 / MCP / 定时（R15-T）**
+- T1 Windows 上经 `cmd.exe` 起的 MCP 服务器只杀了外壳：`taskkill /T /F` 抽成 `src/server/kill-tree.ts` 共用，探测的子进程登记进 `probing` 并在 `close()` 回收（`fdc4c30`）
+- T2 `create_session` 可把任意绝对目录当项目根、零审批读遍家目录。**MiMo 完全不检查**（渲染端直接 `POST /session?directory=`，连目录存在都不验），本项故意不照抄：项目（或其仓库根）内照旧放行，项目外走既有「项目外」审批（`e7a08dc`，见「与 MiMo 故意不同的地方」）
+- T3 cron 项目锁拿不到就永不重试（`??` 缓存了 `owned:false`）；除重试外加锁心跳：持有者每 30 秒盖时间戳，超 5 分钟未盖的锁即使 pid 还在也可接管——这才堵上「硬杀后 pid 被复用」（`61d0f64`）
+- T4 `cron` 工具能写别的项目的 `.mcode/scheduled_tasks.json`：拒绝目录不在本次调用项目内的 `session_id`（`b693b10`）；T5 启动失败的命令永远留在 `live`（只有 `error`+`close`，没有 `exit`）（`1577ff6`）
+
+**主进程（R15-M）**
+- M1 面板页面自关（OAuth 回调页那类）后 `view.webContents` 变 `undefined`：面板所有操作抛错、`closePanel` 中断循环使其余页永不关闭、主进程多次未捕获异常。新增 `contentsOf(tab)` 与 `destroyed` 监听 → `dropTab()`（`8da2335`）
+- M2 界面重新加载后面板网页仍压在界面上且无处可关：`wireWindow` 在 `did-navigate` 上 `closePanel`（用 `did-navigate` 而非 `did-start-navigation`，`index.ts:862` 拦下的导航不会误伤）（`e52c050`）
+- M3 同一次重载永久泄漏 office 目录监听（`49ccef1`）；M4 每开一次面板多挂一个窗口 `closed` 监听，第 9 次告警，用 `WeakSet` 守门（`45ccb43`）；M5 托盘配置切换给刚建的窗口发消息必丢，改为等 `did-finish-load`（`829e827`）
+
+**界面状态层（R15-R）**
+- R1 `session.history` 的旧应答落到新会话：撤销状态张冠李戴、右侧面板被假变化触发重读。应答后核对 `currentID`（`5e72dd5`）
+- R2 提示上限 3 会把常驻提示（断线横幅、登录过期、配置/凭据损坏）挤掉且再不回来：驱逐时先挤有时钟的，总量上限仍是 MiMo 的 3（`21e830a`）
+- R3 对话框退场副本没有 `inert`，关后 200ms 内 Tab 掉进副本再落到 `<body>`；顺带修好这 200ms 内的拖放判定（`64a7869`）
+- R4 查找条跨会话不刷新（旧命中数、高亮挂在已脱离文档的 Range）（`67eddf7`）；R5 着色缓存命中不刷新 LRU（`2e56165`）；R6 `forgetSession` 漏清按会话 id 的集合（`cda1414`）
+
+**对话界面（R15-U1）**
+- U1-1 盘符根目录的 .xlsx/.pptx/.html 打不开（`slice(0, cut)` 少了分隔符，第二轮修 PDF/Docx 时漏了三个）：五个视图统一 `splitFilePath`。复核推测的「会读到 cwd 同名文件」不成立——`office-guard` 的绝对路径校验先拒（`afeefb6`）
+- U1-2 文件页查找条恒宽 324px 盖住文件树、面板拖窄时伸出面板；改为跟随面板宽度并给按钮加宽度下限（只加 `max-width` 会让按钮溢出窗口）（`e2c1344`）
+- U1-3 「历史」按钮关不掉自己的弹层（捕获阶段先关、随后的 click 又开）（`3842f4d`）；U1-4 会话导航条为 synthetic 消息画死刻度、悬停显示写给模型的内部消息（`87129a6`）；U1-6 docx 修订卡无锚点时叠成一摞（`bff33dc`）；U1-7 子智能体行焦点环被分组 `overflow:hidden` 裁掉（`50db010`）；U1-8 首页字标弹跳无视 app 自己的「减少动态效果」（`95324da`）；U1-9 `.skill-item{30px}` 被后置 `.item{28px}` 压平（`1ae049d`）；U1-10 审查页乱序返回时旧读覆盖新读（`2a78b05`）
+- 保留不改：代码字号放大后行号列重叠——MiMo 的 `.rv-ln{34px}` / `.ft-ln{44px}` 数值相同、放大同样会叠，属忠实复刻
+
+**设置与弹窗（R15-U2）**
+- U21 窄窗（窗口下限 720）下模型页与 MCP 页行重叠、按钮被卡片裁掉。真正成因不是 `.pname` 缺 `min-width:0`（它不是 flex item，加了是空操作），而是 `.ptext`/`.line-text` 的 `flex:1` 基准为 0 + 行不换行 + `.card{overflow:hidden}`。改为行可换行、控件组换行后仍靠右、文字列 `min-width: min(180px,100%)`（`e401c22`）
+- U22 `.config-path` 的 11.5px 被后置 `.line-sub{12px}` 压平 → `.line-sub.config-path`；`.card.wt-empty` 的 18px 侧距 → 17（`3d5c072`）
+
+**界面字号（R15-U3）**
+- 外观页字号可调到 24，但 168 处声明跨 42 文件只缩 `font-size` 不缩 `line-height`（常配死 `height` + `overflow:hidden`）：导航标签溢出 241px 列被页面盖住、`.ctl-btn` 文字竖向裁掉、行互相压字、侧栏与首页字形底部被切。
+- MiMo 的做法（`out/renderer/assets/index-Dz6PjQMq.css`）：`--ui-font-scale` 只出现在 16 个 `--text-N` token 和 7 个 `.type-*` 类的 **line-height** 上。照此把每条缩放字号的规则的 `line-height`（及包住该文字的 `height`）同比缩放；用 `height: calc(...)` 而非 `min-height`（后者会改变属性、破坏基类与修饰类的覆盖关系）。设置导航列另加行最小高度、`overflow-wrap: anywhere`、`.nav{overflow-x: clip}`（用 `clip` 不用 `hidden`，否则另一轴变 `auto` 会吃掉 10px 滚动条宽）。两处图片占位与九处滚动区 `max-height` 豁免（`ba1f77e`、`4c3eca0`、`214d37d`）
+- 实测：德语字号 24 下裁切 225 → 0、行溢出 21 → 0、标签压页 22 → 0；默认字号中文逐元素几何 0 处变化。唯一有意变化：德语默认字号下「已归档对话」导航行 36px → 40px（它的标签本来就要两行、原先画在行外）
+- **发现但未修（已另记）**：设置导航列在默认字号下就超出自身盒子（1400×900 中文 `scrollHeight 745` vs `clientHeight 659`），最后一组与「应用更新」被画在列外并被对话框裁掉。修它要让该列滚动，会占 10px 滚动条宽并移动默认字号下的每一行，与本路「默认像素不变」的前提冲突；MiMo 用的是内层 `.sn-scroll`。
 
 ## 第十四轮：网络与代理、本地化、打包与更新（2026-09-20）
 
@@ -674,7 +720,7 @@
 npm run dev          # 开发版（先结束残留的 node_modules/electron/dist/electron.exe）
 npm run typecheck
 npm run build
-npm run smoke        # 当前 4700 条（2026-09-20）
+npm run smoke        # 当前 4891 条（2026-09-20）
 npm run i18ncheck    # 18 种语言表键一致
 npm run themecheck   # 重新生成 tokens.css 并逐字节比对；也拦物理方向的 CSS
 npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监听
@@ -896,9 +942,9 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
 
 ## 下一步建议
 
-**第十四轮（网络与代理、本地化、打包与更新）16 项已全部完成并合并入 `v2.0`**，已知 backlog 清空。下一步：
+**第十五轮（二次全面复核）34 条缺陷已全部修掉并合并入 `v2.0`**，smoke 4891。下一步：
 
-1. 如要继续对照，可再换只读角度开第十五轮，例如：（a）MCP 与工具全链路的边界情况（工具超时、大结果、并发调用、服务器中途退出）逐项对照 MiMo；（b）会话与上下文管理（自动压缩、上下文溢出、回退、分支、导出）的细节；（c）主题与视觉细节在高 DPI、缩放 125/150%、高对比度模式下的表现。
-2. 用真实模型实际使用已装好的 0.2.9，按看到的问题逐条修；这是现在最有价值的一步（smoke 4700 条大多用模拟模型，真实长时间使用覆盖少）。
-3. 小尾巴（可选）：`update-transaction.json` 与 `composer-input.ts` 走 `writeAtomicSync`；清理崩溃留下的 `*.tmp`；提示超过 3 条时持久提示被挤掉；两处偶发失败的 smoke 检查（见「约定与坑」）。
+1. 用真实模型实际使用已装好的版本，按看到的问题逐条修。
+2. 已知未修的一条（第十五轮 U3 路发现）：设置导航列在默认字号下就超出自身盒子，最后一组与「应用更新」被裁掉；修法是照 MiMo 加内层滚动区 `.sn-scroll`，但会占 10px 滚动条宽、移动默认字号下每一行，需要单独一轮并重新核对默认几何。
+3. 其他小尾巴（可选）：`update-transaction.json` 与 `composer-input.ts` 走 `writeAtomicSync`；清理崩溃留下的 `*.tmp`；英文词中子串搜索（`figur` → `configuration`）仍未恢复；偶发失败的两处 smoke 检查（见「约定与坑」）。
 4. 新页面（钩子、CLI 插件、SSH 连接）用户已决定不做。
