@@ -152,4 +152,23 @@ export async function roundSixteenDiffChecks(check: Check, section: (name: strin
     const tab = await read("src/renderer/src/components/right/RpDiffTab.vue")
     check("and the tab fills it, so it has one", /<DiffBody :diff="diff" :layout="layout" fill \/>/.test(tab))
   }
+
+  // ----------------------------------------------------------------- R16-D5
+  section("Round 16 (R16-D5): the launcher's cards say what each tool is for")
+  {
+    const panel = await read("src/renderer/src/components/RightPanel.vue")
+    check("the description sits between the name and the key cap, where MiMo's does", /lc-name[\s\S]{0,120}<span class="lc-desc" data-launch-desc>\{\{ t\(`launch\.\$\{tool\}Desc`\) \}\}<\/span>[\s\S]{0,120}lc-kbd/.test(panel))
+    check("and it is cut rather than pushing the key cap out of a narrow panel", /\.lc-desc \{[^}]*text-overflow: ellipsis/.test(panel))
+
+    const strings = await tables()
+    const names = Object.keys(strings)
+    for (const tool of ["review", "files", "chat", "browser", "terminal"]) {
+      const key = `launch.${tool}Desc`
+      const absent = names.filter((name) => !strings[name]![key])
+      check(`${key} is written in every language`, absent.length === 0, absent)
+    }
+    const tools = await read("src/renderer/src/lib/right-tools.ts")
+    const listed = [...tools.matchAll(/^ {2}(\w+): \{$/gm)].map((found) => found[1]!)
+    check("every tool the launcher can draw has a description", listed.every((tool) => strings.en![`launch.${tool}Desc`]), listed)
+  }
 }
