@@ -5,6 +5,7 @@ import { useOpenWith } from "../lib/open-with"
 import ModelsPage from "./ModelsPage.vue"
 import { LANGUAGES, ago, compactTokens, dayLabel, language, sessionTitle, t, type Language } from "../lib/i18n"
 import { wordMatch } from "../lib/word-match"
+import { revealScrollTop } from "../lib/scroll-reveal"
 import { folderName, projectName } from "../lib/project"
 import { listedProjects } from "@shared/projects"
 import { projectOf } from "../lib/session-project"
@@ -1056,6 +1057,31 @@ const pointerMoved = ref(false)
 
 onMounted(() => dialogEl.value?.focus())
 
+/*
+ * The nav list scrolls, so the selected row can sit below its fold - opened
+ * straight onto 应用更新, or chosen from the search. As MiMo's: two frames after
+ * the column draws, the selected row is brought just inside the list with 8 to
+ * spare, and nothing moves when it is already in view.
+ */
+const navScrollEl = ref<HTMLElement>()
+
+function revealSelectedNav() {
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      const list = navScrollEl.value
+      const row = list?.querySelector<HTMLElement>(".nav-item.on")
+      if (!list || !row || !row.offsetParent) return
+      const top = row.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop
+      const target = revealScrollTop(list.scrollTop, list.clientHeight, top, row.offsetHeight)
+      if (target === undefined) return
+      list.scrollTo({ top: target, behavior: reducedMotion() ? "auto" : "smooth" })
+    }),
+  )
+}
+
+onMounted(revealSelectedNav)
+watch([currentSection, navQuery], revealSelectedNav)
+
 const saved = ref<string>()
 
 /**
@@ -1488,146 +1514,152 @@ onBeforeUnmount(() => {
         </svg>
       </button>
       <nav class="nav" :class="{ 'mouse-active': pointerMoved }" @pointermove="pointerMoved = true">
-        <div class="nav-title">{{ t("rail.settings") }}</div>
-        <input
-          v-model="navQuery"
-          class="nav-search"
-          :placeholder="t('set.search')"
-          :aria-label="t('set.search')"
-          spellcheck="false"
-          autocomplete="off"
-          @keydown.enter="!composing($event) && openFirstMatch()"
-        />
+        <!-- The title and the search stay put; only the list under them scrolls, as MiMo's does. -->
+        <div class="nav-top">
+          <div class="nav-title">{{ t("rail.settings") }}</div>
+          <input
+            v-model="navQuery"
+            class="nav-search"
+            :placeholder="t('set.search')"
+            :aria-label="t('set.search')"
+            spellcheck="false"
+            autocomplete="off"
+            @keydown.enter="!composing($event) && openFirstMatch()"
+          />
+        </div>
         <!--
-          MiMo's four groups, in its order.
+          MiMo's four groups, in its order, in a list that scrolls on its own:
+          at the default size they are already taller than the dialog.
         -->
-        <div v-show="navShows('general') || navShows('usage') || navShows('appearance') || navShows('files') || navShows('models') || navShows('personal') || navShows('keys')" class="nav-group">{{ t("set.group.personal") }}</div>
+        <div ref="navScrollEl" class="nav-scroll u-scrollbar-thin" data-settings-nav-scroll>
+          <div v-show="navShows('general') || navShows('usage') || navShows('appearance') || navShows('files') || navShows('models') || navShows('personal') || navShows('keys')" class="nav-group">{{ t("set.group.personal") }}</div>
 
-        <button v-show="navShows('general')" class="nav-item" :class="{ on: section === 'general' }" @click="section = 'general'">
-          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path
-              d="M3.625 6.25H10.9375M16.375 13.75H10.5625M3.625 13.75H4.9375M11.125 6.25C11.125 4.79969 12.2997 3.625 13.75 3.625C15.2003 3.625 16.375 4.79969 16.375 6.25C16.375 7.70031 15.2003 8.875 13.75 8.875C12.2997 8.875 11.125 7.70031 11.125 6.25ZM10.375 13.75C10.375 15.2003 9.20031 16.375 7.75 16.375C6.29969 16.375 5.125 15.2003 5.125 13.75C5.125 12.2997 6.29969 11.125 7.75 11.125C9.20031 11.125 10.375 12.2997 10.375 13.75Z"
-              stroke="currentColor"
-              stroke-linecap="square"
-            />
-          </svg>
-          {{ t("set.nav.general") }}
-        </button>
+          <button v-show="navShows('general')" class="nav-item" :class="{ on: section === 'general' }" @click="section = 'general'">
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path
+                d="M3.625 6.25H10.9375M16.375 13.75H10.5625M3.625 13.75H4.9375M11.125 6.25C11.125 4.79969 12.2997 3.625 13.75 3.625C15.2003 3.625 16.375 4.79969 16.375 6.25C16.375 7.70031 15.2003 8.875 13.75 8.875C12.2997 8.875 11.125 7.70031 11.125 6.25ZM10.375 13.75C10.375 15.2003 9.20031 16.375 7.75 16.375C6.29969 16.375 5.125 15.2003 5.125 13.75C5.125 12.2997 6.29969 11.125 7.75 11.125C9.20031 11.125 10.375 12.2997 10.375 13.75Z"
+                stroke="currentColor"
+                stroke-linecap="square"
+              />
+            </svg>
+            {{ t("set.nav.general") }}
+          </button>
 
-        <button v-show="navShows('usage')" class="nav-item" :class="{ on: section === 'usage' }" @click="section = 'usage'">
-          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path d="M4 16V9M8 16V5M12 16v-4M16 16v-8" stroke="currentColor" stroke-linecap="round" />
-          </svg>
-          <span>{{ t("set.nav.usage") }}</span>
-        </button>
+          <button v-show="navShows('usage')" class="nav-item" :class="{ on: section === 'usage' }" @click="section = 'usage'">
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M4 16V9M8 16V5M12 16v-4M16 16v-8" stroke="currentColor" stroke-linecap="round" />
+            </svg>
+            <span>{{ t("set.nav.usage") }}</span>
+          </button>
 
-        <button v-show="navShows('appearance')" class="nav-item" :class="{ on: section === 'appearance' }" @click="section = 'appearance'">
-          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <circle cx="10" cy="10" r="6.5" stroke="currentColor" />
-            <path d="M10 3.5a6.5 6.5 0 0 1 0 13z" fill="currentColor" />
-          </svg>
-          <span>{{ t("set.appearance") }}</span>
-        </button>
+          <button v-show="navShows('appearance')" class="nav-item" :class="{ on: section === 'appearance' }" @click="section = 'appearance'">
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <circle cx="10" cy="10" r="6.5" stroke="currentColor" />
+              <path d="M10 3.5a6.5 6.5 0 0 1 0 13z" fill="currentColor" />
+            </svg>
+            <span>{{ t("set.appearance") }}</span>
+          </button>
 
-        <button v-show="navShows('files')" class="nav-item" :class="{ on: section === 'files' }" @click="section = 'files'">
-          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path d="M5 3.5h6l4 4V16.5H5z" stroke="currentColor" stroke-linejoin="round" />
-            <path d="M11 3.5v4h4" stroke="currentColor" stroke-linejoin="round" />
-          </svg>
-          <span>{{ t("set.nav.files") }}</span>
-        </button>
+          <button v-show="navShows('files')" class="nav-item" :class="{ on: section === 'files' }" @click="section = 'files'">
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M5 3.5h6l4 4V16.5H5z" stroke="currentColor" stroke-linejoin="round" />
+              <path d="M11 3.5v4h4" stroke="currentColor" stroke-linejoin="round" />
+            </svg>
+            <span>{{ t("set.nav.files") }}</span>
+          </button>
 
-        <button v-show="navShows('models')" class="nav-item" :class="{ on: section === 'models' }" @click="section = 'models'">
-          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path
-              fill-rule="evenodd"
-              clip-rule="evenodd"
-              d="M17.5 10C12.2917 10 10 12.2917 10 17.5C10 12.2917 7.70833 10 2.5 10C7.70833 10 10 7.70833 10 2.5C10 7.70833 12.2917 10 17.5 10Z"
-              stroke="currentColor"
-            />
-          </svg>
-          {{ t("set.models") }}
-        </button>
+          <button v-show="navShows('models')" class="nav-item" :class="{ on: section === 'models' }" @click="section = 'models'">
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path
+                fill-rule="evenodd"
+                clip-rule="evenodd"
+                d="M17.5 10C12.2917 10 10 12.2917 10 17.5C10 12.2917 7.70833 10 2.5 10C7.70833 10 10 7.70833 10 2.5C10 7.70833 12.2917 10 17.5 10Z"
+                stroke="currentColor"
+              />
+            </svg>
+            {{ t("set.models") }}
+          </button>
 
-        <button v-show="navShows('personal')" class="nav-item" :class="{ on: section === 'personal' }" @click="section = 'personal'">
-          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <circle cx="10" cy="7" r="3" stroke="currentColor" />
-            <path d="M4.5 16c0-2.5 2.5-4 5.5-4s5.5 1.5 5.5 4" stroke="currentColor" stroke-linecap="round" />
-          </svg>
-          <span>{{ t("set.personal") }}</span>
-        </button>
+          <button v-show="navShows('personal')" class="nav-item" :class="{ on: section === 'personal' }" @click="section = 'personal'">
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <circle cx="10" cy="7" r="3" stroke="currentColor" />
+              <path d="M4.5 16c0-2.5 2.5-4 5.5-4s5.5 1.5 5.5 4" stroke="currentColor" stroke-linecap="round" />
+            </svg>
+            <span>{{ t("set.personal") }}</span>
+          </button>
 
-        <button v-show="navShows('keys')" class="nav-item" :class="{ on: section === 'keys' }" @click="section = 'keys'">
-          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path
-              d="M5.125 7.375V4.375H14.875V2.875M8.3125 13.9375H11.6875M8.125 13.9375H11.875M2.125 7.375H17.875V17.125H2.125V7.375ZM5.5 10.375H5.125V10.75H5.5V10.375ZM8.5 10.375H8.125V10.75H8.5V10.375ZM11.875 10.375H11.5V10.75H11.875V10.375ZM14.875 10.375H14.5V10.75H14.875V10.375ZM14.875 13.75H14.5V14.125H14.875V13.75ZM5.5 13.75H5.125V14.125H5.5V13.75Z"
-              stroke="currentColor"
-              stroke-linecap="square"
-            />
-          </svg>
-          {{ t("set.shortcuts") }}
-        </button>
+          <button v-show="navShows('keys')" class="nav-item" :class="{ on: section === 'keys' }" @click="section = 'keys'">
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path
+                d="M5.125 7.375V4.375H14.875V2.875M8.3125 13.9375H11.6875M8.125 13.9375H11.875M2.125 7.375H17.875V17.125H2.125V7.375ZM5.5 10.375H5.125V10.75H5.5V10.375ZM8.5 10.375H8.125V10.75H8.5V10.375ZM11.875 10.375H11.5V10.75H11.875V10.375ZM14.875 10.375H14.5V10.75H14.875V10.375ZM14.875 13.75H14.5V14.125H14.875V13.75ZM5.5 13.75H5.125V14.125H5.5V13.75Z"
+                stroke="currentColor"
+                stroke-linecap="square"
+              />
+            </svg>
+            {{ t("set.shortcuts") }}
+          </button>
 
-        <div v-show="navShows('mcp')" class="nav-group">{{ t("set.group.integrations") }}</div>
+          <div v-show="navShows('mcp')" class="nav-group">{{ t("set.group.integrations") }}</div>
 
-        <button v-show="navShows('mcp')" class="nav-item" :class="{ on: section === 'mcp' }" @click="section = 'mcp'">
-          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path
-              d="M7.5 2.5v3.5M12.5 2.5v3.5M5.5 6h9v3.5a4.5 4.5 0 0 1-9 0V6ZM10 14v3.5"
-              stroke="currentColor"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-          </svg>
-          <span>{{ t("set.nav.mcp") }}</span>
-        </button>
+          <button v-show="navShows('mcp')" class="nav-item" :class="{ on: section === 'mcp' }" @click="section = 'mcp'">
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path
+                d="M7.5 2.5v3.5M12.5 2.5v3.5M5.5 6h9v3.5a4.5 4.5 0 0 1-9 0V6ZM10 14v3.5"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span>{{ t("set.nav.mcp") }}</span>
+          </button>
 
-        <div v-show="navShows('environment')" class="nav-group">{{ t("set.group.coding") }}</div>
+          <div v-show="navShows('environment')" class="nav-group">{{ t("set.group.coding") }}</div>
 
-        <button v-show="navShows('environment')" class="nav-item" :class="{ on: section === 'environment' }" @click="section = 'environment'">
-          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path d="M6.5 4v6.5a2 2 0 0 0 2 2H14" stroke="currentColor" stroke-linecap="round" />
-            <circle cx="6.5" cy="3.6" r="1.6" stroke="currentColor" />
-            <circle cx="15.4" cy="12.5" r="1.6" stroke="currentColor" />
-            <circle cx="6.5" cy="15.4" r="1.6" stroke="currentColor" />
-          </svg>
-          <span>{{ t("set.environment") }}</span>
-        </button>
+          <button v-show="navShows('environment')" class="nav-item" :class="{ on: section === 'environment' }" @click="section = 'environment'">
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M6.5 4v6.5a2 2 0 0 0 2 2H14" stroke="currentColor" stroke-linecap="round" />
+              <circle cx="6.5" cy="3.6" r="1.6" stroke="currentColor" />
+              <circle cx="15.4" cy="12.5" r="1.6" stroke="currentColor" />
+              <circle cx="6.5" cy="15.4" r="1.6" stroke="currentColor" />
+            </svg>
+            <span>{{ t("set.environment") }}</span>
+          </button>
 
-        <!-- MiMo 26.920's 实验室 group, always shown, between 编码 and 已归档. -->
-        <div v-show="navShows('lab')" class="nav-group">{{ t("set.group.lab") }}</div>
+          <!-- MiMo 26.920's 实验室 group, always shown, between 编码 and 已归档. -->
+          <div v-show="navShows('lab')" class="nav-group">{{ t("set.group.lab") }}</div>
 
-        <button v-show="navShows('lab')" class="nav-item" :class="{ on: section === 'lab' }" data-nav-lab @click="section = 'lab'">
-          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path d="M8 3h4M8.5 3v5L4 15.5a1 1 0 0 0 .9 1.5h10.2a1 1 0 0 0 .9-1.5L11.5 8V3" stroke="currentColor" stroke-linejoin="round" />
-            <path d="M6 12.5h8" stroke="currentColor" />
-          </svg>
-          <span>{{ t("set.nav.lab") }}</span>
-        </button>
+          <button v-show="navShows('lab')" class="nav-item" :class="{ on: section === 'lab' }" data-nav-lab @click="section = 'lab'">
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M8 3h4M8.5 3v5L4 15.5a1 1 0 0 0 .9 1.5h10.2a1 1 0 0 0 .9-1.5L11.5 8V3" stroke="currentColor" stroke-linejoin="round" />
+              <path d="M6 12.5h8" stroke="currentColor" />
+            </svg>
+            <span>{{ t("set.nav.lab") }}</span>
+          </button>
 
-        <div v-show="navShows('archive')" class="nav-group">{{ t("set.group.archived") }}</div>
+          <div v-show="navShows('archive')" class="nav-group">{{ t("set.group.archived") }}</div>
 
-        <button v-show="navShows('archive')" class="nav-item" :class="{ on: section === 'archive' }" @click="section = 'archive'">
-          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path
-              d="M16.8747 6.24935H17.3747V5.74935H16.8747V6.24935ZM16.8747 16.8743V17.3743H17.3747V16.8743H16.8747ZM3.12467 16.8743H2.62467V17.3743H3.12467V16.8743ZM3.12467 6.24935V5.74935H2.62467V6.24935H3.12467ZM2.08301 2.91602V2.41602H1.58301V2.91602H2.08301ZM17.9163 2.91602H18.4163V2.41602H17.9163V2.91602ZM17.9163 6.24935V6.74935H18.4163V6.24935H17.9163ZM2.08301 6.24935H1.58301V6.74935H2.08301V6.24935ZM8.33301 9.08268H7.83301V10.0827H8.33301V9.58268V9.08268ZM11.6663 10.0827H12.1663V9.08268H11.6663V9.58268V10.0827ZM16.8747 6.24935H16.3747V16.8743H16.8747H17.3747V6.24935H16.8747ZM16.8747 16.8743V16.3743H3.12467V16.8743V17.3743H16.8747V16.8743ZM3.12467 16.8743H3.62467V6.24935H3.12467H2.62467V16.8743H3.12467ZM3.12467 6.24935V6.74935H16.8747V6.24935V5.74935H3.12467V6.24935ZM2.08301 2.91602V3.41602H17.9163V2.91602V2.41602H2.08301V2.91602ZM17.9163 2.91602H17.4163V6.24935H17.9163H18.4163V2.91602H17.9163ZM17.9163 6.24935V5.74935H2.08301V6.24935V6.74935H17.9163V6.24935ZM2.08301 6.24935H2.58301V2.91602H2.08301H1.58301V6.24935H2.08301ZM8.33301 9.58268V10.0827H11.6663V9.58268V9.08268H8.33301V9.58268Z"
-              fill="currentColor"
-            />
-          </svg>
-          {{ t("set.nav.archive") }}
-        </button>
+          <button v-show="navShows('archive')" class="nav-item" :class="{ on: section === 'archive' }" @click="section = 'archive'">
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path
+                d="M16.8747 6.24935H17.3747V5.74935H16.8747V6.24935ZM16.8747 16.8743V17.3743H17.3747V16.8743H16.8747ZM3.12467 16.8743H2.62467V17.3743H3.12467V16.8743ZM3.12467 6.24935V5.74935H2.62467V6.24935H3.12467ZM2.08301 2.91602V2.41602H1.58301V2.91602H2.08301ZM17.9163 2.91602H18.4163V2.41602H17.9163V2.91602ZM17.9163 6.24935V6.74935H18.4163V6.24935H17.9163ZM2.08301 6.24935H1.58301V6.74935H2.08301V6.24935ZM8.33301 9.08268H7.83301V10.0827H8.33301V9.58268V9.08268ZM11.6663 10.0827H12.1663V9.08268H11.6663V9.58268V10.0827ZM16.8747 6.24935H16.3747V16.8743H16.8747H17.3747V6.24935H16.8747ZM16.8747 16.8743V16.3743H3.12467V16.8743V17.3743H16.8747V16.8743ZM3.12467 16.8743H3.62467V6.24935H3.12467H2.62467V16.8743H3.12467ZM3.12467 6.24935V6.74935H16.8747V6.24935V5.74935H3.12467V6.24935ZM2.08301 2.91602V3.41602H17.9163V2.91602V2.41602H2.08301V2.91602ZM17.9163 2.91602H17.4163V6.24935H17.9163H18.4163V2.91602H17.9163ZM17.9163 6.24935V5.74935H2.08301V6.24935V6.74935H17.9163V6.24935ZM2.08301 6.24935H2.58301V2.91602H2.08301H1.58301V6.24935H2.08301ZM8.33301 9.58268V10.0827H11.6663V9.58268V9.08268H8.33301V9.58268Z"
+                fill="currentColor"
+              />
+            </svg>
+            {{ t("set.nav.archive") }}
+          </button>
 
-        <div v-show="navShows('updates')" class="nav-group">{{ t("set.groupAbout") }}</div>
+          <div v-show="navShows('updates')" class="nav-group">{{ t("set.groupAbout") }}</div>
 
-        <button v-show="navShows('updates')" class="nav-item" :class="{ on: section === 'updates' }" @click="section = 'updates'">
-          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path d="M10 4v8M10 4 6.8 7.2M10 4l3.2 3.2" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" />
-            <path d="M4.5 13.5v2h11v-2" stroke="currentColor" stroke-linecap="round" />
-          </svg>
-          <span>{{ t("set.nav.updates") }}</span>
-        </button>
+          <button v-show="navShows('updates')" class="nav-item" :class="{ on: section === 'updates' }" @click="section = 'updates'">
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M10 4v8M10 4 6.8 7.2M10 4l3.2 3.2" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M4.5 13.5v2h11v-2" stroke="currentColor" stroke-linecap="round" />
+            </svg>
+            <span>{{ t("set.nav.updates") }}</span>
+          </button>
 
-        <div v-if="!navMatches.length" class="nav-empty">{{ t("set.noMatch") }}</div>
+          <div v-if="!navMatches.length" class="nav-empty">{{ t("set.noMatch") }}</div>
+        </div>
       </nav>
 
       <div ref="contentEl" class="content">
@@ -4570,15 +4602,43 @@ h3 {
   gap: 2px;
   width: 241px;
   min-width: 241px;
-  padding: 19px 11px 12px;
+  /* The padding lives on the two parts below: the fixed top and the list. */
+  padding: 0;
   /* The column is a fixed width, so a row whose label outgrows it used to
      paint over the page beside it - the page has an opaque background, so the
      label simply disappeared under it. MiMo's settings-nav clips the same way.
-     `clip` rather than `hidden` so the other axis stays `visible` instead of
-     turning into a scroller, which would reserve scrollbar width here. */
+     `clip` rather than `hidden` so the column itself never becomes a scroller;
+     the list inside it is the one part that scrolls. */
   overflow-x: clip;
   background: #f8f7f5;
   border-inline-end: 1px solid #f3efeb;
+}
+
+/* MiMo's sn-top: the title and the search, which never scroll away. */
+.nav-top {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 2px;
+  padding: 19px 11px 0;
+}
+
+/*
+ * MiMo's sn-scroll. At the default size the groups are taller than the dialog
+ * (814 against 659 in zh-CN at 1400x900), so the list scrolls inside the column
+ * rather than running off its foot. As MiMo's: the same start inset, 12 below
+ * the last row, nothing on the trailing side - the thin 9px scrollbar takes
+ * that lane when there is anything to scroll.
+ */
+.nav-scroll {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  padding: 0 0 12px 11px;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 :root[data-theme="dark"] .overlay {
@@ -4931,7 +4991,8 @@ h3 {
   border-color: color-mix(in srgb, var(--text-strong) 32%, var(--surface-raised));
 }
 
-.nav-search + .nav-group {
+/* The first group under the search, now the first row of the scrolling list. */
+.nav-scroll > .nav-group:first-child {
   margin-top: 7px;
 }
 
