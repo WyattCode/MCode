@@ -5,7 +5,7 @@
  * quietly moved to another before anyone hears it is listening.
  *
  * Imported first by the check scripts; the app itself takes its ports through
- * free-port.ts and preview-server.ts.
+ * listenForWindow (src/server/index.ts) and preview-server.ts.
  */
 import net from "node:net"
 import { isBlockedPort } from "../src/shared/blocked-ports"

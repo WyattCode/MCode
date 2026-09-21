@@ -1,11 +1,12 @@
+import { createServer, type Server } from "node:http"
 import path from "node:path"
 import { WebSocketServer, type WebSocket } from "ws"
 import type { ClientFrame, ServerFrame } from "@shared/protocol"
 import { narrowcastSession } from "@shared/protocol"
 import { codeOf, paramsOf } from "@shared/errors"
+import { isBlockedPort } from "@shared/blocked-ports"
 import { Storage, pruneQuarantined } from "./storage"
 import { Bus } from "./bus"
-import { windowSafePort } from "./free-port"
 import { Config } from "./config"
 import type { SecretBox } from "./credential-file"
 import { AuthManager } from "./auth/manager"
@@ -66,10 +67,43 @@ export interface BackendOptions {
   secrets?: SecretBox
 }
 
+/** How many ports the system is asked for before the backend gives up on one a browser accepts. */
+const LISTEN_ATTEMPTS = 20
+
+/**
+ * Listens on a free port the window is allowed to connect to: port 0, closed
+ * and asked for again while the system's answer is one a browser refuses
+ * (blocked-ports.ts). The port is the server's own from the start, so nothing
+ * can take it between choosing and listening; the tries are bounded, and a
+ * listen that fails rejects instead of leaving the start waiting.
+ */
+export async function listenForWindow(server: Server, host: string, refused: (port: number) => boolean = isBlockedPort, attempts = LISTEN_ATTEMPTS): Promise<number> {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    await new Promise<void>((resolve, reject) => {
+      const failed = (error: Error) => {
+        server.off("listening", listening)
+        reject(error)
+      }
+      const listening = () => {
+        server.off("error", failed)
+        resolve()
+      }
+      server.once("error", failed)
+      server.once("listening", listening)
+      server.listen(0, host)
+    })
+    const bound = server.address()
+    const port = typeof bound === "object" && bound ? bound.port : 0
+    if (port && !refused(port)) return port
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+  throw new Error(`no port a browser accepts after ${attempts} tries`)
+}
+
 /**
  * Boots the backend and binds it to a loopback WebSocket.
  *
- * The OS picks a free port (one a browser does not refuse, free-port.ts), which
+ * The OS picks a free port (one a browser does not refuse, listenForWindow), which
  * is then handed to the renderer through the preload bridge - nothing is hardcoded, so several instances can
  * run side by side. The socket is bound to 127.0.0.1 only: this speaks for the
  * user's filesystem and must never be reachable from the network.
@@ -270,11 +304,11 @@ export async function startBackend(dataDirectory: string, options: BackendOption
    * page at all) and carry this launch's secret. See socket-guard.ts.
    */
   const secret = newSocketSecret()
-  let port = 0
+  // Never one of the ports the window's own WebSocket would be refused on (blocked-ports.ts).
+  const http = createServer()
+  const port = await listenForWindow(http, "127.0.0.1")
   const server = new WebSocketServer({
-    host: "127.0.0.1",
-    // Never one of the ports the window's own WebSocket would be refused on (blocked-ports.ts).
-    port: await windowSafePort("127.0.0.1"),
+    server: http,
     verifyClient: ({ req }, done) => {
       const origin = req.headers.origin
       const protocols = req.headers["sec-websocket-protocol"]
@@ -390,9 +424,8 @@ export async function startBackend(dataDirectory: string, options: BackendOption
     })
   })
 
-  await new Promise<void>((resolve) => server.once("listening", resolve))
-  const address = server.address()
-  port = typeof address === "object" && address ? address.port : 0
+  // The listening server's own errors reach the socket server; said here rather than thrown as unhandled.
+  server.on("error", (error) => console.warn(`[socket] the window's socket failed: ${error.message}`))
 
   return {
     runtime,
@@ -418,6 +451,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       await artifacts?.close()
       for (const client of clients) client.terminate()
       await new Promise<void>((resolve) => server.close(() => resolve()))
+      await new Promise<void>((resolve) => http.close(() => resolve()))
       /*
        * Last, so what the steps above saved is included (L12-6): an approval
        * or a setting made just before quit reaches the disk before the
