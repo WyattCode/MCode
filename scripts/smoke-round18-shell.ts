@@ -11,7 +11,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
-import { LANGUAGES, language, t } from "../src/renderer/src/lib/i18n"
+import { LANGUAGES, language, t, tn } from "../src/renderer/src/lib/i18n"
 import { toolVerb } from "../src/renderer/src/lib/tool-meta"
 import { UPDATE_REASONS, interruptedReason, readOnlyInstall } from "../src/shared/update-reason"
 
@@ -192,5 +192,32 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
     }
     const html = await read("src/renderer/src/components/right/HtmlTab.vue")
     check("R18-U12: the HTML view mounts it under the page", /<\/div>\s*<!--[^>]*-->\s*<ViewerAiNote viewer="html" \/>\s*<VersionHistory/.test(html))
+  }
+
+  section("Round 18 (lane U): R18-U6 the question dock can be minimised, and stands at most half the window tall")
+  {
+    const dock = await read("src/renderer/src/components/QuestionDock.vue")
+    const form = await read("src/renderer/src/components/parts/QuestionForm.vue")
+    const dockRule = /\n\.confirm-dock \{([^}]*)\}/.exec(dock)?.[1] ?? ""
+    check("R18-U6: the dock is 50vh at most (it was 72vh)", /max-height: 50vh;/.test(dockRule) && !/max-height: 72vh/.test(dock), dockRule)
+    check("R18-U6: and a column, so the question's body can scroll under its head", /display: flex;/.test(dockRule) && /flex-direction: column;/.test(dockRule))
+    const body = /\n\.confirm-q-body \{([^}]*)\}/.exec(form)?.[1] ?? ""
+    check("R18-U6: the body scrolls on its own, without handing the scroll on", /overflow-y: auto;/.test(body) && /overscroll-behavior: contain;/.test(body) && /min-height: 0;/.test(body), body)
+    check("R18-U6: the typed answer sticks to the foot of it", /\n\.q-custom \{[^}]*position: sticky;[^}]*bottom: 0;/.test(form))
+    check("R18-U6: a chevron minimises and expands, named for what it will do", /data-confirm-collapse-toggle[\s\S]{0,120}:title="t\(collapsed \? 'questionDock\.expand' : 'questionDock\.collapse'\)"[\s\S]{0,200}:aria-expanded="!collapsed"[\s\S]{0,40}@click\.stop="collapsed = !collapsed"/.test(form))
+    check("R18-U6: minimised, the head says how many questions wait and opens it again", /:data-confirm-head-clickable="collapsed \? 'true' : undefined" @click="collapsed && \(collapsed = false\)"/.test(form) && /data-confirm-collapsed>\s*\{\{ tn\("questionDock\.collapsedSummary", total\) \}\}/.test(form))
+    check("R18-U6: and hides the body, the pager and the actions", /<div v-if="!collapsed" :key="page" class="confirm-q-body"/.test(form) && /v-if="total > 1 && !collapsed" class="q-pager"/.test(form) && /v-if="!allowCustom && !collapsed" class="q-actions q-actions-row"/.test(form) && /v-if="allDone && !collapsed"/.test(form))
+    check("R18-U6: the dismiss X does not also open a minimised card", /data-confirm-dismiss[\s\S]{0,200}@click\.stop="dismiss"/.test(form))
+    const before = language.value
+    language.value = "zh-CN"
+    const zh = [tn("questionDock.collapsedSummary", 3), t("questionDock.collapse"), t("questionDock.expand")]
+    language.value = "en"
+    const en = [tn("questionDock.collapsedSummary", 1), tn("questionDock.collapsedSummary", 2)]
+    language.value = before
+    check("R18-U6: 3 个提问待回答, 最小化, 展开", JSON.stringify(zh) === JSON.stringify(["3 个提问待回答", "最小化", "展开"]), zh)
+    check("R18-U6: one question, two questions in English", en[0] === "1 question waiting" && en[1] === "2 questions waiting", en)
+    for (const key of ["questionDock.collapsedSummary_one", "questionDock.collapsedSummary_other", "questionDock.collapse", "questionDock.expand"]) {
+      check(`R18-U6: ${key} is in all 18 tables`, (await carrying(key)) === 18)
+    }
   }
 }

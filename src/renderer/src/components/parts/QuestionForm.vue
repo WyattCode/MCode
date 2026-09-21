@@ -2,7 +2,7 @@
 import { computed, h, ref, watch, type FunctionalComponent, type VNode } from "vue"
 import type { QuestionRequest } from "@shared/protocol"
 import StepIcon from "./StepIcon.vue"
-import { t } from "../../lib/i18n"
+import { t, tn } from "../../lib/i18n"
 import { useQuestions } from "../../stores/questions"
 import { isAnswered, mergeCustom, nextStop, toggleChoice } from "../../lib/confirm-queue"
 import { openPlan, planHeader, planOf, planOptionDescription, planOptionLabel, planQuestionText } from "../../lib/plan-question"
@@ -14,6 +14,10 @@ import { useApp } from "../../stores/app"
  * One page per question. A single-choice click moves on by itself; 跳过 and an
  * icon button carry the rest; the X gives up on the set by replying empty. The
  * dock around it owns focus and the keys - digits, arrows and Enter.
+ *
+ * MiMo 26.920 lets the card be minimised: the chevron (or, once down, a click
+ * on the head) folds it to one line, "N questions waiting", so the work behind
+ * it can be read, and opens it again. A new request arrives open.
  */
 const props = defineProps<{ request: QuestionRequest; queueTotal: number }>()
 const emit = defineEmits<{ page: [] }>()
@@ -29,6 +33,7 @@ const multiple = computed(() => current.value.multiple === true)
 const last = computed(() => page.value === total.value - 1)
 const allowCustom = computed(() => current.value.custom !== false)
 const sending = computed(() => questions.busy(props.request.id))
+const collapsed = ref(false)
 
 /** Chosen labels, typed text and skip marks, one entry per question. */
 const chosen = ref<string[][]>(prompts.value.map(() => []))
@@ -184,10 +189,13 @@ const Actions: FunctionalComponent = () => {
 </script>
 
 <template>
-  <div class="confirm-question" data-confirm-question>
-    <div class="q-head">
+  <div class="confirm-question" :class="{ collapsed }" data-confirm-question>
+    <div class="q-head" :class="{ clickable: collapsed }" :data-confirm-head-clickable="collapsed ? 'true' : undefined" @click="collapsed && (collapsed = false)">
       <span class="q-icon" aria-hidden="true"><StepIcon name="question" :size="15" /></span>
-      <span id="confirm-dock-title" class="q-title" data-confirm-qtitle>{{ title }}</span>
+      <span v-if="collapsed" id="confirm-dock-title" class="q-title" data-confirm-qtitle data-confirm-collapsed>
+        {{ tn("questionDock.collapsedSummary", total) }}
+      </span>
+      <span v-else id="confirm-dock-title" class="q-title" data-confirm-qtitle>{{ title }}</span>
       <template v-if="current.header">
         <span class="q-dim">·</span>
         <span class="q-header" data-confirm-qheader :title="planHeader(current)">{{ planHeader(current) }}</span>
@@ -196,7 +204,7 @@ const Actions: FunctionalComponent = () => {
         <span v-if="queueTotal > 1" class="q-queue" data-confirm-queue :title="t('perm.queueTitle', { total: queueTotal })">
           1/{{ queueTotal }}
         </span>
-        <span v-if="total > 1" class="q-pager" data-confirm-pager>
+        <span v-if="total > 1 && !collapsed" class="q-pager" data-confirm-pager>
           <button
             type="button"
             class="q-page"
@@ -228,11 +236,24 @@ const Actions: FunctionalComponent = () => {
         <button
           type="button"
           class="q-dismiss"
+          data-confirm-collapse-toggle
+          :title="t(collapsed ? 'questionDock.expand' : 'questionDock.collapse')"
+          :aria-label="t(collapsed ? 'questionDock.expand' : 'questionDock.collapse')"
+          :aria-expanded="!collapsed"
+          @click.stop="collapsed = !collapsed"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path :d="collapsed ? 'm18 15-6-6-6 6' : 'm6 9 6 6 6-6'" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="q-dismiss"
           data-confirm-dismiss
           :disabled="sending"
           :title="t('questionDock.dismissTitle')"
           :aria-label="t('questionDock.dismissTitle')"
-          @click="dismiss"
+          @click.stop="dismiss"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M18 6 6 18" />
@@ -242,7 +263,7 @@ const Actions: FunctionalComponent = () => {
       </span>
     </div>
 
-    <div :key="page" class="confirm-q-body" data-confirm-qbody>
+    <div v-if="!collapsed" :key="page" class="confirm-q-body" data-confirm-qbody>
       <div id="confirm-dock-desc" class="q-text" data-confirm-qtext>{{ questionText }}</div>
       <!-- plan: MiMo's 查看方案, which opens the plan file beside the conversation. -->
       <button v-if="plan" type="button" class="q-plan" data-confirm-plan :title="plan" @click="openPlan(plan, app.current?.directory)">
@@ -317,10 +338,10 @@ const Actions: FunctionalComponent = () => {
       </div>
     </div>
 
-    <div v-if="!allowCustom" class="q-actions q-actions-row"><Actions /></div>
+    <div v-if="!allowCustom && !collapsed" class="q-actions q-actions-row"><Actions /></div>
     <!-- Enter's target once every question is answered; out of sight and out of the tab order. -->
     <button
-      v-if="allDone"
+      v-if="allDone && !collapsed"
       type="button"
       class="q-primary"
       data-cnav-primary
@@ -332,12 +353,18 @@ const Actions: FunctionalComponent = () => {
 </template>
 
 <style scoped>
+/* A column inside the dock's 50vh: the head stays, the body scrolls on its own. */
 .confirm-question {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
 }
 
 .q-head {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 8px;
   color: var(--text-base);
@@ -357,6 +384,11 @@ const Actions: FunctionalComponent = () => {
 .q-title {
   flex: none;
   font-weight: 500;
+}
+
+/* Minimised, the whole head opens it again. */
+.q-head.clickable {
+  cursor: pointer;
 }
 
 .q-dim {
@@ -436,7 +468,11 @@ const Actions: FunctionalComponent = () => {
 }
 
 .confirm-q-body {
+  flex: 1 1 auto;
+  min-height: 0;
   margin-top: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   animation: confirm-q-in 0.18s ease;
 }
 
@@ -616,12 +652,16 @@ const Actions: FunctionalComponent = () => {
   opacity: 1;
 }
 
+/* The typed answer stays in reach at the foot of the scrolling body, on the dock's own surface. */
 .q-custom {
+  position: sticky;
+  bottom: 0;
   display: flex;
   align-items: center;
   gap: 12px;
   width: 100%;
   padding: 7px 12px;
+  background: var(--surface-menu);
   border-radius: 9px;
   transition: background-color 0.15s;
 }

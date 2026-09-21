@@ -208,14 +208,17 @@ watch(
 
 /*
  * MiMo's `.confirm-dock`: the composer's surface under a half-pixel input
- * border and a shadow lighter than the composer's own. A tall request scrolls
- * inside rather than pushing the composer off the screen.
+ * border and a shadow lighter than the composer's own. At most half the window
+ * tall since 26.920 (it was 72vh): a question's body scrolls inside under its
+ * head, and anything else taller scrolls the dock.
  */
 .confirm-dock {
   position: relative;
+  display: flex;
+  flex-direction: column;
   /* The composer's column and fill (Composer.vue's `.shell` and `.box`), so the pair keeps one edge. */
   max-width: 712px;
-  max-height: 72vh;
+  max-height: 50vh;
   margin: 0 auto 10px;
   padding: 10px 14px;
   overflow-y: auto;
