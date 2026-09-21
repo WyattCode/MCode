@@ -183,4 +183,28 @@ export async function roundTwentyV2Checks(check: Check, section: (name: string) 
     const sub = code(await read("src/renderer/src/components/InfoSubgroup.vue"))
     check("the info card's subgroup head has no hover colour", !/\.head:hover/.test(sub))
   }
+
+  // ------------------------------------------------------------------ R20-V2-rename
+  section("Round 20 (V2-rename): one click on the header title renames it in place, as MiMo 26.920 does")
+  {
+    const title = /<h1\s[^>]*class="title"[^>]*\/?>/.exec(header)?.[0] ?? ""
+    check("a click on the title starts the edit; there is no double-click dialog", /@click="beginEdit"/.test(title) && !/dblclick/.test(header), title)
+    check("Enter, leaving and typing are wired to the title itself", /@keydown="onTitleKey"/.test(title) && /@blur="finishEdit"/.test(title) && /@input="clampInput"/.test(title))
+    check("the header asks the app for no dialog", !/rename: \[\]/.test(header) && !/emit\("rename"\)|emit\('rename'\)/.test(header))
+    const begin = /function beginEdit\(\) \{([\s\S]*?)\n\}/.exec(header)?.[1] ?? ""
+    check("editing turns the title itself editable and selects all of it", /contentEditable = "true"/.test(begin) && /selectNodeContents/.test(begin) && /addRange/.test(begin), begin)
+    const finish = /function finishEdit\(\) \{([\s\S]*?)\n\}/.exec(header)?.[1] ?? ""
+    check("saving trims, falls back to the untitled name, caps at 80 and renames", /trim\(\) \|\| t\("session\.untitled"\)/.test(finish) && /clampTitle/.test(finish) && /app\.rename\(/.test(finish) && /TITLE_MAX = 80/.test(header), finish)
+    const key = /function onTitleKey\(event: KeyboardEvent\) \{([\s\S]*?)\n\}/.exec(header)?.[1] ?? ""
+    check("Enter saves unless an IME is composing; Escape cancels", /event\.key === "Enter" && !\(event\.isComposing \|\| event\.keyCode === 229\)/.test(key) && /finishEdit\(\)/.test(key) && /event\.key === "Escape"/.test(key) && /cancelEdit\(\)/.test(key), key)
+    check("its card stays shut while it is being edited", /v-tip="card && !editing \?/.test(title))
+    check("MiMo's editing field: 100 wide at least, 8 in, a 7px corner", /\.title\.editing \{[^}]*min-width: 100px;[^}]*padding: 0 8px;[^}]*border-radius: 7px;/.test(header))
+    check("the header lends its editor to the app", /defineExpose\(\{ beginEdit \}\)/.test(header))
+
+    const shell = code(await read("src/renderer/src/App.vue"))
+    check("the app mounts the header by ref and no longer listens for a rename event", /<SessionHeader\s+ref="sessionHeader"/.test(shell) && !/<SessionHeader[^>]*@rename=/.test(shell))
+    check("the rename command and its Ctrl+Alt+R chord edit the header", /id: "session\.rename",[\s\S]{0,200}run: \(\) => renameInHeader\(\)/.test(shell) && /letter === "r"\) \{[\s\S]{0,200}renameInHeader\(\)/.test(shell))
+    check("a side-column row's 重命名 opens MiMo's dialog for that row without opening it", /if \(key === "session\.rename" && !header\) \{\s*beginRename\(target\)/.test(shell))
+    check("a row's double-click still opens the same dialog, as MiMo's does", /function renameFromSide\(sessionID: string\) \{\s*beginRename\(sessionID\)/.test(shell) && /<RenameDialog\s+v-if="renamingSession"/.test(shell))
+  }
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue"
+import { computed, nextTick, onMounted, ref, watch } from "vue"
 import { useApp } from "../stores/app"
 import { useRightPanel } from "../stores/right-panel"
 import ContextMenu from "./ContextMenu.vue"
@@ -27,10 +27,102 @@ const app = useApp()
 /* `menuOpen`: this conversation's menu is up, which keeps its "more" tip shut as MiMo's is. */
 defineProps<{ infoOpen?: boolean; bottomOpen?: boolean; sideCollapsed?: boolean; hasContent?: boolean; panelBeside?: boolean; menuOpen?: boolean }>()
 
-/* `rename` asks the app for MiMo's rename dialog; the header no longer edits in place. */
-const emit = defineEmits<{ rename: []; menu: [x: number, y: number]; info: []; bottom: [] }>()
+const emit = defineEmits<{ menu: [x: number, y: number]; info: []; bottom: [] }>()
 
 const title = computed(() => (app.current ? sessionTitle(app.current.title) : ""))
+
+/*
+ * MiMo 26.920's rename: one click on the title makes the title itself editable,
+ * with everything in it selected. Enter or leaving the field saves, Escape puts
+ * the old name back. The element's text is written by hand rather than by the
+ * template, so what is being typed is never overwritten under the caret.
+ */
+const titleEl = ref<HTMLElement>()
+const editing = ref(false)
+/* MiMo's cap on a conversation name, counted in code points so a pair is never split. */
+const TITLE_MAX = 80
+
+function clampTitle(text: string) {
+  const points = Array.from(text)
+  return points.length > TITLE_MAX ? points.slice(0, TITLE_MAX).join("") : text
+}
+
+function showTitle() {
+  const el = titleEl.value
+  if (el && !editing.value && el.textContent !== title.value) el.textContent = title.value
+}
+
+onMounted(showTitle)
+watch(title, () => void nextTick(showTitle))
+
+function beginEdit() {
+  const el = titleEl.value
+  if (!el || !app.current || editing.value) return
+  editing.value = true
+  el.contentEditable = "true"
+  el.textContent = title.value
+  requestAnimationFrame(() => {
+    if (el.contentEditable !== "true") return
+    el.focus()
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    const selection = getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+  })
+}
+
+function finishEdit() {
+  const el = titleEl.value
+  if (!el || !editing.value) return
+  el.contentEditable = "false"
+  editing.value = false
+  const next = clampTitle(el.textContent?.trim() || t("session.untitled"))
+  el.textContent = next
+  el.scrollLeft = 0
+  const session = app.current
+  if (session && next !== title.value) void app.rename(session.id, next)
+}
+
+function cancelEdit() {
+  const el = titleEl.value
+  if (!el || !editing.value) return
+  editing.value = false
+  el.textContent = title.value
+  el.contentEditable = "false"
+  el.scrollLeft = 0
+}
+
+/* Past the cap, what was typed is cut back and the caret goes to the end. */
+function clampInput() {
+  const el = titleEl.value
+  if (!el || !editing.value) return
+  const text = el.textContent ?? ""
+  const clamped = clampTitle(text)
+  if (clamped === text) return
+  el.textContent = clamped
+  const range = document.createRange()
+  range.selectNodeContents(el)
+  range.collapse(false)
+  const selection = getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+}
+
+/* Enter saves unless an IME is still composing; Escape cancels. */
+function onTitleKey(event: KeyboardEvent) {
+  if (!editing.value) return
+  if (event.key === "Enter" && !(event.isComposing || event.keyCode === 229)) {
+    event.preventDefault()
+    finishEdit()
+  } else if (event.key === "Escape") {
+    event.preventDefault()
+    event.stopPropagation()
+    cancelEdit()
+  }
+}
+
+defineExpose({ beginEdit })
 
 /* MiMo's card over the title: the project, the folder and when it last changed. */
 const card = computed(() => (app.current ? convoCard(app.current, app.config?.projectNames, [], undefined, app.groupContext, app.automationTasks) : undefined))
@@ -89,8 +181,19 @@ function openMenu(event: MouseEvent) {
           <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
         </svg>
       </span>
-      <!-- A plain label; a double-click opens MiMo's rename dialog. -->
-      <h1 class="title" v-tip="card ? { card, placement: 'bottom' } : ''" @dblclick="emit('rename')">{{ title }}</h1>
+      <!-- One click edits the name in place, as MiMo's does; its card stays shut while it is being edited. -->
+      <h1
+        ref="titleEl"
+        class="title"
+        :class="{ editing }"
+        data-header-title
+        spellcheck="false"
+        v-tip="card && !editing ? { card, placement: 'bottom' } : ''"
+        @click="beginEdit"
+        @keydown="onTitleKey"
+        @blur="finishEdit"
+        @input="clampInput"
+      />
 
       <!--
         Beside the name rather than at the far end of the bar: it is this
@@ -210,10 +313,7 @@ function openMenu(event: MouseEvent) {
   color: var(--text-weak);
 }
 
-/*
- * Padded and rounded rather than plain text: it is the rename control, and the
- * hover background is the only thing that says so.
- */
+/* The rename control itself: MiMo gives it the text cursor and nothing else until it is clicked. */
 .title {
   overflow: hidden;
   width: fit-content;
@@ -228,8 +328,8 @@ function openMenu(event: MouseEvent) {
   letter-spacing: -0.04px;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: pointer;
-  transition: background 0.12s;
+  cursor: text;
+  outline: none;
 }
 
 
@@ -292,6 +392,24 @@ function openMenu(event: MouseEvent) {
   font-weight: 400;
   line-height: calc(26px * var(--ui-font-scale, 1));
   letter-spacing: 0;
+}
+
+/*
+ * MiMo's title while it is being renamed: a field at least 100 wide on the side
+ * column's ground, a 1px edge of that ground with a tenth of the strongest text
+ * in it, 8 in on each side and a 7px corner; the text is cut, not ellipsed.
+ */
+.title.editing {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  min-width: 100px;
+  padding: 0 8px;
+  background: var(--surface-base);
+  border: 1px solid color-mix(in srgb, var(--surface-base), var(--text-strong) 10%);
+  border-radius: 7px;
+  line-height: normal;
+  text-overflow: clip;
 }
 
 /*
