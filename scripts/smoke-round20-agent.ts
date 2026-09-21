@@ -6,6 +6,7 @@
  *
  * smoke.ts calls `roundTwentyAgentChecks` with its own check and section.
  */
+import { bashDescription } from "../src/server/tool/bash"
 import { findTool } from "../src/server/tool/registry"
 import type { Check } from "./smoke-round5"
 
@@ -33,5 +34,12 @@ export async function roundTwentyAgentChecks(check: Check, section: (name: strin
     const grep = describe("grep")
     check("V4-3: counting matches is done with rg through bash, not grep", grep.includes("to count them") && grep.includes("run ripgrep through bash") && grep.includes("rg --count"), grep)
     check("V4-3: and it names where the bundled rg is when none is on the PATH", grep.includes("MCODE_RIPGREP_PATH"), grep)
+  }
+
+  section("Round 20 (V4-4): bash checks a parent folder first and leaves output uncut")
+  {
+    const bash = bashDescription()
+    check("V4-4: the parent folder is checked before something is created in it", bash.includes("make sure the folder it goes into exists") && bash.includes("before `mkdir"), bash)
+    check("V4-4: output is not cut with head or tail, since the whole of it is saved", bash.includes("do not cut the output down yourself") && bash.includes("`head`") && bash.includes("`tail`"), bash)
   }
 }
