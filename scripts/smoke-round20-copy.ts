@@ -216,6 +216,27 @@ export const GROUP_G: Row[] = [
   ["skillDetail.configureDraft", "帮我配置技能「{name}」（ID：{id}）："],
 ]
 
+/** The whole-table sweep: one-sentence errors, and the single ellipsis. */
+export const SWEEP: Row[] = [
+  ["error.configUnparseable", "{file} 第 {line} 行第 {column} 列附近格式有误，本次改动未写入，请先修正该文件"],
+  ["error.mcpAuthUnreadable", "无法读取 MCP 登录信息文件 {file}，本次登录未保存，请修复或移走该文件后重试"],
+  ["provider.envConnected", "{name} 通过环境变量 {variable} 连接，应用中没有可断开的密钥，请在系统中移除 {variable} 后重启 MCode"],
+  ["composer.audioTooLong", "音频超过 {minutes} 分钟，无法发送，请截取后再试"],
+  ["ui.question.custom.placeholder", "输入你的答案…", "Type your answer…"],
+]
+
+/** Values written with "..." or "……" where MiMo writes the single "…"; the voice examples quote speech and keep theirs. */
+export function ellipsisLeftovers(tables: Record<string, Record<string, string>>): string[] {
+  const out: string[] = []
+  for (const [name, entries] of Object.entries(tables)) {
+    for (const [key, value] of Object.entries(entries)) {
+      if (key === "voice.usage.correctExamples") continue
+      if (/……|(?<!\.)\.\.\.(?=$|\s)/.test(value)) out.push(`${name} ${key}`)
+    }
+  }
+  return out
+}
+
 export const GROUPS: [name: string, rows: Row[]][] = [
   ["A: the goal switch and bar", GROUP_A],
   ["B: conversation errors, permissions and attachments", GROUP_B],
@@ -224,6 +245,7 @@ export const GROUPS: [name: string, rows: Row[]][] = [
   ["E: shortcuts, menus and project removal", GROUP_E],
   ["F: voice and connecting a provider", GROUP_F],
   ["G: the plugins page and skill detail", GROUP_G],
+  ["sweep: one-sentence errors and the single ellipsis", SWEEP],
 ]
 
 /** The in-window menu's rows that MiMo's native menu words differently: what AppMenu.vue calls, and what it should. */
@@ -295,5 +317,10 @@ export function roundTwentyCopyChecks(check: Check, section: (name: string) => v
   {
     const loose = vocabularyLeftovers(tables)
     check("no zh-CN string says 服务商, 提供商 or API 密钥", loose.length === 0, loose.slice(0, 8))
+  }
+  section("Round 20 (V3-sweep): every table writes the single ellipsis")
+  {
+    const dots = ellipsisLeftovers(tables)
+    check('no value ends in "..." or writes "……"', dots.length === 0, dots.slice(0, 8))
   }
 }
