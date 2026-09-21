@@ -30,7 +30,7 @@ import type { GroupContext } from "@shared/session-group"
 import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fallback"
 import type { AutomationTask, ChatLink } from "@shared/protocol"
 import { notice, notify, notifyFailure } from "../lib/toast"
-import { findModel, withoutLatest } from "../lib/model"
+import { findModel } from "../lib/model"
 import { forgetRunEnded, noteRunEnded, noteToolWrites } from "../lib/ai-touch"
 import { endOfficeWatches } from "../lib/annotation-fx"
 import { noteDeliveryTurnEnded, noteDeliveryUpdate } from "../lib/delivered"
@@ -2241,21 +2241,6 @@ export const useApp = defineStore("app", () => {
     const last = messages.value[messages.value.length - 1]
     return last?.role === "assistant" ? last : undefined
   })
-
-  /*
-   * The tray's 配置切换 answers with a toast, as MiMo's does. The window
-   * applies the pick; this only names it. MiMo adds "active in your next chat",
-   * which MCode leaves out because the switch applies at once.
-   */
-  if (typeof window !== "undefined" && window.mcode?.onTrayProfile) {
-    window.mcode.onTrayProfile((key) => {
-      const cut = key.indexOf("/")
-      if (cut <= 0) return
-      const provider = providers.value.find((entry) => entry.id === key.slice(0, cut))
-      const model = provider?.models.find((entry) => entry.id === key.slice(cut + 1))
-      notice.success(t("tray.switched", { name: model ? withoutLatest(model.name || model.id) : key.slice(cut + 1) }))
-    })
-  }
 
   return {
     client,

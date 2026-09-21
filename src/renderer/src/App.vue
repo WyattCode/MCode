@@ -802,35 +802,6 @@ watch(
 )
 
 /*
- * The tray's 配置切换: the models the picker offers, the one in use checked.
- * Main draws the menu; a model chosen there comes back here to be applied.
- */
-watch(
-  () => {
-    const current = app.config?.model
-    return app.providers
-      .filter((provider) => provider.configured)
-      .flatMap((provider) =>
-        provider.models
-          .map((model) => ({
-            key: `${provider.id}/${model.id}`,
-            label: `${provider.name} · ${model.name || model.id}`,
-            checked: current?.provider === provider.id && current.model === model.id,
-          })),
-      )
-      .slice(0, 40)
-  },
-  (profiles) => window.mcode.trayProfiles(profiles),
-  { immediate: true },
-)
-onBeforeUnmount(
-  window.mcode.onTrayProfile((key) => {
-    const cut = key.indexOf("/")
-    if (cut > 0) void app.patchConfig({ model: { provider: key.slice(0, cut), model: key.slice(cut + 1) } })
-  }),
-)
-
-/*
  * Choices that are answered by the stylesheet rather than by a component: the
  * cursor over what can be pressed, whether anything animates, how a diff marks
  * its changed lines, and how text is smoothed.

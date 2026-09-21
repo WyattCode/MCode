@@ -485,36 +485,6 @@ const syncLinuxIcon = linuxIconSync({
   },
 })
 
-/*
- * What the tray's 配置切换 offers: the models the window's picker offers, with
- * the one in use checked. The window holds the config, so it sends the list.
- */
-interface TrayProfile {
-  key: string
-  label: string
-  checked: boolean
-}
-let trayProfiles: TrayProfile[] = []
-
-/**
- * A profile the tray picked, delivered to a window that can hear it.
- *
- * A window made for the occasion has no page yet, and Electron does not queue
- * a message for one, so sending straight at it drops the switch on the floor
- * (R15-M5). The key waits for the page instead, as a session link does.
- */
-function deliverTrayProfile(key: string) {
-  const ready = readyWindow()
-  if (ready) {
-    ready.webContents.send("mcode:tray-profile", key)
-    return
-  }
-  const window = currentWindow() ?? createWindow()
-  window.webContents.once("did-finish-load", () => {
-    if (!window.isDestroyed()) window.webContents.send("mcode:tray-profile", key)
-  })
-}
-
 /**
  * Builds or rebuilds the tray.
  *
@@ -561,37 +531,11 @@ function refreshTray(enabled: boolean): void {
     tray.on("double-click", open)
   } else tray.setImage(image)
 
-  /*
-   * MiMo's 配置切换 presentation: entries grouped (MiMo by app, here by the
-   * provider each key starts with) with a rule between groups.
-   */
-  const grouped = new Map<string, TrayProfile[]>()
-  for (const entry of trayProfiles) {
-    const provider = entry.key.slice(0, Math.max(0, entry.key.indexOf("/")))
-    grouped.set(provider, [...(grouped.get(provider) ?? []), entry])
-  }
-  const profiles: Electron.MenuItemConstructorOptions[] = trayProfiles.length
-    ? [...grouped.values()].flatMap((group, index): Electron.MenuItemConstructorOptions[] => [
-        ...(index > 0 ? [{ type: "separator" as const }] : []),
-        ...group.map((entry) => ({
-          label: entry.label,
-          type: "radio" as const,
-          checked: entry.checked,
-          click: () => {
-            if (closing) return
-            deliverTrayProfile(entry.key)
-          },
-        })),
-      ])
-    : [{ label: label("tray.profilesEmpty", "(None)"), enabled: false }]
-
   tray.setToolTip(APP_NAME)
   tray.setContextMenu(
     Menu.buildFromTemplate([
+      // MiMo 26.920's tray: open, a rule, quit - its 配置切换 is gone.
       { label: label("tray.open", "Open MCode"), click: open },
-      // MiMo puts a rule before 配置切换 as well as before quit.
-      { type: "separator" },
-      { label: label("tray.profiles", "Switch Profile"), submenu: profiles },
       { type: "separator" },
       {
         // A real quit, past the close-to-tray rule below.
@@ -1603,22 +1547,6 @@ app.whenReady().then(async () => {
 
   ipcMain.on("mcode:tray", (_event, enabled: boolean) => {
     refreshTray(Boolean(enabled))
-  })
-
-  /* The 配置切换 list, checked here because it arrives from a window. */
-  ipcMain.on("mcode:tray-profiles", (_event, list: unknown) => {
-    if (!Array.isArray(list)) return
-    trayProfiles = list
-      .filter(
-        (entry): entry is TrayProfile =>
-          Boolean(entry) &&
-          typeof entry.key === "string" &&
-          typeof entry.label === "string" &&
-          typeof entry.checked === "boolean",
-      )
-      .slice(0, 40)
-      .map((entry) => ({ key: entry.key, label: entry.label.slice(0, 120), checked: entry.checked }))
-    if (tray) refreshTray(true)
   })
 
   /* Answers whether the icon took, so Settings can say so or keep the old one (MiMo's setAppIcon). */
