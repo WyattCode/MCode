@@ -166,4 +166,31 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
     check("R18-U10: the keys still walk every custom row in drawn order", /const customRows = computed\(\(\) => customGroups\.value\.flatMap\(\(group\) => group\.rows\)\)/.test(composer) && /\.\.\.customRows\.value\.map\(\(row\) => row\.key\)/.test(composer))
     check("R18-U10: the heading is 12px in the muted colour with 6 by 10 of padding", /\.model-menu \.provider-head \{[^}]*padding: 6px 10px;[^}]*font-size: calc\(12px \* var\(--ui-font-scale, 1\)\)/.test(composer))
   }
+
+  section("Round 18 (lane U): R18-U12 every document view ends on 内容由 AI 生成，请注意核实")
+  {
+    const note = await read("src/renderer/src/components/right/ViewerAiNote.vue")
+    check("R18-U12: the footer is a component of its own, saying the composer's line", /\{\{ t\("composer\.aiNote"\) \}\}/.test(note) && /data-viewer-ai-note/.test(note))
+    check("R18-U12: 8 above, 12 at the sides, 6 below, 10px and centred", /padding: 8px 12px 6px;/.test(note) && /font-size: calc\(10px \* var\(--ui-font-scale, 1\)\)/.test(note) && /text-align: center;/.test(note) && /flex: 0 0 auto;/.test(note))
+    const before = language.value
+    language.value = "zh-CN"
+    const zh = t("composer.aiNote")
+    language.value = before
+    check("R18-U12: in Chinese it reads 内容由 AI 生成，请注意核实", zh === "内容由 AI 生成，请注意核实", zh)
+    const views: [string, string, string, string][] = [
+      ["PdfView.vue", "pdf", ".pdf-view", ".office-sel"],
+      ["DocxView.vue", "docx", ".docx-view", ".office-sel"],
+      ["XlsxView.vue", "xlsx", ".xlsx-view", ".xlsx-grid"],
+      ["PptxView.vue", "pptx", ".pptx-view", ".pptx-host"],
+    ]
+    for (const [file, kind, root, body] of views) {
+      const source = await read(`src/renderer/src/components/right/${file}`)
+      const rule = (selector: string) => new RegExp(`\\n${selector.replace(".", "\\.")} \\{([^}]*)\\}`).exec(source)?.[1] ?? ""
+      check(`R18-U12: the ${kind} view mounts it`, source.includes(`<ViewerAiNote viewer="${kind}" />`) && source.includes('import ViewerAiNote from "./ViewerAiNote.vue"'))
+      check(`R18-U12: the ${kind} view is a column, so the line sits under the document`, /display: flex;/.test(rule(root)) && /flex-direction: column;/.test(rule(root)), rule(root))
+      check(`R18-U12: and the ${kind} document takes the room the line leaves`, /flex: 1 1 0;/.test(rule(body)) && /min-height: 0;/.test(rule(body)) && !/height: 100%/.test(rule(body)), rule(body))
+    }
+    const html = await read("src/renderer/src/components/right/HtmlTab.vue")
+    check("R18-U12: the HTML view mounts it under the page", /<\/div>\s*<!--[^>]*-->\s*<ViewerAiNote viewer="html" \/>\s*<VersionHistory/.test(html))
+  }
 }

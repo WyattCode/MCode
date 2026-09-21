@@ -30,6 +30,7 @@ import { dialogOpen } from "../../lib/escape-layer"
 import CellAffordance from "../CellAffordance.vue"
 import AnnotationFx from "../AnnotationFx.vue"
 import AnnotationMarkLayer, { type MarkItem } from "../AnnotationMarkLayer.vue"
+import ViewerAiNote from "./ViewerAiNote.vue"
 
 /**
  * MiMo's spreadsheet view: the workbook in Univer (Chinese, light, only the
@@ -922,6 +923,8 @@ const keepOpen = () => true
       @close="mode = 'hidden'"
     />
 
+    <!-- MiMo 26.920's footer line under every document view. -->
+    <ViewerAiNote viewer="xlsx" />
     <div v-if="(loading && !restoring) || error" class="xlsx-note" :data-xlsx-failed="error ? '' : undefined">{{ error || t("office.loadingConvert") }}</div>
   </div>
 </template>
@@ -930,15 +933,19 @@ const keepOpen = () => true
 .xlsx-view {
   position: relative;
   isolation: isolate;
+  display: flex;
   flex: 1;
+  flex-direction: column;
   width: 100%;
   height: 100%;
   min-height: 0;
 }
 
+/* The sheet takes what the footer line leaves. */
 .xlsx-grid {
+  flex: 1 1 0;
   width: 100%;
-  height: 100%;
+  min-height: 0;
 }
 
 .xlsx-layer {

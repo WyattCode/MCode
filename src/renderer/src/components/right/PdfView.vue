@@ -18,6 +18,7 @@ import { t } from "../../lib/i18n"
 import { dialogOpen } from "../../lib/escape-layer"
 import CellAffordance from "../CellAffordance.vue"
 import AnnotationFx from "../AnnotationFx.vue"
+import ViewerAiNote from "./ViewerAiNote.vue"
 
 /**
  * MiMo's PDF view.
@@ -1024,6 +1025,8 @@ const noteInside = (target: Node) => Boolean(rootEl.value?.contains(target))
       @close="hideNote"
     />
 
+    <!-- MiMo 26.920's footer line under every document view. -->
+    <ViewerAiNote viewer="pdf" />
     <div v-if="(loading && !restoring) || failure" class="pdf-note" :data-pdf-failed="failure ? '' : undefined">
       {{ failure || t("rp.pdf.loading") }}
     </div>
@@ -1034,19 +1037,22 @@ const noteInside = (target: Node) => Boolean(rootEl.value?.contains(target))
 .pdf-view {
   position: relative;
   isolation: isolate;
+  display: flex;
   flex: 1;
+  flex-direction: column;
   width: 100%;
   height: 100%;
   min-height: 0;
   overflow: hidden;
 }
 
-/* MiMo's document ground: the side colour, scrolling both ways. */
+/* MiMo's document ground: the side colour, scrolling both ways, over the footer line. */
 .office-sel {
   position: relative;
   isolation: isolate;
+  flex: 1 1 0;
   width: 100%;
-  height: 100%;
+  min-height: 0;
   overflow: auto;
   background: var(--surface-base);
 }

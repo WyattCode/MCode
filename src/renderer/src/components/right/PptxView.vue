@@ -35,6 +35,7 @@ import CellAffordance from "../CellAffordance.vue"
 import AnnotationFx from "../AnnotationFx.vue"
 import AnnotationMarkLayer, { type MarkItem } from "../AnnotationMarkLayer.vue"
 import PptxPresent from "./PptxPresent.vue"
+import ViewerAiNote from "./ViewerAiNote.vue"
 
 /**
  * MiMo's slides view: every slide down the pane at its width, 20 apart, drawn
@@ -957,6 +958,8 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
       @close="closeNote"
     />
 
+    <!-- MiMo 26.920's footer line under every document view. -->
+    <ViewerAiNote viewer="pptx" />
     <div v-if="(loading && !restoring) || error" class="pptx-note" :data-pptx-failed="error ? '' : undefined">{{ error || t("office.loadingConvert") }}</div>
 
     <PptxPresent v-if="present" :viewer="present.viewer" :bytes="present.bytes" :start-index="present.startIndex" @close="present = null" />
@@ -967,7 +970,9 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
 .pptx-view {
   position: relative;
   isolation: isolate;
+  display: flex;
   flex: 1;
+  flex-direction: column;
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -977,8 +982,9 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
 .pptx-host {
   position: relative;
   isolation: isolate;
+  flex: 1 1 0;
   width: 100%;
-  height: 100%;
+  min-height: 0;
   overflow: auto;
   cursor: default;
   user-select: text;

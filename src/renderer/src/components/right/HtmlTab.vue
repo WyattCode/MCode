@@ -16,6 +16,7 @@ import { useAnnotations } from "../../stores/annotations"
 import { ANNOTATION_LIMIT } from "@shared/annotations"
 import LucideIcon from "../LucideIcon.vue"
 import VersionHistory from "./VersionHistory.vue"
+import ViewerAiNote from "./ViewerAiNote.vue"
 
 /**
  * MiMo's web page tab: the page served from its own folder (so its scripts,
@@ -351,6 +352,8 @@ onBeforeUnmount(() => {
           {{ failed === "missing" ? t("html.noPage") : failed === "server" ? t("office.serveFailed") : t("office.loadingConvert") }}
         </div>
       </div>
+      <!-- MiMo 26.920's footer line under every document view. -->
+      <ViewerAiNote viewer="html" />
       <VersionHistory v-if="history" :path="path" :anchor="history" @close="history = null" />
     </template>
   </div>
