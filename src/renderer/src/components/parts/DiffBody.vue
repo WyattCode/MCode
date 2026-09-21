@@ -161,7 +161,7 @@ defineExpose({ reveal })
                 <span class="db-ln" />
                 <span class="db-code">{{ hunk.header }}</span>
               </div>
-              <div v-for="(line, l) in hunk.lines" :key="`${h}:${l}`" class="db-row" :class="[line.kind, { marked: Boolean(line.marks) }]">
+              <div v-for="(line, l) in hunk.lines" :key="`${h}:${l}`" class="db-row" :class="[line.kind, { paired: line.paired }]">
                 <span class="db-ln"><span class="db-num">{{ line.old ?? "" }}</span><span class="db-num">{{ line.new ?? "" }}</span></span>
                 <span class="db-code"><span class="db-prefix">{{ line.kind === "add" ? "+" : line.kind === "del" ? "-" : " " }}</span><template v-if="line.marks"><span v-for="(mark, m) in line.marks" :key="m" :class="{ 'db-mark': mark.changed }">{{ mark.text }}</span></template><template v-else>{{ line.text }}</template></span>
               </div>
@@ -181,7 +181,7 @@ defineExpose({ reveal })
                   v-for="(pair, p) in hunk.split"
                   :key="`${h}:${p}`"
                   class="db-row"
-                  :class="[pair[side] ? pair[side]!.kind : 'empty', { marked: Boolean(pair[side]?.marks) }]"
+                  :class="[pair[side] ? pair[side]!.kind : 'empty', { paired: pair[side]?.paired }]"
                 >
                   <span class="db-ln">{{ pair[side] ? (side === "left" ? pair[side]!.old : pair[side]!.new) : "" }}</span>
                   <span class="db-code"><span class="db-prefix">{{ pair[side]?.kind === "add" ? "+" : pair[side]?.kind === "del" ? "-" : " " }}</span><template v-if="pair[side]?.marks"><span v-for="(mark, m) in pair[side]!.marks" :key="m" :class="{ 'db-mark': mark.changed }">{{ mark.text }}</span></template><template v-else>{{ pair[side]?.text ?? "" }}</template>&#8203;</span>
@@ -199,7 +199,14 @@ defineExpose({ reveal })
 <style scoped>
 /*
  * The diff colours are diff2html's, which MiMo keeps in its light theme, and
- * MiMo's GitHub-dark set under the dark theme.
+ * MiMo's GitHub-dark set under the dark theme, laid over the panel's own
+ * surface - so a dark diff's lines sit on the panel and only the gutter is
+ * GitHub's near-black, as measured on MiMo 26.920.
+ *
+ * diff2html has four colours this component has no names for: a pair's two
+ * sides, and the words inside them. They are the same roles one level down,
+ * so the line colours are named again inside a pair and again inside a marked
+ * word, rather than given names of their own.
  */
 .db-scroll {
   --d2h-bg: #fff;
@@ -223,9 +230,19 @@ defineExpose({ reveal })
   max-height: 480px;
   overflow: auto;
   color: var(--d2h-color);
-  background: var(--d2h-bg);
+  background: var(--surface-raised);
   border: 1px solid var(--d2h-border);
   border-radius: 8px;
+}
+
+.db-scroll .paired {
+  --d2h-del-bg: #fdf2d0;
+  --d2h-ins-bg: #ded;
+}
+
+.db-scroll .db-mark {
+  --d2h-del-bg: #ffb6ba;
+  --d2h-ins-bg: #97f295;
 }
 
 .db-scroll.fill {
@@ -235,9 +252,19 @@ defineExpose({ reveal })
   border: 0;
 }
 
+:root[data-theme="dark"] .db-scroll .paired {
+  --d2h-del-bg: #d2992233;
+  --d2h-ins-bg: #2ea04340;
+}
+
+:root[data-theme="dark"] .db-scroll .db-mark {
+  --d2h-del-bg: #f8514966;
+  --d2h-ins-bg: #2ea04366;
+}
+
 :root[data-theme="dark"] .db-scroll {
   --d2h-bg: #0d1117;
-  --d2h-color: #e6edf3;
+  --d2h-color: #f4f4f5;
   --d2h-dim: #6e7681;
   --d2h-border: #30363d;
   --d2h-line-border: #21262d;
@@ -255,9 +282,19 @@ defineExpose({ reveal })
 }
 
 @media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .db-scroll .paired {
+    --d2h-del-bg: #d2992233;
+    --d2h-ins-bg: #2ea04340;
+  }
+
+  :root:not([data-theme="light"]) .db-scroll .db-mark {
+    --d2h-del-bg: #f8514966;
+    --d2h-ins-bg: #2ea04366;
+  }
+
   :root:not([data-theme="light"]) .db-scroll {
     --d2h-bg: #0d1117;
-    --d2h-color: #e6edf3;
+    --d2h-color: #f4f4f5;
     --d2h-dim: #6e7681;
     --d2h-border: #30363d;
     --d2h-line-border: #21262d;
@@ -532,53 +569,53 @@ defineExpose({ reveal })
   user-select: none;
 }
 
-.db-row.add,
-.db-row.add .db-ln {
+/*
+ * A coloured line is coloured once, gutter and code alike, over the panel: the
+ * gutter lets the row's colour through rather than laying its own on top, as
+ * diff2html colours each cell once. A pair - diff2html's "change" - takes its
+ * own colours, and a word only one side of it has takes the brighter pair.
+ */
+.db-row.add {
   background: var(--d2h-ins-bg);
+}
+
+.db-row.del {
+  background: var(--d2h-del-bg);
+}
+
+.db-row.info {
+  color: var(--d2h-dim);
+  background: var(--d2h-info-bg);
+}
+
+.db-row.empty {
+  background: var(--d2h-empty-bg);
+}
+
+.db-row:is(.add, .del, .info, .empty) .db-ln {
+  background: transparent;
+}
+
+.db-row.add .db-ln {
   border-color: var(--d2h-ins-border);
 }
 
-.db-row.del,
 .db-row.del .db-ln {
-  background: var(--d2h-del-bg);
   border-color: var(--d2h-del-border);
 }
 
-/*
- * A pair that was marked word by word: the line itself steps back so the words
- * only one side has are what the eye lands on, MiMo's own emphasis drawn in
- * this app's diff colours.
- */
-.db-row.add.marked,
-.db-row.add.marked .db-ln {
-  background: color-mix(in srgb, var(--d2h-ins-bg) 55%, var(--d2h-bg));
-}
-
-.db-row.del.marked,
-.db-row.del.marked .db-ln {
-  background: color-mix(in srgb, var(--d2h-del-bg) 55%, var(--d2h-bg));
+.db-row.info .db-ln {
+  border-color: var(--d2h-info-border);
 }
 
 .db-row.add .db-mark {
-  background: color-mix(in srgb, var(--d2h-ins-label) 32%, transparent);
+  background: var(--d2h-ins-bg);
   border-radius: 0.2em;
 }
 
 .db-row.del .db-mark {
-  background: color-mix(in srgb, var(--d2h-del-label) 32%, transparent);
+  background: var(--d2h-del-bg);
   border-radius: 0.2em;
-}
-
-.db-row.info,
-.db-row.info .db-ln {
-  color: var(--d2h-dim);
-  background: var(--d2h-info-bg);
-  border-color: var(--d2h-info-border);
-}
-
-.db-row.empty,
-.db-row.empty .db-ln {
-  background: var(--d2h-empty-bg);
 }
 
 /* The diff-marks setting, as MiMo reads it: colour alone keeps the prefix's room but blanks it. */
@@ -586,11 +623,19 @@ html[data-diff-marks="color"] .db-prefix {
   visibility: hidden;
 }
 
+/* Signs alone: the lines go plain and only the gutter keeps the colour. */
 html[data-diff-marks="signs"] .db-row.add,
 html[data-diff-marks="signs"] .db-row.del,
-html[data-diff-marks="signs"] .db-row.marked,
 html[data-diff-marks="signs"] .db-mark {
   background: transparent;
+}
+
+html[data-diff-marks="signs"] .db-row.add .db-ln {
+  background: var(--d2h-ins-bg);
+}
+
+html[data-diff-marks="signs"] .db-row.del .db-ln {
+  background: var(--d2h-del-bg);
 }
 
 /* MiMo's cap note: 12px muted, under the diff. */

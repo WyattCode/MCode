@@ -112,7 +112,7 @@ export async function roundSixteenDiffChecks(check: Check, section: (name: strin
     check("the component marks each hunk before it splits it, so one reading serves both layouts", /const lines = markWords\(hunk\.lines\)[\s\S]{0,120}split: splitRows\(lines\)/.test(body))
     check("a marked piece is drawn in its own element in the merged view", /class="db-code">[\s\S]{0,200}v-for="\(mark, m\) in line\.marks"[\s\S]{0,60}'db-mark': mark\.changed/.test(body))
     check("and in the side-by-side view", /v-for="\(mark, m\) in pair\[side\]!\.marks"/.test(body))
-    check("the marked line steps back so the marked words are what stands out", /\.db-row\.add\.marked[\s\S]{0,140}background: color-mix/.test(body) && /\.db-row\.add \.db-mark \{[\s\S]{0,140}background: color-mix/.test(body))
+    check("a marked word is drawn in its own background", /\.db-row\.add \.db-mark \{[\s\S]{0,60}background: var\(--d2h-ins-bg\)/.test(body))
     check("and the signs-only setting still paints nothing", /html\[data-diff-marks="signs"\][^{]*\.db-mark \{\s*background: transparent/.test(body))
   }
 

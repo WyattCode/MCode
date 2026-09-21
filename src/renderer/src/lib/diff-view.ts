@@ -30,6 +30,12 @@ export interface DiffLine {
   text: string
   /** What the line shares with the one it is paired with, and what only it has. */
   marks?: readonly LineMark[]
+  /**
+   * A removal with an addition against it, or that addition: diff2html's
+   * "change", which MiMo colours apart from a line only one side has. Set for
+   * every pair, including one too long to mark word by word.
+   */
+  paired?: boolean
 }
 
 export interface DiffHunkView {
@@ -174,7 +180,8 @@ export function reviewRows(diff: string): ReviewRow[] {
  * MiMo pairs a run of removals with the run of additions after it, row for row,
  * and marks a pair that has both sides; a removal with no addition against it,
  * and an addition that follows no removal, stay plain. The pairing is the one
- * `splitRows` draws with, so the same words light up in either layout.
+ * `splitRows` draws with, so the same words light up in either layout. Both
+ * sides of a pair are flagged `paired`, whether or not they could be marked.
  */
 export function markWords(lines: readonly DiffLine[]): DiffLine[] {
   const marked = lines.map((line) => ({ ...line }))
@@ -189,6 +196,8 @@ export function markWords(lines: readonly DiffLine[]): DiffLine[] {
     while (index < marked.length && marked[index]!.kind === "del") removed.push(marked[index++]!)
     while (index < marked.length && marked[index]!.kind === "add") added.push(marked[index++]!)
     for (let row = 0; row < Math.min(removed.length, added.length); row++) {
+      removed[row]!.paired = true
+      added[row]!.paired = true
       const pair = markPair(removed[row]!.text, added[row]!.text)
       if (!pair) continue
       removed[row]!.marks = pair.old

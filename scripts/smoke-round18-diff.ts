@@ -10,6 +10,8 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { LANGUAGES } from "../src/renderer/src/lib/i18n"
+import { markWords, splitRows, type DiffLine } from "../src/renderer/src/lib/diff-view"
+import { WORD_MARK_MAX } from "../src/renderer/src/lib/diff-words"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
 
@@ -61,5 +63,74 @@ export async function roundEighteenDiffChecks(check: Check, section: (name: stri
     check("the gutter scrolls with the code, as diff2html's static cell does", !/position: sticky/.test(rule(".db-ln")))
     check("with a line on both sides of it, as diff2html draws it", /border-width: 0 1px/.test(rule(".db-ln")))
     check("the side-by-side gutter keeps diff2html's 4em", /grid-template-columns: 4em minmax\(max-content, 1fr\)/.test(rule(".db-side .db-table")))
+  }
+
+  // ----------------------------------------------------------------- R18-D3
+  section("Round 18 (R18-D3): a pair is coloured apart from a lone removal or addition, in MiMo's measured colours")
+  {
+    const line = (kind: DiffLine["kind"], text: string): DiffLine => ({ kind, text })
+    const hunk = markWords([
+      line("ctx", "export function greet(name) {"),
+      line("del", '  const message = "Hello, " + name'),
+      line("add", '  const message = "Hi, " + name'),
+      line("ctx", "}"),
+      line("del", ""),
+      line("del", "export function total(items) {"),
+      line("ctx", "# demo"),
+      line("add", "## Usage"),
+    ])
+    check("a removal with an addition after it is a pair, both sides", hunk[1]!.paired === true && hunk[2]!.paired === true, hunk.map((l) => l.paired))
+    check("a run of removals with nothing after it is not", hunk[4]!.paired === undefined && hunk[5]!.paired === undefined)
+    check("nor is an addition that follows no removal", hunk[7]!.paired === undefined && hunk[0]!.paired === undefined)
+    const long = "x".repeat(WORD_MARK_MAX + 5)
+    const tooLong = markWords([line("del", long), line("add", `${long}y`)])
+    check("a pair too long to mark word by word is still a pair, as diff2html still calls it a change", tooLong[0]!.paired === true && tooLong[1]!.paired === true && tooLong[0]!.marks === undefined)
+    const uneven = markWords([line("del", "a"), line("del", "b"), line("add", "c")])
+    check("of two removals against one addition only the first is paired", uneven[0]!.paired === true && uneven[1]!.paired === undefined && uneven[2]!.paired === true)
+    check("side by side keeps the flag, because it draws the same lines", splitRows(hunk)[1]?.left?.paired === true && splitRows(hunk)[1]?.right?.paired === true)
+
+    const body = await read("src/renderer/src/components/parts/DiffBody.vue")
+    const style = body.slice(body.indexOf("<style"))
+    /** The declarations of one rule, found by its exact selector. */
+    const rule = (selector: string) => {
+      const at = style.indexOf(`${selector} {`)
+      return at < 0 ? "" : style.slice(at, style.indexOf("}", at))
+    }
+    check("a merged row carries the pair's class", /class="db-row" :class="\[line\.kind, \{ paired: line\.paired \}\]"/.test(body))
+    check("and so does a side-by-side row", /\{ paired: pair\[side\]\?\.paired \}/.test(body))
+
+    // The measured table: diff2html's light values, and its dark ones over the panel.
+    const light = { pairDel: "#fdf2d0", pairIns: "#ded", wordDel: "#ffb6ba", wordIns: "#97f295", pureDel: "#fee8e9", pureIns: "#dfd", info: "#f8fafd", head: "#f7f7f7", gutter: "#fff" }
+    const dark = { pairDel: "#d2992233", pairIns: "#2ea04340", wordDel: "#f8514966", wordIns: "#2ea04366", pureDel: "#f851491a", pureIns: "#2ea04326", info: "#388bfd1a", head: "#161b22", gutter: "#0d1117" }
+    for (const [scheme, prefix, want] of [
+      ["light", "\n.db-scroll", light],
+      ["dark", '\n:root[data-theme="dark"] .db-scroll', dark],
+      ["system dark", '  :root:not([data-theme="light"]) .db-scroll', dark],
+    ] as const) {
+      const pair = rule(`${prefix} .paired`)
+      const word = rule(`${prefix} .db-mark`)
+      const base = rule(prefix)
+      check(`${scheme}: a pair's removal and addition take diff2html's change colours`, pair.includes(`--d2h-del-bg: ${want.pairDel};`) && pair.includes(`--d2h-ins-bg: ${want.pairIns};`), pair)
+      check(`${scheme}: a marked word takes diff2html's highlight colours`, word.includes(`--d2h-del-bg: ${want.wordDel};`) && word.includes(`--d2h-ins-bg: ${want.wordIns};`), word)
+      check(
+        `${scheme}: a lone line, the hunk header, the file header and the gutter keep diff2html's own`,
+        [`--d2h-del-bg: ${want.pureDel};`, `--d2h-ins-bg: ${want.pureIns};`, `--d2h-info-bg: ${want.info};`, `--d2h-head-bg: ${want.head};`, `--d2h-bg: ${want.gutter};`].every((one) => base.includes(one)),
+        base,
+      )
+    }
+    check("dark code is drawn in the measured #f4f4f5", (rule('\n:root[data-theme="dark"] .db-scroll').match(/--d2h-color: #f4f4f5;/g) ?? []).length === 1 && /--d2h-color: #f4f4f5;/.test(rule('  :root:not([data-theme="light"]) .db-scroll')))
+    check("the lines sit on the panel's own surface, #181818 in the dark as MiMo's do", /background: var\(--surface-raised\)/.test(rule("\n.db-scroll")))
+    check("a coloured row's gutter lets the row's colour through, so it is coloured once", /background: transparent/.test(rule(".db-row:is(.add, .del, .info, .empty) .db-ln")))
+    check("while a context line's gutter keeps the near-black", /background: var\(--d2h-bg\)/.test(rule("\n.db-ln")))
+    check("a word's background is the line colour named again inside it", /background: var\(--d2h-del-bg\)/.test(rule(".db-row.del .db-mark")) && /background: var\(--d2h-ins-bg\)/.test(rule(".db-row.add .db-mark")))
+    const names = new Set([...style.matchAll(/(--[a-z0-9-]+):/g)].map((m) => m[1]))
+    const allowed = ["--d2h-bg", "--d2h-color", "--d2h-dim", "--d2h-border", "--d2h-line-border", "--d2h-head-bg", "--d2h-head-border", "--d2h-ins-bg", "--d2h-ins-border", "--d2h-ins-label", "--d2h-del-bg", "--d2h-del-border", "--d2h-del-label", "--d2h-info-bg", "--d2h-info-border", "--d2h-empty-bg"]
+    const extra = [...names].filter((name) => !allowed.includes(name!))
+    check("no colour gets a name the component did not already have", extra.length === 0, extra)
+    check(
+      "signs alone still means plain lines with the colour kept in the gutter",
+      /html\[data-diff-marks="signs"\] \.db-row\.add,\s*html\[data-diff-marks="signs"\] \.db-row\.del,\s*html\[data-diff-marks="signs"\] \.db-mark \{\s*background: transparent/.test(style) &&
+        /background: var\(--d2h-del-bg\)/.test(rule('html[data-diff-marks="signs"] .db-row.del .db-ln')),
+    )
   }
 }
