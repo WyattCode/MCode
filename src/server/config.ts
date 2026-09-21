@@ -147,7 +147,6 @@ function defaults(): AppConfig {
     effort: "medium",
     agent: "build",
     goalMode: false,
-    importOnboarded: false,
     uiFontSize: 14,
     codeFontSize: 12,
     instructions: "",
@@ -558,16 +557,6 @@ export class Config {
       const map = this.current.permissions
       const full = this.current.accessLevel !== "auto" && PERMISSION_KINDS.every((kind) => map[kind] !== "ask")
       if (full && !this.current.allowFullAccess) this.current.allowFullAccess = true
-    })
-
-    /*
-     * 导入: the one question about conversations in other AI apps belongs to a
-     * new profile's first run. A profile that has been running without it is
-     * marked as already asked, so an upgrade never opens a window over the
-     * conversations it already has - and nothing stored is touched either way.
-     */
-    once("import-prompt-r6", () => {
-      if (this.existed) this.current.importOnboarded = true
     })
 
     /*

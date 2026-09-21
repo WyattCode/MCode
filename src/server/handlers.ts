@@ -15,6 +15,7 @@ import type {
 import { sessionFiles } from "@shared/session-files"
 import { artifactCategory } from "@shared/artifact-category"
 import { normalizeBaseURL } from "@shared/custom-endpoint"
+import { providerIdMessageKey, providerIdProblem, type ProviderIdProblem } from "@shared/provider-id"
 import { CodedError } from "@shared/errors"
 import { cleanGoal } from "./session/goal"
 import { summarizeUsage } from "./usage-summary"
@@ -43,7 +44,6 @@ import type { ProviderAdapter } from "./provider/types"
 import { expandCommand, listCommands, runShellPlaceholders } from "./command"
 import { discoverSkills, enabledSkills, readSkillFile, removableSkill, uninstallSkill } from "./skill"
 import { applyMcpImports, importItem, scanMcpImports } from "./mcp-import"
-import { runImport, scanImports } from "./import"
 import { mergeMcpSecrets } from "./mcp-save"
 import { agentsState, deleteAgents, ensureAgents, globalAgentsPath, setAgentsEnabled } from "./global-agents"
 import { turnFileDiffs } from "./session/turn-diff"
@@ -297,6 +297,18 @@ async function waitForIdle(runtime: Runtime, sessionID: string, within = IDLE_WA
   return true
 }
 
+/** A refused provider id, said in English for logs and coded for the window's own language. */
+function providerIdRefusal(id: string, problem: ProviderIdProblem): CodedError {
+  const said =
+    problem === "exists" ? `A provider with the id ${id} already exists` : problem === "slash" ? `"${id}" is not a valid provider id: it contains /` : "A provider id is required"
+  return new CodedError(said, providerIdMessageKey(problem))
+}
+
+/** Every provider id in use: the built-ins, the custom ones, and a disabled custom one too. */
+function takenProviderIds(runtime: Runtime): string[] {
+  return [...runtime.config.definitions().map((entry) => entry.id), ...runtime.config.get().customProviders.map((entry) => entry.id)]
+}
+
 export async function handle(runtime: Runtime, request: Request, owner?: ShellOwner): Promise<unknown> {
   switch (request.type) {
     case "session.list":
@@ -435,8 +447,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     }
 
     case "project.createBlank": {
-      // MiMo's dialog can put the folder somewhere else; without a choice it is the default project location.
-      const directory = await blankProjectDirectory(request.name, request.location || runtime.config.get().projectRoot)
+      // Always under the default project location from Settings > 常规: MiMo's dialog has no place to change it.
+      const directory = await blankProjectDirectory(request.name, runtime.config.get().projectRoot)
       return { directory } satisfies Handled<"project.createBlank">
     }
 
@@ -1116,15 +1128,12 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * both.
        */
       const id = request.id.trim()
-      if (!/^[a-z0-9][a-z0-9-_]*$/.test(id)) {
-        throw new CodedError(`"${id}" is not a valid provider id`, "provider.custom.error.providerID.format")
-      }
       const config = runtime.config.get()
-      // Checked against every provider, not only the custom ones: taking a
-      // built-in's id would shadow it and there would be no way back.
-      if (runtime.config.definition(id)) {
-        throw new CodedError(`A provider with the id ${id} already exists`, "provider.custom.error.providerID.exists")
-      }
+      // MiMo's rule. Checked against every provider, not only the custom ones
+      // (and a disabled one too), without case: taking a built-in's id would
+      // shadow it and there would be no way back.
+      const problem = providerIdProblem(id, takenProviderIds(runtime))
+      if (problem) throw providerIdRefusal(id, problem)
       // Id and name trimmed, and 高级配置 checked: a bad limit is refused, not dropped.
       const models = request.models.map((model) => withImageInput(customModelOf(model), runtime.config.modelCatalog()))
       if (!models.length) throw new CodedError("A custom provider needs at least one model", "provider.needsModel")
@@ -1211,14 +1220,12 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       const config = runtime.config.get()
       const source = config.customProviders.find((entry) => entry.id === request.provider)
       if (!source) throw new CodedError(`No custom provider with the id ${request.provider}`, "provider.notFound")
-      const taken = (id: string) =>
-        Boolean(runtime.config.definition(id)) || config.customProviders.some((entry) => entry.id === id)
+      const ids = takenProviderIds(runtime)
+      const taken = (id: string) => providerIdProblem(id, ids) === "exists"
       // The id chosen in the clone dialog, checked as a new provider's is; otherwise the first free `-copy`.
       const chosen = request.id?.trim()
-      if (chosen !== undefined && !/^[a-z0-9][a-z0-9-_]*$/.test(chosen)) {
-        throw new CodedError(`"${chosen}" is not a valid provider id`, "provider.custom.error.providerID.format")
-      }
-      if (chosen && taken(chosen)) throw new CodedError(`A provider with the id ${chosen} already exists`, "provider.custom.error.providerID.exists")
+      const problem = chosen !== undefined ? providerIdProblem(chosen, ids) : undefined
+      if (problem) throw providerIdRefusal(chosen ?? "", problem)
       let id = chosen || `${source.id}-copy`
       for (let n = 2; !chosen && taken(id); n++) id = `${source.id}-copy-${n}`
       await runtime.config.set({
@@ -1254,6 +1261,26 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       })
       await runtime.config.setApiKey(request.provider, "")
       return { providers: runtime.config.providers() }
+    }
+
+    /*
+     * MiMo 26.920's 删除自定义模型, confirmed in the window: the model leaves the
+     * saved provider straight away. The last one stays, because a custom
+     * provider with nothing to talk to is refused everywhere else too; the
+     * form still drops its row and asks for a model before the next save.
+     */
+    case "provider.removeCustomModel": {
+      const config = runtime.config.get()
+      const existing = config.customProviders.find((entry) => entry.id === request.provider)
+      const models = existing?.models ?? []
+      if (models.length > 1 && models.some((model) => model.id === request.model)) {
+        await runtime.config.set({
+          customProviders: config.customProviders.map((entry) =>
+            entry.id === request.provider ? { ...entry, models: models.filter((model) => model.id !== request.model) } : entry,
+          ),
+        })
+      }
+      return { providers: runtime.config.providers() } satisfies Handled<"provider.removeCustomModel">
     }
 
     case "auth.begin":
@@ -1614,25 +1641,6 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "mcp.importApply":
       return { imported: await applyMcpImports(runtime.config, request.items) } satisfies Handled<"mcp.importApply">
-
-    /*
-     * 导入: what other AI apps on this machine hold. Counts only travel to the
-     * window, and `asked` says whether this profile has had the first-run
-     * question - the window asks once and marks it, as MiMo does.
-     */
-    case "import.scan":
-      return {
-        scan: await scanImports(runtime.storage, runtime.sessions),
-        asked: runtime.config.get().importOnboarded,
-      } satisfies Handled<"import.scan">
-
-    case "import.run": {
-      const result = await runImport(
-        { storage: runtime.storage, sessions: runtime.sessions, model: runtime.config.get().model },
-        request.sources,
-      )
-      return { result } satisfies Handled<"import.run">
-    }
 
     case "mcp.save": {
       // The window was never sent the saved secrets, so blank rows it marks as kept take the stored ones here.

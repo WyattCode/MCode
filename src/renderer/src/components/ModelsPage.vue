@@ -121,11 +121,11 @@ async function refresh() {
     else if (provider && provider.kind === "openai-compatible") {
       try {
         const found = await app.discoverModels(provider.id)
-        notify(t("provider.refreshed", { n: found }))
+        notify(t("provider.refreshed", { n: found }), { level: "success" })
       } catch (err) {
         notifyFailure(localFailure(provider) ?? (err instanceof Error ? err.message : String(err)))
       }
-    } else notify(t("set.models.refreshed"))
+    } else notify(t("set.models.refreshed"), { level: "success" })
   } finally {
     refreshing.value = false
   }
@@ -333,7 +333,7 @@ async function confirmClone(id: string) {
       <ConfirmDialog
         v-if="removing"
         :title="t(removing.custom ? 'set.models.removeProvider' : 'set.models.disconnectTitle')"
-        :body="t(removing.custom ? 'set.models.deleteBody' : 'set.models.disconnectBody', { name: removing.name })"
+        :body="t(removing.custom ? 'set.models.removeProviderBody' : 'set.models.disconnectBody', { name: removing.name })"
         :confirm-label="removing.custom ? t('set.models.remove') : t('set.disconnect')"
         @confirm="confirmRemove"
         @close="removing = undefined"

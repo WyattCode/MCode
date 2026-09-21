@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue"
+import { onMounted, ref } from "vue"
 import { t } from "../lib/i18n"
+import { pickDirectory } from "../lib/native-pick"
 import { useEscapeLayer } from "../lib/escape-layer"
 
 /**
@@ -11,8 +12,8 @@ import { useEscapeLayer } from "../lib/escape-layer"
  * the project under the name given. Picking a folder before the name has been
  * touched names the project after the folder.
  */
-const props = defineProps<{ value: string; defaultLocation?: string }>()
-const emit = defineEmits<{ close: []; submit: [name: string, source?: string, location?: string] }>()
+const props = defineProps<{ value: string }>()
+const emit = defineEmits<{ close: []; submit: [name: string, source?: string] }>()
 
 /* MiMo caps a project name at 80 code points, however it was arrived at. */
 const MAX_NAME = 80
@@ -28,20 +29,6 @@ const touched = ref(false)
 const source = ref("")
 const field = ref<HTMLInputElement>()
 
-/*
- * Where the new folder goes, as MiMo's dialog lets it be changed. Empty means
- * the default project location, which is what the row shows until it is.
- * Only asked about when no source folder was picked: with one, that folder is
- * the project and there is nowhere else to put it.
- */
-const location = ref("")
-const shownLocation = computed(() => location.value || props.defaultLocation || "")
-
-async function pickLocation() {
-  const [directory] = await window.mcode.pickDirectory(t("set.projectRoot"), false)
-  if (directory) location.value = directory
-}
-
 function typed(event: Event) {
   touched.value = true
   const input = event.target as HTMLInputElement
@@ -51,7 +38,7 @@ function typed(event: Event) {
 }
 
 async function pickSource() {
-  const [directory] = await window.mcode.pickDirectory(t("home.blankSource"), false)
+  const [directory] = await pickDirectory(t("home.blankSource"), false)
   if (!directory) return
   source.value = directory
   if (!touched.value) draft.value = clamp(directory.split(/[\\/]/).filter(Boolean).pop() || draft.value)
@@ -60,7 +47,7 @@ async function pickSource() {
 function submit() {
   const name = clamp(draft.value.trim())
   if (!name) return
-  emit("submit", name, source.value || undefined, source.value ? undefined : location.value || undefined)
+  emit("submit", name, source.value || undefined)
 }
 
 /* Enter while an IME is composing picks a candidate; it must not create. */
@@ -120,16 +107,6 @@ onMounted(() => {
         <span v-if="source" class="source-path" data-np-source-path :title="source">{{ source }}</span>
         <span v-else class="source-hint" data-np-source-hint>{{ t("home.blankSourceHint") }}</span>
       </button>
-
-      <!-- Where the folder goes; with a source folder there is nowhere else for it to be. -->
-      <template v-if="!source">
-        <div class="label">{{ t("set.projectRoot") }}</div>
-        <button type="button" class="where" data-np-location @click="pickLocation">
-          <span v-if="shownLocation" class="where-path" data-np-location-path :title="shownLocation">{{ shownLocation }}</span>
-          <span v-else class="where-path where-default" data-np-location-path>{{ t("set.projectRootEmpty") }}</span>
-          <span class="where-pick">{{ t("set.pickDir") }}</span>
-        </button>
-      </template>
 
       <div class="actions">
         <button type="button" class="btn" data-np-cancel @click="emit('close')">{{ t("common.cancel") }}</button>
@@ -276,51 +253,6 @@ onMounted(() => {
 
 .source-path {
   color: var(--text-strong);
-}
-
-/* The location row: the path on one line with the button after it, on the field's own ground. */
-.where {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  box-sizing: border-box;
-  width: 100%;
-  margin-bottom: 18px;
-  padding: 10px 12px;
-  color: var(--text-weak);
-  font: inherit;
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  text-align: start;
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weak);
-  border-radius: 9px;
-  cursor: pointer;
-}
-
-.where:hover {
-  background: var(--surface-hover);
-}
-
-.where-path {
-  overflow: hidden;
-  color: var(--text-strong);
-  font-family: var(--font-mono);
-  font-size: calc(11.5px * var(--ui-font-scale, 1));
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* No location chosen yet: the sentence that says where it will land, in the quieter colour. */
-.where-default {
-  color: var(--text-weak);
-  font-family: inherit;
-  font-size: calc(12px * var(--ui-font-scale, 1));
-}
-
-.where-pick {
-  flex: none;
-  color: var(--text-weak);
 }
 
 .actions {

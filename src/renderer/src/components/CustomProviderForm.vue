@@ -6,7 +6,9 @@ import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 import { notice } from "../lib/toast"
 import { useEscapeLayerWhile } from "../lib/escape-layer"
-import { LIMIT_PRESETS, MODALITIES, limitLabel, limitOf, modalitySummary, validEndpoint, type Modality } from "../lib/custom-model"
+import ConfirmDialog from "./ConfirmDialog.vue"
+import { LIMIT_PRESETS, MODALITIES, limitLabel, limitOf, modalitySummary, providerIdError, validEndpoint, type Modality } from "../lib/custom-model"
+import { providerIdProblem } from "@shared/provider-id"
 
 /**
  * A custom provider, laid out as MiMo 26.920's models page lays one out: the
@@ -35,8 +37,6 @@ const props = defineProps<{
 const emit = defineEmits<{ connected: [providerID: string]; saved: [providerID: string] }>()
 
 const app = useApp()
-
-const PROVIDER_ID = /^[a-z0-9][a-z0-9-_]*$/
 
 type Mods = Record<Modality, boolean>
 
@@ -129,14 +129,24 @@ const keyShown = ref(Boolean(editing?.environment))
 
 /* ------------------------------------------------------------ the checks */
 
+/*
+ * MiMo 26.920's rule: not empty, no `/`, and not an id any provider already
+ * has, compared without case. Every provider's id, not only the custom ones:
+ * taking a built-in's id would shadow it with no way back.
+ */
+const idProblem = computed(() =>
+  editing
+    ? undefined
+    : providerIdProblem(
+        form.value.providerID,
+        app.providers.map((entry) => entry.id),
+      ),
+)
+
 const idError = computed(() => {
-  if (editing) return undefined
-  const value = form.value.providerID.trim()
-  if (!value) return tried.value ? t("provider.custom.error.providerID.required") : undefined
-  if (!PROVIDER_ID.test(value)) return t("provider.custom.error.providerID.format")
-  // Every provider's id, not only the custom ones: taking a built-in's id would shadow it with no way back.
-  if (app.providers.some((entry) => entry.id === value)) return t("provider.custom.error.providerID.exists")
-  return undefined
+  const problem = idProblem.value
+  if (!problem || (problem === "empty" && !tried.value)) return undefined
+  return providerIdError(problem)
 })
 
 const endpointBad = computed(() => Boolean(form.value.baseURL.trim()) && !validEndpoint(form.value.baseURL))
@@ -155,7 +165,7 @@ const headerProblems = computed(() =>
 
 const canSave = computed(() => {
   const value = form.value
-  if (!PROVIDER_ID.test(value.providerID.trim()) || idError.value || !validEndpoint(value.baseURL)) return false
+  if (idProblem.value || !value.providerID.trim() || !validEndpoint(value.baseURL)) return false
   if (!value.models.length || value.models.some(limitBad)) return false
   return headerProblems.value.every((problem) => !problem.key && !problem.value)
 })
@@ -252,7 +262,18 @@ function comboKey(event: KeyboardEvent) {
   }
 }
 
-function removeModel(row: ModelRow) {
+/*
+ * MiMo 26.920's 删除自定义模型: the trash button asks first, and on yes the
+ * model leaves the saved provider straight away (the backend ignores one that
+ * was never saved) before its card is dropped from the form.
+ */
+const removingModel = ref<ModelRow>()
+
+async function confirmRemoveModel() {
+  const row = removingModel.value
+  removingModel.value = undefined
+  if (!row) return
+  if (editing) await app.removeCustomModel(editing.id, row.id).catch(() => undefined)
   form.value.models = form.value.models.filter((entry) => entry.key !== row.key)
 }
 
@@ -365,7 +386,7 @@ async function submit(): Promise<boolean> {
       if (app.currentID) await app.setModel(model)
       else await app.patchConfig({ model, smart: false })
     }
-    if (editing) notice.info(t("model.changesSaved"))
+    if (editing) notice.success(t("model.changesSaved"))
     else notice.success(t("set.models.providerAdded"))
     emit("saved", id)
     emit("connected", id)
@@ -541,7 +562,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
         :aria-label="t('provider.custom.models.remove')"
         :title="t('provider.custom.models.remove')"
         :data-model-remove="row.id"
-        @click="removeModel(row)"
+        @click="removingModel = row"
       >
         <svg width="15" height="15" viewBox="0 0 14 14" aria-hidden="true">
           <path d="M3 3.6h8M5.6 3.6V2.4h2.8v1.2M4.2 3.6l.5 7.4h4.6l.5-7.4" stroke="currentColor" stroke-width="1.1" fill="none" stroke-linecap="round" stroke-linejoin="round" />
@@ -646,6 +667,17 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
     <button v-if="standalone" class="cp-submit" type="submit" :disabled="busy || !canSave" data-custom-save>
       {{ busy ? t("common.saving") : t("common.save") }}
     </button>
+
+    <Teleport to="body">
+      <ConfirmDialog
+        v-if="removingModel"
+        :title="t('set.models.deleteModelTitle')"
+        :body="t('set.models.deleteBody', { name: removingModel.name.trim() || removingModel.id })"
+        :confirm-label="t('set.models.remove')"
+        @confirm="confirmRemoveModel"
+        @close="removingModel = undefined"
+      />
+    </Teleport>
   </form>
 </template>
 

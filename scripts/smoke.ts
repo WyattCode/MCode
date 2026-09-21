@@ -392,6 +392,8 @@ import { perfThreadChecks } from "./smoke-perf-thread"
 // The entry chunk: what the first paint does not need is fetched on first use.
 import { perfEntryChecks } from "./smoke-perf-entry"
 import { loadMath } from "../src/renderer/src/lib/markdown"
+// Round 19, lane A: settings and shell items against MiMo 26.920 (first-run import, pickers, toasts, providers).
+import { roundNineteenLaneAChecks } from "./smoke-round19-a"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -2846,7 +2848,7 @@ async function main() {
 
     const malformed = await call({
       type: "provider.addCustom",
-      id: "Not Valid",
+      id: "Not/Valid",
       name: "Bad",
       baseURL: "https://example.com/v1",
       apiKey: "",
@@ -7028,6 +7030,7 @@ async function main() {
   await roundNineteenPanelChecks(check, section)
   await perfThreadChecks(check, section)
   await perfEntryChecks(check, section)
+  await roundNineteenLaneAChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

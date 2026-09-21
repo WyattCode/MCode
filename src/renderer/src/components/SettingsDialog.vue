@@ -4,6 +4,7 @@ import { useApp } from "../stores/app"
 import { useOpenWith } from "../lib/open-with"
 import ModelsPage from "./ModelsPage.vue"
 import { LANGUAGES, ago, compactTokens, dayLabel, language, sessionTitle, t, type Language } from "../lib/i18n"
+import { pickDirectory, pickProjectFolder } from "../lib/native-pick"
 import { wordMatch } from "../lib/word-match"
 import { revealScrollTop } from "../lib/scroll-reveal"
 import { folderName, projectName } from "../lib/project"
@@ -145,7 +146,7 @@ async function copyConfigPath() {
   if (!target) return
   try {
     await navigator.clipboard.writeText(target)
-    notify(t("set.config.pathCopied"))
+    notify(t("set.config.pathCopied"), { level: "success" })
   } catch {
     notifyFailure(t("set.config.copyPathFailed"))
   }
@@ -451,7 +452,7 @@ async function saveMcp() {
     return
   }
   delete mcpTools.value[name]
-  notify(t("set.mcpForm.saved", { name }))
+  notify(t("set.mcpForm.saved", { name }), { level: "success" })
   mcpView.value = "list"
   void refreshMcp()
 }
@@ -475,7 +476,7 @@ async function authorizeMcp(name: string) {
   notify(t("set.mcp.authorizing"))
   try {
     await app.client?.request({ type: "mcp.authenticate", name })
-    notify(t("set.mcp.authorized"))
+    notify(t("set.mcp.authorized"), { level: "success" })
   } catch (err) {
     notifyFailure(t("set.mcp.authorizeFailed") + (err instanceof Error ? err.message : String(err)))
   } finally {
@@ -497,7 +498,7 @@ async function removeMcp(name: string) {
   }
   if (mcpToolsOpen.value === name) mcpToolsOpen.value = undefined
   delete mcpTools.value[name]
-  notify(t("set.mcp.removed") + name)
+  notify(t("set.mcp.removed") + name, { level: "success" })
   void refreshMcp()
 }
 
@@ -566,7 +567,7 @@ async function finishMcpImport() {
   try {
     const items = mcpImportChosen.value.map(({ source, name }) => ({ source, name }))
     const result = await app.client?.request({ type: "mcp.importApply", items })
-    notify(t("set.mcp.importDone", { n: String(result?.imported.length ?? 0) }))
+    notify(t("set.mcp.importDone", { n: String(result?.imported.length ?? 0) }), { level: "success" })
     mcpView.value = "list"
     void refreshMcp()
   } catch (err) {
@@ -637,7 +638,7 @@ const envDirty = computed(
 )
 
 async function addProject() {
-  const [directory] = await window.mcode.pickProjectFolder(t("dialog.pickProjectFolder"), false)
+  const [directory] = await pickProjectFolder(t("dialog.pickProjectFolder"), false)
   if (!directory) return
   // MiMo's add with activate off: listed, nothing opened, no conversation made.
   await app.addProject(directory, { switched: false })
@@ -952,8 +953,8 @@ watch(navQuery, (query) => {
 })
 
 /*
- * MiMo's highlight: two frames after the page draws, the first row whose title
- * or option reads the query scrolls to the middle and holds the selected fill
+ * MiMo's highlight: two frames after the page draws, the first row whose text
+ * (title, description or control) reads the query scrolls to the middle and holds the selected fill
  * for 1.6s while it fades. Reduced motion gets the fill without the fade.
  */
 const contentEl = ref<HTMLElement>()
@@ -966,7 +967,8 @@ async function flashMatch(query: string) {
   await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
   const root = contentEl.value
   if (!root) return
-  const hit = [...root.querySelectorAll<HTMLElement>(".line-title, .choice-btn, h3")].find((element) =>
+  // A whole row's text, as MiMo reads it: the title, the description under it and its controls' labels.
+  const hit = [...root.querySelectorAll<HTMLElement>(".line, .choice-btn, h3")].find((element) =>
     (element.textContent ?? "").toLocaleLowerCase().includes(needle),
   )
   if (!hit) return
@@ -1331,15 +1333,15 @@ function toggleAllPicked() {
 /* MiMo confirms a restore with one toast, and a batch with one counted toast rather than one each. */
 async function restoreOne(sessionID: string) {
   await app.archive(sessionID, false)
-  notify(t("toast.convoRestored"))
+  notify(t("toast.convoRestored"), { level: "success" })
 }
 
 async function restorePicked() {
   const ids = [...pickedLive.value]
   for (const sessionID of ids) await app.archive(sessionID, false)
   stopSelecting()
-  if (ids.length === 1) notify(t("toast.convoRestored"))
-  else if (ids.length) notify(t("toast.convosRestored", { n: ids.length }))
+  // A batch is always counted, even a batch of one, as MiMo's unarchiveMany says it.
+  if (ids.length) notify(t("toast.convosRestored", { n: ids.length }), { level: "success" })
 }
 
 /** What the delete dialog is about: one named conversation, or the selection. */
@@ -1424,7 +1426,7 @@ async function toggleFullAccess() {
 
 /** Where tasks with no project get their folders. Empty is the default under the home folder. */
 async function pickProjectRoot() {
-  const [directory] = await window.mcode.pickDirectory(t("set.pickDir"))
+  const [directory] = await pickDirectory(t("set.pickDir"))
   if (!directory) return
   await app.patchConfig({ projectRoot: directory })
   notify(t("set.projectRootSet"))
@@ -2186,7 +2188,7 @@ onBeforeUnmount(() => {
             <div class="line">
               <div class="line-text">
                 <div class="line-title">{{ t("set.config.file") }}</div>
-                <div class="line-sub mcp-path" data-config-path :title="configFile?.path">{{ configFile?.path ?? "" }}</div>
+                <div class="line-sub mcp-path" data-config-path :title="configFile?.path">{{ configFile ? homePath(configFile.path, paths?.home) : "" }}</div>
               </div>
               <div class="mcp-ctrl">
                 <button class="ctl-btn" data-config-copy-path :disabled="!configFile" @click="copyConfigPath">{{ t("set.config.copyPath") }}</button>
@@ -2519,6 +2521,11 @@ onBeforeUnmount(() => {
                 <div class="line-sub mcp-path" data-config-path :title="configFile?.path">
                   {{ configFile ? homePath(configFile.path, paths?.home) : t("set.mcp.configResolving") }}
                 </div>
+              </div>
+              <!-- MiMo 26.920 puts the config page's 复制路径 and 打开 on this row too. -->
+              <div class="mcp-ctrl">
+                <button class="ctl-btn" data-config-copy-path :disabled="!configFile" @click="copyConfigPath">{{ t("set.config.copyPath") }}</button>
+                <button class="ctl-btn" data-mcp-config-open :disabled="!configFile" @click="openConfigFile">{{ t("files.open") }}</button>
               </div>
             </div>
           </div>

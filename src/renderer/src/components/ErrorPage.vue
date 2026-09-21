@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue"
 import { getActivePinia } from "pinia"
 import { formatError } from "../lib/format-error"
 import { language, t } from "../lib/i18n"
+import { isPickerBusy, type PickerBusy } from "@shared/native-pick"
 
 /**
  * What is left when the interface itself has failed.
@@ -63,7 +64,7 @@ function runningVersion(): string {
 const version = runningVersion()
 
 /** The bridge may be absent - in a plain browser tab, or if preload failed. */
-type Bridge = { relaunch?: () => unknown; saveText?: (name: string, text: string) => Promise<string | undefined> }
+type Bridge = { relaunch?: () => unknown; saveText?: (name: string, text: string) => Promise<string | PickerBusy | undefined> }
 const bridge = window.mcode as unknown as Bridge | undefined
 
 const canExport = typeof bridge?.saveText === "function"
@@ -112,8 +113,9 @@ async function exportLogs() {
     ]
     if (version) header.push(`version ${version}`)
     const saved = await bridge.saveText("mcode-error.txt", [...header, "", details].join("\n"))
-    // Cancelling the save dialog is not a failure, and says nothing.
-    if (saved) note.value = { text: `${t("log.saved")} - ${saved}`, failed: false }
+    // Another picker already open says so here, where no notice is drawn; a cancel says nothing.
+    if (isPickerBusy(saved)) note.value = { text: t("toast.pickerBusy"), failed: true }
+    else if (saved) note.value = { text: `${t("log.saved")} - ${saved}`, failed: false }
   } catch (error) {
     note.value = { text: describe(error), failed: true }
   }

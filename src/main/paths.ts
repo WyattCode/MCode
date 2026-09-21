@@ -1,6 +1,8 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import { BrowserWindow, dialog, shell, type IpcMain } from "electron"
+import { PICKER_BUSY } from "@shared/native-pick"
+import { claimDialog, releaseDialog } from "./native-dialogs"
 
 /*
  * MiMo's path links in a reply: a file named in the answer opens with the
@@ -125,7 +127,10 @@ export function registerPaths(ipcMain: IpcMain) {
       filters: [{ name: "PNG", extensions: ["png"] }],
     }
     const owner = BrowserWindow.fromWebContents(event.sender)
-    const result = owner ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options)
+    // One native dialog at a time, as every other picker here: a second ask is answered busy.
+    const claim = claimDialog(process.platform, owner)
+    if (!claim) return PICKER_BUSY
+    const result = await (owner ? dialog.showSaveDialog(owner, options) : dialog.showSaveDialog(options)).finally(() => releaseDialog(claim))
     if (result.canceled || !result.filePath) return undefined
     await fs.writeFile(result.filePath, Buffer.from(base64, "base64"))
     return result.filePath

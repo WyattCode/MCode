@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
-import { AGENT_NAMES, IMPORT_SOURCES } from "@shared/protocol"
+import { AGENT_NAMES } from "@shared/protocol"
 import { useApp } from "./stores/app"
+import { pickDirectory, pickProjectFolder, saveText } from "./lib/native-pick"
 import Sidebar from "./components/Sidebar.vue"
 import HomeHero from "./components/HomeHero.vue"
 import SessionHero from "./components/SessionHero.vue"
@@ -43,7 +44,6 @@ const ConnectDialog = defineAsyncComponent(() => import("./components/ConnectDia
 import { connectableProviders, groupProviders, type Group } from "./lib/connect"
 import SearchOverlay from "./components/SearchOverlay.vue"
 import ErrorBoundary from "./components/ErrorBoundary.vue"
-const ImportDialog = defineAsyncComponent(() => import("./components/ImportDialog.vue"))
 import {
   LANGUAGES,
   RTL_LANGUAGES,
@@ -245,6 +245,8 @@ onBeforeUnmount(() => mainObserver?.disconnect())
 const downloadedUpdate = ref<string>()
 /** A check in flight, so the update page can say 检查中… and not start another. */
 const updateChecking = ref(false)
+/** The one notice a check asked for by hand lives under, from 正在检查更新… to its answer. */
+const UPDATE_CHECK_TOAST = "update-check"
 
 type UpdateStatus = Awaited<ReturnType<typeof window.mcode.updateStatus>>
 
@@ -272,7 +274,7 @@ onMounted(() => {
   offUpdateState = window.mcode.onUpdateState((state) => {
     takeUpdateState(state)
     /* A check asked for by hand says when it has moved on to downloading, as MiMo's toasts do. */
-    if (updateChecking.value && state.phase === "downloading") notify(t("update.downloading"), { id: "update-check", duration: 0 })
+    if (updateChecking.value && state.phase === "downloading") notify(t("update.downloading"), { id: UPDATE_CHECK_TOAST, duration: 0, closable: false })
   })
 })
 onBeforeUnmount(() => offUpdateState?.())
@@ -418,7 +420,7 @@ async function submitProjectRename(name: string) {
   if (!directory) return
   const names = app.config?.projectNames ?? {}
   if (app.projects.some((other) => other !== directory && projectName(other, names) === name)) {
-    notify(t("toast.projectNameTaken", { name }), { level: "warning" })
+    notifyFailure(t("toast.projectNameTaken", { name }))
     return
   }
   await app.patchConfig({ projectNames: { ...names, [directory]: name } })
@@ -481,7 +483,7 @@ async function exportLog() {
     "",
   ]
   const body = logLines.length ? logLines : [t("log.empty")]
-  const saved = await window.mcode.saveText("mcode-log.txt", [...header, ...body].join("\n"))
+  const saved = await saveText("mcode-log.txt", [...header, ...body].join("\n"))
   if (saved) notify(t("log.saved"), { action: revealAction(saved) })
 }
 
@@ -498,21 +500,25 @@ async function exportLog() {
 async function checkForUpdates() {
   if (updateChecking.value) return
   updateChecking.value = true
-  /* MiMo's sticky 正在检查更新…, up for as long as the check (and a download) runs. */
-  const checking = notify(t("update.checking"), { id: "update-check", duration: 0 })
+  /*
+   * MiMo's sticky 正在检查更新…, up for as long as the check (and a download)
+   * runs, with no ✕; the result then takes its place under the same id, so the
+   * one notice turns into the answer rather than a second one appearing.
+   */
+  const checking = notify(t("update.checking"), { id: UPDATE_CHECK_TOAST, duration: 0, closable: false })
   try {
     const result = await window.mcode.updateCheckNow()
-    dismiss(checking)
     takeUpdateState(result)
-    if (result.outcome === "current") notify(t("update.current"))
-    else if (result.outcome === "ready") notify(t("update.readyToast"))
-    else if (result.outcome === "no-feed") notifyFailure(t("update.noFeed"))
-    else if (result.outcome === "failed") notifyFailure(t(result.during === "download" ? "update.failed" : "update.checkFailed"), result.error ?? "")
+    if (result.outcome === "current") notify(t("update.current"), { id: checking })
+    else if (result.outcome === "ready") notify(t("update.readyToast"), { id: checking, level: "success" })
+    else if (result.outcome === "no-feed") notifyFailure(t("update.noFeed"), { id: checking })
+    else if (result.outcome === "failed") {
+      notifyFailure(t(result.during === "download" ? "update.failed" : "update.checkFailed"), { id: checking, body: result.error ?? "" })
+    } else dismiss(checking)
   } catch (err) {
     // Electron prefixes the IPC plumbing; only the reason is worth showing.
-    notifyFailure(t("update.checkFailed"), reasonOf(err))
+    notifyFailure(t("update.checkFailed"), { id: checking, body: reasonOf(err) })
   } finally {
-    dismiss(checking)
     updateChecking.value = false
   }
 }
@@ -1236,7 +1242,7 @@ async function newSessionIn(directory: string) {
  * one picked. No conversation is made.
  */
 async function browse() {
-  const directories = await window.mcode.pickProjectFolder(t("dialog.pickProjectFolder"), true)
+  const directories = await pickProjectFolder(t("dialog.pickProjectFolder"), true)
   if (!directories.length) return
   await addAndBrowse(directories)
 }
@@ -1331,23 +1337,6 @@ watch(
     connectOpen.value = true
   },
 )
-
-/**
- * 导入: the first run's one question about conversations in other AI apps.
- *
- * Opened only when a source actually holds something, and the profile is marked
- * as asked either way - so a machine is asked once, as MiMo asks once.
- */
-const importOpen = ref(false)
-
-async function askAboutImport() {
-  if (!app.config || app.config.importOnboarded) return
-  const answer = await app.client?.request({ type: "import.scan" }).catch(() => undefined)
-  if (!answer || answer.asked) return
-  await app.patchConfig({ importOnboarded: true }, { quiet: true }).catch(() => undefined)
-  const scan = answer.scan
-  importOpen.value = IMPORT_SOURCES.some((source) => scan[source].available && scan[source].sessions > 0)
-}
 
 /** The session waiting on an answer before it is removed for good. */
 const deletingSession = ref<string>()
@@ -1769,7 +1758,7 @@ const PROJECT_ACTIONS: Record<string, (directory: string) => void | Promise<void
    * icon, colour and pin the project had come along with it.
    */
   relocate: async (directory) => {
-    const [next] = await window.mcode.pickDirectory(t("menu.relocateProject"), false)
+    const [next] = await pickDirectory(t("menu.relocateProject"), false)
     if (!next || next === directory) return
     // MiMo refuses a folder that is already another project's, rather than merging the two.
     if (app.projects.includes(next) || app.sessions.some((entry) => entry.directory === next && !entry.archived)) {
@@ -1964,13 +1953,13 @@ async function confirmRemoveProjects() {
  * without, a new empty folder. A conversation waiting on it moves in and opens;
  * otherwise the project is added and opened, as a dropped folder is.
  */
-async function createNamedProject(title: string, source?: string, location?: string) {
+async function createNamedProject(title: string, source?: string) {
   const moving = namingProject.value?.sessionID
   namingProject.value = undefined
   let directory = source
   if (!directory) {
     try {
-      directory = (await app.client?.request({ type: "project.createBlank", name: title, ...(location ? { location } : {}) }))?.directory
+      directory = (await app.client?.request({ type: "project.createBlank", name: title }))?.directory
     } catch (failure) {
       notifyFailure(t("menu.createFailed", { error: reasonOf(failure) }))
       return
@@ -2118,7 +2107,7 @@ async function shareSession() {
   ].join("\n")
 
   try {
-    const saved = await window.mcode.saveText(`${name}.html`, page)
+    const saved = await saveText(`${name}.html`, page)
     // The page is meant to be looked at, so this one opens rather than reveals.
     if (saved) {
       notify(t("share.saved"), {
@@ -3810,8 +3799,6 @@ async function boot() {
     return
   }
 
-  // 导入: asked once, on a first run, and only when another AI app has something.
-  void askAboutImport()
   if (app.currentID) view.value = "session"
 
   // MiMo opens again on the conversation whose draft was on screen when the app closed.
@@ -4220,7 +4207,6 @@ onBeforeUnmount(() => {
 
   </div>
   <ConnectDialog v-if="connectOpen" :group="connectGroup" @close="(connectOpen = false), (connectGroup = undefined)" />
-  <ImportDialog v-if="importOpen" @close="importOpen = false" />
   <ImagePreview />
   <VideoPreview />
 
@@ -4265,7 +4251,6 @@ onBeforeUnmount(() => {
   <NewProjectDialog
     v-if="namingProject"
     :value="t('home.blankDefault')"
-    :default-location="app.config?.projectRoot"
     @close="namingProject = undefined"
     @submit="createNamedProject"
   />

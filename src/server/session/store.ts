@@ -257,14 +257,13 @@ export class SessionStore {
     parentCallID?: string
     subagent?: SessionInfo["subagent"]
     /*
-     * 导入: a conversation taken from another AI app keeps that app's own
-     * clock and the name it had there, so the list reads as the history it is
-     * rather than as a batch of conversations made this minute.
+     * A conversation brought in from a file keeps its own clock and the
+     * name it had, so the list reads as the history it is rather than as a
+     * conversation made this minute.
      */
     created?: number
     updated?: number
     titleSource?: SessionInfo["titleSource"]
-    imported?: SessionInfo["imported"]
   }): Promise<SessionInfo> {
     const now = Date.now()
     const session: SessionInfo = {
@@ -286,7 +285,6 @@ export class SessionStore {
       ...(input.parentCallID ? { parentCallID: input.parentCallID } : {}),
       ...(input.subagent ? { subagent: input.subagent } : {}),
       ...(input.titleSource ? { titleSource: input.titleSource } : {}),
-      ...(input.imported ? { imported: input.imported } : {}),
       created: input.created ?? now,
       updated: input.updated ?? now,
       usage: emptyUsage(),

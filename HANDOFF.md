@@ -487,6 +487,16 @@
 - RP-8 标签中键在松开时关闭（auxclick），按下后拖离不关
 - R19-SH2 对话卡片在「更新于」/定时任务行之后、互聊行之前加「运行中的子智能体：…」（与胶囊同一数据，无名的略去，按 MiMo 用「、」连接；`subagentDetail.runningList` ×18）
 - R19-SH3（用户 2026-09-21 决定）删行菜单「导出为对话文件」及整条对话文件链：`session.exportFile` / `session.importFile`、`src/shared/convo-file.ts`、`mcode:open-text` 与 `openText`、8 条文案 ×18；第七轮 S4、第八轮 X17 的对应检查一并删除。保留 MiMo 的 Markdown「导出对话记录」和其他导入器用的 store 选项。上文 S4 所述「命令面板导入对话文件」已不存在
+## 第十九轮 A 路：设置与外壳（2026-09-21）
+
+对照 26.920 的 14 条（`r19-laneA.json`），smoke `smoke-round19-a.ts`（旧代码下各节全部失败），一次性配置真窗口探针看过截图。
+- **F1**（用户定）：删首启「从其他 AI 应用导入」——MiMo 算出了钩子和懒加载弹窗却丢掉返回值，从不显示；连同 `ImportDialog.vue`、`server/import.ts`、`import.scan/run`、`importOnboarded` 及迁移、会话 `imported` 标记、18 表 `import.*` 一起删。常规页本来就没有导入入口，MiMo 也没有。
+- **F6**（用户定）：新建项目弹窗删「默认新建项目位置」行（L8 把 `showLocation` 误读成存放位置），`project.createBlank` 不再收 `location`，空白项目一律放到常规里的默认位置。
+- **F3/SH1**：原生选择框占用时主进程回 `{busy:true}`（`@shared/native-pick`），`save-png` 也纳入一次一个；窗口所有调用走 `lib/native-pick.ts`，弹 MiMo 原句 warning（`toast.pickerBusy`）。错误页没有吐司，写在它自己的提示行。
+- **F2** 删自定义模型先确认（删除自定义模型），确认即从已存配置删（新请求 `provider.removeCustomModel`，最后一个保留）；**F7** 删供应商用「及其全部模型」文案；**F8** 模型页 提供商→供应商、探测只显示「{n} 个模型」、组合框「选择或添加 model-id」；**F9** 供应商 ID 照 MiMo：只禁 `/` 与（不分大小写的）重复，前后端共用 `@shared/provider-id`。
+- **F4** 成功类吐司改 success，项目已存在/重名改 danger，批量恢复一律计数；**F10** 常规搜索词加 硬件加速/GPU/图形，高亮按整行文字；**F11** MCP 页配置文件行加 复制路径/打开；**F12** 检查更新的常驻吐司不可关，结果在同一 id 上替换；**F13** 配置页路径显示 `~`；**SH4** 重启更新抛错只显示原因句，原始错误进控制台。
+- **未改（与 `reference-strings.json` 冲突，报告）**：`provider.custom.field.providerID.label` 仍为「提供商 ID」（MiMo「供应商 ID」），`provider.custom.error.providerID.exists` 仍为「该提供商 ID 已存在」（MiMo「该 ID 已被占用」）。
+- 探针里 复制路径 在无焦点窗口被剪贴板拒绝（显示「无法复制路径」），属探针环境；success 级别用「已添加项目」验证。
 
 ## 第十八轮：对照 MiMo 26.920（2026-09-21）
 

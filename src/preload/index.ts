@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron"
 import type { SoundfontReply } from "../shared/soundfont"
 import type { InstallAnswer } from "../shared/update-reason"
+import type { PickerBusy } from "../shared/native-pick"
 
 export type OfficeVersionSource = "initial" | "ai" | "ai_local" | "user" | "external"
 export interface OfficeVersionState {
@@ -45,12 +46,12 @@ const api = {
   /** What the paths a drag named in its `text/uri-list` are; the ones that are gone do not come back. */
   describeFiles: (paths: string[]): Promise<{ path: string; name: string; size: number; directory: boolean }[]> =>
     ipcRenderer.invoke("mcode:describe-files", paths),
-  pickDirectory: (title: string, multiple = false): Promise<string[]> =>
+  pickDirectory: (title: string, multiple = false): Promise<string[] | PickerBusy> =>
     ipcRenderer.invoke("mcode:pick-directory", title, multiple),
   /** MiMo's 选择或新建项目文件夹: the same dialog, opening at the default project location. */
-  pickProjectFolder: (title: string, multiple = false): Promise<string[]> =>
+  pickProjectFolder: (title: string, multiple = false): Promise<string[] | PickerBusy> =>
     ipcRenderer.invoke("mcode:pick-directory", title, multiple, true),
-  saveText: (suggested: string, text: string): Promise<string | undefined> =>
+  saveText: (suggested: string, text: string): Promise<string | PickerBusy | undefined> =>
     ipcRenderer.invoke("mcode:save-text", suggested, text),
 
   /** Whether the clipboard holds a picture at all - a yes or a no, never its contents. */
@@ -329,7 +330,7 @@ const api = {
   /** A picture file straight onto the clipboard; fails for formats the system decoder cannot read. */
   copyImageFromPath: (target: string): Promise<{ ok: true } | { ok: false; error: string }> => ipcRenderer.invoke("mcode:copy-image-path", target),
   /** Saves a PNG where the person chooses; the path, or undefined when dismissed. */
-  savePng: (suggested: string, base64: string): Promise<string | undefined> => ipcRenderer.invoke("mcode:save-png", suggested, base64),
+  savePng: (suggested: string, base64: string): Promise<string | PickerBusy | undefined> => ipcRenderer.invoke("mcode:save-png", suggested, base64),
   /** A loopback address a web page is served at, with its folder beside it. */
   officeServe: (target: string): Promise<{ ok: true; url: string } | { ok: false; error: string }> => ipcRenderer.invoke("mcode:office-serve", target),
   /* One interactive widget from a reply, served on an origin of its own so the frame can run it without reaching anything. */

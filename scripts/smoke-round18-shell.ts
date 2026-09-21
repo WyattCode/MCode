@@ -145,7 +145,7 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
     for (const key of ["update.watchdogTimeout", "update.restartFailed", "update.failReason", "update.failGeneric", "update.interrupted", "update.failedTip"]) {
       check(`R18-U8: the old ${key} has left all 18 tables`, (await carrying(key)) === 0)
     }
-    check("R18-U8: the watchdog says not-started, a thrown install says install-failed", /markUpdateFailed\("not-started"\)/.test(pill) && /markUpdateFailed\("install-failed", /.test(pill))
+    check("R18-U8: the watchdog says not-started, a thrown install says install-failed", /markUpdateFailed\("not-started"\)/.test(pill) && /markUpdateFailed\("install-failed"\)/.test(pill))
     check("R18-U8: a refused install says the reason main gave", /if \(!answer\.ok && updateState\.phase === "installing"\) markUpdateFailed\(answer\.reason, answer\.hint\)/.test(pill))
 
     const main = await read("src/main/index.ts")

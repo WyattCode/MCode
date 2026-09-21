@@ -290,7 +290,7 @@ export async function roundEighteenSettingsChecks(check: Check, section: (name: 
     check("R18-M5: kept as decided in round nine - a vendor chip opens the connect dialog", /@click="openConnect\(group\)"/.test(models))
     check("R18-M5: and a connected vendor keeps its endpoint and its models", /data-provider-endpoint/.test(models) && /app\.discoverModels\(provider\.id\)/.test(models))
     const handlers = await read("src/server/handlers.ts")
-    check("R18-M5: a clone takes the id chosen, checked as a new provider's", /const chosen = request\.id\?\.trim\(\)/.test(handlers) && /chosen && taken\(chosen\)/.test(handlers))
+    check("R18-M5: a clone takes the id chosen, checked as a new provider's", /const chosen = request\.id\?\.trim\(\)/.test(handlers) && /providerIdProblem\(chosen, ids\)/.test(handlers))
   }
 
   // Session chat's skill, which the lab switch takes away with the tools.
