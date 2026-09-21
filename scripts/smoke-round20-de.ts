@@ -101,4 +101,17 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
     const card = await read("src/renderer/src/components/EditedFilesCard.vue")
     check("D-9: the card uses it, with no list of its own", /patch = recordedPatch\(props\.parts\)/.test(card) && !/\["edit", "write"\]/.test(card))
   }
+
+  section("Round 20: D-3 the folded column's preview stays while a menu or card opened from it is up")
+  {
+    const side = await read("src/renderer/src/components/Sidebar.vue")
+    const layers = /const PREVIEW_LAYERS = '([^']*)'/.exec(side)?.[1] ?? ""
+    check("D-3: a menu, its scrim and an information card count as the preview's", ['.scrim', '[role="menu"]', ".app-tip.interactive"].every((part) => layers.includes(part)), layers)
+    const press = /function onPreviewPress\([^)]*\) \{([\s\S]*?)\n\}/.exec(side)?.[1] ?? ""
+    check("D-3: a press on one of them is not a press elsewhere", /inPreview\(target\)/.test(press), press)
+    const key = /function onPreviewKey\([^)]*\) \{([\s\S]*?)\n\}/.exec(side)?.[1] ?? ""
+    check("D-3: an Escape a menu took closes the menu alone", /!event\.defaultPrevented/.test(key), key)
+    check("D-3: where the pointer is decides the hold, across the whole document", /addEventListener\("pointerover", onPreviewOver, true\)/.test(side) && /addEventListener\("pointerout", onPreviewOut, true\)/.test(side))
+    check("D-3: the shell's own leave no longer lets the preview go under an open menu", !/@pointerleave="holdPreview\(false\)"/.test(side))
+  }
 }
