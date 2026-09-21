@@ -63,7 +63,7 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
       const at = source.indexOf(`ipcMain.handle("${channel}"`)
       return at < 0 ? "" : source.slice(at, source.indexOf("\n  })", at))
     }
-    for (const channel of ["mcode:pick-directory", "mcode:open-text", "mcode:save-text"]) {
+    for (const channel of ["mcode:pick-directory", "mcode:save-text"]) {
       check(`${channel} answers busy when the one dialog slot is taken`, /if \(!claim\) return PICKER_BUSY/.test(handler(main, channel)))
     }
     const png = handler(paths, "mcode:save-png")

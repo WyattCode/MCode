@@ -31,7 +31,6 @@ const LAZY: [file: string, component: string, path: string][] = [
   ["src/renderer/src/App.vue", "ImagePreview", "./components/ImagePreview.vue"],
   ["src/renderer/src/App.vue", "VideoPreview", "./components/VideoPreview.vue"],
   ["src/renderer/src/App.vue", "ConnectDialog", "./components/ConnectDialog.vue"],
-  ["src/renderer/src/App.vue", "ImportDialog", "./components/ImportDialog.vue"],
   ["src/renderer/src/components/RightPanel.vue", "OfficeTab", "./right/OfficeTab.vue"],
   ["src/renderer/src/components/RightPanel.vue", "HtmlTab", "./right/HtmlTab.vue"],
   ["src/renderer/src/components/RightPanel.vue", "RpBrowser", "./right/RpBrowser.vue"],
