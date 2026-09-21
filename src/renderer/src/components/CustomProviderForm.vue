@@ -530,7 +530,8 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
         <span class="cp-label">{{ t("set.models.probeTitle") }}</span>
         <div class="cp-probe">
           <span class="cp-probe-text" :class="probe.status" data-probe-text>{{ probe.text }}</span>
-          <span class="cp-light" :class="probe.status" data-probe-light :aria-label="probe.status" />
+          <!-- The light repeats the words beside it; a reader hears those, not "ok" or "busy". -->
+          <span class="cp-light" :class="probe.status" data-probe-light aria-hidden="true" />
           <button type="button" class="cp-btn" data-provider-probe :disabled="probe.status === 'busy'" @click="testConnection()">
             {{ t("set.models.probe") }}
           </button>

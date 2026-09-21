@@ -70,4 +70,11 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
     check("D-6: a removed model, saved at once, leaves the saved form too", /saved\.models = saved\.models\.filter\(\(entry\) => entry\.key !== row\.key\)/.test(remove) && /pristine\.value = JSON\.stringify\(saved\)/.test(remove), remove)
     check("D-6: only when the removal was saved", /if \(removed\) \{/.test(remove) && /\.then\(\(\) => true, \(\) => false\)/.test(remove), remove)
   }
+
+  section("Round 20: D-10 the connection light is not read out as a raw status")
+  {
+    const form = await read("src/renderer/src/components/CustomProviderForm.vue")
+    const light = /<span class="cp-light"[^>]*\/>/.exec(form)?.[0] ?? ""
+    check("D-10: the light is hidden from the accessibility tree", /aria-hidden="true"/.test(light) && !/aria-label/.test(light), light)
+  }
 }
