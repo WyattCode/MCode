@@ -16,6 +16,7 @@ import { useAnnotationFx, type FxBox } from "../../lib/annotation-fx"
 import { notifyFailure } from "../../lib/toast"
 import { t } from "../../lib/i18n"
 import { dialogOpen } from "../../lib/escape-layer"
+import { PdfLinkService, namedActionPage, pdfLinkAction, resolveDestination } from "../../lib/pdf-links"
 import CellAffordance from "../CellAffordance.vue"
 import AnnotationFx from "../AnnotationFx.vue"
 import ViewerAiNote from "./ViewerAiNote.vue"
@@ -36,6 +37,11 @@ import ViewerAiNote from "./ViewerAiNote.vue"
  * flashes the frame; a sent message's chip finds the passage again, marked in
  * amber. Escape clears what was sent from here. The file reloads when it
  * changes on disk, keeping its place.
+ *
+ * Over each drawn page lies pdf.js's annotation layer, as react-pdf lays it
+ * over MiMo's: links, highlight and note popups, attachments; form fields stay
+ * painted on the canvas (renderForms off). A link to the web goes out through
+ * the app's external-open path; one into the document scrolls to its place.
  */
 const props = withDefaults(defineProps<{ path: string; name: string; root?: string; origin?: string; active?: boolean }>(), {
   root: undefined,
@@ -324,21 +330,38 @@ async function draw(index: number) {
     container: text,
     viewport,
   })
-  const links = document.createElement("div")
-  links.className = "annotationLayer"
+  const notes = document.createElement("div")
+  notes.className = "annotationLayer"
   try {
-    await Promise.all([state.canvas.promise, state.text.render()])
-    for (const item of await page.getAnnotations({ intent: "display" })) {
-      if (item.subtype !== "Link" || typeof item.url !== "string") continue
-      const [x1, y1, x2, y2] = viewport.convertToViewportRectangle(item.rect)
-      const link = document.createElement("a")
-      link.href = item.url
-      link.style.left = `${Math.min(x1, x2)}px`
-      link.style.top = `${Math.min(y1, y2)}px`
-      link.style.width = `${Math.abs(x2 - x1)}px`
-      link.style.height = `${Math.abs(y2 - y1)}px`
-      links.append(link)
-    }
+    const [annotations] = await Promise.all([page.getAnnotations({ intent: "display" }), state.canvas.promise, state.text.render()])
+    if (drawn.get(index) !== state) return
+    /*
+     * react-pdf's call, as MiMo makes it: the viewport unflipped, no editor,
+     * accessibility or struct tree, forms left on the canvas. The icons of
+     * note annotations come from pdf.js's own images, copied beside the page.
+     */
+    const flat = viewport.clone({ dontFlip: true })
+    await new lib.AnnotationLayer({
+      div: notes,
+      accessibilityManager: null,
+      annotationCanvasMap: null,
+      annotationEditorUIManager: null,
+      page,
+      viewport: flat,
+      structTreeLayer: null,
+      commentManager: null,
+      linkService,
+      annotationStorage: pdf.annotationStorage,
+    }).render({
+      annotations,
+      annotationStorage: pdf.annotationStorage,
+      div: notes,
+      imageResourcesPath: assets("images"),
+      linkService,
+      page,
+      renderForms: false,
+      viewport: flat,
+    } as unknown as Parameters<InstanceType<PdfJs["AnnotationLayer"]>["render"]>[0])
   } catch {
     return // cancelled by a newer drawing, or the document went away
   }
@@ -352,7 +375,7 @@ async function draw(index: number) {
   end.className = "endOfContent"
   text.append(end)
   layer.style.setProperty("--scale-factor", String(scale))
-  layer.replaceChildren(canvas, text, links)
+  layer.replaceChildren(canvas, text, notes)
   refreshMarks()
 }
 
@@ -447,15 +470,62 @@ function setZoom(next: number) {
   zoom.value = Math.min(Math.max(Math.round(next * 10) / 10, 0.5), 3)
 }
 
-/* Links go out only to the web, mail and phone. */
+/*
+ * Links go out only to the web, mail and phone, through the app's external
+ * path. The "#" ones pdf.js bound to a destination or a named action reach
+ * their own click handler, which moves within the document.
+ */
 function onLinkClick(event: MouseEvent) {
   const link = (event.target as Element | null)?.closest?.("a[href]")
   if (!link) return
   event.preventDefault()
-  event.stopPropagation()
   const href = link.getAttribute("href") || ""
-  if (/^(https?:|mailto:|tel:)/i.test(href)) window.mcode.openExternal(href)
+  const action = pdfLinkAction(href)
+  if (action === "internal") return
+  event.stopPropagation()
+  if (action === "external") window.mcode.openExternal(href)
 }
+
+/* A destination's page and point, brought to the top of the view as pdf.js's viewer brings it. */
+async function goToDestination(dest: unknown) {
+  const pdf = doc.value
+  const el = scroller.value
+  if (!pdf || !el) return
+  const mine = generation
+  const target = await resolveDestination(pdf, dest)
+  if (!target || mine !== generation || doc.value !== pdf) return
+  const top = tops.value[target.pageIndex]
+  const height = heights.value[target.pageIndex]
+  if (top === undefined || height === undefined) return
+  let offset = 0
+  if (target.top !== null) {
+    const page = await pdf.getPage(target.pageIndex + 1).catch(() => null)
+    if (!page || mine !== generation) return
+    const base = page.getViewport({ scale: 1 })
+    const [, y] = page.getViewport({ scale: pageWidth.value / base.width }).convertToViewportPoint(target.left ?? 0, target.top)
+    offset = Math.min(Math.max(y, 0), height)
+  }
+  hideNote()
+  align = null
+  scrollToTop(el, Math.max(0, Math.round(top + offset)))
+}
+
+function goToPage(number: number) {
+  const el = scroller.value
+  const top = tops.value[number - 1]
+  if (!el || top === undefined) return
+  hideNote()
+  align = null
+  scrollToTop(el, Math.max(0, top))
+}
+
+const linkService = new PdfLinkService({
+  goTo: (dest) => void goToDestination(dest),
+  named: (action) => {
+    const page = namedActionPage(action, current.value, count.value)
+    if (page !== null) goToPage(page)
+  },
+})
 
 /* ------------------------------------------------------------ rects and marks */
 
@@ -1251,27 +1321,201 @@ const noteInside = (target: Node) => Boolean(rootEl.value?.contains(target))
   top: 0;
 }
 
+/*
+ * pdf.js 5.4.296's annotation layer (web/pdf_viewer.css), the version whose
+ * elements these are. Its custom properties are written out as their values,
+ * and the rules for HTML form fields are left out: with renderForms off, as
+ * in MiMo, fields are painted on the canvas and no input is ever built.
+ * pdf.js sizes the layer and places every section in percentages of the page,
+ * so a redraw at a new zoom moves them with the canvas.
+ */
 .pdf-view .annotationLayer {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
   z-index: 2;
+  pointer-events: none;
+  transform-origin: 0 0;
+  color-scheme: only light;
+}
+
+.pdf-view .annotationLayer[data-main-rotation="90"] .norotate {
+  transform: rotate(270deg) translateX(-100%);
+}
+
+.pdf-view .annotationLayer[data-main-rotation="180"] .norotate {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+
+.pdf-view .annotationLayer[data-main-rotation="270"] .norotate {
+  transform: rotate(90deg) translateY(-100%);
+}
+
+.pdf-view .annotationLayer .annotationContent {
+  position: absolute;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
 }
 
-.pdf-view .annotationLayer a {
+.pdf-view .annotationLayer section {
   position: absolute;
+  box-sizing: border-box;
+  text-align: initial;
   pointer-events: auto;
+  transform-origin: 0 0;
+  user-select: none;
+}
+
+.pdf-view .annotationLayer section:has(div.annotationContent) canvas.annotationContent {
+  display: none;
+}
+
+.pdf-view .annotationLayer section .overlaidText {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: inline-block;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+/* Sections stop taking the pointer while text is being drag-selected across them. */
+.pdf-view .textLayer.selecting ~ .annotationLayer section {
+  pointer-events: none;
+}
+
+.pdf-view .annotationLayer :is(.linkAnnotation, .buttonWidgetAnnotation.pushButton) > a {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  font-size: 1em;
 }
 
 /* pdf.js's own link hover, which MiMo keeps. */
-.pdf-view .annotationLayer a:hover {
+.pdf-view .annotationLayer :is(.linkAnnotation, .buttonWidgetAnnotation.pushButton):not(.hasBorder) > a:hover {
   opacity: 0.2;
-  background: #ff0;
-  box-shadow: 0 2px 10px #ff0;
+  background-color: rgb(255 255 0);
 }
 
-/* Links stop taking the pointer while text is being drag-selected across them. */
-.pdf-view .textLayer.selecting ~ .annotationLayer a {
+.pdf-view .annotationLayer .linkAnnotation.hasBorder:hover {
+  background-color: rgb(255 255 0 / 0.2);
+}
+
+.pdf-view .annotationLayer .hasBorder {
+  background-size: 100% 100%;
+}
+
+.pdf-view .annotationLayer .textAnnotation img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+
+.pdf-view .annotationLayer .fileAttachmentAnnotation .popupTriggerArea {
+  width: 100%;
+  height: 100%;
+}
+
+.pdf-view .annotationLayer .popupAnnotation {
+  position: absolute;
+  width: max-content;
+  max-width: 45%;
+  height: auto;
+  font-size: calc(9px * var(--total-scale-factor));
   pointer-events: none;
+}
+
+/* The note's popup: pdf.js's yellow card, in both themes. */
+.pdf-view .annotationLayer .popup {
+  padding: calc(6px * var(--total-scale-factor));
+  color: black;
+  background-color: rgb(255 255 153);
+  border-radius: calc(2px * var(--total-scale-factor));
+  outline: 1.5px solid rgb(255 255 74);
+  box-shadow: 0 calc(2px * var(--total-scale-factor)) calc(5px * var(--total-scale-factor)) rgb(136 136 136);
+  font: message-box;
+  white-space: normal;
+  word-wrap: break-word;
+  cursor: pointer;
+  pointer-events: auto;
+  user-select: text;
+}
+
+.pdf-view .annotationLayer .popupAnnotation.focused .popup {
+  outline-width: 3px;
+}
+
+.pdf-view .annotationLayer .popup * {
+  font-size: calc(9px * var(--total-scale-factor));
+}
+
+.pdf-view .annotationLayer .popup > .header {
+  display: inline-block;
+}
+
+.pdf-view .annotationLayer .popup > .header > .title {
+  display: inline;
+  font-weight: bold;
+}
+
+.pdf-view .annotationLayer .popup > .header .popupDate {
+  display: inline-block;
+  width: fit-content;
+  margin-left: calc(5px * var(--total-scale-factor));
+}
+
+.pdf-view .annotationLayer .popupContent {
+  margin-top: calc(2px * var(--total-scale-factor));
+  padding-top: calc(2px * var(--total-scale-factor));
+  border-top: 1px solid rgb(51 51 51);
+}
+
+.pdf-view .annotationLayer .richText > * {
+  white-space: pre-wrap;
+  font-size: calc(9px * var(--total-scale-factor));
+}
+
+.pdf-view .annotationLayer .popupTriggerArea {
+  cursor: pointer;
+}
+
+.pdf-view .annotationLayer section svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.pdf-view .annotationLayer .annotationTextContent {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  color: transparent;
+  opacity: 0;
+  user-select: none;
+  pointer-events: none;
+}
+
+.pdf-view .annotationLayer .annotationTextContent span {
+  display: inline-block;
+  width: 100%;
+}
+
+.pdf-view .annotationLayer svg.quadrilateralsContainer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: -1;
+  width: 0;
+  height: 0;
+  contain: strict;
 }
 </style>

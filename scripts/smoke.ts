@@ -383,6 +383,8 @@ import { roundEighteenSettingsNavChecks } from "./smoke-round18-settings-nav"
 import { roundEighteenAigcMarkChecks } from "./smoke-round18-aigc-marks"
 // The search overlay finds text inside a word again, through a trigram index (R15-S3's open item).
 import { substringSearchChecks } from "./smoke-substring-search"
+// Round 18: the PDF view's full annotation layer, as MiMo's react-pdf renders it (R17-V's open item).
+import { roundEighteenPdfAnnotationChecks } from "./smoke-round18-pdf-annotations"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7013,6 +7015,7 @@ async function main() {
   await roundEighteenSettingsNavChecks(check, section)
   await roundEighteenAigcMarkChecks(check, section)
   await substringSearchChecks(check, section)
+  await roundEighteenPdfAnnotationChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
