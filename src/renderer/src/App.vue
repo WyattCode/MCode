@@ -4626,10 +4626,25 @@ onBeforeUnmount(() => {
   color: var(--text-strong);
 }
 
-/* MiMo on Windows: every title-bar glyph 12px, in one solid colour on light and dark alike. */
+/*
+ * MiMo on Windows: every title-bar glyph 12px in its Windows title-bar colour,
+ * #2b2b2b on light and #ececec on dark, kept on hover and while pressed.
+ */
 .app[data-platform="win32"] .side-panel-toggle,
 .app[data-platform="win32"] .home-bottom:not(:disabled) {
-  color: var(--text-strong);
+  color: #2b2b2b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .app[data-platform="win32"] .side-panel-toggle,
+  :root:not([data-theme="light"]) .app[data-platform="win32"] .home-bottom:not(:disabled) {
+    color: #ececec;
+  }
+}
+
+:root[data-theme="dark"] .app[data-platform="win32"] .side-panel-toggle,
+:root[data-theme="dark"] .app[data-platform="win32"] .home-bottom:not(:disabled) {
+  color: #ececec;
 }
 
 .app[data-platform="win32"] .side-panel-toggle svg,

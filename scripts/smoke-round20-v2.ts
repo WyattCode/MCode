@@ -43,4 +43,23 @@ export async function roundTwentyV2Checks(check: Check, section: (name: string) 
     check("the header's start inset is 18px", /padding-inline:\s*18px\b/.test(head), head)
     check("the folded rail's insets are kept (129 on macOS, 72 elsewhere)", /\.head\.after-rail \{\s*padding-inline-start: 129px;/.test(header) && /\.head\.after-rail \{\s*padding-inline-start: 72px;/.test(header))
   }
+
+  // ------------------------------------------------------------------ R20-V2-3
+  section("Round 20 (V2-3): the title menu in MiMo's muted colour, the panel toggles in its Windows title-bar colour")
+  {
+    const shell = code(await read("src/renderer/src/App.vue"))
+    check("the … button is the muted text (--text-base), not the dim one", /\.ico\.options \{[^}]*color: var\(--text-base\);/.test(header))
+    check("the header's panel toggles are #2b2b2b on light Windows", /\n\.app\[data-platform="win32"\] \.ico:not\(\.options\) \{\s*color: #2b2b2b;/.test(header))
+    check(
+      "and #ececec on dark Windows, both for the system and the chosen scheme",
+      /:root:not\(\[data-theme="light"\]\) \.app\[data-platform="win32"\] \.ico:not\(\.options\) \{\s*color: #ececec;/.test(header) &&
+        /:root\[data-theme="dark"\] \.app\[data-platform="win32"\] \.ico:not\(\.options\) \{\s*color: #ececec;/.test(header),
+    )
+    check("the side panel toggle is #2b2b2b on light Windows", /\.app\[data-platform="win32"\] \.side-panel-toggle,\s*\.app\[data-platform="win32"\] \.home-bottom:not\(:disabled\) \{\s*color: #2b2b2b;/.test(shell))
+    check(
+      "and #ececec on dark Windows",
+      /:root\[data-theme="dark"\] \.app\[data-platform="win32"\] \.side-panel-toggle,[^{]*\{\s*color: #ececec;/.test(shell) &&
+        /:root:not\(\[data-theme="light"\]\) \.app\[data-platform="win32"\] \.side-panel-toggle,[^{]*\{\s*color: #ececec;/.test(shell),
+    )
+  }
 }

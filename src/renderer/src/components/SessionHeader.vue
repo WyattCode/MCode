@@ -315,9 +315,23 @@ function openMenu(event: MouseEvent) {
   color: var(--text-strong);
 }
 
-/* MiMo on Windows: the panel toggles' glyphs 12px, in one solid colour on light and dark alike. */
+/*
+ * MiMo on Windows: the panel toggles' glyphs 12px in its Windows title-bar
+ * colour, #2b2b2b on light and #ececec on dark, which hovering and pressing
+ * keep rather than brighten.
+ */
 .app[data-platform="win32"] .ico:not(.options) {
-  color: var(--text-strong);
+  color: #2b2b2b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .app[data-platform="win32"] .ico:not(.options) {
+    color: #ececec;
+  }
+}
+
+:root[data-theme="dark"] .app[data-platform="win32"] .ico:not(.options) {
+  color: #ececec;
 }
 
 .app[data-platform="win32"] .ico:not(.options) svg {
@@ -325,12 +339,12 @@ function openMenu(event: MouseEvent) {
   height: 12px;
 }
 
-/* Against the title, and never squeezed by a long one: MiMo's 26px menu in the muted colour. */
+/* Against the title, and never squeezed by a long one: MiMo's 26px menu in its muted (mut) colour. */
 .ico.options {
   flex-shrink: 0;
   width: 26px;
   height: 26px;
-  color: var(--text-weak);
+  color: var(--text-base);
 }
 
 /*
