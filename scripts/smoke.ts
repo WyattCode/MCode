@@ -414,6 +414,8 @@ import { roundTwentyDeChecks } from "./smoke-round20-de"
 import { roundTwentyAgentChecks } from "./smoke-round20-agent"
 // Round 20, lane V2: the conversation header, composer and info card against MiMo 26.920.
 import { roundTwentyV2Checks } from "./smoke-round20-v2"
+// Round 20, V3: the interface copy follows MiMo 26.920.
+import { roundTwentyCopyChecks } from "./smoke-round20-copy"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7057,6 +7059,7 @@ async function main() {
   await roundTwentyDeChecks(check, section)
   await roundTwentyAgentChecks(check, section)
   await roundTwentyV2Checks(check, section)
+  roundTwentyCopyChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

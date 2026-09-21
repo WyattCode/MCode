@@ -101,8 +101,8 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
       toasts.value = []
       const results = [await picks.pickDirectory("t"), await picks.pickProjectFolder("t"), await picks.saveText("a.txt", "x"), await picks.savePng("a.png", "")]
       check("a busy answer reads as a cancel to the caller", JSON.stringify(results) === "[[],[],null,null]", results)
-      const warned = toasts.value.filter((entry) => entry.level === "warning" && entry.title === "已经打开了一个选择窗口，完成或取消它后再试（它可能被主窗口挡住了）")
-      check("and raises MiMo's warning (one notice, the same text each time)", warned.length === 1, toasts.value)
+      const warned = toasts.value.filter((entry) => entry.level === "warning" && entry.title === "已有一个选择窗口打开，请先完成或取消（它可能被主窗口遮挡）")
+      check("and raises the busy warning, worded in MiMo's shape (one notice, the same text each time)", warned.length === 1, toasts.value)
       toasts.value = []
       answers.pickDirectory = ["C:\\work"]
       check("a real answer passes through with no notice", JSON.stringify(await picks.pickDirectory("t")) === JSON.stringify(["C:\\work"]) && toasts.value.length === 0)
@@ -187,7 +187,7 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
       "set.models.removeProvider": "删除供应商",
       "set.models.cloneProvider": "克隆供应商",
       "set.models.fromProvider": "来自此供应商的模型",
-      "set.models.providerAdded": "已添加供应商",
+      "set.models.providerAdded": "已添加",
       "set.models.comboPlaceholder": "选择或添加 model-id",
     }
     for (const [key, want] of Object.entries(zh)) check(`zh-CN ${key} is ${want}`, said("zh-CN", key) === want, said("zh-CN", key))

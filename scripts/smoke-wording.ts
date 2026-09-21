@@ -156,48 +156,14 @@ export function bracketPlurals(tables: Tables): string[] {
 }
 
 /*
- * W4: one name for a conversation.
+ * W4: the retired session rows.
  *
- * MiMo's centre is 对话 / "conversation" for the thing the user talks in, with
- * 聊天 / "chat" in only a handful of its own strings and 会话 / "session" kept
- * for the engine's object (its id and link, compacting its context, importing,
- * sharing). MCode follows that: 聊天 / "chat" survives only in the side-chat
- * feature's name and in rows that are MiMo's own strings byte for byte, and
- * 会话 / "session" only in those engine rows and in the locked reference keys -
- * which are no longer what any screen draws.
+ * MCode's terms follow MiMo 26.920 exactly - 聊天 / 会话 / 引擎 / 侧边聊天 /
+ * 会话互聊 where MiMo says them (the user's 2026-09-22 decision), so there is
+ * no longer a rule that everything be called 对话. What stays is narrower: the
+ * locked OpenCode rows below are not what any screen draws, and a screen that
+ * reached for one again would bring OpenCode's wording back with it.
  */
-// The fork shortcut row is MiMo's own 分叉聊天 / "Fork chat" again, since W5 was reverted to MiMo's wording.
-const MIMO_CHAT_KEYS = new Set(["toast.noConvosToArchive", "toast.archivedNConvos", "set.codeFontSizeSub", "key.label.conv-archive", "key.desc.conv-archive", "key.label.fork-chat", "key.desc.fork-chat"])
-const ENGINE_SESSION_KEYS = new Set([
-  "stream.chatSourceGone",
-  "share.session",
-  "set.spineSoundSub",
-  "toast.compactFailed",
-  "toast.shareFailed",
-  "set.displayServerSub",
-  "import.running",
-  "import.sessions",
-  "import.importedExceeds",
-  "key.label.copy-deeplink",
-  "key.label.copy-session-id",
-  "key.desc.copy-deeplink",
-  "key.desc.copy-session-id",
-  "key.copyID",
-  "key.copyLink",
-  "menu.copiedLink",
-  "menu.linkMissing",
-  "menu.copiedID",
-  "side.chatLink.jump",
-  "composer.compactDesc",
-  "menu.noWorkDir",
-  "menu.copySessionID",
-  "menu.copySessionLink",
-  "menu.copiedSessionID",
-  "composer.compact.noSession",
-  "composer.compact.busy",
-  "rp.termClose.message",
-  "rp.termClose.batchMessage",
-])
 /** The locked reference rows that say 会话 / "Session" and that no screen may draw any more. */
 export const RETIRED_SESSION_KEYS = [
   "session.new",
@@ -216,25 +182,6 @@ export const RETIRED_SESSION_KEYS = [
   "key.nextSession",
   "key.groupSession",
 ]
-
-function lockedKeys(): Set<string> {
-  const fixture = path.join(process.cwd(), "scripts/fixtures/reference-strings.json")
-  return new Set(Object.keys(JSON.parse(fs.readFileSync(fixture, "utf8")) as Record<string, unknown>))
-}
-
-export function terminology(tables: Tables, locked: Set<string> = lockedKeys()): string[] {
-  const found: string[] = []
-  for (const [key, zh] of Object.entries(tables.zhCN ?? {})) {
-    if (zh.replace(/侧边聊天/g, "").includes("聊天") && !MIMO_CHAT_KEYS.has(key)) found.push(`zhCN ${key} says 聊天`)
-    if (zh.includes("会话") && !locked.has(key) && !ENGINE_SESSION_KEYS.has(key)) found.push(`zhCN ${key} says 会话`)
-  }
-  for (const [key, en] of Object.entries(tables.en ?? {})) {
-    const rest = en.replace(/side chats?/gi, "").replace(/\/chat\//g, "")
-    if (/\bchats?\b/i.test(rest) && !MIMO_CHAT_KEYS.has(key) && !key.startsWith("set.keywords.")) found.push(`en ${key} says chat`)
-    if (/\bsessions?\b/i.test(en) && !locked.has(key) && !ENGINE_SESSION_KEYS.has(key)) found.push(`en ${key} says session`)
-  }
-  return found
-}
 
 /** Source lines that still draw a retired session row, e.g. t("cmd.newSession") or group: "key.groupSession". */
 export function retiredSessionCalls(root: string): string[] {
@@ -367,26 +314,14 @@ export function wordingChecks(check: Check, section: (name: string) => void): vo
     )
   }
 
-  section("Round 8 (W4): a conversation has one name")
+  section("Round 8 (W4): no screen draws a retired OpenCode session row")
   {
-    const loose = terminology(tables)
-    check("聊天 / chat and 会话 / session appear only where MiMo or the engine keeps them", loose.length === 0, loose.slice(0, 8))
     const calls = retiredSessionCalls(process.cwd())
     check("no screen draws a locked 会话 / Session row any more", calls.length === 0, calls)
     for (const key of ["key.groupConversation", "conv.prev", "conv.next", "conv.search", "conv.prevUnread", "conv.nextUnread"]) {
       const absent = Object.keys(tables).filter((name) => !tables[name][key])
       check(`${key} is written in every table`, absent.length === 0, absent)
     }
-    const broken = clone(tables)
-    broken.zhCN["cmd.archive"] = "归档此会话"
-    broken.en["art.back"] = "Open chat"
-    broken.zhCN["launch.chat"] = "侧边聊天"
-    const caught = terminology(broken)
-    check(
-      "the rule catches 会话 on an archive row and chat on a button, and lets the side chat keep its name",
-      caught.includes("zhCN cmd.archive says 会话") && caught.includes("en art.back says chat") && !caught.some((line) => line.includes("launch.chat")),
-      caught,
-    )
   }
 
   section("Round 8 (W6): relative time is one family with one English spelling")
