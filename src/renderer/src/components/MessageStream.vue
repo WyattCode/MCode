@@ -7,7 +7,6 @@ import ToolGroup from "./parts/ToolGroup.vue"
 import QuestionCard from "./parts/QuestionCard.vue"
 import ErrorStep from "./parts/ErrorStep.vue"
 import RetryRow from "./parts/RetryRow.vue"
-import TextShimmer from "./parts/TextShimmer.vue"
 import MessageSourceRow from "./parts/MessageSource.vue"
 import type { MessageSource } from "@shared/protocol"
 import SubagentActivity from "./parts/SubagentActivity.vue"
@@ -552,14 +551,15 @@ function layout(turn: Turn, at: number): { rows: Row[]; foldAt: number } {
   if (live) {
     const retry = turn.last?.retry
     if (retry) all.push({ kind: "retry", id: `retry:${turn.last?.id}`, attempt: retry.attempt, reason: retryReason(retry.message, retry.kind), next: retry.next })
-    // The last group with nothing said after it is the one being worked in.
+    /*
+     * The stage being worked in - everything after the last thing said, where
+     * an answered question and subagent news count as said, as they end a
+     * stage in MiMo - has every one of its groups open.
+     */
     for (let index = all.length - 1; index >= 0; index--) {
       const row = all[index]!
-      if (row.kind === "part") break
-      if (row.kind === "group") {
-        row.open = true
-        break
-      }
+      if (speaks(row)) break
+      if (row.kind === "group") row.open = true
     }
     return { rows: all, foldAt: 0 }
   }
@@ -589,10 +589,10 @@ function shown(turn: Turn, at: number): Row[] {
   return foldAt > 0 && !opened.value.has(turn.id) ? all.slice(foldAt) : all
 }
 
-/** Rows that belong to MiMo's tight step column rather than the reply's paragraphs. */
-function isStep(row: Row): boolean {
-  // subagents: notices that reached a running turn are a step row of pills, spaced as steps are.
-  return row.kind === "group" || row.kind === "error" || row.kind === "retry" || row.kind === "question" || row.kind === "steer"
+
+/** Whether the turn has an answer block to draw: parts, a failure, an end, or a live retry. */
+function answers(turn: Turn, at: number): boolean {
+  return Boolean(turn.parts.length || turn.error || turn.finish || (liveTurn(at) && turn.last?.retry))
 }
 
 /** Whether this is the turn still being worked on. */
@@ -601,12 +601,15 @@ function liveTurn(at: number): boolean {
 }
 
 /*
- * MiMo's head time: whole seconds as "12s", past a minute "1m 5s" - not
- * worded per language. It counts up once a second while the turn runs.
+ * MiMo's head time: whole seconds as "12s", past a minute "1m 5s", past an
+ * hour "1h 2m 3s" - not worded per language. It counts up once a second while
+ * the turn runs.
  */
 function formatDuration(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000))
-  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m ${seconds % 60}s`
 }
 
 const now = ref(Date.now())
@@ -1758,9 +1761,10 @@ defineExpose({ stepMessage, scroller })
                 v-tip="{ label: t('stream.copyAsked'), placement: 'top' }"
                 @click="copyAsked(turn)"
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <rect x="8" y="8" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2.2" />
-                  <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" stroke="currentColor" stroke-width="2.2" />
+                <!-- MiMo's copy at its 17 by 20 measure: a tall rounded sheet with the corner of the one behind it. -->
+                <svg width="12" height="12" viewBox="0 0 17 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M1 11V5a4 4 0 0 1 4-4h6" />
+                  <rect x="4.75" y="4.75" width="11.25" height="14.25" rx="2.25" />
                 </svg>
               </button>
               <button
@@ -1795,7 +1799,7 @@ defineExpose({ stepMessage, scroller })
         <!-- One block answers with every assistant message of the turn: the first names it, and all of them are listed. -->
         <!-- A retry drops what the failed attempt streamed, so a live turn retrying its first request has no parts yet and still shows its reconnecting row. -->
         <div
-          v-if="turn.parts.length || turn.error || turn.finish || (liveTurn(at) && turn.last?.retry)"
+          v-if="answers(turn, at)"
           class="msg assistant"
           :data-message-id="turn.messageIDs[0]"
           :data-message-ids="turn.messageIDs.join(' ')"
@@ -1822,19 +1826,24 @@ defineExpose({ stepMessage, scroller })
             :aria-label="t('turn.steps')"
             @click="foldRun(turn.id)"
           >
-            <span class="run-label">{{ t("turn.processed") }}</span>
-            <span v-if="headTime(turn, at)" class="run-time" data-turn-time>{{ headTime(turn, at) }}</span>
+            <span class="run-body">
+              <span class="run-label">{{ t("turn.processed") }}</span>
+              <span v-if="headTime(turn, at)" class="run-time" data-turn-time>{{ headTime(turn, at) }}</span>
+            </span>
             <svg class="run-chev" :class="{ open: opened.has(turn.id) }" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="m9 18 6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </button>
           <!-- P5-5: MiMo draws no head over a finished turn with neither steps nor words, so a failure card sits flush at the top. -->
           <div v-else-if="turn.started && (liveTurn(at) || answered(turn))" class="run" data-turn-head :data-live="liveTurn(at) ? 'true' : undefined">
-            <span class="run-label"><TextShimmer :text="t(subagent && liveTurn(at) ? 'subagentDetail.liveHead' : 'turn.processed')" :active="liveTurn(at)" /></span>
-            <span v-if="headTime(turn, at)" class="run-time" data-turn-time>{{ headTime(turn, at) }}</span>
+            <!-- MiMo sweeps the running head's words and its time together. -->
+            <span class="run-body" :class="{ 'running-shimmer': liveTurn(at) }">
+              <span class="run-label">{{ t(subagent && liveTurn(at) ? "subagentDetail.liveHead" : "turn.processed") }}</span>
+              <span v-if="headTime(turn, at)" class="run-time" data-turn-time>{{ headTime(turn, at) }}</span>
+            </span>
           </div>
 
-          <div v-for="row in shown(turn, at)" :key="row.id" class="part" :class="{ step: isStep(row) }">
+          <div v-for="row in shown(turn, at)" :key="row.id" class="part" :class="{ words: row.kind === 'part' && row.part.type === 'text' }">
             <!-- subagents: news of background subagents that reached the turn while it ran. -->
             <SubagentActivity v-if="row.kind === 'steer'" :notices="row.steer.notices" />
             <ToolGroup v-else-if="row.kind === 'group'" :items="row.items" :default-open="row.open" :actor="row.actor" />
@@ -1842,6 +1851,20 @@ defineExpose({ stepMessage, scroller })
             <ErrorStep v-else-if="row.kind === 'error'" :error="row.error" />
             <RetryRow v-else-if="row.kind === 'retry'" :attempt="row.attempt" :reason="row.reason" :next="row.next" @stop="app.abort(shownID)" />
             <TextPart v-else-if="row.part.type === 'text'" :part="row.part" />
+          </div>
+
+          <!-- MiMo's working indicator ends the running turn inside it, under its last row. -->
+          <div
+            v-if="thinking(turn, at)"
+            class="work-indicator"
+            role="status"
+            aria-live="polite"
+            :aria-label="t('stream.workLoading')"
+            data-work-loading
+          >
+            <svg viewBox="0 0 34 7" width="34" height="7" aria-hidden="true" focusable="false">
+              <circle v-for="x in [3.5, 12.5, 21.5, 30.5]" :key="x" :cx="x" cy="3.5" r="3" fill="currentColor" />
+            </svg>
           </div>
 
           <!--
@@ -1923,9 +1946,9 @@ defineExpose({ stepMessage, scroller })
               v-tip="{ label: t('stream.replyCopy'), placement: 'top' }"
               @click="copyReply(turn)"
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <rect x="8" y="8" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2.2" />
-                <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" stroke="currentColor" stroke-width="2.2" />
+              <svg width="12" height="12" viewBox="0 0 17 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M1 11V5a4 4 0 0 1 4-4h6" />
+                <rect x="4.75" y="4.75" width="11.25" height="14.25" rx="2.25" />
               </svg>
             </button>
             <button
@@ -1937,11 +1960,11 @@ defineExpose({ stepMessage, scroller })
               v-tip="{ label: t('stream.replyFork'), placement: 'top' }"
               @click="branchReply(turn)"
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <circle cx="6" cy="5" r="2.2" stroke="currentColor" stroke-width="2.2" />
-                <circle cx="6" cy="19" r="2.2" stroke="currentColor" stroke-width="2.2" />
-                <circle cx="18" cy="8" r="2.2" stroke="currentColor" stroke-width="2.2" />
-                <path d="M6 7.2v9.6M18 10.2c0 4-3.4 5.2-8.3 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+              <!-- MiMo's branch at its 17 by 20 measure: a stem with a branch halfway and a foot that turns right, each ending at a ring. -->
+              <svg width="12" height="12" viewBox="0 0 17 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M2 1.5v11.25a3.5 3.5 0 0 0 3.5 3.5h4.75M2 6.75h8.25" />
+                <circle cx="12.5" cy="6.75" r="2.25" />
+                <circle cx="12.5" cy="16.25" r="2.25" />
               </svg>
             </button>
             <!-- 追求目标: the one word a met goal leaves in the transcript, on the reply that met it. -->
@@ -1955,9 +1978,10 @@ defineExpose({ stepMessage, scroller })
           </div>
         </div>
 
+        <!-- Before the turn has anything of its own to draw, the indicator stands under the question. -->
         <div
-          v-if="thinking(turn, at)"
-          class="work-indicator"
+          v-if="thinking(turn, at) && !answers(turn, at)"
+          class="work-indicator lone"
           role="status"
           aria-live="polite"
           :aria-label="t('stream.workLoading')"
@@ -2052,17 +2076,18 @@ defineExpose({ stepMessage, scroller })
 }
 
 /* Under a card - the edited files, or the artifacts - it keeps its distance. */
-.msg-actions:is(.file-card + .msg-actions, [data-fc-reverted] + .msg-actions, .fc-confirm + .msg-actions, .err-card + .msg-actions) {
+.msg-actions:is(.file-card + .msg-actions, [data-fc-reverted] + .msg-actions, .fc-confirm + .msg-actions, .err-card + .msg-actions, .media-strip ~ .msg-actions) {
   margin-top: 10px;
 }
 
+/* MiMo's icon-btn xs: muted, and on hover its side-hover fill under its txt colour (#151c13cc light, #f4f4f5 dark). */
 .msg-act {
   display: grid;
   place-items: center;
   width: 26px;
   height: 26px;
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 7px;
@@ -2070,8 +2095,18 @@ defineExpose({ stepMessage, scroller })
 }
 
 .msg-act:hover {
-  color: var(--text-base);
+  color: #151c13cc;
   background: var(--surface-hover);
+}
+
+:root[data-theme="dark"] .msg-act:hover {
+  color: #f4f4f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .msg-act:hover {
+    color: #f4f4f5;
+  }
 }
 
 .msg-act:active {
@@ -2084,17 +2119,27 @@ defineExpose({ stepMessage, scroller })
   align-items: center;
   gap: 8px;
   margin-inline-start: 6px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   opacity: 0;
-  transition: opacity 0.12s;
 }
 
+/* MiMo's line: #f0ebe5 in light, #2e2e2e in dark. */
 .msg-time::before {
   width: 1px;
   height: 12px;
   content: "";
-  background: var(--border-weak);
+  background: #f0ebe5;
+}
+
+:root[data-theme="dark"] .msg-time::before {
+  background: #2e2e2e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .msg-time::before {
+    background: #2e2e2e;
+  }
 }
 
 .msg.assistant:hover .msg-time,
@@ -2109,7 +2154,7 @@ defineExpose({ stepMessage, scroller })
   gap: 5px;
   margin-inline-start: 6px;
   padding-inline-start: 9px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-inline-start: 1px solid var(--border-weak);
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
@@ -2128,7 +2173,6 @@ defineExpose({ stepMessage, scroller })
   align-self: flex-end;
   align-items: center;
   gap: 4px;
-  margin-bottom: 6px;
   padding: 1.5px 7px;
   color: var(--text-strong);
   background: var(--surface-layer);
@@ -2172,8 +2216,8 @@ defineExpose({ stepMessage, scroller })
 }
 
 /*
- * MiMo's user-meta under a question: the time, then copy and edit, 2px below
- * the bubble; all of it out of sight, and the buttons out of reach, until the
+ * MiMo's user-meta under a question: the time, then copy and edit, the row's
+ * 6px gap and 2px more below the bubble; all of it out of sight, and the buttons out of reach, until the
  * question is under the pointer or holds focus.
  */
 .user-meta {
@@ -2185,7 +2229,7 @@ defineExpose({ stepMessage, scroller })
 }
 
 .user-time {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   opacity: 0;
   transition: opacity 0.12s;
@@ -2221,9 +2265,23 @@ defineExpose({ stepMessage, scroller })
   align-items: center;
   width: 40px;
   height: 14px;
-  margin-top: 6px;
+  /* MiMo's: 14 under a step row, whose 5px padding is its own. */
+  margin-top: 14px;
   color: var(--text-strong);
   opacity: 0.58;
+}
+
+/* Ten under the words being written, whose 5px padding is their own, or under the head alone. */
+.part.words + .work-indicator {
+  margin-top: 5px;
+}
+
+.run + .work-indicator {
+  margin-top: 10px;
+}
+
+.work-indicator.lone {
+  margin-top: 6px;
 }
 
 .work-indicator svg {
@@ -2284,6 +2342,7 @@ defineExpose({ stepMessage, scroller })
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  gap: 6px;
 }
 
 /* MiMo's msg-in, on a question sent while the conversation is open; the reduced-motion rule in base.css lands it at once. */
@@ -2314,7 +2373,7 @@ defineExpose({ stepMessage, scroller })
   box-sizing: border-box;
   width: 100%;
   padding: 9px 13px;
-  background: color-mix(in srgb, var(--text-strong) 9.5%, var(--surface-raised));
+  background: #f8f7f5;
   border-radius: 16px;
 }
 
@@ -2389,7 +2448,6 @@ defineExpose({ stepMessage, scroller })
   gap: 8px;
   width: fit-content;
   max-width: min(82%, 64ch);
-  margin-bottom: 8px;
   margin-inline-start: auto;
 }
 
@@ -2501,21 +2559,17 @@ defineExpose({ stepMessage, scroller })
   margin-bottom: 2px;
 }
 
-.part + .part {
-  margin-top: 24px;
-}
-
 /*
- * MiMo's steps sit in a column two apart, each row carrying its own 5px above
- * and below; a paragraph of the reply keeps a clearer break from them.
+ * MiMo's harness column: every row two apart, and each carries its own 5px
+ * above and below - a step row and a run of the reply's words alike - so any
+ * two neighbouring lines sit twelve apart.
  */
-.part + .part.step,
-.part.step + .part {
-  margin-top: 12px;
+.part + .part {
+  margin-top: 2px;
 }
 
-.part.step + .part.step {
-  margin-top: 2px;
+.part.words {
+  padding: 5px 0;
 }
 
 .err {
@@ -2649,7 +2703,7 @@ defineExpose({ stepMessage, scroller })
   max-width: 78%;
   padding: 9px 13px;
   color: color-mix(in srgb, var(--text-strong) 95%, transparent);
-  background: color-mix(in srgb, var(--text-strong) 9.5%, var(--surface-raised));
+  background: #f8f7f5;
   border-radius: 16px;
   font-weight: 500;
   line-height: calc(20px * var(--ui-font-scale, 1));
@@ -2672,8 +2726,29 @@ defineExpose({ stepMessage, scroller })
   inset-inline: 0;
   bottom: 0;
   height: 56px;
-  background: linear-gradient(to top, color-mix(in srgb, var(--text-strong) 9.5%, var(--surface-raised)), transparent);
+  background: linear-gradient(to top, #f8f7f5, transparent);
   pointer-events: none;
+}
+
+/* MiMo's bubble colour: its settings-nav #f8f7f5 in light, its code-bg #2e2e2e in dark. */
+:root[data-theme="dark"] .user-bubble,
+:root[data-theme="dark"] .asked-edit {
+  background: #2e2e2e;
+}
+
+:root[data-theme="dark"] .asked-text.folded::after {
+  background: linear-gradient(to top, #2e2e2e, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .user-bubble,
+  :root:not([data-theme="light"]) .asked-edit {
+    background: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .asked-text.folded::after {
+    background: linear-gradient(to top, #2e2e2e, transparent);
+  }
 }
 
 /* MiMo's: 12px in the muted colour, 2 by 4 of padding on a 6px corner. */
@@ -2768,7 +2843,6 @@ defineExpose({ stepMessage, scroller })
 .asked-annotations {
   justify-content: flex-end;
   max-width: 78%;
-  padding-block: 6px 0;
 }
 
 /*
@@ -2835,29 +2909,37 @@ defineExpose({ stepMessage, scroller })
 }
 
 /*
- * 2.0: MiMo's line above an answer - 14/500 in the base colour, the time a
- * size down and fainter beside it, and twelve clear of the first line so the
- * two sit thirty apart as they do there.
+ * 2.0: MiMo's harness head - 14/500 in the muted colour on its 1.6 line with
+ * 2px above and below, running or done, the time a size down and dimmer beside
+ * it. Five below it and the first row's own 5px put the first line ten clear.
  */
 .run {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 5px;
+  padding: 2px 0;
   color: var(--text-base);
+}
+
+.run-body {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .run-label {
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: calc(18px * var(--ui-font-scale, 1));
+  line-height: calc(22.4px * var(--ui-font-scale, 1));
 }
 
 .run-time {
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: calc(16px * var(--ui-font-scale, 1));
+  line-height: calc(19.2px * var(--ui-font-scale, 1));
 }
 
 .run-time {
@@ -2867,7 +2949,6 @@ defineExpose({ stepMessage, scroller })
 /* The finished head that folds: the whole line is the button. */
 .run.foldable {
   width: fit-content;
-  padding: 2px 0;
   font: inherit;
   text-align: start;
   background: transparent;

@@ -498,12 +498,12 @@ function tableAlignment(line: string): ("left" | "center" | "right" | undefined)
   })
 }
 
+/* The code block's copy and copied glyphs: 14px on a 24 grid with a 2 stroke, MiMo's measure, MCode's own paths. */
+const CODE_GLYPH = 'width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"'
 const COPY_ICON =
-  '<svg class="md-code-icon idle" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
-  '<rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.2"/>' +
-  '<path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2" stroke="currentColor" stroke-width="1.2"/></svg>' +
-  '<svg class="md-code-icon done" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
-  '<path d="M3.5 8.5 6.5 11.5 12.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+  `<svg class="md-code-icon idle" ${CODE_GLYPH}><rect x="9" y="9" width="12.5" height="12.5" rx="2"/>` +
+  `<path d="M5 15.5a2.5 2.5 0 0 1-2.5-2.5V5A2.5 2.5 0 0 1 5 2.5h8A2.5 2.5 0 0 1 15.5 5"/></svg>` +
+  `<svg class="md-code-icon done" ${CODE_GLYPH}><path d="M4.5 12.5 9.5 17.5 19.5 6.5"/></svg>`
 
 /* The table buttons' glyphs: 12px on a 24 grid with a 1.7 stroke, as MiMo draws them. */
 const TABLE_GLYPH = 'width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"'

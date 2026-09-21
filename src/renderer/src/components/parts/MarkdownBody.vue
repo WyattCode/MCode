@@ -505,55 +505,6 @@ function onError(event: Event) {
   margin-bottom: 0;
 }
 
-/*
- * Three sizes, not one.
- *
- * The renderer emits every heading two levels down so a reply cannot outrank
- * the page, but a reader is going by size - collapsing all of them to 13px
- * threw away the structure the author wrote.
- */
-.text .md-h {
-  color: var(--text-strong);
-  line-height: 1.5;
-}
-
-.text .md-list {
-  margin: 8px 0 12px;
-  padding-inline-start: 32px;
-  list-style-position: outside;
-}
-
-.text ol.md-list {
-  padding-inline-start: 36px;
-}
-
-/* A nested list is a step, not another full indent. */
-.text .md-list .md-list {
-  margin: 4px 0;
-  padding-inline-start: 16px;
-}
-
-.text ol.md-list ol.md-list {
-  padding-inline-start: 28px;
-}
-
-.text .md-list li {
-  margin: 0 0 8px;
-}
-
-.text .md-list li:last-child {
-  margin-bottom: 0;
-}
-
-/* A tint of the text itself rather than a boxed chip. */
-.text code {
-  padding: 1px 4px;
-  color: var(--text-base);
-  background: color-mix(in oklch, var(--text-base) 8%, transparent);
-  border-radius: 4px;
-  font-weight: 530;
-}
-
 .text .md-code {
   margin: 8px 0;
   padding: 12px;
@@ -565,10 +516,14 @@ function onError(event: Event) {
   line-height: 1.5;
 }
 
+/* MiMo's code inside a block keeps the chip's 1.5px 5px, on no fill, as a block of its own. */
 .text .md-code code {
-  padding: 0;
+  display: block;
+  padding: 1.5px 5px;
   background: none;
   border: none;
+  border-radius: 0;
+  font-size: calc(13px * var(--code-font-scale, 1));
 }
 
 /*
@@ -620,13 +575,13 @@ function onError(event: Event) {
   gap: 4px;
   height: calc(22px * var(--ui-font-scale, 1));
   padding: 0 6px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 6px;
   font-size: calc(12px * var(--ui-font-scale, 1));
   opacity: 0.7;
-  transition: opacity 0.12s, background-color 0.12s;
+  transition: opacity 0.15s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .text .md-codeblock:hover .md-code-copy,
@@ -754,9 +709,15 @@ function onError(event: Event) {
  * like headings, and code chips that are a filled box rather than a tint.
  */
 .text {
-  color: color-mix(in srgb, var(--text-strong) 95%, transparent);
+  /* MiMo's answer: txt-strong #151c13 in light, txt #f4f4f5 in dark (below); headings inherit it. */
+  color: var(--text-strong);
   font-weight: 500;
   line-height: calc(23.8px * var(--ui-font-scale, 1));
+}
+
+/* MiMo's strong is semibold, not the browser's bolder 700. */
+.text strong {
+  font-weight: 600;
 }
 
 .text .md-p {
@@ -796,26 +757,26 @@ function onError(event: Event) {
 
 .text .md-h[data-level="6"] {
   margin: 12px 0 6px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
-.text .md-h:first-child:not(.md-block > .md-h),
-.text > .md-block:first-child > .md-h:first-child {
-  margin-top: 0;
-}
-
+/*
+ * MiMo's lists: every one, nested or not, 22px in with discs (30 for numbers)
+ * and 14 below - a nested list is not a smaller step.
+ */
 .text .md-list {
   margin: 0 0 14px;
   padding-inline-start: 22px;
 }
 
-.text ol.md-list {
-  padding-inline-start: 30px;
+.text ul.md-list {
+  list-style-type: disc;
 }
 
-.text .md-list .md-list {
-  margin: 0;
+.text ol.md-list {
+  padding-inline-start: 30px;
+  list-style-type: decimal;
 }
 
 .text .md-list li,
@@ -838,7 +799,7 @@ function onError(event: Event) {
 .text .md-quote {
   margin: 0 0 14px;
   padding-inline-start: 12px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-inline-start: 3px solid var(--border-weak);
   font-style: normal;
 }
@@ -859,13 +820,43 @@ function onError(event: Event) {
   margin-bottom: 0;
 }
 
+/* MiMo's code chip: its code-bg and code-fg (#f0f0f2 on #3a3a38 in light, #2e2e2e on #e6e6e6 in dark, below), 13px with the text scale, at the weight around it. */
 .text code {
   padding: 1.5px 5px;
-  color: color-mix(in srgb, var(--text-strong) 90%, transparent);
-  background: color-mix(in srgb, var(--text-strong) 9.5%, var(--surface-raised));
+  color: #3a3a38;
+  background: #f0f0f2;
   border-radius: 5px;
-  font-size: calc(13px * var(--code-font-scale, 1));
-  font-weight: 500;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+:root[data-theme="dark"] .text code {
+  color: #e6e6e6;
+  background: #2e2e2e;
+}
+
+:root[data-theme="dark"] .text .md-code code {
+  background: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .text code {
+    color: #e6e6e6;
+    background: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .text .md-code code {
+    background: none;
+  }
+}
+
+:root[data-theme="dark"] .text {
+  color: #f4f4f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .text {
+    color: #f4f4f5;
+  }
 }
 
 .text .md-code {
@@ -887,7 +878,7 @@ function onError(event: Event) {
   display: inline-block;
   width: 2ch;
   margin-inline-end: 16px;
-  color: var(--text-weak);
+  color: var(--text-base);
   content: counter(md-line);
   opacity: 0.6;
   text-align: end;
@@ -916,9 +907,41 @@ function onError(event: Event) {
   white-space: nowrap;
 }
 
-.text .md-table th:last-child,
+/* No wider than 30rem, broken only at a word when it has to be; the last cell of a row, not of the head, drops its 24. */
+.text .md-table :is(th, td) {
+  max-width: 30rem;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
 .text .md-table td:last-child {
   padding-inline-end: 0;
+}
+
+/* MiMo's line-soft between rows: #0000000d in light, #ffffff12 in dark. */
+.text .md-table td {
+  border-bottom-color: #0000000d;
+}
+
+:root[data-theme="dark"] .text .md-table td {
+  border-bottom-color: #ffffff12;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .text .md-table td {
+    border-bottom-color: #ffffff12;
+  }
+}
+
+/* A narrow column: a table of four or more columns keeps its width and scrolls. */
+.text .md-table-scroller {
+  container-type: inline-size;
+}
+
+@container (max-width: 640px) {
+  .text .md-table:has(> thead > tr > th:nth-child(4)) {
+    width: max-content;
+  }
 }
 
 .text .md-table tbody tr:last-child td {
@@ -934,7 +957,7 @@ function onError(event: Event) {
 
 .text .md-link-code {
   font-family: var(--font-mono);
-  font-size: calc(13px * var(--code-font-scale, 1));
+  font-size: calc(13px * var(--ui-font-scale, 1));
   text-decoration-style: dotted;
   text-underline-offset: 2px;
 }
@@ -1038,10 +1061,6 @@ function onError(event: Event) {
   }
 }
 
-.text del {
-  color: var(--text-weak);
-}
-
 /* KaTeX: display math is its own block; an error shows in KaTeX's red with the message as its tip. */
 .text .md-math {
   margin: 0 0 14px;
@@ -1102,7 +1121,7 @@ function onError(event: Event) {
  * restart from nothing each time, which is the flicker this replaced.
  */
 .text.streaming > .md-block {
-  animation: stream-block-in 220ms ease-out;
+  animation: stream-block-in 0.32s ease-out both;
 }
 
 @keyframes stream-block-in {
