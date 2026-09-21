@@ -132,7 +132,7 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
   {
     const dialog = await read("src/renderer/src/components/ConnectDialog.vue")
     const form = await read("src/renderer/src/components/CustomProviderForm.vue")
-    check("autofocus: no attribute Chromium honours once per document is relied on", !/\sautofocus[\s/>]/.test(dialog.replace(/<CustomProviderForm[^>]*>/, "")) && !/:autofocus=/.test(form))
+    check("autofocus: no attribute Chromium skips while something else holds focus is relied on", !/\sautofocus[\s/>]/.test(dialog.replace(/<CustomProviderForm[^>]*>/, "")) && !/:autofocus=/.test(form))
     check("autofocus: the list's search is focused whenever the list is shown", /if \(now === "browse"\) void nextTick\(\(\) => searchEl\.value\?\.focus\(\)\)/.test(dialog) && /<input ref="searchEl"/.test(dialog))
     check("autofocus: the custom form focuses its id field itself when asked", /if \(props\.autofocus\) providerIdEl\.value\?\.focus\(\)/.test(form) && /ref="providerIdEl"/.test(form))
   }

@@ -227,8 +227,8 @@ onMounted(() => {
 
 /*
  * Asked to (the connect dialog's custom step), the id field takes the keys on
- * opening. Focused here: Chromium honours the `autofocus` attribute only for
- * the first element that asks in a document's life, and this form opens later.
+ * opening. Focused here: Chromium skips an `autofocus` while anything else in
+ * the page holds focus, and the dialog's search box still does when this opens.
  */
 const providerIdEl = ref<HTMLInputElement>()
 onMounted(() => {

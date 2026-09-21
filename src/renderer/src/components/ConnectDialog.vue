@@ -50,9 +50,9 @@ const step = ref<Step>(
 
 /*
  * The list's search takes the keys whenever the list is shown - on opening and
- * back from the custom form. Focused here: Chromium honours `autofocus` only
- * for the first element that asks in a document's life, so an attribute would
- * work once and never again.
+ * back from the custom form. Focused here: Chromium skips an `autofocus` while
+ * anything else in the page holds focus - the composer the dialog was opened
+ * from, or the row that led back to the list.
  */
 const searchEl = ref<HTMLInputElement>()
 watch(
