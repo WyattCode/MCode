@@ -44,7 +44,7 @@ export async function roundEighteenSettingsNavChecks(check: Check, section: (nam
 
     const list = lastRule(style, ".nav-scroll")
     check("the list is the part that scrolls: it takes the rest of the column and may shrink below its rows", /overflow-y:\s*auto/.test(list) && /min-height:\s*0/.test(list) && /flex:\s*1\b/.test(list), list)
-    check("as MiMo's: the start inset, 12 below the last row, nothing on the trailing side for the scrollbar's lane", /padding:\s*0 0 12px 11px/.test(list), list)
+    check("as MiMo's: the start inset, 12 below the last row, nothing on the trailing side for the scrollbar's lane", /padding-block:\s*0 12px/.test(list) && /padding-inline:\s*11px 0/.test(list), list)
     check("it never scrolls sideways - a long label still breaks inside the row", /overflow-x:\s*hidden/.test(list), list)
     const column = lastRule(style, ".nav")
     check("the column keeps no padding of its own that the list could run past", /padding:\s*0;/.test(column), column)

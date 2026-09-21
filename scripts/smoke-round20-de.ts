@@ -77,4 +77,12 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
     const light = /<span class="cp-light"[^>]*\/>/.exec(form)?.[0] ?? ""
     check("D-10: the light is hidden from the accessibility tree", /aria-hidden="true"/.test(light) && !/aria-label/.test(light), light)
   }
+
+  section("Round 20: D-8 the settings list keeps its inset at the start in a right-to-left language")
+  {
+    const dialog = await read("src/renderer/src/components/SettingsDialog.vue")
+    const rule = /\n\.nav-scroll \{([^}]*)\}/.exec(dialog)?.[1] ?? ""
+    check("D-8: the list's inset is on the logical start", /padding-inline:\s*11px 0;/.test(rule) && /padding-block:\s*0 12px;/.test(rule), rule)
+    check("D-8: no physical left inset is left behind", !/padding(-left)?:[^;]*11px/.test(rule.replace(/padding-inline:[^;]*;/, "")), rule)
+  }
 }
