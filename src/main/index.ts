@@ -1,5 +1,5 @@
 import fs from "node:fs/promises"
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { execFile, execFileSync, spawnSync } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -86,7 +86,7 @@ import { maximizeAtStart, restore, saveWindowState, toggleMaximize, track } from
 import { keepWindowsOnScreen, repaintAfterWake } from "./displays"
 import { boundsOnShow, closeBounds } from "./work-area"
 import { HELPER_SWEEP_TIMEOUT_MS, createUpdater, helperSweep, staleInstallers, type AutoUpdaterLike, type UpdateState, type Updater } from "./updater"
-import { TRANSACTION_FILE, createTransactions } from "./update-transaction"
+import { TRANSACTION_FILE, createTransactions, fileTransactionStore } from "./update-transaction"
 import { deliveryOf, waitForDelivery } from "./install-notice"
 import pkg from "../../package.json"
 
@@ -309,26 +309,7 @@ const windows = new Set<BrowserWindow>()
 
 /* MiMo's update transaction record (update-transaction.ts), in the profile's updates folder. */
 const transactionFile = path.join(app.getPath("userData"), "updates", TRANSACTION_FILE)
-const updateTransactions = createTransactions({
-  read: () => {
-    try {
-      return readFileSync(transactionFile, "utf8")
-    } catch {
-      return undefined
-    }
-  },
-  write: (text) => {
-    mkdirSync(path.dirname(transactionFile), { recursive: true })
-    writeFileSync(transactionFile, `${text}\n`, { encoding: "utf8", mode: 0o600 })
-  },
-  remove: () => {
-    try {
-      unlinkSync(transactionFile)
-    } catch {
-      // Already gone.
-    }
-  },
-})
+const updateTransactions = createTransactions(fileTransactionStore(transactionFile))
 
 /* An install the person asked for, run by the quit path once the backend has closed. */
 let pendingInstall: (() => void) | undefined

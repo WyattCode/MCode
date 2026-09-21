@@ -14,6 +14,8 @@
  *
  * Electron-free: the caller passes a store for the one file.
  */
+import fs from "node:fs"
+import { writeAtomicSync } from "./atomic-write"
 
 export const TRANSACTION_FILE = "update-transaction.json"
 export const STALE_AFTER_MS = 60 * 60 * 1000
@@ -23,6 +25,35 @@ export interface TransactionStore {
   read(): string | undefined
   write(text: string): void
   remove(): void
+}
+
+/**
+ * The record kept in one file, as MiMo keeps win-update-transaction.json.
+ *
+ * Replaced through a temp file rather than truncated in place (D12-7): the
+ * record is written just before the installer takes the app down, which is
+ * exactly when a write is most likely to be cut short, and a record that no
+ * longer parses is read at the next launch as "invalid" - an interruption
+ * reported for an update that may well have finished.
+ */
+export function fileTransactionStore(file: string): TransactionStore {
+  return {
+    read: () => {
+      try {
+        return fs.readFileSync(file, "utf8")
+      } catch {
+        return undefined
+      }
+    },
+    write: (text) => writeAtomicSync(file, `${text}\n`, 0o600),
+    remove: () => {
+      try {
+        fs.unlinkSync(file)
+      } catch {
+        // Already gone.
+      }
+    },
+  }
 }
 
 export interface Transaction {
