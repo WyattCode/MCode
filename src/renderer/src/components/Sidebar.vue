@@ -670,6 +670,11 @@ function dayLabel(at: number): string {
 /* subagents: the subagents still working for each conversation whose own turn has ended, for MiMo 26.920's chip. */
 const workingFor = computed(() => subagentsAtWork(app.subagentSessions, app.running, app.rootOf))
 
+/* The names of the subagents still working for a conversation, for its card's 运行中的子智能体 line; MiMo leaves an unnamed one out. */
+function runningNames(sessionID: string): string[] {
+  return (workingFor.value.get(sessionID) ?? []).map((session) => session.title?.trim() ?? "").filter(Boolean)
+}
+
 /* Their names, as a list is written in the reader's language. */
 function subagentNames(sessions: SessionInfo[]): string {
   const names = sessions.map((session) => session.title?.trim() || t("subagentActivity.fallbackName"))
@@ -1222,7 +1227,7 @@ onBeforeUnmount(() => {
             <ChatLinkMark v-if="app.chatLinksOf(block.session.id).length" :links="app.chatLinksOf(block.session.id)" />
             <RowTitle
               class="row-label task-label"
-              v-tip="{ card: convoCard(block.session, app.config?.projectNames, app.chatLinksOf(block.session.id), (id: string) => emit('open', id), app.groupContext, app.automationTasks), placement: 'right', disabled: picking || menuSession === block.session.id }"
+              v-tip="{ card: convoCard(block.session, app.config?.projectNames, app.chatLinksOf(block.session.id), (id: string) => emit('open', id), app.groupContext, app.automationTasks, runningNames(block.session.id)), placement: 'right', disabled: picking || menuSession === block.session.id }"
               :text="title(block.session.title)"
               :cover="picking ? 0 : TITLE_COVER"
               @rename="!picking && emit('rename', block.session.id)"
@@ -1433,7 +1438,7 @@ onBeforeUnmount(() => {
                 <ChatLinkMark v-if="app.chatLinksOf(session.id).length" :links="app.chatLinksOf(session.id)" />
                 <RowTitle
                   class="row-label task-label"
-                  v-tip="{ card: convoCard(session, app.config?.projectNames, app.chatLinksOf(session.id), (id: string) => emit('open', id), app.groupContext, app.automationTasks), placement: 'right', disabled: picking || menuSession === session.id }"
+                  v-tip="{ card: convoCard(session, app.config?.projectNames, app.chatLinksOf(session.id), (id: string) => emit('open', id), app.groupContext, app.automationTasks, runningNames(session.id)), placement: 'right', disabled: picking || menuSession === session.id }"
                   :text="title(session.title)"
                   :cover="picking ? 0 : TITLE_COVER"
                   @rename="!picking && emit('rename', session.id)"
@@ -1578,7 +1583,7 @@ onBeforeUnmount(() => {
             <span class="stack">
               <RowTitle
                 class="row-label task-label"
-                v-tip="{ card: convoCard(entry.session, app.config?.projectNames, app.chatLinksOf(entry.session.id), (id: string) => emit('open', id), app.groupContext, app.automationTasks), placement: 'right', disabled: picking || menuSession === entry.session.id }"
+                v-tip="{ card: convoCard(entry.session, app.config?.projectNames, app.chatLinksOf(entry.session.id), (id: string) => emit('open', id), app.groupContext, app.automationTasks, runningNames(entry.session.id)), placement: 'right', disabled: picking || menuSession === entry.session.id }"
                 :text="title(entry.session.title)"
                 :cover="picking ? 0 : TITLE_COVER"
                 @rename="!picking && emit('rename', entry.session.id)"

@@ -17,6 +17,7 @@ import { createPinia, setActivePinia } from "pinia"
 import { PANEL_MIN_WIDTH, useRightPanel } from "../src/renderer/src/stores/right-panel"
 import { panelWidthShown } from "../src/renderer/src/lib/right-tools"
 import { subagentItems } from "../src/renderer/src/lib/subagents"
+import { convoCard } from "../src/renderer/src/lib/convo-card"
 import type { Message, SessionInfo, ToolPart } from "../src/shared/protocol"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
@@ -143,5 +144,25 @@ export async function roundNineteenPanelChecks(check: Check, section: (name: str
     check("RP-2: 执行记录 sits in its own label, then MiMo's pill", /rp-subagent-detail-subtitle-label">\{\{ t\("subagents\.transcript"\) \}\}/.test(subtitle) && /v-if="detail\.model" class="rp-subagent-model" :data-subagent-model="detail\.model\.model" :title="detail\.model\.model">\{\{ modelName\(detail\) \}\}/.test(subtitle), subtitle)
     const pill = /\.rp-subagent-model \{([^}]*)\}/.exec(view)?.[1] ?? ""
     check("RP-2: the pill is MiMo's: 120 at most, cut, 1px 6px, round, 6% of the text colour, line-height 1.35", /max-width: 120px/.test(pill) && /text-overflow: ellipsis/.test(pill) && /padding: 1px 6px/.test(pill) && /border-radius: 999px/.test(pill) && /color-mix\(in srgb, var\(--text-strong\) 6%, transparent\)/.test(pill) && /line-height: 1\.35/.test(pill), pill)
+  }
+
+  section("Round 19 (lane B): R19-SH2 a conversation's card names the subagents still at work")
+  {
+    const before = language.value
+    language.value = "zh-CN"
+    const session = { id: "ses_a", title: "Tidy", directory: "/p", updated: 1_700_000_000_000 }
+    const card = (convoCard as (...args: unknown[]) => { lines: unknown[] })(session, {}, [{ peerID: "ses_b", peerTitle: "Other", direction: "outbound", kind: "request", phase: "running", queueAhead: 0 }], undefined, undefined, [], ["explore-1", "", "general-2"])
+    const lines = card.lines.filter(Boolean)
+    const at = lines.indexOf("运行中的子智能体：explore-1、general-2")
+    check("R19-SH2: MiMo's line, the unnamed left out and the names joined with 、", at >= 0, lines)
+    check("R19-SH2: after 更新于 and before the chat-link lines", at > 0 && typeof lines[at - 1] === "string" && /^更新于/.test(lines[at - 1] as string) && typeof lines[at + 1] === "object", lines)
+    const quiet = (convoCard as (...args: unknown[]) => { lines: unknown[] })(session, {}, [], undefined, undefined, [], [])
+    check("R19-SH2: no line while none is at work", !quiet.lines.some((line) => typeof line === "string" && line.startsWith("运行中的子智能体")))
+    language.value = "en"
+    check("R19-SH2: the English table carries MiMo's wording", t("subagentDetail.runningList", { names: "a" }) === "Running subagents: a")
+    language.value = before
+    const side = await read("src/renderer/src/components/Sidebar.vue")
+    const calls = side.match(/app\.automationTasks, runningNames\((?:block\.session|session|entry\.session)\.id\)\)/g) ?? []
+    check("R19-SH2: every conversation row's card is handed its working subagents' names", calls.length === 3 && (side.match(/convoCard\(/g) ?? []).length === 3, calls.length)
   }
 }

@@ -66,6 +66,9 @@ export function automationLines(sessionID: string, tasks: readonly AutomationTas
  * the folder it works in and when it last changed. A task without a project
  * has no project line.
  *
+ * subagents: then, while any of its subagents still work, MiMo 26.920's line
+ * naming them, joined with 「、」 as MiMo joins them in every language.
+ *
  * session chat: then a line for each message in flight with another
  * conversation; given `jump`, a line whose other side still exists opens it.
  */
@@ -76,7 +79,9 @@ export function convoCard(
   jump?: (sessionID: string) => void,
   context?: GroupContext,
   automations: readonly AutomationTask[] = [],
+  runningSubagents: readonly string[] = [],
 ): { title: string; lines: (string | TipLine | undefined)[] } {
+  const running = runningSubagents.filter(Boolean)
   // The project it is filed under, which 移动至项目 may have moved; the folder line below still says where it works.
   const group = sessionGroup(session, context)
   return {
@@ -86,6 +91,7 @@ export function convoCard(
       session.directory || undefined,
       session.updated ? t("convoTip.updatedAt", { time: cardTime(session.updated) }) : undefined,
       ...(session.id ? automationLines(session.id, automations) : []),
+      running.length ? t("subagentDetail.runningList", { names: running.join("、") }) : undefined,
       ...sortedChatLinks(links).map((link): TipLine => {
         const peer = link.peerID
         return {
