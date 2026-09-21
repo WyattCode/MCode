@@ -139,12 +139,51 @@ export const GROUP_D: Row[] = [
   ["toast.pickerBusy", "已有一个选择窗口打开，请先完成或取消（它可能被主窗口遮挡）"],
 ]
 
+/** Group E: the shortcuts page says 聊天 where MiMo's does; menus and the project removal say what MiMo's say. */
+export const GROUP_E: Row[] = [
+  ["key.label.conv-rename", "重命名聊天", "Rename chat"],
+  ["key.label.next-recent", "下一个最近查看的聊天或标签页", "Next recently viewed chat or tab"],
+  ["key.label.prev-recent", "上一个最近查看的聊天或标签页", "Previous recently viewed chat or tab"],
+  ["key.label.next-tab", "下一个聊天或标签页", "Next chat or tab"],
+  ["key.label.prev-tab", "上一个聊天或标签页", "Previous chat or tab"],
+  ["key.label.goto-chat", "转到聊天 {n}", "Go to chat {n}"],
+  ["key.desc.side-chat", "在侧边聊天中打开当前聊天", "Open the current chat in a side chat"],
+  ["key.desc.conv-pin", "置顶或取消置顶当前聊天", "Pin or unpin the current chat"],
+  ["key.desc.conv-rename", "重命名当前聊天", "Rename the current chat"],
+  ["key.desc.find", "在当前聊天中搜索", "Search the current chat"],
+  ["key.desc.next-recent", "切换到下一个最近查看的聊天或标签页"],
+  ["key.desc.prev-recent", "切换到上一个最近查看的聊天或标签页"],
+  ["key.desc.next-tab", "切换到下一个聊天或标签页"],
+  ["key.desc.prev-tab", "切换到上一个聊天或标签页"],
+  ["key.desc.copy-md", "将当前聊天复制为 Markdown", "Copy the current chat as Markdown"],
+  ["key.desc.copy-session-id", "复制当前聊天会话 ID", "Copy the current chat session ID"],
+  ["key.desc.copy-cwd", "复制当前聊天工作目录", "Copy the current chat working directory"],
+  ["key.desc.goto-chat", "打开此快捷键槽位中可见的聊天", "Open the visible chat in this shortcut slot"],
+  ["set.removeProjectBody", "从列表中移除项目「{name}」？\n会话不会被删除，重新添加同目录即可恢复。"],
+  ["side.removeProjectBody", "从列表中移除项目「{name}」？\n会话不会被删除，重新添加同目录即可恢复。"],
+  ["batch.projectsRemoveBody", "从列表中移除选中的 {count} 个项目？\n会话不会被删除，重新添加同目录即可恢复。"],
+  ["cmd.openProject", "打开文件夹", "Open folder"],
+  ["side.chat", "侧边聊天", "Side chat"],
+]
+
 export const GROUPS: [name: string, rows: Row[]][] = [
   ["A: the goal switch and bar", GROUP_A],
   ["B: conversation errors, permissions and attachments", GROUP_B],
   ["C: the settings pages", GROUP_C],
   ["D: updates and toasts", GROUP_D],
+  ["E: shortcuts, menus and project removal", GROUP_E],
 ]
+
+/** The in-window menu's rows that MiMo's native menu words differently: what AppMenu.vue calls, and what it should. */
+export function appMenuKeys(appMenu: string): string[] {
+  const out: string[] = []
+  const want: [string, string][] = [["open-project", "menu.openFolder"], ["devtools", "menu.developerTools"], ["fullscreen", "menu.enterFullscreen"]]
+  for (const [row, key] of want) {
+    const found = new RegExp(`key: "${row}", label: t\\("([^"]+)"\\)`).exec(appMenu)?.[1]
+    if (found !== key) out.push(`${row} reads ${found ?? "(not found)"}, not ${key}`)
+  }
+  return out
+}
 
 const read = (relative: string) => fs.readFileSync(path.join(process.cwd(), relative), "utf8")
 
@@ -192,5 +231,12 @@ export function roundTwentyCopyChecks(check: Check, section: (name: string) => v
     check("the device-code button says 复制 / 已复制, not 复制回复 / 已保存", hint.length === 0, hint)
     const title = downloadFailureTitle(read("src/renderer/src/App.vue"), tables)
     check("a failed download says 更新失败, not the check's failure", title.length === 0, title)
+  }
+  section("Round 20 (V3-E): the in-window menu draws MiMo's menu wording")
+  {
+    const menu = appMenuKeys(read("src/renderer/src/components/AppMenu.vue"))
+    check("打开文件夹 / 开发者工具 / 进入全屏幕 come from the keys the native menu uses", menu.length === 0, menu)
+    const gone = ["menu.openProject", "menu.devTools", "menu.fullscreen", "stream.copy"].filter((key) => Object.values(tables).some((table) => key in table))
+    check("and the retired keys are gone from every table", gone.length === 0, gone)
   }
 }
