@@ -47,4 +47,25 @@ export async function roundNineteenLaneCChecks(check: Check, section: (name: str
     check("the old 64px stick is gone from turn-end", !/STICK|stickState/.test(await read("src/renderer/src/components/parts/turn-end.ts")))
     check("scroll anchoring is off while following and on otherwise", /element\.style\.overflowAnchor = on \? "none" : "auto"/.test(script))
   }
+
+  // ------------------------------------------------------------------ R19-CV-3
+  section("Round 19 (CV-3): holds while the reader is busy in the conversation, and MiMo's re-pins")
+  {
+    const idle = { selecting: false, sinceSelect: 1e9, sinceMedia: 1e9, editing: false, sinceEdit: 1e9, sinceWheelUp: 1e9 }
+    check("nothing holds an idle conversation", follow.heldBy(idle) === undefined)
+    check("a drag-select holds once past its first 600ms", follow.heldBy({ ...idle, selecting: true, sinceSelect: 601 }) === "select")
+    check("but not within them", follow.heldBy({ ...idle, selecting: true, sinceSelect: 200 }) === undefined)
+    check("a wheel turned up in the last 150ms holds", follow.heldBy({ ...idle, sinceWheelUp: 100 }) === "wheel" && follow.heldBy({ ...idle, sinceWheelUp: 150 }) === undefined)
+    check("the edit box holds while open and for 300ms after", follow.heldBy({ ...idle, editing: true }) === "edit" && follow.heldBy({ ...idle, sinceEdit: 250 }) === "edit")
+    check("a video starting or stopping holds for 600ms", follow.heldBy({ ...idle, sinceMedia: 500 }) === "media")
+    const pin = body(script, "function pin(")
+    check("every pin asks the holds first", /if \(!following\.value \|\| held\(\)\) return false/.test(pin), pin)
+    check("no watcher or observer scrolls to the end around them", !/if \(following\.value\) toBottom\(\)/.test(script))
+    check("the holds read the selection, the edit box, the wheel and media", /selecting: pressed \|\| holdsSelection/.test(script) && /editing: Boolean\(editingAsked\.value\)/.test(script) && /@wheel\.passive="onWheel"/.test(stream) && /@play\.capture="onMedia"/.test(stream))
+    check("coming back to the window re-pins when following", /document\.addEventListener\("visibilitychange", onReturn\)/.test(script) && /window\.addEventListener\("focus", onReturn\)/.test(script) && /if \(!document\.hidden\) pin\(\)/.test(script))
+    const card = script.slice(script.indexOf("watch(waitingCard"), script.indexOf("const waitingSteers"))
+    check("a new permission or question forces following and pins", /following\.value = true/.test(card) && /pin\(\)/.test(card), card.slice(0, 160))
+    const steer = script.slice(script.indexOf("watch([shownID, waitingSteers]"))
+    check("so does a message sent into the running turn", /count <= wasCount\) return/.test(steer) && /following\.value = true/.test(steer.slice(0, 300)))
+  }
 }

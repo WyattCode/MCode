@@ -61,3 +61,32 @@ export function nextFollowing(following: boolean, up: boolean, distance: number,
   return following
 }
 
+/*
+ * The holds: while one is on, following stays on but nothing is pinned. A
+ * selection being made (after its first 600ms), a media element that just
+ * started or stopped, an edit box that is open or just closed, a wheel turned
+ * upward in the last 150ms.
+ */
+export const SELECT_GRACE = 600
+export const MEDIA_HOLD = 600
+export const EDIT_HOLD = 300
+export const WHEEL_HOLD = 150
+
+export interface Holds {
+  selecting: boolean
+  /* ms since the selecting state last changed. */
+  sinceSelect: number
+  sinceMedia: number
+  editing: boolean
+  sinceEdit: number
+  sinceWheelUp: number
+}
+
+export function heldBy(holds: Holds): "media" | "edit" | "wheel" | "select" | undefined {
+  if (holds.sinceMedia <= MEDIA_HOLD) return "media"
+  if (holds.editing || holds.sinceEdit <= EDIT_HOLD) return "edit"
+  if (holds.sinceWheelUp < WHEEL_HOLD) return "wheel"
+  if (holds.selecting && holds.sinceSelect > SELECT_GRACE) return "select"
+  return undefined
+}
+

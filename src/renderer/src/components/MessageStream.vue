@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch, onBeforeUnmount } from "vue"
 import { useApp } from "../stores/app"
+import { useQuestions } from "../stores/questions"
 import TextPart from "./parts/TextPart.vue"
 import ToolGroup from "./parts/ToolGroup.vue"
 import QuestionCard from "./parts/QuestionCard.vue"
@@ -31,7 +32,7 @@ import { openDocument } from "../lib/office-open"
 import { occurrences, registerFoldedCounter } from "../lib/find-folded"
 import { useRestoreDraft } from "../lib/draft"
 import { cardCut, interruptedEnd, stepPart, stoppedEmpty } from "./parts/turn-end"
-import { endDistance, growthEcho, jumpShown, nextFollowing, reattachWithin, scrolledUp, UP_SLACK, upwardRun, type Geometry } from "../lib/scroll-follow"
+import { endDistance, growthEcho, heldBy, jumpShown, nextFollowing, reattachWithin, scrolledUp, UP_SLACK, upwardRun, type Geometry } from "../lib/scroll-follow"
 
 /**
  * WHY EVERY MESSAGE IS DRAWN, where opencode virtualises.
@@ -692,6 +693,47 @@ watch(
   { immediate: true },
 )
 
+/*
+ * MiMo's holds: following stays on, but the end is not pinned while the reader
+ * is busy in the conversation - dragging out a selection (after its first
+ * 600ms), a video that just started or stopped, the edit box open or just
+ * closed, a wheel turned upward in the last 150ms. The next pin after the hold
+ * catches up.
+ */
+let selectingSince = 0
+let mediaAt = Number.NEGATIVE_INFINITY
+let editClosedAt = Number.NEGATIVE_INFINITY
+let wheelUpAt = Number.NEGATIVE_INFINITY
+
+function held(): boolean {
+  const now = performance.now()
+  return Boolean(
+    heldBy({
+      selecting: pressed || holdsSelection,
+      sinceSelect: now - selectingSince,
+      sinceMedia: now - mediaAt,
+      editing: Boolean(editingAsked.value),
+      sinceEdit: now - editClosedAt,
+      sinceWheelUp: now - wheelUpAt,
+    }),
+  )
+}
+
+/* Pins the end when following and nothing holds it; whether it did. */
+function pin(): boolean {
+  if (!following.value || held()) return false
+  toBottom()
+  return true
+}
+
+function onWheel(event: WheelEvent) {
+  if (event.deltaY < 0) wheelUpAt = performance.now()
+}
+
+function onMedia() {
+  mediaAt = performance.now()
+}
+
 /* MiMo's jump: straight to the end with no smooth scroll, following again, and the button gone in the same tick. */
 function jump() {
   toBottom()
@@ -729,7 +771,7 @@ watch(
   () => shownMessages.value.length,
   async () => {
     await nextTick()
-    if (following.value) toBottom()
+    pin()
     measureJump()
   },
 )
@@ -740,7 +782,7 @@ watch(
   () => shownStreaming.value?.parts.map((part) => ("text" in part ? part.text.length : part.status)).join(),
   async () => {
     await nextTick()
-    if (following.value) toBottom()
+    pin()
     measureJump()
   },
 )
@@ -760,7 +802,7 @@ onMounted(() => {
   toBottom()
   if (typeof ResizeObserver === "undefined" || !inner.value) return
   sizer = new ResizeObserver(() => {
-    if (following.value) toBottom()
+    pin()
     measureJump()
   })
   sizer.observe(inner.value)
@@ -778,7 +820,12 @@ let pressed = false
 let holdsSelection = false
 
 function paintSelecting() {
-  scroller.value?.classList.toggle("selecting", pressed || holdsSelection)
+  const selecting = pressed || holdsSelection
+  if (!scroller.value || scroller.value.classList.contains("selecting") === selecting) return
+  scroller.value.classList.toggle("selecting", selecting)
+  // Within its first 600ms a selection does not hold, so the end is caught up with as it starts and as it stops.
+  selectingSince = performance.now()
+  pin()
 }
 
 function onPressMove() {
@@ -810,13 +857,55 @@ function onSelectionChange() {
   paintSelecting()
 }
 
+/*
+ * MiMo's forced re-pins. A permission or a question newly waiting on the
+ * reader takes the view to the end, following again, even from further up; so
+ * does a message sent into the running turn (插话), which is the reader's own.
+ */
+const questions = useQuestions()
+const waitingCard = computed(() => {
+  if (props.side || props.latest || props.subagent) return ""
+  const last = questions.queue.at(-1)
+  return last ? `${last.kind}:${last.id}` : ""
+})
+
+watch(waitingCard, async (card, was) => {
+  if (!card || card === was) return
+  following.value = true
+  await nextTick()
+  pin()
+  measureJump()
+})
+
+const waitingSteers = computed(() => turns.value.at(-1)?.waiting.length ?? 0)
+
+watch([shownID, waitingSteers], async ([id, count], [wasID, wasCount]) => {
+  if (id !== wasID || count <= wasCount) return
+  following.value = true
+  await nextTick()
+  pin()
+  measureJump()
+})
+
+/*
+ * MiMo's re-pin on coming back to the window: when still following, a reply
+ * that grew while the window was hidden or behind another is caught up with.
+ */
+function onReturn() {
+  if (!document.hidden) pin()
+}
+
 onMounted(() => {
   document.addEventListener("mousedown", onPressDown)
   document.addEventListener("selectionchange", onSelectionChange)
+  document.addEventListener("visibilitychange", onReturn)
+  window.addEventListener("focus", onReturn)
 })
 onBeforeUnmount(() => {
   document.removeEventListener("mousedown", onPressDown)
   document.removeEventListener("selectionchange", onSelectionChange)
+  document.removeEventListener("visibilitychange", onReturn)
+  window.removeEventListener("focus", onReturn)
   onPressUp()
 })
 
@@ -885,6 +974,11 @@ const goalAchieved = computed(() => {
   if (!goal?.done || goal.done.status !== "complete") return undefined
   const seconds = Math.max(0, Math.round((goal.done.at - goal.startedAt) / 1000))
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+})
+
+// The edit box holds the end while open and for 300ms after it closes, as MiMo's does.
+watch(editingAsked, (open, was) => {
+  if (was && !open) editClosedAt = performance.now()
 })
 
 // A question that stops being the last one (another was sent) is no longer editable.
@@ -1132,7 +1226,15 @@ defineExpose({ stepMessage, scroller })
 </script>
 
 <template>
-  <div ref="scroller" class="stream" :aria-busy="loadingHere || undefined" @scroll="onScroll">
+  <div
+    ref="scroller"
+    class="stream"
+    :aria-busy="loadingHere || undefined"
+    @scroll="onScroll"
+    @wheel.passive="onWheel"
+    @play.capture="onMedia"
+    @pause.capture="onMedia"
+  >
     <div ref="inner" class="inner">
       <!-- MiMo's line while a conversation just switched to has not brought its messages. -->
       <div v-if="loadingHere" class="thread-loading" data-thread-loading>{{ t("stream.loadingConvo") }}</div>
