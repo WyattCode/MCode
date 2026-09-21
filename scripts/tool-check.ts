@@ -523,6 +523,14 @@ async function main(): Promise<void> {
     const chinese = described.filter((tool) => han.test(tool.text)).map((tool) => tool.name)
     check("every tool describes itself and its arguments in English, as MiMo's do", chinese.length === 0, chinese.join(", "))
     check("and there are tools to have checked", described.length > 10, String(described.length))
+    /*
+     * R18-E6: MiMo 26.920 rewrote every tool name its descriptions mention in
+     * lower case (notebook_edit's cell_id: "the Read tool's" became "the `read`
+     * tool's"), matching the prompt's rule that tool names are exact. MCode's
+     * descriptions already name tools that way; this keeps them there.
+     */
+    const capitalised = described.filter((tool) => /\b(Read|Write|Edit|Glob|Grep|Bash|Task|WebFetch|Question) tool\b/.test(tool.text)).map((tool) => tool.name)
+    check("no description names another tool with a capital, as the prompt says names are exact", capitalised.length === 0, capitalised.join(", "))
   }
 
   console.log("")
