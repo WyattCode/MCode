@@ -53,7 +53,7 @@ export function sanitizeConfig(doc: AppConfig, fallback: AppConfig): boolean {
   // An unknown access level is no level of its own: the default level is read off the map.
   if (record.accessLevel !== undefined && !["ask", "auto", "full"].includes(record.accessLevel as string)) drop("accessLevel")
 
-  for (const key of ["allowFullAccess", "goalMode", "importOnboarded", "tray", "voiceSend", "voiceFeedback", "fontSmoothing", "pointerCursor", "spineSound"]) {
+  for (const key of ["allowFullAccess", "goalMode", "tray", "voiceSend", "voiceFeedback", "fontSmoothing", "pointerCursor", "spineSound"]) {
     if (typeof record[key] !== "boolean") put(key, base[key])
   }
   for (const key of ["smart", "browserEnabled", "videoCardDetails", "sessionChat"]) {

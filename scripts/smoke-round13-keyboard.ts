@@ -339,12 +339,6 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
     )
   }
 
-  // ---------------------------------------------------------------- K13-15
-  {
-    const importer = await component("ImportDialog")
-    check("K13-15: the import dialog closes on Escape, as every MiMo dialog but the image preview does", /useEscapeLayer\(\(\) => emit\("close"\)\)/.test(importer))
-  }
-
   // ---------------------------------------------------------------- K13-17
   {
     // A new task lands in the home screen's own box: the conversation's box is not drawn there.

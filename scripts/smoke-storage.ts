@@ -22,7 +22,6 @@ import { Permissions, RULES_KEY } from "../src/server/permission"
 import { CONVO_FILE_FORMAT, conversationDocument, conversationFileName, parseConversationDocument } from "../src/shared/convo-file"
 import { ARTIFACT_SCHEMA_VERSION, ArtifactStore } from "../src/server/artifact/store"
 import { STORAGE_LAYOUT_VERSION, readStorageLayout } from "../src/server/storage-layout"
-import { IMPORT_SCHEMA_VERSION, runImport } from "../src/server/import"
 import { Snapshots, snapshotBytes } from "../src/server/session/snapshot"
 import { CHECKPOINT_MIGRATION, migrateCheckpoints } from "../src/server/session/checkpoint-migrate"
 
@@ -598,32 +597,6 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     check("a profile written by a newer build is detected rather than stamped down", newer.fromNewerVersion === true, newer)
     const untouched = JSON.parse(await fs.readFile(storage.fileOf("layout"), "utf8")) as { schemaVersion?: number }
     check("and its marker is left exactly as it was", untouched.schemaVersion === STORAGE_LAYOUT_VERSION + 1, untouched)
-
-    /*
-     * The import record gets the same bargain: stamped when this build writes
-     * it, and never written over when a newer build did - otherwise the next
-     * run would take every conversation again as though it had never seen them.
-     */
-    const bus = new Bus()
-    const sessions = new SessionStore(storage, bus)
-    const empty = path.join(root, "layout", "no-other-apps")
-    await fs.mkdir(empty, { recursive: true })
-    const previous = process.env.MCODE_IMPORT_HOME
-    process.env.MCODE_IMPORT_HOME = empty
-    await runImport({ storage, sessions, model: MODEL }, ["cc"])
-    const record = JSON.parse(await fs.readFile(storage.fileOf("imported"), "utf8")) as { schemaVersion?: number; entries?: unknown }
-    check("the import record is stamped with this build's version", record.schemaVersion === IMPORT_SCHEMA_VERSION, record)
-
-    await storage.write("imported", { schemaVersion: IMPORT_SCHEMA_VERSION + 1, entries: { "cc:kept": { source: "cc", key: "kept", mtime: 1, sessionID: "ses_kept" } } })
-    await runImport({ storage, sessions, model: MODEL }, ["cc"])
-    const keptRecord = JSON.parse(await fs.readFile(storage.fileOf("imported"), "utf8")) as { schemaVersion?: number; entries?: Record<string, unknown> }
-    check(
-      "one written by a newer build is read but never written over",
-      keptRecord.schemaVersion === IMPORT_SCHEMA_VERSION + 1 && Object.keys(keptRecord.entries ?? {}).length === 1,
-      keptRecord,
-    )
-    if (previous === undefined) delete process.env.MCODE_IMPORT_HOME
-    else process.env.MCODE_IMPORT_HOME = previous
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)

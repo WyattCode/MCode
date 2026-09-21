@@ -45,7 +45,6 @@ import type { ProviderAdapter } from "./provider/types"
 import { expandCommand, listCommands, runShellPlaceholders } from "./command"
 import { discoverSkills, enabledSkills, readSkillFile, removableSkill, uninstallSkill } from "./skill"
 import { applyMcpImports, importItem, scanMcpImports } from "./mcp-import"
-import { runImport, scanImports } from "./import"
 import { mergeMcpSecrets } from "./mcp-save"
 import { agentsState, deleteAgents, ensureAgents, globalAgentsPath, setAgentsEnabled } from "./global-agents"
 import { turnFileDiffs } from "./session/turn-diff"
@@ -1662,25 +1661,6 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "mcp.importApply":
       return { imported: await applyMcpImports(runtime.config, request.items) } satisfies Handled<"mcp.importApply">
-
-    /*
-     * 导入: what other AI apps on this machine hold. Counts only travel to the
-     * window, and `asked` says whether this profile has had the first-run
-     * question - the window asks once and marks it, as MiMo does.
-     */
-    case "import.scan":
-      return {
-        scan: await scanImports(runtime.storage, runtime.sessions),
-        asked: runtime.config.get().importOnboarded,
-      } satisfies Handled<"import.scan">
-
-    case "import.run": {
-      const result = await runImport(
-        { storage: runtime.storage, sessions: runtime.sessions, model: runtime.config.get().model },
-        request.sources,
-      )
-      return { result } satisfies Handled<"import.run">
-    }
 
     case "mcp.save": {
       // The window was never sent the saved secrets, so blank rows it marks as kept take the stored ones here.
