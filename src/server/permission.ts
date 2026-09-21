@@ -15,19 +15,32 @@ import type { Bus } from "./bus"
 import type { Config } from "./config"
 import type { Storage } from "./storage"
 
+/**
+ * A call that was not allowed to run. It becomes the call's error result and
+ * the turn goes on: the model reads the refusal and takes another route, as
+ * MiMo's engine does with `continue_loop_on_deny` on (26.920, the user's
+ * 2026-09-21 decision). Only Stop ends a turn.
+ */
 export class PermissionDenied extends Error {
-  /**
-   * True when a person pressed Deny, with or without a reason. The runner ends
-   * the turn on it, as MiMo stops the conversation; a refusal by a setting or a
-   * question closed by Stop does not carry it.
-   */
-  readonly byUser: boolean
-
-  constructor(subject: string, reason?: string, byUser = false) {
+  constructor(subject: string, reason?: string) {
     super(reason ?? `Permission denied by the user: ${subject}`)
     this.name = "PermissionDenied"
-    this.byUser = byUser
   }
+}
+
+/**
+ * What the model is told when a person presses Deny, with or without a reason.
+ *
+ * Read in the same turn, so it has to say what to do next: the one thing it
+ * must not do is send the call again, which would only put the same question
+ * back in front of the person who just answered it.
+ */
+export function userRefusal(subject: string, reason?: string): string {
+  return [
+    `Permission denied by the user: ${subject}`,
+    ...(reason ? [`The user explained: ${reason}`] : []),
+    "This call was not run and nothing was changed. Do not make the same call again. Take their answer into account and carry on another way; if nothing else can do what is needed, say so and ask the user how to proceed.",
+  ].join("\n")
 }
 
 /**
@@ -502,19 +515,9 @@ export class Permissions {
       if (this.action(input.kind) === "deny") {
         throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
       }
-      /*
-       * A person said no. The turn ends on it; the reason, if any, stays in the
-       * call's result, which the model reads along with the next message.
-       */
-      const byUser = entry?.decided === "reject" || entry?.decided === "reject-with-reason"
-      if (reason) {
-        throw new PermissionDenied(
-          input.subject,
-          `Permission denied by the user: ${input.subject}\nThe user explained: ${reason}`,
-          byUser,
-        )
-      }
-      throw new PermissionDenied(input.subject, undefined, byUser)
+      // A person said no; anything else here is a question closed by Stop, which ends the turn by itself.
+      if (entry?.decided === "reject" || entry?.decided === "reject-with-reason") throw new PermissionDenied(input.subject, userRefusal(input.subject, reason))
+      throw new PermissionDenied(input.subject)
     }
   }
 

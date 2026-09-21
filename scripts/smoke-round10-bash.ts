@@ -57,7 +57,7 @@ export async function roundTenBashChecks(check: Check, section: (name: string) =
   const gate = {
     ask: async (question: { forced?: boolean; kind: string; subject: string }) => {
       asked.push(question)
-      if (refuseAsks) throw new PermissionDenied(question.subject, undefined, true)
+      if (refuseAsks) throw new PermissionDenied(question.subject)
     },
   }
   const context = (extra: Partial<ToolContext> = {}): ToolContext =>

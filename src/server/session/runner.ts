@@ -358,7 +358,7 @@ export class SessionRunner {
   private watchdog?: ReturnType<typeof setInterval>
   /**
    * subagents: the conversation whose turn a running subagent works for. Its
-   * file changes are recorded into that turn, and a refusal stops that turn.
+   * file changes are recorded into that turn.
    */
   private readonly owners = new Map<string, string>()
   /** subagents: the highest number handed out per parent and kind, so parallel calls never share a name. */
@@ -3362,7 +3362,6 @@ export class SessionRunner {
       part.metadata = { ...(part.metadata ?? {}), permissions: [...decisions] }
       publish()
     })
-    let refusedByUser = false
 
     try {
       /*
@@ -3372,7 +3371,7 @@ export class SessionRunner {
        * switch reading off and watch files carry on being read. This is the only
        * point that every call passes through, so it is where those buckets are
        * consulted. Inside the try, so a refusal is caught below and written onto
-       * the part as an error; one a person gave then ends the turn once saved.
+       * the part as an error, which the model reads in this same turn.
        */
       await this.checkRepeated(part, assistant, input.session.id, input.signal)
       await this.permissions.check({
@@ -3467,7 +3466,6 @@ export class SessionRunner {
        * account of the stop.
        */
       if (input.signal.aborted) part.metadata = { ...(part.metadata ?? {}), aborted: true, interrupted: true }
-      if (err instanceof PermissionDenied && err.byUser) refusedByUser = true
     } finally {
       stopListening()
       // A finished tool hands back metadata of its own, which would otherwise replace the record.
@@ -3476,14 +3474,6 @@ export class SessionRunner {
       publish()
       await this.store.saveMessage(assistant, true)
     }
-    /*
-     * MiMo stops the conversation when a person rejects, rather than handing
-     * the refusal back for the model to work around. Stopped the way Stop does
-     * it, so calls still running or asking are cancelled with it. The refusal
-     * and its reason are already saved on the part for the next message.
-     */
-    // subagents: a refusal inside a subagent stops the turn it works for, and so every subagent in it.
-    if (refusedByUser) this.abort(owner)
   }
 
   /**
@@ -3642,8 +3632,8 @@ export class SessionRunner {
    *
    * All four raise the same question: once lets it run, always lets that tool
    * repeat for the rest of the conversation, and a refusal - or typed
-   * feedback, or dismissing the question - refuses the call, which stops the
-   * turn as a refused permission does.
+   * feedback, or dismissing the question - refuses the call, and the model
+   * reads that refusal and carries on, as it does a refused permission.
    */
   private async checkRepeated(part: ToolPart, assistant: AssistantMessage, sessionID: string, signal: AbortSignal): Promise<void> {
     const monitor = this.loopMonitors.get(sessionID) ?? this.loopMonitors.set(sessionID, new LoopMonitor()).get(sessionID)!
@@ -3677,13 +3667,8 @@ export class SessionRunner {
       return
     }
     const feedback = chosen.find((entry) => entry !== LOOP_ANSWERS.reject)
-    throw new PermissionDenied(
-      part.name,
-      feedback
-        ? `The user stopped this repeated call and said: ${feedback}`
-        : "The user stopped this call: it repeated the previous two calls with the same input.",
-      true,
-    )
+    const said = feedback ? `The user stopped this repeated call and said: ${feedback}` : "The user stopped this call: it repeated the previous two calls with the same input."
+    throw new PermissionDenied(part.name, `${said}\nIt was not run. Do not repeat it; change your approach, or ask the user if you are stuck.`)
   }
 
   /** tasks: changes to one conversation's registry, one after another, so parallel subagents never lose each other's. */

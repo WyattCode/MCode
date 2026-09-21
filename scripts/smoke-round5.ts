@@ -540,9 +540,11 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       const second = asked()[1]
       if (second) e.runner.questions.reply(second.id, [["reject"]])
       await e.idle(session.id)
-      const refused = (await e.assistants(session.id)).at(-1)
+      const [refused, after] = (await e.assistants(session.id)).slice(-2)
       const refusedCall = refused?.parts.filter((part) => part.type === "tool").at(-1)
-      check("a refusal stops the call and the turn", refused?.finish === "aborted" && refusedCall?.type === "tool" && refusedCall.status === "error" && String(refusedCall.error).includes("repeated"), refused)
+      check("a refusal stops the call", refusedCall?.type === "tool" && refusedCall.status === "error" && String(refusedCall.error).includes("repeated"), refused)
+      // R18-E1: and the model reads it and carries on, as a refused permission now does.
+      check("but not the turn", refused?.finish !== "aborted" && after?.finish === "end_turn" && after.parts.some((part) => part.type === "text" && part.text === "done"), [refused?.finish, after?.finish])
 
       e.replies.push(listThrice)
       await e.runner.prompt({ sessionID: session.id, text: "LOOP always" })

@@ -366,6 +366,8 @@ import { roundSeventeenViewerChecks } from "./smoke-round17-viewers"
 import { roundSeventeenWorkflowChecks } from "./smoke-round17-workflow"
 // Round 17, lane X: the mermaid diagram block and the motion rule that flattened it (R17-X1 onwards).
 import { roundSeventeenDiagramChecks } from "./smoke-round17-diagram"
+// Round 18, lane E: the engine and the model-facing text, moved to MiMo 26.920 (R18-E1 onwards).
+import { roundEighteenEngineChecks } from "./smoke-round18-engine"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -1698,7 +1700,7 @@ async function main() {
       return result
     }
     const refusedChild = await settledOrAsked(command("s-child", "c-bg-1"))
-    check("E37: a background subagent's call nothing allows is refused without a question", refusedChild instanceof PermissionDenied && !refusedChild.byUser && bg.outstanding().length === 0, refusedChild)
+    check("E37: a background subagent's call nothing allows is refused without a question", refusedChild instanceof PermissionDenied && refusedChild.message.startsWith("Refused: this subagent runs in the background") && bg.outstanding().length === 0, refusedChild)
     const parentAsk = command("s-parent", "c-bg-2")
     await pause(20)
     const parentQuestion = bg.outstanding().find((entry) => entry.callID === "c-bg-2")
@@ -1905,7 +1907,7 @@ async function main() {
     await decide("c-rec-stop", () => permissions.rejectAll("s-record"))
     check("a question closed by Stop is recorded as cancelled", heard[3]?.decided === "cancelled", heard[3])
 
-    // Who said no decides whether the turn ends: a person does; a setting or a Stop does not.
+    // Who said no decides what the model is told; none of them ends the turn (R18-E1).
     const refusalOf = async (gate: Permissions, callID: string, settle: (id: string) => void) => {
       const asked = gate
         .ask({ sessionID: "s-byuser", messageID: "m-byuser", callID, kind: "edit", title: "t", subject: `${callID}.md` })
@@ -1918,16 +1920,17 @@ async function main() {
     const plainRefusal = await refusalOf(permissions, "c-by-plain", (id) => permissions.respond(id, "reject"))
     const reasonedRefusal = await refusalOf(permissions, "c-by-reason", (id) => permissions.respond(id, "reject", "not here"))
     const stoppedRefusal = await refusalOf(permissions, "c-by-stop", () => permissions.rejectAll("s-byuser"))
+    const workAround = (err: unknown) => err instanceof PermissionDenied && err.message.includes("Do not make the same call again")
     check(
-      "a person's refusal is marked as theirs, with or without a reason",
-      plainRefusal instanceof PermissionDenied && plainRefusal.byUser && reasonedRefusal instanceof PermissionDenied && reasonedRefusal.byUser,
+      "a person's refusal tells the model to take another route, with or without a reason",
+      workAround(plainRefusal) && workAround(reasonedRefusal) && String((reasonedRefusal as Error).message).includes("The user explained: not here"),
       [plainRefusal, reasonedRefusal],
     )
-    check("a Stop is not", stoppedRefusal instanceof PermissionDenied && !stoppedRefusal.byUser, stoppedRefusal)
+    check("a Stop is not a person's answer", stoppedRefusal instanceof PermissionDenied && !workAround(stoppedRefusal), stoppedRefusal)
     // R16-C6: creating a file is judged by the edit bucket, so that is the one a refusal is set on.
     const denyingGate = new Permissions(new Bus(), { get: () => ({ permissions: { ...PERMISSION_DEFAULTS, edit: "deny" } }) } as never)
     const settingRefusal = await refusalOf(denyingGate, "c-by-setting", () => {})
-    check("nor is a bucket set to Deny", settingRefusal instanceof PermissionDenied && !settingRefusal.byUser, settingRefusal)
+    check("nor is a bucket set to Deny, which names the setting", settingRefusal instanceof PermissionDenied && !workAround(settingRefusal) && settingRefusal.message.includes("set to Deny"), settingRefusal)
 
     const before = heard.length
     const unheard = permissions
@@ -3389,7 +3392,7 @@ async function main() {
     found = await toolPart("call_repair")
     check("a mis-cased tool name and a camelCase argument are repaired and run", found.part?.name === "read" && found.part?.status === "completed" && found.part?.input?.file_path === "hello.ts", found.part)
 
-    // A refusal with a reason: kept on the part, and the turn ends there, as MiMo stops on a rejection.
+    // A refusal with a reason: kept on the part and handed to the model in the same turn, as MiMo 26.920 does (R18-E1).
     const askedFor = (callID: string, since: number) =>
       new Promise<string | undefined>((resolve) => {
         const started = Date.now()
@@ -3415,11 +3418,15 @@ async function main() {
     // R16-C6: a creation is judged by the edit bucket, so that is the kind on the record.
     check("with the question it answered", kept[0]?.kind === "edit" && typeof kept[0]?.requestID === "string", kept[0])
     check("the refusal and its reason stay on the call", found.part?.status === "error" && String(found.part?.error).includes("keep notes elsewhere"), found.part?.error)
-    check("a refusal ends the turn", found.last?.finish === "aborted", found.last?.finish)
-    check("without handing the refusal back to the model", bodies.length === requestsBeforeRefusal, bodies.length - requestsBeforeRefusal)
+    check("a refusal does not end the turn", found.last?.finish === "end_turn" && found.last?.parts.some((part: any) => part.type === "text" && part.text === "done"), found.last?.finish)
+    check(
+      "the model reads the refusal and its reason in the same turn",
+      bodies.length === requestsBeforeRefusal + 1 && JSON.stringify(bodies.at(-1) ?? {}).includes("keep notes elsewhere") && JSON.stringify(bodies.at(-1) ?? {}).includes("Do not make the same call again"),
+      bodies.length - requestsBeforeRefusal,
+    )
     check("nothing was written", !(await exists(path.join(project, "steps-denied.md"))))
 
-    // The next message takes the refusal, and its reason, to the model as context.
+    // The next message still carries the refusal, and its reason, to the model as context.
     from = events.length
     await call({ type: "session.prompt", sessionID: stepsID, text: "then put it in docs" })
     check("the next turn finished", await idle(from))
@@ -3429,7 +3436,7 @@ async function main() {
       JSON.stringify(bodies.at(-1) ?? {}).slice(0, 600),
     )
 
-    // A refusal without a reason ends the turn the same way.
+    // A refusal without a reason goes back to the model the same way.
     replies.push(toolCall("call_perm_bare", "write", '{"file_path": "steps-bare.md", "content": "no"}'))
     from = events.length
     await call({ type: "session.prompt", sessionID: stepsID, text: "write another note" })
@@ -3439,7 +3446,11 @@ async function main() {
     check("the bare refusal finished", await idle(from))
     found = await toolPart("call_perm_bare")
     const bareKept = (found.part?.metadata?.permissions ?? []) as PermissionRecord[]
-    check("a refusal without a reason ends the turn too", found.last?.finish === "aborted" && bodies.length === requestsBeforeBare, [found.last?.finish, bodies.length - requestsBeforeBare])
+    check(
+      "a refusal without a reason does not end the turn either",
+      found.last?.finish === "end_turn" && bodies.length === requestsBeforeBare + 1 && JSON.stringify(bodies.at(-1) ?? {}).includes("Permission denied by the user"),
+      [found.last?.finish, bodies.length - requestsBeforeBare],
+    )
     check("recorded as a plain reject", bareKept[0]?.decided === "reject" && bareKept[0]?.reason === undefined, bareKept)
 
     /*
@@ -7018,6 +7029,7 @@ async function main() {
   await roundSeventeenViewerChecks(check, section)
   await roundSeventeenWorkflowChecks(check, section)
   await roundSeventeenDiagramChecks(check, section)
+  await roundEighteenEngineChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
