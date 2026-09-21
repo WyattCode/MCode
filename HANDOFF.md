@@ -740,7 +740,7 @@
 - D12-4 `edit` / `view` / `window` / `browser-act` 不认识的动作什么也不做（`4c17a48`）
 - D12-5 Office 通道检查抛错时回答自己的拒绝形状（`guarded()`）（`68397b4`）
 - D12-6 `pick-directory` 标题只收文本、开关只认 `=== true`（`d47a3d9`）
-- D12-7 `src/main/atomic-write.ts` `writeAtomicSync`：`boot-prefs.json` / `display-server.json` / `window.json` 走临时文件+fsync+改名（`c1ce049`）。没做：`updates/update-transaction.json` 仍是普通写，`composer-input.ts` 没有 fsync（关页时同步写、最大 16 MB，fsync 可能卡关闭）；崩溃留下的 `*.<pid>.<n>.tmp` 没人清
+- D12-7 `src/main/atomic-write.ts` `writeAtomicSync`：`boot-prefs.json` / `display-server.json` / `window.json` 走临时文件+fsync+改名（`c1ce049`）。收尾已做：`updates/update-transaction.json` 经 `fileTransactionStore` 走 `writeAtomicSync`（`399382f`）；`composer-input.ts` 也走 `writeAtomicSync`（`5d0db97`），只有关页那次 flush 做 fsync，打字时 300 ms 一次的保存不做（本机 NVMe 16 MB：无 fsync 约 8 ms，有 fsync 约 12 ms）；启动时 `sweepWriterTemps` 清三个目录里本写入者格式、进程已不在（或超过一小时）的 `*.<pid>.<n>.tmp`，含 composer-input 旧的 `.<pid>.tmp`（`bdcc62b`）。检查在 `scripts/smoke-atomic-leftovers.ts`。MiMo 26.920：更新记录走临时文件+改名、无 fsync；composer-input 直接覆盖写；不清残留临时文件
 
 ## 第十一轮：并发与长期运行（2026-09-18）
 
