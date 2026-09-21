@@ -195,6 +195,11 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
     check("the probe's success is just the count, as MiMo's probeOkN", said("zh-CN", "set.models.probeOk", { n: 3 }) === "3 个模型" && said("en", "set.models.probeOk", { n: 3 }) === "3 models")
     check("the models page's own strings no longer say 提供商", !Object.keys(zh).some((key) => said("zh-CN", key).includes("提供商")) && !said("zh-CN", "set.models.removed", { name: "x" }).includes("提供商"))
     check("search still finds the page by the new word", said("zh-CN", "set.keywords.models").includes("供应商"))
+    check(
+      "the provider form's ID field and its taken error say it as MiMo does (the user's 2026-09-22 call, the fixture moved with it)",
+      said("zh-CN", "provider.custom.field.providerID.label") === "供应商 ID" && said("zh-CN", "provider.custom.error.providerID.exists") === "该 ID 已被占用" &&
+        said("zh-TW", "provider.custom.field.providerID.label") === "供應商 ID" && said("zh-TW", "provider.custom.error.providerID.exists") === "該 ID 已被佔用",
+    )
     language.value = spoken
   }
 

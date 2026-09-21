@@ -3653,8 +3653,8 @@
     "th": "รหัสผู้ให้บริการนั้นมีอยู่แล้ว",
     "tr": "Bu sağlayıcı kimliği zaten mevcut",
     "uk": "ID провайдера вже існує",
-    "zhCN": "该提供商 ID 已存在",
-    "zhTW": "該提供者 ID 已存在"
+    "zhCN": "该 ID 已被占用",
+    "zhTW": "該 ID 已被佔用"
   },
   "provider.custom.error.providerID.format": {
     "ar": "استخدم أحرفًا صغيرة، أرقامًا، شرطات، أو شرطات سفلية",
@@ -3893,8 +3893,8 @@
     "th": "รหัสผู้ให้บริการ",
     "tr": "Sağlayıcı kimliği",
     "uk": "ID провайдера",
-    "zhCN": "提供商 ID",
-    "zhTW": "提供者 ID"
+    "zhCN": "供应商 ID",
+    "zhTW": "供應商 ID"
   },
   "provider.custom.field.providerID.placeholder": {
     "ar": "myprovider",
