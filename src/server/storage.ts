@@ -55,9 +55,10 @@ export function tempNameFor(target: string): string {
  *
  * `verify`, when given, reads the written temp file back before it replaces
  * anything, and a throw from it leaves the target as it was - for a write
- * that must be proved readable before the old version goes (L12-3).
+ * that must be proved readable before the old version goes (L12-3). `data`
+ * may be bytes, for a file that is not text (R18-A1).
  */
-export async function writeAtomic(target: string, data: string, mode?: number, durable = true, verify?: (written: string) => Promise<void>): Promise<void> {
+export async function writeAtomic(target: string, data: string | Uint8Array, mode?: number, durable = true, verify?: (written: string) => Promise<void>): Promise<void> {
   await fs.mkdir(path.dirname(target), { recursive: true })
   const temp = tempNameFor(target)
   let written = false
