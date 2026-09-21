@@ -35,4 +35,12 @@ export async function roundTwentyV2Checks(check: Check, section: (name: string) 
     check("the chip waits on a darwin-only condition, as MiMo's .app scan finds nothing elsewhere", /openShown/.test(tag) && /app\.platform === "darwin"/.test(header), tag)
     check("its face shows the chosen app's own icon when one is known", /<img v-if="openIcon" class="open-icon"/.test(header))
   }
+
+  // ------------------------------------------------------------------ R20-V2-2
+  section("Round 20 (V2-2): the title starts 18 in, MiMo's pl-[18px]")
+  {
+    const head = rule(header, ".head")
+    check("the header's start inset is 18px", /padding-inline:\s*18px\b/.test(head), head)
+    check("the folded rail's insets are kept (129 on macOS, 72 elsewhere)", /\.head\.after-rail \{\s*padding-inline-start: 129px;/.test(header) && /\.head\.after-rail \{\s*padding-inline-start: 72px;/.test(header))
+  }
 }

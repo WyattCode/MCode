@@ -187,9 +187,8 @@ function openMenu(event: MouseEvent) {
   gap: 8px;
   height: 48px;
   padding-block: 0;
-  /* The narrower inset goes where the title starts and the wider where the row
-     of icons runs out, so the pair follows the reading rather than the window. */
-  padding-inline: 10px 20px;
+  /* MiMo's 18px before the title; the end is set below, clear of the caption buttons. */
+  padding-inline: 18px 20px;
 }
 
 .left {
