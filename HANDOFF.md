@@ -475,6 +475,19 @@
   - C11-48 只有技能芯片、没有文字时照常发出（MiMo 拒发并提示「请输入内容」）。
   - C11-50 运行中发送走完整路径（命令模板、技能芯片、批注都带上；MiMo 只插「文本 + 附件」）。
 
+## 第十九轮 · B：右侧面板与侧栏细节（2026-09-21）
+
+清单 scratchpad `r19-laneB.json`，十项全部照 MiMo 26.920 改完；smoke `smoke-round19-panel.ts`（旧代码下各项均失败），探针 scratchpad `r19b/probe.cjs`（一次性配置，截图 `r19b/probe-*.png`）。
+- RP-1 批注发光：输入框发送与运行中追加（steer）也登记文档监视（照 MiMo 的 VD/KD/HD，只算有批注文字、且是 PDF/Office 文件），同一次运行同一文件合并为一个监视并保留首个 prompt；已在发光的查看器合并新 id（26.920 的 noteBatch）；运行结束的监视标记 ended，之后的发送另起一个
+- RP-2 子智能体详情头：「执行记录」后加模型胶囊（显示名，title 为完整 id；120 上限省略，1px 6px，圆角 999，文字色 6%，行高 1.35），模型取子对话自己的 `model`
+- RP-3 侧栏收起时右侧面板不再扣 62 的导轨：1000 宽窗口最大 520（探针实测 innerWidth 1001 → 521）
+- RP-4 同一对话/首页下目录变了，文件标签回到「打开文件」（清 viewFile / fileRoot / name，`rightPanel.reroot()`）
+- RP-5 文件页图片点开预览带缩略图 rect，从原位放大；RP-6 文件树收起改 v-show，展开后滚动位置保留
+- RP-7 启动卡描述照 MiMo 原文（14 种 MiMo 有的语言逐字，ar/bs/th/uk 自写同风格短句）
+- RP-8 标签中键在松开时关闭（auxclick），按下后拖离不关
+- R19-SH2 对话卡片在「更新于」/定时任务行之后、互聊行之前加「运行中的子智能体：…」（与胶囊同一数据，无名的略去，按 MiMo 用「、」连接；`subagentDetail.runningList` ×18）
+- R19-SH3（用户 2026-09-21 决定）删行菜单「导出为对话文件」及整条对话文件链：`session.exportFile` / `session.importFile`、`src/shared/convo-file.ts`、`mcode:open-text` 与 `openText`、8 条文案 ×18；第七轮 S4、第八轮 X17 的对应检查一并删除。保留 MiMo 的 Markdown「导出对话记录」和其他导入器用的 store 选项。上文 S4 所述「命令面板导入对话文件」已不存在
+
 ## 第十八轮：对照 MiMo 26.920（2026-09-21）
 
 **对照基准从 26.914 改为 26.920**（用户 2026-09-21 决定让 MiMo 自动更新；更新已由用户退出 MiMo 时自动完成）。26.920 的 out/ 已只读解到 scratchpad `r18-mimo920/out/`；26.914 的旧副本（`sf-main.mjs`、`r12-node.mjs`、`r12c-mimo/`、`r16-prompts/`）保留作对比，但 26.914 的 CSS、图片、`index.html` 没有存。从待装安装包取程序包的办法：NSIS 外壳里偏移 198712 处是一段原样 7z 流，电子打包缓存里的 `7za.exe` 能解。
