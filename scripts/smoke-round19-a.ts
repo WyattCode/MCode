@@ -48,7 +48,7 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
       "the confirmation is MiMo's: 删除自定义模型 over the model's name",
       /<ConfirmDialog\s+v-if="removingModel"\s+:title="t\('set\.models\.deleteModelTitle'\)"\s+:body="t\('set\.models\.deleteBody', \{ name: removingModel\.name\.trim\(\) \|\| removingModel\.id \}\)"/.test(form),
     )
-    check("on yes the saved provider loses the model before the card goes", /if \(editing\) await app\.removeCustomModel\(editing\.id, row\.id\)/.test(form) && /type: "provider\.removeCustomModel", provider, model/.test(store))
+    check("on yes the saved provider loses the model before the card goes", /const removed = editing \? await app\.removeCustomModel\(editing\.id, row\.id\)/.test(form) && /type: "provider\.removeCustomModel", provider, model/.test(store))
     const handler = handlers.slice(handlers.indexOf('case "provider.removeCustomModel"'), handlers.indexOf('case "auth.begin"'))
     check("the backend drops it from the stored provider, keeping the last one", /models\.length > 1/.test(handler) && /models\.filter\(\(model\) => model\.id !== request\.model\)/.test(handler))
     check("the title is in all 18 tables", (i18n.match(/^ {2}"set\.models\.deleteModelTitle": /gm) ?? []).length === 18)
