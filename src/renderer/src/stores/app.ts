@@ -2122,6 +2122,12 @@ export const useApp = defineStore("app", () => {
     providers.value = (await api().request({ type: "provider.removeCustom", provider })).providers
   }
 
+  /** Removes one model from a saved custom provider now, as MiMo's confirmed 删除自定义模型 does. */
+  async function removeCustomModel(provider: string, model: string) {
+    providers.value = (await api().request({ type: "provider.removeCustomModel", provider, model })).providers
+    await ensureUsableModel()
+  }
+
   /** Saves an edited custom provider under its own id; a blank key keeps the one held. */
   async function updateCustomProvider(entry: {
     id: string
@@ -2392,6 +2398,7 @@ export const useApp = defineStore("app", () => {
     discoverModels,
     addCustomProvider,
     removeCustomProvider,
+    removeCustomModel,
     updateCustomProvider,
     copyCustomProvider,
     probeProvider,

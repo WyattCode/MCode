@@ -1303,6 +1303,26 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return { providers: runtime.config.providers() }
     }
 
+    /*
+     * MiMo 26.920's 删除自定义模型, confirmed in the window: the model leaves the
+     * saved provider straight away. The last one stays, because a custom
+     * provider with nothing to talk to is refused everywhere else too; the
+     * form still drops its row and asks for a model before the next save.
+     */
+    case "provider.removeCustomModel": {
+      const config = runtime.config.get()
+      const existing = config.customProviders.find((entry) => entry.id === request.provider)
+      const models = existing?.models ?? []
+      if (models.length > 1 && models.some((model) => model.id === request.model)) {
+        await runtime.config.set({
+          customProviders: config.customProviders.map((entry) =>
+            entry.id === request.provider ? { ...entry, models: models.filter((model) => model.id !== request.model) } : entry,
+          ),
+        })
+      }
+      return { providers: runtime.config.providers() } satisfies Handled<"provider.removeCustomModel">
+    }
+
     case "auth.begin":
       return (await runtime.auth.start(request.provider, request.method)) satisfies Handled<"auth.begin">
 

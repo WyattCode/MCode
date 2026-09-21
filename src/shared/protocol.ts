@@ -2120,6 +2120,8 @@ export type Request =
       protocol?: CustomProvider["protocol"]
     }
   | { type: "provider.removeCustom"; provider: string }
+  /** MiMo 26.920's 删除自定义模型: one model leaves the saved provider at once, not on the next save. */
+  | { type: "provider.removeCustomModel"; provider: string; model: string }
   | {
       type: "provider.updateCustom"
       id: string
@@ -2410,6 +2412,7 @@ export interface ResponseMap {
   "provider.discover": { providers: ProviderStatus[]; count: number }
   "provider.addCustom": { providers: ProviderStatus[] }
   "provider.removeCustom": { providers: ProviderStatus[] }
+  "provider.removeCustomModel": { providers: ProviderStatus[] }
   "provider.updateCustom": { providers: ProviderStatus[] }
   /** The copy's id. */
   "provider.copyCustom": { providers: ProviderStatus[]; id: string }

@@ -6,6 +6,7 @@ import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 import { notice } from "../lib/toast"
 import { useEscapeLayerWhile } from "../lib/escape-layer"
+import ConfirmDialog from "./ConfirmDialog.vue"
 import { LIMIT_PRESETS, MODALITIES, limitLabel, limitOf, modalitySummary, validEndpoint, type Modality } from "../lib/custom-model"
 
 /**
@@ -252,7 +253,18 @@ function comboKey(event: KeyboardEvent) {
   }
 }
 
-function removeModel(row: ModelRow) {
+/*
+ * MiMo 26.920's 删除自定义模型: the trash button asks first, and on yes the
+ * model leaves the saved provider straight away (the backend ignores one that
+ * was never saved) before its card is dropped from the form.
+ */
+const removingModel = ref<ModelRow>()
+
+async function confirmRemoveModel() {
+  const row = removingModel.value
+  removingModel.value = undefined
+  if (!row) return
+  if (editing) await app.removeCustomModel(editing.id, row.id).catch(() => undefined)
   form.value.models = form.value.models.filter((entry) => entry.key !== row.key)
 }
 
@@ -541,7 +553,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
         :aria-label="t('provider.custom.models.remove')"
         :title="t('provider.custom.models.remove')"
         :data-model-remove="row.id"
-        @click="removeModel(row)"
+        @click="removingModel = row"
       >
         <svg width="15" height="15" viewBox="0 0 14 14" aria-hidden="true">
           <path d="M3 3.6h8M5.6 3.6V2.4h2.8v1.2M4.2 3.6l.5 7.4h4.6l.5-7.4" stroke="currentColor" stroke-width="1.1" fill="none" stroke-linecap="round" stroke-linejoin="round" />
@@ -646,6 +658,17 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
     <button v-if="standalone" class="cp-submit" type="submit" :disabled="busy || !canSave" data-custom-save>
       {{ busy ? t("common.saving") : t("common.save") }}
     </button>
+
+    <Teleport to="body">
+      <ConfirmDialog
+        v-if="removingModel"
+        :title="t('set.models.deleteModelTitle')"
+        :body="t('set.models.deleteBody', { name: removingModel.name.trim() || removingModel.id })"
+        :confirm-label="t('set.models.remove')"
+        @confirm="confirmRemoveModel"
+        @close="removingModel = undefined"
+      />
+    </Teleport>
   </form>
 </template>
 
