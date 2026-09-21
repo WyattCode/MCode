@@ -2665,8 +2665,13 @@ export class SessionRunner {
           if (!compacted) throw failure
           session = compacted
           step -= 1
-          // The step is run again into the same message, so a reply being continued is not left half-written.
-          continuing = carried ? assistant : undefined
+          /*
+           * Run again into a message of its own, even when this step was
+           * continuing a reply. That reply now lies before the compaction mark,
+           * where the request no longer reaches it: the rest of it would be
+           * written into a message the model cannot see, above the summary and
+           * the request posted again after it.
+           */
           continue
         }
         throw failure
@@ -2805,7 +2810,14 @@ export class SessionRunner {
         if ((next.note || repeatNote) && !lastStep) {
           // The rest of a sentence the limit cut belongs to the reply that started it.
           if (next.note === LENGTH_NOTE) continuing = assistant
-          if (overflowing) session = (await this.compactForOverflow(session, controller.signal)) ?? session
+          if (overflowing) {
+            const compacted = await this.compactForOverflow(session, controller.signal)
+            if (compacted) {
+              session = compacted
+              // The cut reply is behind the compaction mark now, out of the request; the next step starts a message after it.
+              continuing = undefined
+            }
+          }
           continue
         }
         /*

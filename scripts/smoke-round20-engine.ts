@@ -36,6 +36,7 @@ export async function roundTwentyEngineChecks(check: Check, section: Section): P
   process.env.MCODE_GENERATE_TITLES = "0"
   try {
     await loopChecks(check, section, path.join(root, "loops"))
+    await compactionChecks(check, section, root)
   } finally {
     if (titles === undefined) delete process.env.MCODE_GENERATE_TITLES
     else process.env.MCODE_GENERATE_TITLES = titles
@@ -161,6 +162,7 @@ async function harness(root: string, options: { context?: number } = {}) {
 }
 
 const read = (file: string): Call => ({ name: "read", input: { file_path: file } })
+const textOf = (message: AssistantMessage | undefined) => (message?.parts ?? []).flatMap((part) => (part.type === "text" ? [part.text] : [])).join("")
 
 /* ---------------------------------------------------------------- R20-A1: the loop detectors read settled calls */
 
@@ -221,5 +223,50 @@ async function loopChecks(check: Check, section: Section, root: string): Promise
     }
   } finally {
     await app.close()
+  }
+}
+
+/* ---------------------------------------------------------------- R20-A2: a compaction ends a continuation */
+
+async function compactionChecks(check: Check, section: Section, root: string): Promise<void> {
+  section("Round 20 (R20-A2): a cut reply refused as too long goes on in a message after the compaction")
+  {
+    const app = await harness(path.join(root, "refused"))
+    try {
+      const session = await app.store.create({ directory: app.project, model: app.model })
+      app.script([{ text: "part one ", finish: "length" }, { status: 400, error: "prompt is too long: 300000 tokens > 200000 maximum" }, { text: "part two" }])
+      await app.runner.prompt({ sessionID: session.id, text: "write it all" })
+      await app.settled(session.id)
+      const mark = (await app.store.get(session.id))?.compacted?.messageID
+      const replies = await app.assistants(session.id)
+      const first = replies.find((message) => textOf(message).includes("part one"))
+      const rest = replies.find((message) => textOf(message).includes("part two"))
+      check("the conversation was compacted once", app.summaries.length === 1 && mark !== undefined, app.summaries.length)
+      check("the rest is not welded into the cut reply", first !== undefined && !textOf(first).includes("part two"), textOf(first))
+      check("it has a message of its own, after the compaction mark", rest !== undefined && rest.id !== first?.id && mark !== undefined && rest.id > mark, [rest?.id, mark])
+    } finally {
+      await app.close()
+    }
+  }
+
+  section("Round 20 (R20-A2): a cut reply that crossed the line goes on in a message after the compaction")
+  {
+    const app = await harness(path.join(root, "crossed"), { context: 1000 })
+    try {
+      const session = await app.store.create({ directory: app.project, model: app.model })
+      app.script([{ text: "part one ", finish: "length", prompt: 990 }, { text: "part two" }])
+      await app.runner.prompt({ sessionID: session.id, text: "write it all" })
+      await app.settled(session.id)
+      const mark = (await app.store.get(session.id))?.compacted?.messageID
+      const replies = await app.assistants(session.id)
+      const first = replies.find((message) => textOf(message).includes("part one"))
+      const rest = replies.find((message) => textOf(message).includes("part two"))
+      check("the conversation was compacted once", app.summaries.length === 1 && mark !== undefined, app.summaries.length)
+      check("the rest is not welded into the cut reply", first !== undefined && !textOf(first).includes("part two"), textOf(first))
+      check("it has a message of its own, after the compaction mark", rest !== undefined && rest.id !== first?.id && mark !== undefined && rest.id > mark, [rest?.id, mark])
+      check("and the model was asked for it without the cut reply in view", app.turns.length === 2 && !app.turns[1]!.text.includes("part one"), app.turns.length)
+    } finally {
+      await app.close()
+    }
   }
 }
