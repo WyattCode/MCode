@@ -151,4 +151,23 @@ export async function roundTwentyV2Checks(check: Check, section: (name: string) 
     check("the orange is written only for the chip at rest", /\.pill\.access\.full:not\(:hover\) \{\s*color: #fb8147;/.test(styles))
     check("no rule keeps it orange while hovered", !/\.pill\.access\.full:hover/.test(styles))
   }
+
+  // ------------------------------------------------------------------ R20-V2-11
+  section("Round 20 (V2-11): the access marks at MiMo's sizes - the hand 16px, the pencil 12 wide in an 18px mark")
+  {
+    const table = /const ACCESS_ICONS[^=]*= \{([\s\S]*?)\n\}/.exec(composer)?.[1] ?? ""
+    const entry = (name: string) => new RegExp(`${name}: \\{[\\s\\S]*?box: (\\d+),\\s*stroke: ([\\d.]+)`).exec(table)
+    check("the hand is drawn at 16", entry("ask")?.[1] === "16", entry("ask")?.slice(1))
+    check("the pencil and the shield at 18", entry("auto")?.[1] === "18" && entry("full")?.[1] === "18")
+    /* The pencil's extent in its own units is its extent on the chip, since the chip draws it at its box. */
+    const pencil = /auto: \{[^}]*paths: \[([^\]]*)\]/.exec(table)?.[1] ?? ""
+    const xs = [...pencil.matchAll(/M([\d.]+) [\d.]+h([\d.]+)/g)].flatMap((m) => [Number(m[1]), Number(m[1]) + Number(m[2])])
+    const body = /"M([\d.]+) [\d.]+a[^"]*L[\d.]+ [\d.]+ ([\d.]+) /.exec(pencil)
+    const left = body ? Number(body[2]) : NaN
+    const width = Math.max(...xs) - left
+    check("the pencil spans 12px, from its tip to the end of its underline", Math.abs(width - 12) < 0.1, { left, xs, width })
+    check("the chip's mark takes the drawing's own size", /:width="ACCESS_ICONS\[access\]\.box"/.test(composer) && /:viewBox="`0 0 \$\{ACCESS_ICONS\[access\]\.box\}/.test(composer))
+    const hand = /ask: \{[^}]*paths: \[([\s\S]*?)\]/.exec(table)?.[1] ?? ""
+    check("the hand has four fingers", (hand.match(/a\.76\.76 0 0 1 1\.5\d 0/g) ?? []).length === 4, hand)
+  }
 }

@@ -2412,16 +2412,29 @@ function onAccessKeys(event: KeyboardEvent) {
   }
 }
 
-/* Each level's mark, on the chip and in the menu: a raised hand, a pencil, a shield with a warning in it. */
-const ACCESS_ICONS: Record<Access, string[]> = {
-  ask: [
-    "M5.4 8.6V4.1a.95.95 0 0 1 1.9 0v3.4",
-    "M7.3 7.2V3.2a.95.95 0 0 1 1.9 0v4",
-    "M9.2 7.3V3.9a.95.95 0 0 1 1.9 0v3.8",
-    "M11.1 7.6V5.6a.95.95 0 0 1 1.9 0v4.1a4.6 4.6 0 0 1-4.6 4.6h-.5a4 4 0 0 1-3.1-1.5L2.7 10a.95.95 0 0 1 1.4-1.3l1.3 1.2",
-  ],
-  auto: ["M2.8 13.4h10.4", "M10.4 2.4l2.2 2.2-6.8 6.8H3.6V9.2z"],
-  full: ["M8 1.8 13 3.7v4c0 3.1-2.1 5.4-5 6.5-2.9-1.1-5-3.4-5-6.5v-4z", "M8 5.3v2.9", "M8 10.6h.01"],
+/*
+ * Each level's mark, on the chip and in the menu, measured off MiMo's: a raised
+ * four-fingered hand drawn 16px on the chip, then a pencil and a shield with a
+ * warning in it drawn 18px, so the pencil spans 12 and the shield 11. `box` is
+ * the drawing's own square and the chip's size; the menu draws all three at 17.
+ */
+const ACCESS_ICONS: Record<Access, { box: number; stroke: number; paths: string[] }> = {
+  ask: {
+    box: 16,
+    stroke: 1,
+    paths: [
+      "M6.16 9.25V4.45a.76.76 0 0 1 1.52 0v3.81",
+      "M7.68 4.45V3.44a.76.76 0 0 1 1.52 0v4.82",
+      "M9.2 4.2a.76.76 0 0 1 1.53 0v4.06",
+      "M10.73 5.72a.76.76 0 0 1 1.52 0v4.31c0 1.83-1.48 3.31-3.3 3.31-1.14 0-1.96-.32-2.62-.89-.64-.56-1.13-1.4-1.57-2.42-.44-.99-.68-1.62-.84-2.01-.07-.22.04-.6.38-.61.77-.04 1.57.54 1.86 1.69",
+    ],
+  },
+  auto: { box: 18, stroke: 1.13, paths: ["M9 14.67h6", "M12 3.67a1.41 1.41 0 0 1 2 2L5.67 14 3 14.67l.67-2.67z"] },
+  full: {
+    box: 18,
+    stroke: 1.03,
+    paths: ["M9 2.94l5.45 3.03v3.63c0 3.03-2.3 5.15-5.45 5.45-3.15-.3-5.45-2.42-5.45-5.45V5.97z", "M9 6.58V9", "M9 11.42h.01"],
+  },
 }
 
 /*
@@ -3428,8 +3441,17 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               v-tip="{ label: t('composer.accessTip'), disabled: menu === 'access' }"
               @click="toggle('access')"
             >
-              <svg class="access-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path v-for="d in ACCESS_ICONS[access]" :key="d" :d="d" />
+              <svg
+                class="access-icon"
+                :width="ACCESS_ICONS[access].box"
+                :height="ACCESS_ICONS[access].box"
+                :viewBox="`0 0 ${ACCESS_ICONS[access].box} ${ACCESS_ICONS[access].box}`"
+                :stroke-width="ACCESS_ICONS[access].stroke"
+                :data-access-icon="access"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path v-for="d in ACCESS_ICONS[access].paths" :key="d" :d="d" />
               </svg>
               <span class="perm-label">{{ t(`composer.access.${access}`) }}</span>
               <svg class="caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -3461,8 +3483,14 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 @mouseenter="accessHot = entry"
                 @click="chooseAccess(entry)"
               >
-                <svg class="access-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path v-for="d in ACCESS_ICONS[entry]" :key="d" :d="d" />
+                <svg
+                  class="access-icon"
+                  :viewBox="`0 0 ${ACCESS_ICONS[entry].box} ${ACCESS_ICONS[entry].box}`"
+                  :stroke-width="ACCESS_ICONS[entry].stroke"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <path v-for="d in ACCESS_ICONS[entry].paths" :key="d" :d="d" />
                 </svg>
                 <span class="item-name">{{ t(entry === "full" ? "composer.access.fullItem" : `composer.access.${entry}`) }}</span>
                 <svg class="access-check" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -5685,12 +5713,22 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   flex: none;
 }
 
+/* The level marks carry their own stroke weights (ACCESS_ICONS); the check keeps 1.2. */
 .access-icon path,
 .access-check path {
   stroke: currentColor;
-  stroke-width: 1.2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.access-check path {
+  stroke-width: 1.2;
+}
+
+/* MiMo's hand ends its finger partings square. */
+.access-icon[data-access-icon="ask"] path,
+.access-item[data-access="ask"] .access-icon path {
+  stroke-linecap: butt;
 }
 
 .access-item {
