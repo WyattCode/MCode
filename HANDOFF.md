@@ -2,7 +2,7 @@
 
 给接手的人（或下一个会话）看的现状说明。每完成一轮就更新一次。
 
-- 分支：`v2.0`，2026-09-22 起推到 GitHub `WyattCode/MCode`（私有仓库，跟踪 `origin/v2.0`）；拉取请求 https://github.com/WyattCode/MCode/pull/4（`v2.0 → main`，可合并，未合并）；0.3.8 已发布为预发布版 https://github.com/WyattCode/MCode/releases/tag/v0.3.8
+- 分支：`v2.0`，2026-09-22 起推到 GitHub `WyattCode/MCode`（私有仓库，跟踪 `origin/v2.0`）；拉取请求 https://github.com/WyattCode/MCode/pull/4 已于 2026-09-22 合并进 `main`（合并提交 `76b86ed`）；0.3.8 已发布为预发布版 https://github.com/WyattCode/MCode/releases/tag/v0.3.8
 - 目标：在界面和功能上 1:1 复刻 Xiaomi MiMo 桌面端，MCode 保留自己的名字、图标和字标
 - 对照清单（逐项实测，含百分比）：https://claude.ai/code/artifact/f149a5d1-857e-4bae-80be-ca03265d9f83
 - 最近更新：2026-09-22（版本 0.3.8，已装到 `D:\Apps\MCode`）
@@ -20,7 +20,7 @@
 - **对照基准**：MiMo 26.920（第十八轮起）。第十九轮逐页重新对照后确认的 28 条差异、两项性能遗留、交接文档记着的遗留项都已做完；目前没有已知的、未决的差异。
 - **版本**：0.3.8（`4f5120e`，`dist\MCode-0.3.8-x64.exe`，225.7 MB）已静默装到 `D:\Apps\MCode` 并验证能启动；此后代码没改过，不需要重新打包。
 - **验证**：typecheck、i18ncheck、wiringcheck、themecheck、mdcheck、sessioncheck、build 全过，smoke **6143 全过**。
-- **GitHub**：`v2.0` 已推到 `origin/v2.0`；2026-09-22 开了拉取请求 #4（`v2.0 → main`，未合并，合并需用户点头），并把 0.3.8 安装包、blockmap、`latest.yml` 发布为预发布版 `v0.3.8`（标签指向 `v2.0` 当时的 HEAD）。自动更新地址仍是占位 `updates.invalid`，所以发布不会触发任何更新。
+- **GitHub**：`v2.0` 已推到 `origin/v2.0`；2026-09-22 开拉取请求 #4 并按用户要求合并进 `main`（合并提交 `76b86ed`，保留全部提交历史），并把 0.3.8 安装包、blockmap、`latest.yml` 发布为预发布版 `v0.3.8`（标签指向 `v2.0` 当时的 HEAD）。自动更新地址仍是占位 `updates.invalid`，所以发布不会触发任何更新。
 - **仍与 MiMo 不同、且不算缺口的**：用户定的有意差异（见「与 MiMo 故意不同的地方」和记忆 `mcode-deliberate-differences`）；第十九轮我定、已告知用户的两处——PDF 文内链接可跳转（MiMo 的点击拦截让它失效）、「（AI生成）」按界面语言翻译（MiMo 全语言写死中文）；依赖小米账号 / 服务的功能；需要 Linux、macOS 真机才能核对的细节；需要新 token 名的 V10。
 - **仍未在真窗口验证的**：拖选时暂停跟随（探针的合成拖拽选不中文字，只用「选区留在对话里」间接验证）；批注发光的两种新入口（需真实发送，只有 smoke）。
 - **下一步可做**：见文末「下一步建议」。
@@ -1114,7 +1114,7 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
 
 **2026-09-22：第十九轮做完，已知差异清零，0.3.8 已装、`v2.0` 已推到 GitHub。** 可选的下一步：
 
-1. [已完成] 开拉取请求 #4、发布预发布版 `v0.3.8`。剩下：用户点头后合并 #4。
+1. [已完成] 开拉取请求 #4 并合并进 `main`、发布预发布版 `v0.3.8`。之后的工作仍在 `v2.0` 上做，攒够再开新的拉取请求。
 2. 用真实模型（局域网 `qwen38-nvfp4`，见记忆 `reference-lan-test-model`，只用一次性配置）实际走几轮对话，重点看第十九轮 C 路的发送停靠与跟随、拖选暂停，以及批注发光。
 3. MiMo 若再更新：先对比新旧 bundle 的版本差异（第十八轮做法），再决定是否重跑逐页对照（第十九轮做法：四块只读审计 + 每条独立复核）。
 4. 偶发的 smoke 不稳定项仍在（第五轮计划模式、第七轮 bash 描述，见「约定与坑」），重跑即过，未修。
