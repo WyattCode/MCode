@@ -33,8 +33,8 @@ text, tables, layout name and speaker notes (`--no-notes` leaves notes out).
 Before writing code, write the outline in your reply or in a scratch file: one
 line per slide saying the point it makes. Aim for one idea per slide, a title
 that states the takeaway ("Costs fell 12% after the move", not "Costs"), and
-roughly 10-15 slides unless told otherwise. When the design matters, load the
-design-blueprint skill first.
+roughly 10-15 slides unless told otherwise. When the design matters, settle it
+first in design notes, as the slide-deck part of your instructions describes.
 
 ## Building
 

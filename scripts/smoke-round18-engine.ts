@@ -27,6 +27,8 @@ import { SessionRunner } from "../src/server/session/runner"
 import { GOAL_GUARD, JUDGE_SYSTEM } from "../src/server/session/goal"
 import { agentPrompt } from "../src/server/session/prompts"
 import { TOOLS, findTool, repairableNames, toolsForTurn } from "../src/server/tool/registry"
+import { discoverSkills } from "../src/server/skill"
+import { searchSkills } from "../src/server/tool/skill"
 
 type Section = (name: string) => void
 
@@ -39,6 +41,7 @@ export async function roundEighteenEngineChecks(check: Check, section: Section):
     await schedulingChecks(check, section, path.join(root, "scheduling"))
     await splitChecks(check, section, path.join(root, "split"))
     await worktreeChecks(check, section, path.join(root, "repo"))
+    await skillChecks(check, section, path.join(root, "skills"))
   } finally {
     if (titles === undefined) delete process.env.MCODE_GENERATE_TITLES
     else process.env.MCODE_GENERATE_TITLES = titles
@@ -416,6 +419,34 @@ async function splitChecks(check: Check, section: Section, root: string): Promis
   } finally {
     await app.close()
   }
+}
+
+/* ---------------------------------------------------------------- R18-E5: the built-in skills 26.920 dropped and added */
+
+async function skillChecks(check: Check, section: Section, root: string): Promise<void> {
+  section("Round 18 (R18-E5): the shipped skills follow 26.920's set")
+  await fs.mkdir(root, { recursive: true })
+  const { skills } = await discoverSkills({ directory: root, storageDirectory: path.join(root, "no-storage") })
+  const shipped = new Map(skills.map((skill) => [skill.name, skill]))
+  check("frontend-design and design-blueprint are gone", !shipped.has("frontend-design") && !shipped.has("design-blueprint"), [...shipped.keys()])
+  const pptx = await fs.readFile(path.join(process.cwd(), "resources/skills/pptx/SKILL.md"), "utf8")
+  check("and nothing shipped still sends the model to them", !pptx.includes("design-blueprint") && !pptx.includes("frontend-design"))
+
+  const tone = shipped.get("less-ai-tone")
+  const shell = shipped.get("powershell-reference")
+  check("the de-AI-tone rewrite and the PowerShell reference ship, under MCode's own names", Boolean(tone && shell) && ![...shipped.keys()].some((name) => name.startsWith("lieflat") || name.startsWith("windows-")), [...shipped.keys()])
+  const found = (query: string) => searchSkills(query, skills).map((hit) => hit.skill_id)
+  check("a request to take the AI tone out of a draft finds the first", found("make this draft sound less like AI, more natural").includes("less-ai-tone") && found("去AI味").includes("less-ai-tone"), [found("make this draft sound less like AI, more natural"), found("去AI味")])
+  check("a PowerShell quoting or escaping question finds the second", found("PowerShell quoting and escaping in a script").includes("powershell-reference"), found("PowerShell quoting and escaping in a script"))
+  check("and its description keeps it off Bash and batch files", /Not for Bash-only work, cmd\.exe batch files/.test(shell?.description ?? ""))
+
+  const toneBody = tone ? await fs.readFile(tone.location, "utf8") : ""
+  const rules = toneBody.match(/^### \d+\. /gm) ?? []
+  check("the rewrite works from an explicit list of rules", rules.length >= 8, rules.length)
+  check("and leaves what no rule matches, and the structure, as they were", toneBody.includes("Anything no rule catches stays word for word") && toneBody.includes("## What never changes"))
+  check("it never invents a source to support a claim", toneBody.includes("Never invent a source"))
+  const shellBody = shell ? await fs.readFile(shell.location, "utf8") : ""
+  check("the reference settles the version first and names what 5.1 lacks", shellBody.includes("## Which PowerShell") && shellBody.includes("## What 5.1 does not have") && shellBody.includes("$LASTEXITCODE"))
 }
 
 /* ---------------------------------------------------------------- R18-E4: no auto-worktree notice */
