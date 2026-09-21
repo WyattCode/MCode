@@ -50,30 +50,6 @@ const STATUS_ICON: Record<string, string[]> = {
 /* Folded files, by name, so a new patch for the same tab keeps what was folded. */
 const collapsed = ref(new Set<string>())
 
-/*
- * The files ticked off as read.
- *
- * MiMo's tick is diff2html's own checkbox and nothing more: it is not written
- * down anywhere, it does not fold the file, and the whole diff is drawn again
- * whenever the patch or the layout changes, which clears every tick. So it is
- * held here for this drawing of this patch alone.
- */
-const viewed = ref(new Set<string>())
-
-function markViewed(name: string, on: boolean) {
-  const next = new Set(viewed.value)
-  if (on) next.add(name)
-  else next.delete(name)
-  viewed.value = next
-}
-
-watch(
-  () => `${props.layout ?? ""}:${capped.value.text}`,
-  () => {
-    viewed.value = new Set()
-  },
-)
-
 function toggle(name: string) {
   const next = new Set(collapsed.value)
   if (next.has(name)) next.delete(name)
@@ -176,10 +152,6 @@ defineExpose({ reveal })
             </span>
             <span class="db-tag" :class="file.status" data-diff-tag>{{ t(`rp.diff.tag.${file.status}`) }}</span>
           </span>
-          <label class="db-viewed" data-diff-viewed @click.stop @keydown.stop>
-            <input type="checkbox" :checked="viewed.has(file.name)" @change="markViewed(file.name, ($event.target as HTMLInputElement).checked)" />
-            {{ t("rp.diff.viewed") }}
-          </label>
         </div>
 
         <div v-if="!collapsed.has(file.name) && layout !== 'split'" class="db-body" :data-diff-scroll="`${file.name}\u0000u`">
@@ -467,24 +439,6 @@ defineExpose({ reveal })
 
 .db-tag.deleted {
   color: var(--d2h-del-label);
-}
-
-/* Ticked off as read: MiMo's own box, which does nothing but stay ticked. */
-.db-viewed {
-  display: flex;
-  flex: none;
-  gap: 5px;
-  align-items: center;
-  margin-inline-start: auto;
-  color: var(--d2h-dim);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  cursor: pointer;
-  user-select: none;
-}
-
-.db-viewed input {
-  margin: 0;
-  cursor: pointer;
 }
 
 .db-body,

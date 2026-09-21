@@ -6,9 +6,10 @@
  * code: the tokens, the pairing between a run of removals and the run of
  * additions after it, the length past which a line is left plain, and the
  * braced name a rename is written with. The rest is markup and words: the file
- * list drawn only where the diff fills the panel, the status mark, the label
- * and the tick in a file's header, the launcher's description line, and a
- * command run through `exec_command` reading as a command row. Those are read
+ * list drawn only where the diff fills the panel, the status mark and the
+ * label in a file's header (its tick was withdrawn in round 18: MiMo draws
+ * none), the launcher's description line, and a command run through
+ * `exec_command` reading as a command row. Those are read
  * from the source here and measured in the lane's Electron probe
  * (r16d-probe.cjs), whose numbers are in the report.
  */
@@ -131,20 +132,18 @@ export async function roundSixteenDiffChecks(check: Check, section: (name: strin
     const body = await read("src/renderer/src/components/parts/DiffBody.vue")
     check("the header carries a mark for what the patch did to the file", /<svg class="db-status"[\s\S]{0,300}:data-diff-status="file\.status"/.test(body))
     check("and the word for it, from this app's own tables rather than diff2html's English", /class="db-tag"[\s\S]{0,80}t\(`rp\.diff\.tag\.\$\{file\.status\}`\)/.test(body))
-    check("with the tick beside it, which does not fold the file it sits in", /class="db-viewed" data-diff-viewed @click\.stop @keydown\.stop/.test(body))
-    check("the header is still a Tab stop that folds, which the tick did not take away", /class="db-head"\s+role="button"\s+tabindex="0"\s+:aria-expanded="!collapsed\.has\(file\.name\)"/.test(body))
-    check("a tick is remembered for this drawing of this patch only: a new patch, or the other layout, clears it", /watch\(\s*\(\) => `\$\{props\.layout \?\? ""\}:\$\{capped\.value\.text\}`,\s*\(\) => \{\s*viewed\.value = new Set\(\)/.test(body))
+    check("the header is a Tab stop that folds", /class="db-head"\s+role="button"\s+tabindex="0"\s+:aria-expanded="!collapsed\.has\(file\.name\)"/.test(body))
     check("the header no longer carries the counts, which MiMo shows in the file list only", !/class="db-head"[\s\S]{0,900}db-stats/.test(body))
 
     const strings = await tables()
     const names = Object.keys(strings)
     check(`all ${LANGUAGES.length} language tables were read`, names.length === LANGUAGES.length, names)
-    for (const key of ["rp.diff.tag.added", "rp.diff.tag.deleted", "rp.diff.tag.renamed", "rp.diff.tag.changed", "rp.diff.viewed"]) {
+    for (const key of ["rp.diff.tag.added", "rp.diff.tag.deleted", "rp.diff.tag.renamed", "rp.diff.tag.changed"]) {
       const absent = names.filter((name) => !strings[name]![key])
       check(`${key} is written in every language`, absent.length === 0, absent)
     }
     const english = strings.en!
-    check("and the words are the tables' own, not the identifiers", english["rp.diff.tag.renamed"] !== "renamed" && english["rp.diff.viewed"] !== "viewed")
+    check("and the words are the tables' own, not the identifiers", english["rp.diff.tag.renamed"] !== "renamed")
   }
 
   // ----------------------------------------------------------------- R16-D4
