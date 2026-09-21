@@ -61,4 +61,17 @@ export async function roundTwentyLaneCChecks(check: Check, section: (name: strin
     const park = code(body(script, "function park("))
     check("park rests a tall question there instead of pinning it to the end", /parkTop\(/.test(park) && /settle\(rest\)/.test(park), park.slice(0, 300))
   }
+
+  // ------------------------------------------------------------------ R20-C-4
+  section("Round 20 (C-4): a new conversation's first question enters and parks")
+  {
+    const plain = code(script)
+    const mount = plain.match(/const mountPark = ([^\n]+)/)?.[1] ?? ""
+    check("the view takes a pending park as it mounts, for the main conversation only", /consumePark\(shownID\.value\)/.test(mount) && /!props\.side/.test(mount) && /!props\.latest/.test(mount) && /!props\.subagent/.test(mount), mount)
+    check("and parks that question once mounted", /onMounted\(\(\) => \{\s*if \(mountPark\) park\(mountPark\)/.test(plain))
+    const seeded = plain.match(/let entering: EnterMark \| undefined = ([^\n]+)/)?.[1] ?? ""
+    check("the enter mark starts at that question, so it takes msg-in", /from: mountAt/.test(seeded), seeded)
+    const mark = follow.enterMark({ id: "s", length: 0, from: 0 }, "s", 1)
+    check("a mark seeded at the first message animates it", mark.from === 0 && follow.enterMark(undefined, "s", 1).from === Number.MAX_SAFE_INTEGER)
+  }
 }

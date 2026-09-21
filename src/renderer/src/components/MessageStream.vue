@@ -1004,12 +1004,21 @@ const lastAsked = computed(() => {
 const lastTurnID = computed(() => turns.value.at(-1)?.id)
 
 /*
+ * A conversation's first question mounts this view along with it - the hero
+ * stands in while there is nothing to show - so neither the message count nor
+ * lastAsked is ever seen to change. The park the composer asked for says it
+ * was just sent: it enters, and parks (onMounted, below), as any other.
+ */
+const mountPark = !props.side && !props.latest && !props.subagent && shownID.value && lastAsked.value && consumePark(shownID.value) ? lastAsked.value : undefined
+const mountAt = mountPark ? shownMessages.value.findIndex((message) => message.id === mountPark) : -1
+
+/*
  * MiMo's msg-in: a question sent while the conversation is on screen fades in
  * and rises 8px over 200ms. Only messages added after it was opened count, so
  * a conversation opened or loaded all at once draws still (lib/scroll-follow
  * enterMark, over the message count as MiMo keeps it).
  */
-let entering: EnterMark | undefined
+let entering: EnterMark | undefined = mountAt >= 0 ? { id: shownID.value, length: mountAt, from: mountAt } : undefined
 const enterFrom = computed(() => {
   entering = enterMark(entering, shownID.value, shownMessages.value.length)
   return entering.from
@@ -1228,6 +1237,11 @@ watch(
   },
   { flush: "post" },
 )
+
+// After the mount's own toBottom, registered earlier.
+onMounted(() => {
+  if (mountPark) park(mountPark)
+})
 
 // A finished turn lets go of a floor the reader has already left.
 watch(shownBusy, async (busy) => {
