@@ -400,6 +400,8 @@ import { roundNineteenLaneAChecks } from "./smoke-round19-a"
 import { roundNineteenLaneCChecks } from "./smoke-round19-c"
 // No window is ever told to connect to a port the browser refuses.
 import { blockedPortChecks } from "./smoke-blocked-ports"
+// Round 20, section A: the engine's turn loop - loop detectors, continuations across compaction and steering, the goal judge.
+import { roundTwentyEngineChecks } from "./smoke-round20-engine"
 // A deleted conversation's artifacts leave the list, as MiMo's delete takes them.
 import { artifactForgetChecks } from "./smoke-artifact-forget"
 // skills: discovery, frontmatter and the slash list.
@@ -7039,6 +7041,7 @@ async function main() {
   await roundNineteenLaneCChecks(check, section)
   await blockedPortChecks(check, section)
   await artifactForgetChecks(check, section)
+  await roundTwentyEngineChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

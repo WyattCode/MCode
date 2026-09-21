@@ -2350,6 +2350,8 @@ export class SessionRunner {
     this.turnOverrides.delete(sessionID)
     // plan: what this step is judged by; a plan approved during the turn moves it to build from the next step.
     this.turnAgents.set(sessionID, session.agent)
+    // MiMo's loop detectors watch one turn: what the last turn's calls added up to is not held against this one.
+    this.loopWatches.delete(sessionID)
     // The project's servers are connected (or have failed) before the turn is offered their tools, as MiMo's instance waits for them.
     this.workingIn.set(sessionID, session.directory)
     await this.mcp?.ready(session.directory)
@@ -3300,6 +3302,7 @@ export class SessionRunner {
       part.metadata = { recoverable: true }
       part.time.started = Date.now()
       part.time.completed = part.time.started
+      this.settleForLoops(input.session.id, part, input.signal)
       publish()
       await this.store.saveMessage(assistant, true)
       return
@@ -3448,6 +3451,7 @@ export class SessionRunner {
       // A finished tool hands back metadata of its own, which would otherwise replace the record.
       if (decisions.length) part.metadata = { ...(part.metadata ?? {}), permissions: decisions }
       part.time.completed = Date.now()
+      this.settleForLoops(input.session.id, part, input.signal)
       publish()
       await this.store.saveMessage(assistant, true)
     }
@@ -3479,8 +3483,31 @@ export class SessionRunner {
   /** Tools a conversation said to always let repeat, by session: MiMo's `always` on its doom-loop ask. */
   private readonly repeatsAllowed = new Map<string, Set<string>>()
 
-  /** What each running conversation's tool calls are adding up to (session/loop-health.ts). */
-  private readonly loopMonitors = new Map<string, LoopMonitor>()
+  /**
+   * What each running conversation's tool calls are adding up to
+   * (session/loop-health.ts), and the incident the last settled call raised.
+   * A call is only judged once it has settled - its status, output, exit code
+   * and diff are what the detectors read - so the incident it raises is asked
+   * about before the next call runs, as MiMo's processor checks each call as
+   * it finishes. Started afresh with every turn.
+   */
+  private readonly loopWatches = new Map<string, { monitor: LoopMonitor; incident?: LoopIncident }>()
+
+  private loopWatch(sessionID: string): { monitor: LoopMonitor; incident?: LoopIncident } {
+    const known = this.loopWatches.get(sessionID)
+    if (known) return known
+    const made = { monitor: new LoopMonitor() }
+    this.loopWatches.set(sessionID, made)
+    return made
+  }
+
+  /** A call has settled: the monitor reads it, and any incident waits for the next call. A stopped call says nothing about a loop. */
+  private settleForLoops(sessionID: string, part: ToolPart, signal: AbortSignal): void {
+    if (signal.aborted) return
+    const watch = this.loopWatch(sessionID)
+    const incident = watch.monitor.consume(part)
+    if (incident) watch.incident = incident
+  }
 
   /**
    * The crop MiMo makes once a turn has been going round for three finished
@@ -3519,11 +3546,12 @@ export class SessionRunner {
    * reads that refusal and carries on, as it does a refused permission.
    */
   private async checkRepeated(part: ToolPart, assistant: AssistantMessage, sessionID: string, signal: AbortSignal): Promise<void> {
-    const monitor = this.loopMonitors.get(sessionID) ?? this.loopMonitors.set(sessionID, new LoopMonitor()).get(sessionID)!
-    const incident: LoopIncident | undefined = repeatsCall(assistant.parts, part) ? { kind: "same-call", tool: part.name } : monitor.consume(part)
-    if (!incident || this.repeatsAllowed.get(sessionID)?.has(part.name)) return
+    const watch = this.loopWatch(sessionID)
+    const incident: LoopIncident | undefined = repeatsCall(assistant.parts, part) ? { kind: "same-call", tool: part.name } : watch.incident
+    watch.incident = undefined
+    if (!incident || this.repeatsAllowed.get(sessionID)?.has(incident.tool)) return
     // Asked once per incident: the count starts again whatever the answer, so one `once` does not ask again immediately.
-    monitor.reset()
+    watch.monitor.reset()
     const [answer] = await this.questions.ask({
       sessionID,
       questions: [
@@ -3545,12 +3573,16 @@ export class SessionRunner {
     if (chosen.includes(LOOP_ANSWERS.once)) return
     if (chosen.includes(LOOP_ANSWERS.always)) {
       const allowed = this.repeatsAllowed.get(sessionID) ?? new Set<string>()
-      allowed.add(part.name)
+      allowed.add(incident.tool)
       this.repeatsAllowed.set(sessionID, allowed)
       return
     }
     const feedback = chosen.find((entry) => entry !== LOOP_ANSWERS.reject)
-    const said = feedback ? `The user stopped this repeated call and said: ${feedback}` : "The user stopped this call: it repeated the previous two calls with the same input."
+    const said = feedback
+      ? `The user stopped this repeated call and said: ${feedback}`
+      : incident.kind === "same-call"
+        ? "The user stopped this call: it repeated the previous two calls with the same input."
+        : `The user stopped this call: ${describeLoop(incident)}`
     throw new PermissionDenied(part.name, `${said}\nIt was not run. Do not repeat it; change your approach, or ask the user if you are stuck.`)
   }
 
@@ -4289,7 +4321,7 @@ export class SessionRunner {
     this.taskQueues.delete(sessionID)
     this.retrying.delete(sessionID)
     this.repeatsAllowed.delete(sessionID)
-    this.loopMonitors.delete(sessionID)
+    this.loopWatches.delete(sessionID)
     for (const key of [...this.numbering.keys()]) if (key.startsWith(`${sessionID}:`)) this.numbering.delete(key)
   }
 
