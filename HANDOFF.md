@@ -475,6 +475,17 @@
   - C11-48 只有技能芯片、没有文字时照常发出（MiMo 拒发并提示「请输入内容」）。
   - C11-50 运行中发送走完整路径（命令模板、技能芯片、批注都带上；MiMo 只插「文本 + 附件」）。
 
+## 第十九轮 A 路：设置与外壳（2026-09-21）
+
+对照 26.920 的 14 条（`r19-laneA.json`），smoke `smoke-round19-a.ts`（旧代码下各节全部失败），一次性配置真窗口探针看过截图。
+- **F1**（用户定）：删首启「从其他 AI 应用导入」——MiMo 算出了钩子和懒加载弹窗却丢掉返回值，从不显示；连同 `ImportDialog.vue`、`server/import.ts`、`import.scan/run`、`importOnboarded` 及迁移、会话 `imported` 标记、18 表 `import.*` 一起删。常规页本来就没有导入入口，MiMo 也没有。
+- **F6**（用户定）：新建项目弹窗删「默认新建项目位置」行（L8 把 `showLocation` 误读成存放位置），`project.createBlank` 不再收 `location`，空白项目一律放到常规里的默认位置。
+- **F3/SH1**：原生选择框占用时主进程回 `{busy:true}`（`@shared/native-pick`），`save-png` 也纳入一次一个；窗口所有调用走 `lib/native-pick.ts`，弹 MiMo 原句 warning（`toast.pickerBusy`）。错误页没有吐司，写在它自己的提示行。
+- **F2** 删自定义模型先确认（删除自定义模型），确认即从已存配置删（新请求 `provider.removeCustomModel`，最后一个保留）；**F7** 删供应商用「及其全部模型」文案；**F8** 模型页 提供商→供应商、探测只显示「{n} 个模型」、组合框「选择或添加 model-id」；**F9** 供应商 ID 照 MiMo：只禁 `/` 与（不分大小写的）重复，前后端共用 `@shared/provider-id`。
+- **F4** 成功类吐司改 success，项目已存在/重名改 danger，批量恢复一律计数；**F10** 常规搜索词加 硬件加速/GPU/图形，高亮按整行文字；**F11** MCP 页配置文件行加 复制路径/打开；**F12** 检查更新的常驻吐司不可关，结果在同一 id 上替换；**F13** 配置页路径显示 `~`；**SH4** 重启更新抛错只显示原因句，原始错误进控制台。
+- **未改（与 `reference-strings.json` 冲突，报告）**：`provider.custom.field.providerID.label` 仍为「提供商 ID」（MiMo「供应商 ID」），`provider.custom.error.providerID.exists` 仍为「该提供商 ID 已存在」（MiMo「该 ID 已被占用」）。
+- 探针里 复制路径 在无焦点窗口被剪贴板拒绝（显示「无法复制路径」），属探针环境；success 级别用「已添加项目」验证。
+
 ## 第十八轮：对照 MiMo 26.920（2026-09-21）
 
 **对照基准从 26.914 改为 26.920**（用户 2026-09-21 决定让 MiMo 自动更新；更新已由用户退出 MiMo 时自动完成）。26.920 的 out/ 已只读解到 scratchpad `r18-mimo920/out/`；26.914 的旧副本（`sf-main.mjs`、`r12-node.mjs`、`r12c-mimo/`、`r16-prompts/`）保留作对比，但 26.914 的 CSS、图片、`index.html` 没有存。从待装安装包取程序包的办法：NSIS 外壳里偏移 198712 处是一段原样 7z 流，电子打包缓存里的 `7za.exe` 能解。
