@@ -138,10 +138,12 @@ export function clampSideWidth(value: number, viewport: number, panelWidth: numb
 /**
  * The panel's width as shown: the one dragged, narrowed to what leaves the
  * conversation its 480 beside the side column, but never under MiMo's 300. The
- * dragged width is kept, so a window that widens again gets it back.
+ * dragged width is kept, so a window that widens again gets it back. `rail` is
+ * what the side column's rail takes: nothing once the column is folded, as
+ * MiMo 26.920's --sidebar-collapsed-width is 0.
  */
-export function panelWidthShown(stored: number, viewport: number, sideWidth: number, floor: number): number {
-  const room = Math.max(floor, viewport - RAIL_WIDTH - sideWidth - MAIN_MIN_WIDTH)
+export function panelWidthShown(stored: number, viewport: number, sideWidth: number, floor: number, rail = RAIL_WIDTH): number {
+  const room = Math.max(floor, viewport - rail - sideWidth - MAIN_MIN_WIDTH)
   return Math.min(room, Math.max(floor, stored))
 }
 

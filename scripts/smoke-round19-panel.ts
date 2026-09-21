@@ -61,4 +61,14 @@ export async function roundNineteenPanelChecks(check: Check, section: (name: str
     check("RP-8: the release closes the tab, middle button only", /event\.button !== 1/.test(aux) && aux.includes("requestClose([id])"), aux)
     check("RP-8: each tab listens for the release", /@auxclick="onTabAuxClick\(\$event, tab\.id\)"/.test(panel))
   }
+
+  section("Round 19 (lane B): RP-3 a folded side column leaves no rail for the panel to allow for")
+  {
+    check("RP-3: folded, a 1000px window lets the panel reach 520, as MiMo's", panelWidthShown(900, 1000, 0, PANEL_MIN_WIDTH, 0) === 520, panelWidthShown(900, 1000, 0, PANEL_MIN_WIDTH, 0))
+    check("RP-3: and a stored 500 is drawn at 500", panelWidthShown(500, 1000, 0, PANEL_MIN_WIDTH, 0) === 500)
+    check("RP-3: with the column open the rail still counts", panelWidthShown(900, 1000, 0, PANEL_MIN_WIDTH) === 458)
+    const panel = await read("src/renderer/src/components/RightPanel.vue")
+    check("RP-3: the panel's rail follows the fold", /const rail = computed\(\(\) => \(props\.sideCollapsed \? 0 : RAIL_WIDTH\)\)/.test(panel))
+    check("RP-3: the drag's max and the shown width both use it", /const maxWidth = computed\(\(\) => Math\.max\(PANEL_MIN_WIDTH, viewport\.value - rail\.value -/.test(panel) && /panelWidthShown\([^)]*rail\.value\)/.test(panel))
+  }
 }

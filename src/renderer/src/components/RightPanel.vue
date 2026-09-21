@@ -110,10 +110,14 @@ watch(
   },
 )
 
-/* Width: between MiMo's 300 and what leaves the conversation its 480. */
+/*
+ * Width: between MiMo's 300 and what leaves the conversation its 480. A folded
+ * side column takes no width at all (R18-U1), so it leaves no rail to allow for.
+ */
 const viewport = ref(window.innerWidth)
-const maxWidth = computed(() => Math.max(PANEL_MIN_WIDTH, viewport.value - RAIL_WIDTH - props.sidebarWidth - MAIN_MIN_WIDTH))
-const shownWidth = computed(() => panelWidthShown(rp.width, viewport.value, props.sidebarWidth, PANEL_MIN_WIDTH))
+const rail = computed(() => (props.sideCollapsed ? 0 : RAIL_WIDTH))
+const maxWidth = computed(() => Math.max(PANEL_MIN_WIDTH, viewport.value - rail.value - props.sidebarWidth - MAIN_MIN_WIDTH))
+const shownWidth = computed(() => panelWidthShown(rp.width, viewport.value, props.sidebarWidth, PANEL_MIN_WIDTH, rail.value))
 const resizing = ref(false)
 
 function onResize() {
