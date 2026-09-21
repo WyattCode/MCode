@@ -1,4 +1,4 @@
-import { copyFileSync, cpSync, createReadStream, existsSync, mkdirSync, statSync } from "node:fs"
+import { copyFileSync, cpSync, createReadStream, existsSync, mkdirSync, readdirSync, statSync } from "node:fs"
 import { resolve, sep } from "node:path"
 import { defineConfig, externalizeDepsPlugin } from "electron-vite"
 import vue from "@vitejs/plugin-vue"
@@ -10,9 +10,16 @@ import type { Plugin } from "vite"
  * developing and copied beside the page in a build, both under `pdfjs/`.
  */
 const PDFJS_DIRS = ["cmaps", "standard_fonts", "wasm", "iccs"]
+/*
+ * The annotation layer's note icons (annotation-note.svg and its ten
+ * siblings), served as `pdfjs/images/`: only these, not the viewer's toolbar
+ * and editor images beside them.
+ */
+const PDFJS_ICON = /^annotation-[a-z]+\.svg$/
 
 function pdfjsAssets(): Plugin {
   const source = resolve("node_modules/pdfjs-dist")
+  const icons = resolve(source, "web/images")
   let outDir = ""
   return {
     name: "mcode-pdfjs-assets",
@@ -22,15 +29,20 @@ function pdfjsAssets(): Plugin {
     configureServer(server) {
       server.middlewares.use("/pdfjs", (req, res, next) => {
         const rel = decodeURIComponent((req.url ?? "").split("?")[0]).replace(/^\/+/, "")
-        const file = resolve(source, rel)
-        const allowed = PDFJS_DIRS.includes(rel.split("/")[0]) && file.startsWith(source + sep)
+        const [dir, ...rest] = rel.split("/")
+        const icon = dir === "images" && rest.length === 1 && PDFJS_ICON.test(rest[0])
+        const file = icon ? resolve(icons, rest[0]) : resolve(source, rel)
+        const allowed = (icon || PDFJS_DIRS.includes(dir)) && file.startsWith(source + sep)
         if (!allowed || !existsSync(file) || !statSync(file).isFile()) return next()
         if (file.endsWith(".wasm")) res.setHeader("Content-Type", "application/wasm")
+        if (file.endsWith(".svg")) res.setHeader("Content-Type", "image/svg+xml")
         createReadStream(file).pipe(res)
       })
     },
     writeBundle() {
       for (const dir of PDFJS_DIRS) cpSync(resolve(source, dir), resolve(outDir, "pdfjs", dir), { recursive: true })
+      mkdirSync(resolve(outDir, "pdfjs", "images"), { recursive: true })
+      for (const name of readdirSync(icons)) if (PDFJS_ICON.test(name)) copyFileSync(resolve(icons, name), resolve(outDir, "pdfjs", "images", name))
     },
   }
 }

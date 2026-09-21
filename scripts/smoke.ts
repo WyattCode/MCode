@@ -379,6 +379,8 @@ import { roundEighteenEngineChecks } from "./smoke-round18-engine"
 import { atomicLeftoverChecks } from "./smoke-atomic-leftovers"
 // Round 18: the settings navigation's list scrolls, as MiMo's sn-scroll (round 15 U3's open item).
 import { roundEighteenSettingsNavChecks } from "./smoke-round18-settings-nav"
+// Round 18: the PDF view's full annotation layer, as MiMo's react-pdf renders it (R17-V's open item).
+import { roundEighteenPdfAnnotationChecks } from "./smoke-round18-pdf-annotations"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7007,6 +7009,7 @@ async function main() {
   await roundEighteenEngineChecks(check, section)
   await atomicLeftoverChecks(check, section)
   await roundEighteenSettingsNavChecks(check, section)
+  await roundEighteenPdfAnnotationChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
