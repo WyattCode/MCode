@@ -398,6 +398,8 @@ import { loadMath } from "../src/renderer/src/lib/markdown"
 import { roundNineteenLaneAChecks } from "./smoke-round19-a"
 // Round 19, lane C: following the stream, parking a sent question, and the sent message against MiMo 26.920.
 import { roundNineteenLaneCChecks } from "./smoke-round19-c"
+// Round 20, lane C: the conversation view's review findings (park edges, goal switch, narration, math).
+import { roundTwentyLaneCChecks } from "./smoke-round20-c"
 // No window is ever told to connect to a port the browser refuses.
 import { blockedPortChecks } from "./smoke-blocked-ports"
 // A deleted conversation's artifacts leave the list, as MiMo's delete takes them.
@@ -7037,6 +7039,7 @@ async function main() {
   await perfEntryChecks(check, section)
   await roundNineteenLaneAChecks(check, section)
   await roundNineteenLaneCChecks(check, section)
+  await roundTwentyLaneCChecks(check, section)
   await blockedPortChecks(check, section)
   await artifactForgetChecks(check, section)
 

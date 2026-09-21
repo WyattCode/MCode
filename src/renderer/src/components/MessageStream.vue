@@ -690,7 +690,12 @@ function onScroll() {
   seen = now
   measureJump()
   const distance = endDistance(now)
-  if (up || distance > JUMP_DISTANCE) releaseFloor()
+  /*
+   * Not while a park slides: its offset is overflow for 200ms, so the view reads
+   * as far from the end, and taking the floor away would not move it yet - only
+   * when the offset is gone, putting the question at the foot of the view.
+   */
+  if (!endSlide && (up || distance > JUMP_DISTANCE)) releaseFloor()
   following.value = nextFollowing(following.value, up, distance, reattachWithin(ratio), arrived)
 }
 
