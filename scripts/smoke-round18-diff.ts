@@ -10,7 +10,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { LANGUAGES } from "../src/renderer/src/lib/i18n"
-import { markWords, splitRows, type DiffLine } from "../src/renderer/src/lib/diff-view"
+import { absoluteName, markWords, splitRows, type DiffLine } from "../src/renderer/src/lib/diff-view"
 import { WORD_MARK_MAX } from "../src/renderer/src/lib/diff-words"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
@@ -159,11 +159,31 @@ export async function roundEighteenDiffChecks(check: Check, section: (name: stri
     check("a name in the list is diff2html's link blue, in both themes", /--d2h-color: #3572b0;[\s\S]*color: var\(--d2h-color\)/.test(rule(".db-list .db-name")) && !/:root\[data-theme="dark"\] \.db-list \.db-name/.test(style))
     check("with its folders dimmed, as before", /opacity: 0\.6/.test(rule(".db-dir")))
     check("a change is diff2html's yellow, #d0b44c", /--d2h-color: #d0b44c;/.test(rule(".db-scroll :is(.db-tag, .db-list-icon).changed")))
-    check("in the dark too, which MiMo's dark set leaves as it is (measured #d0b44c on 26.920)", !/#d29922/.test(style) && !/data-theme[^{]*\.changed/.test(style))
+    check("in the dark too, which MiMo's dark set leaves as it is (measured #d0b44c on 26.920)", !/#d29922;/.test(style) && !/data-theme[^{]*\.changed/.test(style))
     check("a move is diff2html's blue", /--d2h-color: #3572b0;/.test(rule(".db-scroll :is(.db-tag, .db-list-icon).renamed")))
     check("an addition green and a removal red, from the labels already named", /color: var\(--d2h-ins-label\)/.test(rule(":is(.db-tag, .db-list-icon).added")) && /color: var\(--d2h-del-label\)/.test(rule(":is(.db-tag, .db-list-icon).deleted")))
     check("the tag and the square draw in the colour named on them", /color: var\(--d2h-color\)/.test(rule("\n.db-tag")) && /color: var\(--d2h-color\)/.test(rule("\n.db-list-icon")))
     check("and the tag is not dimmed, so its colour is the one measured", !/opacity/.test(rule("\n.db-tag")))
   }
 
+  // ----------------------------------------------------------------- R18-D5
+  section("Round 18 (R18-D5): a step's diff names each file in full, with forward slashes; the review tab keeps the project's path")
+  {
+    const root = "C:\\Users\\me\\mimo-diff-demo"
+    check("a project path is joined to the project, forward slashes throughout", absoluteName("src/greet.js", root) === "C:/Users/me/mimo-diff-demo/src/greet.js", absoluteName("src/greet.js", root))
+    check("a name the model wrote with backslashes reads the same", absoluteName("src\\greet.js", root) === "C:/Users/me/mimo-diff-demo/src/greet.js", absoluteName("src\\greet.js", root))
+    check("an absolute name keeps its place, only its slashes turned", absoluteName("D:\\other\\a.ts", root) === "D:/other/a.ts" && absoluteName("/etc/hosts", "/home/me") === "/etc/hosts")
+    check("a name that climbs out of the project is walked up", absoluteName("../notes.md", root) === "C:/Users/me/notes.md" && absoluteName("./a/../b.ts", "/home/me/") === "/home/me/b.ts", absoluteName("../notes.md", root))
+    check("with no project there is nothing to join, and the name stays as the patch wrote it", absoluteName("src/a.ts") === "src/a.ts")
+    check("a new file's /dev/null is left alone", absoluteName("/dev/null", root) === "/dev/null")
+
+    const body = await read("src/renderer/src/components/parts/DiffBody.vue")
+    check("the diff joins its names to the project only when it is handed one", /props\.root === undefined \? file : \{ name: absoluteName\(file\.name, props\.root\), oldName: file\.oldName && absoluteName\(file\.oldName, props\.root\) \}/.test(body))
+    const view = await read("src/renderer/src/components/parts/DiffView.vue")
+    check("the step's view passes the project through", /defineProps<\{ diff: string; root\?: string \}>\(\)/.test(view) && /<DiffBody :diff="diff" :root="root" \/>/.test(view))
+    const part = await read("src/renderer/src/components/parts/ToolPart.vue")
+    check("and a step hands over its conversation's project", /<DiffView :diff="diffText" :root="app\.current\?\.directory" \/>/.test(part))
+    const tab = await read("src/renderer/src/components/right/RpDiffTab.vue")
+    check("while the review tab hands over none, so it keeps the project's own path", /<DiffBody :diff="diff" :layout="layout" fill \/>/.test(tab))
+  }
 }

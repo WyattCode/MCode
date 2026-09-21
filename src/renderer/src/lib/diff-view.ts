@@ -263,6 +263,26 @@ export function splitRows(lines: readonly DiffLine[]): SplitRow[] {
   return rows
 }
 
+/*
+ * A patch's file name as a step's diff header writes it: the full path, with
+ * forward slashes, as MiMo's step shows `C:/Users/.../src/greet.js` where its
+ * review tab keeps the project's own `src/greet.js`. A name that is already
+ * absolute - `/dev/null` among them - is only given forward slashes, and a
+ * name that climbs out of the project is walked up the folder it climbs from.
+ */
+export function absoluteName(name: string, root?: string): string {
+  const slashed = name.replace(/\\/g, "/")
+  if (!root || slashed.startsWith("/") || /^[a-zA-Z]:\//.test(slashed)) return slashed
+  const joined = `${root.replace(/\\/g, "/").replace(/\/+$/, "")}/${slashed}`
+  const kept: string[] = []
+  for (const part of joined.split("/")) {
+    if (part === ".") continue
+    if (part === ".." && kept.length > 1 && kept[kept.length - 1] !== "") kept.pop()
+    else if (part !== "..") kept.push(part)
+  }
+  return kept.join("/")
+}
+
 /* A file's name as its folder part and its own name, MiMo's dim directory before the base. */
 export function splitPath(name: string): { dir: string; base: string } {
   const cut = name.lastIndexOf("/")

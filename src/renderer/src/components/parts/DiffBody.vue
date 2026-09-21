@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue"
-import { capDiff, displayName, markWords, parseDiffFiles, splitPath, splitRows, type DiffLayout } from "../../lib/diff-view"
+import { absoluteName, capDiff, displayName, markWords, parseDiffFiles, splitPath, splitRows, type DiffLayout } from "../../lib/diff-view"
 import { t } from "../../lib/i18n"
 
 /**
@@ -23,13 +23,17 @@ const props = defineProps<{
   layout?: DiffLayout
   /** Fills its parent (the tab); otherwise it takes MiMo's height for a step. */
   fill?: boolean
+  /** The project a step's patch was made in: its headers then name each file in full. */
+  root?: string
 }>()
 
 const capped = computed(() => capDiff(props.diff))
 const files = computed(() =>
   parseDiffFiles(capped.value.text).map((file) => ({
     ...file,
-    path: splitPath(displayName(file)),
+    path: splitPath(
+      displayName(props.root === undefined ? file : { name: absoluteName(file.name, props.root), oldName: file.oldName && absoluteName(file.oldName, props.root) }),
+    ),
     rows: file.hunks.map((hunk) => {
       const lines = markWords(hunk.lines)
       return { header: hunk.header, lines, split: splitRows(lines) }

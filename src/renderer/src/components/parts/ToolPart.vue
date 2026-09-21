@@ -252,7 +252,7 @@ const avatarSeed = computed(() => {
               <div class="hs-skip-hint" data-skip-hint>{{ t("stepList.skippedHint") }}</div>
               <pre class="tc-out" data-step-output>{{ cleaned.slice(0, OUTPUT_CAP) }}</pre>
             </template>
-            <div v-else-if="diffText" class="hs-diff"><DiffView :diff="diffText" /></div>
+            <div v-else-if="diffText" class="hs-diff"><DiffView :diff="diffText" :root="app.current?.directory" /></div>
             <!-- Safe to bind: the Markdown renderer escapes every piece of source it places. -->
             <div v-else-if="skillHtml" class="tc-out md text" data-step-output data-step-markdown v-html="skillHtml" />
             <pre v-else class="tc-out" data-step-output>{{ cleaned.slice(0, OUTPUT_CAP) }}</pre>

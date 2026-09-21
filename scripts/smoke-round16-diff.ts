@@ -152,7 +152,7 @@ export async function roundSixteenDiffChecks(check: Check, section: (name: strin
     const body = await read("src/renderer/src/components/parts/DiffBody.vue")
     check("the list is drawn only where the diff fills the panel", /<ol v-if="fill" class="db-list" data-diff-file-list>/.test(body))
     const view = await read("src/renderer/src/components/parts/DiffView.vue")
-    check("a step's diff and a permission card's ask for the unfilled diff, so they have no list", /<DiffBody :diff="diff" \/>/.test(view))
+    check("a step's diff and a permission card's ask for the unfilled diff, so they have no list", /<DiffBody :diff="diff" :root="root" \/>/.test(view))
     const tab = await read("src/renderer/src/components/right/RpDiffTab.vue")
     check("and the tab fills it, so it has one", /<DiffBody :diff="diff" :layout="layout" fill \/>/.test(tab))
   }
