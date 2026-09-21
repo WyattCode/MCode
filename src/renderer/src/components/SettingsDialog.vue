@@ -53,6 +53,7 @@ type Section =
   | "updates"
   | "models"
   | "mcp"
+  | "lab"
 
 /** Which page to land on - the title bar's server button aims straight at it. */
 /**
@@ -912,6 +913,7 @@ const NAV_LABELS: Record<Section, string> = {
   keys: "set.shortcuts",
   mcp: "set.nav.mcp",
   environment: "set.environment",
+  lab: "set.nav.lab",
   archive: "set.nav.archive",
   updates: "set.nav.updates",
 }
@@ -927,6 +929,7 @@ const NAV_KEYWORDS: Record<Section, string> = {
   keys: "set.keywords.keys",
   mcp: "set.keywords.mcp",
   environment: "set.keywords.environment",
+  lab: "set.keywords.lab",
   archive: "set.keywords.archive",
   updates: "set.keywords.updates",
 }
@@ -1830,6 +1833,17 @@ onBeforeUnmount(() => {
             <circle cx="6.5" cy="15.4" r="1.6" stroke="currentColor" />
           </svg>
           <span>{{ t("set.environment") }}</span>
+        </button>
+
+        <!-- MiMo 26.920's 实验室 group, always shown, between 编码 and 已归档. -->
+        <div v-show="navShows('lab')" class="nav-group">{{ t("set.group.lab") }}</div>
+
+        <button v-show="navShows('lab')" class="nav-item" :class="{ on: section === 'lab' }" data-nav-lab @click="section = 'lab'">
+          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M8 3h4M8.5 3v5L4 15.5a1 1 0 0 0 .9 1.5h10.2a1 1 0 0 0 .9-1.5L11.5 8V3" stroke="currentColor" stroke-linejoin="round" />
+            <path d="M6 12.5h8" stroke="currentColor" />
+          </svg>
+          <span>{{ t("set.nav.lab") }}</span>
         </button>
 
         <div v-show="navShows('archive')" class="nav-group">{{ t("set.group.archived") }}</div>
@@ -3124,6 +3138,34 @@ onBeforeUnmount(() => {
         </div>
 
         <!-- Archive -->
+        <!--
+          MiMo 26.920's lab, one card per switch. Only session chat is here:
+          its other two switches (Git version preview, the uncommitted-changes
+          reminder) ship off and MCode has neither behaviour behind them.
+        -->
+        <template v-else-if="section === 'lab'">
+          <h2>{{ t("set.nav.lab") }}</h2>
+          <div class="card" data-lab-session-chat>
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.lab.sessionChat") }}</div>
+                <div class="line-sub">{{ t("set.lab.sessionChatSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.sessionChat !== false }"
+                role="switch"
+                :aria-checked="app.config?.sessionChat !== false"
+                :aria-label="t('set.lab.sessionChat')"
+                data-session-chat-switch
+                @click="app.patchConfig({ sessionChat: app.config?.sessionChat === false })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+          </div>
+        </template>
+
         <template v-else-if="section === 'archive'">
           <!-- MiMo's header: the page title, and 批量管理 at its far end while anything is archived. -->
           <div class="page-head">

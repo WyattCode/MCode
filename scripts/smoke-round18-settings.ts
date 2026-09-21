@@ -13,6 +13,7 @@ import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { SESSION_CHAT_SKILL, discoverSkills, externalSkillDirs } from "../src/server/skill"
 import { sanitizeConfig } from "../src/server/config-sanitize"
+import { SESSION_CHAT_TOOLS, toolsForTurn, withheldByLab } from "../src/server/tool/registry"
 import type { AppConfig } from "../src/shared/protocol"
 import {
   OPEN_HIDDEN_ARG,
@@ -148,7 +149,34 @@ export async function roundEighteenSettingsChecks(check: Check, section: (name: 
     check("R18-M2: the row sits under the tray row and only where it is offered", /data-tray-row[\s\S]*v-if="loginItem\.supported"[^>]*data-launch-at-login-row/.test(settings))
   }
 
-  // Session chat's skill, which the lab switch takes away (R18-M3 checks the tools).
+  // ---------------------------------------------------------------- R18-M3
+  section("Round 18 (M3): the lab page, and session chat behind its switch")
+  {
+    const names = (sessionChat?: boolean) => toolsForTurn("build", { voiceFeedback: true, sessionChat }).map((tool) => tool.name)
+    const on = names(undefined)
+    const off = names(false)
+    check("R18-M3: session chat is on by default, as MiMo ships it: all six tools offered", [...SESSION_CHAT_TOOLS].every((name) => on.includes(name)), on)
+    check("R18-M3: switched off, none of the six is offered", [...SESSION_CHAT_TOOLS].every((name) => !off.includes(name)))
+    check("R18-M3: and nothing else goes with them", off.length === on.length - SESSION_CHAT_TOOLS.size)
+    check("R18-M3: a call to one while off is not run", withheldByLab("talk_to_session", { sessionChat: false }) && !withheldByLab("talk_to_session", {}) && !withheldByLab("read", { sessionChat: false }))
+    const runner = await read("src/server/session/runner.ts")
+    check("R18-M3: the runner offers the turn's tools by the setting", /sessionChat: settings\.sessionChat/.test(runner))
+    check("R18-M3: and refuses a withheld one at dispatch", /labOff\(name\) \? undefined : findTool\(name\)/.test(runner))
+
+    const doc = { sessionChat: "no" } as unknown as AppConfig
+    sanitizeConfig(doc, {} as AppConfig)
+    check("R18-M3: a stored switch that is not a boolean is dropped, which is on", doc.sessionChat === undefined)
+
+    const settings = await read("src/renderer/src/components/SettingsDialog.vue")
+    const nav = settings.slice(settings.indexOf('<nav class="nav"'), settings.indexOf("</nav>"))
+    const order = ["navShows('environment')", "navShows('lab')", "navShows('archive')"].map((needle) => nav.indexOf(needle))
+    check("R18-M3: the lab group sits between 编码 and 已归档, as in MiMo", order.every((at) => at >= 0) && order[0] < order[1] && order[1] < order[2], order)
+    check("R18-M3: always shown - no condition beyond the search", /<button v-show="navShows\('lab'\)" class="nav-item"/.test(nav))
+    check("R18-M3: the switch reads absent as on", /:class="\{ on: app\.config\?\.sessionChat !== false \}"/.test(settings))
+    check("R18-M3: only switches with a behaviour behind them are drawn", !/gitVersionPin|uncommittedHint/.test(settings))
+  }
+
+  // Session chat's skill, which the lab switch takes away with the tools.
   {
     const builtin = path.join(process.cwd(), "resources", "skills")
     const on = await discoverSkills({ directory: os.tmpdir(), builtinRoot: builtin, home: path.join(os.tmpdir(), "mcode-r18-no-home") })

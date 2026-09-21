@@ -29,7 +29,7 @@ import { PermissionDenied, REVIEW_TIMEOUT_MS, VERDICT_TOOL_NAME, looksSecret, ve
 import type { Storage } from "../storage"
 import { globalAgentsPath } from "../global-agents"
 import { discoverSkills, enabledSkills, skillReminders, withSkillReminders, type SkillInfo } from "../skill"
-import { findTool, hasOwnToolsOnly, reachOf, repairableNames, toolsForTurn } from "../tool/registry"
+import { findTool, hasOwnToolsOnly, reachOf, repairableNames, toolsForTurn, withheldByLab } from "../tool/registry"
 import { normalizeToolInput, resolveToolName } from "../tool/repair"
 import { Questions } from "../tool/question"
 import type { PlanControl, SubagentControl, SubagentSpec, ToolContext, ToolDefinition, ToolResult } from "../tool/types"
@@ -577,7 +577,9 @@ export class SessionRunner {
   private tools(agent: string, directory: string): ToolDefinition[] {
     // speak rides on the voice feedback setting; the rule itself lives with the registry.
     // bash's description is written for the shell the settings name (R16-C2).
-    const own = toolsForTurn(agent, { voiceFeedback: this.config.get().voiceFeedback !== false, shell: this.config.get().shell })
+    // session chat: the lab's switch takes its tools away from the next turn.
+    const settings = this.config.get()
+    const own = toolsForTurn(agent, { voiceFeedback: settings.voiceFeedback !== false, shell: settings.shell, sessionChat: settings.sessionChat })
     if (hasOwnToolsOnly(agent)) return own
     return [...own, ...(this.mcp?.tools(directory) ?? [])]
   }
@@ -3266,8 +3268,12 @@ export class SessionRunner {
      */
     // subagents: a subagent asked for structured output has one more tool, made from its schema.
     const schema = part.name === STRUCTURED_OUTPUT ? (await this.store.get(input.session.id))?.subagent?.outputSchema : undefined
+    // A tool the lab has switched off is not there to be called, as it is not there in MiMo.
+    const labOff = (name: string) => withheldByLab(name, this.config.get())
     const lookup = (name: string) =>
-      findTool(name) ?? (schema && name === STRUCTURED_OUTPUT ? structuredOutputTool(schema) : undefined) ?? this.mcp?.tools(input.session.directory).find((entry) => entry.name === name)
+      (labOff(name) ? undefined : findTool(name)) ??
+      (schema && name === STRUCTURED_OUTPUT ? structuredOutputTool(schema) : undefined) ??
+      this.mcp?.tools(input.session.directory).find((entry) => entry.name === name)
     let tool = lookup(part.name)
     if (!tool) {
       // MiMo's repair: the name without case, then with dashes, underscores and spaces ignored.

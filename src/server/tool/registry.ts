@@ -133,10 +133,24 @@ export function hasOwnToolsOnly(agent: string): boolean {
  * Windows PowerShell 5.1, which has no such operator. `shell` is already part
  * of the prompt prefix key, so a changed setting rebuilds the prefix anyway.
  */
-export function toolsForTurn(agent: string, options: { voiceFeedback: boolean; shell?: string }): ToolDefinition[] {
+export function toolsForTurn(agent: string, options: { voiceFeedback: boolean; shell?: string; sessionChat?: boolean }): ToolDefinition[] {
   return toolsFor(agent)
     .filter((tool) => tool.name !== "speak" || options.voiceFeedback)
+    .filter((tool) => !withheldByLab(tool.name, options))
     .map((tool) => (tool.name === "bash" ? { ...tool, description: bashDescription(options.shell) } : tool))
+}
+
+/**
+ * The lab's session chat (MiMo 26.920, on unless switched off): its six tools,
+ * which MiMo's desktop installs as one module and leaves out whole when the
+ * switch is off - reaching other conversations, creating and naming them, and
+ * reading other coding tools' saved sessions. The skill goes with them.
+ */
+export const SESSION_CHAT_TOOLS = new Set(["contacts", "talk_to_session", "create_session", "update_session", "list_external_sessions", "read_external_session"])
+
+/** Whether a switch in the lab keeps this tool from the model: neither offered nor run. */
+export function withheldByLab(name: string, settings: { sessionChat?: boolean }): boolean {
+  return settings.sessionChat === false && SESSION_CHAT_TOOLS.has(name)
 }
 
 /**
