@@ -366,6 +366,10 @@ import { roundSeventeenViewerChecks } from "./smoke-round17-viewers"
 import { roundSeventeenWorkflowChecks } from "./smoke-round17-workflow"
 // Round 17, lane X: the mermaid diagram block and the motion rule that flattened it (R17-X1 onwards).
 import { roundSeventeenDiagramChecks } from "./smoke-round17-diagram"
+// Round 18, lane A: the AI-generated label written into delivered files (R18-A1 onwards).
+import { roundEighteenLabelChecks } from "./smoke-round18-labels"
+// Round 18, lane D: the diff as MiMo 26.920 draws it (R18-D1 onwards).
+import { roundEighteenDiffChecks } from "./smoke-round18-diff"
 // Round 18, lane E: the engine and the model-facing text, moved to MiMo 26.920 (R18-E1 onwards).
 import { roundEighteenEngineChecks } from "./smoke-round18-engine"
 // skills: discovery, frontmatter and the slash list.
@@ -6997,6 +7001,8 @@ async function main() {
   await roundSeventeenViewerChecks(check, section)
   await roundSeventeenWorkflowChecks(check, section)
   await roundSeventeenDiagramChecks(check, section)
+  await roundEighteenLabelChecks(check, section)
+  await roundEighteenDiffChecks(check, section)
   await roundEighteenEngineChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)

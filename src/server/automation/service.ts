@@ -451,6 +451,14 @@ export class AutomationService {
     if (settled) void this.save()
     for (const automation of this.saved.automations) this.plan(automation, true)
     if (options.interval === false) return
+    /*
+     * The clocks are sampled now, as the checks begin, so the first check has
+     * something to compare against. Sampled only by that first check, a clock
+     * that jumped before it ran - the machine put to sleep straight after
+     * start-up - had no baseline, read as ordinary, and let every missed
+     * occurrence fire at once.
+     */
+    this.lastClock = this.sampleClock()
     this.interval = setInterval(() => void this.tick(), this.deps.tickMs ?? TICK_MS)
     this.interval.unref?.()
   }

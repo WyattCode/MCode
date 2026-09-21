@@ -6,11 +6,12 @@ import DiffBody from "./DiffBody.vue"
  *
  * MiMo draws the same diff component here as in the 审阅 tab, only unfilled, so
  * a multi-file patch is split per file with its own header and counts and the
- * cap note instead of running together as one list of lines.
+ * cap note instead of running together as one list of lines. A step hands over
+ * its project, and its headers then name each file in full, as MiMo's do.
  */
-defineProps<{ diff: string }>()
+defineProps<{ diff: string; root?: string }>()
 </script>
 
 <template>
-  <DiffBody :diff="diff" />
+  <DiffBody :diff="diff" :root="root" />
 </template>

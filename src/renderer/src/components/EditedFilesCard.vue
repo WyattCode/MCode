@@ -211,9 +211,10 @@ async function pickMenu(key: string) {
     <div class="file-card" data-edited-card @contextmenu="single ? openMenu($event, single.path) : undefined">
       <div class="fc-head" data-fc-header>
         <span class="fc-icon" :data-fc-icon="files.length > 1 ? 'multiple' : single?.created ? 'new' : 'edited'">
+          <!-- Several files: one sheet with a plus over a minus, as MiMo 26.920 draws it. -->
           <svg v-if="files.length > 1" width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M8 3h7l4 4v10a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
-            <path d="M15 3v4h4M3 8v11a2 2 0 0 0 2 2h9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+            <path d="M12 7.5v5M9.5 10h5M9.5 16h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
           <svg v-else-if="single?.created" width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />

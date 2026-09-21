@@ -2,13 +2,15 @@ import path from "node:path"
 import fs from "node:fs/promises"
 import type { Stats } from "node:fs"
 import type { ToolDefinition } from "./types"
-import { addressName, normalizedAddress } from "@shared/session-files"
+import { addressName, demotedInBatch, normalizedAddress } from "@shared/session-files"
+import { labelDelivered, type AigcOutcome } from "./aigc-label"
 
 /*
  * Two tools that act on the window rather than the project, as MiMo's baseline
  * extension offers them: one points the PDF preview at a quoted passage, one
- * names the files a turn is handing over. Neither reads or changes a file's
- * contents; the renderer does the showing once the call has completed.
+ * names the files a turn is handing over. The renderer does the showing once
+ * the call has completed; the only change either makes to a file is the
+ * AI-generated label present_files writes into what it hands over (R18-A1).
  */
 
 const baseName = (file: string) => file.split(/[\\/]/).pop() || file
@@ -124,6 +126,24 @@ const SKIP_WORDS: Record<PresentSkip["reason"], string> = {
   directory: "is a folder, not a file",
 }
 
+/**
+ * The files of one hand-over that get the AI-generated label (R18-A1): every
+ * local file delivered, except what MiMo's demotions take out of the batch as
+ * renders made on the way to a document, as 26.920 labels its deliverables
+ * only. One at a time, in the order given.
+ */
+async function labelHandedOver(files: PresentedFile[], snapshot: (target: string) => Promise<void>): Promise<AigcOutcome[]> {
+  const local = files.flatMap((file) => ("path" in file ? [file.path] : []))
+  const demoted = demotedInBatch(local)
+  const outcomes: AigcOutcome[] = []
+  for (const target of local) {
+    if (demoted.has(target)) continue
+    const outcome = await labelDelivered(target, { snapshot })
+    if (outcome.kind) outcomes.push(outcome)
+  }
+  return outcomes
+}
+
 export const PresentFilesTool: ToolDefinition = {
   name: "present_files",
   description: [
@@ -153,13 +173,16 @@ export const PresentFilesTool: ToolDefinition = {
     const { files, skipped } = await presentable(list, context.directory, cwd)
     const names = files.map((file) => file.name)
     const notes = skipped.map((skip) => `Skipped "${skip.entry}": it ${SKIP_WORDS[skip.reason]}.`)
+    const labelled = await labelHandedOver(files, context.snapshot)
     const head = files.length
       ? `Showed ${files.length} ${files.length === 1 ? "file" : "files"} to the user: ${names.join(", ")}. The first opens in the preview panel.`
       : "No files were shown to the user."
+    const marked = labelled.filter((outcome) => outcome.status === "labelled").map((outcome) => baseName(outcome.path))
+    if (marked.length) notes.push(`The AI-generated label (AI生成) was written into ${marked.join(", ")}, as the rules for AI-generated content require; leave it in place.`)
     return {
       output: [head, ...notes].join("\n"),
       title: names.join(", ").slice(0, 80),
-      metadata: { files, skipped },
+      metadata: { files, skipped, ...(labelled.length ? { aigc: labelled } : {}) },
     }
   },
 }
