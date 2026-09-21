@@ -537,7 +537,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
           agent: session.agent,
           globalAgentsFile: globalAgentsPath(runtime.storage.directory),
           skills: enabledSkills(
-            (await discoverSkills({ directory: session.directory, storageDirectory: runtime.storage.directory })).skills,
+            (await discoverSkills({ directory: session.directory, storageDirectory: runtime.storage.directory, settings: runtime.config.get() })).skills,
             runtime.config.get().disabledSkills,
           ),
         }),
@@ -782,7 +782,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
      * detail card reads the file and can uninstall one of the user's own.
      */
     case "skill.list": {
-      const { skills } = await discoverSkills({ directory: request.directory, storageDirectory: runtime.storage.directory })
+      const { skills } = await discoverSkills({ directory: request.directory, storageDirectory: runtime.storage.directory, settings: runtime.config.get() })
       const off = new Set(runtime.config.get().disabledSkills ?? [])
       return {
         skills: skills.map((skill) => ({
@@ -799,7 +799,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     }
 
     case "skill.content": {
-      const { skills } = await discoverSkills({ directory: request.directory, storageDirectory: runtime.storage.directory })
+      const { skills } = await discoverSkills({ directory: request.directory, storageDirectory: runtime.storage.directory, settings: runtime.config.get() })
       const skill = skills.find((entry) => entry.name === request.name)
       const read = skill ? await readSkillFile(skill.location) : undefined
       if (!read) throw new Error(`There is no skill ${request.name} to read`)
@@ -807,7 +807,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     }
 
     case "skill.uninstall": {
-      const { skills } = await discoverSkills({ directory: request.directory, storageDirectory: runtime.storage.directory })
+      const { skills } = await discoverSkills({ directory: request.directory, storageDirectory: runtime.storage.directory, settings: runtime.config.get() })
       const skill = skills.find((entry) => entry.name === request.name)
       if (!skill) throw new Error(`There is no skill ${request.name}`)
       await uninstallSkill(skill, runtime.storage.directory)

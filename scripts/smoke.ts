@@ -366,6 +366,8 @@ import { roundSeventeenViewerChecks } from "./smoke-round17-viewers"
 import { roundSeventeenWorkflowChecks } from "./smoke-round17-workflow"
 // Round 17, lane X: the mermaid diagram block and the motion rule that flattened it (R17-X1 onwards).
 import { roundSeventeenDiagramChecks } from "./smoke-round17-diagram"
+// Round 18, lane M: the settings MiMo 26.920 added or redid (R18-M1 onwards).
+import { roundEighteenSettingsChecks } from "./smoke-round18-settings"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7018,6 +7020,7 @@ async function main() {
   await roundSeventeenViewerChecks(check, section)
   await roundSeventeenWorkflowChecks(check, section)
   await roundSeventeenDiagramChecks(check, section)
+  await roundEighteenSettingsChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

@@ -1683,7 +1683,8 @@ export class SessionRunner {
 
   /** skills: every switched-on skill a conversation in this directory can reach, with the user's global ones from the app's data folder. */
   private async skillsFor(directory: string): Promise<SkillInfo[]> {
-    return enabledSkills((await discoverSkills({ directory, storageDirectory: path.dirname(this.globalAgents) })).skills, this.config.get().disabledSkills)
+    const settings = this.config.get()
+    return enabledSkills((await discoverSkills({ directory, storageDirectory: path.dirname(this.globalAgents), settings })).skills, settings.disabledSkills)
   }
 
   /** skills: what a user message carries for the model beyond its words - skills it names, and the hint its office documents bring. */

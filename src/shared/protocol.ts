@@ -1118,6 +1118,25 @@ export const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "ma
 export type Effort = (typeof EFFORTS)[number]
 
 /**
+ * The other coding tools whose skill folders can be read too, in the order
+ * MiMo's engine lists them: `~/.<tool>/skills` and each project's
+ * `.<tool>/skills`. `agents` is the open standard.
+ */
+export const SKILL_PATH_SOURCES = ["claude", "codex", "opencode", "agents"] as const
+
+export type SkillPathSource = (typeof SKILL_PATH_SOURCES)[number]
+
+/** MiMo 26.920's defaults: `.agents` read, the three brand folders not. */
+export const SKILL_PATH_DEFAULTS: Record<SkillPathSource, boolean> = { claude: false, codex: false, opencode: false, agents: true }
+
+/** Which tools' folders are read, each unset one at MiMo's default. */
+export function skillPathCompat(stored: Partial<Record<SkillPathSource, boolean>> | undefined): Record<SkillPathSource, boolean> {
+  const out = { ...SKILL_PATH_DEFAULTS }
+  for (const source of SKILL_PATH_SOURCES) if (typeof stored?.[source] === "boolean") out[source] = stored[source]
+  return out
+}
+
+/**
  * Every bucket a tool call is judged against.
  *
  * The order is the order the settings screen draws, and it follows the
@@ -1650,6 +1669,18 @@ export interface AppConfig {
    * denies them.
    */
   disabledSkills?: string[]
+  /**
+   * skills: which other coding tools' skill folders are read as well, MiMo's
+   * 技能兼容路径. Absent keys take `SKILL_PATH_DEFAULTS`: the open `.agents`
+   * folders on, the three brand folders off.
+   */
+  skillPaths?: Partial<Record<SkillPathSource, boolean>>
+  /**
+   * The lab's session chat: whether the model is offered the tools and the
+   * skill that reach other conversations and local agents. Absent is on, as
+   * MiMo ships it.
+   */
+  sessionChat?: boolean
   /** OpenAI-compatible providers the user added by base URL. */
   customProviders: CustomProvider[]
   /**

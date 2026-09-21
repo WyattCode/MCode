@@ -20,7 +20,8 @@ import LanguageMenu from "./LanguageMenu.vue"
 import VoiceUsageDialog from "./VoiceUsageDialog.vue"
 import ThirdPartyDialog from "./ThirdPartyDialog.vue"
 import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
-import type { AgentsFileState, AppPath, AppPaths, UsageSummary } from "@shared/protocol"
+import type { AgentsFileState, AppPath, AppPaths, SkillPathSource, UsageSummary } from "@shared/protocol"
+import { skillPathCompat } from "@shared/protocol"
 import type { McpImportItem, McpImportSource, McpServerConfig, McpStatus, McpToolInfo } from "@shared/protocol"
 import { MCP_STATUS_TONE, isMcpStatus, mcpNeedsSignIn, mcpStatusLabel } from "../lib/mcp-status"
 import { homePath } from "../lib/home-path"
@@ -138,6 +139,51 @@ const confirmingAgentsDelete = ref(false)
 
 function reasonText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+/* MiMo 26.920's 复制路径 and 打开 on the config file row. */
+async function copyConfigPath() {
+  const target = configFile.value?.path
+  if (!target) return
+  try {
+    await navigator.clipboard.writeText(target)
+    notify(t("set.config.pathCopied"))
+  } catch {
+    notifyFailure(t("set.config.copyPathFailed"))
+  }
+}
+
+async function openConfigFile() {
+  const target = configFile.value?.path
+  if (!target) return
+  const cut = Math.max(target.lastIndexOf("/"), target.lastIndexOf("\\"))
+  const failure = await window.mcode.openFile(target.slice(0, cut), target.slice(cut + 1))
+  if (failure) notifyFailure(failure)
+}
+
+/*
+ * MiMo 26.920's 技能兼容路径: this app's own folders always, and the other
+ * tools' folders each behind a switch, `.agents` on unless turned off.
+ */
+const skillPathRows = computed(() => {
+  const compat = skillPathCompat(app.config?.skillPaths)
+  const storage = paths.value?.storage
+  const own = storage ? homePath(`${storage}${storage.includes("\\") ? "\\" : "/"}skills`, paths.value?.home) : ""
+  return [
+    { id: "mcode" as const, title: t("set.skillPaths.mcode"), global: own, project: ".mcode/skills", on: true },
+    ...(["agents", "claude", "codex", "opencode"] as const).map((id) => ({
+      id,
+      title: t(`set.skillPaths.${id}`),
+      global: `~/.${id}/skills`,
+      project: `.${id}/skills`,
+      on: compat[id],
+    })),
+  ]
+})
+
+function switchSkillPath(id: SkillPathSource) {
+  const compat = skillPathCompat(app.config?.skillPaths)
+  void app.patchConfig({ skillPaths: { ...compat, [id]: !compat[id] } })
 }
 
 async function loadAgents() {
@@ -2303,6 +2349,10 @@ onBeforeUnmount(() => {
                 <div class="line-title">{{ t("set.config.file") }}</div>
                 <div class="line-sub mcp-path" data-config-path :title="configFile?.path">{{ configFile?.path ?? "" }}</div>
               </div>
+              <div class="mcp-ctrl">
+                <button class="ctl-btn" data-config-copy-path :disabled="!configFile" @click="copyConfigPath">{{ t("set.config.copyPath") }}</button>
+                <button class="ctl-btn" data-config-open :disabled="!configFile" @click="openConfigFile">{{ t("files.open") }}</button>
+              </div>
             </div>
             <div class="line" data-agents-row>
               <div class="line-text">
@@ -2326,6 +2376,32 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </div>
+          <h3 data-skill-paths-heading>{{ t("set.skillPaths.title") }}</h3>
+          <div class="card" data-skill-paths>
+            <div v-for="row in skillPathRows" :key="row.id" class="line" :data-skill-path="row.id">
+              <div class="line-text">
+                <div class="line-title">{{ row.title }}</div>
+                <div class="line-sub skill-path-pair">
+                  <span>{{ t("set.skillPaths.global", { path: row.global }) }}</span>
+                  <span>{{ t("set.skillPaths.project", { path: row.project }) }}</span>
+                </div>
+              </div>
+              <span v-if="row.id === 'mcode'" class="agents-tag" data-skill-path-always>{{ t("set.skillPaths.always") }}</span>
+              <button
+                v-else
+                class="switch"
+                :class="{ on: row.on }"
+                role="switch"
+                :aria-checked="row.on"
+                :aria-label="row.title"
+                :data-skill-path-switch="row.id"
+                @click="switchSkillPath(row.id)"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+          </div>
+          <p class="note" data-skill-paths-note>{{ t("set.skillPaths.note") }}</p>
           <Teleport to="body">
             <ConfirmDialog
               v-if="confirmingAgentsDelete"
@@ -4221,6 +4297,12 @@ h3 {
   border-radius: 999px;
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 400;
+}
+
+.skill-path-pair {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 12px;
 }
 
 .agents-tag.off {

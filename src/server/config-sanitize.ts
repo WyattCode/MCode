@@ -1,6 +1,6 @@
 import { APP_ICONS, DEFAULT_APP_ICON } from "@shared/app-icons"
 import { migrateChime } from "@shared/chime"
-import { AGENT_NAMES, EFFORTS, type AppConfig } from "@shared/protocol"
+import { AGENT_NAMES, EFFORTS, SKILL_PATH_SOURCES, type AppConfig } from "@shared/protocol"
 
 /**
  * Every stored value, checked as it is read - MiMo's rule for its preferences.
@@ -56,7 +56,7 @@ export function sanitizeConfig(doc: AppConfig, fallback: AppConfig): boolean {
   for (const key of ["allowFullAccess", "goalMode", "importOnboarded", "tray", "voiceSend", "voiceFeedback", "fontSmoothing", "pointerCursor", "spineSound"]) {
     if (typeof record[key] !== "boolean") put(key, base[key])
   }
-  for (const key of ["smart", "browserEnabled", "videoCardDetails"]) {
+  for (const key of ["smart", "browserEnabled", "videoCardDetails", "sessionChat"]) {
     if (record[key] !== undefined && typeof record[key] !== "boolean") drop(key)
   }
 
@@ -84,6 +84,15 @@ export function sanitizeConfig(doc: AppConfig, fallback: AppConfig): boolean {
     const value = record.disabledSkills
     if (!Array.isArray(value)) drop("disabledSkills")
     else if (!strings(value)) put("disabledSkills", value.filter((item) => typeof item === "string"))
+  }
+  // Only the four known folders, each a boolean; anything else is its default.
+  if (record.skillPaths !== undefined) {
+    const value = record.skillPaths as Record<string, unknown> | null
+    if (!value || typeof value !== "object" || Array.isArray(value)) drop("skillPaths")
+    else {
+      const kept = Object.fromEntries(SKILL_PATH_SOURCES.flatMap((source) => (typeof value[source] === "boolean" ? [[source, value[source]]] : [])))
+      if (Object.keys(kept).length !== Object.keys(value).length) put("skillPaths", kept)
+    }
   }
   if (record.memory !== undefined) {
     const memory = record.memory as Record<string, unknown> | null

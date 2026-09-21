@@ -3,7 +3,7 @@ import { existsSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { spawn } from "node:child_process"
-import type { CommandDefinition, CommandInfo, Effort, ModelRef, TurnAgent } from "@shared/protocol"
+import type { AppConfig, CommandDefinition, CommandInfo, Effort, ModelRef, TurnAgent } from "@shared/protocol"
 import { COMMAND_AGENTS, EFFORTS } from "@shared/protocol"
 import { MODEL_TIERS, expandTemplate, fileReferences, hints, shellPlaceholders, substituteShell } from "@shared/command"
 import type { McpServers } from "./mcp"
@@ -45,7 +45,7 @@ import { builtinCommands } from "./command-builtin"
 
 interface Deps {
   /** Only these fields are read, so a check can hand this a plain object. */
-  config: { get(): { commands?: Record<string, CommandDefinition>; model?: ModelRef; shell?: string; disabledSkills?: string[] } }
+  config: { get(): { commands?: Record<string, CommandDefinition>; model?: ModelRef; shell?: string; disabledSkills?: string[] } & Pick<AppConfig, "skillPaths" | "sessionChat"> }
   /** Only the prompt half of the MCP surface is used. */
   mcp: Pick<McpServers, "prompts" | "getPrompt">
   /** The app's data directory, whose `command(s)` and `skill(s)` folders hold the user's global ones. */
@@ -70,7 +70,7 @@ export async function listCommands(deps: Deps, directory: string): Promise<Comma
     commands[name] = prompt
   }
 
-  for (const skill of await skillCommands(directory, deps.storage?.directory, deps.config.get().disabledSkills)) {
+  for (const skill of await skillCommands(directory, deps.storage?.directory, deps.config.get(), deps.home)) {
     // The one source that yields: a skill never displaces a command.
     if (commands[skill.name]) continue
     commands[skill.name] = skill
@@ -348,10 +348,15 @@ async function promptCommands(mcp: Deps["mcp"], directory: string): Promise<Reco
  * - no base-directory lines after it, those belong to the skill tool's output -
  * and marks the shipped ones `bundled`, which is `builtin` here.
  */
-async function skillCommands(directory: string, storageDirectory?: string, disabled?: readonly string[]): Promise<CommandInfo[]> {
-  const { skills } = await discoverSkills({ directory, storageDirectory })
+async function skillCommands(
+  directory: string,
+  storageDirectory: string | undefined,
+  settings: Pick<AppConfig, "skillPaths" | "sessionChat" | "disabledSkills">,
+  home?: string,
+): Promise<CommandInfo[]> {
+  const { skills } = await discoverSkills({ directory, storageDirectory, settings, home })
   // A switched-off skill is not offered after a slash, as MiMo's list leaves out a denied one.
-  return enabledSkills(skills, disabled).map((skill) => ({
+  return enabledSkills(skills, settings.disabledSkills).map((skill) => ({
     name: skill.name,
     description: skill.description || undefined,
     source: "skill" as const,
