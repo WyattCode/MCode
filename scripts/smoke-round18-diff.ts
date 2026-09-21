@@ -186,4 +186,14 @@ export async function roundEighteenDiffChecks(check: Check, section: (name: stri
     const tab = await read("src/renderer/src/components/right/RpDiffTab.vue")
     check("while the review tab hands over none, so it keeps the project's own path", /<DiffBody :diff="diff" :layout="layout" fill \/>/.test(tab))
   }
+
+  // ----------------------------------------------------------------- R18-D6
+  section("Round 18 (R18-D6): the card for several edited files wears a sheet with a plus over a minus")
+  {
+    const card = await read("src/renderer/src/components/EditedFilesCard.vue")
+    const at = card.indexOf('<svg v-if="files.length > 1"')
+    const icon = at < 0 ? "" : card.slice(at, card.indexOf("</svg>", at))
+    check("the several-files icon is one sheet, not two stacked", (icon.match(/<path /g) ?? []).length === 2 && !/M3 8v11/.test(icon))
+    check("holding a plus above a minus", /d="M12 7\.5v5M9\.5 10h5M9\.5 16h5"/.test(icon))
+  }
 }
