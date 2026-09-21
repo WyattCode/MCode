@@ -1874,9 +1874,10 @@ export interface CustomProvider {
   /**
    * Which API the gateway speaks. Absent is OpenAI-compatible, which every
    * provider stored before this existed is; `anthropic` reaches a Claude-style
-   * gateway over the Messages API, as MiMo's `npm: @ai-sdk/anthropic` does.
+   * gateway over the Messages API, as MiMo's `npm: @ai-sdk/anthropic` does, and
+   * `responses` OpenAI's Responses API, MiMo 26.920's `@ai-sdk/openai`.
    */
-  protocol?: "openai" | "anthropic"
+  protocol?: "openai" | "anthropic" | "responses"
 }
 
 /**
@@ -1888,7 +1889,7 @@ export type AuthMethodKind = "api-key" | "oauth-browser" | "oauth-headless" | "l
 export interface ProviderStatus {
   id: string
   name: string
-  kind: "anthropic" | "openai-compatible" | "chatgpt"
+  kind: "anthropic" | "openai-compatible" | "chatgpt" | "openai-responses"
   /** i18n key, resolved in the renderer. */
   description: string
   recommended: boolean

@@ -40,9 +40,7 @@ import { workspaceInfo } from "./workspace"
 import { systemPrompt } from "./session/prompt"
 import * as git from "./git"
 import { pullRequestState } from "./pull-request"
-import { AnthropicAdapter } from "./provider/anthropic"
-import { OpenAICompatible } from "./provider/openai"
-import { ChatGPTSubscription } from "./provider/chatgpt"
+import { adapterFor } from "./provider/adapter"
 import type { ProviderAdapter } from "./provider/types"
 import { expandCommand, listCommands, runShellPlaceholders } from "./command"
 import { discoverSkills, enabledSkills, readSkillFile, removableSkill, uninstallSkill } from "./skill"
@@ -1200,8 +1198,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
             ...(Object.keys(headers).length ? { headers } : {}),
             models,
             ...(environment ? { environment } : {}),
-            // A Claude-style gateway speaks the Messages API; absent stays OpenAI-compatible.
-            ...(request.protocol === "anthropic" ? { protocol: "anthropic" as const } : {}),
+            // A Claude-style gateway speaks the Messages API, and `responses` the Responses API; absent stays OpenAI-compatible.
+            ...(request.protocol === "anthropic" || request.protocol === "responses" ? { protocol: request.protocol } : {}),
           },
         ],
       })
@@ -1243,7 +1241,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
                 ...(Object.keys(keptHeaders).length ? { headers: keptHeaders } : {}),
                 models,
                 ...(keptEnvironment ? { environment: keptEnvironment } : {}),
-                ...(request.protocol === "anthropic" ? { protocol: "anthropic" as const } : {}),
+                ...(request.protocol === "anthropic" || request.protocol === "responses" ? { protocol: request.protocol } : {}),
               }
             : entry,
         ),
@@ -1399,12 +1397,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * tools, and whatever does not come back in time is simply not used - the
        * card commits under its own `update …` wording instead.
        */
-      const adapter: ProviderAdapter =
-        definition.kind === "anthropic"
-          ? AnthropicAdapter
-          : definition.kind === "chatgpt"
-            ? ChatGPTSubscription
-            : OpenAICompatible
+      const adapter: ProviderAdapter = adapterFor(definition.kind)
       const apiKey = runtime.config.apiKey(definition.id) ?? ""
       const tokens =
         definition.kind === "chatgpt" ? await runtime.auth.accessToken(definition.id).catch(() => undefined) : undefined

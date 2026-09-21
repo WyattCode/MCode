@@ -1231,7 +1231,7 @@ export class Config {
         id: entry.id,
         name: entry.name,
         // MiMo lets a custom provider name its SDK; here that is the protocol it speaks.
-        kind: entry.protocol === "anthropic" ? "anthropic" : "openai-compatible",
+        kind: entry.protocol === "anthropic" ? "anthropic" : entry.protocol === "responses" ? "openai-responses" : "openai-compatible",
         description: "provider.desc.custom",
         // Tidied as a save would be, so an address stored before that rule still reaches the right path.
         baseURL: normalizeBaseURL(entry.baseURL),

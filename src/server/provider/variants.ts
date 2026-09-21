@@ -179,7 +179,8 @@ export function modelVariants(kind: ProviderKind, entry: ModelEntry, provider?: 
     return narrow(["high", "max"])
   }
 
-  if (kind === "chatgpt") return narrow(openaiCompatibleEfforts(id))
+  // The Responses API, subscription or custom: MiMo's `@ai-sdk/openai` arm.
+  if (kind === "chatgpt" || kind === "openai-responses") return narrow(openaiCompatibleEfforts(id))
 
   // MiMo's OpenAI-compatible arm: the three widely supported levels.
   return narrow(WIDELY_SUPPORTED)

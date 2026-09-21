@@ -28,7 +28,7 @@ import { hushSpeech } from "../lib/voice"
 import { knownFolder, listedProjects, projectsByRecency } from "@shared/projects"
 import type { GroupContext } from "@shared/session-group"
 import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fallback"
-import type { AutomationTask, ChatLink } from "@shared/protocol"
+import type { AutomationTask, ChatLink, CustomProvider } from "@shared/protocol"
 import { notice, notify, notifyFailure } from "../lib/toast"
 import { findModel, withoutLatest } from "../lib/model"
 import { forgetRunEnded, noteRunEnded, noteToolWrites } from "../lib/ai-touch"
@@ -2112,7 +2112,7 @@ export const useApp = defineStore("app", () => {
     apiKey: string
     headers?: Record<string, string>
     models: CustomModel[]
-    protocol?: "openai" | "anthropic"
+    protocol?: CustomProvider["protocol"]
   }) {
     providers.value = (await api().request({ type: "provider.addCustom", ...entry })).providers
     await ensureUsableModel()
@@ -2130,7 +2130,7 @@ export const useApp = defineStore("app", () => {
     apiKey: string
     headers?: Record<string, string>
     models: CustomModel[]
-    protocol?: "openai" | "anthropic"
+    protocol?: CustomProvider["protocol"]
   }) {
     providers.value = (await api().request({ type: "provider.updateCustom", ...entry })).providers
     await ensureUsableModel()

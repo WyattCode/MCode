@@ -14,6 +14,13 @@ import type { Check } from "./smoke-round5"
 import { SESSION_CHAT_SKILL, discoverSkills, externalSkillDirs } from "../src/server/skill"
 import { sanitizeConfig } from "../src/server/config-sanitize"
 import { SESSION_CHAT_TOOLS, toolsForTurn, withheldByLab } from "../src/server/tool/registry"
+import http from "node:http"
+import type { AddressInfo } from "node:net"
+import { adapterFor } from "../src/server/provider/adapter"
+import { AnthropicAdapter } from "../src/server/provider/anthropic"
+import { ChatGPTSubscription, OpenAIResponses } from "../src/server/provider/chatgpt"
+import { OpenAICompatible } from "../src/server/provider/openai"
+import { modelVariants } from "../src/server/provider/variants"
 import type { AppConfig } from "../src/shared/protocol"
 import {
   OPEN_HIDDEN_ARG,
@@ -174,6 +181,67 @@ export async function roundEighteenSettingsChecks(check: Check, section: (name: 
     check("R18-M3: always shown - no condition beyond the search", /<button v-show="navShows\('lab'\)" class="nav-item"/.test(nav))
     check("R18-M3: the switch reads absent as on", /:class="\{ on: app\.config\?\.sessionChat !== false \}"/.test(settings))
     check("R18-M3: only switches with a behaviour behind them are drawn", !/gitVersionPin|uncommittedHint/.test(settings))
+  }
+
+  // ---------------------------------------------------------------- R18-M4
+  section("Round 18 (M4): the /responses protocol for a custom provider")
+  {
+    check("R18-M4: each kind reaches its own wire", adapterFor("anthropic") === AnthropicAdapter && adapterFor("chatgpt") === ChatGPTSubscription && adapterFor("openai-compatible") === OpenAICompatible)
+    check("R18-M4: and /responses the Responses API", adapterFor("openai-responses") === OpenAIResponses)
+    const entry = { id: "gpt-5.1", name: "GPT-5.1", reasoning: true, contextWindow: 0, input: 0, output: 0 } as Parameters<typeof modelVariants>[1]
+    check("R18-M4: efforts follow MiMo's @ai-sdk/openai arm, as the subscription's do", JSON.stringify(modelVariants("openai-responses", entry)) === JSON.stringify(modelVariants("chatgpt", entry)))
+
+    const seen: { url?: string; headers?: http.IncomingHttpHeaders; body?: Record<string, unknown> } = {}
+    const server = http.createServer((req, res) => {
+      let raw = ""
+      req.on("data", (chunk) => (raw += chunk))
+      req.on("end", () => {
+        seen.url = req.url
+        seen.headers = req.headers
+        seen.body = JSON.parse(raw)
+        res.writeHead(200, { "Content-Type": "text/event-stream" })
+        const frame = (data: unknown) => res.write(`data: ${JSON.stringify(data)}\n\n`)
+        frame({ type: "response.output_text.delta", delta: "hello" })
+        frame({ type: "response.completed", response: { status: "completed", usage: { input_tokens: 12, output_tokens: 3 } } })
+        res.end()
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+    try {
+      const port = (server.address() as AddressInfo).port
+      let text = ""
+      const outcome = await OpenAIResponses.stream(
+        {
+          apiKey: "sk-test",
+          model: { provider: "gw", model: "gpt-5.1" },
+          system: "be brief",
+          history: [{ id: "u1", role: "user", text: "hi", attachments: [], time: 0 } as never],
+          tools: [],
+          effort: "medium",
+          signal: new AbortController().signal,
+          baseURL: `http://127.0.0.1:${port}/v1/`,
+          headers: { "x-route": "blue", Authorization: "Bearer not-this" },
+        },
+        (event) => {
+          if (event.type === "text.delta") text += event.text
+        },
+      )
+      check("R18-M4: the request goes to <base>/responses", seen.url === "/v1/responses", seen.url)
+      check("R18-M4: with the provider's key, which a header of the same name cannot displace", seen.headers?.authorization === "Bearer sk-test", seen.headers?.authorization)
+      check("R18-M4: and the provider's own headers beside it", seen.headers?.["x-route"] === "blue")
+      check("R18-M4: none of the subscription's own headers", seen.headers?.originator === undefined && seen.headers?.["chatgpt-account-id"] === undefined)
+      check("R18-M4: the body is a Responses body", Array.isArray(seen.body?.input) && seen.body?.instructions === "be brief" && seen.body?.stream === true, seen.body)
+      check("R18-M4: and the reply streams back", text === "hello" && outcome.stop === "end_turn" && outcome.usage.input === 12)
+    } finally {
+      server.close()
+    }
+
+    const config = await read("src/server/config.ts")
+    check("R18-M4: a provider stored with `responses` is reached over it", /entry\.protocol === "responses" \? "openai-responses"/.test(config))
+    const handlers = await read("src/server/handlers.ts")
+    check("R18-M4: adding and editing keep the choice", (handlers.match(/request\.protocol === "anthropic" \|\| request\.protocol === "responses"/g) ?? []).length === 2)
+    const runner = await read("src/server/session/runner.ts")
+    check("R18-M4: no caller picks an adapter by hand any more", !/\? ChatGPTSubscription/.test(runner + handlers))
   }
 
   // Session chat's skill, which the lab switch takes away with the tools.

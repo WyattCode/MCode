@@ -348,6 +348,7 @@ defineExpose({ submit, canSave, busy })
       <select id="cp-protocol" v-model="form.protocol" class="cpin" data-custom-protocol>
         <option value="openai">{{ t("provider.custom.protocol.openai") }}</option>
         <option value="anthropic">{{ t("provider.custom.protocol.anthropic") }}</option>
+        <option value="responses">{{ t("provider.custom.protocol.responses") }}</option>
       </select>
       <div class="cphelp">{{ t("provider.custom.field.protocol.description") }}</div>
     </div>

@@ -41,9 +41,8 @@ import { ToolOutputs } from "../tool/truncate"
 import { cooldownLeft, noteRateLimit, retryDecision, waitFor, withRequestRetry } from "./retry"
 import { Semaphore, STEP_TOOL_LIMIT, SUBAGENT_LIMIT } from "./semaphore"
 import { CodedError, codeOf, paramsOf } from "@shared/errors"
-import { AnthropicAdapter, describeAnthropicError } from "../provider/anthropic"
-import { OpenAICompatible } from "../provider/openai"
-import { ChatGPTSubscription } from "../provider/chatgpt"
+import { describeAnthropicError } from "../provider/anthropic"
+import { adapterFor } from "../provider/adapter"
 import type { AuthManager } from "../auth/manager"
 import type { ProviderAdapter, TurnEvent, TurnOutcome } from "../provider/types"
 import { failureCode, failureDetail } from "./error-map"
@@ -494,12 +493,7 @@ export class SessionRunner {
     if (!session) return false
     const definition = this.config.definition(session.model.provider)
     if (!definition) return false
-    const adapter: ProviderAdapter =
-      definition.kind === "anthropic"
-        ? AnthropicAdapter
-        : definition.kind === "chatgpt"
-          ? ChatGPTSubscription
-          : OpenAICompatible
+    const adapter: ProviderAdapter = adapterFor(definition.kind)
     const apiKey = this.config.apiKey(definition.id) ?? ""
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
     const stored = await this.store.messages(session.id)
@@ -1410,12 +1404,7 @@ export class SessionRunner {
 
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new CodedError(`No provider called ${session.model.provider} is set up`, "error.noModel")
-    const adapter: ProviderAdapter =
-      definition.kind === "anthropic"
-        ? AnthropicAdapter
-        : definition.kind === "chatgpt"
-          ? ChatGPTSubscription
-          : OpenAICompatible
+    const adapter: ProviderAdapter = adapterFor(definition.kind)
     const apiKey = this.config.apiKey(definition.id) ?? ""
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
     const entry = this.config.modelEntry(session.model)
@@ -1761,12 +1750,7 @@ export class SessionRunner {
     let reading: TaskReading | undefined
     const definition = this.config.definition(main.provider)
     if (definition && this.config.usable(main.provider)) {
-      const adapter: ProviderAdapter =
-        definition.kind === "anthropic"
-          ? AnthropicAdapter
-          : definition.kind === "chatgpt"
-            ? ChatGPTSubscription
-            : OpenAICompatible
+      const adapter: ProviderAdapter = adapterFor(definition.kind)
       const apiKey = this.config.apiKey(definition.id) ?? ""
       const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
       const controller = new AbortController()
@@ -2028,8 +2012,7 @@ export class SessionRunner {
   private async titleFrom(session: SessionInfo, model: ModelRef, text: string, stopped: AbortSignal): Promise<string | undefined> {
     const definition = this.config.definition(model.provider)
     if (!definition || !this.config.usable(model.provider) || stopped.aborted) return undefined
-    const adapter: ProviderAdapter =
-      definition.kind === "anthropic" ? AnthropicAdapter : definition.kind === "chatgpt" ? ChatGPTSubscription : OpenAICompatible
+    const adapter: ProviderAdapter = adapterFor(definition.kind)
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
     const entry = this.config.modelEntry(model)
     // Each try has its own time limit, and Stop ends either.
@@ -2168,8 +2151,7 @@ export class SessionRunner {
     const model = session.model
     const definition = this.config.definition(model.provider)
     if (!definition || !this.config.usable(model.provider) || stopped.aborted) return undefined
-    const adapter: ProviderAdapter =
-      definition.kind === "anthropic" ? AnthropicAdapter : definition.kind === "chatgpt" ? ChatGPTSubscription : OpenAICompatible
+    const adapter: ProviderAdapter = adapterFor(definition.kind)
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
     const entry = this.config.modelEntry(model)
     const controller = new AbortController()
@@ -2377,12 +2359,7 @@ export class SessionRunner {
     await this.mcp?.ready(session.directory)
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new CodedError(`No provider called ${session.model.provider} is set up`, "error.noModel")
-    const adapter: ProviderAdapter =
-      definition.kind === "anthropic"
-        ? AnthropicAdapter
-        : definition.kind === "chatgpt"
-          ? ChatGPTSubscription
-          : OpenAICompatible
+    const adapter: ProviderAdapter = adapterFor(definition.kind)
     // A subscription carries no API key; the bearer is a refreshed access token.
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
     if (definition.kind === "chatgpt" && !tokens) throw new CodedError(`The ${definition.name} sign-in has expired`, "auth.expired", { name: definition.name })
