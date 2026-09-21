@@ -608,10 +608,11 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
               <span>{{ value }} ({{ limitLabel(value) }})</span>
               <span v-if="row[field] === value" class="cp-check">✓</span>
             </button>
+            <!-- The number itself, preset or not, as MiMo's field shows it: typing 128000 never blanks it. -->
             <input
               class="cp-in small"
               inputmode="numeric"
-              :value="row[field] !== undefined && !(LIMIT_PRESETS[field] as readonly number[]).includes(row[field]!) ? String(row[field]) : ''"
+              :value="row[field] !== undefined ? String(row[field]) : ''"
               :placeholder="t('set.models.limitCustom')"
               :data-model-limit-custom="field"
               @input="typeLimit(row, field, $event)"

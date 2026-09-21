@@ -47,4 +47,12 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
     check("D-5: the row is scrolled into the list's view, the nearest way", /comboMenuEl\.value\?\.querySelector<HTMLElement>\("\.cp-option\.on"\)\?\.scrollIntoView\(\{ block: "nearest" \}\)/.test(reveal), reveal)
     check("D-5: the list is the element held", /ref="comboMenuEl" class="cp-menu combo"/.test(form))
   }
+
+  section("Round 20: D-4 the custom limit field keeps a number that reaches a preset")
+  {
+    const form = await read("src/renderer/src/components/CustomProviderForm.vue")
+    const field = /<input[^>]*data-model-limit-custom[^>]*\/>/.exec(form)?.[0] ?? ""
+    check("D-4: the field shows the limit itself, a preset included", /:value="row\[field\] !== undefined \? String\(row\[field\]\) : ''"/.test(field), field)
+    check("D-4: no preset test blanks it while typing", !/LIMIT_PRESETS/.test(field), field)
+  }
 }
