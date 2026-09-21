@@ -63,4 +63,14 @@ export async function roundTwentyAgentChecks(check: Check, section: (name: strin
     const some = sessionNote({ mcpServers: ["files"], configFile: "/home/u/.mcode/config.json" })
     check("V4-6: with a server configured it is still named", some.includes("MCP servers configured here: files"), some)
   }
+
+  section("Round 20 (V4-7): the no-colon narration example is Chinese")
+  {
+    const prompt = agentPrompt("build")
+    const rule = prompt.split("\n").find((line) => line.includes("with a colon just before a tool call")) ?? ""
+    const examples = [...rule.matchAll(/"([^"]+)"/g)].map((match) => match[1] ?? "")
+    check("V4-7: the rule shows the right way and the wrong way", examples.length === 2, rule)
+    check("V4-7: both in Chinese, one closing on a full stop and one on a colon", /\p{Script=Han}/u.test(examples[0] ?? "") && (examples[0] ?? "").endsWith("。") && (examples[1] ?? "").endsWith("："), examples)
+    check("V4-7: the English example is gone", !prompt.includes("I'll check the config"))
+  }
 }
