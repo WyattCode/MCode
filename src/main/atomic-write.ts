@@ -41,15 +41,19 @@ function renameOverSync(temp: string, target: string): void {
  * is always either the old contents or the new ones. Throws when the write
  * fails, after removing its temp file; a crash can only leave a stray temp
  * beside the target, which no reader opens.
+ *
+ * `durable: false` skips the flush, for a write the next one supersedes within
+ * the second: the rename still orders it, so a crashed process leaves the old
+ * file or the new one whole, and only a power cut can cost that write.
  */
-export function writeAtomicSync(file: string, text: string, mode?: number): void {
+export function writeAtomicSync(file: string, text: string, mode?: number, durable = true): void {
   fs.mkdirSync(path.dirname(file), { recursive: true })
   const temp = tempNameFor(file)
   try {
     const handle = fs.openSync(temp, "w", mode)
     try {
       fs.writeFileSync(handle, text, "utf8")
-      fs.fsyncSync(handle)
+      if (durable) fs.fsyncSync(handle)
     } finally {
       fs.closeSync(handle)
     }
