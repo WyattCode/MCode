@@ -20,4 +20,18 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
     const bar = /<GoalBar\b[^>]*\/>/.exec(composer)?.[0] ?? ""
     check("D-1: the bar is keyed by the conversation, so a rewrite in progress never lands on another", /:key="sessionID"/.test(bar), bar)
   }
+
+  section("Round 20: D-2 Enter in the models field adds what was typed unless a suggestion was moved to")
+  {
+    const lib = (await import("../src/renderer/src/lib/custom-model")) as Record<string, unknown>
+    const enter = lib.comboEnterValue as ((highlight: number, choices: readonly string[], typed: string) => string) | undefined
+    check("D-2: the rule is a pure function smoke can hold", typeof enter === "function")
+    if (enter) {
+      check("D-2: nothing moved to, a typed gpt-4 stays gpt-4 though gpt-4o heads the list", enter(-1, ["gpt-4o", "gpt-4-turbo"], "gpt-4") === "gpt-4")
+      check("D-2: moved to the second suggestion, that is what goes in", enter(1, ["gpt-4o", "gpt-4-turbo"], "gpt-4") === "gpt-4-turbo")
+    }
+    const form = await read("src/renderer/src/components/CustomProviderForm.vue")
+    check("D-2: the list opens and changes with nothing highlighted", /const highlight = ref\(-1\)/.test(form) && /\(\) => \(highlight\.value = -1\)\)/.test(form))
+    check("D-2: Enter goes through the rule", /addModel\(comboEnterValue\(/.test(form))
+  }
 }

@@ -7,7 +7,7 @@ import { t } from "../lib/i18n"
 import { notice } from "../lib/toast"
 import { useEscapeLayerWhile } from "../lib/escape-layer"
 import ConfirmDialog from "./ConfirmDialog.vue"
-import { LIMIT_PRESETS, MODALITIES, limitLabel, limitOf, modalitySummary, providerIdError, validEndpoint, type Modality } from "../lib/custom-model"
+import { LIMIT_PRESETS, MODALITIES, comboEnterValue, limitLabel, limitOf, modalitySummary, providerIdError, validEndpoint, type Modality } from "../lib/custom-model"
 import { providerIdProblem } from "@shared/provider-id"
 
 /**
@@ -224,7 +224,8 @@ onMounted(() => {
 
 const query = ref("")
 const openMenu = ref<string>()
-const highlight = ref(0)
+/* The suggestion moved to; none until the arrows or the pointer pick one. */
+const highlight = ref(-1)
 
 const choices = computed(() => {
   const needle = query.value.trim().toLowerCase()
@@ -232,7 +233,7 @@ const choices = computed(() => {
   return probe.value.models.filter((id) => !added.has(id) && (!needle || id.toLowerCase().includes(needle)))
 })
 
-watch([query, () => openMenu.value === "combo"], () => (highlight.value = 0))
+watch([query, () => openMenu.value === "combo"], () => (highlight.value = -1))
 
 function addModel(raw: string) {
   const id = normalizeModelId(raw)
@@ -254,11 +255,10 @@ function comboKey(event: KeyboardEvent) {
     highlight.value = Math.min(highlight.value + 1, Math.max(choices.value.length - 1, 0))
   } else if (event.key === "ArrowUp") {
     event.preventDefault()
-    highlight.value = Math.max(highlight.value - 1, 0)
+    if (highlight.value > 0) highlight.value -= 1
   } else if (event.key === "Enter") {
     event.preventDefault()
-    const picked = openMenu.value === "combo" ? choices.value[highlight.value] : undefined
-    addModel(picked ?? query.value)
+    addModel(comboEnterValue(openMenu.value === "combo" ? highlight.value : -1, choices.value, query.value))
   }
 }
 
