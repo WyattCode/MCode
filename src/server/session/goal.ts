@@ -37,9 +37,10 @@ export interface GoalVerdict {
  * own prompt.
  *
  * MiMo keeps this to a single sentence and leaves it out in plan mode, where
- * the whole point is to stop and show a plan; both are kept.
+ * the whole point is to stop and show a plan; both are kept. English since
+ * MiMo 26.920 rewrote its own in English (the user's 2026-09-21 decision).
  */
-export const GOAL_GUARD = "[目标模式] 请朝着用户设定的目标持续推进，自己把需要的步骤全部做完，不要中途停下来征求确认；只有目标真正达成、或确实无法达成时才结束。"
+export const GOAL_GUARD = "[Goal mode] Keep working toward the goal the user set and carry out every step it needs yourself, without stopping to ask for confirmation along the way; finish only when the goal is reached or clearly cannot be."
 
 /**
  * What the judge is told it is doing.

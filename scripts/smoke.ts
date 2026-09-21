@@ -3791,8 +3791,8 @@ async function main() {
 
     // plan: what each turn is told, in this app's own words.
     const firstNote = firstPlanNote(".mcode/plans/p.md", false)
-    check("the first planning turn is told to write the plan and how the turn may end", firstNote.includes("\u76ee\u524d\u8fd8\u6ca1\u6709\u65b9\u6848\u6587\u4ef6") && firstNote.includes(".mcode/plans/p.md") && firstNote.includes("plan_exit"), firstNote.slice(0, 120))
-    check("and is told to edit it once it is there", firstPlanNote(".mcode/plans/p.md", true).includes("\u5df2\u7ecf\u5199\u4e86\u4e00\u4efd\u65b9\u6848"))
+    check("the first planning turn is told to write the plan and how the turn may end", firstNote.includes("There is no plan file yet") && firstNote.includes(".mcode/plans/p.md") && firstNote.includes("plan_exit"), firstNote.slice(0, 120))
+    check("and is told to edit it once it is there", firstPlanNote(".mcode/plans/p.md", true).includes("A plan is already written at"))
     check("later turns get one line naming the same file", laterPlanNote(".mcode/plans/p.md").includes(".mcode/plans/p.md") && laterPlanNote(".mcode/plans/p.md").split("\n").length === 1)
     check("the switch note says the mode changed and that writing is allowed again", buildSwitchNote().includes("plan mode to build mode") && buildSwitchNote().includes("no longer read-only"))
     check("and the plan is named when one exists", carryOutNote(".mcode/plans/p.md").includes(".mcode/plans/p.md"))
@@ -3824,16 +3824,12 @@ async function main() {
 
     const planPrompt = await systemPrompt({ directory: project, agent: "plan" })
     const buildPrompt = await systemPrompt({ directory: project, agent: "build" })
-    check("plan is told what mode it is in", planPrompt.includes("\u8ba1\u5212\u6a21\u5f0f"), planPrompt.slice(0, 80))
     /*
-     * Round 8: the general agent prompt describes both modes, as MiMo's
-     * default prompt does, so "plan mode" appearing at all proves nothing. What
-     * build must not carry is the section that says it is planning.
+     * R18-E3: MiMo 26.920 gives plan mode the very same prompt as build - the
+     * planning section is gone - and the rules ride on the turn instead
+     * (session/plan.ts), which the plan checks above and round five read.
      */
-    check("build is not", !buildPrompt.includes("\u8ba1\u5212\u6a21\u5f0f"))
-    // plan: the prompt says how planning ends and what it may write; the per-turn note carries the path.
-    check("plan is told how the mode ends", planPrompt.includes("plan_exit"), planPrompt.slice(0, 200))
-    check("and that one file is writable rather than that nothing is", planPrompt.includes("\u6bcf\u4e00\u8f6e\u63d0\u793a\u91cc\u6307\u5b9a\u7684\u90a3\u4e2a\u65b9\u6848\u6587\u4ef6\u9664\u5916"), planPrompt.slice(0, 400))
+    check("plan reads the same prompt as build, with no planning section", planPrompt === buildPrompt && !planPrompt.includes("# \u8ba1\u5212\u6a21\u5f0f") && !/^# Plan mode/m.test(planPrompt))
 
     /*
      * Standing instructions. They are the reader's own rather than the
@@ -3905,9 +3901,6 @@ async function main() {
 
     /* MiMo has no four-stage mode of its own, and neither has this app any more (R16-A1). */
     check("no stage section survives anywhere", !buildPrompt.includes("## Working in stages"))
-    /* R16-B2: and plan mode says so in Chinese, where build says nothing about it. */
-    const planModePrompt = await systemPrompt({ directory: project, agent: "plan" })
-    check("plan mode is told what mode it is in, in Chinese", planModePrompt.includes("\u8ba1\u5212\u6a21\u5f0f") && !buildPrompt.includes("\u8ba1\u5212\u6a21\u5f0f"))
   }
 
   section("Voice")

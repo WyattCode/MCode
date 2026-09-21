@@ -1366,6 +1366,7 @@ export class SessionRunner {
             globalAgentsFile: this.globalAgents,
             instructionFiles: config.instructionFiles,
             skills,
+            skillsFolder: path.join(this.dataRoot, "skills"),
           })
     this.prefixes.set(session.id, { key, system: base })
     // subagents: a subagent is told what it is, after what its agent would be told anyway.
@@ -1966,12 +1967,8 @@ export class SessionRunner {
     return [
       sessionNote({
         mcpServers: names,
-        globalAgentsFile: this.globalAgents,
         // Where the MCP servers actually live, so a bulk import can be done by editing the file.
         configFile: path.join(this.dataRoot, "config.json"),
-        dataRoot: this.dataRoot,
-        // The environment-check guard names the shell a command will really be handed to.
-        shell: this.config.get().shell,
       }),
       runtime,
     ]

@@ -23,7 +23,7 @@ import { Bus } from "../src/server/bus"
 import { Permissions } from "../src/server/permission"
 import { SessionStore } from "../src/server/session/store"
 import { SessionRunner } from "../src/server/session/runner"
-import { JUDGE_SYSTEM } from "../src/server/session/goal"
+import { GOAL_GUARD, JUDGE_SYSTEM } from "../src/server/session/goal"
 import { agentPrompt } from "../src/server/session/prompts"
 import { TOOLS, findTool, repairableNames, toolsForTurn } from "../src/server/tool/registry"
 
@@ -36,6 +36,7 @@ export async function roundEighteenEngineChecks(check: Check, section: Section):
   try {
     await denyChecks(check, section, path.join(root, "deny"))
     await schedulingChecks(check, section, path.join(root, "scheduling"))
+    await splitChecks(check, section, path.join(root, "split"))
   } finally {
     if (titles === undefined) delete process.env.MCODE_GENERATE_TITLES
     else process.env.MCODE_GENERATE_TITLES = titles
@@ -362,5 +363,55 @@ async function schedulingChecks(check: Check, section: Section, root: string): P
     const handlers = await fs.readFile(path.join(process.cwd(), "src/server/handlers.ts"), "utf8")
     check("saved tasks and scheduled prompts still run while the app is open", index.includes("startAutomations(") && index.includes("startScheduler("))
     check("and the side column still lists the saved tasks", handlers.includes("automations: automationService()?.sidebar() ?? []"))
+  }
+}
+
+/* ---------------------------------------------------------------- R18-E3: what the model reads, in 26.920's split */
+
+/** The user messages of one request, as text. */
+const userTexts = (seen: Seen | undefined) =>
+  (seen?.body.messages ?? []).filter((message) => message.role === "user").map((message) => (typeof message.content === "string" ? message.content : JSON.stringify(message.content)))
+
+async function splitChecks(check: Check, section: Section, root: string): Promise<void> {
+  const app = await harness(root)
+  try {
+    section("Round 18 (R18-E3): a real turn carries 26.920's split")
+    {
+      const session = await app.store.create({ directory: app.project, model: app.model })
+      app.scriptJudge([JSON.stringify({ ok: false, reason: "not yet" }), JSON.stringify({ ok: true, reason: "now" })])
+      app.script([{ text: "first" }, { text: "second" }])
+      const before = app.turns.length
+      await app.runner.prompt({ sessionID: session.id, text: "go", goal: "finish it" })
+      await app.settled(session.id)
+      const first = app.turns[before]
+      const [firstUser] = userTexts(first)
+      check("the first message's note is the MCP blocks and the runtime context, nothing more", firstUser !== undefined && firstUser.includes("# About this app") && firstUser.includes("mcpServers") && firstUser.includes("# Runtime context"), firstUser?.slice(0, 400))
+      check(
+        "without the skill folder, the instruction file, the question advice or the environment check",
+        firstUser !== undefined && !firstUser.includes("SKILL.md") && !firstUser.includes("AGENTS.md") && !firstUser.includes("question tool") && !firstUser.includes("node -v") && !/[\u4e00-\u9fff]{4}/.test(firstUser.replace(/Response language:[^\n]*/, "")),
+        firstUser?.slice(0, 1200),
+      )
+      check("the goal guard rides in the system text, in English", first?.system.includes(GOAL_GUARD) === true && GOAL_GUARD.startsWith("[Goal mode]"))
+      check("where a made skill goes is in the Skills section instead", first?.system.includes(`${path.sep}skills${path.sep}<name>${path.sep}SKILL.md for every project`) === true)
+    }
+
+    section("Round 18 (R18-E3): a planning turn reads the build prompt and an English note")
+    {
+      const build = await app.store.create({ directory: app.project, model: app.model })
+      app.script([{ text: "built" }])
+      await app.runner.prompt({ sessionID: build.id, text: "build" })
+      await app.settled(build.id)
+      const buildSystem = app.turns.at(-1)?.system ?? ""
+      const plan = await app.store.create({ directory: app.project, model: app.model, agent: "plan" })
+      app.script([{ text: "planned" }])
+      await app.runner.prompt({ sessionID: plan.id, text: "plan" })
+      await app.settled(plan.id)
+      const planned = app.turns.at(-1)
+      const agentPart = (system: string) => system.slice(0, system.indexOf("\n\n## Skills"))
+      check("the agent prompt is the same bytes as a build turn's", agentPart(planned?.system ?? "") === agentPart(buildSystem) && agentPart(buildSystem).length > 10_000)
+      check("the plan rules ride on the message, in English", userTexts(planned).some((text) => text.includes("[Plan mode] The user has switched on plan mode")))
+    }
+  } finally {
+    await app.close()
   }
 }

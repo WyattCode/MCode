@@ -21,7 +21,10 @@ import { clampEffort, cycleVariant, isLatest, withoutLatest } from "../src/rende
 import { createPinia, setActivePinia } from "pinia"
 import { useRightPanel } from "../src/renderer/src/stores/right-panel"
 import { locateOffset } from "../src/renderer/src/lib/find"
-import { PLAN_SECTION, agentPrompt } from "../src/server/session/prompts"
+import { agentPrompt } from "../src/server/session/prompts"
+import { firstPlanNote, laterPlanNote } from "../src/server/session/plan"
+import { GOAL_GUARD } from "../src/server/session/goal"
+import { sessionNote } from "../src/server/session/context"
 
 let passed = 0
 const problems: string[] = []
@@ -282,11 +285,12 @@ console.log("\nfind-in-view maps an offset back onto a node")
  * The agent prompt, section by section.
  *
  * MiMo's desktop app gives every model one prompt: a general part, then a
- * desktop part, then - in plan mode only - a planning section. MCode does the
- * same, and this is what says so. The headings are listed here by hand, in
- * order, rather than read off the prompt, so a section cut out of
- * `session/prompts.ts` or a family split creeping back fails here instead of
- * quietly agreeing with itself.
+ * desktop part - since 26.920 the same two in every mode, plan included, with
+ * tone and style moved into the desktop part and skills given a section of
+ * their own. MCode does the same, and this is what says so. The headings are
+ * listed here by hand, in order, rather than read off the prompt, so a section
+ * cut out of `session/prompts.ts` or a family split creeping back fails here
+ * instead of quietly agreeing with itself.
  */
 console.log("\nThe one agent prompt every model reads")
 {
@@ -297,16 +301,16 @@ console.log("\nThe one agent prompt every model reads")
     "# Doing tasks",
     "# Executing actions with care",
     "# Using your tools",
-    "# Tone and style",
-    "# Text output (not tool calls)",
-    "# Session-specific guidance",
+    "# Skills",
     "# MCode desktop",
     "## Reply language",
-    "## Tone and formatting",
+    "## Tone and style",
     "## Visual explanations",
     "## Asking clarifying questions",
     "## Task management",
-    "## Doing tasks",
+    // R18-E2: in place of the scheduling tools, which are withdrawn outside an end-to-end run.
+    "## Scheduled tasks",
+    "## Desktop verification",
     "## Files you produce",
     "### A file, or an answer?",
     "### present_files",
@@ -314,31 +318,43 @@ console.log("\nThe one agent prompt every model reads")
     "### Web pages",
     "### Office documents and PDF",
     "## Tools on this machine",
-    "# Code references",
     "## Web page work",
     "### Slide decks",
   ])
-  /* The desktop's general part is about 12KB and its desktop part about 16.5KB; MCode leaves out what it does not have. */
+  /* 26.920's general part is about 10KB and its desktop part about 18.5KB; MCode leaves out what it does not have. */
   const split = build.indexOf("\n\n# MCode desktop\n")
-  check("the general part is in the length class of the one it answers", split > 8_000 && split < 14_000, true)
-  check("and so is the desktop part", build.length - split > 9_000 && build.length - split < 18_000, true)
-  check("every agent but plan reads exactly the same text", [agentPrompt("compose"), agentPrompt(undefined), agentPrompt("general")].every((text) => text === build), true)
-  const plan = agentPrompt("plan")
-  check("plan mode reads the same text with one section after it", plan.startsWith(build + "\n\n# \u8ba1\u5212\u6a21\u5f0f\n") && plan === `${build}\n\n${PLAN_SECTION}`, true)
-  /* The one it answers is 679 bytes of Chinese; this is in the same class, counted the same way. */
-  check("that section is short, as the one it answers is", Buffer.byteLength(PLAN_SECTION, "utf8") > 300 && Buffer.byteLength(PLAN_SECTION, "utf8") < 1_500, true)
-  check("it asks for a stepwise plan, recorded with task, put to the user with plan_exit", ["\u5206\u6b65\u65b9\u6848", "`task` \u5de5\u5177", "plan_exit"].filter((part) => !PLAN_SECTION.includes(part)), [])
+  check("the general part is in the length class of the one it answers", split > 7_000 && split < 12_000, true)
+  check("and so is the desktop part", build.length - split > 12_000 && build.length - split < 20_000, true)
+  check("every agent reads exactly the same text, plan included", [agentPrompt("plan"), agentPrompt("compose"), agentPrompt(undefined), agentPrompt("general")].every((text) => text === build), true)
   /*
-   * R16-B2: the guard is Chinese and the two base layers are not, which is
-   * MiMo's own split - and a share rather than an absence, since its own
-   * `desktop-base.md` carries Chinese trigger words inside English prose
-   * (0.25% Han, against 67% in `plan-addendum.md`). A guard that drifted back
-   * into English, or a base layer that was translated, both fail here.
+   * R18-E3: what 26.920 moved. The general part keeps no tone rules of its
+   * own, the desktop part carries them, and the old code-references section
+   * is one line among them.
+   */
+  const general = build.slice(0, split)
+  const desktop = build.slice(split)
+  check("tone and the reply's shape are the desktop part's, not the general one's", !/^# (Tone and style|Text output|Session-specific guidance|Code references)/m.test(build) && desktop.includes("file_path:line_number") && desktop.includes("Do not think aloud") && !general.includes("No emoji"), true)
+  check("the general part states the permission rules and the scope of an approval", ["allows, asks or denies", "Approval given once covers that action in that place and nothing wider"].filter((part) => !general.includes(part)), [])
+  check("and tells the model that the conversation, not memory, is the state of things", general.includes("Memory notes can be out of date"), true)
+  check("tool names are exact and lower case", general.includes("Tool names are exact") && general.includes("in lower case"), true)
+  check("the Skills section says where a made skill goes by pointing at the list", general.includes("write it where the Skills section says new skills go"), true)
+  /*
+   * The environment check is gone as a guard (26.920 deleted both of its
+   * files); what it said survives as one sentence in the base layer, which
+   * names both platforms' ways of looking.
+   */
+  const tools = desktop.slice(desktop.indexOf("## Tools on this machine"), desktop.indexOf("## Web page work"))
+  check("one failed command is not proof a tool is missing, and each platform's way of looking is named", ["one bare command failing", "Get-Command", "where.exe", "bash -lc", "command -v"].filter((part) => !tools.includes(part)), [])
+  /*
+   * R16-B2 said the guards are Chinese and the base layers are not. 26.920
+   * turned that round: the goal guard is English, the plan and environment
+   * guards are gone, and the per-turn note is English too. A share rather
+   * than an absence, because the base carries a few Chinese trigger words.
    */
   const han = (text: string) => (text.match(/[\u4e00-\u9fff]/g)?.length ?? 0) / text.length
-  check("the guard is written in Chinese, as MiMo's guards are", han(PLAN_SECTION) > 0.25, true)
-  check("and the two base layers are not", han(build) < 0.05, true)
-  check("the prompt names this app and never the reference", plan.startsWith("You are MCode") && !/mimo/i.test(plan), true)
+  check("the base layers are English", han(build) < 0.05, true)
+  check("and so are the goal guard, the plan notes and the per-turn note", [GOAL_GUARD, firstPlanNote("/p/plan.md", false), laterPlanNote("/p/plan.md"), sessionNote({ mcpServers: [], configFile: "/c/config.json" })].map((text) => han(text) === 0), [true, true, true, true])
+  check("the prompt names this app and never the reference", build.startsWith("You are MCode") && !/mimo/i.test(build), true)
   /*
    * The interactive widget, under "Visual explanations". The three that matter
    * are the fence (nothing renders without it), the sizing rule (a widget laid

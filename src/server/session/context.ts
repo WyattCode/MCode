@@ -1,7 +1,6 @@
 import path from "node:path"
 import { attachmentKind, extensionOf } from "@shared/attachment-kind"
 import { interfaceLocale, localeName } from "./locale"
-import { activeShellName } from "../tool/bash"
 
 /** Office documents a model cannot read as text, and what opens each of them. */
 const OFFICE_TOOLS: Record<string, string> = {
@@ -128,32 +127,27 @@ export function runtimeContext(input: RuntimeInput): string {
 export interface SessionNoteInput {
   /** The MCP servers this conversation has, by the name they are configured under. */
   mcpServers: string[]
-  /** Where the user's global AGENTS.md lives. */
-  globalAgentsFile: string
   /** This app's own config file, which holds the MCP servers among everything else. */
   configFile: string
-  /** Where this app keeps its data, which is where a global skill goes. */
-  dataRoot: string
-  platform?: NodeJS.Platform
-  /** The shell this machine hands a command to, so the guard names the one in use. */
-  shell?: string
 }
 
 /**
- * The once-per-conversation note: which tools this app adds, where things are
- * configured, and how to ask.
+ * The once-per-conversation note: the MCP servers this app has, and where
+ * they are configured.
+ *
+ * MiMo 26.920 cut its note to these two blocks, both English, and so does
+ * MCode: where a skill or an instruction file goes, how to ask the user, and
+ * the environment check went with it. The first of those now sits in the
+ * Skills section of the prompt, the question tool's own description covers the
+ * third, and the base prompt's "Tools on this machine" says in one sentence
+ * what the environment check said in eight.
  *
  * The MCP paragraph is the long one on purpose, and it is the one MiMo spends
  * its own length on. Without it a model that has a configured MCP server still
  * reaches for a platform's command-line tool, spends a turn on a login this app
  * cannot service, and then tells the user it cannot see any MCP servers at all.
- *
- * Mixed languages, because MiMo's are: of the six blocks it assembles here,
- * the MCP-config one and the environment-check guard are Chinese and the rest
- * English. That split is copied rather than tidied.
  */
 export function sessionNote(input: SessionNoteInput): string {
-  const platform = input.platform ?? process.platform
   const lines = ["# About this app"]
 
   if (input.mcpServers.length) {
@@ -167,70 +161,8 @@ export function sessionNote(input: SessionNoteInput): string {
     lines.push("- No MCP servers are configured here. Say so plainly if the user asks, and do not invent one.")
   }
 
-  /*
-   * The configuration file is the one paragraph MiMo writes in Chinese among
-   * these English ones (its `Jee()`), and MCode follows that split: the model
-   * is being told a fact about this desktop, not given general guidance.
-   */
   lines.push(
-    `- [MCP 配置文件] MCP 服务器就落在 ${input.configFile} 的 \`mcpServers\` 段里。**这个文件确实存在,也可以直接编辑** —— 用户说「把这几个 MCP 装进来」时,不要回答「桌面没给配置文件入口、只能到设置里一个个加」,用文件工具读写这一段就能一次加完。每个服务器一项:本地的是 {"type":"local","command":["程序","参数"],"environment":{"KEY":"值"},"enabled":true},远程的是 {"type":"remote","url":"https://...","headers":{"KEY":"值"},"enabled":true}。只改 \`mcpServers\` 段,文件其余部分原样保留;改完要告诉用户,改动对之后新开的对话生效。设置里的 MCP 页也能用图形界面增删。`,
-    `- A skill goes in <project>/.mcode/skills/<name>/SKILL.md for one project, or ${path.join(input.dataRoot, "skills")}/<name>/SKILL.md for every project. The folder name is the skill's id; its SKILL.md needs name and description in the frontmatter. A new skill is picked up by conversations started after it.`,
-    `- Instructions: a project's own go in AGENTS.md at its root, and one in a nested folder is read as well for work under it. The user's global instructions are in ${input.globalAgentsFile}. Write to those paths when asked to record a rule; do not invent a folder for another tool's convention.`,
-    "- When the user has to choose between options, ask with the question tool instead of listing the options in prose, and set multiple when more than one answer can apply - the flag, not the wording, is what lets them pick more than one.",
+    `- The MCP servers live in the \`mcpServers\` section of ${input.configFile}. That file exists and you may edit it: when the user wants several servers added at once, write them into that section with the file tools rather than sending them to the settings one by one. One entry per server - a local one as {"type":"local","command":["program","argument"],"environment":{"KEY":"value"},"enabled":true}, a remote one as {"type":"remote","url":"https://...","headers":{"KEY":"value"},"enabled":true}. Change nothing else in the file, and tell the user that the change reaches conversations started afterwards; the MCP page in the settings can add and remove servers too.`,
   )
-
-  lines.push("", environmentGuard(platform, activeShellName(input.shell)))
   return lines.join("\n")
-}
-
-/**
- * The environment-check guard, once per conversation.
- *
- * In Chinese, as MiMo's two are (`guard-envcheck-win32.md` and its unix twin),
- * while the base prompt around it stays English - the user's 2026-09-20
- * decision. The words are MCode's own; the rules are the ones MiMo states,
- * because they answer the single most common failure of a coding agent on a
- * machine it has not seen: one bare `node -v` misses on PATH, the agent
- * declares the toolchain absent, quietly stops verifying anything, and reports
- * a reading of the code as if it had run it.
- *
- * The last two rules are not about paths at all and matter as much: finish the
- * check you announced inside this turn, and do not change your mind about it
- * from turn to turn.
- */
-export function environmentGuard(platform: NodeJS.Platform, shell = "powershell"): string {
-  const posh = shell === "powershell" || shell === "pwsh"
-  const shared = [
-    "查到了就用全路径**把测试或构建真正跑起来**,而不是退回到只读代码、只做静态分析。",
-    "还有两条与路径无关:你一旦说了要做某项检查(「我来跑一下类型检查」之类),就在**本回合内**做完再收尾,不要只宣布打算就停下;也不要在后续回合里反复改口、原地打转。",
-    "只有照上面查过、确认真的没有,才可以说「本机缺少 X」。",
-  ]
-  if (platform === "win32") {
-    return [
-      `[环境检测] 本机是 **Windows**,不是 macOS 或 Linux,命令交给 ${shell} 执行。判断某个工具链(Node.js/npm/pnpm/yarn、Python/pip 等)在不在、装在哪里时,一律按 Windows 的方式来:`,
-      "- 不要用 `/bin/zsh`、`bash -lc`、`zsh -lc` 这类登录 shell,Windows 默认没有;也不要去找 `/usr/local/bin`、`/opt/homebrew/bin`、`~/.nvm/...` 这些 Unix 路径,它们在这里不存在。",
-      posh
-        ? "- 不要只凭一条裸命令(比如 `node -v`)在当前 PATH 上失败,就断定「没装 / 跑不了测试或构建」。用 PowerShell 的 `Get-Command node` 或 `where.exe node` 去定位,不要用 `which`。"
-        : "- 不要只凭一条裸命令(比如 `node -v`)在当前 PATH 上失败,就断定「没装 / 跑不了测试或构建」。用 `where.exe node` 去定位,它在任何 Windows shell 里都能用。",
-      "- Node 常见的落脚处:`C:\\Program Files\\nodejs`、nvm-windows(`%APPDATA%\\nvm` 或 `%NVM_HOME%`)、fnm、volta(`%USERPROFILE%\\.volta\\bin`)、scoop(`%USERPROFILE%\\scoop\\shims`)、chocolatey(`C:\\ProgramData\\chocolatey\\bin`)。Python 常走 py 启动器、`%LOCALAPPDATA%\\Programs\\Python`,或者 conda/uv 的环境。",
-      `- ${shared[0]}`,
-      `- ${shared[1]}`,
-      `- ${shared[2]}`,
-      posh
-        ? "写 PowerShell 而不是 bash:变量用 `$env:NAME`,带空格的路径用 `& \"路径\"` 调用,也不要假定 GNU 那套命令行工具在这里。"
-        : `命令按 ${shell} 的语法写,不要假定另一种 shell 的写法在这里能用。`,
-    ].join("\n")
-  }
-  const unix = platform === "darwin" ? "macOS" : "Linux"
-  return [
-    `[环境检测] 本机是 **${unix}**,不是 Windows。判断某个工具链(Node.js/npm/pnpm/yarn、Python/pip 等)在不在、装在哪里时,一律按这个平台的方式来:`,
-    "- 不要用 `where.exe`、`Get-Command` 或 `%APPDATA%` 这类 Windows 的写法,它们在这里没有意义。用 `command -v node`(或 `which node`)去定位。",
-    "- 不要只凭一条裸命令(比如 `node -v`)在当前 PATH 上失败,就断定「没装 / 跑不了测试或构建」:非交互的 shell 读不到用户登录时才加载的那段 PATH。",
-    platform === "darwin"
-      ? "- Node 常见的落脚处:`/usr/local/bin`、`/opt/homebrew/bin`、nvm(`~/.nvm/versions/node/*/bin`)、fnm、volta(`~/.volta/bin`)、asdf(`~/.asdf/shims`)。Python 常走 `python3`、pyenv(`~/.pyenv/shims`)、Homebrew,或者 conda/uv 的环境。"
-      : "- Node 常见的落脚处:`/usr/local/bin`、`/usr/bin`、nvm(`~/.nvm/versions/node/*/bin`)、fnm、volta(`~/.volta/bin`)、asdf(`~/.asdf/shims`)。Python 常走 `python3`、pyenv(`~/.pyenv/shims`),或者 conda/uv 的环境。",
-    `- ${shared[0]}`,
-    `- ${shared[1]}`,
-    `- ${shared[2]}`,
-  ].join("\n")
 }

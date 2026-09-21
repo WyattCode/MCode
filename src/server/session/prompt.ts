@@ -28,6 +28,8 @@ export interface PromptContext {
   fetchInstruction?: (url: string) => Promise<string>
   /** skills: every skill the conversation can reach; the ones kept from the model are left out of the list. */
   skills?: SkillInfo[]
+  /** skills: the folder a skill for every project is written to, which the list names for a skill the user asks to have made. */
+  skillsFolder?: string
   /** memory: the memory files a top-level conversation keeps; absent for a subagent. */
   memory?: { project: string; global: string; notes: string }
 }
@@ -71,9 +73,9 @@ Before asking the user something they may already have told you, search with the
  */
 export async function systemPrompt(context: PromptContext): Promise<string> {
   /*
-   * The one agent prompt every model reads (session/prompts.ts), with plan
-   * mode's section when planning. It is the first section, so the cached
-   * prefix opens with the same bytes whatever the model.
+   * The one agent prompt every model reads in every mode (session/prompts.ts).
+   * It is the first section, so the cached prefix opens with the same bytes
+   * whatever the model.
    */
   const sections = [agentPrompt(context.agent)]
 
@@ -101,7 +103,7 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
     )
   }
 
-  if (context.skills) sections.push(skillsSection(context.skills))
+  if (context.skills) sections.push(skillsSection(context.skills, context.skillsFolder))
 
   // memory: names this conversation's own notes file, so last - where a request carries it, outside the cached prefix.
   if (context.memory) sections.push(memorySection(context.memory))
@@ -111,10 +113,16 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
 /**
  * skills: the ones the model may load, by name, what each is for, and where it
  * lives, as MiMo's engine lists them; sorted so the list reads the same each turn.
+ *
+ * It ends on where a new skill goes. That used to ride on the first message of
+ * every conversation; MiMo 26.920 moved it into the prompt, and here it sits
+ * with the list it adds to, which is frozen for the conversation just as the
+ * folder is fixed for the app.
  */
-function skillsSection(skills: readonly SkillInfo[]): string {
+function skillsSection(skills: readonly SkillInfo[], folder?: string): string {
   const listed = modelInvocable(skills)
-  if (!listed.length) return "## Skills\n\nNo skills are available in this conversation."
+  const making = `A skill the user asks you to make goes in <project>/.mcode/skills/<name>/SKILL.md for one project${folder ? `, or ${folder}${path.sep}<name>${path.sep}SKILL.md for every project` : ""}. The folder name is the skill's id, its SKILL.md needs a name and a description in the frontmatter, and conversations started afterwards pick it up.`
+  if (!listed.length) return `## Skills\n\nNo skills are available in this conversation.\n\n${making}`
   const entries = [...listed]
     .sort((a, b) => a.name.localeCompare(b.name))
     .flatMap((skill) => [
@@ -132,6 +140,8 @@ function skillsSection(skills: readonly SkillInfo[]): string {
     "<skills>",
     ...entries,
     "</skills>",
+    "",
+    making,
   ].join("\n")
 }
 

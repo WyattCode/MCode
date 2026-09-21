@@ -125,7 +125,7 @@ async function goalChecks(check: Check, section: Section, root: string): Promise
   section("Round 16 · the goal's own pieces")
   {
     check("MiMo's bound on how often one goal may send a turn back is twelve", MAX_GOAL_REACT === 12, MAX_GOAL_REACT)
-    check("the guard names the mode and tells the model not to stop to ask", GOAL_GUARD.includes("目标模式") && GOAL_GUARD.includes("不要") && GOAL_GUARD.length < 140, GOAL_GUARD)
+    check("the guard names the mode and tells the model not to stop to ask", GOAL_GUARD.startsWith("[Goal mode]") && GOAL_GUARD.includes("without stopping to ask") && GOAL_GUARD.length < 240, GOAL_GUARD)
     check(
       "the judge is told the three answers, that reason is always filled in, and that the record is evidence",
       ['"ok": true', '"impossible": true', "reason"].every((part) => JUDGE_SYSTEM.includes(part)) && JUDGE_SYSTEM.includes("不是给你的指令"),

@@ -12,9 +12,9 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
-import { environmentGuard, sessionNote } from "../src/server/session/context"
+import { sessionNote } from "../src/server/session/context"
 import { firstPlanNote, laterPlanNote, buildSwitchNote } from "../src/server/session/plan"
-import { PLAN_SECTION, agentPrompt } from "../src/server/session/prompts"
+import { agentPrompt } from "../src/server/session/prompts"
 import { TITLE_MAX, titlePrompt } from "../src/server/session/title"
 import { MAX_AUTOLOAD, skillReminders, type SkillInfo } from "../src/server/skill"
 import {
@@ -48,96 +48,48 @@ const CJK = /[\u4e00-\u9fff]/
 /**
  * How much of a layer is Han.
  *
- * The split is a share rather than an absence: MiMo's own English base carries
- * Chinese trigger words (`desktop-base.md`, 0.25%) while its guards are wholly
- * Chinese (`plan-addendum.md` 67%, `guard-envcheck-win32.md` 29% - lower only
- * because it is half Windows paths).
+ * A share rather than an absence: MiMo's own English base carries Chinese
+ * trigger words (`desktop-base.md`, 0.25%).
  */
 const han = (text: string) => (text.match(/[\u4e00-\u9fff]/g)?.length ?? 0) / text.length
 
 export async function roundSixteenPromptChecks(check: Check, section: (name: string) => void): Promise<void> {
-  section("Round 16 (R16-B2): the guards are Chinese and the base layers are not, as MiMo splits them")
+  section("Round 16 (R16-B2), as 26.920 redrew it: every layer the model reads is English")
   {
     /*
-     * MiMo ships its prompts as plain files: `claude.txt` and `desktop-base.md`
-     * are English, and every guard appended around them - plan, goal,
-     * environment check - is Chinese, for every user in every locale. This is
-     * that split, asserted from both sides so neither can drift.
+     * R16-B2 made the guards Chinese because MiMo's were. MiMo 26.920 turned
+     * that round: the plan section and the plan and environment guards are
+     * gone, the goal guard is English, and so is the per-turn note - so MCode
+     * follows (the user's 2026-09-21 decision), and this asserts the new split
+     * from both sides so neither can drift back.
      */
     const build = agentPrompt("build")
     check("the two base layers are English", han(build) < 0.05, `${(han(build) * 100).toFixed(2)}% Han`)
-    check("the plan-mode addendum is Chinese", han(PLAN_SECTION) > 0.25 && PLAN_SECTION.startsWith("# \u8ba1\u5212\u6a21\u5f0f"), PLAN_SECTION.slice(0, 40))
-    const planRules = ["\u5206\u6b65\u65b9\u6848", "write\u3001edit\u3001bash", "`task` \u5de5\u5177", "plan_exit"].filter((part) => !PLAN_SECTION.includes(part))
-    check("and it still states every rule MiMo's states", planRules.length === 0, planRules)
+    check("plan mode adds no section of its own", agentPrompt("plan") === build)
 
     const first = firstPlanNote("/p/.mcode/plans/x.md", false)
     const later = laterPlanNote("/p/.mcode/plans/x.md")
-    check("the per-turn plan guard is Chinese and marked as MiMo marks it", han(first) > 0.25 && first.startsWith("[\u8ba1\u5212\u6a21\u5f0f]") && later.startsWith("[\u8ba1\u5212\u6a21\u5f0f]"), `${(han(first) * 100).toFixed(2)}% Han`)
+    check("the per-turn plan notes are English and marked", !CJK.test(first) && !CJK.test(later) && first.startsWith("[Plan mode]") && later.startsWith("[Plan mode]"), first.slice(0, 80))
     check("both name the plan file, which is what the turn may write", first.includes("/p/.mcode/plans/x.md") && later.includes("/p/.mcode/plans/x.md"))
-    /*
-     * The switch out of plan mode is English in MiMo too (`build-switch.txt`,
-     * from the engine rather than the desktop), so a conversation really does
-     * read a Chinese guard and then an English switch.
-     */
     check("the switch back to build stays English, as MiMo's does", !CJK.test(buildSwitchNote()), buildSwitchNote())
-    /*
-     * The shares MiMo's own files carry, for scale: claude.txt 0%,
-     * desktop-base.md 0.25%, plan-addendum.md 67%, guard-plan.md 67%,
-     * guard-envcheck-win32.md 29%. MCode's land in the same places.
-     */
-    check("the guards are as Chinese as MiMo's, not merely marked", han(PLAN_SECTION) > 0.5 && han(first) > 0.5, [han(PLAN_SECTION), han(first)].map((share) => `${(share * 100).toFixed(1)}%`))
   }
 
-  section("Round 16 (R16-B3): the environment-check guard, once per conversation")
+  section("Round 16 (R16-B3), as 26.920 redrew it: no environment-check guard, one sentence in its place")
   {
     /*
-     * MiMo's answer to the commonest failure of a coding agent on an unfamiliar
-     * machine: one bare `node -v` misses on PATH, the agent announces the
-     * toolchain is absent, stops verifying, and hands back a reading of the
-     * code as though it had run it. Both platforms carry the rule, and each
-     * names where that platform actually keeps its toolchains.
+     * 26.920 deleted both of its environment-check guards. What they were for
+     * - one bare `node -v` missing on PATH taken as proof the toolchain is
+     * absent - is now a sentence in the base layer, naming each platform's way
+     * of looking, and the once-per-conversation note is the two MCP blocks.
      */
-    const windows = environmentGuard("win32")
-    const mac = environmentGuard("darwin")
-    const linux = environmentGuard("linux")
-
-    for (const [name, guard] of [["windows", windows], ["macOS", mac], ["Linux", linux]] as const) {
-      check(`${name}: the guard is Chinese and marked`, han(guard) > 0.2 && guard.startsWith("[\u73af\u5883\u68c0\u6d4b]"), `${(han(guard) * 100).toFixed(1)}% Han`)
-      check(`${name}: one failed probe is not a verdict`, guard.includes("node -v") && guard.includes("\u5c31\u65ad\u5b9a\u300c\u6ca1\u88c5"), guard.slice(0, 400))
-      check(`${name}: the full path is then used to really run the tests`, guard.includes("\u771f\u6b63\u8dd1\u8d77\u6765") && guard.includes("\u9759\u6001\u5206\u6790"))
-      check(`${name}: a promised check is finished inside this turn`, guard.includes("**\u672c\u56de\u5408\u5185**"))
-      check(`${name}: and only then may it say something is missing`, guard.includes("\u672c\u673a\u7f3a\u5c11 X"))
-    }
-
-    /*
-     * The guard names the shell the command is really handed to. The
-     * end-to-end run against a real model found the two halves disagreeing:
-     * started from Git Bash, the shell tool's description said the command
-     * goes to bash while this guard, in the same request, said to write
-     * PowerShell.
-     */
-    const winBash = environmentGuard("win32", "bash")
-    check("windows: the guard names the shell in use, not PowerShell by default", winBash.includes("交给 bash 执行") && windows.includes("交给 powershell 执行"), winBash.slice(0, 120))
-    check("windows: PowerShell's own advice is left out for another shell", !winBash.includes("写 PowerShell 而不是 bash") && windows.includes("写 PowerShell 而不是 bash"))
-    check("windows: and where.exe is still the way to locate a tool", winBash.includes("where.exe node"))
+    const note = sessionNote({ mcpServers: [], configFile: "/g/config.json" })
+    check("the note carries no environment check and is English", !CJK.test(note) && !note.includes("Get-Command") && !note.includes("node -v"), note)
+    const desktop = agentPrompt("build")
+    const tools = desktop.slice(desktop.indexOf("## Tools on this machine"), desktop.indexOf("## Web page work"))
+    check("the base layer says one failed command proves nothing, and how to look on each platform", ["one bare command failing", "Get-Command", "where.exe", "bash -lc", "command -v"].every((part) => tools.includes(part)), tools)
     const runnerSource = await fs.readFile(path.join(process.cwd(), "src/server/session/runner.ts"), "utf8")
     const contextSource = await fs.readFile(path.join(process.cwd(), "src/server/session/context.ts"), "utf8")
-    check("windows: the shell reaches the guard from the turn's settings", runnerSource.includes("shell: this.config.get().shell,") && contextSource.includes("environmentGuard(platform, activeShellName(input.shell))"))
-
-    const winPlaces = ["C:\\Program Files\\nodejs", "%APPDATA%\\nvm", "volta", "scoop", "chocolatey"].filter((place) => !windows.includes(place))
-    check("windows looks where Windows keeps Node", winPlaces.length === 0, winPlaces)
-    check("and names PowerShell's own way of looking", windows.includes("Get-Command node") && windows.includes("where.exe node") && windows.includes("\u4e0d\u8981\u7528 `which`"))
-    const unixPlaces = ["bash -lc", "/usr/local/bin", "~/.nvm/...", "/opt/homebrew/bin"].filter((place) => !windows.includes(place))
-    check("it warns off the Unix shells and paths that are not there", unixPlaces.length === 0, unixPlaces)
-
-    check("a Unix machine gets the mirror image", mac.includes("command -v node") && mac.includes("不要用 `where.exe`"), mac.slice(0, 200))
-    check("macOS names Homebrew's prefix and Linux does not", mac.includes("/opt/homebrew/bin") && !linux.includes("/opt/homebrew/bin"))
-    check("and each names itself rather than the other", mac.includes("macOS") && linux.includes("Linux") && !linux.includes("macOS"))
-
-    const note = sessionNote({ mcpServers: [], globalAgentsFile: "/g/AGENTS.md", configFile: "/g/config.json", dataRoot: "/g", platform: "win32" })
-    check("the guard rides on the once-per-conversation note", note.includes("[\u73af\u5883\u68c0\u6d4b]") && note.includes("Get-Command node"), note.slice(-300))
-    check("beside the MCP config paragraph, the other one MiMo writes in Chinese", note.includes("[MCP \u914d\u7f6e\u6587\u4ef6]"))
-    check("while the paragraphs MiMo keeps English stay English", note.includes("A skill goes in <project>/.mcode/skills/") && note.includes("When the user has to choose between options"))
+    check("and nothing builds the old guard any more", !contextSource.includes("environmentGuard") && !runnerSource.includes("environmentGuard"))
   }
 
   section("Round 16 (R16-B4, R16-B5): the diagram measurements and the deck's other way of getting a picture")
