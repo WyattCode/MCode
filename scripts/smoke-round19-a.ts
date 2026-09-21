@@ -216,4 +216,15 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
     check("a clone's suggested id is free in any case", cloneId("gw", new Set(["gw", "GW-copy"])) === "gw-copy-2")
     check("MiMo's slash message is in all 18 tables", (i18n.match(/^ {2}"set\.models\.providerIdSlash": /gm) ?? []).length === 18)
   }
+
+  // ----------------------------------------------------------------- R19-F10
+  section("Round 19 (F10): settings search finds hardware acceleration, and highlights by a row's whole text")
+  {
+    const general = i18n.split("\n").filter((line) => line.startsWith('  "set.keywords.general": '))
+    check("every table's 常规 keywords name the GPU", general.length === 18 && general.every((line) => /gpu/i.test(line)), general.filter((line) => !/gpu/i.test(line)))
+    check("zh-CN's say 硬件加速 and 图形", general[0]?.includes("硬件加速") && general[0]?.includes("图形"))
+    const settings = await read("src/renderer/src/components/SettingsDialog.vue")
+    const flash = settings.slice(settings.indexOf("async function flashMatch("), settings.indexOf("\n}\n", settings.indexOf("async function flashMatch(")))
+    check("the highlight reads a whole row (title, description, control), not the title alone", /querySelectorAll<HTMLElement>\("\.line, \.choice-btn, h3"\)/.test(flash) && !flash.includes(".line-title"))
+  }
 }

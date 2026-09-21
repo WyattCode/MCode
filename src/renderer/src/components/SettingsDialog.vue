@@ -953,8 +953,8 @@ watch(navQuery, (query) => {
 })
 
 /*
- * MiMo's highlight: two frames after the page draws, the first row whose title
- * or option reads the query scrolls to the middle and holds the selected fill
+ * MiMo's highlight: two frames after the page draws, the first row whose text
+ * (title, description or control) reads the query scrolls to the middle and holds the selected fill
  * for 1.6s while it fades. Reduced motion gets the fill without the fade.
  */
 const contentEl = ref<HTMLElement>()
@@ -967,7 +967,8 @@ async function flashMatch(query: string) {
   await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
   const root = contentEl.value
   if (!root) return
-  const hit = [...root.querySelectorAll<HTMLElement>(".line-title, .choice-btn, h3")].find((element) =>
+  // A whole row's text, as MiMo reads it: the title, the description under it and its controls' labels.
+  const hit = [...root.querySelectorAll<HTMLElement>(".line, .choice-btn, h3")].find((element) =>
     (element.textContent ?? "").toLocaleLowerCase().includes(needle),
   )
   if (!hit) return
