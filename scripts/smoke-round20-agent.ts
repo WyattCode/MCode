@@ -6,11 +6,13 @@
  *
  * smoke.ts calls `roundTwentyAgentChecks` with its own check and section.
  */
+import fs from "node:fs/promises"
+import { messagesRequest } from "../src/server/provider/anthropic"
 import { sessionNote } from "../src/server/session/context"
 import { agentPrompt } from "../src/server/session/prompts"
 import { bashDescription } from "../src/server/tool/bash"
 import { findTool } from "../src/server/tool/registry"
-import type { Check } from "./smoke-round5"
+import { calls, engine, say, wireText, type Check } from "./smoke-round5"
 
 const describe = (name: string) => findTool(name)?.description ?? ""
 
@@ -72,5 +74,47 @@ export async function roundTwentyAgentChecks(check: Check, section: (name: strin
     check("V4-7: the rule shows the right way and the wrong way", examples.length === 2, rule)
     check("V4-7: both in Chinese, one closing on a full stop and one on a colon", /\p{Script=Han}/u.test(examples[0] ?? "") && (examples[0] ?? "").endsWith("。") && (examples[1] ?? "").endsWith("："), examples)
     check("V4-7: the English example is gone", !prompt.includes("I'll check the config"))
+  }
+
+  section("Round 20 (V4-8): the last step keeps the tools defined and lets none be called, as MiMo's does")
+  {
+    const e = await engine()
+    try {
+      await e.config.set({ maxSteps: 1 })
+      const session = await e.store.create({ directory: e.project, model: e.model })
+      e.replies.push(calls([{ name: "read", input: { file_path: "README.md" } }]), say("stopped here"))
+      await e.runner.prompt({ sessionID: session.id, text: "keep going" })
+      await e.idle(session.id)
+      const last = e.bodies.at(-1)
+      const tools = (last?.tools ?? []) as unknown[]
+      check("V4-8: the step and then the last one were asked for", e.bodies.length === 2, e.bodies.length)
+      check("V4-8: the last request's history holds the tool call and its result", wireText(last).includes('"tool_calls"') && wireText(last).includes('"role":"tool"'), wireText(last).slice(0, 400))
+      check("V4-8: so its tools are still defined", tools.length > 0, tools.length)
+      check("V4-8: with the tool choice none", last?.tool_choice === "none", last?.tool_choice)
+      check("V4-8: and the instruction to answer in words", wireText(last).includes("MAXIMUM STEPS REACHED"))
+      const earlier = e.bodies[0]
+      check("V4-8: an ordinary step still leaves the choice to the model", earlier?.tool_choice === "auto", earlier?.tool_choice)
+      const reply = (await e.assistants(session.id)).at(-1)
+      check("V4-8: the turn ends on the model's words", !reply?.error && reply?.finish === "end_turn", reply?.error ?? reply?.finish)
+    } finally {
+      await e.close()
+      await fs.rm(e.dir, { recursive: true, force: true }).catch(() => undefined)
+    }
+
+    // The Messages request: Anthropic refuses tool blocks in a request that defines no tools.
+    const base = {
+      apiKey: "",
+      model: { provider: "anthropic", model: "claude-sonnet-4-5" },
+      system: "s",
+      history: [],
+      tools: [findTool("read")!],
+      effort: "",
+      signal: new AbortController().signal,
+    }
+    const closing = messagesRequest({ ...base, toolChoice: "none" }) as { tools?: unknown[]; tool_choice?: { type?: string } }
+    check("V4-8 (Anthropic): the last step's request defines the tools", (closing.tools?.length ?? 0) === 1, closing.tools?.length)
+    check("V4-8 (Anthropic): and chooses none of them", closing.tool_choice?.type === "none", closing.tool_choice)
+    const ordinary = messagesRequest(base) as { tool_choice?: unknown }
+    check("V4-8 (Anthropic): an ordinary step sends no choice, so the model picks", ordinary.tool_choice === undefined, ordinary.tool_choice)
   }
 }

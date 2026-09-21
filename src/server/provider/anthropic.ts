@@ -277,6 +277,7 @@ export function messagesRequest(request: TurnRequest): MessagesBody {
     // The conversation's own tail follows the marked prefix unmarked, so the prefix reads from one cache across conversations.
     system: [{ type: "text", text: request.system, cache_control: mark }, ...(request.systemTail ? [{ type: "text" as const, text: request.systemTail }] : [])],
     tools,
+    ...(request.toolChoice && tools.length ? { tool_choice: { type: request.toolChoice } } : {}),
     messages,
     ...reasoningRequest(request.model.model, request.effort, request.variants, maxTokens, limit ?? wanted),
     // MiMo's family sampling: none for Claude, set for another family reached over this protocol.

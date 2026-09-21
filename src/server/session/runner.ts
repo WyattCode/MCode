@@ -256,9 +256,10 @@ const TITLE_SOURCE_CHARS = 4000
 /**
  * What the model is told on the step that has to be the last one.
  *
- * The reference's `MAX_STEPS_PROMPT`, kept as it stands. It goes in as an
- * assistant message beside a request carrying no tools at all, so the only
- * thing left to do is write.
+ * The reference's `MAX_STEPS_PROMPT`, kept as it stands. It goes in as a
+ * user message beside a request whose tool choice is "none", so the only thing
+ * left to do is write. The tools are still defined, as MiMo's are: a request
+ * that defines none is refused by Anthropic once the history holds a tool call.
  */
 const MAX_STEPS_PROMPT = [
   "CRITICAL - MAXIMUM STEPS REACHED",
@@ -2470,7 +2471,7 @@ export class SessionRunner {
     let continuing: AssistantMessage | undefined
     for (let step = 0; ; step++) {
       if (controller.signal.aborted) return
-      // The reference's `isLastStep`: no tools, and an instruction to write.
+      // The reference's `isLastStep`: tools that may not be called, and an instruction to write.
       const lastStep = limit !== undefined && step >= limit
 
       /*
@@ -2639,12 +2640,9 @@ export class SessionRunner {
         // subagents: a subagent is never handed the actor tool, so it cannot start subagents of its own,
         // nor the session chat tools, which refuse a subagent anyway and only cost it a wasted call;
         // one asked for structured output has the tool it returns it through.
-        tools: lastStep
-          ? []
-          : [
-              ...this.offeredTools(session),
-              ...(outputSchema ? [structuredOutputTool(outputSchema)] : []),
-            ],
+        tools: [...this.offeredTools(session), ...(outputSchema ? [structuredOutputTool(outputSchema)] : [])],
+        // MiMo's last step: the tools stay defined, since the history carries calls to them, but none may be called.
+        ...(lastStep ? { toolChoice: "none" as const } : {}),
         effort: effort ?? "",
 
         signal: controller.signal,

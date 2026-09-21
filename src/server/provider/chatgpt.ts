@@ -269,7 +269,7 @@ async function streamResponses(
       input: toInput(request.history, request.inputs, request.model),
       include: INCLUDE_ENCRYPTED_REASONING,
       tools: toolSchemas(request.tools),
-      tool_choice: "auto",
+      tool_choice: request.toolChoice ?? "auto",
       parallel_tool_calls: false,
       // Nothing is retained server-side: the transcript lives in this app.
       store: false,
