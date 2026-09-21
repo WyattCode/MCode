@@ -834,10 +834,18 @@ function onError(event: Event) {
   background: #2e2e2e;
 }
 
+:root[data-theme="dark"] .text .md-code code {
+  background: none;
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .text code {
     color: #e6e6e6;
     background: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .text .md-code code {
+    background: none;
   }
 }
 
