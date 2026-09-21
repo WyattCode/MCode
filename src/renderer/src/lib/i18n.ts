@@ -41959,6 +41959,23 @@ export function compactTokens(count: number): string {
   return String(count)
 }
 
+/*
+ * Building an Intl.DateTimeFormat costs far more than using one: a transcript
+ * stamps every question and answer, and making a fresh formatter for each was
+ * 23ms of a switch to a 160-turn conversation. Kept per language and options.
+ */
+const formatters = new Map<string, Intl.DateTimeFormat>()
+
+function formatterFor(tag: string, options?: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  const key = `${tag}\n${options ? JSON.stringify(options) : ""}`
+  let formatter = formatters.get(key)
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(tag, options)
+    formatters.set(key, formatter)
+  }
+  return formatter
+}
+
 /**
  * The one date formatter: a moment in the interface language and that
  * language's own default calendar - MiMo's Intl.DateTimeFormat(language) for
@@ -41968,7 +41985,7 @@ export function compactTokens(count: number): string {
 export function dateIn(value: number | Date, options?: Intl.DateTimeFormatOptions): string {
   const date = typeof value === "number" ? new Date(value) : value
   try {
-    return new Intl.DateTimeFormat(language.value, options).format(date)
+    return formatterFor(language.value, options).format(date)
   } catch {
     return date.toLocaleDateString(undefined, options)
   }

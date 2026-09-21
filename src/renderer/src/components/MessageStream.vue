@@ -716,6 +716,58 @@ onMounted(() => {
 
 onBeforeUnmount(() => sizer?.disconnect())
 
+/*
+ * MiMo's selecting state: from a primary press inside the conversation until
+ * it is let go, and for as long as the selection sits in it, every turn is
+ * drawn (see `.stream.selecting` below). A class on the scroller, not a ref: a
+ * re-render of the whole transcript per mouse press would cost what the rule saves.
+ */
+let pressed = false
+let holdsSelection = false
+
+function paintSelecting() {
+  scroller.value?.classList.toggle("selecting", pressed || holdsSelection)
+}
+
+function onPressMove() {
+  window.removeEventListener("mousemove", onPressMove)
+  pressed = true
+  paintSelecting()
+}
+
+function onPressUp() {
+  window.removeEventListener("mousemove", onPressMove)
+  window.removeEventListener("mouseup", onPressUp)
+  pressed = false
+  paintSelecting()
+}
+
+function onPressDown(event: MouseEvent) {
+  if (event.button !== 0 || !(event.target instanceof Node) || !scroller.value?.contains(event.target)) return
+  window.addEventListener("mousemove", onPressMove)
+  window.addEventListener("mouseup", onPressUp)
+}
+
+function onSelectionChange() {
+  const selection = document.getSelection()
+  const view = scroller.value
+  const inside = (node: Node | null | undefined) => Boolean(node && view?.contains(node))
+  const next = Boolean(selection && !selection.isCollapsed && (inside(selection.anchorNode) || inside(selection.focusNode)))
+  if (next === holdsSelection) return
+  holdsSelection = next
+  paintSelecting()
+}
+
+onMounted(() => {
+  document.addEventListener("mousedown", onPressDown)
+  document.addEventListener("selectionchange", onSelectionChange)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener("mousedown", onPressDown)
+  document.removeEventListener("selectionchange", onSelectionChange)
+  onPressUp()
+})
+
 /**
  * Walks the conversation a turn at a time.
  *
@@ -1055,7 +1107,7 @@ defineExpose({ stepMessage, scroller })
       </div>
       <template v-for="(turn, at) in turns" :key="turn.id">
       <!-- round3-panel: the floating card draws the latest turn only, without its question. -->
-      <div v-if="!latest || at === turns.length - 1" class="turn" :data-turn="turn.id">
+      <div v-if="!latest || at === turns.length - 1" class="turn" :data-turn="turn.id" :data-turn-last="at === turns.length - 1 ? '' : undefined">
         <!-- Beyond MiMo: a heading per turn that is never drawn, for a screen reader's heading keys; find and selection pass it by. -->
         <h2 v-if="!latest" class="a11y-only" data-turn-heading data-find-skip data-selectable="none">{{ t("a11y.turnHeading", { n: at + 1 }) }}</h2>
         <!-- subagents: what a subagent was handed, labelled as MiMo labels it. -->
@@ -2373,6 +2425,36 @@ defineExpose({ stepMessage, scroller })
 
 /* A search result arrived at: a soft tint over the message that fades over MiMo's 1.6s. */
 /* MiMo's find-flash: radius 8, from 30% accent to clear over 1.2s, with no hold. */
+/*
+ * MiMo's long thread (26.920, its `#thread>.row` rule): a turn out of sight is
+ * neither laid out nor painted, and holds the room it last took - 240px before
+ * it has ever been drawn. Switching back to a 160-turn conversation spent 300ms
+ * laying out 33,000 nodes nobody could see; the text stays in the page, so
+ * find, copy, anchors and jumping to a message reach it as before. The last
+ * turn, the one being written and read, is always drawn in full.
+ */
+.inner > .turn {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px;
+}
+
+.inner > .turn[data-turn-last] {
+  content-visibility: visible;
+}
+
+/*
+ * While a selection is being made or held in the conversation every turn is
+ * drawn, as MiMo does, so a drag that runs past the window edge scrolls
+ * through real heights. The containment stays, so no turn moves when it switches.
+ */
+.stream.selecting .inner > .turn {
+  content-visibility: visible;
+}
+
+.stream.selecting .inner > .turn:not([data-turn-last]) {
+  contain: layout paint style;
+}
+
 .revealed {
   border-radius: 8px;
   animation: reveal-flash 1.2s ease-out both;

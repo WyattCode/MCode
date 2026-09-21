@@ -150,8 +150,14 @@ function markActive() {
   if (!view) return
   const rect = view.getBoundingClientRect()
   const next = new Set<number>()
-  stops.value.forEach((_stop, index) => {
-    const box = turnElement(index)?.getBoundingClientRect()
+  /*
+   * Every turn found in one pass: a selector per stop scanned the whole
+   * transcript once per turn, 22ms of a switch to a 160-turn conversation.
+   */
+  const byID = new Map<string, HTMLElement>()
+  for (const element of view.querySelectorAll<HTMLElement>("[data-turn]")) byID.set(element.dataset.turn ?? "", element)
+  stops.value.forEach((stop, index) => {
+    const box = byID.get(stop.id)?.getBoundingClientRect()
     if (box && box.bottom > rect.top && box.top < rect.bottom) next.add(index)
   })
   active.value = next
