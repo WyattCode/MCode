@@ -300,6 +300,12 @@ async function denyChecks(check: Check, section: Section, root: string): Promise
       const last = (await app.assistants(session.id)).at(-1)
       check("the model is not asked again after a Stop", app.turns.length === before + 1 && last?.finish === "aborted", [app.turns.length - before, last?.finish])
     }
+
+    section("Round 18 (R18-E1): the built-in guide says so too")
+    {
+      const guide = await fs.readFile(path.join(process.cwd(), "resources/skills/mcode-guide/SKILL.md"), "utf8")
+      check("it no longer says a refusal stops the turn", !/refusal stops the turn/i.test(guide) && guide.includes("carries on another way in the same turn"))
+    }
   } finally {
     await app.close()
   }

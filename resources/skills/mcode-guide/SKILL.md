@@ -55,8 +55,9 @@ the same menu.
 The access level in the composer decides what runs without asking: ask for
 changes, approve-for-me (routine edits and commands run, risky ones are checked),
 or full access. Settings can set any tool to always allow, ask or deny. A
-refusal stops the turn, and the reason is passed to the agent with the next
-message.
+refused call is not run; the refusal, and any reason given, goes straight back
+to the agent, which carries on another way in the same turn. Only Stop ends a
+turn.
 
 ## Modes
 
