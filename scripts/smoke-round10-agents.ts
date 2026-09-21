@@ -345,7 +345,8 @@ async function agentChecks(check: Check, section: Section, root: string): Promis
       check("and its write goes through", writePart?.status === "completed" && (await fs.readFile(target, "utf8").catch(() => "")) === "built", writePart)
       check("the conversation is left in build mode", (await store.get(planned.id))?.agent === "build")
       const systems = h.parentRequests.map((seen) => seen.system)
-      check("the step after approval is asked with build's system prompt", systems.length === 3 && systems[0] !== systems[1] && systems[1] === systems[2], systems.map((text) => text.length))
+      // R18-E3: since 26.920 plan and build read the same prompt; the switch shows in the agent each step ran as, above.
+      check("every step, before and after approval, is asked with the one system prompt", systems.length === 3 && systems[0] === systems[1] && systems[1] === systems[2], systems.map((text) => text.length))
       check("the plan-mode refusal names the step, not the turn", /Refused for this step only/.test(planApprovedRefusal("a.ts")) && !/next turn/.test(planApprovedRefusal("a.ts")))
     }
 
