@@ -187,7 +187,7 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
       "set.models.removeProvider": "删除供应商",
       "set.models.cloneProvider": "克隆供应商",
       "set.models.fromProvider": "来自此供应商的模型",
-      "set.models.providerAdded": "已添加供应商",
+      "set.models.providerAdded": "已添加",
       "set.models.comboPlaceholder": "选择或添加 model-id",
     }
     for (const [key, want] of Object.entries(zh)) check(`zh-CN ${key} is ${want}`, said("zh-CN", key) === want, said("zh-CN", key))

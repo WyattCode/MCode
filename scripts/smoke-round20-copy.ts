@@ -70,9 +70,58 @@ export const GROUP_B: Row[] = [
   ["rp.diff.filesChanged", "{n} 个文件已更改", "{n} files changed"],
 ]
 
+/** Group C: the settings pages - MiMo's labels, MCode's descriptions in MiMo's shape. */
+export const GROUP_C: Row[] = [
+  ["set.config.pathCopied", "已复制路径", "Path copied"],
+  ["set.config.copyPathFailed", "复制路径失败", "Failed to copy path"],
+  ["set.mcp.applyNow", "立即生效", "Apply now"],
+  ["set.mcp.applyDoing", "正在生效…", "Applying…"],
+  ["set.mcp.applyDone", "已生效，下一条消息起使用新配置"],
+  ["set.mcp.applyBusy", "有对话正在运行，暂不能立即生效，请稍后再试"],
+  ["set.mcp.applyFailed", "暂时无法立即生效，新对话会使用新配置"],
+  ["set.mcp.unapplied", "配置已修改，尚未生效"],
+  ["set.mcp.importDone", "已导入 {n} 个 MCP 服务器，下个新对话生效"],
+  ["set.models.probeBusy", "测试中…", "Testing…"],
+  ["set.models.modelExists", "模型已存在", "Model already added"],
+  ["set.models.comboEmpty", "未找到模型，请手动输入 model-id", "No models found. Enter a model-id manually."],
+  ["set.models.cloneDesc", "为副本指定新的供应商 ID", "Pick a new provider ID for the copy"],
+  ["set.models.removeProviderBody", "将删除「{name}」及其下所有模型，且无法恢复。"],
+  ["set.models.intro", "自定义模型使用你自己的密钥：填入各家的 API Key 即可在对话里选用，仅保存在本机"],
+  ["set.models.providerAdded", "已添加", "Added"],
+  ["provider.custom.field.name.label", "名称", "Name"],
+  ["provider.custom.field.baseURL.label", "接口地址", "Endpoint"],
+  ["provider.custom.field.apiKey.label", "API Key", "API Key"],
+  ["provider.custom.field.apiKey.placeholder", "API Key", "API Key"],
+  ["provider.custom.models.name.placeholder", "展示名", "Display name"],
+  ["provider.custom.error.providerID.required", "供应商 ID 不能为空"],
+  ["provider.custom.error.name.required", "名称不能为空"],
+  ["provider.custom.error.baseURL.required", "接口地址不能为空"],
+  ["provider.custom.error.baseURL.format", "接口地址需以 http:// 或 https:// 开头"],
+  ["provider.custom.field.apiKey.description", "选填；通过请求头鉴权时可留空"],
+  ["provider.custom.field.providerID.placeholder", "my-provider", "my-provider"],
+  ["provider.custom.models.remove", "删除", "Remove"],
+  ["common.saving", "保存中…", "Saving…"],
+  ["set.skillPaths.title", "技能兼容路径", "Skill path compatibility"],
+  ["set.skillPaths.always", "始终启用"],
+  ["set.skillPaths.note", "下一条消息起生效；同名技能将覆盖内置技能"],
+  ["set.launchAtLoginSub", "开启后，登录电脑时自动启动 MCode"],
+  ["set.voiceFeedbackSub", "开启后，告诉 Agent 你想要「语音反馈」，它就会用短句朗读进展（如「好的」「完成了」）"],
+  ["set.ciHelp2", "内容只保存在本机，清空并保存即可停用"],
+  ["set.updateInstallHint", "重启更新后，MCode 将关闭并完成安装，结束后自动重新打开，可能需要几分钟"],
+  ["set.lab.sessionChat", "会话互聊", "Session chat"],
+  ["set.lab.sessionChatSub", "实验性：允许模型联系其他对话或本机的其他编程工具，并创建协作对话。关闭后新回合不再提供相关工具与技能；历史消息照常显示"],
+  ["set.closedSub", "关闭的项目会从侧栏移除，会话不会被删除"],
+  ["set.usageSub", "本机记录的 token 用量与费用"],
+  ["set.usageNone", "暂无记录"],
+  ["set.usageWindow", "近 {n} 天数据，按本机时区统计；标题、Smart 路由、上下文压缩等后台请求计入费用，不计回合"],
+  ["set.voiceModelSub", "仅用于语音转写；智能编辑由当前对话模型完成"],
+  ["set.updateFeedSub", "填写存放 latest.yml 和安装包的 https 地址，用于检查更新"],
+]
+
 export const GROUPS: [name: string, rows: Row[]][] = [
   ["A: the goal switch and bar", GROUP_A],
   ["B: conversation errors, permissions and attachments", GROUP_B],
+  ["C: the settings pages", GROUP_C],
 ]
 
 /** Rows whose zh-CN or English value is not the pinned one. */
