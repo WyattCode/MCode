@@ -7,7 +7,8 @@ import { t } from "../lib/i18n"
 import { notice } from "../lib/toast"
 import { useEscapeLayerWhile } from "../lib/escape-layer"
 import ConfirmDialog from "./ConfirmDialog.vue"
-import { LIMIT_PRESETS, MODALITIES, limitLabel, limitOf, modalitySummary, validEndpoint, type Modality } from "../lib/custom-model"
+import { LIMIT_PRESETS, MODALITIES, limitLabel, limitOf, modalitySummary, providerIdError, validEndpoint, type Modality } from "../lib/custom-model"
+import { providerIdProblem } from "@shared/provider-id"
 
 /**
  * A custom provider, laid out as MiMo 26.920's models page lays one out: the
@@ -36,8 +37,6 @@ const props = defineProps<{
 const emit = defineEmits<{ connected: [providerID: string]; saved: [providerID: string] }>()
 
 const app = useApp()
-
-const PROVIDER_ID = /^[a-z0-9][a-z0-9-_]*$/
 
 type Mods = Record<Modality, boolean>
 
@@ -130,14 +129,24 @@ const keyShown = ref(Boolean(editing?.environment))
 
 /* ------------------------------------------------------------ the checks */
 
+/*
+ * MiMo 26.920's rule: not empty, no `/`, and not an id any provider already
+ * has, compared without case. Every provider's id, not only the custom ones:
+ * taking a built-in's id would shadow it with no way back.
+ */
+const idProblem = computed(() =>
+  editing
+    ? undefined
+    : providerIdProblem(
+        form.value.providerID,
+        app.providers.map((entry) => entry.id),
+      ),
+)
+
 const idError = computed(() => {
-  if (editing) return undefined
-  const value = form.value.providerID.trim()
-  if (!value) return tried.value ? t("provider.custom.error.providerID.required") : undefined
-  if (!PROVIDER_ID.test(value)) return t("provider.custom.error.providerID.format")
-  // Every provider's id, not only the custom ones: taking a built-in's id would shadow it with no way back.
-  if (app.providers.some((entry) => entry.id === value)) return t("provider.custom.error.providerID.exists")
-  return undefined
+  const problem = idProblem.value
+  if (!problem || (problem === "empty" && !tried.value)) return undefined
+  return providerIdError(problem)
 })
 
 const endpointBad = computed(() => Boolean(form.value.baseURL.trim()) && !validEndpoint(form.value.baseURL))
@@ -156,7 +165,7 @@ const headerProblems = computed(() =>
 
 const canSave = computed(() => {
   const value = form.value
-  if (!PROVIDER_ID.test(value.providerID.trim()) || idError.value || !validEndpoint(value.baseURL)) return false
+  if (idProblem.value || !value.providerID.trim() || !validEndpoint(value.baseURL)) return false
   if (!value.models.length || value.models.some(limitBad)) return false
   return headerProblems.value.every((problem) => !problem.key && !problem.value)
 })

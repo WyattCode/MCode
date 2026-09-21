@@ -193,8 +193,9 @@ export async function roundNineProviderChecks(check: Check, section: (name: stri
 
       /* P9-9: the refusals are named, so the window says them in its own language. */
       const request = (body: Record<string, unknown>) => () => handle(backend.runtime, body as unknown as Request)
-      const bad = await refusal(request({ type: "provider.addCustom", id: "Bad Id", name: "x", baseURL: "https://a.example/v1", apiKey: "", models: [{ id: "m", name: "m" }] }))
-      check("(P9-9) a bad provider id is refused by code", bad.code === "provider.custom.error.providerID.format", bad)
+      // R19-F9: MiMo 26.920's rule refuses only a slash (and a taken id), so that is the bad id now.
+      const bad = await refusal(request({ type: "provider.addCustom", id: "Bad/Id", name: "x", baseURL: "https://a.example/v1", apiKey: "", models: [{ id: "m", name: "m" }] }))
+      check("(P9-9) a bad provider id is refused by code", bad.code === "set.models.providerIdSlash", bad)
       const taken = await refusal(request({ type: "provider.addCustom", id: "gw", name: "x", baseURL: "https://a.example/v1", apiKey: "", models: [{ id: "m", name: "m" }] }))
       check("(P9-9) so is a taken one", taken.code === "provider.custom.error.providerID.exists", taken)
       const empty = await refusal(request({ type: "provider.addCustom", id: "gw2", name: "x", baseURL: "https://a.example/v1", apiKey: "", models: [] }))

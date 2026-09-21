@@ -16,6 +16,7 @@ import { sessionFiles } from "@shared/session-files"
 import { artifactCategory } from "@shared/artifact-category"
 import { Identifier } from "@shared/id"
 import { normalizeBaseURL } from "@shared/custom-endpoint"
+import { providerIdMessageKey, providerIdProblem } from "@shared/provider-id"
 import { CodedError } from "@shared/errors"
 import { cleanGoal } from "./session/goal"
 import { summarizeUsage } from "./usage-summary"
@@ -296,6 +297,11 @@ async function waitForIdle(runtime: Runtime, sessionID: string, within = IDLE_WA
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
   return true
+}
+
+/** Every provider id in use: the built-ins, the custom ones, and a disabled custom one too. */
+function takenProviderIds(runtime: Runtime): string[] {
+  return [...runtime.config.definitions().map((entry) => entry.id), ...runtime.config.get().customProviders.map((entry) => entry.id)]
 }
 
 export async function handle(runtime: Runtime, request: Request, owner?: ShellOwner): Promise<unknown> {
@@ -1163,15 +1169,12 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * both.
        */
       const id = request.id.trim()
-      if (!/^[a-z0-9][a-z0-9-_]*$/.test(id)) {
-        throw new CodedError(`"${id}" is not a valid provider id`, "provider.custom.error.providerID.format")
-      }
       const config = runtime.config.get()
-      // Checked against every provider, not only the custom ones: taking a
-      // built-in's id would shadow it and there would be no way back.
-      if (runtime.config.definition(id)) {
-        throw new CodedError(`A provider with the id ${id} already exists`, "provider.custom.error.providerID.exists")
-      }
+      // MiMo's rule. Checked against every provider, not only the custom ones
+      // (and a disabled one too), without case: taking a built-in's id would
+      // shadow it and there would be no way back.
+      const problem = providerIdProblem(id, takenProviderIds(runtime))
+      if (problem) throw new CodedError(`"${id}" cannot be a provider id (${problem})`, providerIdMessageKey(problem))
       // Id and name trimmed, and 高级配置 checked: a bad limit is refused, not dropped.
       const models = request.models.map((model) => withImageInput(customModelOf(model), runtime.config.modelCatalog()))
       if (!models.length) throw new CodedError("A custom provider needs at least one model", "provider.needsModel")
@@ -1258,14 +1261,12 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       const config = runtime.config.get()
       const source = config.customProviders.find((entry) => entry.id === request.provider)
       if (!source) throw new CodedError(`No custom provider with the id ${request.provider}`, "provider.notFound")
-      const taken = (id: string) =>
-        Boolean(runtime.config.definition(id)) || config.customProviders.some((entry) => entry.id === id)
+      const ids = takenProviderIds(runtime)
+      const taken = (id: string) => providerIdProblem(id, ids) === "exists"
       // The id chosen in the clone dialog, checked as a new provider's is; otherwise the first free `-copy`.
       const chosen = request.id?.trim()
-      if (chosen !== undefined && !/^[a-z0-9][a-z0-9-_]*$/.test(chosen)) {
-        throw new CodedError(`"${chosen}" is not a valid provider id`, "provider.custom.error.providerID.format")
-      }
-      if (chosen && taken(chosen)) throw new CodedError(`A provider with the id ${chosen} already exists`, "provider.custom.error.providerID.exists")
+      const problem = chosen !== undefined ? providerIdProblem(chosen, ids) : undefined
+      if (problem) throw new CodedError(`"${chosen}" cannot be a provider id (${problem})`, providerIdMessageKey(problem))
       let id = chosen || `${source.id}-copy`
       for (let n = 2; !chosen && taken(id); n++) id = `${source.id}-copy-${n}`
       await runtime.config.set({

@@ -2,6 +2,8 @@
  * The pure rules of the models page's provider form (MiMo 26.920), shared by
  * the form and smoke.
  */
+import type { ProviderIdProblem } from "@shared/provider-id"
+import { t } from "./i18n"
 
 /* MiMo 26.920's limit menus: three sizes each, in tokens, and a custom field under them. */
 export const LIMIT_PRESETS = {
@@ -52,10 +54,18 @@ export function modalitySummary(on: Record<Modality, boolean>, label: (key: Moda
   return [head, on.pdf ? label("pdf") : ""].filter(Boolean).join("·") || "—"
 }
 
-/** A free id for a clone, MiMo's way: `<id>-copy`, then `-copy-2`, `-copy-3`... */
+/** A free id for a clone, MiMo's way: `<id>-copy`, then `-copy-2`, `-copy-3`... (free without regard to case). */
 export function cloneId(source: string, taken: ReadonlySet<string>): string {
+  const lower = new Set([...taken].map((id) => id.toLowerCase()))
   for (let n = 1; ; n++) {
     const id = n === 1 ? `${source}-copy` : `${source}-copy-${n}`
-    if (!taken.has(id)) return id
+    if (!lower.has(id.toLowerCase())) return id
   }
+}
+
+/** What the form and the clone dialog say under a provider id that `providerIdProblem` refuses. */
+export function providerIdError(problem: ProviderIdProblem): string {
+  if (problem === "empty") return t("provider.custom.error.providerID.required")
+  if (problem === "slash") return t("set.models.providerIdSlash")
+  return t("provider.custom.error.providerID.exists")
 }

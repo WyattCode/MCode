@@ -1787,8 +1787,8 @@ export interface CustomProvider {
   /**
    * Chosen by the user, not derived from the name.
    *
-   * The reference asks for this outright and validates it against
-   * /^[a-z0-9][a-z0-9-_]*$/. It matters because `provider/model` refs and the
+   * Asked for outright and checked by MiMo 26.920's rule (`providerIdProblem`
+   * in @shared/provider-id: no `/`, not taken in any case). It matters because `provider/model` refs and the
    * stored credential are both keyed by it, so an id that moves when the
    * display name is edited takes both with it.
    */

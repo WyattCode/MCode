@@ -3,6 +3,8 @@ import { computed, onMounted, ref } from "vue"
 import { t } from "../lib/i18n"
 import { useEscapeLayer } from "../lib/escape-layer"
 import { composing } from "../lib/keys"
+import { providerIdError } from "../lib/custom-model"
+import { providerIdProblem } from "@shared/provider-id"
 
 /**
  * MiMo 26.920's 克隆供应商: the copy's provider id, asked for in the shared
@@ -13,16 +15,13 @@ import { composing } from "../lib/keys"
 const props = defineProps<{ initial: string; taken: ReadonlySet<string> }>()
 const emit = defineEmits<{ close: []; confirm: [id: string] }>()
 
-const PROVIDER_ID = /^[a-z0-9][a-z0-9-_]*$/
 const id = ref(props.initial)
 const field = ref<HTMLInputElement>()
 
+/* MiMo's rule, the same the form keeps: not empty, no `/`, not taken in any case. */
 const error = computed(() => {
-  const value = id.value.trim()
-  if (!value) return t("provider.custom.error.providerID.required")
-  if (!PROVIDER_ID.test(value)) return t("provider.custom.error.providerID.format")
-  if (props.taken.has(value)) return t("provider.custom.error.providerID.exists")
-  return undefined
+  const problem = providerIdProblem(id.value, props.taken)
+  return problem ? providerIdError(problem) : undefined
 })
 
 function confirm() {

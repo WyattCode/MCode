@@ -197,4 +197,23 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
     check("search still finds the page by the new word", said("zh-CN", "set.keywords.models").includes("供应商"))
     language.value = spoken
   }
+
+  // ------------------------------------------------------------------ R19-F9
+  section("Round 19 (F9): a provider id follows MiMo's rule - no slash, not taken in any case")
+  {
+    const { providerIdProblem } = await import("../src/shared/provider-id")
+    const taken = ["openai", "gw"]
+    check("uppercase, dots and spaces are accepted, as MiMo accepts them", ["OpenAI-2", "my.provider", "My Gateway"].every((id) => providerIdProblem(id, taken) === undefined))
+    check("a slash is refused", providerIdProblem("a/b", taken) === "slash")
+    check("empty (after trimming) is refused", providerIdProblem("   ", taken) === "empty")
+    check("a taken id is refused without regard to case", providerIdProblem("OpenAI", taken) === "exists" && providerIdProblem(" GW ", taken) === "exists")
+    check("an object's own names are refused as taken", ["__proto__", "constructor"].every((id) => providerIdProblem(id, []) === "exists"))
+    const form = await read("src/renderer/src/components/CustomProviderForm.vue")
+    const clone = await read("src/renderer/src/components/ProviderCloneDialog.vue")
+    const handlers = await read("src/server/handlers.ts")
+    check("the form, the clone dialog and the backend all use it, and the old lowercase pattern is gone", [form, clone, handlers].every((source) => source.includes("providerIdProblem(") && !source.includes("[a-z0-9][a-z0-9-_]*")))
+    const { cloneId } = await import("../src/renderer/src/lib/custom-model")
+    check("a clone's suggested id is free in any case", cloneId("gw", new Set(["gw", "GW-copy"])) === "gw-copy-2")
+    check("MiMo's slash message is in all 18 tables", (i18n.match(/^ {2}"set\.models\.providerIdSlash": /gm) ?? []).length === 18)
+  }
 }
