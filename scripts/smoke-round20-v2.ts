@@ -92,4 +92,17 @@ export async function roundTwentyV2Checks(check: Check, section: (name: string) 
       /:root:not\(\[data-theme="light"\]\) \.input::placeholder \{\s*color: #a0a0a0;/.test(styles) && /:root\[data-theme="dark"\] \.input::placeholder \{\s*color: #a0a0a0;/.test(styles),
     )
   }
+
+  // ------------------------------------------------------------------ R20-V2-6
+  section("Round 20 (V2-6): the context ring is MiMo's - 18px, drawn in 16 units, r 6, stroke 2.4")
+  {
+    const ring = code(await read("src/renderer/src/components/ContextRing.vue"))
+    check("a 16-unit square", /viewBox="0 0 16 16"/.test(ring))
+    check("radius 6 about the centre, for both circles", (ring.match(/cx="8"\s+cy="8"\s+r="6"/g) ?? []).length === 2)
+    check("stroke 2.4 by default, and the composer mounts it at 18", /stroke: 2\.4/.test(ring) && /<ContextRing :percent="contextUsage\.percent" :size="18" :stroke="2\.4" \/>/.test(composer))
+    check("the track is the weak border on light and #2e2e2e on dark", /\.ring-track \{\s*stroke: var\(--border-weak\);/.test(ring) && /:root\[data-theme="dark"\] \.ring-track \{\s*stroke: #2e2e2e;/.test(ring))
+    check("the arc is the muted text", /\.ring-arc \{\s*stroke: var\(--text-base\);/.test(ring))
+    const ctx = rules(".ctx").at(-1) ?? ""
+    check("the button around it has no margin of its own", !/margin/.test(ctx), ctx)
+  }
 }

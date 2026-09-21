@@ -4475,9 +4475,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   justify-content: center;
   width: 28px;
   height: 28px;
-  margin-inline-end: 2px;
   padding: 0;
-  color: var(--icon-base);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 50%;
