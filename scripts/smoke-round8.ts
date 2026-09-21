@@ -184,7 +184,7 @@ export async function roundEightChecks(check: Check, section: (name: string) => 
     check("and it says nothing else - no skill folder, no instruction file, no question advice", !configured.includes("SKILL.md") && !configured.includes("AGENTS.md") && !configured.includes("question tool"))
 
     const none = sessionNote({ mcpServers: [], configFile: "/home/u/.mcode/config.json" })
-    check("with no servers it says so plainly and invents none", none.includes("No MCP servers are configured here") && !none.includes("Prefer an MCP tool"))
+    check("with no servers the note lists none and gives only where they are kept", !none.includes("MCP servers configured here") && !none.includes("Prefer an MCP tool") && none.includes("mcpServers"), none)
 
     const e = await engine()
     try {
@@ -194,13 +194,13 @@ export async function roundEightChecks(check: Check, section: (name: string) => 
       await e.idle(session.id)
       const first = wireText(e.bodies.at(-1))
       check("the note reaches the provider on the first message, with where the servers are kept", first.includes("section of") && first.includes("config.json"))
-      check("exactly once", countIn(first, "No MCP servers are configured here") === 1, countIn(first, "No MCP servers are configured here"))
+      check("exactly once", countIn(first, "# About this app") === 1, countIn(first, "# About this app"))
 
       e.replies.push(say("ok"))
       await e.runner.prompt({ sessionID: session.id, text: "second" })
       await e.idle(session.id)
       const second = wireText(e.bodies.at(-1))
-      check("and is not repeated on the next message", countIn(second, "No MCP servers are configured here") === 1)
+      check("and is not repeated on the next message", countIn(second, "# About this app") === 1)
     } finally {
       await e.close()
     }

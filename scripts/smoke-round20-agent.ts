@@ -6,6 +6,7 @@
  *
  * smoke.ts calls `roundTwentyAgentChecks` with its own check and section.
  */
+import { sessionNote } from "../src/server/session/context"
 import { agentPrompt } from "../src/server/session/prompts"
 import { bashDescription } from "../src/server/tool/bash"
 import { findTool } from "../src/server/tool/registry"
@@ -52,5 +53,14 @@ export async function roundTwentyAgentChecks(check: Check, section: (name: strin
     check("V4-5: the first rule gives example step names", examples.length >= 2, task)
     check("V4-5: every one of them is written in Chinese", examples.length > 0 && examples.every((example) => /\p{Script=Han}/u.test(example) && !/[A-Za-z]{3,}/.test(example)), examples)
     check("V4-5: the English examples are gone", !prompt.includes("Outline the deck") && !prompt.includes("Check the finished slides"))
+  }
+
+  section("Round 20 (V4-6): with no MCP server the first note adds nothing about servers")
+  {
+    const none = sessionNote({ mcpServers: [], configFile: "/home/u/.mcode/config.json" })
+    check("V4-6: no line announcing that there are none", !/No MCP servers/i.test(none), none)
+    check("V4-6: the note is its heading and the config-file block alone", none.split("\n").length === 2 && none.includes("mcpServers") && none.includes("/home/u/.mcode/config.json"), none)
+    const some = sessionNote({ mcpServers: ["files"], configFile: "/home/u/.mcode/config.json" })
+    check("V4-6: with a server configured it is still named", some.includes("MCP servers configured here: files"), some)
   }
 }

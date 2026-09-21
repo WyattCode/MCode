@@ -146,6 +146,8 @@ export interface SessionNoteInput {
  * its own length on. Without it a model that has a configured MCP server still
  * reaches for a platform's command-line tool, spends a turn on a login this app
  * cannot service, and then tells the user it cannot see any MCP servers at all.
+ * With no server configured MiMo's server block is empty and only the file
+ * block remains, and so it is here.
  */
 export function sessionNote(input: SessionNoteInput): string {
   const lines = ["# About this app"]
@@ -157,8 +159,6 @@ export function sessionNote(input: SessionNoteInput): string {
       "- Prefer an MCP tool to a command-line program that does the same job. When a server covers the work, do not reach for that platform's CLI, do not check whether the CLI is installed, and never try to sign into one: this app cannot hand a terminal over to an interactive login, so the attempt only costs a turn.",
       "- A server's own executable is not a shell fallback either. If the tool you need is missing, say which server it belongs to and that it needs connecting, rather than running the server yourself or substituting a different server's tool.",
     )
-  } else {
-    lines.push("- No MCP servers are configured here. Say so plainly if the user asks, and do not invent one.")
   }
 
   lines.push(
