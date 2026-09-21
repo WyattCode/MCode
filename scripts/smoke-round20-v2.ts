@@ -144,4 +144,11 @@ export async function roundTwentyV2Checks(check: Check, section: (name: string) 
         /:root:not\(\[data-theme="light"\]\) \.box:not\(\.dropping\) \{\s*border-color: #2e2e2e;/.test(styles),
     )
   }
+
+  // ------------------------------------------------------------------ R20-V2-10
+  section("Round 20 (V2-10): the full-access chip gives up its orange on hover, as MiMo's does")
+  {
+    check("the orange is written only for the chip at rest", /\.pill\.access\.full:not\(:hover\) \{\s*color: #fb8147;/.test(styles))
+    check("no rule keeps it orange while hovered", !/\.pill\.access\.full:hover/.test(styles))
+  }
 }

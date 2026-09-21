@@ -5601,9 +5601,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   line-height: calc(18px * var(--ui-font-scale, 1));
 }
 
-/* Full access is the one setting on this bar worth noticing, so it is coloured. */
-.pill.access.full,
-.pill.access.full:hover {
+/* Full access is the one setting on this bar worth noticing, so it is coloured - until hovered, where MiMo's hover colour takes over. */
+.pill.access.full:not(:hover) {
   color: #fb8147;
 }
 
