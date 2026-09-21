@@ -2,10 +2,10 @@
 
 给接手的人（或下一个会话）看的现状说明。每完成一轮就更新一次。
 
-- 分支：`v2.0`（只在本地，从未推送）
+- 分支：`v2.0`，2026-09-22 起推到 GitHub `WyattCode/MCode`（私有仓库，跟踪 `origin/v2.0`）；尚未合并进 `main`，安装包也未发布到 Releases
 - 目标：在界面和功能上 1:1 复刻 Xiaomi MiMo 桌面端，MCode 保留自己的名字、图标和字标
 - 对照清单（逐项实测，含百分比）：https://claude.ai/code/artifact/f149a5d1-857e-4bae-80be-ca03265d9f83
-- 最近更新：2026-09-20
+- 最近更新：2026-09-22（版本 0.3.8，已装到 `D:\Apps\MCode`）
 - 第十二轮（2026-09-19/20）：三个新的只读角度（数据生命周期与版本升级、主进程与界面的通信契约、失败与空状态）的审计已做完，34 项全部完成并合并入 `v2.0`，见下方「第十二轮」一节。报告在 scratchpad `round12-lifecycle.md` / `round12-ipc.md` / `round12-failure-ux.md`
 - 第十三轮（2026-09-20）：键盘与焦点、多实例与窗口生命周期、大数据量三个只读角度，37 项全部完成并合并入 `v2.0`，见下方「第十三轮」一节。报告在 scratchpad `round13-keyboard.md` / `round13-instances.md` / `round13-scale.md`
 - 第十四轮（2026-09-20）：网络与代理、本地化格式与从右到左、打包安装与自动更新三个只读角度，16 项全部完成并合并入 `v2.0`，见下方「第十四轮」一节。报告在 scratchpad `round14-network.md` / `round14-locale.md` / `round14-packaging.md`
@@ -14,6 +14,16 @@
 - 第十七轮（2026-09-21）：文档查看器、语音与媒体、版本控制与工作流三个角度，三路完成并合并入 `v2.0`，见下方「第十七轮」一节。报告 scratchpad `round17-viewers.md` / `round17-media.md` / `round17-workflow.md`
 - 第十八轮（2026-09-21）：**对照基准改为 MiMo 26.920**（用户让 MiMo 自动更新）；截图实测差异配色 + 26.914→26.920 版本差异，五路完成并合并入 `v2.0`，见下方「第十八轮」一节。报告 scratchpad `round18-mimo920.md` / `round18-visual-measured.md`
 - 第十九轮（2026-09-21/22）：逐页重新对照 26.920（四块只读审计 + 逐条复核，确认 28 条），A 设置与弹窗 14、B 右侧面板与侧栏 10、C 对话滚动（发送后停靠、跟随规则、暂停与重钉、入场动画、定时任务两行截断）5；另做性能：切回长对话 438→124–188ms、入口 5.90MB→2.14MB。用户定：删首启导入弹窗、新建项目位置行、「导出为对话文件」。`provider.custom.field.providerID.label` / `…providerID.exists` 的简繁中文经用户 2026-09-22 同意连同 `reference-strings.json` 一起改成 MiMo 的「供应商 ID」「该 ID 已被占用」。另修：本机动态端口从 1024 起，端口 0 可能落在浏览器拒绝的端口（5060、6000 等），后端 socket（`server/free-port.ts`）与预览服务改为避开这些端口，检查脚本的服务器由 `scripts/safe-listen.ts` 挪开（原「bad port」偶发失败）。合并后 smoke 6134 全过；合并版真窗口复测停靠 135.1（目标 136.8）。见各「第十九轮」小节。
+
+## 当前状态（2026-09-22，先读这里）
+
+- **对照基准**：MiMo 26.920（第十八轮起）。第十九轮逐页重新对照后确认的 28 条差异、两项性能遗留、交接文档记着的遗留项都已做完；目前没有已知的、未决的差异。
+- **版本**：0.3.8（`4f5120e`，`dist\MCode-0.3.8-x64.exe`，225.7 MB）已静默装到 `D:\Apps\MCode` 并验证能启动；此后代码没改过，不需要重新打包。
+- **验证**：typecheck、i18ncheck、wiringcheck、themecheck、mdcheck、sessioncheck、build 全过，smoke **6143 全过**。
+- **GitHub**：`v2.0` 已推到 `origin/v2.0`。**没做、需用户点头**：合并进 `main`（开拉取请求），以及把安装包发布到 Releases。
+- **仍与 MiMo 不同、且不算缺口的**：用户定的有意差异（见「与 MiMo 故意不同的地方」和记忆 `mcode-deliberate-differences`）；第十九轮我定、已告知用户的两处——PDF 文内链接可跳转（MiMo 的点击拦截让它失效）、「（AI生成）」按界面语言翻译（MiMo 全语言写死中文）；依赖小米账号 / 服务的功能；需要 Linux、macOS 真机才能核对的细节；需要新 token 名的 V10。
+- **仍未在真窗口验证的**：拖选时暂停跟随（探针的合成拖拽选不中文字，只用「选区留在对话里」间接验证）；批注发光的两种新入口（需真实发送，只有 smoke）。
+- **下一步可做**：见文末「下一步建议」。
 
 ## 现在到哪了
 
@@ -475,6 +485,10 @@
   - C11-46 斜杠高亮的命令名接受 `[^\s/]+`（MiMo 只接受 `[A-Za-z0-9_-]+`）：MCode 的 MCP 提示命令名是 `服务:提示`，收严会让这类命令不再高亮；高亮本来就要求命令在缓存列表里，不会误标。
   - C11-48 只有技能芯片、没有文字时照常发出（MiMo 拒发并提示「请输入内容」）。
   - C11-50 运行中发送走完整路径（命令模板、技能芯片、批注都带上；MiMo 只插「文本 + 附件」）。
+- 第十九轮（2026-09-21/22，我定并已告知用户，用户可要求改回）：
+  - PDF 文内链接（目录等）点击后跳到目标位置；MiMo 26.920 的捕获阶段点击处理把它们一起拦掉，点了没反应。
+  - 乐谱与内联音频旁的「（AI生成）」按界面语言翻译（`markdown.aiGenerated`）；MiMo 在所有语言下写死中文。与查看器底部 AI 提示一致。
+  - 发送停靠的地板放在问题所在那一轮、并按列底而不是 scrollHeight 算空间（C 路）：MiMo 的算法在上一轮失去页脚时问题会漂移、对话短于视口时问题被放低。
 
 ## 第十九轮 · B：右侧面板与侧栏细节（2026-09-21）
 
@@ -871,7 +885,7 @@
 npm run dev          # 开发版（先结束残留的 node_modules/electron/dist/electron.exe）
 npm run typecheck
 npm run build
-npm run smoke        # 当前 5830 条（2026-09-21）
+npm run smoke        # 当前 6143 条（2026-09-22）
 npm run i18ncheck    # 18 种语言表键一致
 npm run themecheck   # 重新生成 tokens.css 并逐字节比对；也拦物理方向的 CSS
 npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监听
@@ -892,7 +906,9 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
 - 读 MiMo：只读方式解 `C:/Users/Wyatt/AppData/Local/Programs/Xiaomi MiMo/resources/app.asar`（用仓库里的 `@electron/asar`，内部路径要用反斜杠拼接）。只看行为和尺寸，**不复制** MiMo 的代码、文案、图标、插画和品牌。
 - 安全：不读、不打印凭据值；不替用户登录；不在用户的 MiMo 里发消息、改设置、按麦克风或铃铛；未经同意不关用户的应用。
 - 探针：
-  - 不要 `moveTop()` 窗口；用 `setBackgroundThrottling(false)` + `showInactive()`。
+  - 不要 `moveTop()` 窗口；用 `setBackgroundThrottling(false)`。**截图前要 `win.show()`**：只 `showInactive()` 时 `capturePage` 可能拿到旧画面（2026-09-21 一张「AI 生成」截图停在首页，数据却是对话里的）。
+  - 读数前先记 `win.isVisible()` 和 `document.visibilityState`：窗口被外部最小化或隐藏时 rAF 不跑，停靠、跟随这类依赖帧的测量全部作废（第十九轮 C 路有几轮因此偏到 268–314）。不是 MCode 自己最小化的（已用 `BrowserWindow.prototype.minimize` 钩子排除），多半是用户同时在用电脑。
+  - 合成的 `mouseDown`/`mouseMove` 拖拽在探针里选不中文字（`getSelection()` 为空），要测选区就用 `Range` 直接放选区。
   - 有活动终端时不要直接退出探针（会弹 conpty 断言对话框）。
   - 打开外部程序、剪贴板、选目录的 IPC（`mcode:open-file`、`mcode:reveal-file`、`mcode:clipboard-write`、`mcode:pick-directory`、`mcode:quit`）先 `removeHandler` 再换成记录器。
   - 背景窗口里 `animation.finished` 可能一直不结束——产品代码里等动画都要配一个超时。
@@ -901,6 +917,9 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
 - 开发版重启：先停旧的 `npm run dev` 任务，再结束残留 electron 进程，否则两个开发实例抢同一份配置（会报缓存无法创建）。第十三轮起未打包运行默认用独立数据目录 `%APPDATA%\MCode-dev`（I13-1），不再和安装版共用 `%APPDATA%\MCode`；探针用 `app.setPath("userData")` 或 `--user-data-dir` 仍然优先。
 - 已知不稳定检查：第五轮计划模式一节（`smoke-round5.ts`「plan mode writes one file…」）偶发 6 条一起失败，2026-09-20 四次全量里出现一次；疑似后台请求（标题生成）插进来，使 `e.bodies.at(-1)` 不是本轮请求。重跑即过，未修。第十四轮 P 路还见过一次第七轮「provider receives the long bash description」两条失败（那次请求里没有工具列表），重跑即过，疑同类。
 - 版本号只在打包时递增，不要手改。WSL 永久不在范围内。
+- 本机 TCP 动态端口从 **1024** 起（`netsh int ipv4 show dynamicport tcp`），向系统要端口 0 可能拿到浏览器 / fetch 拒绝的端口（5060、6000、6666 等）。应用里后端 socket 走 `server/free-port.ts` 的 `windowSafePort`，预览服务在 `bind()` 里换掉这类端口，列表在 `shared/blocked-ports.ts`；检查脚本的服务器由 `scripts/safe-listen.ts` 挪开（`smoke.ts`、`session-check.ts` 第一个 import，`smoke-blocked-ports.ts` 验证）。新写的检查脚本入口也要先 import 它。
+- 合并多路时：各路都删同一批代码（如导入弹窗、对话文件），冲突两侧都要丢掉，不能 keep-both；合并后还要 grep 检查脚本里对已删符号的引用（第十九轮 E1/E11、`openText` 就是这样漏的）。
+- 用 Python 改仓库文件一律 `open(..., newline="")` 读写，否则 Windows 下会把 LF 写成 CRLF。
 - 对用户仓库跑 git 一律用 `server/git-process.ts` 的 `runGit`（固定环境、路径不加引号、超时、隐藏窗口）；解析路径用 `-z` 输出和 `parsePorcelain`。只有影子快照仓库（`session/snapshot.ts`）自己起进程。smoke-round10-git 会扫描 `src/server`、`src/main` 里没带 `windowsHide` 的 git 进程。
 
 ## 待办：用户截图逐项对照（2026-09-13，优先于下方审计清单）
@@ -1093,12 +1112,21 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
 
 ## 下一步建议
 
+**2026-09-22：第十九轮做完，已知差异清零，0.3.8 已装、`v2.0` 已推到 GitHub。** 可选的下一步：
+
+1. 用户点头后：开 `v2.0 → main` 的拉取请求；把 0.3.8 安装包作为 GitHub Release 发布。
+2. 用真实模型（局域网 `qwen38-nvfp4`，见记忆 `reference-lan-test-model`，只用一次性配置）实际走几轮对话，重点看第十九轮 C 路的发送停靠与跟随、拖选暂停，以及批注发光。
+3. MiMo 若再更新：先对比新旧 bundle 的版本差异（第十八轮做法），再决定是否重跑逐页对照（第十九轮做法：四块只读审计 + 每条独立复核）。
+4. 偶发的 smoke 不稳定项仍在（第五轮计划模式、第七轮 bash 描述，见「约定与坑」），重跑即过，未修。
+
+以下是更早的建议，留作记录：
+
 **第十五轮（二次全面复核）34 条缺陷已全部修掉并合并入 `v2.0`**，smoke 4891。下一步：
 
 0. **第十六轮已完成**（编码能力照 MiMo 重做，见上一节）。剩下的尾巴：MiMo 的「已查看」勾选框是否可见、深色差异配色与每文件边框，这三条要真截一次 MiMo 才能定；`notebook_edit` 的改动进不了撤销（`EDITING` 里没有它）。设置导航列溢出已修（`753c0a7`，见第十五轮 R15-U3 一节）。
 1. 用真实模型实际使用已装好的版本，按看到的问题逐条修。
 2. [已完成] 设置导航列在默认字号下超出自身盒子——照 MiMo 的 `.sn-scroll` 让列表在列内滚动（`753c0a7`），各行位置与高度不变、宽 +2.5px。
-3. 其他小尾巴（可选）：`update-transaction.json` 与 `composer-input.ts` 走 `writeAtomicSync`；清理崩溃留下的 `*.tmp`；[已完成] 英文词中子串搜索（`figur` → `configuration`，trigram 索引，见 R15-S3）；偶发失败的两处 smoke 检查（见「约定与坑」）。
+3. 其他小尾巴（可选）：`update-transaction.json` 与 `composer-input.ts` 走 `writeAtomicSync`；清理崩溃留下的 `*.tmp`；[已完成] 英文词中子串搜索（`figur` → `configuration`，trigram 索引，见 R15-S3）；偶发失败的两处 smoke 检查（见「约定与坑」）；[已完成]「bad port」偶发失败（本机端口范围，见「约定与坑」）。
 4. 新页面（钩子、CLI 插件、SSH 连接）用户已决定不做。
 5. [已完成] **T3 切回长对话**（第七轮遗留）：照 MiMo 26.920 的 `#thread>.row` 规则，对话里每一轮 `content-visibility: auto; contain-intrinsic-size: auto 240px`，最后一轮始终完整绘制；在对话里按下拖选或选区还在对话里时（`.stream.selecting`）所有轮都绘制并保留 containment，拖选越过窗口边缘时滚的是真实高度、切换时不挪动；另把 `dateIn` 的 `Intl.DateTimeFormat` 按语言与参数缓存（每个时间戳新建一个占 23ms）、导航条 `markActive` 由每轮一次 querySelector 改为一次扫描（22ms）；因轮次有了 containment，改过的「已编辑文件」卡片右键菜单挪到 body（fixed 定位否则以轮次为包含块）。**实测**（真实窗口、临时 profile，160 轮 / 480 条消息，含代码块、表格、工具步骤；探针 `scratchpad/perf/perf-switch.cjs`，从 `open()` 到流绘制且连续 30 帧不变）：切回长对话中位 438ms → 124–188ms（单帧最长 406 → 96–154ms，其中布局 300ms → 12ms），首次打开 1073 → 573–664ms，小对话 38 → 16–24ms。所见不变：底部与中段截图只有亚像素差异（滚动位置小数部分不同）；搜索结果跳转居中偏差 0 并闪烁；选区跨 40 轮复制出的字数与改前相同（34 898）；查找按 TreeWalker 走文本节点，字数与命中数与改前相同；编辑最后一问可打开、聚焦、Esc 关闭。注意：对话元素的 `innerText` 不再包含屏幕外轮次（仓库里没有代码在对话上用 `innerText`，新代码也别用，改用 `textContent` 或 TreeWalker）。smoke `smoke-perf-thread.ts` 9 条，改前代码上 7 条失败。
 6. [已完成] **入口 chunk**（第七轮遗留，当时 5.60MB，本轮开始前已涨到 5 902 781 字节，MiMo 26.920 为 2 271 966）：用 rollup 的逐模块 renderedLength 拆出大头——`lib/i18n.ts` 2.2MB（18 张语言表）、katex 600KB、设置对话框 185KB、jszip 与 Office / PDF 查看器约 300KB、图片与视频预览、产物页、插件页、连接与导入对话框。做法：① 语言表照 MiMo 分语言按需加载：源文件仍是一个 `i18n.ts`（各检查照旧读取与导入），构建时由 `electron.vite.config.ts` 的 `languageChunks` 把 zh-CN（默认）与 en（回退）以外的 16 张表各拆成一个 chunk、填进 `LOADERS`，找不到预期结构就让构建失败；`App.vue` 切语言前先 `loadLanguage`，表到手才切（不会半中半外，后发先至以最后一次为准）；窗口把上次的语言记在 localStorage，启动时与系统语言一起预取（不阻塞挂载）。② KaTeX 首次画公式时 `import()`，并在空闲时预取；未到时公式显示源码一瞬，`mathReady` 变真后重画；`smoke.ts` 与 `markdown-check.ts` 开头 `await loadMath()`。③ 设置、产物页、插件页、图片 / 视频预览、连接 / 导入对话框、Office / HTML / 浏览器标签、文件标签里的 PDF 改为 `defineAsyncComponent`。**结果**：入口 5 902 781 → 2 136 100 字节（-64%，已低于 MiMo），入口 CSS 639KB → 451KB；主进程依赖不变，新 chunk 都在 `out/renderer/assets`（`files` 已含 `out/renderer/**`）。**实测**（临时 profile 冷启动各 7 次取中位，从导入 `out/main` 起算；本机噪声约 ±30ms）：首个窗口创建 344 → 328–341ms（主进程，不受影响）、窗口显示 650 → 565–595、DOMContentLoaded 613 → 538–556、首次内容绘制 689 → 642–662、Vue 挂载完成 670 → 620–639；法语配置首次启动时文字在设置到达后约 20ms 换成法语（改前与设置同时），之后的启动因预取在设置到达时即是法语（0ms）。真实窗口里公式（行内与块级）、图片预览、Ctrl+, 打开设置、切换到日语 / 阿拉伯语（含 RTL）再切回英语均正常。smoke `smoke-perf-entry.ts` 14 条（入口预算 2 400 000 字节、各懒加载边界在源码与构建产物里都存在、16 个语言 chunk、法语专有字符串不在入口），改前代码上 12 条失败。未做安装包实测（打包会递增版本号）。
