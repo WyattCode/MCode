@@ -27,4 +27,11 @@ export async function roundTwentyAgentChecks(check: Check, section: (name: strin
     check("V4-2: a large file is written as a first portion, then edit calls", write.includes("Build a large file in parts") && write.includes("then add the rest with edit"), write)
     check("V4-2: and why - one huge call can pass the output limit and leave the file cut off", write.includes("output limit") && write.includes("cut off"), write)
   }
+
+  section("Round 20 (V4-3): grep sends counting to ripgrep through bash")
+  {
+    const grep = describe("grep")
+    check("V4-3: counting matches is done with rg through bash, not grep", grep.includes("to count them") && grep.includes("run ripgrep through bash") && grep.includes("rg --count"), grep)
+    check("V4-3: and it names where the bundled rg is when none is on the PATH", grep.includes("MCODE_RIPGREP_PATH"), grep)
+  }
 }

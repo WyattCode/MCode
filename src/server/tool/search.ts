@@ -327,6 +327,7 @@ export const GrepTool: ToolDefinition = {
     "Narrow it with path - a folder to search, or a single file - and with include, a glob naming which files to look in (`*.ts`, `*.{ts,tsx}`). A file include names is searched even when .gitignore leaves it out.",
     "Matches come back as the matching lines grouped under each file, most recently changed files first, at most 100 matches; past that it says so, so a search that hits the cap should be narrowed rather than trusted as complete.",
     "It is faster than running grep or Select-String through bash and does not depend on which tools this machine has. Reach for it to find where something is used, then read that file; use glob when you are matching names rather than contents.",
+    "It shows where matches are, not how many: to count them, per file or in all, run ripgrep through bash (`rg --count`, or `rg --count-matches` for every hit on a line) rather than grep. When rg is not on the PATH, the copy MCode ships is at the path in the MCODE_RIPGREP_PATH environment variable.",
   ].join("\n"),
   permission: "grep",
   parameters: {
