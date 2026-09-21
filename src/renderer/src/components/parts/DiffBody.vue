@@ -47,6 +47,16 @@ const STATUS_ICON: Record<string, string[]> = {
   changed: [SHEET, CORNER, "M6 8.6h4M6 11h2.6"],
 }
 
+/*
+ * The square in front of a name in the file list, marked for what the patch
+ * does to the file; a changed file's square holds a dot, drawn in the markup.
+ */
+const LIST_MARK: Record<string, string | undefined> = {
+  added: "M7 5.4v5.2M4.4 8h5.2",
+  deleted: "M4.4 8h5.2",
+  renamed: "M4.4 8h4.8M7.4 5.8 9.6 8l-2.2 2.2",
+}
+
 /* Folded files, by name, so a new patch for the same tab keeps what was folded. */
 const collapsed = ref(new Set<string>())
 
@@ -108,6 +118,7 @@ defineExpose({ reveal })
     <pre v-if="!files.length" class="db-raw">{{ capped.text }}</pre>
     <template v-else>
       <!-- MiMo draws the list only where the diff fills the panel; a step's diff and a permission card's go without it. -->
+      <div v-if="fill" class="db-list-title" data-diff-files-heading>{{ t("rp.diff.filesChanged", { n: files.length }) }}</div>
       <ol v-if="fill" class="db-list" data-diff-file-list>
         <li
           v-for="(file, index) in files"
@@ -118,6 +129,11 @@ defineExpose({ reveal })
           @click="reveal(index)"
           @keydown.enter.space.self.prevent="reveal(index, true)"
         >
+          <svg class="db-list-icon" :class="file.status" viewBox="0 0 14 16" width="14" height="16" :data-diff-list-icon="file.status" aria-hidden="true">
+            <rect x="1.6" y="2.6" width="10.8" height="10.8" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.2" />
+            <path v-if="LIST_MARK[file.status]" :d="LIST_MARK[file.status]" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
+            <circle v-else cx="7" cy="8" r="2" fill="currentColor" />
+          </svg>
           <span class="db-name" :title="`${file.path.dir}${file.path.base}`">
             <span v-if="file.path.dir" class="db-dir">{{ file.path.dir }}</span><span class="db-base">{{ file.path.base }}</span>
           </span>
@@ -320,7 +336,13 @@ defineExpose({ reveal })
   white-space: pre-wrap;
 }
 
-/* The file list: a line per file, a rule between. */
+/* The file list under diff2html's bold count, a line per file, a rule between. */
+.db-list-title {
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-weight: 700;
+  line-height: 1.5;
+}
+
 .db-list {
   margin: 0 0 10px;
   padding: 0;
@@ -340,6 +362,13 @@ defineExpose({ reveal })
 
 .db-list-line:last-child {
   border-bottom: 0;
+}
+
+/* A name in the list is diff2html's link blue in either theme, its folders dimmed. */
+.db-list .db-name {
+  --d2h-color: #3572b0;
+
+  color: var(--d2h-color);
 }
 
 .db-name {
@@ -455,25 +484,54 @@ defineExpose({ reveal })
   color: var(--d2h-del-label);
 }
 
-/* The word for what the patch did, beside the name. */
+/*
+ * The word for what the patch did, beside the name, and the square before it
+ * in the list: diff2html's status colours - green, red, yellow for a change and
+ * blue for a move. The last two have no name here, so the foreground is named
+ * again on the element that wears them.
+ */
 .db-tag {
   flex: none;
   margin-inline-start: 8px;
   padding: 1px 6px;
+  color: var(--d2h-color);
   border: 1px solid currentcolor;
   border-radius: 6px;
   font-size: calc(11px * var(--ui-font-scale, 1));
   line-height: 1.5;
   text-transform: uppercase;
   white-space: nowrap;
-  opacity: 0.85;
 }
 
-.db-tag.added {
+.db-list-icon {
+  flex: none;
+  margin-inline-end: 2px;
+  color: var(--d2h-color);
+}
+
+.db-scroll :is(.db-tag, .db-list-icon).changed {
+  --d2h-color: #d0b44c;
+}
+
+.db-scroll :is(.db-tag, .db-list-icon).renamed {
+  --d2h-color: #3572b0;
+}
+
+:root[data-theme="dark"] .db-scroll :is(.db-tag, .db-list-icon).changed {
+  --d2h-color: #d29922;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .db-scroll :is(.db-tag, .db-list-icon).changed {
+    --d2h-color: #d29922;
+  }
+}
+
+:is(.db-tag, .db-list-icon).added {
   color: var(--d2h-ins-label);
 }
 
-.db-tag.deleted {
+:is(.db-tag, .db-list-icon).deleted {
   color: var(--d2h-del-label);
 }
 

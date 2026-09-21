@@ -133,4 +133,36 @@ export async function roundEighteenDiffChecks(check: Check, section: (name: stri
         /background: var\(--d2h-del-bg\)/.test(rule('html[data-diff-marks="signs"] .db-row.del .db-ln')),
     )
   }
+
+  // ----------------------------------------------------------------- R18-D4
+  section("Round 18 (R18-D4): the review tab counts its files, and marks and colours each one by what happened to it")
+  {
+    const body = await read("src/renderer/src/components/parts/DiffBody.vue")
+    const style = body.slice(body.indexOf("<style"))
+    const rule = (selector: string) => {
+      const at = style.indexOf(`${selector} {`)
+      return at < 0 ? "" : style.slice(at, style.indexOf("}", at))
+    }
+    check(
+      "the filled diff has a heading over its list, counting the files through the tables",
+      /<div v-if="fill" class="db-list-title" data-diff-files-heading>\{\{ t\("rp\.diff\.filesChanged", \{ n: files\.length \}\) \}\}<\/div>\s*<ol v-if="fill" class="db-list"/.test(body),
+    )
+    check("in bold, as diff2html's title is", /font-weight: 700/.test(rule(".db-list-title")))
+    const strings = await tables()
+    const names = Object.keys(strings)
+    const missing = names.filter((name) => !strings[name]!["rp.diff.filesChanged"]?.includes("{n}"))
+    check(`the heading is written in all ${LANGUAGES.length} languages, each with the count in it`, names.length === LANGUAGES.length && missing.length === 0, missing)
+    check("in its own words in each, not the English copied round", new Set(names.map((name) => strings[name]!["rp.diff.filesChanged"])).size >= 16)
+
+    check("each file in the list has a square marked for its status", /<svg class="db-list-icon" :class="file\.status"[^>]*:data-diff-list-icon="file\.status"/.test(body) && /<rect [^>]*stroke="currentColor"/.test(body))
+    check("a changed file's square holds a dot, the others a plus, a minus or an arrow", /<circle v-else cx="7" cy="8" r="2" fill="currentColor" \/>/.test(body) && /const LIST_MARK[^}]*added:[^}]*deleted:[^}]*renamed:/.test(body) && !/changed:/.test(body.slice(body.indexOf("const LIST_MARK"), body.indexOf("}", body.indexOf("const LIST_MARK")))))
+    check("a name in the list is diff2html's link blue, in both themes", /--d2h-color: #3572b0;[\s\S]*color: var\(--d2h-color\)/.test(rule(".db-list .db-name")) && !/:root\[data-theme="dark"\] \.db-list \.db-name/.test(style))
+    check("with its folders dimmed, as before", /opacity: 0\.6/.test(rule(".db-dir")))
+    check("a change is diff2html's yellow, #d0b44c in light", /--d2h-color: #d0b44c;/.test(rule(".db-scroll :is(.db-tag, .db-list-icon).changed")))
+    check("and #d29922 in the dark, both ways the dark is chosen", /--d2h-color: #d29922;/.test(rule(':root[data-theme="dark"] .db-scroll :is(.db-tag, .db-list-icon).changed')) && /--d2h-color: #d29922;/.test(rule('  :root:not([data-theme="light"]) .db-scroll :is(.db-tag, .db-list-icon).changed')))
+    check("a move is diff2html's blue", /--d2h-color: #3572b0;/.test(rule(".db-scroll :is(.db-tag, .db-list-icon).renamed")))
+    check("an addition green and a removal red, from the labels already named", /color: var\(--d2h-ins-label\)/.test(rule(":is(.db-tag, .db-list-icon).added")) && /color: var\(--d2h-del-label\)/.test(rule(":is(.db-tag, .db-list-icon).deleted")))
+    check("the tag and the square draw in the colour named on them", /color: var\(--d2h-color\)/.test(rule("\n.db-tag")) && /color: var\(--d2h-color\)/.test(rule("\n.db-list-icon")))
+    check("and the tag is not dimmed, so its colour is the one measured", !/opacity/.test(rule("\n.db-tag")))
+  }
 }
