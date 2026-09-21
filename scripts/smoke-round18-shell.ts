@@ -48,4 +48,17 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
       check(`R18-U3: ${key} has left all 18 tables`, count === 0, count)
     }
   }
+
+  section("Round 18 (lane U): R18-U4 a failure's card offers no retry; a stopped or empty turn still does")
+  {
+    const stream = await read("src/renderer/src/components/MessageStream.vue")
+    const template = stream.slice(stream.indexOf("<template>"), stream.lastIndexOf("</template>"))
+    const card = template.slice(template.indexOf('data-turn-error>'), template.indexOf("</div>", template.indexOf('data-turn-error>')))
+    const finished = template.slice(template.indexOf("data-turn-finished"), template.indexOf("</template>", template.indexOf("data-turn-finished")))
+    const actions = template.slice(template.indexOf("data-msg-actions"), template.indexOf("</div>", template.indexOf("data-msg-actions")))
+    check("R18-U4: the error card holds its reason and detail but no retry", card.includes("data-err-text") && card.includes("data-err-detail") && !/retry/i.test(card), card.slice(-300))
+    check("R18-U4: the stopped or empty line keeps its retry", /data-retry[\s\S]*@click="retry\(turn\)"/.test(finished))
+    check("R18-U4: the reply's action row has no retry either", actions.length > 0 && !/retry/i.test(actions))
+    check("R18-U4: the pill's style went with it", !stream.includes(".retry-pill"))
+  }
 }
