@@ -2218,6 +2218,12 @@ async function openFromSide(sessionID: string) {
   if (app.currentID !== sessionID) await app.open(sessionID)
 }
 
+/* subagents: MiMo 26.920's chip on a side column row - the conversation, then its 子智能体 tab. */
+async function openSubagentsFromSide(sessionID: string) {
+  await openFromSide(sessionID)
+  rp.openSubagents()
+}
+
 /** A file's session, opened from the artifacts page. */
 async function openFromArtifacts(sessionID: string) {
   view.value = "session"
@@ -3933,6 +3939,7 @@ onBeforeUnmount(() => {
         @browse="browse"
         @dropFolders="addDroppedProjects"
         @open="openFromSide"
+        @openSubagents="openSubagentsFromSide"
         @rename="renameFromSide"
         @createIn="newSessionIn"
         @settings="openSettings"

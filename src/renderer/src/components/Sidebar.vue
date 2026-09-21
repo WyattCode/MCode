@@ -5,8 +5,9 @@ import RowTitle from "./RowTitle.vue"
 import ChatLinkMark from "./ChatLinkMark.vue"
 import { convoCard } from "../lib/convo-card"
 import { projectOf } from "../lib/session-project"
+import { subagentsAtWork } from "../lib/subagent-chip"
 import { useApp } from "../stores/app"
-import { dateIn, language, sessionTitle, t } from "../lib/i18n"
+import { dateIn, language, sessionTitle, t, tn } from "../lib/i18n"
 import { notify } from "../lib/toast"
 import { RAIL_WIDTH } from "../lib/right-tools"
 import { shownChord } from "../lib/keys"
@@ -72,6 +73,8 @@ const emit = defineEmits<{
   toggle: []
   browse: []
   open: [sessionID: string]
+  /* subagents: the conversation, with its 子智能体 tab open beside it. */
+  openSubagents: [sessionID: string]
   rename: [sessionID: string]
   createIn: [directory: string]
   settings: []
@@ -663,6 +666,22 @@ function dayLabel(at: number): string {
   return dateIn(at, { weekday: "long" })
 }
 
+/* subagents: the subagents still working for each conversation whose own turn has ended, for MiMo 26.920's chip. */
+const workingFor = computed(() => subagentsAtWork(app.subagentSessions, app.running, app.rootOf))
+
+/* Their names, as a list is written in the reader's language. */
+function subagentNames(sessions: SessionInfo[]): string {
+  const names = sessions.map((session) => session.title?.trim() || t("subagentActivity.fallbackName"))
+  try {
+    return new Intl.ListFormat(language.value, { type: "conjunction" }).format(names)
+  } catch {
+    return names.join(", ")
+  }
+}
+
+/* A conversation at work, or one whose subagents still are. */
+const working = (sessionID: string) => app.running.has(sessionID) || workingFor.value.has(sessionID)
+
 /* What a conversation is waiting on, most urgent first. */
 type Attention = "waiting" | "unread" | "active"
 const RANK: Record<Attention, number> = { waiting: 0, unread: 1, active: 2 }
@@ -670,7 +689,7 @@ const RANK: Record<Attention, number> = { waiting: 0, unread: 1, active: 2 }
 function attentionOf(sessionID: string): Attention | undefined {
   if (app.pendingPermissions.has(sessionID)) return "waiting"
   if (app.unseen.has(sessionID) || app.failed(sessionID)) return "unread"
-  if (app.running.has(sessionID)) return "active"
+  if (working(sessionID)) return "active"
   return undefined
 }
 
@@ -686,7 +705,7 @@ const STATUS_RANK: Record<RowStatus, number> = { waiting: 0, running: 1, unread:
 
 function statusOf(sessionID: string): RowStatus | undefined {
   if (app.pendingPermissions.has(sessionID) && app.currentID !== sessionID) return "waiting"
-  if (app.running.has(sessionID)) return "running"
+  if (working(sessionID)) return "running"
   if (app.unseen.has(sessionID) || app.failed(sessionID)) return "unread"
   return undefined
 }
@@ -1240,6 +1259,18 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
               <span v-else class="status-pill" :aria-label="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
             </span>
           </button>
+          <!-- subagents: MiMo 26.920's chip - how many subagents still work for this conversation, named under the pointer. -->
+          <button
+            v-if="workingFor.get(block.session.id)"
+            type="button"
+            class="subagent-chip"
+            :data-conv-subagent-chip="block.session.id"
+            :aria-label="tn('side.subagentChip', workingFor.get(block.session.id)!.length)"
+            v-tip="{ label: subagentNames(workingFor.get(block.session.id)!), placement: 'top' }"
+            @click.stop="emit('openSubagents', block.session.id)"
+          >
+            {{ tn("side.subagentChip", workingFor.get(block.session.id)!.length) }}
+          </button>
           <span class="row-actions">
             <button
               class="row-menu"
@@ -1439,6 +1470,18 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
                   <span v-else class="status-pill" :aria-label="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
                 </span>
               </button>
+              <!-- subagents: MiMo 26.920's chip - how many subagents still work for this conversation, named under the pointer. -->
+              <button
+                v-if="workingFor.get(session.id)"
+                type="button"
+                class="subagent-chip"
+                :data-conv-subagent-chip="session.id"
+                :aria-label="tn('side.subagentChip', workingFor.get(session.id)!.length)"
+                v-tip="{ label: subagentNames(workingFor.get(session.id)!), placement: 'top' }"
+                @click.stop="emit('openSubagents', session.id)"
+              >
+                {{ tn("side.subagentChip", workingFor.get(session.id)!.length) }}
+              </button>
               <span class="row-actions">
                 <button
                   class="row-menu"
@@ -1574,6 +1617,18 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
               <span v-else-if="statusOf(entry.session.id) === 'unread'" class="status-dot" aria-hidden="true" />
               <span v-else class="status-pill" :aria-label="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
             </span>
+          </button>
+          <!-- subagents: MiMo 26.920's chip - how many subagents still work for this conversation, named under the pointer. -->
+          <button
+            v-if="workingFor.get(entry.session.id)"
+            type="button"
+            class="subagent-chip"
+            :data-conv-subagent-chip="entry.session.id"
+            :aria-label="tn('side.subagentChip', workingFor.get(entry.session.id)!.length)"
+            v-tip="{ label: subagentNames(workingFor.get(entry.session.id)!), placement: 'top' }"
+            @click.stop="emit('openSubagents', entry.session.id)"
+          >
+            {{ tn("side.subagentChip", workingFor.get(entry.session.id)!.length) }}
           </button>
           <span class="row-actions">
             <button
@@ -2723,6 +2778,40 @@ button.section-head:focus-visible {
 
 .row:hover .row-status {
   opacity: 0;
+}
+
+/*
+ * subagents: MiMo 26.920's chip - a 10px pill on the hover colour, 6 after the
+ * spinner (the row's 14 less 8), stepping 54px aside for the row's pin and
+ * menu when the row is under the pointer, and over their scrim.
+ */
+.subagent-chip {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  margin-inline-start: -8px;
+  padding: 1px 6px;
+  color: var(--text-weak);
+  background: var(--surface-hover);
+  border-radius: 999px;
+  font-size: calc(10px * var(--ui-font-scale, 1));
+  line-height: calc(14px * var(--ui-font-scale, 1));
+  white-space: nowrap;
+  transition: transform var(--motion-fast, 0.12s);
+}
+
+.subagent-chip:hover {
+  color: var(--text-strong);
+}
+
+.row:hover .subagent-chip,
+.row:focus-within .subagent-chip {
+  transform: translateX(-54px);
+}
+
+.row:hover .subagent-chip:dir(rtl),
+.row:focus-within .subagent-chip:dir(rtl) {
+  transform: translateX(54px);
 }
 
 .status-spin {

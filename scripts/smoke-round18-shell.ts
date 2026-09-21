@@ -14,6 +14,7 @@ import type { Check } from "./smoke-round5"
 import { LANGUAGES, language, t, tn } from "../src/renderer/src/lib/i18n"
 import { toolVerb } from "../src/renderer/src/lib/tool-meta"
 import { UPDATE_REASONS, interruptedReason, readOnlyInstall } from "../src/shared/update-reason"
+import { subagentsAtWork } from "../src/renderer/src/lib/subagent-chip"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
 
@@ -219,5 +220,39 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
     for (const key of ["questionDock.collapsedSummary_one", "questionDock.collapsedSummary_other", "questionDock.collapse", "questionDock.expand"]) {
       check(`R18-U6: ${key} is in all 18 tables`, (await carrying(key)) === 18)
     }
+  }
+
+  section("Round 18 (lane U): R18-U7 a side column row counts the subagents still at work for it")
+  {
+    // A conversation c1 whose turn ended, with a1 and a2 working and a3 done; a4 works under a1; c2 is running itself, with b1.
+    const parents: Record<string, string> = { a1: "c1", a2: "c1", a3: "c1", a4: "a1", b1: "c2" }
+    const rootOf = (id: string) => {
+      let at = id
+      while (parents[at]) at = parents[at]
+      return at
+    }
+    const subagents = ["a1", "a2", "a3", "a4", "b1"].map((id) => ({ id }))
+    const working = subagentsAtWork(subagents, new Set(["a1", "a2", "a4", "b1", "c2"]), rootOf)
+    check("R18-U7: the working ones count for their conversation, one under another included", JSON.stringify(working.get("c1")?.map((entry) => entry.id)) === JSON.stringify(["a1", "a2", "a4"]), [...working])
+    check("R18-U7: a finished one does not", !working.get("c1")?.some((entry) => entry.id === "a3"))
+    check("R18-U7: a conversation that is running itself has no chip", !working.has("c2"))
+    check("R18-U7: and nothing counts for a subagent's own id", !working.has("a1"))
+
+    const side = await read("src/renderer/src/components/Sidebar.vue")
+    const chips = side.match(/class="subagent-chip"/g)?.length ?? 0
+    check("R18-U7: the chip is on all three kinds of row (pinned, in a project, recent)", chips === 3 && ["block.session.id", "session.id", "entry.session.id"].every((x) => side.includes(`:data-conv-subagent-chip="${x}"`)), chips)
+    check("R18-U7: it names the subagents under the pointer and opens their tab", /v-tip="\{ label: subagentNames\(workingFor\.get\(session\.id\)!\), placement: 'top' \}"\s*@click\.stop="emit\('openSubagents', session\.id\)"/.test(side))
+    check("R18-U7: the row keeps its spinner while they work", /const working = \(sessionID: string\) => app\.running\.has\(sessionID\) \|\| workingFor\.value\.has\(sessionID\)/.test(side) && /if \(working\(sessionID\)\) return "running"/.test(side))
+    check("R18-U7: under the pointer it steps 54px aside for the pin and menu", /\.row:hover \.subagent-chip,\s*\.row:focus-within \.subagent-chip \{\s*transform: translateX\(-54px\);/.test(side))
+    const app = await read("src/renderer/src/App.vue")
+    check("R18-U7: the window opens the conversation, then its 子智能体 tab", /@openSubagents="openSubagentsFromSide"/.test(app) && /async function openSubagentsFromSide\(sessionID: string\) \{\s*await openFromSide\(sessionID\)\s*rp\.openSubagents\(\)/.test(app))
+    const before = language.value
+    language.value = "zh-CN"
+    const zh = tn("side.subagentChip", 2)
+    language.value = "en"
+    const en = [tn("side.subagentChip", 1), tn("side.subagentChip", 3)]
+    language.value = before
+    check("R18-U7: 2 个子智能体; 1 subagent, 3 subagents", zh === "2 个子智能体" && en[0] === "1 subagent" && en[1] === "3 subagents", [zh, en])
+    for (const key of ["side.subagentChip_one", "side.subagentChip_other"]) check(`R18-U7: ${key} is in all 18 tables`, (await carrying(key)) === 18)
   }
 }
