@@ -1120,69 +1120,6 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
     }
   }
 
-  section("Round 5: the auto-worktree notice (E40)")
-  {
-    const e = await engine()
-    try {
-      await e.config.set({ permissions: { ...e.config.get().permissions, edit: "allow" } })
-      execFileSync("git", ["init", "-q"], { cwd: e.project })
-      const session = await e.store.create({ directory: e.project, model: e.model })
-      e.replies.push(calls([{ name: "write", input: { file_path: "note.txt", content: "first" } }]))
-      await e.runner.prompt({ sessionID: session.id, text: "WORKTREE write" })
-      await e.idle(session.id)
-      const noted = wireText(e.bodies.at(-1))
-      check("a change to a main worktree brings the note at the next step", noted.includes("main worktree of a git repository") && noted.includes("ask the user"), noted.slice(0, 700))
-      check("stored on the user's message, and the conversation marked", (await e.store.get(session.id))?.worktreeNotice === true && (await e.store.messages(session.id)).some((message) => message.role === "user" && message.context?.some((note) => note.includes("main worktree"))))
-      e.replies.push(calls([{ name: "write", input: { file_path: "note.txt", content: "second" } }]))
-      await e.runner.prompt({ sessionID: session.id, text: "WORKTREE again" })
-      await e.idle(session.id)
-      check("once per conversation", wireText(e.bodies.at(-1)).split("main worktree of a git repository").length === 2)
-
-      await fs.mkdir(path.join(e.project, ".git", "worktrees", "feature"), { recursive: true })
-      const linked = await e.store.create({ directory: e.project, model: e.model })
-      e.replies.push(calls([{ name: "write", input: { file_path: "other.txt", content: "x" } }]))
-      await e.runner.prompt({ sessionID: linked.id, text: "WORKTREE linked" })
-      await e.idle(linked.id)
-      // R17-W10: with worktrees already in use it is told to move without asking, and to move before writing.
-      check(
-        "with linked worktrees already there, it says to make one and move into it without asking",
-        wireText(e.bodies.at(-1)).includes("make a worktree for this task and move into it") && wireText(e.bodies.at(-1)).includes("do not need to ask"),
-      )
-
-      const reads = await e.store.create({ directory: e.project, model: e.model })
-      e.replies.push(calls([{ name: "glob", input: { pattern: "*" } }]))
-      await e.runner.prompt({ sessionID: reads.id, text: "WORKTREE only reads" })
-      await e.idle(reads.id)
-      check("reading alone brings no note", !wireText(e.bodies.at(-1)).includes("main worktree") && !(await e.store.get(reads.id))?.worktreeNotice)
-
-      /* L4: a change made through bash brings the same notice, and only once the command has actually run. */
-      await e.config.set({ permissions: { ...e.config.get().permissions, bash: "allow" } })
-      const shelled = await e.store.create({ directory: e.project, model: e.model })
-      e.replies.push(calls([{ name: "bash", input: { command: "echo hi > shelled.txt", description: "write a file" } }]))
-      await e.runner.prompt({ sessionID: shelled.id, text: "WORKTREE bash write" })
-      await e.idle(shelled.id)
-      check(
-        "a change made through bash brings the note as a write tool's change does",
-        (await e.store.get(shelled.id))?.worktreeNotice === true && wireText(e.bodies.at(-1)).includes("main worktree of a git repository"),
-        wireText(e.bodies.at(-1)).slice(0, 400),
-      )
-
-      const looked = await e.store.create({ directory: e.project, model: e.model })
-      e.replies.push(calls([{ name: "bash", input: { command: "git status", description: "look" } }]))
-      await e.runner.prompt({ sessionID: looked.id, text: "WORKTREE bash reads" })
-      await e.idle(looked.id)
-      check("a command that only looks brings none", !(await e.store.get(looked.id))?.worktreeNotice)
-
-      const failed = await e.store.create({ directory: e.project, model: e.model })
-      e.replies.push(calls([{ name: "bash", input: { command: "echo x > failed.txt; exit 3", description: "write then fail" } }]))
-      await e.runner.prompt({ sessionID: failed.id, text: "WORKTREE bash failed" })
-      await e.idle(failed.id)
-      check("a command that ended badly brings none either", !(await e.store.get(failed.id))?.worktreeNotice)
-    } finally {
-      await e.close()
-    }
-  }
-
   section("Round 6: an oversized picture is made smaller rather than dropped (L12)")
   {
     /* A PNG header is all this needs: the size is read from it, and the byte count from the payload. */

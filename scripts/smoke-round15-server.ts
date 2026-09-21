@@ -355,15 +355,12 @@ export async function roundFifteenServerChecks(check: Check, section: (name: str
     try {
       const runner = backend.runtime.runner as unknown as {
         repeatsAllowed: Map<string, Set<string>>
-        worktreeHits: Map<string, unknown>
         forgetSession: (sessionID: string) => void
       }
       runner.repeatsAllowed.set("ses_gone", new Set(["bash"]))
-      runner.worktreeHits.set("ses_gone", { root: "/tmp/repo", linked: false })
       runner.repeatsAllowed.set("ses_kept", new Set(["bash"]))
       backend.runtime.runner.forgetSession("ses_gone")
       check("R15-S4: the tools a deleted conversation let repeat go with it", !runner.repeatsAllowed.has("ses_gone"), [...runner.repeatsAllowed.keys()])
-      check("R15-S4: so does the worktree it was told about", !runner.worktreeHits.has("ses_gone"), [...runner.worktreeHits.keys()])
       check("R15-S4: and another conversation's own keeps its place", runner.repeatsAllowed.has("ses_kept"))
     } finally {
       await backend.close()

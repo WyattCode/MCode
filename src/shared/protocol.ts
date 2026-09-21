@@ -45,8 +45,6 @@ export interface SessionInfo {
    * before this existed, which are treated as already named.
    */
   titleSource?: "fallback" | "generated" | "user"
-  /** MiMo's `auto_worktree_hint_sent`: the one note about changing a repository's main worktree has gone to the model. */
-  worktreeNotice?: boolean
   /** MiMo's `interactiveNotified`: the reader has been told once that a command wanting to be typed at was skipped. */
   interactiveNotice?: boolean
   /** Absolute path of the project directory this session operates in. */

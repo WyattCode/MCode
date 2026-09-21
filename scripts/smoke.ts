@@ -82,7 +82,7 @@ import { dangerousCommand, readOnlyCommand } from "../src/server/command-risk"
 import { normalizeToolInput, resolveToolName } from "../src/server/tool/repair"
 import { repairableNames } from "../src/server/tool/registry"
 import { STALL, stallGuard } from "../src/server/provider/stall"
-import { arityPrefix, collectMutationTargets, scanCommand, simpleCommands } from "../src/server/tool/bash-scan"
+import { arityPrefix, scanCommand, simpleCommands } from "../src/server/tool/bash-scan"
 // round 6 (L8): where a blank project's folder is made.
 import { blankProjectDirectory } from "../src/server/scratch"
 // round 6 (L6): a thumbnail needs the attachment's bytes, which a saved draft no longer carries.
@@ -1548,33 +1548,6 @@ async function main() {
     check("a file argument outside the project names its folder", reaching.dirs.length === 1 && path.resolve(reaching.dirs[0]) === path.resolve(elsewhere), reaching)
     check("a delete only of files in the temp folder needs no question of its own", (await scanCommand(`rm "${path.join(scratch, "old.txt")}"`, e23, e23, false)).tempOnlyDeletes)
     check("but one inside the project does, and so does one whose target is not known", !(await scanCommand("rm notes.txt", e23, e23, false)).tempOnlyDeletes && !(await scanCommand("rm $TARGET", e23, e23, false)).tempOnlyDeletes)
-
-    /* L4: where a command would write, so a change made through bash raises the worktree notice too. */
-    const wrote = (line: string, ps = false) => collectMutationTargets(line, e23, ps).paths.map((entry) => path.resolve(entry))
-    check(
-      "a redirection names the file it writes, and one that only reads names nothing",
-      wrote("echo hi > out.txt").includes(path.join(e23, "out.txt")) && wrote("cat < in.txt").length === 0,
-      wrote("echo hi > out.txt"),
-    )
-    check(
-      "a write command names its paths, and a copy only its destination",
-      wrote("touch a.txt").includes(path.join(e23, "a.txt")) &&
-        wrote("cp src.txt dest.txt").includes(path.join(e23, "dest.txt")) &&
-        !wrote("cp src.txt dest.txt").includes(path.join(e23, "src.txt")),
-      wrote("cp src.txt dest.txt"),
-    )
-    check("sed in place counts as a write", wrote("sed -i s/a/b/ notes.txt").includes(path.join(e23, "notes.txt")))
-    check(
-      "a git subcommand that changes the repository counts, and looking does not",
-      collectMutationTargets("git commit -m x", e23, false).gitMutate && !collectMutationTargets("git status", e23, false).gitMutate,
-    )
-    check(
-      "git worktree counts only where it touches a tree that is already there",
-      collectMutationTargets("git worktree remove old", e23, false).gitMutate && !collectMutationTargets("git worktree add new", e23, false).gitMutate,
-    )
-    check("cd decides where the command after it writes", wrote("cd sub && touch b.txt").includes(path.join(e23, "sub", "b.txt")), wrote("cd sub && touch b.txt"))
-    check("git -C names the repository it is pointed at", wrote("git -C other commit -m x").includes(path.join(e23, "other")), wrote("git -C other commit -m x"))
-    check("a command that writes nothing names nothing at all", collectMutationTargets("git status && ls -la", e23, false).paths.length === 0)
 
     /* L8: MiMo's blank-project dialog can put the folder somewhere else; with no choice it is the default project location. */
     const chosenRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-blank-"))

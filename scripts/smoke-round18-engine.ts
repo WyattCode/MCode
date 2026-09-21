@@ -15,6 +15,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { createServer } from "node:http"
+import { execFileSync } from "node:child_process"
 import type { Check } from "./smoke-round5"
 import type { AssistantMessage, ServerEvent, ToolPart } from "../src/shared/protocol"
 import { Storage } from "../src/server/storage"
@@ -37,6 +38,7 @@ export async function roundEighteenEngineChecks(check: Check, section: Section):
     await denyChecks(check, section, path.join(root, "deny"))
     await schedulingChecks(check, section, path.join(root, "scheduling"))
     await splitChecks(check, section, path.join(root, "split"))
+    await worktreeChecks(check, section, path.join(root, "repo"))
   } finally {
     if (titles === undefined) delete process.env.MCODE_GENERATE_TITLES
     else process.env.MCODE_GENERATE_TITLES = titles
@@ -411,6 +413,37 @@ async function splitChecks(check: Check, section: Section, root: string): Promis
       check("the agent prompt is the same bytes as a build turn's", agentPart(planned?.system ?? "") === agentPart(buildSystem) && agentPart(buildSystem).length > 10_000)
       check("the plan rules ride on the message, in English", userTexts(planned).some((text) => text.includes("[Plan mode] The user has switched on plan mode")))
     }
+  } finally {
+    await app.close()
+  }
+}
+
+/* ---------------------------------------------------------------- R18-E4: no auto-worktree notice */
+
+async function worktreeChecks(check: Check, section: Section, root: string): Promise<void> {
+  const app = await harness(root)
+  try {
+    section("Round 18 (R18-E4): changing a repository's main worktree brings no notice")
+    await app.config.set({ permissions: { ...app.config.get().permissions, edit: "allow", bash: "allow" } })
+    execFileSync("git", ["init", "-q"], { cwd: app.project })
+    const session = await app.store.create({ directory: app.project, model: app.model })
+    app.script([
+      { calls: [write("note.txt")] },
+      { calls: [{ name: "bash", input: { command: "echo hi > shelled.txt", description: "Write a file" } }] },
+      { text: "done" },
+    ])
+    const before = app.turns.length
+    await app.runner.prompt({ sessionID: session.id, text: "change the files" })
+    await app.settled(session.id)
+    const sent = app.turns.slice(before)
+    check("the write and the command both ran", (await exists(path.join(app.project, "note.txt"))) && (await exists(path.join(app.project, "shelled.txt"))))
+    check("no request after them mentions the main worktree", sent.length === 3 && sent.every((seen) => userTexts(seen).every((text) => !/main worktree/i.test(text))), sent.length)
+    const stored = await app.store.messages(session.id)
+    check("and nothing is stored on the message for it", stored.every((message) => message.role !== "user" || !(message.context ?? []).some((note) => /main worktree/i.test(note))))
+    const command = (await app.toolParts(session.id)).find((part) => part.name === "bash")
+    check("the command's result no longer records main worktrees", command?.status === "completed" && command.metadata?.mainWorktreeHits === undefined, command?.metadata)
+    const worktree = await fs.readFile(path.join(process.cwd(), "src/server/session/worktree.ts"), "utf8")
+    check("the notice's text is gone from the source", !/worktreeNotice|hasLinkedWorktrees|mainWorktreeRoots/.test(worktree))
   } finally {
     await app.close()
   }

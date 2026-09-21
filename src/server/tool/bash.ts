@@ -7,7 +7,6 @@ import { resolvePath } from "./fs-util"
 import { guardAppData } from "./app-data"
 import { namesAskingFile } from "../permission"
 import { collectMutationTargets, scanCommand } from "./bash-scan"
-import { mainWorktreeRoots } from "../session/worktree"
 import { ABORTED_TOOL } from "../provider/history"
 import { repositoryRoot, tryGit } from "../git"
 import { gitBash, platformShell, which, windowsPath } from "../shell-path"
@@ -462,12 +461,6 @@ export const BashTool: ToolDefinition = {
      * MiMo has none: a delete is what its own question is for.
      */
     const scan = await scanCommand(command, cwd, context.directory, powershell)
-    /*
-     * MiMo's auto-worktree notice reads a command's result rather than its
-     * arguments: the tool records which repository main worktrees this command
-     * would write to, and the runner raises the notice for one that then
-     * exited cleanly.
-     */
     const mutations = collectMutationTargets(command, cwd, powershell)
     // A command that would write into the app's own data folder is refused like a write tool's call.
     for (const target of mutations.written) {
@@ -477,7 +470,6 @@ export const BashTool: ToolDefinition = {
         throw new ToolError(`Refused: ${target} names an alternate data stream (a colon after the drive), which commands here may not write.`)
       }
     }
-    const worktreeHits = await mainWorktreeRoots(mutations.paths)
     // The saved sign-ins are not read through a shell either.
     for (const file of scan.files) await guardAppData(file, "read")
     for (const dir of scan.dirs) await resolvePath(context, dir)
@@ -687,7 +679,6 @@ export const BashTool: ToolDefinition = {
             description,
             truncated: cut,
             ...(cut && file ? { outputPath: file } : {}),
-            ...(worktreeHits.length ? { mainWorktreeHits: worktreeHits } : {}),
           },
         })
       }

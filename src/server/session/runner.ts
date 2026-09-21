@@ -70,7 +70,6 @@ import { attachmentNote, runtimeContext, sessionNote } from "./context"
 import { settleAttachments, withAttachmentData, type AttachmentCache } from "./attachments"
 import type { ModelEntry } from "../provider/catalog"
 import { forWire } from "../provider/wire-ids"
-import { hasLinkedWorktrees, worktreeNotice, worktreeTop } from "./worktree"
 import type { ModelModalities, SessionGoal } from "@shared/protocol"
 import { costOf } from "./usage"
 // The day on this machine's calendar, which is what the runtime context tells the model.
@@ -2488,7 +2487,6 @@ export class SessionRunner {
        * yet, whereas one already in flight cannot be added to.
        */
       await this.steering.get(sessionID)?.written
-      await this.deliverWorktreeNotice(sessionID)
       /*
        * plan: MiMo picks each step's agent from the latest user message, so a
        * plan approved in the last step - which wrote the approval as a message
@@ -3440,8 +3438,6 @@ export class SessionRunner {
       part.metadata = capped?.truncated ? { ...result.metadata, truncated: true, outputPath: capped.file } : result.metadata
       // MiMo's tool results carry media to the model; one attached by path is read when the request is built.
       if (result.attachments?.length) part.attachments = result.attachments
-      // MiMo's auto-worktree notice: the first change a conversation makes to a repository's main worktree is noted.
-      await this.noteWorktreeChange(owner, part, input.session.directory)
       // MiMo's interactive notice: the reader is told once why a command that wanted to be typed at was skipped.
       await this.noteInteractiveRefusal(owner, part)
     } catch (err) {
@@ -3491,100 +3487,6 @@ export class SessionRunner {
     if (!session || session.interactiveNotice) return
     await this.store.update(sessionID, { interactiveNotice: true })
     this.bus.publish({ type: "session.notice", sessionID, code: "toast.bashInteractive" })
-  }
-
-  /** A conversation's first change to a repository's main worktree, waiting for the next step to note it. */
-  private readonly worktreeHits = new Map<string, { root: string; linked: boolean }>()
-  /** Conversations whose transcript has already been read back for a hit this app never delivered. */
-  private readonly worktreeScanned = new Set<string>()
-
-  /**
-   * MiMo's auto-worktree notice, first half: a completed write, edit or patch
-   * in a git repository's main worktree, by a conversation of the user's own
-   * (not a subagent), that has not been told yet. The shell is not looked at:
-   * MCode's shell tool reports no paths it changed.
-   */
-  private async noteWorktreeChange(sessionID: string, part: ToolPart, directory: string): Promise<void> {
-    if (this.worktreeHits.has(sessionID)) return
-    const session = await this.store.get(sessionID)
-    if (!session || session.parentID || session.worktreeNotice) return
-    const root = await this.changedMainWorktree(part, directory)
-    if (!root) return
-    this.worktreeHits.set(sessionID, { root, linked: await hasLinkedWorktrees(root) })
-  }
-
-  /**
-   * The repository main worktree this call changed, if it changed one.
-   *
-   * MiMo reads two kinds of call here. A write tool names the file it wrote, so
-   * the worktree is found from that path. A shell command names nothing, so its
-   * own scan records the main worktrees it would write to and the result
-   * carries them - and only a command that exited cleanly counts, since one
-   * that failed changed nothing worth a notice.
-   */
-  private async changedMainWorktree(part: ToolPart, directory: string): Promise<string | undefined> {
-    if (["write", "edit", "notebook_edit"].includes(part.name)) {
-      const named = part.input?.file_path ?? part.input?.notebook_path
-      if (typeof named !== "string") return undefined
-      const top = await worktreeTop(path.dirname(path.resolve(directory, named)))
-      return top?.main ? top.root : undefined
-    }
-    if (part.name !== "bash" || part.metadata?.exit !== 0) return undefined
-    const hits = part.metadata?.mainWorktreeHits
-    return Array.isArray(hits) ? hits.find((hit): hit is string => typeof hit === "string" && hit.length > 0) : undefined
-  }
-
-  /**
-   * The hit waiting to be delivered: the one this app watched land, or - once
-   * per conversation - one read back out of the transcript.
-   *
-   * The watched hit lives in memory only, so a turn that was stopped, or an app
-   * that was closed straight after a write, lost it and the conversation was
-   * not told until it changed the main worktree a second time. MiMo keeps
-   * nothing in memory at all: every turn it re-reads the stored messages for
-   * the first such change, and treats a notice already in the transcript as
-   * sent. The stored `worktreeNotice` flag says that here, so the read-back is
-   * wanted once per conversation per run of the app rather than every step.
-   */
-  private async worktreeHit(sessionID: string): Promise<{ root: string; linked: boolean } | undefined> {
-    const watched = this.worktreeHits.get(sessionID)
-    if (watched) return watched
-    if (this.worktreeScanned.has(sessionID)) return undefined
-    this.worktreeScanned.add(sessionID)
-    /*
-     * Nothing here may stop the step. This runs before every turn's first
-     * request, and a read that failed - a transcript being written as it is
-     * read - would otherwise take the turn down with it over a notice.
-     */
-    const session = await this.store.get(sessionID).catch(() => undefined)
-    if (!session || session.parentID || session.worktreeNotice) return undefined
-    for (const message of await this.store.messages(sessionID).catch((): Message[] => [])) {
-      if (message.role !== "assistant") continue
-      for (const part of message.parts) {
-        if (part.type !== "tool" || part.status !== "completed") continue
-        const root = await this.changedMainWorktree(part, session.directory)
-        if (!root) continue
-        return { root, linked: await hasLinkedWorktrees(root) }
-      }
-    }
-    return undefined
-  }
-
-  /**
-   * Second half: at the next step the note is added to the latest user message
-   * - stored, as MiMo stores it - and the conversation is marked so it is never
-   * told twice.
-   */
-  private async deliverWorktreeNotice(sessionID: string): Promise<void> {
-    const hit = await this.worktreeHit(sessionID)
-    if (!hit) return
-    this.worktreeHits.delete(sessionID)
-    const session = await this.store.get(sessionID)
-    if (!session || session.worktreeNotice) return
-    const latest = [...this.liveMessages(session, await this.store.messages(sessionID))].reverse().find((message): message is UserMessage => message.role === "user")
-    if (!latest) return
-    await this.store.saveMessage({ ...latest, context: [...(latest.context ?? []), worktreeNotice(hit.root, hit.linked)] })
-    await this.store.update(sessionID, { worktreeNotice: true })
   }
 
   /** Each conversation's system prompt as first built, and what it was built for (see `run`). */
@@ -4404,9 +4306,6 @@ export class SessionRunner {
     this.retrying.delete(sessionID)
     this.repeatsAllowed.delete(sessionID)
     this.loopMonitors.delete(sessionID)
-    // Dropped in deliverWorktreeNotice, but only for a conversation that got as far as being told.
-    this.worktreeHits.delete(sessionID)
-    this.worktreeScanned.delete(sessionID)
     for (const key of [...this.numbering.keys()]) if (key.startsWith(`${sessionID}:`)) this.numbering.delete(key)
   }
 

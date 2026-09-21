@@ -30,7 +30,6 @@ import { turnFilePaths } from "../src/server/session/turn-revert"
 import { editedFiles } from "../src/renderer/src/lib/edited-files"
 import { createdFile, parseUnifiedDiff, sectionCreates } from "../src/shared/unified-diff"
 import { actorAction } from "../src/shared/subagent"
-import { worktreeNotice } from "../src/server/session/worktree"
 import { MAX_PROGRESS_REACT, PROGRESS_SECTIONS, missingProgressSections, progressPath, progressReminder, progressTemplate } from "../src/server/session/task-progress"
 import { AutomationService, scheduleKey, type AutomationDeps } from "../src/server/automation/service"
 import { LEASE_MS } from "../src/server/automation/run-queue"
@@ -110,19 +109,6 @@ function diffChecks(check: Check, section: Section): void {
 /* ---------------------------------------------------------------- what the model is told */
 
 function noticeChecks(check: Check, section: Section): void {
-  section("Round 17 (R17-W10): the worktree notice says what to do, not only what happened")
-  {
-    const linked = worktreeNotice("/repo", true)
-    const alone = worktreeNotice("/repo", false)
-    for (const [name, text] of [["in a repository that keeps worktrees", linked], ["in one that does not", alone]] as const) {
-      check(`${name}: the reason concurrent writes matter is given`, /other agents/i.test(text) && /committed/i.test(text), text)
-      check(`${name}: the rule is about repositories, not this one path`, /another repository/i.test(text), text)
-    }
-    check("with worktrees: it is told not to ask, and to move before writing", /do not need to ask/i.test(linked) && /before your next write/i.test(linked), linked)
-    check("without: it is told to ask, and what each answer leads to", /ask the user/i.test(alone) && /say yes/i.test(alone) && /say no/i.test(alone), alone)
-    check("and still not to make one on its own", /do not make a worktree on your own/i.test(alone), alone)
-  }
-
   section("Round 17 (R17-W12): the record a subagent working on a task leaves")
   {
     check("MiMo's bound on how often it is sent back is three", MAX_PROGRESS_REACT === 3, MAX_PROGRESS_REACT)
@@ -207,15 +193,8 @@ async function sourceChecks(check: Check, section: Section): Promise<void> {
     )
   }
 
-  section("Round 17 (R17-W11/W16/W24): the transcript read back, and two tool descriptions")
+  section("Round 17 (R17-W16/W24): two tool descriptions")
   {
-    const runner = await read("src/server/session/runner.ts")
-    const hit = runner.slice(runner.indexOf("private async worktreeHit("), runner.indexOf("private async worktreeHit(") + 1400)
-    check(
-      "a pending worktree hit is read back out of the stored messages once",
-      /if \(this\.worktreeScanned\.has\(sessionID\)\) return undefined/.test(hit) && /this\.worktreeScanned\.add\(sessionID\)/.test(hit) && hit.includes("await this.store.messages(sessionID)") && hit.includes("changedMainWorktree"),
-      hit.slice(0, 200),
-    )
     const actorTool = await read("src/server/tool/subagent.ts")
     check("send takes MiMo's to_session_id and type rather than refusing them", /to_session_id: \{ type: "string"/.test(actorTool) && /type: \{ type: "string"/.test(actorTool))
     check("and status names MiMo's pending", /pending \(started, still queued behind others\)/.test(actorTool))
