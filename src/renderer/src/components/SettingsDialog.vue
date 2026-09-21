@@ -2188,7 +2188,7 @@ onBeforeUnmount(() => {
             <div class="line">
               <div class="line-text">
                 <div class="line-title">{{ t("set.config.file") }}</div>
-                <div class="line-sub mcp-path" data-config-path :title="configFile?.path">{{ configFile?.path ?? "" }}</div>
+                <div class="line-sub mcp-path" data-config-path :title="configFile?.path">{{ configFile ? homePath(configFile.path, paths?.home) : "" }}</div>
               </div>
               <div class="mcp-ctrl">
                 <button class="ctl-btn" data-config-copy-path :disabled="!configFile" @click="copyConfigPath">{{ t("set.config.copyPath") }}</button>

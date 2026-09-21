@@ -237,4 +237,15 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
     check("the row copies the path", /data-config-copy-path[^>]*@click="copyConfigPath"/.test(row))
     check("and opens the file", /data-mcp-config-open[^>]*@click="openConfigFile"/.test(row))
   }
+
+  // ----------------------------------------------------------------- R19-F13
+  section("Round 19 (F13): the 配置 page shows the config file's ~-shortened path, the full one kept for copy")
+  {
+    const settings = await read("src/renderer/src/components/SettingsDialog.vue")
+    const page = settings.slice(settings.indexOf("data-config-page"), settings.indexOf("data-agents-row"))
+    check("the line shows homePath(...)", /data-config-path :title="configFile\?\.path">\{\{ configFile \? homePath\(configFile\.path, paths\?\.home\) : "" \}\}/.test(page))
+    check("the copy still takes the real path", /const target = configFile\.value\?\.path\n\s+if \(!target\) return\n\s+try \{\n\s+await navigator\.clipboard\.writeText\(target\)/.test(settings))
+    const { homePath } = await import("../src/renderer/src/lib/home-path")
+    check("which reads as ~ under the home folder", homePath("C:\\Users\\me\\AppData\\Roaming\\MCode\\config.json", "C:\\Users\\me") === "~\\AppData\\Roaming\\MCode\\config.json")
+  }
 }
