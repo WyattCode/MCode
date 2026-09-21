@@ -119,6 +119,24 @@ export async function roundNineteenLaneCChecks(check: Check, section: (name: str
     )
   }
 
+  // ------------------------------------------------------------------ R19-CV-5
+  section("Round 19 (CV-5): a scheduled task's message is clamped to two lines with 显示更多")
+  {
+    const i18n = await read("src/renderer/src/lib/i18n.ts")
+    const at = stream.indexOf("data-automation-bubble")
+    const bubble = stream.slice(stream.lastIndexOf("<div", at), stream.indexOf("</button>", at))
+    check("a turn from a scheduled task draws its own bubble", /v-else-if="turn\.text && turn\.inbox\?\.automationID"/.test(bubble), bubble.slice(0, 120))
+    check("its text is clamped until opened", /:class="\{ clamped: !openedMore\.has\(turn\.id\) \}"/.test(bubble))
+    check("显示更多 shows only when the text runs past two lines, and opens it for good", /v-if="overflowing\.has\(turn\.id\) && !openedMore\.has\(turn\.id\)"/.test(bubble) && /@click="openMore\(turn\.id\)"/.test(bubble) && /aria-expanded="false"/.test(bubble))
+    check("with MiMo's 13px down chevron", /<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" \/><\/svg>/.test(bubble))
+    check("overflow is measured as MiMo does, scrollHeight past clientHeight by more than 1px", /entry\.target\.scrollHeight - entry\.target\.clientHeight > 1/.test(script))
+    const style = stream.slice(stream.indexOf("<style"))
+    check("two lines", /\.automation-text\.clamped \{[^}]*-webkit-line-clamp: 2;/.test(style))
+    check("the button: 13px, muted, 6px below, 4px gap", /\.automation-more \{[^}]*gap: 4px;[^}]*margin-top: 6px;[^}]*color: var\(--text-weak\);[^}]*font-size: calc\(13px \* var\(--ui-font-scale, 1\)\);/.test(style))
+    check("the key is in all 18 tables", (i18n.match(/^ {2}"stream\.automationShowMore": /gm) ?? []).length === 18)
+    check("in MiMo's words", /"stream\.automationShowMore": "显示更多"/.test(i18n) && /"stream\.automationShowMore": "Show more"/.test(i18n) && /"stream\.automationShowMore": "顯示更多"/.test(i18n))
+  }
+
   // ------------------------------------------------------------------ R19-CV-3
   section("Round 19 (CV-3): holds while the reader is busy in the conversation, and MiMo's re-pins")
   {

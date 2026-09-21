@@ -1008,6 +1008,49 @@ function enters(turn: Turn): boolean {
   return (messageAt.value.get(turn.id) ?? -1) >= enterFrom.value
 }
 
+/*
+ * MiMo's scheduled-task message: clamped to two lines, measured as it
+ * resizes, and 显示更多 offered only when the text runs past them. Opening
+ * one is for good; there is no collapse.
+ */
+const openedMore = ref(new Set<string>())
+const overflowing = ref(new Set<string>())
+const clampEls = new Map<string, HTMLElement>()
+const clampOf = new WeakMap<Element, string>()
+const clampSizer =
+  typeof ResizeObserver === "undefined"
+    ? undefined
+    : new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const id = clampOf.get(entry.target)
+          if (!id) continue
+          const over = entry.target.scrollHeight - entry.target.clientHeight > 1
+          if (over === overflowing.value.has(id)) continue
+          const next = new Set(overflowing.value)
+          if (over) next.add(id)
+          else next.delete(id)
+          overflowing.value = next
+        }
+      })
+
+function clampWatch(id: string, element: HTMLElement | null) {
+  const was = clampEls.get(id)
+  if (was === element) return
+  if (was) clampSizer?.unobserve(was)
+  if (!element) {
+    clampEls.delete(id)
+    return
+  }
+  clampEls.set(id, element)
+  clampOf.set(element, id)
+  clampSizer?.observe(element)
+}
+
+function openMore(id: string) {
+  openedMore.value = new Set(openedMore.value).add(id)
+}
+
+onBeforeUnmount(() => clampSizer?.disconnect())
 
 /*
  * 追求目标: how long a met goal took, which the last reply says. Only a goal
@@ -1556,6 +1599,30 @@ defineExpose({ stepMessage, scroller })
                 {{ t("stream.editSend") }}
               </button>
             </div>
+          </div>
+          <!--
+            MiMo's scheduled-task message: two lines, and 显示更多 under them
+            when there is more, which opens it for good.
+          -->
+          <div v-else-if="turn.text && turn.inbox?.automationID" class="user-bubble automation-bubble" data-automation-bubble @dblclick="startEdit(turn, true)">
+            <div
+              :ref="(element) => clampWatch(turn.id, element as HTMLElement | null)"
+              class="automation-text"
+              :class="{ clamped: !openedMore.has(turn.id) }"
+              data-user-message-text
+            >{{ turn.text }}</div>
+            <button
+              v-if="overflowing.has(turn.id) && !openedMore.has(turn.id)"
+              type="button"
+              class="automation-more"
+              aria-expanded="false"
+              data-automation-more
+              @click="openMore(turn.id)"
+              @dblclick.stop
+            >
+              <span>{{ t("stream.automationShowMore") }}</span>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
+            </button>
           </div>
           <div v-else-if="turn.text && hasCode(turn.text)" class="user-bubble" data-asked-parts @dblclick="startEdit(turn, true)">
             <template v-for="(part, index) in questionParts(turn.text)" :key="index">
@@ -2549,6 +2616,59 @@ defineExpose({ stepMessage, scroller })
 
 .asked-expand:hover {
   color: var(--text-strong);
+}
+
+/* MiMo's scheduled-task bubble: the text over its 显示更多, both from the left edge. */
+.automation-bubble {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.automation-text {
+  width: 100%;
+}
+
+.automation-text.clamped {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.automation-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-weak);
+  font: inherit;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.automation-more:hover {
+  color: var(--text-strong);
+}
+
+.automation-more:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
+.automation-more svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
 }
 
 /*
