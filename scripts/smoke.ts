@@ -410,6 +410,8 @@ import { artifactForgetChecks } from "./smoke-artifact-forget"
 import { roundTwentyServerChecks } from "./smoke-round20-server"
 // Round 20, sections D and E: settings, shell and right-panel findings of the code review.
 import { roundTwentyDeChecks } from "./smoke-round20-de"
+// Round 20, V3: the interface copy follows MiMo 26.920.
+import { roundTwentyCopyChecks } from "./smoke-round20-copy"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7051,6 +7053,7 @@ async function main() {
   await roundTwentyEngineChecks(check, section)
   await roundTwentyServerChecks(check, section)
   await roundTwentyDeChecks(check, section)
+  roundTwentyCopyChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
