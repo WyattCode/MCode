@@ -301,7 +301,11 @@ onBeforeUnmount(() => {
           </svg>
         </button>
       </div>
-      <span class="md-media-name md-voice-name">{{ name }}</span>
+      <!-- MiMo's line under the bubble, as wide as it: the file's name, then the small AI-generated marker. -->
+      <span class="md-voice-foot" :style="{ width: bubbleWidth }" data-voice-foot>
+        <span class="md-media-name md-voice-name">{{ name }}</span>
+        <span class="md-voice-aigc" data-voice-aigc>{{ t("markdown.aiGenerated") }}</span>
+      </span>
     </template>
   </div>
 </template>
@@ -483,8 +487,27 @@ onBeforeUnmount(() => {
   background: #f1f0ec;
 }
 
+.text .md-voice-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
 .text .md-voice-name {
+  flex: 1;
+  min-width: 0;
+  max-width: none;
   color: #151c1366;
+}
+
+/* MiMo's marker: a fixed 10px on a 1.2 line in the dim colour, never shrunk and never selected. */
+.text .md-voice-aigc {
+  flex: none;
+  color: #151c1366;
+  font-size: 10px;
+  line-height: 1.2;
+  user-select: none;
 }
 
 :root[data-theme="dark"] .text .md-voice {
@@ -519,7 +542,8 @@ onBeforeUnmount(() => {
   background: #ffffff0f;
 }
 
-:root[data-theme="dark"] .text .md-voice-name {
+:root[data-theme="dark"] .text .md-voice-name,
+:root[data-theme="dark"] .text .md-voice-aigc {
   color: #777;
 }
 
@@ -556,7 +580,8 @@ onBeforeUnmount(() => {
     background: #ffffff0f;
   }
 
-  :root:not([data-theme="light"]) .text .md-voice-name {
+  :root:not([data-theme="light"]) .text .md-voice-name,
+  :root:not([data-theme="light"]) .text .md-voice-aigc {
     color: #777;
   }
 }

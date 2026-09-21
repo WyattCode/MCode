@@ -240,6 +240,8 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
         </div>
       </div>
       <div v-if="!ready && !failed" class="md-abc-rendering" data-abc-rendering>{{ t("abc.rendering") }}</div>
+      <!-- MiMo's small AI-generated marker, over the score whenever the score view shows. -->
+      <div class="md-abc-aigc" data-abc-aigc>{{ t("markdown.aiGenerated") }}</div>
       <!-- abcjs's markup, sanitised by lib/abc (svg-safe and DOMPurify) before it is put here. -->
       <div ref="score" class="md-abc-score" data-abc-score @click="onScoreClick" />
     </div>
@@ -357,6 +359,13 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
   padding: 12px;
   color: var(--text-weak);
   font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+/* MiMo's marker line: 6 above, 12 at the sides, 12px in the muted text colour on the block's own ground. */
+.text .md-abc-aigc {
+  padding: 6px 12px 0;
+  color: var(--text-base);
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 /* The score is always ink on white, in either theme, as MiMo draws it. */
