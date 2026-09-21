@@ -46,7 +46,17 @@ const OWN_LOCATION = ["office", "browser", "html"]
 const directory = computed(() =>
   rp.open && OWN_LOCATION.includes(rp.activeTab?.type ?? "") ? undefined : app.current?.directory,
 )
-const { label: openLabel, items: openItems, open: openIn, pick: pickOpen } = useOpenWith(() => app.platform)
+const { label: openLabel, items: openItems, open: openIn, pick: pickOpen, choice: openChoice, options: openOptions } = useOpenWith(
+  () => app.platform,
+)
+/*
+ * MiMo draws the control only when its app scan finds something, and that scan
+ * looks for macOS application bundles alone - Finder among them - so on
+ * Windows and Linux the control never appears, and on macOS it always does.
+ */
+const openShown = computed(() => Boolean(directory.value) && app.platform === "darwin")
+/* The face carries the chosen app's own 14px icon, as MiMo's does; the folder mark stands in until it is known. */
+const openIcon = computed(() => openOptions.value.find((entry) => entry.value === openChoice.value)?.icon || "")
 const appMenu = ref<{ x: number; y: number }>()
 
 function openAppMenu(event: MouseEvent) {
@@ -100,16 +110,18 @@ function openMenu(event: MouseEvent) {
     <div class="right">
       <!--
         MiMo's first tool: the face opens the project folder in the app last
-        chosen, the caret chooses another. Only while there is a folder.
+        chosen, the caret chooses another. Only while there is a folder, and
+        only on macOS (openShown).
       -->
-      <div v-if="directory" class="open-with">
+      <div v-if="openShown && directory" class="open-with">
         <button
           class="open-face"
           :aria-label="t('header.openDirTip', { name: openLabel })"
           v-tip="t('header.openDirTip', { name: openLabel })"
           @click="openIn(directory)"
         >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <img v-if="openIcon" class="open-icon" :src="openIcon" width="14" height="14" alt="" aria-hidden="true" />
+          <svg v-else width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path
               d="M2 4.5C2 3.67 2.67 3 3.5 3H6l1.5 1.75h5c.83 0 1.5.67 1.5 1.5v5.25c0 .83-.67 1.5-1.5 1.5h-9c-.83 0-1.5-.67-1.5-1.5v-7Z"
               stroke="currentColor"
@@ -348,6 +360,11 @@ function openMenu(event: MouseEvent) {
   font-weight: 500;
   line-height: 1;
   white-space: nowrap;
+}
+
+.open-icon {
+  flex: none;
+  object-fit: contain;
 }
 
 .open-caret {
