@@ -589,6 +589,11 @@ function shown(turn: Turn, at: number): Row[] {
 }
 
 
+/** Whether the turn has an answer block to draw: parts, a failure, an end, or a live retry. */
+function answers(turn: Turn, at: number): boolean {
+  return Boolean(turn.parts.length || turn.error || turn.finish || (liveTurn(at) && turn.last?.retry))
+}
+
 /** Whether this is the turn still being worked on. */
 function liveTurn(at: number): boolean {
   return at === turns.value.length - 1 && shownBusy.value
@@ -1792,7 +1797,7 @@ defineExpose({ stepMessage, scroller })
         <!-- One block answers with every assistant message of the turn: the first names it, and all of them are listed. -->
         <!-- A retry drops what the failed attempt streamed, so a live turn retrying its first request has no parts yet and still shows its reconnecting row. -->
         <div
-          v-if="turn.parts.length || turn.error || turn.finish || (liveTurn(at) && turn.last?.retry)"
+          v-if="answers(turn, at)"
           class="msg assistant"
           :data-message-id="turn.messageIDs[0]"
           :data-message-ids="turn.messageIDs.join(' ')"
@@ -1844,6 +1849,20 @@ defineExpose({ stepMessage, scroller })
             <ErrorStep v-else-if="row.kind === 'error'" :error="row.error" />
             <RetryRow v-else-if="row.kind === 'retry'" :attempt="row.attempt" :reason="row.reason" :next="row.next" @stop="app.abort(shownID)" />
             <TextPart v-else-if="row.part.type === 'text'" :part="row.part" />
+          </div>
+
+          <!-- MiMo's working indicator ends the running turn inside it, under its last row. -->
+          <div
+            v-if="thinking(turn, at)"
+            class="work-indicator"
+            role="status"
+            aria-live="polite"
+            :aria-label="t('stream.workLoading')"
+            data-work-loading
+          >
+            <svg viewBox="0 0 34 7" width="34" height="7" aria-hidden="true" focusable="false">
+              <circle v-for="x in [3.5, 12.5, 21.5, 30.5]" :key="x" :cx="x" cy="3.5" r="3" fill="currentColor" />
+            </svg>
           </div>
 
           <!--
@@ -1957,9 +1976,10 @@ defineExpose({ stepMessage, scroller })
           </div>
         </div>
 
+        <!-- Before the turn has anything of its own to draw, the indicator stands under the question. -->
         <div
-          v-if="thinking(turn, at)"
-          class="work-indicator"
+          v-if="thinking(turn, at) && !answers(turn, at)"
+          class="work-indicator lone"
           role="status"
           aria-live="polite"
           :aria-label="t('stream.workLoading')"
@@ -2223,9 +2243,23 @@ defineExpose({ stepMessage, scroller })
   align-items: center;
   width: 40px;
   height: 14px;
-  margin-top: 6px;
+  /* MiMo's: 14 under a step row, whose 5px padding is its own. */
+  margin-top: 14px;
   color: var(--text-strong);
   opacity: 0.58;
+}
+
+/* Ten under the words being written, whose 5px padding is their own, or under the head alone. */
+.part.words + .work-indicator {
+  margin-top: 5px;
+}
+
+.run + .work-indicator {
+  margin-top: 10px;
+}
+
+.work-indicator.lone {
+  margin-top: 6px;
 }
 
 .work-indicator svg {
