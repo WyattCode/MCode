@@ -677,7 +677,8 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
     </div>
 
     <div ref="body" class="fv-body">
-      <aside v-if="treeOpen" class="fv-tree" :style="{ width: `${treeWidth}px` }">
+      <!-- Folded, the tree is only hidden, as MiMo's tree-collapsed: it keeps its scroll for when it comes back. -->
+      <aside v-show="treeOpen" class="fv-tree" :style="{ width: `${treeWidth}px` }">
         <div class="fv-filter">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" />

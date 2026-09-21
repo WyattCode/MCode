@@ -80,4 +80,10 @@ export async function roundNineteenPanelChecks(check: Check, section: (name: str
     check("RP-5: a click and Enter or Space both open it through the one handler", /@click="previewImage\(\$event\)"/.test(img) && /@keydown\.enter\.space\.prevent="previewImage\(\$event\)"/.test(img), img)
     check("RP-5: and the handler hands the preview the picture's rect", /rect = \(event\.currentTarget as HTMLElement\)\.getBoundingClientRect\(\)/.test(handler) && /openImagePreview\(mediaUrl\.value, \{[^}]*\brect \}\)/.test(handler), handler)
   }
+
+  section("Round 19 (lane B): RP-6 folding the file tree hides it, so it keeps its scroll")
+  {
+    const files = await read("src/renderer/src/components/right/RpFiles.vue")
+    check("RP-6: the tree stays in the page while folded", /<aside v-show="treeOpen" class="fv-tree"/.test(files) && !/v-if="treeOpen"/.test(files))
+  }
 }
