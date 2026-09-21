@@ -9,7 +9,7 @@ import os from "node:os"
 import path from "node:path"
 import JSZip from "jszip"
 import type { Check } from "./smoke-round5"
-import { labelDelivered, officeAigc } from "../src/server/tool/aigc-label"
+import { labelDelivered, labelHtml, officeAigc } from "../src/server/tool/aigc-label"
 
 async function zipOf(parts: Record<string, string>): Promise<Buffer> {
   const zip = new JSZip()
@@ -66,6 +66,27 @@ export async function roundTwentyServerChecks(check: Check, section: (name: stri
       const keptOut = await labelDelivered(keptFile, deps)
       const kept = await officeAigc(await JSZip.loadAsync(await fs.readFile(keptFile)))
       check("R20-B1 office: a kept ProduceID with $ patterns is written back as it was", keptOut.status === "labelled" && kept?.ProduceID === id && kept?.PropagateID === id, { keptOut, kept })
+    }
+
+    // ---------------------------------------------------------------- R20-B5
+    section("Round 20 (B5): the page's corner tag goes into the real body, never into a script, a style or a comment")
+    {
+      const script = `<script>const shell = "<body class='x'>" + '<BODY>'</script>`
+      const style = `<style>/* <body> */ p { color: red }</style>`
+      const comment = `<!-- an old <body> left here -->`
+      const page = `<!doctype html><html><head>${script}${style}${comment}</head><body id="real"><p>hi</p></body></html>`
+      const out = labelHtml(page) ?? ""
+      const tag = out.indexOf("data-mcode-aigc=")
+      const real = out.indexOf('<body id="real">')
+      check(
+        "R20-B5 html: a <body inside a script, a style or a comment is passed over; the tag follows the real one",
+        out.includes(script) && out.includes(style) && out.includes(comment) && real > 0 && tag > real && tag < out.indexOf("<p>hi</p>"),
+        out,
+      )
+      // With no body at all, the head's own close is the place, again not one inside a script.
+      const headless = `<html><head><script>let s = "</head>"</script></head><p>x</p></html>`
+      const headOut = labelHtml(headless) ?? ""
+      check("R20-B5 html: and with no body, a </head> inside a script is passed over too", headOut.includes(`<script>let s = "</head>"</script>`) && headOut.indexOf("data-mcode-aigc=") > headOut.indexOf("</script></head>"), headOut)
     }
   } finally {
     await fs.rm(root, { recursive: true, force: true }).catch(() => {})
