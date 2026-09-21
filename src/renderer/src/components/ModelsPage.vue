@@ -333,7 +333,7 @@ async function confirmClone(id: string) {
       <ConfirmDialog
         v-if="removing"
         :title="t(removing.custom ? 'set.models.removeProvider' : 'set.models.disconnectTitle')"
-        :body="t(removing.custom ? 'set.models.deleteBody' : 'set.models.disconnectBody', { name: removing.name })"
+        :body="t(removing.custom ? 'set.models.removeProviderBody' : 'set.models.disconnectBody', { name: removing.name })"
         :confirm-label="removing.custom ? t('set.models.remove') : t('set.disconnect')"
         @confirm="confirmRemove"
         @close="removing = undefined"

@@ -158,4 +158,18 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
       /\| \{ type: "project\.createBlank"; name: string \}/.test(protocol) && /blankProjectDirectory\(request\.name, runtime\.config\.get\(\)\.projectRoot\)/.test(handlers),
     )
   }
+
+  // ------------------------------------------------------------------ R19-F7
+  section("Round 19 (F7): deleting a provider says it takes every model with it")
+  {
+    const models = await read("src/renderer/src/components/ModelsPage.vue")
+    check("the provider's confirmation uses the provider wording, not the single model's", /removing\.custom \? 'set\.models\.removeProviderBody' : 'set\.models\.disconnectBody'/.test(models))
+    check("which is in all 18 tables", (i18n.match(/^ {2}"set\.models\.removeProviderBody": /gm) ?? []).length === 18)
+    const { language, t } = await import("../src/renderer/src/lib/i18n")
+    const spoken = language.value
+    language.value = "zh-CN"
+    const body = t("set.models.removeProviderBody", { name: "gw" })
+    language.value = spoken
+    check("and names the provider and all of its models", body.includes("「gw」") && body.includes("所有模型"), body)
+  }
 }
