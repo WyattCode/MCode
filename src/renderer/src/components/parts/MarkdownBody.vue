@@ -34,8 +34,14 @@ import { allowRemoteImage, showAllowedRemoteImages } from "../../lib/remote-imag
  * per-character pacing.
  */
 defineOptions({ inheritAttrs: false })
-const props = defineProps<{ text: string; live?: boolean }>()
+const props = defineProps<{
+  text: string
+  live?: boolean
+  /** The folder a relative picture, video or path is read from: a markdown file's own; a reply's is its conversation's. */
+  baseDir?: string
+}>()
 const app = useApp()
+const baseDir = computed(() => props.baseDir ?? app.current?.directory)
 const instance = getCurrentInstance()
 
 /*
@@ -113,7 +119,7 @@ async function openVideoCard(url: string, label: string) {
     openVideoPreview(url, { name: label })
     return
   }
-  const file = localPathOf(url, app.current?.directory)
+  const file = localPathOf(url, baseDir.value)
   const served = file ? await window.mcode.officeServe(file) : null
   if (!served?.ok) {
     notifyFailure(t("office.fileMissing"))
@@ -177,11 +183,11 @@ function mountMedia() {
     const path = holder.dataset.mediaPath
     if ((kind !== "image" && kind !== "video" && kind !== "audio") || !path) continue
     // A picture, video or sound is shown wherever it lives, as MiMo shows it (the user's 2026-09-16 decision).
-    const target = mediaPath(path, app.current?.directory)
+    const target = mediaPath(path, baseDir.value)
     if (!target) continue
     holder.dataset.mounted = "true"
     holder.textContent = ""
-    const vnode = h(LocalMedia, { kind, path: target, directory: app.current?.directory })
+    const vnode = h(LocalMedia, { kind, path: target, directory: baseDir.value })
     vnode.appContext = instance?.appContext ?? null
     render(vnode, holder)
     mounted.add(holder)
@@ -256,7 +262,7 @@ async function onContextMenu(event: MouseEvent) {
   if (!holder) return
   event.preventDefault()
   const at = { x: event.clientX, y: event.clientY }
-  const target = await resolvePathTarget(holder.dataset.path ?? "", holder.dataset.pathKind ?? "", app.current?.directory, holder.hasAttribute("data-path-image"))
+  const target = await resolvePathTarget(holder.dataset.path ?? "", holder.dataset.pathKind ?? "", baseDir.value, holder.hasAttribute("data-path-image"))
   if (target) pathMenu.value = { ...at, items: pathMenuItems(target, app.platform), target }
 }
 
@@ -278,7 +284,7 @@ function scrollToFootnote(selector: string) {
 }
 
 function openChip(chip: HTMLElement) {
-  void openPathLink(chip.dataset.path ?? "", chip.dataset.pathKind ?? "", app.current?.directory, app.platform)
+  void openPathLink(chip.dataset.path ?? "", chip.dataset.pathKind ?? "", baseDir.value, app.platform)
 }
 
 /*

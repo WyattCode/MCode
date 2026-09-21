@@ -4635,7 +4635,8 @@ h3 {
  * (814 against 659 in zh-CN at 1400x900), so the list scrolls inside the column
  * rather than running off its foot. As MiMo's: the same start inset, 12 below
  * the last row, nothing on the trailing side - the thin 9px scrollbar takes
- * that lane when there is anything to scroll.
+ * that lane when there is anything to scroll. Logical sides, so a
+ * right-to-left language keeps the inset at the start, away from the bar.
  */
 .nav-scroll {
   display: flex;
@@ -4643,7 +4644,8 @@ h3 {
   flex-direction: column;
   gap: 2px;
   min-height: 0;
-  padding: 0 0 12px 11px;
+  padding-block: 0 12px;
+  padding-inline: 11px 0;
   overflow-x: hidden;
   overflow-y: auto;
 }

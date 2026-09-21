@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue"
+import { computed, nextTick, ref, watch } from "vue"
 import type { ProviderStatus } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
@@ -46,6 +46,21 @@ const way = ref<Way | undefined>(props.group ? waysFor(props.group.entries)[0] :
 type Step = "browse" | "methods" | "form" | "custom"
 const step = ref<Step>(
   props.group ? (waysFor(props.group.entries).length > 1 ? "methods" : "form") : "browse",
+)
+
+/*
+ * The list's search takes the keys whenever the list is shown - on opening and
+ * back from the custom form. Focused here: Chromium skips an `autofocus` while
+ * anything else in the page holds focus - the composer the dialog was opened
+ * from, or the row that led back to the list.
+ */
+const searchEl = ref<HTMLInputElement>()
+watch(
+  step,
+  (now) => {
+    if (now === "browse") void nextTick(() => searchEl.value?.focus())
+  },
+  { immediate: true },
 )
 
 /**
@@ -284,7 +299,7 @@ useEscapeLayer(dismiss)
             <circle cx="7.2" cy="7.2" r="4.4" stroke="currentColor" stroke-width="1.3" />
             <path d="M10.6 10.6 13.4 13.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
           </svg>
-          <input v-model="query" class="search-in" :placeholder="t('connect.search')" spellcheck="false" autofocus />
+          <input ref="searchEl" v-model="query" class="search-in" :placeholder="t('connect.search')" spellcheck="false" />
           <button v-if="query" class="icon small" v-tip="{ label: t('common.clear'), placement: 'bottom' }" @click="query = ''">
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2" />

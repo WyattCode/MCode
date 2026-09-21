@@ -3061,8 +3061,12 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 <template>
   <div class="composer" :class="{ noted: sessionID && !side, side }" :data-compacting="compactingHere || undefined">
     <div class="shell">
-      <!-- 追求目标: the goal and how it is going, above the box, as MiMo puts it. -->
-      <GoalBar v-if="!side && sessionID" :session-i-d="sessionID" />
+      <!--
+        追求目标: the goal and how it is going, above the box, as MiMo puts it.
+        One bar per conversation: a rewrite in progress, or an expanded goal,
+        never follows the composer to the next conversation.
+      -->
+      <GoalBar v-if="!side && sessionID" :key="sessionID" :session-i-d="sessionID" />
       <!-- MiMo's cue drawer: tucked behind the box's top edge, it slides up with the command a recording was heard as. -->
       <div class="voice-cues" :class="{ on: cueOn }" data-voice-cues>
         <div class="voice-drawer" role="status">

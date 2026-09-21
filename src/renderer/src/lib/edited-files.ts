@@ -78,3 +78,14 @@ export function editedFiles(parts: readonly AssistantPart[], directory?: string,
     del: files.reduce((sum, file) => sum + file.del, 0),
   }
 }
+
+/** The diffs the run's own edit, write and notebook calls recorded, joined: what the card reviews when git has nothing to show. */
+export function recordedPatch(parts: readonly AssistantPart[]): string {
+  const diffs: string[] = []
+  for (const part of parts) {
+    if (part.type !== "tool" || !EDITING.has(part.name) || part.status === "error") continue
+    const diff = (part as ToolPart).metadata?.diff
+    if (typeof diff === "string" && diff) diffs.push(diff)
+  }
+  return diffs.join("\n")
+}

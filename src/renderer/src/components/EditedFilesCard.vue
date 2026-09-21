@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue"
-import type { AssistantPart, ToolPart } from "@shared/protocol"
+import type { AssistantPart } from "@shared/protocol"
 import { parseUnifiedDiff } from "@shared/unified-diff"
 import { useApp } from "../stores/app"
 import { useRightPanel } from "../stores/right-panel"
-import { editedFiles } from "../lib/edited-files"
+import { editedFiles, recordedPatch } from "../lib/edited-files"
 import { requestFile } from "../lib/review-request"
 import { notify, notifyFailure } from "../lib/toast"
 import type { MenuItem } from "../lib/menu"
@@ -114,17 +114,6 @@ async function revert() {
   }
 }
 
-/* The diffs the turn's own edit, write and patch calls recorded. */
-function toolPatch(): string {
-  const diffs: string[] = []
-  for (const part of props.parts) {
-    if (part.type !== "tool" || !["edit", "write"].includes(part.name) || part.status === "error") continue
-    const diff = (part as ToolPart).metadata?.diff
-    if (typeof diff === "string" && diff) diffs.push(diff)
-  }
-  return diffs.join("\n")
-}
-
 /* A patch with at least one hunk; headers alone show nothing. */
 function changes(patch: string) {
   return parseUnifiedDiff(patch).some((section) => section.hunks.length > 0)
@@ -145,7 +134,7 @@ async function review() {
       keep(answer)
       if (answer?.repo) patch = answer.files.map((entry) => entry.patch).filter(changes).join("\n")
     }
-    if (!changes(patch)) patch = toolPatch()
+    if (!changes(patch)) patch = recordedPatch(props.parts)
     if (!changes(patch)) {
       notify(t("stream.noDiff"))
       return

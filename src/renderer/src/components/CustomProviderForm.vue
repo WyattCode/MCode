@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { CustomModel, CustomProvider, ModelInfo } from "@shared/protocol"
 import { normalizeBaseURL, normalizeModelId } from "@shared/custom-endpoint"
 import { useApp } from "../stores/app"
@@ -7,7 +7,7 @@ import { t } from "../lib/i18n"
 import { notice } from "../lib/toast"
 import { useEscapeLayerWhile } from "../lib/escape-layer"
 import ConfirmDialog from "./ConfirmDialog.vue"
-import { LIMIT_PRESETS, MODALITIES, limitLabel, limitOf, modalitySummary, providerIdError, validEndpoint, type Modality } from "../lib/custom-model"
+import { LIMIT_PRESETS, MODALITIES, comboEnterValue, limitLabel, limitOf, modalitySummary, providerIdError, validEndpoint, type Modality } from "../lib/custom-model"
 import { providerIdProblem } from "@shared/provider-id"
 
 /**
@@ -32,6 +32,7 @@ const props = defineProps<{
   editing?: CustomProvider
   /** In the connect dialog: a save button of its own, and the saved model is selected. */
   standalone?: boolean
+  /** The id field takes the keys when the form opens. */
   autofocus?: boolean
 }>()
 const emit = defineEmits<{ connected: [providerID: string]; saved: [providerID: string] }>()
@@ -118,9 +119,13 @@ const form = ref({
     ? Object.entries(editing?.headers ?? {}).map(([key, value]) => ({ ...headerRow(), key, value }))
     : [headerRow()],
 })
-/* The form as it was first drawn, so an edit knows whether anything changed. */
-const pristine = JSON.stringify(form.value)
-const dirty = computed(() => JSON.stringify(form.value) !== pristine)
+/*
+ * The form as it was last saved (first, as it was drawn), so an edit knows
+ * whether anything changed since: MiMo's save clears its dirty flag, and so
+ * does a model removed, which is saved at once.
+ */
+const pristine = ref(JSON.stringify(form.value))
+const dirty = computed(() => JSON.stringify(form.value) !== pristine.value)
 
 const busy = ref(false)
 const tried = ref(false)
@@ -220,11 +225,22 @@ onMounted(() => {
   if (editing && validEndpoint(editing.baseURL)) void testConnection(true)
 })
 
+/*
+ * Asked to (the connect dialog's custom step), the id field takes the keys on
+ * opening. Focused here: Chromium skips an `autofocus` while anything else in
+ * the page holds focus, and the dialog's search box still does when this opens.
+ */
+const providerIdEl = ref<HTMLInputElement>()
+onMounted(() => {
+  if (props.autofocus) providerIdEl.value?.focus()
+})
+
 /* ------------------------------------------------------------ the model picker */
 
 const query = ref("")
 const openMenu = ref<string>()
-const highlight = ref(0)
+/* The suggestion moved to; none until the arrows or the pointer pick one. */
+const highlight = ref(-1)
 
 const choices = computed(() => {
   const needle = query.value.trim().toLowerCase()
@@ -232,7 +248,14 @@ const choices = computed(() => {
   return probe.value.models.filter((id) => !added.has(id) && (!needle || id.toLowerCase().includes(needle)))
 })
 
-watch([query, () => openMenu.value === "combo"], () => (highlight.value = 0))
+/* Synchronous, so an ArrowDown that opens the list lands on its first row rather than being reset after. */
+watch([query, () => openMenu.value === "combo"], () => (highlight.value = -1), { flush: "sync" })
+const comboMenuEl = ref<HTMLElement>()
+
+/* The row the keyboard moved to is scrolled into the list's view; a row under the pointer is already in it. */
+function revealHighlight() {
+  void nextTick(() => comboMenuEl.value?.querySelector<HTMLElement>(".cp-option.on")?.scrollIntoView({ block: "nearest" }))
+}
 
 function addModel(raw: string) {
   const id = normalizeModelId(raw)
@@ -252,13 +275,14 @@ function comboKey(event: KeyboardEvent) {
     event.preventDefault()
     openMenu.value = "combo"
     highlight.value = Math.min(highlight.value + 1, Math.max(choices.value.length - 1, 0))
+    revealHighlight()
   } else if (event.key === "ArrowUp") {
     event.preventDefault()
-    highlight.value = Math.max(highlight.value - 1, 0)
+    if (highlight.value > 0) highlight.value -= 1
+    revealHighlight()
   } else if (event.key === "Enter") {
     event.preventDefault()
-    const picked = openMenu.value === "combo" ? choices.value[highlight.value] : undefined
-    addModel(picked ?? query.value)
+    addModel(comboEnterValue(openMenu.value === "combo" ? highlight.value : -1, choices.value, query.value))
   }
 }
 
@@ -273,8 +297,14 @@ async function confirmRemoveModel() {
   const row = removingModel.value
   removingModel.value = undefined
   if (!row) return
-  if (editing) await app.removeCustomModel(editing.id, row.id).catch(() => undefined)
+  const removed = editing ? await app.removeCustomModel(editing.id, row.id).then(() => true, () => false) : false
   form.value.models = form.value.models.filter((entry) => entry.key !== row.key)
+  if (removed) {
+    // Saved already: the model leaves the saved form too, and every other unsaved change stays unsaved.
+    const saved = JSON.parse(pristine.value) as typeof form.value
+    saved.models = saved.models.filter((entry) => entry.key !== row.key)
+    pristine.value = JSON.stringify(saved)
+  }
 }
 
 /* ------------------------------------------------------------ limits and inputs */
@@ -381,6 +411,7 @@ async function submit(): Promise<boolean> {
   try {
     if (editing) await app.updateCustomProvider(entry)
     else await app.addCustomProvider(entry)
+    pristine.value = JSON.stringify(form.value)
     if (props.standalone) {
       const model = { provider: id, model: entry.models[0].id }
       if (app.currentID) await app.setModel(model)
@@ -413,8 +444,8 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
             v-model="form.providerID"
             class="cp-in mono"
             :class="{ bad: idError }"
+            ref="providerIdEl"
             :readonly="Boolean(editing)"
-            :autofocus="props.autofocus"
             :placeholder="t('provider.custom.field.providerID.placeholder')"
             spellcheck="false"
             autocomplete="off"
@@ -510,7 +541,8 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
         <span class="cp-label">{{ t("set.models.probeTitle") }}</span>
         <div class="cp-probe">
           <span class="cp-probe-text" :class="probe.status" data-probe-text>{{ probe.text }}</span>
-          <span class="cp-light" :class="probe.status" data-probe-light :aria-label="probe.status" />
+          <!-- The light repeats the words beside it; a reader hears those, not "ok" or "busy". -->
+          <span class="cp-light" :class="probe.status" data-probe-light aria-hidden="true" />
           <button type="button" class="cp-btn" data-provider-probe :disabled="probe.status === 'busy'" @click="testConnection()">
             {{ t("set.models.probe") }}
           </button>
@@ -535,7 +567,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
         @keydown="comboKey"
       />
       <button type="button" class="cp-btn" data-model-add :disabled="!query.trim()" @click="addModel(query)">{{ t("provider.custom.models.add") }}</button>
-      <div v-if="openMenu === 'combo'" class="cp-menu combo" role="listbox" data-model-combo-menu>
+      <div v-if="openMenu === 'combo'" ref="comboMenuEl" class="cp-menu combo" role="listbox" data-model-combo-menu>
         <div v-if="!choices.length" class="cp-menu-empty" data-model-combo-empty>{{ t("set.models.comboEmpty") }}</div>
         <button
           v-for="(id, at) in choices"
@@ -599,10 +631,11 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
               <span>{{ value }} ({{ limitLabel(value) }})</span>
               <span v-if="row[field] === value" class="cp-check">✓</span>
             </button>
+            <!-- The number itself, preset or not, as MiMo's field shows it: typing 128000 never blanks it. -->
             <input
               class="cp-in small"
               inputmode="numeric"
-              :value="row[field] !== undefined && !(LIMIT_PRESETS[field] as readonly number[]).includes(row[field]!) ? String(row[field]) : ''"
+              :value="row[field] !== undefined ? String(row[field]) : ''"
               :placeholder="t('set.models.limitCustom')"
               :data-model-limit-custom="field"
               @input="typeLimit(row, field, $event)"

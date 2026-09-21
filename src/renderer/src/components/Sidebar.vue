@@ -1020,23 +1020,58 @@ function toggleColumn() {
   emit("toggle")
 }
 
+/* An Escape a menu opened from the preview took closes that menu alone. */
 function onPreviewKey(event: KeyboardEvent) {
-  if (event.key === "Escape") closePreview()
+  if (event.key === "Escape" && !event.defaultPrevented) closePreview()
+}
+
+/*
+ * What the preview opens over the window belongs to it while it is open - a
+ * menu with the scrim under it, a conversation's information card - as the
+ * portals of MiMo's menus belong to its column: the pointer on them holds the
+ * preview, and a press on them is not a press elsewhere.
+ */
+const PREVIEW_LAYERS = '.scrim, [role="menu"], .app-tip.interactive'
+const toolsEl = ref<HTMLElement>()
+
+function inPreview(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false
+  return Boolean(shellEl.value?.contains(target) || toolsEl.value?.contains(target) || target.closest(PREVIEW_LAYERS))
+}
+
+/* Held while the pointer is on the preview, the controls beside the toggle or a layer of the preview's; let go 200ms after it leaves them. */
+let pointerInPreview = true
+function onPreviewOver(event: PointerEvent) {
+  const inside = inPreview(event.target)
+  if (inside || pointerInPreview) holdPreview(inside)
+  pointerInPreview = inside
+}
+
+/* Out of the window altogether: no element is entered, so nothing else would say so. */
+function onPreviewOut(event: PointerEvent) {
+  if (event.relatedTarget || !pointerInPreview) return
+  pointerInPreview = false
+  holdPreview(false)
 }
 
 function onPreviewPress(event: PointerEvent) {
   const target = event.target as Node | null
-  if (target && (shellEl.value?.contains(target) || toggleEl.value?.contains(target))) return
+  if (inPreview(target) || (target && toggleEl.value?.contains(target))) return
   closePreview()
 }
 
 watch(preview, (open) => {
   if (open) {
+    pointerInPreview = true
     document.addEventListener("keydown", onPreviewKey)
     document.addEventListener("pointerdown", onPreviewPress, true)
+    document.addEventListener("pointerover", onPreviewOver, true)
+    document.addEventListener("pointerout", onPreviewOut, true)
   } else {
     document.removeEventListener("keydown", onPreviewKey)
     document.removeEventListener("pointerdown", onPreviewPress, true)
+    document.removeEventListener("pointerover", onPreviewOver, true)
+    document.removeEventListener("pointerout", onPreviewOut, true)
   }
 })
 watch(
@@ -1050,6 +1085,8 @@ onBeforeUnmount(() => {
   closePreview()
   document.removeEventListener("keydown", onPreviewKey)
   document.removeEventListener("pointerdown", onPreviewPress, true)
+  document.removeEventListener("pointerover", onPreviewOver, true)
+  document.removeEventListener("pointerout", onPreviewOut, true)
 })
 </script>
 
@@ -1062,7 +1099,7 @@ onBeforeUnmount(() => {
       pointer, so it carries no tip of its own - and 新建任务. Back and forward
       go with the column.
     -->
-    <div v-if="collapsed" class="rail-tools" data-collapsed-tools @pointerenter="holdPreview(true)" @pointerleave="holdPreview(false)">
+    <div v-if="collapsed" ref="toolsEl" class="rail-tools" data-collapsed-tools>
       <button
         ref="toggleEl"
         class="ico"
@@ -1099,8 +1136,6 @@ onBeforeUnmount(() => {
       :data-side-preview="collapsed && preview ? '' : undefined"
       :inert="collapsed && !preview ? true : undefined"
       :aria-hidden="collapsed && !preview ? 'true' : undefined"
-      @pointerenter="holdPreview(true)"
-      @pointerleave="holdPreview(false)"
     >
     <div class="top" :class="{ mac: app.platform === 'darwin' }">
       <button class="ico side-toggle" :aria-label="t('side.toggle')" v-tip="{ label: t('side.toggle'), hint: 'Ctrl+B' }" @click="toggleColumn">
