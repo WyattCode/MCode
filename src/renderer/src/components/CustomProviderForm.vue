@@ -377,7 +377,7 @@ async function submit(): Promise<boolean> {
       if (app.currentID) await app.setModel(model)
       else await app.patchConfig({ model, smart: false })
     }
-    if (editing) notice.info(t("model.changesSaved"))
+    if (editing) notice.success(t("model.changesSaved"))
     else notice.success(t("set.models.providerAdded"))
     emit("saved", id)
     emit("connected", id)

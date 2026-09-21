@@ -113,4 +113,33 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
     }
     check("the sentence is in all 18 tables", (i18n.match(/^ {2}"toast\.pickerBusy": /gm) ?? []).length === 18)
   }
+
+  // ------------------------------------------------------------------ R19-F4
+  section("Round 19 (F4): confirmations are green success notices, refusals danger, as MiMo's")
+  {
+    const settings = await read("src/renderer/src/components/SettingsDialog.vue")
+    const models = await read("src/renderer/src/components/ModelsPage.vue")
+    const form = await read("src/renderer/src/components/CustomProviderForm.vue")
+    const store = await read("src/renderer/src/stores/app.ts")
+    const app = await read("src/renderer/src/App.vue")
+    const success = (source: string, call: string) => source.includes(`${call}, { level: "success" })`)
+    const sites: [string, boolean][] = [
+      ["配置 path copied", success(settings, 'notify(t("set.config.pathCopied")')],
+      ["MCP server saved", success(settings, 'notify(t("set.mcpForm.saved", { name })')],
+      ["MCP server authorized", success(settings, 'notify(t("set.mcp.authorized")')],
+      ["MCP server removed", success(settings, 'notify(t("set.mcp.removed") + name')],
+      ["MCP import done", success(settings, 'notify(t("set.mcp.importDone", { n: String(result?.imported.length ?? 0) })')],
+      ["one conversation restored", success(settings, 'notify(t("toast.convoRestored")')],
+      ["a batch restored", success(settings, 'if (ids.length) notify(t("toast.convosRestored", { n: ids.length })')],
+      ["models refreshed", success(models, 'notify(t("set.models.refreshed")') && success(models, 'notify(t("provider.refreshed", { n: found })')],
+      ["provider saved", /if \(editing\) notice\.success\(t\("model\.changesSaved"\)\)/.test(form)],
+      ["project added", success(store, 'else notify(t("side.projectAdded", { name })')],
+      ["projects removed", success(store, 'notify(directories.length > 1 ? t("side.projectsRemoved", { count: directories.length }) : t("side.projectRemoved")')],
+      ["update ready", success(app, 'notify(t("update.readyToast")')],
+    ]
+    for (const [name, ok] of sites) check(`success: ${name}`, ok)
+    check("a batch of one is counted too, as MiMo's unarchiveMany", !/ids\.length === 1\) notify\(t\("toast\.convoRestored"\)/.test(settings))
+    check("danger: the project is already there", /if \(result\.existed\) notifyFailure\(t\("side\.projectExists", \{ name \}\)\)/.test(store))
+    check("danger: the project name is taken", /notifyFailure\(t\("toast\.projectNameTaken", \{ name \}\)\)/.test(app) && !/projectNameTaken", \{ name \}\), \{ level: "warning" \}/.test(app))
+  }
 }

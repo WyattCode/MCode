@@ -146,7 +146,7 @@ async function copyConfigPath() {
   if (!target) return
   try {
     await navigator.clipboard.writeText(target)
-    notify(t("set.config.pathCopied"))
+    notify(t("set.config.pathCopied"), { level: "success" })
   } catch {
     notifyFailure(t("set.config.copyPathFailed"))
   }
@@ -452,7 +452,7 @@ async function saveMcp() {
     return
   }
   delete mcpTools.value[name]
-  notify(t("set.mcpForm.saved", { name }))
+  notify(t("set.mcpForm.saved", { name }), { level: "success" })
   mcpView.value = "list"
   void refreshMcp()
 }
@@ -476,7 +476,7 @@ async function authorizeMcp(name: string) {
   notify(t("set.mcp.authorizing"))
   try {
     await app.client?.request({ type: "mcp.authenticate", name })
-    notify(t("set.mcp.authorized"))
+    notify(t("set.mcp.authorized"), { level: "success" })
   } catch (err) {
     notifyFailure(t("set.mcp.authorizeFailed") + (err instanceof Error ? err.message : String(err)))
   } finally {
@@ -498,7 +498,7 @@ async function removeMcp(name: string) {
   }
   if (mcpToolsOpen.value === name) mcpToolsOpen.value = undefined
   delete mcpTools.value[name]
-  notify(t("set.mcp.removed") + name)
+  notify(t("set.mcp.removed") + name, { level: "success" })
   void refreshMcp()
 }
 
@@ -567,7 +567,7 @@ async function finishMcpImport() {
   try {
     const items = mcpImportChosen.value.map(({ source, name }) => ({ source, name }))
     const result = await app.client?.request({ type: "mcp.importApply", items })
-    notify(t("set.mcp.importDone", { n: String(result?.imported.length ?? 0) }))
+    notify(t("set.mcp.importDone", { n: String(result?.imported.length ?? 0) }), { level: "success" })
     mcpView.value = "list"
     void refreshMcp()
   } catch (err) {
@@ -1332,15 +1332,15 @@ function toggleAllPicked() {
 /* MiMo confirms a restore with one toast, and a batch with one counted toast rather than one each. */
 async function restoreOne(sessionID: string) {
   await app.archive(sessionID, false)
-  notify(t("toast.convoRestored"))
+  notify(t("toast.convoRestored"), { level: "success" })
 }
 
 async function restorePicked() {
   const ids = [...pickedLive.value]
   for (const sessionID of ids) await app.archive(sessionID, false)
   stopSelecting()
-  if (ids.length === 1) notify(t("toast.convoRestored"))
-  else if (ids.length) notify(t("toast.convosRestored", { n: ids.length }))
+  // A batch is always counted, even a batch of one, as MiMo's unarchiveMany says it.
+  if (ids.length) notify(t("toast.convosRestored", { n: ids.length }), { level: "success" })
 }
 
 /** What the delete dialog is about: one named conversation, or the selection. */

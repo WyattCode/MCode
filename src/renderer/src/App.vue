@@ -413,7 +413,7 @@ async function submitProjectRename(name: string) {
   if (!directory) return
   const names = app.config?.projectNames ?? {}
   if (app.projects.some((other) => other !== directory && projectName(other, names) === name)) {
-    notify(t("toast.projectNameTaken", { name }), { level: "warning" })
+    notifyFailure(t("toast.projectNameTaken", { name }))
     return
   }
   await app.patchConfig({ projectNames: { ...names, [directory]: name } })
@@ -500,7 +500,7 @@ async function checkForUpdates() {
     dismiss(checking)
     takeUpdateState(result)
     if (result.outcome === "current") notify(t("update.current"))
-    else if (result.outcome === "ready") notify(t("update.readyToast"))
+    else if (result.outcome === "ready") notify(t("update.readyToast"), { level: "success" })
     else if (result.outcome === "no-feed") notifyFailure(t("update.noFeed"))
     else if (result.outcome === "failed") notifyFailure(t(result.during === "download" ? "update.failed" : "update.checkFailed"), result.error ?? "")
   } catch (err) {

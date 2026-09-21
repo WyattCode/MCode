@@ -121,11 +121,11 @@ async function refresh() {
     else if (provider && provider.kind === "openai-compatible") {
       try {
         const found = await app.discoverModels(provider.id)
-        notify(t("provider.refreshed", { n: found }))
+        notify(t("provider.refreshed", { n: found }), { level: "success" })
       } catch (err) {
         notifyFailure(localFailure(provider) ?? (err instanceof Error ? err.message : String(err)))
       }
-    } else notify(t("set.models.refreshed"))
+    } else notify(t("set.models.refreshed"), { level: "success" })
   } finally {
     refreshing.value = false
   }

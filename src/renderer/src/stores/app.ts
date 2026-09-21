@@ -1965,14 +1965,16 @@ export const useApp = defineStore("app", () => {
     config.value = result.config
     if (options.silent || (result.existed && !options.switched)) return
     const name = projectName(directory, result.config.projectNames)
-    notify(t(result.existed ? "side.projectExists" : "side.projectAdded", { name }))
+    // MiMo: added is a success; already there goes through its danger notice.
+    if (result.existed) notifyFailure(t("side.projectExists", { name }))
+    else notify(t("side.projectAdded", { name }), { level: "success" })
   }
 
   /** MiMo's remove: off the list, conversations kept. */
   async function removeProjects(directories: string[]) {
     if (!directories.length) return
     config.value = (await api().request({ type: "project.remove", directories })).config
-    notify(directories.length > 1 ? t("side.projectsRemoved", { count: directories.length }) : t("side.projectRemoved"))
+    notify(directories.length > 1 ? t("side.projectsRemoved", { count: directories.length }) : t("side.projectRemoved"), { level: "success" })
   }
 
   /**
