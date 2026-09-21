@@ -16,6 +16,8 @@ import { Bus } from "../src/server/bus"
 import { Storage } from "../src/server/storage"
 import { SessionStore } from "../src/server/session/store"
 import { startHistory, stopHistory } from "../src/server/history/service"
+import { AutomationService, type AutomationDeps } from "../src/server/automation/service"
+import { RunQueue } from "../src/server/automation/run-queue"
 
 const MODEL = { provider: "anthropic", model: "claude-opus-5" } as const
 
@@ -169,6 +171,130 @@ export async function roundTwentyServerChecks(check: Check, section: (name: stri
           await stopHistory(history)
         }
       }
+    }
+
+    // ---------------------------------------------------------------- R20-B2
+    section("Round 20 (B2): a run still starting when its 30-second lease runs out is neither skipped nor started twice")
+    {
+      const temp = path.join(root, "automation")
+      await fs.mkdir(temp, { recursive: true })
+      let clock = Date.parse("2026-09-20T08:00:00Z")
+      const target = { id: "ses_r20_target", directory: temp, model: MODEL, agent: "build", title: "Target", created: clock, updated: clock } as unknown as SessionInfo
+      const made = { id: "ses_r20_made", directory: temp, model: MODEL, agent: "build", title: "Made", created: clock, updated: clock } as unknown as SessionInfo
+      /** Calls that wait until the check lets them go, so a start can be held past its lease. */
+      const gates: (() => void)[] = []
+      const gate = () => new Promise<void>((resolve) => gates.push(resolve))
+      let holdPrompt = false
+      let holdCreate = false
+      let prompts = 0
+      let creates = 0
+      const file = path.join(temp, "automations.json")
+      const deps = (): AutomationDeps => ({
+        file,
+        now: () => clock,
+        sessions: {
+          get: async (id) => (id === target.id ? target : id === made.id ? made : undefined),
+          create: async () => {
+            creates++
+            if (holdCreate) await gate()
+            return made
+          },
+          messages: async (): Promise<Message[]> => [],
+        },
+        prompt: async () => {
+          prompts++
+          if (holdPrompt) await gate()
+        },
+        busy: () => false,
+        models: () => [{ provider: MODEL.provider, id: MODEL.model, name: "Opus" }],
+        agent: () => "build",
+        effort: () => undefined,
+        scratch: async () => temp,
+        publish: () => {},
+      })
+      const until = async (condition: () => boolean) => {
+        const end = Date.now() + 5000
+        while (!condition() && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 5))
+        return condition()
+      }
+      const service = new AutomationService(deps())
+      await service.start({ interval: false })
+      const create = async (runMode: "existing-task" | "new-task") =>
+        (
+          JSON.parse(
+            await service.handle(
+              { mode: "create", title: `Held ${runMode}`, prompt: "Summarise", rrule: "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0", runMode, ...(runMode === "existing-task" ? { targetThreadId: target.id } : {}), notification: "failed-runs" },
+              { sessionID: target.id, directory: temp },
+            ),
+          ) as { automation: { id: string } }
+        ).automation.id
+      const history = (id: string) => service.list().find((automation) => automation.id === id)?.runHistory ?? []
+
+      // The turn's own start is what is slow: the task's conversation is already marked as running.
+      const existing = await create("existing-task")
+      const due = service.dueAt(existing) ?? 0
+      clock = due + 1000
+      holdPrompt = true
+      const first = service.tick()
+      const reached = await until(() => prompts === 1)
+      clock += 31_000
+      await service.tick()
+      holdPrompt = false
+      for (const open of gates.splice(0)) open()
+      await first
+      clock += 1000
+      await service.tick()
+      const records = history(existing)
+      check(
+        "R20-B2 existing conversation: the run that was still starting is recorded once, as running, and never as skipped",
+        reached && prompts === 1 && records.length === 1 && records[0]?.runId === RunQueue.runIdFor(existing, due) && records[0]?.status === "running",
+        { reached, prompts, records },
+      )
+      check("R20-B2 and its queue entry is gone once it has started", service.queued === 0, service.queued)
+      await service.handle({ mode: "delete", id: existing }, { sessionID: target.id, directory: temp })
+
+      // Making the new conversation is what is slow: nothing is marked as running yet.
+      const fresh = await create("new-task")
+      const freshDue = service.dueAt(fresh) ?? 0
+      clock = freshDue + 1000
+      holdCreate = true
+      const second = service.tick()
+      const creating = await until(() => creates === 1)
+      clock += 31_000
+      await service.tick()
+      holdCreate = false
+      for (const open of gates.splice(0)) open()
+      await second
+      clock += 1000
+      await service.tick()
+      clock += 1000
+      await service.tick()
+      const freshRecords = history(fresh)
+      check(
+        "R20-B2 new conversation: one conversation made, one run recorded as running, none skipped as overlapping",
+        creating && creates === 1 && freshRecords.length === 1 && freshRecords[0]?.status === "running",
+        { creating, creates, freshRecords },
+      )
+      check("R20-B2 and its queue entry is gone too", service.queued === 0, service.queued)
+      await service.stop()
+
+      // A run whose record already exists - saved before a kill, with its queue entry saved beside it - is not started again.
+      const saved = JSON.parse(await fs.readFile(file, "utf8")) as { runQueue?: { entries: unknown[] } }
+      const runId = RunQueue.runIdFor(fresh, freshDue)
+      saved.runQueue = { entries: [{ run: { runId, automationID: fresh, scheduledFor: freshDue, scheduleFingerprint: "", source: "schedule", deliveryGeneration: 1 }, attempts: 0 }] }
+      await fs.writeFile(file, JSON.stringify(saved), "utf8")
+      const restarted = new AutomationService(deps())
+      await restarted.start({ interval: false })
+      const createsBefore = creates
+      const promptsBefore = prompts
+      await restarted.tick()
+      const after = restarted.list().find((automation) => automation.id === fresh)?.runHistory ?? []
+      check(
+        "R20-B2 a queued run whose id is already in the task's history is dropped, not run a second time",
+        creates === createsBefore && prompts === promptsBefore && after.length === 1 && restarted.queued === 0,
+        { creates, prompts, after, queued: restarted.queued },
+      )
+      await restarted.stop()
     }
   } finally {
     await fs.rm(root, { recursive: true, force: true }).catch(() => {})

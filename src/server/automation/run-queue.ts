@@ -135,17 +135,20 @@ export class RunQueue {
   }
 
   /**
-   * What the holder of an entry found. A report from an earlier hand-out - a
-   * slow caller that woke up after the lease had already passed the entry on -
-   * is ignored, which is what the generation is for.
+   * What the holder of an entry found. "settled" finishes the run whichever
+   * hand-out reports it: a slow start that outlived its lease has still
+   * started, and the entry the lease passed on must not start it again. Any
+   * other report from an earlier hand-out is ignored, which is what the
+   * generation is for.
    */
   report(runId: string, deliveryGeneration: number, outcome: RunReport): boolean {
     const entry = this.entries.get(runId)
-    if (!entry || entry.run.deliveryGeneration !== deliveryGeneration) return false
+    if (!entry) return false
     if (outcome === "settled") {
       this.entries.delete(runId)
       return true
     }
+    if (entry.run.deliveryGeneration !== deliveryGeneration) return false
     entry.leaseUntil = 0
     if (outcome === "failed") entry.attempts++
     return true

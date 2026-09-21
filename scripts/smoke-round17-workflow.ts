@@ -348,8 +348,9 @@ async function automationChecks(check: Check, section: Section, root: string): P
      * ring of settled ids guards against: the prompt is held open, so the check
      * that took the entry never reports, and thirty seconds later the entry is
      * deliverable again. Here the run ids are `<task>-<due moment>`, so the
-     * overlap check is what settles it - and it settles it before anything can
-     * start.
+     * task's run history, which already holds that id, drops it before
+     * anything can start - and without recording the run that is answering as
+     * skipped (R20-B2).
      */
     clock = new Date(2026, 0, 9, 9, 0, 1).getTime()
     let releasePrompt: () => void = () => {}
@@ -363,7 +364,7 @@ async function automationChecks(check: Check, section: Section, root: string): P
     await service.tick()
     check("the run is not started a second time", prompts.length === ran, prompts.length - ran)
     const twice = service.list()[0]?.runHistory?.at(-1)
-    check("the entry is given up on as an overlap instead", twice?.status === "skipped" && twice?.errorCode === "overlap", twice)
+    check("and the run that is answering stays recorded as running, not as a skipped overlap", twice?.status === "running", twice)
     check("and nothing is left in the queue", service.queued === 0, service.queued)
     releasePrompt()
     await started

@@ -107,9 +107,10 @@ export interface RunRecord {
  * are what this app knows about. `duplicate-run` is MiMo's guard against one
  * run being delivered twice, which needs a ring of settled ids because its own
  * ids are not tied to an occurrence; here a run id is `<task>-<due moment>`, so
- * the only way the same one comes round again is a lease running out under a
- * turn that is still going - and the overlap check below settles that one
- * before it can start. They stay in the list because a record written by a
+ * the only ways the same one comes round again are a lease running out under a
+ * start that is still going and a queue saved before the app went away - and
+ * the task's own run history, which already holds that id, drops it before it
+ * can start. They stay in the list because a record written by a
  * newer build, or read by a page later, may still use them.
  */
 export const RUN_REASONS = [
@@ -265,6 +266,11 @@ export function scheduleKey(rrule: string, label?: string): string {
     if (rule.byWeekdays.length === 1) return `weekly:${rule.byWeekdays[0]}:${time}`
   }
   return `custom:${lines}\u0000${label?.trim() ?? ""}`
+}
+
+/** Whether a queued run has already opened its record, which only a start does (skips are written under their own id). */
+function startedBefore(automation: Automation, run: QueuedRun): boolean {
+  return (automation.runHistory ?? []).some((record) => record.runId === run.runId)
 }
 
 /** The task as a run found it, kept on the run's record. */
@@ -913,7 +919,8 @@ export class AutomationService {
     // And one that has been handed out as often as it may be is given up on rather than tried for ever.
     for (const gone of this.queue.exhausted()) {
       const automation = this.saved.automations.find((entry) => entry.id === gone.automationID)
-      if (automation) {
+      // A run that did start, under a hand-out whose lease ran out, is not also recorded as one that could not.
+      if (automation && !startedBefore(automation, gone)) {
         this.skipRun(automation, COULD_NOT_START, gone)
         this.tellAbout(automation, undefined, "skipped")
       }
@@ -935,6 +942,23 @@ export class AutomationService {
         dirty = true
         continue
       }
+      /*
+       * Started once already: a hand-out that outlived its lease, or a start
+       * whose queue entry was saved before the app went away. Its record says
+       * how that run went; starting it again would run the same due moment
+       * twice.
+       */
+      if (startedBefore(automation, entry)) {
+        this.queue.drop(entry.runId)
+        console.warn(`[automation] run ${entry.runId} was dropped: it has already started`)
+        dirty = true
+        continue
+      }
+      // Still being started by an earlier check whose lease ran out; that check reports on it.
+      if (this.starting.has(entry.automationID)) {
+        this.queue.report(entry.runId, entry.deliveryGeneration, "later")
+        continue
+      }
       // Paused under it - by the user or by the model - between being queued and being handed out.
       if (!automation.enabled) {
         this.queue.drop(entry.runId)
@@ -949,23 +973,12 @@ export class AutomationService {
         dirty = true
         continue
       }
-      /*
-       * The last run of this same task has not finished yet; MiMo refuses to
-       * lay a second one on top of it. This is also what settles the one case
-       * that could otherwise start a run twice: a lease that ran out while the
-       * turn it began was genuinely still going puts the entry back in the
-       * queue, and the next check finds the task still answering and gives up
-       * on it rather than starting it again.
-       */
+      // The last run of this same task has not finished yet; MiMo refuses to lay a second one on top of it.
       if ([...this.runs.values()].some((running) => running.id === automation.id)) {
         this.queue.drop(entry.runId)
         this.skipRun(automation, "The previous run of this task had not finished.", entry, "overlap")
         this.tellAbout(automation, automation.targetThreadId, "skipped")
         dirty = true
-        continue
-      }
-      if (this.starting.has(entry.automationID)) {
-        this.queue.report(entry.runId, entry.deliveryGeneration, "later")
         continue
       }
       this.starting.add(entry.automationID)
