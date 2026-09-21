@@ -21,7 +21,7 @@ import { systemPrompt } from "../src/server/session/prompt"
 import { attachmentNote, sessionNote } from "../src/server/session/context"
 import { firstPlanNote } from "../src/server/session/plan"
 import { createLoopMonitor } from "../src/server/session/reminders"
-import { findTool, toolsFor } from "../src/server/tool/registry"
+import { TOOLS, findTool, toolsFor } from "../src/server/tool/registry"
 import { AutomationService } from "../src/server/automation/service"
 import { readFileSync } from "node:fs"
 
@@ -149,7 +149,8 @@ export async function roundEightChecks(check: Check, section: (name: string) => 
     check("memory says when to search rather than ask", memory.includes("before asking the user something they may already have told you"))
     check("and what each scope holds", memory.includes("project memory holds"))
 
-    const cron = describe("cron")
+    // R18-E2: withdrawn from the model, so read from the registry rather than dispatched.
+    const cron = TOOLS.find((tool) => tool.name === "cron")?.description ?? ""
     check("cron says which of schedule and loop fits what", cron.includes("Which to use: schedule for work that belongs to a time"))
     check("and that a fired prompt starts with none of this conversation's context", cron.includes("has none of this conversation's context"))
 

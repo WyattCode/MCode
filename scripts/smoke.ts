@@ -3693,14 +3693,16 @@ async function main() {
      */
     const planning = toolsFor("plan").map((tool) => tool.name)
     const building = toolsFor("build").map((tool) => tool.name)
-    check("build keeps every tool", building.length === TOOLS.length, building)
+    // R18-E2: every tool but the two scheduling ones, which only an end-to-end run is offered.
+    const offeredCount = TOOLS.filter((tool) => tool.name !== "cron" && tool.name !== "automation_update").length
+    check("build keeps every tool", building.length === offeredCount, building)
     /*
      * plan: and so does planning, as MiMo's plan agent does. What holds it to
      * reading is the rule the write tools enforce, not a shorter list - a plan
      * mode that could not run `git log` or write the plan down was weaker than
      * MiMo's at the same promise.
      */
-    check("planning keeps every tool too", planning.length === TOOLS.length, planning)
+    check("planning keeps every tool too", planning.length === offeredCount, planning)
     check("including the shell, the writing tools and the cross-conversation ones", ["bash", "write", "edit", "notebook_edit", "talk_to_session", "create_session", "update_session", "contacts"].every((name) => planning.includes(name)), planning)
     check("plan_exit is offered in both modes, as MiMo offers it", planning.includes("plan_exit") && building.includes("plan_exit"))
     check("but never to an explore subagent", !toolsFor("explore").some((tool) => tool.name === "plan_exit"), toolsFor("explore").map((tool) => tool.name))
