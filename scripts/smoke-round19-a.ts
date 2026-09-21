@@ -172,4 +172,29 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
     language.value = spoken
     check("and names the provider and all of its models", body.includes("「gw」") && body.includes("所有模型"), body)
   }
+
+  // ------------------------------------------------------------------ R19-F8
+  section("Round 19 (F8): the models page says 供应商, as MiMo 26.920, with its probe and combo texts")
+  {
+    const { language, t } = await import("../src/renderer/src/lib/i18n")
+    const spoken = language.value
+    const said = (lang: typeof language.value, key: string, values?: Record<string, string | number>) => {
+      language.value = lang
+      return t(key, values)
+    }
+    const zh = {
+      "set.models.addProvider": "添加供应商",
+      "set.models.removeProvider": "删除供应商",
+      "set.models.cloneProvider": "克隆供应商",
+      "set.models.fromProvider": "来自此供应商的模型",
+      "set.models.providerAdded": "已添加供应商",
+      "set.models.comboPlaceholder": "选择或添加 model-id",
+    }
+    for (const [key, want] of Object.entries(zh)) check(`zh-CN ${key} is ${want}`, said("zh-CN", key) === want, said("zh-CN", key))
+    check("zh-TW says 供應商 too", said("zh-TW", "set.models.addProvider") === "新增供應商" && said("zh-TW", "set.models.fromProvider") === "來自此供應商的模型")
+    check("the probe's success is just the count, as MiMo's probeOkN", said("zh-CN", "set.models.probeOk", { n: 3 }) === "3 个模型" && said("en", "set.models.probeOk", { n: 3 }) === "3 models")
+    check("the models page's own strings no longer say 提供商", !Object.keys(zh).some((key) => said("zh-CN", key).includes("提供商")) && !said("zh-CN", "set.models.removed", { name: "x" }).includes("提供商"))
+    check("search still finds the page by the new word", said("zh-CN", "set.keywords.models").includes("供应商"))
+    language.value = spoken
+  }
 }
