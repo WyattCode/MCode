@@ -48,10 +48,6 @@ const emit = defineEmits<{ toggle: [] }>()
   text-align: start;
 }
 
-.head:hover {
-  color: var(--text-base);
-}
-
 .chev {
   flex: none;
 }

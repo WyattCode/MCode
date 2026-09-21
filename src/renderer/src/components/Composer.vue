@@ -3780,9 +3780,13 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               <span class="mic-spinner" aria-hidden="true" />
               <span class="voice-label" data-voice-status>{{ voiceLabel }}</span>
             </span>
-            <svg v-else width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <rect x="7.4" y="2.6" width="5.2" height="9.2" rx="2.6" stroke="currentColor" stroke-width="1.3" />
-              <path d="M4.8 9.6a5.2 5.2 0 0 0 10.4 0M10 14.8v2.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+            <!-- MiMo's microphone, filled: a capsule ring over an open cradle, no stand. -->
+            <svg v-else width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+              <path
+                fill="currentColor"
+                fill-rule="evenodd"
+                d="M9 1.56a3.54 3.54 0 0 1 3.54 3.54v4.25a3.54 3.54 0 0 1-7.08 0V5.1A3.54 3.54 0 0 1 9 1.56zm0 1.42a2.13 2.13 0 0 0-2.13 2.12v4.25a2.13 2.13 0 0 0 4.25 0V5.1A2.13 2.13 0 0 0 9 2.98zM2.05 10.74a7.09 7.09 0 0 0 13.9 0l-1.39-.28a5.67 5.67 0 0 1-11.12 0z"
+              />
             </svg>
           </button>
 
@@ -5488,6 +5492,17 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 /* MiMo sets what is written at 500; its placeholder stays at the regular weight. */
 .input:not(:placeholder-shown) {
   font-weight: 500;
+}
+
+/* MiMo's written text: the strongest text on light, #f4f4f5 rather than white on dark. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .input {
+    color: #f4f4f5;
+  }
+}
+
+:root[data-theme="dark"] .input {
+  color: #f4f4f5;
 }
 
 /* Locked while the conversation is compacted. */

@@ -170,4 +170,17 @@ export async function roundTwentyV2Checks(check: Check, section: (name: string) 
     const hand = /ask: \{[^}]*paths: \[([\s\S]*?)\]/.exec(table)?.[1] ?? ""
     check("the hand has four fingers", (hand.match(/a\.76\.76 0 0 1 1\.5\d 0/g) ?? []).length === 4, hand)
   }
+
+  // ------------------------------------------------------------------ R20-V2-12
+  section("Round 20 (V2-12): typed text #f4f4f5 on dark, MiMo's filled microphone, a subgroup head that does not brighten")
+  {
+    check(
+      "the text being written is #f4f4f5 on dark, not white",
+      /:root\[data-theme="dark"\] \.input \{\s*color: #f4f4f5;/.test(styles) && /:root:not\(\[data-theme="light"\]\) \.input \{\s*color: #f4f4f5;/.test(styles),
+    )
+    const mic = /<svg v-else width="18" height="18" viewBox="0 0 18 18"[^>]*>\s*<path([^>]*)\/>\s*<\/svg>/.exec(composer)?.[1] ?? ""
+    check("the microphone is one filled path, capsule and cradle, with no stand", /fill="currentColor"/.test(mic) && /fill-rule="evenodd"/.test(mic) && !/stroke/.test(mic), mic)
+    const sub = code(await read("src/renderer/src/components/InfoSubgroup.vue"))
+    check("the info card's subgroup head has no hover colour", !/\.head:hover/.test(sub))
+  }
 }
