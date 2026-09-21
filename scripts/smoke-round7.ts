@@ -929,7 +929,7 @@ export async function roundSevenModelChecks(check: Check, section: (name: string
 
     const read = describe("read")
     check("read explains the numbered-line form the edit tool matches on", read.includes("N: text") && read.includes("edit expects you to quote back"))
-    check("it explains reading a long file in parts", read.includes("offset") && read.includes("limit") && read.includes("2,000 lines or 50 KB"))
+    check("it explains reading a long file in parts", read.includes("offset") && read.includes("limit") && read.includes("says where to continue from"))
     check("it discourages a series of tiny slices, as MiMo's does", read.includes("30-line slices"))
     check("and it is no longer a single sentence", read.length > 800, read.length)
 
