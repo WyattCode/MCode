@@ -3564,9 +3564,14 @@ export class SessionRunner {
     if (watched) return watched
     if (this.worktreeScanned.has(sessionID)) return undefined
     this.worktreeScanned.add(sessionID)
-    const session = await this.store.get(sessionID)
+    /*
+     * Nothing here may stop the step. This runs before every turn's first
+     * request, and a read that failed - a transcript being written as it is
+     * read - would otherwise take the turn down with it over a notice.
+     */
+    const session = await this.store.get(sessionID).catch(() => undefined)
     if (!session || session.parentID || session.worktreeNotice) return undefined
-    for (const message of await this.store.messages(sessionID)) {
+    for (const message of await this.store.messages(sessionID).catch((): Message[] => [])) {
       if (message.role !== "assistant") continue
       for (const part of message.parts) {
         if (part.type !== "tool" || part.status !== "completed") continue

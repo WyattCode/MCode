@@ -210,7 +210,7 @@ async function sourceChecks(check: Check, section: Section): Promise<void> {
   section("Round 17 (R17-W11/W16/W24): the transcript read back, and two tool descriptions")
   {
     const runner = await read("src/server/session/runner.ts")
-    const hit = runner.slice(runner.indexOf("private async worktreeHit("), runner.indexOf("private async worktreeHit(") + 900)
+    const hit = runner.slice(runner.indexOf("private async worktreeHit("), runner.indexOf("private async worktreeHit(") + 1400)
     check(
       "a pending worktree hit is read back out of the stored messages once",
       /if \(this\.worktreeScanned\.has\(sessionID\)\) return undefined/.test(hit) && /this\.worktreeScanned\.add\(sessionID\)/.test(hit) && hit.includes("await this.store.messages(sessionID)") && hit.includes("changedMainWorktree"),
