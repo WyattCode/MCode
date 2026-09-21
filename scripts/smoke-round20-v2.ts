@@ -129,4 +129,19 @@ export async function roundTwentyV2Checks(check: Check, section: (name: string) 
     const d = /d="([^"]+)"/.exec(arrow)?.[1] ?? ""
     check("a shaft 14 units tall (10.5px at 18) under a chevron meeting at its top", d === "M12 19V5m-7 7 7-7 7 7", d)
   }
+
+  // ------------------------------------------------------------------ R20-V2-9
+  section("Round 20 (V2-9): no focus ring on the composer card; MiMo's edge and shadow in each theme")
+  {
+    check("no :focus-within rule draws on the card", !/\.box:focus-within/.test(styles))
+    check("the keyboard's own outline is kept", /:root\[data-focus-key\] \.box:has\(\.input:focus\) \{\s*outline: 2px solid var\(--interactive\);/.test(styles))
+    const box = rules(".box").filter((body) => /box-shadow/.test(body)).at(-1) ?? ""
+    check("light: a #151c130f edge", /border: 0\.5px solid #151c130f;/.test(box), box)
+    check("light: MiMo's two-step shadow", /box-shadow: 0 1px 2px #0000000d, 0 6px 18px #0000001b;/.test(box), box)
+    check(
+      "dark: a #2e2e2e edge under the one dark drop, and a dropped file's ring still wins",
+      /:root\[data-theme="dark"\] \.box:not\(\.dropping\) \{\s*border-color: #2e2e2e;\s*box-shadow: 0 1px 3px rgb\(0 0 0 \/ 0\.4\);/.test(styles) &&
+        /:root:not\(\[data-theme="light"\]\) \.box:not\(\.dropping\) \{\s*border-color: #2e2e2e;/.test(styles),
+    )
+  }
 }

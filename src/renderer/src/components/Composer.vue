@@ -4141,10 +4141,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   transition: box-shadow 0.12s;
 }
 
-.box:focus-within {
-  box-shadow: var(--shadow-md), 0 0 0 1px var(--border-strong);
-}
-
 .input {
   /*
    * Taller than the one line it starts with, so an empty composer reads as
@@ -5404,16 +5400,29 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   display: none;
 }
 
+/*
+ * MiMo's card: no ring when it takes focus. Its edge is #151c130f on light and
+ * #2e2e2e on dark; its shadow a soft two-step lift on light and one darker
+ * drop on dark.
+ */
 .box {
   padding: 8px;
   background: var(--surface-menu);
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid #151c130f;
   border-radius: 20px;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+  box-shadow: 0 1px 2px #0000000d, 0 6px 18px #0000001b;
 }
 
-.box:focus-within {
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4), 0 0 0 0.5px var(--border-strong);
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .box:not(.dropping) {
+    border-color: #2e2e2e;
+    box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+  }
+}
+
+:root[data-theme="dark"] .box:not(.dropping) {
+  border-color: #2e2e2e;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
 }
 
 /* The keyboard's ring (base.css) goes round the card rather than the bare writing area inside it. */
