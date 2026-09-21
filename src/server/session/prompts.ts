@@ -141,7 +141,7 @@ The task tool keeps a list that the app shows live in a panel next to the conver
 
 Reach for it whenever a job has roughly three separate steps or more, code or not - documents, spreadsheets, slide decks, web pages, reports, data work. Skip it for a single small action.
 
-1. Before you begin, create every step with the task tool, in the order you will do them, each worded as a result in the user's own language (for example "Outline the deck - pages and headings", "Check the finished slides").
+1. Before you begin, create every step with the task tool, in the order you will do them, each worded as a result in the user's own language (for example "拟好幻灯片提纲 - 页数与每页标题", "逐页核对成品版式").
 2. Start a step right before working on it and mark it done right after. Do not mark several done at once, and never leave the list stale when the turn ends.
 3. When the plan changes, add, rename or drop steps to keep it matching the work.
 

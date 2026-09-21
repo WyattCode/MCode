@@ -6,6 +6,7 @@
  *
  * smoke.ts calls `roundTwentyAgentChecks` with its own check and section.
  */
+import { agentPrompt } from "../src/server/session/prompts"
 import { bashDescription } from "../src/server/tool/bash"
 import { findTool } from "../src/server/tool/registry"
 import type { Check } from "./smoke-round5"
@@ -41,5 +42,15 @@ export async function roundTwentyAgentChecks(check: Check, section: (name: strin
     const bash = bashDescription()
     check("V4-4: the parent folder is checked before something is created in it", bash.includes("make sure the folder it goes into exists") && bash.includes("before `mkdir"), bash)
     check("V4-4: output is not cut with head or tail, since the whole of it is saved", bash.includes("do not cut the output down yourself") && bash.includes("`head`") && bash.includes("`tail`"), bash)
+  }
+
+  section("Round 20 (V4-5): the task list's example steps are Chinese, as the model-facing layer is")
+  {
+    const prompt = agentPrompt("build")
+    const task = /## Task management[\s\S]*?\n1\. ([^\n]*)/.exec(prompt)?.[1] ?? ""
+    const examples = [...task.matchAll(/"([^"]+)"/g)].map((match) => match[1] ?? "")
+    check("V4-5: the first rule gives example step names", examples.length >= 2, task)
+    check("V4-5: every one of them is written in Chinese", examples.length > 0 && examples.every((example) => /\p{Script=Han}/u.test(example) && !/[A-Za-z]{3,}/.test(example)), examples)
+    check("V4-5: the English examples are gone", !prompt.includes("Outline the deck") && !prompt.includes("Check the finished slides"))
   }
 }
