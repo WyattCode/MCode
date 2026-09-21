@@ -81,4 +81,15 @@ export async function roundTwentyV2Checks(check: Check, section: (name: string) 
     check("no fill", /background: transparent;/.test(round), round)
     check("the hover fill is kept", /\.attach:hover,\s*\.attach\.open,\s*\.mic:not\(\.on\):hover \{[^}]*background: var\(--surface-hover\)/.test(styles))
   }
+
+  // ------------------------------------------------------------------ R20-V2-5
+  section("Round 20 (V2-5): the placeholder in MiMo's colours")
+  {
+    const light = rules(".input::placeholder").at(-1) ?? ""
+    check("light: the muted text, #151c1399 (--text-base)", /color: var\(--text-base\);/.test(light), light)
+    check(
+      "dark: #a0a0a0, for the system and the chosen scheme",
+      /:root:not\(\[data-theme="light"\]\) \.input::placeholder \{\s*color: #a0a0a0;/.test(styles) && /:root\[data-theme="dark"\] \.input::placeholder \{\s*color: #a0a0a0;/.test(styles),
+    )
+  }
 }

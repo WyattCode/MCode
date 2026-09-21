@@ -5463,8 +5463,19 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   cursor: progress;
 }
 
+/* MiMo's composer placeholder: its muted text on light, #a0a0a0 on dark. */
 .input::placeholder {
-  color: var(--text-weak);
+  color: var(--text-base);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .input::placeholder {
+    color: #a0a0a0;
+  }
+}
+
+:root[data-theme="dark"] .input::placeholder {
+  color: #a0a0a0;
 }
 
 /* A height set by dragging may go past the fitted cap, to 480px or half the window, and down to MiMo's 44. */
