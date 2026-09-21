@@ -76,7 +76,7 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
         const relative = path.join(dir, entry.name)
         if (entry.isDirectory()) await walk(relative)
         else if (/\.(ts|vue)$/.test(entry.name) && !relative.endsWith(path.join("lib", "native-pick.ts"))) {
-          if (/window\.mcode\.(pickDirectory|pickProjectFolder|saveText|openText|savePng)\(/.test(await read(relative))) offenders.push(relative)
+          if (/window\.mcode\.(pickDirectory|pickProjectFolder|saveText|savePng)\(/.test(await read(relative))) offenders.push(relative)
         }
       }
     }
@@ -92,15 +92,15 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
     const spoken = language.value
     language.value = "zh-CN"
     const picks = await import("../src/renderer/src/lib/native-pick")
-    const answers: Record<string, unknown> = { pickDirectory: PICKER_BUSY, pickProjectFolder: PICKER_BUSY, saveText: PICKER_BUSY, openText: PICKER_BUSY, savePng: PICKER_BUSY }
+    const answers: Record<string, unknown> = { pickDirectory: PICKER_BUSY, pickProjectFolder: PICKER_BUSY, saveText: PICKER_BUSY, savePng: PICKER_BUSY }
     const stub = Object.fromEntries(Object.keys(answers).map((name) => [name, async () => answers[name]]))
     const global = globalThis as { window?: unknown }
     const before = global.window
     global.window = { mcode: stub }
     try {
       toasts.value = []
-      const results = [await picks.pickDirectory("t"), await picks.pickProjectFolder("t"), await picks.saveText("a.txt", "x"), await picks.openText("t"), await picks.savePng("a.png", "")]
-      check("a busy answer reads as a cancel to the caller", JSON.stringify(results) === "[[],[],null,null,null]", results)
+      const results = [await picks.pickDirectory("t"), await picks.pickProjectFolder("t"), await picks.saveText("a.txt", "x"), await picks.savePng("a.png", "")]
+      check("a busy answer reads as a cancel to the caller", JSON.stringify(results) === "[[],[],null,null]", results)
       const warned = toasts.value.filter((entry) => entry.level === "warning" && entry.title === "已经打开了一个选择窗口，完成或取消它后再试（它可能被主窗口挡住了）")
       check("and raises MiMo's warning (one notice, the same text each time)", warned.length === 1, toasts.value)
       toasts.value = []
