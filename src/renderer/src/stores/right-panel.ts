@@ -285,6 +285,20 @@ export const useRightPanel = defineStore("rightPanel", () => {
     }
   }
 
+  /*
+   * MiMo's Nge: the project the tabs work in changed under them (a project
+   * picked on the home screen). The files tab goes back to 打开文件 with the
+   * new project as its root rather than reading the old file's path there; the
+   * review follows the new root by itself.
+   */
+  function reroot() {
+    tabs.value = tabs.value.map((tab) =>
+      tab.type === "files" && (tab.viewFile !== undefined || tab.fileRoot !== undefined || tab.name !== undefined)
+        ? { ...tab, viewFile: undefined, fileRoot: undefined, name: undefined }
+        : tab,
+    )
+  }
+
   /** The conversation on show changed; undefined is the home screen. */
   function setScope(next: string | undefined) {
     if (next === scope) return
@@ -336,6 +350,7 @@ export const useRightPanel = defineStore("rightPanel", () => {
     toggleFullscreen,
     setWidth,
     setScope,
+    reroot,
     forget,
   }
 })

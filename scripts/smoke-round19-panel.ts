@@ -13,7 +13,8 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { LANGUAGES, language, t } from "../src/renderer/src/lib/i18n"
-import { PANEL_MIN_WIDTH } from "../src/renderer/src/stores/right-panel"
+import { createPinia, setActivePinia } from "pinia"
+import { PANEL_MIN_WIDTH, useRightPanel } from "../src/renderer/src/stores/right-panel"
 import { panelWidthShown } from "../src/renderer/src/lib/right-tools"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
@@ -85,5 +86,24 @@ export async function roundNineteenPanelChecks(check: Check, section: (name: str
   {
     const files = await read("src/renderer/src/components/right/RpFiles.vue")
     check("RP-6: the tree stays in the page while folded", /<aside v-show="treeOpen" class="fv-tree"/.test(files) && !/v-if="treeOpen"/.test(files))
+  }
+
+  section("Round 19 (lane B): RP-4 a new project under the same tabs sends the files tab back to 打开文件")
+  {
+    setActivePinia(createPinia())
+    const rp = useRightPanel()
+    const files = rp.openTool("files")
+    rp.update(files.id, { viewFile: "src/old.ts", name: "old.ts", fileRoot: "/elsewhere" })
+    const chat = rp.openTool("chat")
+    rp.update(chat.id, { convoId: "ses_side" })
+    const reroot = (rp as unknown as { reroot?: () => void }).reroot
+    if (reroot) reroot()
+    const after = rp.tabs.find((tab) => tab.id === files.id)
+    check("RP-4: the files tab forgets the old file, its own root and its name", Boolean(reroot) && after?.viewFile === undefined && after?.fileRoot === undefined && after?.name === undefined, after)
+    check("RP-4: it stays the same tab, where it was", rp.tabs.length === 2 && rp.tabs[0]?.id === files.id)
+    check("RP-4: the other tabs keep what they hold", rp.tabs.find((tab) => tab.id === chat.id)?.convoId === "ses_side")
+    const panel = await read("src/renderer/src/components/RightPanel.vue")
+    const watcher = /watch\(\s*\(\) => \[props\.sessionID, props\.directory\] as const,([\s\S]*?)\n\)/.exec(panel)?.[1] ?? ""
+    check("RP-4: the panel resets it when the directory changes under the same conversation or home screen", /session === sessionBefore && directory !== directoryBefore\) rp\.reroot\(\)/.test(watcher), watcher)
   }
 }

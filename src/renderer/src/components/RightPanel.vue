@@ -307,6 +307,18 @@ function onTabAuxClick(event: MouseEvent, id: string) {
   requestClose([id])
 }
 
+/*
+ * The project changed under the same tabs - the home screen's picked project,
+ * or a conversation moved elsewhere - so the files tab starts over in it. A
+ * different conversation brings its own tabs instead (setScope).
+ */
+watch(
+  () => [props.sessionID, props.directory] as const,
+  ([session, directory], [sessionBefore, directoryBefore]) => {
+    if (session === sessionBefore && directory !== directoryBefore) rp.reroot()
+  },
+)
+
 /* The plus and its menu of tools. */
 const addMenu = ref<{ x: number; y: number }>()
 const addItems = computed<MenuItem[]>(() =>
