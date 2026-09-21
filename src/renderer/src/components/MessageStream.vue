@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch, onBeforeUnmount } from "vue"
 import { useApp } from "../stores/app"
+import { useQuestions } from "../stores/questions"
 import TextPart from "./parts/TextPart.vue"
 import ToolGroup from "./parts/ToolGroup.vue"
 import QuestionCard from "./parts/QuestionCard.vue"
@@ -30,7 +31,26 @@ import AnnotationChips from "./AnnotationChips.vue"
 import { openDocument } from "../lib/office-open"
 import { occurrences, registerFoldedCounter } from "../lib/find-folded"
 import { useRestoreDraft } from "../lib/draft"
-import { cardCut, interruptedEnd, stepPart, stickState, stoppedEmpty } from "./parts/turn-end"
+import { cardCut, interruptedEnd, stepPart, stoppedEmpty } from "./parts/turn-end"
+import {
+  consumePark,
+  enterMark,
+  endDistance,
+  heldBy,
+  JUMP_DISTANCE,
+  jumpShown,
+  movedDown,
+  nextFollowing,
+  parkRoom,
+  parkTarget,
+  reattachWithin,
+  scrolledUp,
+  UP_SLACK,
+  upwardRun,
+  type EnterMark,
+  type Geometry,
+} from "../lib/scroll-follow"
+import { reducedMotion } from "../lib/modal"
 
 /**
  * WHY EVERY MESSAGE IS DRAWN, where opencode virtualises.
@@ -614,30 +634,125 @@ function stoppedAfter(turn: Turn): string {
   return formatDuration(turn.started && turn.completed ? turn.completed - turn.started : 0)
 }
 
-/** Auto-follow is on until the user scrolls up, and resumes when they return. */
+/*
+ * Following the end of the reply, by MiMo's rules (lib/scroll-follow): any
+ * upward move of more than 8px stops it, even a few pixels from the end, and
+ * only the end itself - within a device pixel or so - starts it again. The 64px
+ * distance belongs to the jump button alone.
+ */
 const following = ref(true)
-/** MiMo's jump button, shown only once the reader is further than the stick distance from the end. */
+/** MiMo's jump button, shown only once the reader is further than 64px from the end. */
 const showJump = ref(false)
+
+function geometry(element: HTMLElement): Geometry {
+  return { top: element.scrollTop, height: element.scrollHeight, client: element.clientHeight }
+}
 
 /* Asked again whenever the content changes, not only on scroll, as MiMo does. */
 function measureJump() {
   const element = scroller.value
-  if (!element) return
-  showJump.value = stickState(element.scrollHeight, element.scrollTop, element.clientHeight).jump
+  // A park's slide lends the column its offset as overflow for 200ms; that is not distance to the end.
+  if (!element || endSlide) return
+  showJump.value = jumpShown(geometry(element))
+}
+
+/* The scroller as the last scroll event left it, and the upward steps added up since. */
+let seen: Geometry | undefined
+let upRun = 0
+let seenRatio = 0
+let seenWidth = 0
+/* The last pin, so its own scroll event is not counted against an upward run. */
+let lastPin: { at: number; to: number } | undefined
+
+function pinEcho(top: number): boolean {
+  return Boolean(lastPin && Date.now() - lastPin.at <= 80 && Math.abs(top - lastPin.to) <= 1)
 }
 
 function onScroll() {
   const element = scroller.value
   if (!element) return
-  const state = stickState(element.scrollHeight, element.scrollTop, element.clientHeight)
-  following.value = state.atEnd
-  showJump.value = state.jump
+  const now = geometry(element)
+  const ratio = window.devicePixelRatio || 1
+  const width = element.clientWidth
+  // A zoom or a resize moves scrollTop on its own; counting starts again from here.
+  if (!seen || ratio !== seenRatio || width !== seenWidth) {
+    seen = now
+    seenRatio = ratio
+    seenWidth = width
+    upRun = 0
+    measureJump()
+    return
+  }
+  upRun = now.top > seen.top && pinEcho(now.top) ? upRun : upwardRun(upRun, seen, now)
+  const up = scrolledUp(seen, now) || upRun > UP_SLACK
+  if (up) upRun = 0
+  const arrived = movedDown(seen, now)
+  seen = now
+  measureJump()
+  const distance = endDistance(now)
+  if (up || distance > JUMP_DISTANCE) releaseFloor()
+  following.value = nextFollowing(following.value, up, distance, reattachWithin(ratio), arrived)
 }
 
 function toBottom() {
   const element = scroller.value
   if (!element) return
   element.scrollTop = element.scrollHeight
+  lastPin = { at: Date.now(), to: element.scrollTop }
+}
+
+/*
+ * MiMo turns the browser's scroll anchoring off while following - the pin is
+ * the anchor then, and the browser's own would fight it - and on while reading
+ * further up, so text growing above the reader leaves them where they are.
+ */
+watch(
+  [following, scroller],
+  ([on, element]) => {
+    if (element) element.style.overflowAnchor = on ? "none" : "auto"
+  },
+  { immediate: true },
+)
+
+/*
+ * MiMo's holds: following stays on, but the end is not pinned while the reader
+ * is busy in the conversation - dragging out a selection (after its first
+ * 600ms), a video that just started or stopped, the edit box open or just
+ * closed, a wheel turned upward in the last 150ms. The next pin after the hold
+ * catches up.
+ */
+let selectingSince = 0
+let mediaAt = Number.NEGATIVE_INFINITY
+let editClosedAt = Number.NEGATIVE_INFINITY
+let wheelUpAt = Number.NEGATIVE_INFINITY
+
+function held(): boolean {
+  const now = performance.now()
+  return Boolean(
+    heldBy({
+      selecting: pressed || holdsSelection,
+      sinceSelect: now - selectingSince,
+      sinceMedia: now - mediaAt,
+      editing: Boolean(editingAsked.value),
+      sinceEdit: now - editClosedAt,
+      sinceWheelUp: now - wheelUpAt,
+    }),
+  )
+}
+
+/* Pins the end when following and nothing holds it; whether it did. */
+function pin(): boolean {
+  if (!following.value || held()) return false
+  toBottom()
+  return true
+}
+
+function onWheel(event: WheelEvent) {
+  if (event.deltaY < 0) wheelUpAt = performance.now()
+}
+
+function onMedia() {
+  mediaAt = performance.now()
 }
 
 /* MiMo's jump: straight to the end with no smooth scroll, following again, and the button gone in the same tick. */
@@ -658,6 +773,9 @@ watch(
   () => shownID.value,
   async () => {
     following.value = true
+    // A parked question's floor is this conversation's alone.
+    clearFloor()
+    parkedIn = undefined
     await nextTick()
     toBottom()
     measureJump()
@@ -677,7 +795,7 @@ watch(
   () => shownMessages.value.length,
   async () => {
     await nextTick()
-    if (following.value) toBottom()
+    pin()
     measureJump()
   },
 )
@@ -688,7 +806,7 @@ watch(
   () => shownStreaming.value?.parts.map((part) => ("text" in part ? part.text.length : part.status)).join(),
   async () => {
     await nextTick()
-    if (following.value) toBottom()
+    pin()
     measureJump()
   },
 )
@@ -708,7 +826,9 @@ onMounted(() => {
   toBottom()
   if (typeof ResizeObserver === "undefined" || !inner.value) return
   sizer = new ResizeObserver(() => {
-    if (following.value) toBottom()
+    // The floor was measured for this width; at another the question would not sit where it was put.
+    if (inner.value && inner.value.clientWidth !== floorWidth) clearFloor()
+    pin()
     measureJump()
   })
   sizer.observe(inner.value)
@@ -726,7 +846,12 @@ let pressed = false
 let holdsSelection = false
 
 function paintSelecting() {
-  scroller.value?.classList.toggle("selecting", pressed || holdsSelection)
+  const selecting = pressed || holdsSelection
+  if (!scroller.value || scroller.value.classList.contains("selecting") === selecting) return
+  scroller.value.classList.toggle("selecting", selecting)
+  // Within its first 600ms a selection does not hold, so the end is caught up with as it starts and as it stops.
+  selectingSince = performance.now()
+  pin()
 }
 
 function onPressMove() {
@@ -758,13 +883,56 @@ function onSelectionChange() {
   paintSelecting()
 }
 
+/*
+ * MiMo's forced re-pins. A permission or a question newly waiting on the
+ * reader takes the view to the end, following again, even from further up; so
+ * does a message sent into the running turn (插话), which is the reader's own.
+ */
+const questions = useQuestions()
+const waitingCard = computed(() => {
+  if (props.side || props.latest || props.subagent) return ""
+  const last = questions.queue.at(-1)
+  return last ? `${last.kind}:${last.id}` : ""
+})
+
+watch(waitingCard, async (card, was) => {
+  // A question parked by its send stays where it was put.
+  if (!card || card === was || parked()) return
+  following.value = true
+  await nextTick()
+  pin()
+  measureJump()
+})
+
+const waitingSteers = computed(() => turns.value.at(-1)?.waiting.length ?? 0)
+
+watch([shownID, waitingSteers], async ([id, count], [wasID, wasCount]) => {
+  if (id !== wasID || count <= wasCount) return
+  following.value = true
+  await nextTick()
+  pin()
+  measureJump()
+})
+
+/*
+ * MiMo's re-pin on coming back to the window: when still following, a reply
+ * that grew while the window was hidden or behind another is caught up with.
+ */
+function onReturn() {
+  if (!document.hidden) pin()
+}
+
 onMounted(() => {
   document.addEventListener("mousedown", onPressDown)
   document.addEventListener("selectionchange", onSelectionChange)
+  document.addEventListener("visibilitychange", onReturn)
+  window.addEventListener("focus", onReturn)
 })
 onBeforeUnmount(() => {
   document.removeEventListener("mousedown", onPressDown)
   document.removeEventListener("selectionchange", onSelectionChange)
+  document.removeEventListener("visibilitychange", onReturn)
+  window.removeEventListener("focus", onReturn)
   onPressUp()
 })
 
@@ -824,6 +992,67 @@ const lastAsked = computed(() => {
 const lastTurnID = computed(() => turns.value.at(-1)?.id)
 
 /*
+ * MiMo's msg-in: a question sent while the conversation is on screen fades in
+ * and rises 8px over 200ms. Only messages added after it was opened count, so
+ * a conversation opened or loaded all at once draws still (lib/scroll-follow
+ * enterMark, over the message count as MiMo keeps it).
+ */
+let entering: EnterMark | undefined
+const enterFrom = computed(() => {
+  entering = enterMark(entering, shownID.value, shownMessages.value.length)
+  return entering.from
+})
+const messageAt = computed(() => new Map(shownMessages.value.map((message, at) => [message.id, at])))
+
+function enters(turn: Turn): boolean {
+  return (messageAt.value.get(turn.id) ?? -1) >= enterFrom.value
+}
+
+/*
+ * MiMo's scheduled-task message: clamped to two lines, measured as it
+ * resizes, and 显示更多 offered only when the text runs past them. Opening
+ * one is for good; there is no collapse.
+ */
+const openedMore = ref(new Set<string>())
+const overflowing = ref(new Set<string>())
+const clampEls = new Map<string, HTMLElement>()
+const clampOf = new WeakMap<Element, string>()
+const clampSizer =
+  typeof ResizeObserver === "undefined"
+    ? undefined
+    : new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const id = clampOf.get(entry.target)
+          if (!id) continue
+          const over = entry.target.scrollHeight - entry.target.clientHeight > 1
+          if (over === overflowing.value.has(id)) continue
+          const next = new Set(overflowing.value)
+          if (over) next.add(id)
+          else next.delete(id)
+          overflowing.value = next
+        }
+      })
+
+function clampWatch(id: string, element: HTMLElement | null) {
+  const was = clampEls.get(id)
+  if (was === element) return
+  if (was) clampSizer?.unobserve(was)
+  if (!element) {
+    clampEls.delete(id)
+    return
+  }
+  clampEls.set(id, element)
+  clampOf.set(element, id)
+  clampSizer?.observe(element)
+}
+
+function openMore(id: string) {
+  openedMore.value = new Set(openedMore.value).add(id)
+}
+
+onBeforeUnmount(() => clampSizer?.disconnect())
+
+/*
  * 追求目标: how long a met goal took, which the last reply says. Only a goal
  * the judge passed leaves this note - one given up on, or out of tries, says
  * so in the bar above the box instead.
@@ -834,6 +1063,158 @@ const goalAchieved = computed(() => {
   const seconds = Math.max(0, Math.round((goal.done.at - goal.startedAt) / 1000))
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 })
+
+// The edit box holds the end while open and for 300ms after it closes, as MiMo's does.
+watch(editingAsked, (open, was) => {
+  if (was && !open) editClosedAt = performance.now()
+})
+
+/*
+ * MiMo's parking. A question sent from the composer does not scroll away as
+ * its reply streams: it comes to rest near the top of the view - a sixth of the
+ * way down, or lower for a short one (lib/scroll-follow parkTarget) - and the
+ * reply is written below it without the view following. Where the
+ * conversation is too short to scroll that far, a floor (a min-height) makes
+ * the room, and the column slides up into place over 200ms.
+ *
+ * MiMo puts its floor on the whole thread. Here it goes on the question's own
+ * turn - the last, always drawn in full - so a turn above that changes size
+ * afterwards (one losing the last turn's footer, or a 240px content-visibility
+ * placeholder drawn at its real size) shortens or lengthens the conversation
+ * by as much, and the question stays where it was put rather than drifting by
+ * that amount. The room is reckoned to the column's end rather than to
+ * scrollHeight, which is the view's own height while the conversation is
+ * shorter than the view, and would put the question that much low.
+ */
+/* The conversation a question was parked in, until another is opened. */
+let parkedIn: string | undefined
+let floorWidth = 0
+/* What holds the floor: the parked turn, or the column once another turn follows it. */
+let floored: HTMLElement | undefined
+let endSlide: (() => void) | undefined
+
+function parked(): boolean {
+  return !following.value && parkedIn !== undefined && parkedIn === shownID.value
+}
+
+function clearFloor() {
+  endSlide?.()
+  if (floored) floored.style.minHeight = ""
+  floored = undefined
+}
+
+/* The floor goes as soon as taking it away would not move the view: once the reader has left it behind. */
+function releaseFloor() {
+  const view = scroller.value
+  const holder = floored
+  if (!holder || !view) return
+  const floor = holder.style.minHeight
+  const top = view.scrollTop
+  holder.style.minHeight = ""
+  if (view.scrollTop < top) {
+    holder.style.minHeight = floor
+    view.scrollTop = top
+  } else floored = undefined
+}
+
+/*
+ * A floor on a turn that is no longer the last would leave a gap in the middle
+ * of the conversation. The column takes it over, ending where the turn's floor
+ * ended, so the turn that follows fills the room instead of adding to it.
+ */
+watch(
+  lastTurnID,
+  () => {
+    const column = inner.value
+    const holder = floored
+    if (!holder || !column || holder === column || holder.hasAttribute("data-turn-last")) return
+    // A turn taken away altogether (a rollback) takes its floor with it.
+    if (!holder.isConnected) {
+      floored = undefined
+      return
+    }
+    const end = holder.getBoundingClientRect().bottom - column.getBoundingClientRect().top + (parseFloat(getComputedStyle(column).paddingBottom) || 0)
+    holder.style.minHeight = ""
+    column.style.minHeight = `${Math.ceil(end)}px`
+    floored = column
+  },
+  { flush: "post" },
+)
+
+function slideIn(column: HTMLElement, by: number) {
+  let done = false
+  let frame = 0
+  const finish = () => {
+    if (done) return
+    done = true
+    cancelAnimationFrame(frame)
+    clearTimeout(fallback)
+    column.removeEventListener("transitionend", onEnd)
+    column.style.transition = ""
+    column.style.transform = ""
+    endSlide = undefined
+    measureJump()
+  }
+  const onEnd = (event: TransitionEvent) => {
+    if (event.target === column && event.propertyName === "transform") finish()
+  }
+  column.style.transition = "none"
+  column.style.transform = `translateY(${by}px)`
+  void column.offsetHeight
+  column.addEventListener("transitionend", onEnd)
+  frame = requestAnimationFrame(() => {
+    column.style.transition = "transform 0.2s cubic-bezier(0.2, 0.7, 0.2, 1)"
+    frame = requestAnimationFrame(() => (column.style.transform = "translateY(0)"))
+  })
+  // A transition that never ends (the window hidden mid-way) must not leave the column shifted.
+  const fallback = setTimeout(finish, 600)
+  endSlide = finish
+}
+
+function park(turnID: string) {
+  const view = scroller.value
+  const column = inner.value
+  const turn = column?.querySelector<HTMLElement>(`[data-turn="${CSS.escape(turnID)}"]`)
+  const row = turn?.querySelector<HTMLElement>(":scope > .msg.user")
+  if (!view || !column || !turn || !row) return
+  clearFloor()
+  const viewTop = view.getBoundingClientRect().top - view.scrollTop
+  const box = row.getBoundingClientRect()
+  // Where the row stands in the layout: its msg-in is still lifting it from 8px below.
+  const lift = new DOMMatrixReadOnly(getComputedStyle(row).transform).m42
+  const end = column.getBoundingClientRect().bottom - viewTop
+  const room = parkRoom(box.top - lift - viewTop, parkTarget(view.clientHeight, box.height), view.clientHeight, end)
+  if (room > 0) {
+    turn.style.minHeight = `${Math.ceil(turn.getBoundingClientRect().height + room)}px`
+    floored = turn
+  }
+  floorWidth = column.clientWidth
+  // To the end as a turn start does, then no longer following: the reply is written below, out of the way.
+  following.value = true
+  pin()
+  following.value = false
+  parkedIn = shownID.value
+  if (room > 0 && !reducedMotion()) slideIn(column, room)
+}
+
+watch(
+  lastAsked,
+  (id, was) => {
+    const here = shownID.value
+    if (!id || id === was || !here || props.side || props.latest || props.subagent) return
+    if (consumePark(here)) park(id)
+  },
+  { flush: "post" },
+)
+
+// A finished turn lets go of a floor the reader has already left.
+watch(shownBusy, async (busy) => {
+  if (busy) return
+  await nextTick()
+  releaseFloor()
+})
+
+onBeforeUnmount(() => endSlide?.())
 
 // A question that stops being the last one (another was sent) is no longer editable.
 watch(lastAsked, (id) => {
@@ -1080,7 +1461,15 @@ defineExpose({ stepMessage, scroller })
 </script>
 
 <template>
-  <div ref="scroller" class="stream" :aria-busy="loadingHere || undefined" @scroll="onScroll">
+  <div
+    ref="scroller"
+    class="stream"
+    :aria-busy="loadingHere || undefined"
+    @scroll="onScroll"
+    @wheel.passive="onWheel"
+    @play.capture="onMedia"
+    @pause.capture="onMedia"
+  >
     <div ref="inner" class="inner">
       <!-- MiMo's line while a conversation just switched to has not brought its messages. -->
       <div v-if="loadingHere" class="thread-loading" data-thread-loading>{{ t("stream.loadingConvo") }}</div>
@@ -1118,7 +1507,7 @@ defineExpose({ stepMessage, scroller })
         <div
           v-if="!latest && (turn.text !== undefined || turn.attachments?.length)"
           class="msg user"
-          :class="{ editing: editingAsked === turn.id }"
+          :class="{ editing: editingAsked === turn.id, 'msg-in': enters(turn) }"
           :data-message-id="turn.id"
         >
           <div v-if="turn.attachments?.length" class="sent">
@@ -1210,6 +1599,30 @@ defineExpose({ stepMessage, scroller })
                 {{ t("stream.editSend") }}
               </button>
             </div>
+          </div>
+          <!--
+            MiMo's scheduled-task message: two lines, and 显示更多 under them
+            when there is more, which opens it for good.
+          -->
+          <div v-else-if="turn.text && turn.inbox?.automationID" class="user-bubble automation-bubble" data-automation-bubble @dblclick="startEdit(turn, true)">
+            <div
+              :ref="(element) => clampWatch(turn.id, element as HTMLElement | null)"
+              class="automation-text"
+              :class="{ clamped: !openedMore.has(turn.id) }"
+              data-user-message-text
+            >{{ turn.text }}</div>
+            <button
+              v-if="overflowing.has(turn.id) && !openedMore.has(turn.id)"
+              type="button"
+              class="automation-more"
+              aria-expanded="false"
+              data-automation-more
+              @click="openMore(turn.id)"
+              @dblclick.stop
+            >
+              <span>{{ t("stream.automationShowMore") }}</span>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
+            </button>
           </div>
           <div v-else-if="turn.text && hasCode(turn.text)" class="user-bubble" data-asked-parts @dblclick="startEdit(turn, true)">
             <template v-for="(part, index) in questionParts(turn.text)" :key="index">
@@ -1796,6 +2209,18 @@ defineExpose({ stepMessage, scroller })
   align-items: flex-end;
 }
 
+/* MiMo's msg-in, on a question sent while the conversation is open; the reduced-motion rule in base.css lands it at once. */
+.msg.user.msg-in {
+  animation: msg-in 0.2s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+@keyframes msg-in {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
 /*
  * MiMo's in-place edit: the row spans the column, the question's own bubble
  * colour holds a box that grows with the words, and 取消 / 发送 sit under it at
@@ -2053,6 +2478,13 @@ defineExpose({ stepMessage, scroller })
   position: sticky;
   bottom: 14px;
   z-index: 10;
+  /*
+   * Taking no room in the flow, as MiMo's (outside its scroller) takes none: a
+   * button that added its height to the conversation as it came and went moved
+   * the end with it, so a reader 5px short of the end was pulled onto it and
+   * followed again the moment the button went.
+   */
+  margin-top: -34px;
   margin-inline: auto;
   display: flex;
   align-items: center;
@@ -2184,6 +2616,59 @@ defineExpose({ stepMessage, scroller })
 
 .asked-expand:hover {
   color: var(--text-strong);
+}
+
+/* MiMo's scheduled-task bubble: the text over its 显示更多, both from the left edge. */
+.automation-bubble {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.automation-text {
+  width: 100%;
+}
+
+.automation-text.clamped {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.automation-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-weak);
+  font: inherit;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.automation-more:hover {
+  color: var(--text-strong);
+}
+
+.automation-more:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
+}
+
+.automation-more svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
 }
 
 /*

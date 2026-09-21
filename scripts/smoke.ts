@@ -151,7 +151,7 @@ import { revertTurnFiles } from "../src/server/session/turn-revert"
 import { branchTitle } from "../src/server/session/store"
 import { failureCode, failureDetail } from "../src/server/session/error-map"
 import { turnFileDiffs } from "../src/server/session/turn-diff"
-import { cardCut, latestTurnParts, stepPart, stickState, stoppedEmpty } from "../src/renderer/src/components/parts/turn-end"
+import { cardCut, latestTurnParts, stepPart, stoppedEmpty } from "../src/renderer/src/components/parts/turn-end"
 import type { AssistantPart, ToolPart } from "../src/shared/protocol"
 import { Bus } from "../src/server/bus"
 import { unifiedDiff } from "../src/server/diff"
@@ -394,6 +394,8 @@ import { perfEntryChecks } from "./smoke-perf-entry"
 import { loadMath } from "../src/renderer/src/lib/markdown"
 // Round 19, lane A: settings and shell items against MiMo 26.920 (first-run import, pickers, toasts, providers).
 import { roundNineteenLaneAChecks } from "./smoke-round19-a"
+// Round 19, lane C: following the stream, parking a sent question, and the sent message against MiMo 26.920.
+import { roundNineteenLaneCChecks } from "./smoke-round19-c"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -4867,9 +4869,6 @@ async function main() {
     check("six are not", cardCut("1\n2\n3\n4\n5\n6")?.clamped === false)
     check("text from 原始错误 on is dropped", cardCut("短句\n\n原始错误：boom")?.text === "短句")
     check("nothing to say is left to the fallback", cardCut("  ") === undefined)
-    check("64px from the end still counts as the end", stickState(1000, 436, 500).atEnd && !stickState(1000, 436, 500).jump)
-    check("65px away offers the jump", !stickState(1000, 435, 500).atEnd && stickState(1000, 435, 500).jump)
-    check("nothing to scroll offers no jump", !stickState(400, 0, 500).jump)
     const said = (id: string) => ({ type: "text", id, text: id }) as AssistantPart
     const reply = (id: string, part: string) =>
       ({ id, sessionID: "s", role: "assistant", model, agent: "build", parts: [said(part)], time: { created: 1 } }) as Message
@@ -7031,6 +7030,7 @@ async function main() {
   await perfThreadChecks(check, section)
   await perfEntryChecks(check, section)
   await roundNineteenLaneAChecks(check, section)
+  await roundNineteenLaneCChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

@@ -487,6 +487,16 @@
 - RP-8 标签中键在松开时关闭（auxclick），按下后拖离不关
 - R19-SH2 对话卡片在「更新于」/定时任务行之后、互聊行之前加「运行中的子智能体：…」（与胶囊同一数据，无名的略去，按 MiMo 用「、」连接；`subagentDetail.runningList` ×18）
 - R19-SH3（用户 2026-09-21 决定）删行菜单「导出为对话文件」及整条对话文件链：`session.exportFile` / `session.importFile`、`src/shared/convo-file.ts`、`mcode:open-text` 与 `openText`、8 条文案 ×18；第七轮 S4、第八轮 X17 的对应检查一并删除。保留 MiMo 的 Markdown「导出对话记录」和其他导入器用的 store 选项。上文 S4 所述「命令面板导入对话文件」已不存在
+## 第十九轮 · C：对话跟随、发送停靠与消息入场（2026-09-22）
+
+清单 scratchpad `r19-laneC.json`，五项照 MiMo 26.920 的 ThreadView / scrollStick / HarnessRow 改完；规则在 `lib/scroll-follow.ts`（纯函数），smoke `smoke-round19-c.ts` 67 条（旧代码下 35 条接线检查全部失败，其余是新库自身的单元检查），探针 scratchpad `r19c/probe.cjs`（一次性配置 + 进程内 127.0.0.1 慢速 SSE 模型，截图 `r19c/v7-*.png`）。
+- **CV-1 发送停靠**：输入框（主对话、非运行中、非 subtask）发送前 `requestPark`，被拒则 `clearPark`，3 秒过期。新问题出现时量它：目标 = min(ch/6, max(12, 2ch/3 − 行高))，所缺空间补成**该轮的** min-height 地板（另一轮接上时交给列，在原处结束），钉到底后停止跟随，列从 translateY(空间) 0.2s 滑入（减少动态效果时不滑）。地板在切对话、宽度变化时清掉；读者上滚或离底 >64、回合结束时，只在拿掉不挪视图时释放。停靠中新的权限/提问卡不拉走视图。**与 MiMo 的两处有意偏差**：MiMo 把地板放在整条 thread、按 scrollHeight 算——上一轮失去「最后一轮」页脚（实测 −14px）会让问题漂移，对话短于视口时 scrollHeight 即视口高会把问题放低（实测 267 对目标 137）；MCode 放在该轮上、按列底算。实测（40 轮含 content-visibility 占位）：问题落在 135.1px（目标 136.8，ceil 所致），回复流 2.5s 内 scrollTop 不动、scrollHeight 长 2048px，跳底按钮出现；一轮对话同为 135.1。
+- **CV-2 跟随规则**：上滚 >8px（单步或累计）即停止跟随，哪怕离底很近；只在距底 ≤ ceil(1+1/max(.25,dpr))px 且是读者向下滚到的才恢复（浏览器因内容缩短把 scrollTop 拉回、无变化的重复 scroll 事件、只等于内容增长的位移都不算）；64px 只管跳底按钮；跟随时 overflow-anchor:none，否则 auto。跳底按钮改为不占流高（margin-top −34px）——原先它出现/消失会改 scrollHeight，离底 5px 的读者会被按钮消失拉到底并重新跟随（实测复现后修掉）。旧 `turn-end` 的 `STICK/stickState` 已删。
+- **CV-3 暂停与重钉**：所有钉底走 `pin()`，拖选/选区在对话内（600ms 宽限后）、视频播放/暂停 600ms 内、编辑框打开及关闭后 300ms、150ms 内向上滚轮时不钉；窗口 focus / visibilitychange 回来且在跟随时重钉；新的待决权限或提问、运行中追加消息强制跟随并钉底。实测：拖选时 scrollTop 固定、松开后恢复；选区留在对话里保持暂停，清掉后恢复；上滚 400 后追加消息回到底部并跟随。
+- **CV-4** 本次打开后新增的问题行 `msg-in`：淡入并上移 8px，0.2s cubic-bezier(.2,.7,.2,1)；切换/一次载入的不动画。停靠测量扣除动画的位移。
+- **CV-5** 定时任务消息两行截断，溢出（scrollHeight−clientHeight>1）时显示 13px 次要色「显示更多」+13px 下箭头（上距 6、间距 4），点开不再收起；`stream.automationShowMore` ×18（ar/bs/th/uk 自写）。实测 40px → 80px。
+- 注意：探针窗口不可见时（锁屏，`win.isVisible()` 为 false）不跑渲染帧，content-visibility 的轮次从未绘制过、没有记住的尺寸，测到的停靠位置不可信；只采信窗口可见的那几轮。
+
 ## 第十九轮 A 路：设置与外壳（2026-09-21）
 
 对照 26.920 的 14 条（`r19-laneA.json`），smoke `smoke-round19-a.ts`（旧代码下各节全部失败），一次性配置真窗口探针看过截图。
