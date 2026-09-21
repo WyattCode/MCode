@@ -197,6 +197,25 @@ export function vocabularyLeftovers(tables: Record<string, Record<string, string
     .map(([key, value]) => `${key}: ${value}`)
 }
 
+/** Group G: the plugins page and a skill's detail (hidden, lowest priority) - MiMo's toasts and labels. */
+export const GROUP_G: Row[] = [
+  ["skills.enabledToast", "{name} 技能已启用", "{name} skill enabled"],
+  ["skills.disabledToast", "{name} 技能已禁用", "{name} skill disabled"],
+  ["skills.toggleFailed", "技能状态更新失败：{error}"],
+  ["skills.malformed", "技能文件格式有误，已跳过加载：{path}"],
+  ["plugins.tools", "共 {n} 个工具"],
+  ["plugins.listUnavailable", "无法读取本机已安装的插件和技能"],
+  ["skillDetail.viewContent", "查看内容（SKILL.md）", "View content (SKILL.md)"],
+  ["skillDetail.contentLoading", "读取中…"],
+  ["skillDetail.processing", "处理中…"],
+  ["skillDetail.contentUnavailable", "读不到该技能的 SKILL.md 文件"],
+  ["skillDetail.contentEmpty", "该技能的 SKILL.md 是空文件"],
+  ["skillDetail.contentTruncated", "内容过长，仅显示前一部分"],
+  ["skillDetail.agentConfig", "让 Agent 配置", "Configure with Agent"],
+  ["skillDetail.tryInChatToast", "已添加到对话：{name}"],
+  ["skillDetail.configureDraft", "帮我配置技能「{name}」（ID：{id}）："],
+]
+
 export const GROUPS: [name: string, rows: Row[]][] = [
   ["A: the goal switch and bar", GROUP_A],
   ["B: conversation errors, permissions and attachments", GROUP_B],
@@ -204,6 +223,7 @@ export const GROUPS: [name: string, rows: Row[]][] = [
   ["D: updates and toasts", GROUP_D],
   ["E: shortcuts, menus and project removal", GROUP_E],
   ["F: voice and connecting a provider", GROUP_F],
+  ["G: the plugins page and skill detail", GROUP_G],
 ]
 
 /** The in-window menu's rows that MiMo's native menu words differently: what AppMenu.vue calls, and what it should. */
