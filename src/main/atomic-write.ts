@@ -1,4 +1,5 @@
 import fs from "node:fs"
+import { readdir, rm, stat } from "node:fs/promises"
 import path from "node:path"
 import { tempNameFor } from "../server/storage"
 
@@ -66,4 +67,63 @@ export function writeAtomicSync(file: string, text: string, mode?: number, durab
     }
     throw err
   }
+}
+
+/**
+ * Past this age a leftover temp goes even when a live process carries its id:
+ * no write here takes more than a moment, so by then the id belongs to some
+ * other program the system has since handed it to.
+ */
+export const TEMP_KEEP_MS = 60 * 60 * 1000
+
+/** Whether a process with this id exists; one we may not signal still does. */
+export function processAlive(pid: number): boolean {
+  if (pid === process.pid) return true
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM"
+  }
+}
+
+export interface TempSweep {
+  /** The files written here, by name; only their temps are looked at. */
+  names: readonly string[]
+  /** Names whose earlier writer named its temp `<name>.<pid>.tmp`, without the counter. */
+  pidOnly?: readonly string[]
+}
+
+/**
+ * Removes the temps killed writes left in one folder (D12-7), once at start-up.
+ *
+ * A write that dies between creating `<name>.<pid>.<n>.tmp` and renaming it
+ * leaves the temp for good: its own cleanup never ran, and nothing else looks
+ * for it. The backend sweeps its storage the same way (N11-30); these are the
+ * main process's folders. Nothing is taken but a temp of one of `names`, in
+ * the writer's own form, whose process is gone - or which is over an hour old,
+ * whoever holds its id now. Never recursive: each writer's folder is listed.
+ *
+ * @returns the names removed.
+ */
+export async function sweepWriterTemps(directory: string, sweep: TempSweep, options: { now?: number; alive?: (pid: number) => boolean } = {}): Promise<string[]> {
+  const now = options.now ?? Date.now()
+  const alive = options.alive ?? processAlive
+  const removed: string[] = []
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+  for (const entry of entries) {
+    if (!entry.isFile()) continue
+    const match = /^(.+?)\.(\d+)(\.\d+)?\.tmp$/.exec(entry.name)
+    if (!match) continue
+    const [, name, pidText, counter] = match
+    if (!(counter ? sweep.names : (sweep.pidOnly ?? [])).includes(name!)) continue
+    const full = path.join(directory, entry.name)
+    const pid = Number(pidText)
+    if (alive(pid)) {
+      const modified = await stat(full).then((found) => found.mtimeMs, () => now)
+      if (now - modified < TEMP_KEEP_MS) continue
+    }
+    await rm(full, { force: true }).then(() => removed.push(entry.name), () => undefined)
+  }
+  return removed
 }

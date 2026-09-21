@@ -24,7 +24,7 @@ import { cutLiveStreams } from "../server/provider/stall"
 import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
 import { closeHidesToTray } from "@shared/protocol"
 import { label, setLabels } from "./labels"
-import { writeAtomicSync } from "./atomic-write"
+import { sweepWriterTemps, writeAtomicSync } from "./atomic-write"
 import { LOGIN_ITEM_FILE, loginItemSupported, parseLoginItem, readLaunchAtLogin, startsHidden, writeLaunchAtLogin, type LoginItemStore } from "./login-item"
 import { BROWSER_ACTS, EDIT_ACTIONS, VIEW_ACTIONS, WINDOW_ACTIONS, actionOf, clipboardText, directoryAsk, panelBounds, titlebarMode } from "./ipc-input"
 import { buildMenu } from "./menu"
@@ -54,7 +54,7 @@ import { readSoundfont } from "./soundfont"
 import { applyZoom } from "./zoom"
 import { APP_NAME, WINDOW_MIN, badgeCount, noticeTitle, pinnedProfile, readTaskNotice, relaunchArgs, textMenuItems, wantsNotice } from "./desktop-rules"
 import { registerOffice } from "./office"
-import { registerComposerInput } from "./composer-input"
+import { COMPOSER_INPUT_FILE, registerComposerInput } from "./composer-input"
 import { registerPasteFiles } from "./paste-files"
 import { saveCopy } from "./save-copy"
 import {
@@ -82,7 +82,7 @@ import {
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
 import { fcitxEnvironment } from "./linux-ime"
 import { linuxIconSync } from "./linux-icon-sync"
-import { maximizeAtStart, restore, saveWindowState, toggleMaximize, track } from "./window-state"
+import { WINDOW_STATE_FILE, maximizeAtStart, restore, saveWindowState, toggleMaximize, track } from "./window-state"
 import { keepWindowsOnScreen, repaintAfterWake } from "./displays"
 import { boundsOnShow, closeBounds } from "./work-area"
 import { HELPER_SWEEP_TIMEOUT_MS, createUpdater, helperSweep, staleInstallers, type AutoUpdaterLike, type UpdateState, type Updater } from "./updater"
@@ -310,6 +310,21 @@ const windows = new Set<BrowserWindow>()
 /* MiMo's update transaction record (update-transaction.ts), in the profile's updates folder. */
 const transactionFile = path.join(app.getPath("userData"), "updates", TRANSACTION_FILE)
 const updateTransactions = createTransactions(fileTransactionStore(transactionFile))
+
+/*
+ * Temps a killed write of an earlier run left beside main's own files (D12-7):
+ * each folder is listed with the files written into it, and only their temps
+ * whose process is gone are taken. The backend sweeps the rest of storage/.
+ */
+void app.whenReady().then(async () => {
+  const profile = app.getPath("userData")
+  const swept = [
+    ...(await sweepWriterTemps(profile, { names: [BOOT_PREFS_FILE, DISPLAY_SERVER_FILE, LOGIN_ITEM_FILE, WINDOW_STATE_FILE] })),
+    ...(await sweepWriterTemps(path.dirname(transactionFile), { names: [TRANSACTION_FILE] })),
+    ...(await sweepWriterTemps(path.join(profile, "storage"), { names: [COMPOSER_INPUT_FILE], pidOnly: [COMPOSER_INPUT_FILE] })),
+  ]
+  if (swept.length) console.info(`[storage] removed ${swept.length} temp file(s) an earlier run left behind: ${swept.join(", ")}`)
+})
 
 /* An install the person asked for, run by the quit path once the backend has closed. */
 let pendingInstall: (() => void) | undefined

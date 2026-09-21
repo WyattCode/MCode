@@ -17,12 +17,12 @@ import { fillsWorkArea, linuxMaximizeToggle, startBounds } from "./work-area"
  * full-screen window writes nothing, and full screen is never restored.
  */
 
-const FILE = "window.json"
+export const WINDOW_STATE_FILE = "window.json"
 /* MiMo's minimum; a remembered size smaller than it is grown to it. */
 const MIN = WINDOW_MIN
 
 function file(): string {
-  return path.join(app.getPath("userData"), FILE)
+  return path.join(app.getPath("userData"), WINDOW_STATE_FILE)
 }
 
 function read(): SavedWindow | undefined {

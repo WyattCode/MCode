@@ -14,6 +14,9 @@ import type { Check } from "./smoke-round5"
 import type { IpcMain } from "electron"
 import { TRANSACTION_FILE, createTransactions, fileTransactionStore } from "../src/main/update-transaction"
 import { COMPOSER_INPUT_FILE, registerComposerInput } from "../src/main/composer-input"
+import { TEMP_KEEP_MS, processAlive, sweepWriterTemps } from "../src/main/atomic-write"
+import { BOOT_PREFS_FILE } from "../src/main/boot-prefs"
+import { spawnSync } from "node:child_process"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
 
@@ -134,5 +137,64 @@ export async function atomicLeftoverChecks(check: Check, section: (name: string)
       syncFs.renameSync = realRename
       await fs.rm(scratch, { recursive: true, force: true })
     }
+  }
+
+  section("D12-7: temps a killed write left are swept at start-up - only the writer's own, only a dead run's")
+  {
+    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-d12-7-sweep-"))
+    try {
+      const dead = 4_000_001
+      const live = 4_000_002
+      const alive = (pid: number) => pid === live || pid === process.pid
+      const now = Date.now()
+      const lay = (name: string, ageMs = 0) => {
+        const full = path.join(scratch, name)
+        syncFs.writeFileSync(full, "{", "utf8")
+        const at = new Date(now - ageMs)
+        syncFs.utimesSync(full, at, at)
+      }
+      const taken = [`${BOOT_PREFS_FILE}.${dead}.1.tmp`, `window.json.${dead}.12.tmp`, `${BOOT_PREFS_FILE}.${live}.3.tmp`, `${COMPOSER_INPUT_FILE}.${dead}.tmp`]
+      // The live process's temp is only taken once it is past the safe age.
+      lay(taken[0]!)
+      lay(taken[1]!)
+      lay(taken[2]!, TEMP_KEEP_MS + 60_000)
+      lay(taken[3]!)
+      const left = [
+        BOOT_PREFS_FILE, // the document itself
+        `${BOOT_PREFS_FILE}.${live}.4.tmp`, // a live run's write, in flight or just finished
+        `${BOOT_PREFS_FILE}.${process.pid}.5.tmp`, // this run's own
+        `settings.json.${dead}.1.tmp`, // a temp of a file this folder's writers do not write
+        `${BOOT_PREFS_FILE}.${dead}.tmp`, // the pid-only form, for a name that never used it
+        `${BOOT_PREFS_FILE}.tmp`, // no pid at all
+        `${BOOT_PREFS_FILE}.${dead}.1.tmp.bak`, // not a temp's name
+        "notes.tmp",
+      ]
+      // A running writer's temps are fresh; everything else is old, so that age alone could not have kept it.
+      for (const name of left) lay(name, name.includes(`.${live}.`) || name.includes(`.${process.pid}.`) ? 0 : 2 * TEMP_KEEP_MS)
+      syncFs.mkdirSync(path.join(scratch, `window.json.${dead}.9.tmp`)) // a folder, whatever its name
+      syncFs.mkdirSync(path.join(scratch, "nested"))
+      syncFs.writeFileSync(path.join(scratch, "nested", `${BOOT_PREFS_FILE}.${dead}.1.tmp`), "{", "utf8") // below the folder listed
+
+      const removed = await sweepWriterTemps(scratch, { names: [BOOT_PREFS_FILE, "window.json", COMPOSER_INPUT_FILE], pidOnly: [COMPOSER_INPUT_FILE] }, { now, alive })
+      const remaining = syncFs.readdirSync(scratch)
+      check("a dead run's temps of the listed files are removed", taken.every((name) => removed.includes(name) && !remaining.includes(name)), { removed, remaining })
+      check("including the pid-only temp an earlier composer-input writer left", removed.includes(`${COMPOSER_INPUT_FILE}.${dead}.tmp`))
+      check("and a live id's temp once it is over the safe age", removed.includes(`${BOOT_PREFS_FILE}.${live}.3.tmp`))
+      check("nothing else is touched", removed.length === taken.length && left.every((name) => remaining.includes(name)), { removed, remaining })
+      check("not a folder named like a temp, nor a temp below the folder listed", remaining.includes(`window.json.${dead}.9.tmp`) && syncFs.existsSync(path.join(scratch, "nested", `${BOOT_PREFS_FILE}.${dead}.1.tmp`)))
+      check("a folder that does not exist yet is nothing to sweep", (await sweepWriterTemps(path.join(scratch, "absent"), { names: [BOOT_PREFS_FILE] })).length === 0)
+
+      // The real test of a process: this one is alive, a child that has exited is not.
+      const child = spawnSync(process.execPath, ["-e", ""])
+      check("processAlive knows this process and a finished child apart", processAlive(process.pid) && typeof child.pid === "number" && !processAlive(child.pid), child.pid)
+    } finally {
+      await fs.rm(scratch, { recursive: true, force: true })
+    }
+    const main = await read("src/main/index.ts")
+    const at = main.indexOf("void app.whenReady().then(async () => {\n  const profile = app.getPath(\"userData\")")
+    const block = at < 0 ? "" : main.slice(at, main.indexOf("\n})", at))
+    check("main sweeps the profile beside boot-prefs, display-server, login-item and window.json", /sweepWriterTemps\(profile, \{ names: \[BOOT_PREFS_FILE, DISPLAY_SERVER_FILE, LOGIN_ITEM_FILE, WINDOW_STATE_FILE\] \}\)/.test(block), block)
+    check("the updates folder beside update-transaction.json", /sweepWriterTemps\(path\.dirname\(transactionFile\), \{ names: \[TRANSACTION_FILE\] \}\)/.test(block))
+    check("and storage/ beside composer-input.json, its older temp name included", /sweepWriterTemps\(path\.join\(profile, "storage"\), \{ names: \[COMPOSER_INPUT_FILE\], pidOnly: \[COMPOSER_INPUT_FILE\] \}\)/.test(block))
   }
 }
