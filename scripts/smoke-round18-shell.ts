@@ -15,6 +15,7 @@ import { LANGUAGES, language, t, tn } from "../src/renderer/src/lib/i18n"
 import { toolVerb } from "../src/renderer/src/lib/tool-meta"
 import { UPDATE_REASONS, interruptedReason, readOnlyInstall } from "../src/shared/update-reason"
 import { subagentsAtWork } from "../src/renderer/src/lib/subagent-chip"
+import { PREVIEW_CLOSE_MS, PREVIEW_OPEN_MS, sidePreview } from "../src/renderer/src/lib/side-preview"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
 
@@ -254,5 +255,78 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
     language.value = before
     check("R18-U7: 2 个子智能体; 1 subagent, 3 subagents", zh === "2 个子智能体" && en[0] === "1 subagent" && en[1] === "3 subagents", [zh, en])
     for (const key of ["side.subagentChip_one", "side.subagentChip_other"]) check(`R18-U7: ${key} is in all 18 tables`, (await carrying(key)) === 18)
+  }
+
+  section("Round 18 (lane U): R18-U1 the folded column is gone, and resting on its toggle previews it")
+  {
+    // A clock the checks move by hand.
+    let now = 0
+    let timers: { at: number; run: () => void; id: number }[] = []
+    let next = 1
+    const clock = {
+      setTimeout: (run: () => void, ms: number) => {
+        const id = next++
+        timers.push({ at: now + ms, run, id })
+        return id as unknown as ReturnType<typeof setTimeout>
+      },
+      clearTimeout: (id: ReturnType<typeof setTimeout> | undefined) => {
+        timers = timers.filter((timer) => timer.id !== (id as unknown as number))
+      },
+    }
+    const advance = (ms: number) => {
+      now += ms
+      for (const timer of timers.filter((entry) => entry.at <= now)) {
+        timers = timers.filter((entry) => entry !== timer)
+        timer.run()
+      }
+    }
+    let folded = true
+    const shown = { value: false }
+    const preview = sidePreview(() => folded, shown, clock)
+    check("R18-U1: MiMo's timings - 150ms to open, 200ms to close", PREVIEW_OPEN_MS === 150 && PREVIEW_CLOSE_MS === 200)
+    preview.schedule(true)
+    advance(149)
+    const early = shown.value
+    advance(1)
+    check("R18-U1: resting on the toggle opens the preview at 150ms, not before", !early && shown.value)
+    preview.schedule(false)
+    advance(150)
+    preview.hold(true)
+    advance(400)
+    check("R18-U1: moving into the preview before 200ms keeps it", shown.value)
+    preview.hold(false)
+    advance(199)
+    const lingering = shown.value
+    advance(1)
+    check("R18-U1: leaving it lets it go 200ms later", lingering && !shown.value)
+    preview.hold(true)
+    advance(500)
+    check("R18-U1: the controls beside the toggle never open one themselves", !shown.value)
+    preview.schedule(true)
+    advance(150)
+    preview.close()
+    check("R18-U1: Escape, a press elsewhere or the toggle close it at once", !shown.value && timers.length === 0)
+    folded = false
+    preview.schedule(true)
+    advance(1000)
+    check("R18-U1: an open column is never previewed", !shown.value)
+
+    const side = await read("src/renderer/src/components/Sidebar.vue")
+    check("R18-U1: folded, the column takes no width at all", /:style="\{ width: collapsed \? '0px' : `\$\{RAIL_WIDTH \+ width\}px` \}"/.test(side) && !/\.side\.rail\b/.test(side))
+    check("R18-U1: the column keeps its own width inside, hidden and inert while folded", /class="side-shell"[\s\S]{0,200}:style="\{ width: `\$\{RAIL_WIDTH \+ width\}px` \}"/.test(side) && /:inert="collapsed && !preview \? true : undefined"/.test(side) && /\.side\.folded \.side-shell:not\(\.preview\) \{\s*visibility: hidden;/.test(side))
+    const card = /\n\.side-shell\.preview \{([^}]*)\}/.exec(side)?.[1] ?? ""
+    check("R18-U1: the preview is a card 8 in from the corner, 16 short of the window, 16 round, at 190", /position: fixed;/.test(card) && /inset-block-start: 8px;/.test(card) && /inset-inline-start: 8px;/.test(card) && /height: calc\(100% - 16px\);/.test(card) && /border-radius: 16px;/.test(card) && /z-index: 190;/.test(card), card)
+    const tools = /\n\.rail-tools \{([^}]*)\}/.exec(side)?.[1] ?? ""
+    check("R18-U1: the folded toggle stands at 75 and 13, above the preview", /position: fixed;/.test(tools) && /top: 13px;/.test(tools) && /inset-inline-start: 75px;/.test(tools) && /z-index: 201;/.test(tools), tools)
+    const folded2 = side.slice(side.indexOf('<div v-if="collapsed" class="rail-tools"'), side.indexOf('<div\n      ref="shellEl"'))
+    check("R18-U1: folded, only the toggle and 新建任务 are left - back and forward go", /data-toggle-side/.test(folded2) && /data-collapsed-new-task/.test(folded2) && !/emit\('back'\)|emit\('forward'\)/.test(folded2))
+    check("R18-U1: the toggle opens the preview and carries no tip of its own", /@pointerenter="schedulePreview\(true\)"\s*@pointerleave="schedulePreview\(false\)"/.test(folded2) && !/data-toggle-side[^>]*v-tip/.test(folded2))
+    check("R18-U1: the rail's quick card has gone with the rail", !/rail-quick|quickEnter|data-quick/.test(side) && (await carrying("side.railArtifacts")) === 0)
+    const header = await read("src/renderer/src/components/SessionHeader.vue")
+    const panel = await read("src/renderer/src/components/RightPanel.vue")
+    const app = await read("src/renderer/src/App.vue")
+    check("R18-U1: the header starts at 129, past 新建任务, as MiMo's does", /\.head\.after-rail \{\s*padding-inline-start: 129px;/.test(header))
+    check("R18-U1: a full-screen panel's tabs start at 139", /\.right-panel\.fullscreen\.side-collapsed \.rp-head \{\s*padding-inline-start: 139px;/.test(panel))
+    check("R18-U1: the no-drag patch covers the two controls where they now stand", /\.rail-no-drag \{[^}]*inset-inline-start: 75px;[^}]*width: 56px;/.test(app))
   }
 }

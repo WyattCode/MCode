@@ -21,7 +21,7 @@ const app = useApp()
  * Whether the Context view this header's ring opens is currently up, and
  * whether the info card beside the conversation is.
  */
-/* `sideCollapsed`: the side column is folded to its rail, whose controls row floats over this header's start. */
+/* `sideCollapsed`: the side column is folded away, and its toggle and 新建任务 float over this header's start. */
 /* `hasContent`: something has been said, which is when MiMo offers the info card at all. */
 /* `panelBeside`: a side panel stands to the right, so this row ends at the column instead of under the toggle. */
 /* `menuOpen`: this conversation's menu is up, which keeps its "more" tip shut as MiMo's is. */
@@ -375,7 +375,8 @@ function openMenu(event: MouseEvent) {
 }
 
 /* The side column folded to its rail: the toggle, back, forward and search float over the start of this row. */
+/* MiMo 26.920's inset past the folded controls: 新建任务's end (107 + 24) less 2, the window's own x now that no rail stands before it. */
 .head.after-rail {
-  padding-inline-start: 132px;
+  padding-inline-start: 129px;
 }
 </style>

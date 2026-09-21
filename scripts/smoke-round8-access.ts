@@ -109,8 +109,7 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
 
   section("round 8 access: names that are not drawn (A7, A8, A10)")
   {
-    const side = read("components/Sidebar.vue")
-    check("the folded rail names 产物中心 and 设置 itself, not through a tip bound before it folded", /:aria-label="collapsed \? t\('side\.railArtifacts'\) : undefined"/.test(side) && /:aria-label="collapsed \? t\('rail\.settings'\) : undefined"/.test(side))
+    // A7's folded rail went in round 18 (R18-U1): a folded column is not drawn, and its preview shows every row's own label.
     const unnamed: string[] = []
     for (const file of sources(path.join(RENDERER, "components"))) {
       if (!file.endsWith(".vue")) continue

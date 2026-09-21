@@ -4443,8 +4443,8 @@ onBeforeUnmount(() => {
 }
 
 /*
- * The folded column's controls row - toggle, back, forward, search - floats
- * over the start of the main column, and the main column's own top strip (the
+ * The folded column's controls - the toggle and 新建任务 - float over the
+ * start of the main column, and the main column's own top strip (the
  * home screen's, or the conversation header) is a window drag region. Electron
  * works drag regions out in document order, so that strip, coming later, took
  * the buttons back into the title bar and Windows swallowed every click on
@@ -4482,9 +4482,9 @@ onBeforeUnmount(() => {
 .rail-no-drag {
   position: fixed;
   top: 13px;
-  inset-inline-start: 65px;
+  inset-inline-start: 75px;
   z-index: 1;
-  width: 120px;
+  width: 56px;
   height: 24px;
   pointer-events: none;
   -webkit-app-region: no-drag;

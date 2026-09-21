@@ -74,7 +74,6 @@ type Table = Record<string, string>
 const zhCN: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "新建任务",
-  "side.railArtifacts": "产物中心：查看任务生成的文件",
   "side.awaitingPill": "待确认",
   "side.subagentChip_one": "{count} 个子智能体",
   "side.subagentChip_other": "{count} 个子智能体",
@@ -2413,7 +2412,6 @@ const zhCN: Table = {
 const zhTW: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "新建任務",
-  "side.railArtifacts": "產出:檢視任務建立的檔案",
   "side.awaitingPill": "待確認",
   "side.subagentChip_one": "{count} 個子智能體",
   "side.subagentChip_other": "{count} 個子智能體",
@@ -4731,7 +4729,6 @@ const zhTW: Table = {
 const en: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "New task",
-  "side.railArtifacts": "Artifacts: View files created by your tasks",
   "side.awaitingPill": "Confirm",
   "side.subagentChip_one": "{count} subagent",
   "side.subagentChip_other": "{count} subagents",
@@ -7051,7 +7048,6 @@ const en: Table = {
 const ar: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "مهمة جديدة",
-  "side.railArtifacts": "المخرجات: عرض الملفات التي أنشأتها مهامك",
   "side.awaitingPill": "بانتظار التأكيد",
   "side.subagentChip_one": "وكيل فرعي واحد",
   "side.subagentChip_other": "وكلاء فرعيون: {count}",
@@ -9331,7 +9327,6 @@ const ar: Table = {
 const bs: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Novi zadatak",
-  "side.railArtifacts": "Artefakti: Pregledaj datoteke koje su kreirali vaši zadaci",
   "side.awaitingPill": "Potvrdi",
   "side.subagentChip_one": "Podagenti: {count}",
   "side.subagentChip_other": "Podagenti: {count}",
@@ -11611,7 +11606,6 @@ const bs: Table = {
 const da: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Ny opgave",
-  "side.railArtifacts": "Artefakter: Se filer, dine opgaver har oprettet",
   "side.awaitingPill": "Bekræft",
   "side.subagentChip_one": "{count} underagent",
   "side.subagentChip_other": "{count} underagenter",
@@ -13891,7 +13885,6 @@ const da: Table = {
 const de: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Neue Aufgabe",
-  "side.railArtifacts": "Artefakte: Von Ihren Aufgaben erstellte Dateien anzeigen",
   "side.awaitingPill": "Bestätigen",
   "side.subagentChip_one": "{count} Subagent",
   "side.subagentChip_other": "{count} Subagenten",
@@ -16171,7 +16164,6 @@ const de: Table = {
 const es: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Nueva tarea",
-  "side.railArtifacts": "Artefactos: ver archivos creados por tus tareas",
   "side.awaitingPill": "Confirmar",
   "side.subagentChip_one": "{count} subagente",
   "side.subagentChip_other": "{count} subagentes",
@@ -18451,7 +18443,6 @@ const es: Table = {
 const fr: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Nouvelle tâche",
-  "side.railArtifacts": "Artefacts : consulter les fichiers créés par vos tâches",
   "side.awaitingPill": "À confirmer",
   "side.subagentChip_one": "{count} sous-agent",
   "side.subagentChip_other": "{count} sous-agents",
@@ -20731,7 +20722,6 @@ const fr: Table = {
 const ja: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "新しいタスク",
-  "side.railArtifacts": "アーティファクト: タスクで作成されたファイルを表示",
   "side.awaitingPill": "確認待ち",
   "side.subagentChip_one": "サブエージェント {count} 件",
   "side.subagentChip_other": "サブエージェント {count} 件",
@@ -23011,7 +23001,6 @@ const ja: Table = {
 const ko: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "새 작업",
-  "side.railArtifacts": "아티팩트: 작업에서 생성된 파일 보기",
   "side.awaitingPill": "확인 필요",
   "side.subagentChip_one": "하위 에이전트 {count}개",
   "side.subagentChip_other": "하위 에이전트 {count}개",
@@ -25291,7 +25280,6 @@ const ko: Table = {
 const nb: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Ny oppgave",
-  "side.railArtifacts": "Artefakter: Vis filer opprettet av dine oppgaver",
   "side.awaitingPill": "Bekreft",
   "side.subagentChip_one": "{count} underagent",
   "side.subagentChip_other": "{count} underagenter",
@@ -27571,7 +27559,6 @@ const nb: Table = {
 const pl: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Nowe zadanie",
-  "side.railArtifacts": "Artefakty: Zobacz pliki utworzone przez Twoje zadania",
   "side.awaitingPill": "Potwierdź",
   "side.subagentChip_one": "Podagenci: {count}",
   "side.subagentChip_other": "Podagenci: {count}",
@@ -29851,7 +29838,6 @@ const pl: Table = {
 const ptBR: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Nova tarefa",
-  "side.railArtifacts": "Artefatos: Veja os arquivos criados pelas suas tarefas",
   "side.awaitingPill": "Confirmar",
   "side.subagentChip_one": "{count} subagente",
   "side.subagentChip_other": "{count} subagentes",
@@ -32131,7 +32117,6 @@ const ptBR: Table = {
 const ru: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Новая задача",
-  "side.railArtifacts": "Артефакты: просмотр файлов, созданных вашими задачами",
   "side.awaitingPill": "Подтвердить",
   "side.subagentChip_one": "Субагентов: {count}",
   "side.subagentChip_other": "Субагентов: {count}",
@@ -34411,7 +34396,6 @@ const ru: Table = {
 const th: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "งานใหม่",
-  "side.railArtifacts": "อาร์ติแฟกต์: ดูไฟล์ที่งานของคุณสร้างขึ้น",
   "side.awaitingPill": "รอยืนยัน",
   "side.subagentChip_one": "เอเจนต์ย่อย {count} ตัว",
   "side.subagentChip_other": "เอเจนต์ย่อย {count} ตัว",
@@ -36691,7 +36675,6 @@ const th: Table = {
 const tr: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Yeni görev",
-  "side.railArtifacts": "Ürünler: Görevleriniz tarafından oluşturulan dosyaları görüntüleyin",
   "side.awaitingPill": "Onayla",
   "side.subagentChip_one": "{count} alt ajan",
   "side.subagentChip_other": "{count} alt ajan",
@@ -38971,7 +38954,6 @@ const tr: Table = {
 const uk: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Нове завдання",
-  "side.railArtifacts": "Артефакти: переглянути файли, створені вашими завданнями",
   "side.awaitingPill": "Підтвердити",
   "side.subagentChip_one": "Субагентів: {count}",
   "side.subagentChip_other": "Субагентів: {count}",
