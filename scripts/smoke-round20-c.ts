@@ -37,4 +37,12 @@ export async function roundTwentyLaneCChecks(check: Check, section: (name: strin
     const release = scroll.split("\n").find((line) => line.includes("releaseFloor()")) ?? ""
     check("the scroll handler leaves the floor alone while the slide runs", /!endSlide\s*&&/.test(release), release.trim())
   }
+
+  // ------------------------------------------------------------------ R20-C-3
+  section("Round 20 (C-3): a park moves the view even while a hold is on")
+  {
+    const park = code(body(script, "function park("))
+    check("park scrolls itself rather than through pin(), which a hold vetoes", /toBottom\(\)/.test(park) && !/\bpin\(\)/.test(park), park.slice(-400))
+    check("and turns following off after it", /following\.value = false/.test(park) && park.indexOf("following.value = false") > park.indexOf("toBottom()"))
+  }
 }

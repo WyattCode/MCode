@@ -1194,9 +1194,14 @@ function park(turnID: string) {
     floored = turn
   }
   floorWidth = column.clientWidth
-  // To the end as a turn start does, then no longer following: the reply is written below, out of the way.
-  following.value = true
-  pin()
+  /*
+   * To the end, then no longer following: the reply is written below, out of
+   * the way. Straight there rather than through pin(), which a hold (the edit
+   * box just closed by this very send, a selection, a wheel) would veto while
+   * following still went off and the floor was left for the next scroll event
+   * to take - the question stranded at the foot of the view.
+   */
+  toBottom()
   following.value = false
   parkedIn = shownID.value
   if (room > 0 && !reducedMotion()) slideIn(column, room)
