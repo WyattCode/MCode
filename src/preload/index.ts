@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron"
 import type { SoundfontReply } from "../shared/soundfont"
+import type { InstallAnswer } from "../shared/update-reason"
 
 export type OfficeVersionSource = "initial" | "ai" | "ai_local" | "user" | "external"
 export interface OfficeVersionState {
@@ -173,7 +174,7 @@ const api = {
    * Takes no path: the window asks to install what was downloaded, and the main
    * process is the only thing that knows what that was.
    */
-  installUpdate: (): Promise<boolean> => ipcRenderer.invoke("mcode:install-update"),
+  installUpdate: (): Promise<InstallAnswer> => ipcRenderer.invoke("mcode:install-update"),
 
   /**
    * Restarts the app.

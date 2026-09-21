@@ -13,6 +13,7 @@ import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { LANGUAGES, language, t } from "../src/renderer/src/lib/i18n"
 import { toolVerb } from "../src/renderer/src/lib/tool-meta"
+import { UPDATE_REASONS, interruptedReason, readOnlyInstall } from "../src/shared/update-reason"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
 
@@ -115,5 +116,42 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
     check("R18-U9: the words are 发送中… and 压缩中…", zh[0] === "发送中…" && zh[1] === "压缩中…", zh)
     check("R18-U9: Sending… and Compacting… in English", en[0] === "Sending…" && en[1] === "Compacting…", en)
     for (const key of ["composer.sending", "composer.compacting"]) check(`R18-U9: ${key} is in all 18 tables`, (await carrying(key)) === 18)
+  }
+
+  section("Round 18 (lane U): R18-U8 an update failure is told by one of nine reasons")
+  {
+    check("R18-U8: the nine reasons are MiMo 26.920's", JSON.stringify(UPDATE_REASONS) === JSON.stringify(["no-ready", "staging", "read-only-volume", "install-failed", "not-started", "version-mismatch", "stale", "disabled", "unknown"]))
+    check("R18-U8: a recorded stale or version-mismatch is read back as itself", interruptedReason("stale").reason === "stale" && interruptedReason("version-mismatch").reason === "version-mismatch" && interruptedReason("no-ready").reason === "no-ready")
+    const failed = interruptedReason("spawn EACCES")
+    check("R18-U8: an installer's own error is install-failed, its words kept as the detail", failed.reason === "install-failed" && failed.hint === "spawn EACCES", failed)
+    check("R18-U8: a damaged record, or none, is unknown", interruptedReason("invalid").reason === "unknown" && interruptedReason("  ").reason === "unknown")
+    check("R18-U8: only an app on a disk image or translocated is read-only", readOnlyInstall("/Volumes/MCode/MCode.app/Contents/MacOS/MCode", "darwin") && readOnlyInstall("/private/var/folders/x/AppTranslocation/1/d/MCode.app/Contents/MacOS/MCode", "darwin") && !readOnlyInstall("/Applications/MCode.app/Contents/MacOS/MCode", "darwin") && !readOnlyInstall("/Volumes/x", "win32"))
+
+    const pill = await read("src/renderer/src/components/UpdatePill.vue")
+    const map = /UPDATE_REASON_KEYS: Record<UpdateReason, string> = \{([\s\S]*?)\n\}/.exec(pill)?.[1] ?? ""
+    const keys = [...map.matchAll(/"(update\.reason\.\w+)"/g)].map((match) => match[1])
+    check("R18-U8: every reason has its own string", keys.length === 9 && new Set(keys).size === 9, keys)
+    const counts = await Promise.all(keys.map((key) => carrying(key)))
+    check("R18-U8: each of the nine is in all 18 tables", counts.every((count) => count === 18), counts)
+    const before = language.value
+    const distinct = LANGUAGES.map((entry) => {
+      language.value = entry.id
+      return new Set(keys.map((key) => t(key))).size
+    })
+    language.value = before
+    check("R18-U8: and in every language the nine read differently", distinct.every((size) => size === 9), distinct)
+    for (const key of ["update.watchdogTimeout", "update.restartFailed", "update.failReason", "update.failGeneric", "update.interrupted", "update.failedTip"]) {
+      check(`R18-U8: the old ${key} has left all 18 tables`, (await carrying(key)) === 0)
+    }
+    check("R18-U8: the watchdog says not-started, a thrown install says install-failed", /markUpdateFailed\("not-started"\)/.test(pill) && /markUpdateFailed\("install-failed", /.test(pill))
+    check("R18-U8: a refused install says the reason main gave", /if \(!answer\.ok && updateState\.phase === "installing"\) markUpdateFailed\(answer\.reason, answer\.hint\)/.test(pill))
+
+    const main = await read("src/main/index.ts")
+    const handler = /ipcMain\.handle\("mcode:install-update"[\s\S]*?\n {2}\}\)\n/.exec(main)?.[0] ?? ""
+    const order = ['reason: "read-only-volume"', 'reason: "disabled"', '"staging" : "no-ready"', "updateTransactions.begin(", "return { ok: true }"].map((text) => handler.indexOf(text))
+    check("R18-U8: main answers read-only, then disabled, then staging or no-ready, before it begins", order.every((at, index) => at > 0 && (index === 0 || at > order[index - 1])), order)
+    check("R18-U8: it answers rather than throws", !/throw new Error/.test(handler))
+    const app = await read("src/renderer/src/App.vue")
+    check("R18-U8: an interrupted install is told by its reason and leaves 重试 on the capsule", /const \{ reason, hint \} = interruptedReason\(state\.interrupted\.error\)\s*markUpdateFailed\(reason, hint, /.test(app))
   }
 }

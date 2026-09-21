@@ -48,6 +48,7 @@ import { isKnownOpenWith } from "@shared/open-app"
 import { installedDocApps, installedOpenAppIcons, installedOpenApps, launchTarget } from "./installed-apps"
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { SOUNDFONT } from "@shared/soundfont"
+import { readOnlyInstall, type InstallAnswer } from "@shared/update-reason"
 import { readSoundfont } from "./soundfont"
 import { applyZoom } from "./zoom"
 import { APP_NAME, WINDOW_MIN, badgeCount, noticeTitle, pinnedProfile, readTaskNotice, relaunchArgs, textMenuItems, wantsNotice } from "./desktop-rules"
@@ -1237,11 +1238,18 @@ app.whenReady().then(async () => {
    * path below calls runPendingInstall): a silent installer run with --updated
    * ends a running MCode after a second, which could cut the backend off while
    * it writes.
+   *
+   * What cannot install says why, as one of MiMo 26.920's reasons, rather than
+   * throwing: a copy that cannot replace itself, a build with updates off, an
+   * update still downloading, or none at all.
    */
-  ipcMain.handle("mcode:install-update", async () => {
+  ipcMain.handle("mcode:install-update", async (): Promise<InstallAnswer> => {
+    if (readOnlyInstall(process.execPath, process.platform)) return { ok: false, reason: "read-only-volume" }
+    if (!autoUpdates) return { ok: false, reason: "disabled" }
     const updater = await updaterReady
-    const target = updater?.readyVersion()
-    if (!updater || !target) throw new Error("no update has been downloaded")
+    if (!updater) return { ok: false, reason: "unknown", hint: "electron-updater did not load" }
+    const target = updater.readyVersion()
+    if (!target) return { ok: false, reason: updater.state().phase === "downloading" ? "staging" : "no-ready" }
     updateTransactions.begin(pkg.version, target)
     /*
      * MiMo's installing notice: shown before the app goes, and given up to 1.5 s
@@ -1274,7 +1282,7 @@ app.whenReady().then(async () => {
       }
       try {
         if (updater.install(process.execPath)) updateTransactions.markInstallerStarted()
-        else updateTransactions.markFailed("no update was ready to install")
+        else updateTransactions.markFailed("no-ready")
       } catch (error) {
         updateTransactions.markFailed(error)
         console.warn("[update] the installer did not start", error)
@@ -1283,7 +1291,7 @@ app.whenReady().then(async () => {
     beginIntentionalQuit()
     // With no backend to wait for, the quit path goes straight to the installer.
     app.quit()
-    return true
+    return { ok: true }
   })
 
   /*

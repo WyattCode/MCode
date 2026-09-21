@@ -30,7 +30,8 @@ import { deliveryShown, setDeliveryView } from "./lib/delivered"
 import { closeImagePreview, closeVideoPreview, imagePreview, videoPreview } from "./lib/image-preview"
 import VideoPreview from "./components/VideoPreview.vue"
 import RenameDialog from "./components/RenameDialog.vue"
-import { markUpdateReady, updateState } from "./components/UpdatePill.vue"
+import { markUpdateFailed, markUpdateReady, updateState } from "./components/UpdatePill.vue"
+import { interruptedReason } from "@shared/update-reason"
 import type TerminalDrawerComponent from "./components/TerminalDrawer.vue"
 import Toasts from "./components/Toasts.vue"
 import ConfirmDialog from "./components/ConfirmDialog.vue"
@@ -256,8 +257,11 @@ onMounted(() => {
     .updateStatus()
     .then((state) => {
       takeUpdateState(state)
-      /* MiMo's interrupted-update notice: the last install did not finish, said once. */
-      if (state.interrupted) notifyFailure(t("update.interrupted", { version: state.interrupted.targetVersion || "?" }), state.interrupted.error)
+      /* MiMo's interrupted-update notice: the last install did not finish, said once, by its reason; the capsule offers 重试. */
+      if (state.interrupted) {
+        const { reason, hint } = interruptedReason(state.interrupted.error)
+        markUpdateFailed(reason, hint, state.interrupted.targetVersion || undefined)
+      }
     })
     .catch(() => {})
   offUpdateState = window.mcode.onUpdateState((state) => {
