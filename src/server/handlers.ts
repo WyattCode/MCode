@@ -482,8 +482,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     }
 
     case "project.createBlank": {
-      // MiMo's dialog can put the folder somewhere else; without a choice it is the default project location.
-      const directory = await blankProjectDirectory(request.name, request.location || runtime.config.get().projectRoot)
+      // Always under the default project location from Settings > 常规: MiMo's dialog has no place to change it.
+      const directory = await blankProjectDirectory(request.name, runtime.config.get().projectRoot)
       return { directory } satisfies Handled<"project.createBlank">
     }
 

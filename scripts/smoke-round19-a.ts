@@ -142,4 +142,20 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
     check("danger: the project is already there", /if \(result\.existed\) notifyFailure\(t\("side\.projectExists", \{ name \}\)\)/.test(store))
     check("danger: the project name is taken", /notifyFailure\(t\("toast\.projectNameTaken", \{ name \}\)\)/.test(app) && !/projectNameTaken", \{ name \}\), \{ level: "warning" \}/.test(app))
   }
+
+  // ------------------------------------------------------------------ R19-F6
+  section("Round 19 (F6): the new-project dialog is MiMo's - a name and a source folder, no location row")
+  {
+    const dialog = await read("src/renderer/src/components/NewProjectDialog.vue")
+    const app = await read("src/renderer/src/App.vue")
+    const protocol = await read("src/shared/protocol.ts")
+    const handlers = await read("src/server/handlers.ts")
+    check("no location row, nor its picker", !/data-np-location|pickLocation|defaultLocation|\.where\b/.test(dialog))
+    check("the dialog answers a name and a source only", /submit: \[name: string, source\?: string\] \}/.test(dialog) && /emit\("submit", name, source\.value \|\| undefined\)/.test(dialog))
+    check("its host passes no location", !/default-location/.test(app) && /request\(\{ type: "project\.createBlank", name: title \}\)/.test(app))
+    check(
+      "a blank project always lands under the default project location",
+      /\| \{ type: "project\.createBlank"; name: string \}/.test(protocol) && /blankProjectDirectory\(request\.name, runtime\.config\.get\(\)\.projectRoot\)/.test(handlers),
+    )
+  }
 }
