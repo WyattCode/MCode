@@ -2839,7 +2839,7 @@ async function main() {
 
     const malformed = await call({
       type: "provider.addCustom",
-      id: "Not Valid",
+      id: "Not/Valid",
       name: "Bad",
       baseURL: "https://example.com/v1",
       apiKey: "",

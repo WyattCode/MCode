@@ -16,7 +16,7 @@ import { sessionFiles } from "@shared/session-files"
 import { artifactCategory } from "@shared/artifact-category"
 import { Identifier } from "@shared/id"
 import { normalizeBaseURL } from "@shared/custom-endpoint"
-import { providerIdMessageKey, providerIdProblem } from "@shared/provider-id"
+import { providerIdMessageKey, providerIdProblem, type ProviderIdProblem } from "@shared/provider-id"
 import { CodedError } from "@shared/errors"
 import { cleanGoal } from "./session/goal"
 import { summarizeUsage } from "./usage-summary"
@@ -297,6 +297,13 @@ async function waitForIdle(runtime: Runtime, sessionID: string, within = IDLE_WA
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
   return true
+}
+
+/** A refused provider id, said in English for logs and coded for the window's own language. */
+function providerIdRefusal(id: string, problem: ProviderIdProblem): CodedError {
+  const said =
+    problem === "exists" ? `A provider with the id ${id} already exists` : problem === "slash" ? `"${id}" is not a valid provider id: it contains /` : "A provider id is required"
+  return new CodedError(said, providerIdMessageKey(problem))
 }
 
 /** Every provider id in use: the built-ins, the custom ones, and a disabled custom one too. */
@@ -1174,7 +1181,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       // (and a disabled one too), without case: taking a built-in's id would
       // shadow it and there would be no way back.
       const problem = providerIdProblem(id, takenProviderIds(runtime))
-      if (problem) throw new CodedError(`"${id}" cannot be a provider id (${problem})`, providerIdMessageKey(problem))
+      if (problem) throw providerIdRefusal(id, problem)
       // Id and name trimmed, and 高级配置 checked: a bad limit is refused, not dropped.
       const models = request.models.map((model) => withImageInput(customModelOf(model), runtime.config.modelCatalog()))
       if (!models.length) throw new CodedError("A custom provider needs at least one model", "provider.needsModel")
@@ -1266,7 +1273,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       // The id chosen in the clone dialog, checked as a new provider's is; otherwise the first free `-copy`.
       const chosen = request.id?.trim()
       const problem = chosen !== undefined ? providerIdProblem(chosen, ids) : undefined
-      if (problem) throw new CodedError(`"${chosen}" cannot be a provider id (${problem})`, providerIdMessageKey(problem))
+      if (problem) throw providerIdRefusal(chosen ?? "", problem)
       let id = chosen || `${source.id}-copy`
       for (let n = 2; !chosen && taken(id); n++) id = `${source.id}-copy-${n}`
       await runtime.config.set({
