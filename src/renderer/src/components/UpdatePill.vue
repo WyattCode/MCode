@@ -80,8 +80,13 @@ export async function installUpdate(): Promise<void> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     if (goneAway(message)) return
-    // Electron prefixes the IPC plumbing; only the error itself is worth showing.
-    markUpdateFailed("install-failed", message.replace(/^Error invoking remote method '[^']+': (Error: )?/, "").trim())
+    /*
+     * As MiMo 26.920: a thrown call says only the reason's sentence, on the
+     * capsule and in the notice. The raw IPC error is for the console, never
+     * the reader; only the main process's own {ok: false} answer carries a hint.
+     */
+    console.warn("MCode: installing the update failed:", message)
+    markUpdateFailed("install-failed")
   }
 }
 </script>

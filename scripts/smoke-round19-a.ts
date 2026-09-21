@@ -267,4 +267,15 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
     check("the answer takes its place: one notice, its level and text, closable again", toasts.value.length === 1 && toasts.value[0]?.title === "up to date" && toasts.value[0]?.level === "success" && toasts.value[0]?.closable === true, toasts.value)
     dismiss(id)
   }
+
+  // ---------------------------------------------------------------- R19-SH4
+  section("Round 19 (SH4): a thrown 重启更新 says only the reason, never Electron's raw error")
+  {
+    const pill = await read("src/renderer/src/components/UpdatePill.vue")
+    const install = pill.slice(pill.indexOf("export async function installUpdate("), pill.indexOf("\n}\n", pill.indexOf("export async function installUpdate(")))
+    const caught = install.slice(install.indexOf("} catch (err) {"))
+    check("the catch marks install-failed with no hint", /markUpdateFailed\("install-failed"\)/.test(caught) && !/markUpdateFailed\("install-failed", /.test(caught))
+    check("the raw text goes to the console only", /console\.warn\([^)]*message\)/.test(caught))
+    check("a main-process {ok: false} answer still carries its hint", /if \(!answer\.ok && updateState\.phase === "installing"\) markUpdateFailed\(answer\.reason, answer\.hint\)/.test(install))
+  }
 }
