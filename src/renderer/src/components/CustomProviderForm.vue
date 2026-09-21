@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { CustomModel, CustomProvider, ModelInfo } from "@shared/protocol"
 import { normalizeBaseURL, normalizeModelId } from "@shared/custom-endpoint"
 import { useApp } from "../stores/app"
@@ -233,7 +233,14 @@ const choices = computed(() => {
   return probe.value.models.filter((id) => !added.has(id) && (!needle || id.toLowerCase().includes(needle)))
 })
 
-watch([query, () => openMenu.value === "combo"], () => (highlight.value = -1))
+/* Synchronous, so an ArrowDown that opens the list lands on its first row rather than being reset after. */
+watch([query, () => openMenu.value === "combo"], () => (highlight.value = -1), { flush: "sync" })
+const comboMenuEl = ref<HTMLElement>()
+
+/* The row the keyboard moved to is scrolled into the list's view; a row under the pointer is already in it. */
+function revealHighlight() {
+  void nextTick(() => comboMenuEl.value?.querySelector<HTMLElement>(".cp-option.on")?.scrollIntoView({ block: "nearest" }))
+}
 
 function addModel(raw: string) {
   const id = normalizeModelId(raw)
@@ -253,9 +260,11 @@ function comboKey(event: KeyboardEvent) {
     event.preventDefault()
     openMenu.value = "combo"
     highlight.value = Math.min(highlight.value + 1, Math.max(choices.value.length - 1, 0))
+    revealHighlight()
   } else if (event.key === "ArrowUp") {
     event.preventDefault()
     if (highlight.value > 0) highlight.value -= 1
+    revealHighlight()
   } else if (event.key === "Enter") {
     event.preventDefault()
     addModel(comboEnterValue(openMenu.value === "combo" ? highlight.value : -1, choices.value, query.value))
@@ -535,7 +544,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
         @keydown="comboKey"
       />
       <button type="button" class="cp-btn" data-model-add :disabled="!query.trim()" @click="addModel(query)">{{ t("provider.custom.models.add") }}</button>
-      <div v-if="openMenu === 'combo'" class="cp-menu combo" role="listbox" data-model-combo-menu>
+      <div v-if="openMenu === 'combo'" ref="comboMenuEl" class="cp-menu combo" role="listbox" data-model-combo-menu>
         <div v-if="!choices.length" class="cp-menu-empty" data-model-combo-empty>{{ t("set.models.comboEmpty") }}</div>
         <button
           v-for="(id, at) in choices"

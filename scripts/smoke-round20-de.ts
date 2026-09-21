@@ -31,7 +31,20 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
       check("D-2: moved to the second suggestion, that is what goes in", enter(1, ["gpt-4o", "gpt-4-turbo"], "gpt-4") === "gpt-4-turbo")
     }
     const form = await read("src/renderer/src/components/CustomProviderForm.vue")
-    check("D-2: the list opens and changes with nothing highlighted", /const highlight = ref\(-1\)/.test(form) && /\(\) => \(highlight\.value = -1\)\)/.test(form))
+    check("D-2: the list opens and changes with nothing highlighted", /const highlight = ref\(-1\)/.test(form) && /\(\) => \(highlight\.value = -1\)[,)]/.test(form))
     check("D-2: Enter goes through the rule", /addModel\(comboEnterValue\(/.test(form))
+    check("D-2: an ArrowDown that opens the list is not reset after it moves", /\(\) => \(highlight\.value = -1\), \{ flush: "sync" \}\)/.test(form))
+  }
+
+  section("Round 20: D-5 the arrows keep the highlighted suggestion in the list's view")
+  {
+    const form = await read("src/renderer/src/components/CustomProviderForm.vue")
+    const key = /function comboKey\([^)]*\) \{([\s\S]*?)\n\}/.exec(form)?.[1] ?? ""
+    const down = /"ArrowDown"\) \{([\s\S]*?)\} else if/.exec(key)?.[1] ?? ""
+    const up = /"ArrowUp"\) \{([\s\S]*?)\} else if/.exec(key)?.[1] ?? ""
+    const reveal = /function revealHighlight\(\) \{([\s\S]*?)\n\}/.exec(form)?.[1] ?? ""
+    check("D-5: both arrows reveal the row they land on", down.includes("revealHighlight()") && up.includes("revealHighlight()"), key)
+    check("D-5: the row is scrolled into the list's view, the nearest way", /comboMenuEl\.value\?\.querySelector<HTMLElement>\("\.cp-option\.on"\)\?\.scrollIntoView\(\{ block: "nearest" \}\)/.test(reveal), reveal)
+    check("D-5: the list is the element held", /ref="comboMenuEl" class="cp-menu combo"/.test(form))
   }
 }
