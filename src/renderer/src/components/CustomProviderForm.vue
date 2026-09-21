@@ -32,6 +32,7 @@ const props = defineProps<{
   editing?: CustomProvider
   /** In the connect dialog: a save button of its own, and the saved model is selected. */
   standalone?: boolean
+  /** The id field takes the keys when the form opens. */
   autofocus?: boolean
 }>()
 const emit = defineEmits<{ connected: [providerID: string]; saved: [providerID: string] }>()
@@ -222,6 +223,16 @@ async function testConnection(quiet = false) {
 /* A saved provider is tested as soon as it opens, as MiMo tests one with an address and a key. */
 onMounted(() => {
   if (editing && validEndpoint(editing.baseURL)) void testConnection(true)
+})
+
+/*
+ * Asked to (the connect dialog's custom step), the id field takes the keys on
+ * opening. Focused here: Chromium honours the `autofocus` attribute only for
+ * the first element that asks in a document's life, and this form opens later.
+ */
+const providerIdEl = ref<HTMLInputElement>()
+onMounted(() => {
+  if (props.autofocus) providerIdEl.value?.focus()
 })
 
 /* ------------------------------------------------------------ the model picker */
@@ -433,8 +444,8 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
             v-model="form.providerID"
             class="cp-in mono"
             :class="{ bad: idError }"
+            ref="providerIdEl"
             :readonly="Boolean(editing)"
-            :autofocus="props.autofocus"
             :placeholder="t('provider.custom.field.providerID.placeholder')"
             spellcheck="false"
             autocomplete="off"

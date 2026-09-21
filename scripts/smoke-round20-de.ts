@@ -127,4 +127,13 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
     const note = /\n\.note \{([^}]*)\}/.exec(page)?.[1] ?? ""
     check("D-7: the intro no longer pulls itself up under a 32px margin", !/margin:\s*-/.test(note) && /margin:\s*2px 0 4px/.test(note), note)
   }
+
+  section("Round 20: the connect dialog puts the keys where its autofocus asked, every time it opens")
+  {
+    const dialog = await read("src/renderer/src/components/ConnectDialog.vue")
+    const form = await read("src/renderer/src/components/CustomProviderForm.vue")
+    check("autofocus: no attribute Chromium honours once per document is relied on", !/\sautofocus[\s/>]/.test(dialog.replace(/<CustomProviderForm[^>]*>/, "")) && !/:autofocus=/.test(form))
+    check("autofocus: the list's search is focused whenever the list is shown", /if \(now === "browse"\) void nextTick\(\(\) => searchEl\.value\?\.focus\(\)\)/.test(dialog) && /<input ref="searchEl"/.test(dialog))
+    check("autofocus: the custom form focuses its id field itself when asked", /if \(props\.autofocus\) providerIdEl\.value\?\.focus\(\)/.test(form) && /ref="providerIdEl"/.test(form))
+  }
 }
