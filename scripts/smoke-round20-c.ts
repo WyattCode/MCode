@@ -88,6 +88,17 @@ export async function roundTwentyLaneCChecks(check: Check, section: (name: strin
     check("it is the last turn only when that turn began before the goal was met", /goal\?\.done\?\.at/.test(which) && /began <= at/.test(which) && /turns\.value\.at\(-1\)/.test(which), which)
   }
 
+  // ------------------------------------------------------------------ R20-C-6
+  section("Round 20 (C-6): the question form's typed-answer row stays opaque when focused in dark")
+  {
+    const form = await read("src/renderer/src/components/parts/QuestionForm.vue")
+    const style = form.slice(form.indexOf("<style"))
+    const rules = [...style.matchAll(/([^{}]*\.q-custom:has\(textarea:focus\)[^{}]*)\{([^}]*)\}/g)].map((match) => ({ selector: match[1].trim(), rule: match[2].trim() }))
+    const dark = rules.filter((entry) => /dark|light/.test(entry.selector))
+    check("both dark rules (the theme attribute and the system scheme) are found", dark.length === 2, rules)
+    check("neither lays a translucent tint over the options scrolling under the sticky row", dark.every((entry) => !/#[0-9a-f]{6}[0-9a-f]{2}\s*;/i.test(entry.rule) && /var\(--surface-menu\)/.test(entry.rule)), dark)
+  }
+
   const store = await read("src/renderer/src/stores/app.ts")
 
   // ------------------------------------------------------------------ R20-C-2

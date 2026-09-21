@@ -802,8 +802,13 @@ const Actions: FunctionalComponent = () => {
   background: #2e2e2e;
 }
 
-:root[data-theme="dark"] .q-opt:hover, :root[data-theme="dark"] .q-opt:focus-visible, :root[data-theme="dark"] .q-custom:has(textarea:focus) {
+:root[data-theme="dark"] .q-opt:hover, :root[data-theme="dark"] .q-opt:focus-visible {
   background: #ffffff0f;
+}
+
+/* The sticky row covers the options scrolling under it: its tint is mixed into its own surface, so they do not show through. */
+:root[data-theme="dark"] .q-custom:has(textarea:focus) {
+  background: color-mix(in srgb, #ffffff 5.88%, var(--surface-menu));
 }
 
 :root[data-theme="dark"] .q-opt.on {
@@ -850,8 +855,12 @@ const Actions: FunctionalComponent = () => {
     background: #2e2e2e;
   }
 
-  :root:not([data-theme="light"]) .q-opt:hover, :root:not([data-theme="light"]) .q-opt:focus-visible, :root:not([data-theme="light"]) .q-custom:has(textarea:focus) {
+  :root:not([data-theme="light"]) .q-opt:hover, :root:not([data-theme="light"]) .q-opt:focus-visible {
     background: #ffffff0f;
+  }
+
+  :root:not([data-theme="light"]) .q-custom:has(textarea:focus) {
+    background: color-mix(in srgb, #ffffff 5.88%, var(--surface-menu));
   }
 
   :root:not([data-theme="light"]) .q-opt.on {
