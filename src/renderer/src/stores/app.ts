@@ -1809,13 +1809,13 @@ export const useApp = defineStore("app", () => {
 
   /*
    * 追求目标: the plus menu's switch, the same shape as the agent - set on the
-   * open conversation if there is one, and written as the default either way so
-   * the next conversation starts where this choice left off.
+   * conversation it is given, and written as the default either way so the next
+   * conversation starts where this choice left off. None given is the home
+   * screen's box: the next task only, never the conversation last opened.
    */
   async function setGoalMode(on: boolean, to?: string) {
-    const target = to ?? currentID.value
-    if (target) {
-      const result = await api().request({ type: "session.goalMode", sessionID: target, on })
+    if (to) {
+      const result = await api().request({ type: "session.goalMode", sessionID: to, on })
       const at = sessions.value.findIndex((entry) => entry.id === result.session.id)
       if (at >= 0) sessions.value[at] = result.session
     }

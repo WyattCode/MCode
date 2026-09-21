@@ -77,4 +77,19 @@ export async function roundTwentyLaneCChecks(check: Check, section: (name: strin
     const mark = follow.enterMark({ id: "s", length: 0, from: 0 }, "s", 1)
     check("a mark seeded at the first message animates it", mark.from === 0 && follow.enterMark(undefined, "s", 1).from === Number.MAX_SAFE_INTEGER)
   }
+
+  const store = await read("src/renderer/src/stores/app.ts")
+
+  // ------------------------------------------------------------------ R20-C-2
+  section("Round 20 (C-2): the home screen's goal switch leaves the last-opened conversation alone")
+  {
+    const set = code(body(store, "  async function setGoalMode("))
+    const setEnd = set.indexOf("\n  }\n")
+    const setBody = setEnd === -1 ? set : set.slice(0, setEnd)
+    check("setGoalMode writes only to the conversation it is given", /if \(to\)/.test(setBody) && /sessionID: to\b/.test(setBody) && !/currentID/.test(setBody), setBody)
+    const toggle = code(body(store, "  async function toggleGoalMode("))
+    check("the home toggle hands it no conversation", /const target = home \? undefined : currentID\.value/.test(toggle) && /setGoalMode\(next, target\)/.test(toggle))
+    const composer = await read("src/renderer/src/components/Composer.vue")
+    check("the home composer's session is none", /const sessionID = computed\(\(\) => \(props\.fresh \? undefined/.test(composer) && /app\.setGoalMode\(!goalMode\.value, sessionID\.value\)/.test(composer))
+  }
 }
