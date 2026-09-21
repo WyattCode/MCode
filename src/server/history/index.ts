@@ -9,7 +9,7 @@ import { projectMemoryID } from "../memory/project-id"
 
 /** What identifies a session's current compaction summary. */
 const summaryStamp = (session: SessionInfo): string => (session.compacted ? `${session.compacted.messageID}:${session.compacted.at}` : "")
-import { ftsQuery, plainSnippet, searchColumn } from "./text"
+import { ftsQuery, plainSnippet, searchColumn, substringPieces, trigramPhrase } from "./text"
 
 /**
  * The full-text index of every conversation, as MiMo's `history` tool searches it.
@@ -36,6 +36,13 @@ const CHECK_PARALLEL = 16
 
 /** While the index catches up, how many never-indexed conversations a search reads directly, newest first. */
 export const UNINDEXED_SCAN = 20
+
+/**
+ * How many of the newest parts the overlay reads for a query of one or two
+ * characters, which the trigram index cannot look up. Bounded so a keystroke
+ * costs the same on a long history as on a short one.
+ */
+export const SHORT_SCAN = 3_000
 
 /**
  * Bumped when what is indexed changes, so an index from before is filled again.
@@ -410,8 +417,20 @@ async close(): Promise<void> {
    * settled one is rather than by reading hundreds of transcripts.
    */
   async candidates(query: string, sessions: readonly SessionInfo[]): Promise<string[]> {
-    // Typed a letter at a time, so the last word is what is being typed, not a word.
-    const found = new Set((await this.search({ query, limit: SEARCH_HARD_CAP, prefix: true })).map((hit) => hit.session_id))
+    const matched = await this.holding(query)
+    /*
+     * The newest SEARCH_HARD_CAP of them that the overlay lists at all. The
+     * overlay scores what it reads and keeps the best, and MiMo's reads the
+     * conversations it has loaded - the recent ones - so when more hold the
+     * query than can be read, the recent ones are what is read.
+     */
+    const found = new Set(
+      sessions
+        .filter((session) => matched.has(session.id) && !session.archived && !session.sideOf && !session.parentID)
+        .sort((a, b) => b.updated - a.updated)
+        .slice(0, SEARCH_HARD_CAP)
+        .map((session) => session.id),
+    )
     if (!this.building) return [...found]
     let unseen = 0
     for (const session of sessions) {
@@ -421,6 +440,49 @@ async close(): Promise<void> {
       unseen += 1
     }
     return [...found]
+  }
+
+  /**
+   * Every conversation with a message that may hold `query` as the overlay
+   * matches it: anywhere in the text, inside a word or across words (R15-S3).
+   *
+   * Pieces of three characters or more are looked up in the trigram index, a
+   * message having to hold them all; shorter pieces are then left to the
+   * overlay's own matcher, which only makes the set larger. A query with no
+   * piece that long has no trigram to look up, so it is answered twice over:
+   * by the word index across the whole history, as before (a word, or the
+   * start of one, and Chinese of any length), and by reading the newest
+   * SHORT_SCAN parts for it anywhere.
+   */
+  private async holding(query: string): Promise<Set<string>> {
+    await this.flush()
+    const pieces = substringPieces(query)
+    if (!pieces.length) return new Set()
+    const phrases = pieces.map(trigramPhrase).filter((phrase): phrase is string => phrase !== undefined)
+    if (phrases.length) {
+      const one = "SELECT p.message_id, p.session_id FROM history_part_trigram t JOIN history_part p ON p.id = t.rowid WHERE history_part_trigram MATCH ?"
+      const rows = await this.db.all<{ session_id: string }>(`SELECT DISTINCT session_id FROM (${phrases.map(() => one).join(" INTERSECT ")})`, ...phrases)
+      return new Set(rows.map((row) => row.session_id))
+    }
+    const found = new Set<string>()
+    const expression = ftsQuery(query, "AND", true)
+    if (expression) {
+      const words = await this.db.all<{ session_id: string }>(
+        "SELECT DISTINCT p.session_id FROM history_part_fts f JOIN history_part p ON p.id = f.rowid WHERE history_part_fts MATCH ?",
+        expression,
+      )
+      for (const row of words) found.add(row.session_id)
+    }
+    // SQLite's lower() folds only ASCII, which is what a query this short mostly is.
+    const recent = await this.db.all<{ session_id: string }>(
+      `SELECT DISTINCT session_id FROM (
+         SELECT session_id, body FROM history_part WHERE kind IN ('text', 'tool') ORDER BY time_created DESC LIMIT ?
+       ) WHERE instr(lower(body), ?) > 0`,
+      SHORT_SCAN,
+      query.trim().toLowerCase(),
+    )
+    for (const row of recent) found.add(row.session_id)
+    return found
   }
 
   async search(input: HistorySearch): Promise<HistoryHit[]> {

@@ -379,6 +379,8 @@ import { roundEighteenEngineChecks } from "./smoke-round18-engine"
 import { atomicLeftoverChecks } from "./smoke-atomic-leftovers"
 // Round 18: the settings navigation's list scrolls, as MiMo's sn-scroll (round 15 U3's open item).
 import { roundEighteenSettingsNavChecks } from "./smoke-round18-settings-nav"
+// The search overlay finds text inside a word again, through a trigram index (R15-S3's open item).
+import { substringSearchChecks } from "./smoke-substring-search"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7007,6 +7009,7 @@ async function main() {
   await roundEighteenEngineChecks(check, section)
   await atomicLeftoverChecks(check, section)
   await roundEighteenSettingsNavChecks(check, section)
+  await substringSearchChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
