@@ -244,6 +244,7 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
     check("R18-U7: the chip is on all three kinds of row (pinned, in a project, recent)", chips === 3 && ["block.session.id", "session.id", "entry.session.id"].every((x) => side.includes(`:data-conv-subagent-chip="${x}"`)), chips)
     check("R18-U7: it names the subagents under the pointer and opens their tab", /v-tip="\{ label: subagentNames\(workingFor\.get\(session\.id\)!\), placement: 'top' \}"\s*@click\.stop="emit\('openSubagents', session\.id\)"/.test(side))
     check("R18-U7: the row keeps its spinner while they work", /const working = \(sessionID: string\) => app\.running\.has\(sessionID\) \|\| workingFor\.value\.has\(sessionID\)/.test(side) && /if \(working\(sessionID\)\) return "running"/.test(side))
+    check("R18-U7: the chip is a 14px-line pill centred in the row, not stretched to its height", /\n\.subagent-chip \{[^}]*align-self: center;[^}]*line-height: calc\(14px \* var\(--ui-font-scale, 1\)\);/.test(side))
     check("R18-U7: under the pointer it steps 54px aside for the pin and menu", /\.row:hover \.subagent-chip,\s*\.row:focus-within \.subagent-chip \{\s*transform: translateX\(-54px\);/.test(side))
     const app = await read("src/renderer/src/App.vue")
     check("R18-U7: the window opens the conversation, then its 子智能体 tab", /@openSubagents="openSubagentsFromSide"/.test(app) && /async function openSubagentsFromSide\(sessionID: string\) \{\s*await openFromSide\(sessionID\)\s*rp\.openSubagents\(\)/.test(app))

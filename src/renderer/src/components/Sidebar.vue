@@ -2696,6 +2696,7 @@ button.section-head:focus-visible {
   position: relative;
   z-index: 1;
   flex: none;
+  align-self: center;
   margin-inline-start: -8px;
   padding: 1px 6px;
   color: var(--text-weak);
