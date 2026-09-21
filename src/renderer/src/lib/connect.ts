@@ -6,9 +6,9 @@ import { t } from "./i18n"
  *
  * A brand can be several providers underneath - a ChatGPT subscription and the
  * metered OpenAI API are different endpoints with different credentials - but
- * to someone connecting an account they are one vendor offering a choice. This
- * lived inside the onboarding wizard; the settings page and the connect dialog
- * need the same answer, and three copies would drift.
+ * to someone connecting an account they are one vendor offering a choice. The
+ * settings page and the connect dialog need the same answer, and two copies
+ * would drift.
  */
 
 export interface Group {
@@ -27,6 +27,43 @@ export interface Way {
   label: string
 }
 
+/**
+ * The vendors MiMo's settings page offers to add, in its order, one chip each:
+ * its two MiMo entries, DeepSeek, Kimi, GLM, Qwen and MiniMax. Every other
+ * provider - the rest of the catalog, local runtimes - is reached through the
+ * custom form, as it is in MiMo; one already connected stays listed as added.
+ */
+export const QUICK_ADD = ["xiaomi", "xiaomi-plan", "deepseek", "moonshot", "zhipu", "dashscope", "minimax"] as const
+
+/*
+ * What the connect dialog lists: the quick-add vendors, and the ChatGPT
+ * subscription sign-in, which MCode keeps on purpose (MiMo has no such entry).
+ */
+const CONNECTABLE = new Set<string>([...QUICK_ADD, "chatgpt"])
+
+/* The two vendor names MiMo translates; every other name is the vendor's own in every language. */
+const LABEL_KEYS: Record<string, string> = { zhipu: "providerLabels.zhipu", dashscope: "providerLabels.dashscope" }
+
+/** A provider's name as the window shows it. */
+export function providerLabel(provider: Pick<ProviderStatus, "id" | "name">): string {
+  const key = LABEL_KEYS[provider.id]
+  return key ? t(key) : provider.name
+}
+
+/** The quick-add chips, each a one-provider group so the connect dialog opens straight on it. */
+export function quickAddGroups(providers: ProviderStatus[]): Group[] {
+  return QUICK_ADD.flatMap((id) => {
+    const provider = providers.find((entry) => entry.id === id)
+    if (!provider) return []
+    return [{ id, name: providerLabel(provider), recommended: Boolean(provider.recommended), order: provider.order, entries: [provider] }]
+  })
+}
+
+/** The providers the connect dialog offers. */
+export function connectableProviders(providers: ProviderStatus[]): ProviderStatus[] {
+  return providers.filter((entry) => CONNECTABLE.has(entry.id))
+}
+
 export function groupProviders(providers: ProviderStatus[], includeCustom = false): Group[] {
   const byId = new Map<string, Group>()
   for (const provider of providers) {
@@ -41,7 +78,7 @@ export function groupProviders(providers: ProviderStatus[], includeCustom = fals
     }
     byId.set(id, {
       id,
-      name: provider.groupName ?? provider.name,
+      name: provider.groupName ?? providerLabel(provider),
       recommended: provider.recommended,
       order: provider.order,
       entries: [provider],

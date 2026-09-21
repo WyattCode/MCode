@@ -1,16 +1,17 @@
 /**
- * Checks the theme engine against the stylesheet it was reverse-engineered from.
+ * Checks the stylesheet against the one palette it is generated from.
  *
- * The app's own colours were written out by hand before the engine existed, and
- * they were taken from the reference's OC-2 theme. So OC-2 run through the
- * engine has to land on exactly those values - any drift means the port of the
- * colour arithmetic is wrong, and every other theme is wrong with it.
+ * MiMo has no palette choice, so the window no longer runs the theme engine:
+ * tokens.css holds what the engine derives from MCode 2.0, in all three of its
+ * blocks - light, the system-dark media query, and the explicit dark choice.
+ * So the palette run through the engine has to land on exactly those values;
+ * a token edited by hand, or a palette edited without regenerating, fails.
  */
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { themeTokens } from "../src/renderer/src/lib/theme-engine"
-import { THEMES, themeByID } from "../src/renderer/src/lib/theme-palettes"
+import { MCODE_THEME } from "../src/renderer/src/lib/theme-palettes"
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const css = fs.readFileSync(path.join(here, "../src/renderer/src/styles/tokens.css"), "utf8")
@@ -41,37 +42,48 @@ function block(selector: string) {
 }
 
 const problems: string[] = []
-const oc2 = themeByID("oc-2")
 
+/*
+ * Every token the engine makes is written in every block, with the engine's
+ * value: nothing paints over the stylesheet at runtime any more, so a token the
+ * stylesheet left out would simply be missing from the window.
+ */
 for (const [scheme, selector] of [
   ["dark", ':root[data-theme="dark"]'],
+  ["system dark", ':root:not([data-theme="light"])'],
   ["light", ":root {"],
 ] as const) {
   const written = block(selector)
-  const generated = themeTokens(oc2, scheme === "dark")
+  const generated = themeTokens(MCODE_THEME, scheme !== "light")
   for (const [name, value] of Object.entries(generated)) {
     const expected = written[name]
-    if (!expected) continue // a token the stylesheet leaves to the engine alone
-    if (expected.toLowerCase() !== value.toLowerCase()) {
+    if (!expected) problems.push(`${scheme} ${name}: the engine makes it, the stylesheet does not have it`)
+    else if (expected.toLowerCase() !== value.toLowerCase()) {
       problems.push(`${scheme} ${name}: engine ${value}, stylesheet ${expected}`)
     }
   }
 }
 
-// Every theme has to produce a usable colour for every token in both schemes:
-// a palette with a missing seed would otherwise surface as an undefined that
-// only shows up as an unstyled corner of the window.
+// The palette has to produce a usable colour for every token in both schemes:
+// a missing seed would otherwise surface as an undefined in the stylesheet.
 const hex = /^#[0-9a-f]{6}$/i
 const alpha = /^#[0-9a-f]{8}$/i
-for (const theme of THEMES) {
-  for (const isDark of [true, false]) {
-    const tokens = themeTokens(theme, isDark)
-    for (const [name, value] of Object.entries(tokens)) {
-      if (!hex.test(value) && !alpha.test(value)) {
-        problems.push(`${theme.id} ${isDark ? "dark" : "light"} ${name}: ${value}`)
-      }
+for (const isDark of [true, false]) {
+  const tokens = themeTokens(MCODE_THEME, isDark)
+  for (const [name, value] of Object.entries(tokens)) {
+    if (!hex.test(value) && !alpha.test(value)) {
+      problems.push(`${MCODE_THEME.id} ${isDark ? "dark" : "light"} ${name}: ${value}`)
     }
   }
+}
+
+/*
+ * No palette is painted over the stylesheet: MiMo's only colour setting is the
+ * scheme, and the window must not bring the engine back.
+ */
+for (const file of ["../src/renderer/src/App.vue", "../src/renderer/src/components/SettingsDialog.vue"]) {
+  const source = fs.readFileSync(path.join(here, file), "utf8")
+  if (/theme-engine|theme-palettes|themeID/.test(source)) problems.push(`${path.basename(file)}: reads a palette, which MiMo does not have`)
 }
 
 /*
@@ -116,16 +128,9 @@ const PHYSICAL = /^\s*(padding-(?:left|right)|margin-(?:left|right)|border-(?:le
  * The title bar's are not the app's decision: Windows paints its caption buttons
  * at one end and reports where, and macOS puts its traffic lights on the left
  * whatever the language - so the room reserved for them has to be reserved on
- * the side the platform actually used. The file panel's pair is a bidi trick,
- * not a layout: a path is turned around so the ellipsis eats the front of it,
- * and the alignment has to be turned back by hand.
+ * the side the platform actually used.
  */
-const PHYSICAL_ALLOWED = new Set([
-  "TitleBar.vue:margin-left",
-  "TitleBar.vue:margin-right",
-  "TitleBar.vue:padding-left",
-  "FilePanel.vue:text-align",
-])
+const PHYSICAL_ALLOWED = new Set<string>([])
 
 // parts/ as well as components/ - a message part is as mirrored as a dialog is.
 const styledFiles = [
@@ -168,28 +173,142 @@ const ANSI_SLOTS = [
   "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
 ]
 
+/*
+ * MiMo has two tables - its own light set, and xterm's defaults written out for
+ * dark - and they live in lib/terminal.ts so the smoke test can read them. Each
+ * must be complete and spread into the palette, and the pane must use that palette.
+ */
 {
-  const source = fs.readFileSync(path.join(componentDir, "TerminalPane.vue"), "utf8")
-  const table = source.slice(source.indexOf("const ANSI = {"), source.indexOf("} as const"))
-  if (!table) {
-    problems.push("TerminalPane.vue: no ANSI table, so the terminal falls back to xterm's own colours")
-  } else {
+  const libFile = path.join(componentDir, "..", "lib", "terminal.ts")
+  const lib = fs.readFileSync(libFile, "utf8")
+  for (const name of ["ANSI_LIGHT", "ANSI_DARK"]) {
+    const from = lib.indexOf(`export const ${name} = {`)
+    const table = from === -1 ? "" : lib.slice(from, lib.indexOf("} as const", from))
+    if (!table) {
+      problems.push(`lib/terminal.ts: no ${name} table, so the terminal falls back to xterm's own colours`)
+      continue
+    }
     for (const slot of ANSI_SLOTS) {
       if (!new RegExp(`\\b${slot}:\\s*"#[0-9a-fA-F]{6}"`).test(table)) {
-        problems.push(`TerminalPane.vue: the ANSI table has no ${slot}, which xterm would fill from its own palette`)
+        problems.push(`lib/terminal.ts: ${name} has no ${slot}, which xterm would fill from its own palette`)
       }
     }
     // Handed to xterm, not merely declared.
-    if (!/\.\.\.ANSI,/.test(source)) {
-      problems.push("TerminalPane.vue: the ANSI table is never spread into the theme xterm is given")
+    if (!new RegExp(`\\.\\.\\.${name}\\b`).test(lib)) {
+      problems.push(`lib/terminal.ts: ${name} is never spread into the theme xterm is given`)
+    }
+  }
+  const pane = fs.readFileSync(path.join(componentDir, "TerminalPane.vue"), "utf8")
+  if (!/theme:\s*palette\(\)/.test(pane) || !/terminalPalette\(/.test(pane)) {
+    problems.push("TerminalPane.vue: xterm is not given lib/terminal.ts's palette")
+  }
+}
+
+/*
+ * A focus ring marks an element. It must not restyle it.
+ *
+ * The global `:focus-visible` rule used to set `border-radius`, which does not
+ * round the ring - an outline already follows whatever radius the element
+ * declares - it rounds the element, for as long as it has focus. Every one of
+ * the 27 focusable controls surveyed across this app had a radius other than
+ * the 4px that rule forced, so taking focus visibly reshaped all of them.
+ *
+ * The same trap is open to `:hover` and `:active`. Revealing a *child* on
+ * hover is a different thing and stays allowed - this looks only at rules
+ * whose own selector ends in the state, so `.row:hover .slot { width }` is not
+ * caught while `.row:hover { width }` is.
+ */
+{
+  const GEOMETRY = ["border-radius", "padding", "border-width", "font-size"]
+  const files: string[] = []
+  const walk = (relative: string) => {
+    for (const entry of fs.readdirSync(path.join(here, "..", relative), { withFileTypes: true })) {
+      const next = `${relative}/${entry.name}`
+      if (entry.isDirectory()) walk(next)
+      else if (next.endsWith(".vue") || next.endsWith(".css")) files.push(next)
+    }
+  }
+  walk("src/renderer/src")
+
+  const STATE = /:(hover|focus-visible|focus|active)\s*(,|\{|$)/
+  /*
+   * Plain string work, no regex. The first attempt built this with
+   * `new RegExp(\`^\s*...\`)` - inside a template literal the backslash is
+   * eaten, so the pattern became `^s*...` and required the line to start with
+   * a literal "s". It matched nothing, and the check passed on the defect it
+   * was written for. Twice.
+   */
+  const declares = (line: string) => {
+    const text = line.trim()
+    return GEOMETRY.find((property) => text.startsWith(property) && text.slice(property.length).trimStart().startsWith(":"))
+  }
+
+  /*
+   * Line by line rather than by matching `selector { body }`. A block regex has
+   * to assume no brace appears in a comment, and this file's comments do -
+   * which silently misaligned every block after the first and made the check
+   * pass on the very defect it was written for.
+   */
+  for (const file of files) {
+    const lines = fs.readFileSync(path.join(here, "..", file), "utf8").split(String.fromCharCode(10))
+    let selector: string | undefined
+    for (const line of lines) {
+      const text = line.trim()
+      if (text.endsWith("{")) {
+        const head = text.slice(0, -1).trim()
+        // Only the element carrying the state, not a descendant of it: a
+        // trailing state pseudo-class on one of the comma-separated parts.
+        selector = head.split(",").some((one) => STATE.test(one.trim() + "{")) ? head : undefined
+        continue
+      }
+      if (text.startsWith("}")) {
+        selector = undefined
+        continue
+      }
+      if (!selector) continue
+      const property = declares(line)
+      if (property) {
+        problems.push(`${file}: \`${selector}\` changes ${property}, which reshapes the element it is marking`)
+      }
     }
   }
 }
 
-console.log(`themes: ${THEMES.length}, tokens each: ${Object.keys(themeTokens(oc2, true)).length}`)
+
+/*
+ * Two scoped-style selectors that Vue compiles into something else entirely.
+ * `:global(X) .y` becomes a bare `X`, so the rule lands on html, :root or the
+ * dock instead of the element (the diff-marks setting once hid the window).
+ * A selector ending in `:is(...)` or `:where(...)` gets its scope attribute on
+ * the wrong compound, so a dark variant written that way never applies.
+ */
+function scopedBlocks(source: string): string[] {
+  return [...source.matchAll(/<style[^>]*\bscoped\b[^>]*>([\s\S]*?)<\/style>/g)].map((match) => match[1])
+}
+function walkVue(directory: string, out: string[] = []): string[] {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const full = path.join(directory, entry.name)
+    if (entry.isDirectory()) walkVue(full, out)
+    else if (entry.name.endsWith(".vue")) out.push(full)
+  }
+  return out
+}
+for (const file of walkVue(path.join(componentDir, ".."))) {
+  const name = path.relative(path.join(componentDir, ".."), file)
+  for (const block of scopedBlocks(fs.readFileSync(file, "utf8"))) {
+    for (const match of block.matchAll(/:global\([^{}]*?\)\s+[.#\[a-zA-Z:*>]/g)) {
+      problems.push(`${name}: \`${match[0].trim()}\` in a scoped style compiles to the bare :global selector - write it as a plain scoped selector`)
+    }
+    for (const match of block.matchAll(/(?:^|[},\n])\s*([^{}]*?\s:(?:is|where)\([^{}]*\))\s*\{/g)) {
+      problems.push(`${name}: \`${match[1].trim()}\` ends in :is()/:where(), which the scope attribute misses - list the selectors instead`)
+    }
+  }
+}
+
+console.log(`palette: ${MCODE_THEME.name}, tokens: ${Object.keys(themeTokens(MCODE_THEME, true)).length}, in three blocks`)
 if (problems.length) {
   console.error(`FAILED with ${problems.length} problem(s):`)
   for (const problem of problems.slice(0, 40)) console.error("  " + problem)
   process.exit(1)
 }
-console.log("OC-2 regenerates tokens.css exactly, and every theme resolves.")
+console.log("MCode 2.0 regenerates tokens.css exactly, in all three blocks.")

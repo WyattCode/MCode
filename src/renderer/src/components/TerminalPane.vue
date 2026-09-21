@@ -5,11 +5,14 @@ import ContextMenu from "./ContextMenu.vue"
 import { Terminal } from "@xterm/xterm"
 import { FitAddon } from "@xterm/addon-fit"
 import { WebglAddon } from "@xterm/addon-webgl"
-import { WebLinksAddon } from "@xterm/addon-web-links"
 import { Unicode11Addon } from "@xterm/addon-unicode11"
 import "@xterm/xterm/css/xterm.css"
+import { typedInput } from "@shared/terminal-input"
+import type { ShellSurface } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
+import { isPasteKey, terminalPalette } from "../lib/terminal"
+import { screenReaderActive } from "../lib/screen-reader"
 
 /**
  * One shell, and the xterm showing it.
@@ -45,37 +48,58 @@ import { t } from "../lib/i18n"
  * only when something changed.
  *
  * So: keep xterm, and take everything from the reference that is not the
- * engine - its font, its option values, its colour derivations, its focus
- * behaviour. What stays different is narrow and written down: Unicode widths
- * follow 11 rather than 15.1, Legacy Computing sextants stay uncovered, the
- * scrollbar is the platform's rather than a fading canvas overlay, and
- * XTPUSHSGR is unsupported.
+ * engine - its font, its option values, its focus behaviour. What stays
+ * different is narrow and written down: Unicode widths follow 11 rather than
+ * 15.1, Legacy Computing sextants stay uncovered, the scrollbar is the
+ * platform's styled to MiMo's overlay slider, and XTPUSHSGR is unsupported.
  */
 const props = defineProps<{
   active: boolean
   height: number
   /** A shell the backend is already holding, to come back to instead of starting one. */
   shellID?: string
+  /** The conversation this terminal belongs to; absent on the home screen. */
+  sessionID?: string
+  /** On the home screen, the project folder picked there, which the shell starts in. */
+  directory?: string
+  /** Which terminal this pane is part of; the drawer and the right panel each own their shells (N11-9). */
+  surface?: ShellSurface
 }>()
-const emit = defineEmits<{ exited: []; opened: [shellID: string] }>()
+/*
+ * `used`: something was typed into the shell, now or before this pane - MiMo
+ * asks before closing such a terminal. `attached`: a shell came back and its
+ * state is known, so the owner can decide whether to start it again elsewhere.
+ */
+const emit = defineEmits<{ opened: [shellID: string, cwd: string]; used: []; attached: [] }>()
 
 const app = useApp()
 
 const host = ref<HTMLElement>()
 const menu = ref<{ x: number; y: number }>()
 const shellID = ref<string>()
+/* MiMo's text in place of a terminal that cannot start; red only for a real failure. */
+const failure = ref<{ text: string; error: boolean }>()
+/* Set while the viewport scrolls, so the slider shows as MiMo's overlay one does. */
+const scrolling = ref(false)
 let terminal: Terminal | undefined
 let fit: FitAddon | undefined
+let resized: ResizeObserver | undefined
 let offEvents: (() => void) | undefined
 let offTheme: (() => void) | undefined
-let blinkOn: (() => void) | undefined
-let blinkOff: (() => void) | undefined
 let webgl: WebglAddon | undefined
+let scrollTimer: ReturnType<typeof setTimeout> | undefined
+/*
+ * True from open() until xterm's own first timer has run. xterm 5.5's viewport
+ * queues a scroll-area sync on a zero timer as the terminal opens; a pane
+ * unmounted before that timer fires (switching between home and a
+ * conversation twice in quick succession does it) had its renderer torn down
+ * underneath the sync, which threw `Cannot read properties of undefined
+ * (reading 'dimensions')` into the window.
+ */
+let openSyncPending = false
 
-/** Whether the process is still running, which the drawer marks on the tab. */
 defineExpose({
   focus: () => terminal?.focus(),
-  alive: () => Boolean(shellID.value),
   /** Types a command into the shell and runs it, as if it had been typed. */
   run: (command: string) => {
     // False while the shell is still starting, so the caller can wait rather
@@ -90,119 +114,66 @@ defineExpose({
   },
 })
 
-/** Whether a colour is dark enough to be a dark theme's background. */
-function isDark(colour: string): boolean {
-  const hex = colour.trim().replace("#", "")
-  if (hex.length < 6) return true
-  const [r, g, b] = [0, 2, 4].map((at) => parseInt(hex.slice(at, at + 2), 16))
-  if ([r, g, b].some((part) => Number.isNaN(part))) return true
-  // Rec. 601 luma, which is what "is this dark" means to an eye.
-  return (r * 299 + g * 587 + b * 114) / 1000 < 128
-}
-
-/**
- * The sixteen colours a program picks from when it colours its own output.
- *
- * These are the reference's own `terminal.ansi*` values. They are not derived
- * from the theme and do not change with it: its `getTerminalColors` resolves
- * only four colours from theme tokens - background, foreground, cursor and
- * selection - and these sit underneath as fixed defaults. Deriving them from
- * this app's semantic tokens instead was the tempting alternative and the wrong
- * one: --error and --success are UI colours, muted for reading paragraphs
- * against, and a build tool's red would have come out washed rather than red.
- *
- * Every bright slot repeats its normal one, which is what the reference ships;
- * black is the terminal's own background, so a program that paints "black" text
- * disappears into it exactly as it does there.
- *
- * Without these, xterm fell back to its built-in palette - a different red, a
- * different green - so ls, git and every build tool were the wrong colours.
- */
-const ANSI = {
-  black: "#141415",
-  red: "#ff2e3f",
-  green: "#0dbe4e",
-  yellow: "#ffca00",
-  blue: "#008cff",
-  magenta: "#c635e4",
-  cyan: "#08c0ef",
-  white: "#c6c6c8",
-  brightBlack: "#141415",
-  brightRed: "#ff2e3f",
-  brightGreen: "#0dbe4e",
-  brightYellow: "#ffca00",
-  brightBlue: "#008cff",
-  brightMagenta: "#c635e4",
-  brightCyan: "#08c0ef",
-  brightWhite: "#c6c6c8",
-} as const
-
-/**
- * The four colours xterm is given.
- *
- * Shaped after the reference's own getTerminalColors, which resolves the
- * theme's tokens and then derives the rest rather than looking each up:
- * `{ background, foreground: text, cursor: text, selectionBackground:
- * withAlpha(text, alpha) }`. Two of those derivations MCode did not make.
- *
- * The cursor was --primary, an accent - orange on the default theme - where
- * the reference draws it in the text colour. And the selection came from
- * --surface-selected, a flat opaque token, where the reference tints the
- * foreground at 25% over dark and 20% over light so whatever is under it still
- * reads through. The fallbacks are the reference's own DEFAULT_TERMINAL_COLORS
- * (main-8t-QUXax.js:5426288).
- */
+/* MiMo's colours on the app's own surface, which a custom palette may have changed. */
 function palette() {
-  const style = getComputedStyle(document.documentElement)
-  const read = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback
-
-  const background = read("--surface-raised", "#191515")
-  const dark = isDark(background)
-  const foreground = read("--text-strong", dark ? "#d4d4d4" : "#211e1e")
-  const alpha = dark ? 0.25 : 0.2
-
-  return {
-    background,
-    foreground,
-    cursor: foreground,
-    selectionBackground: withAlpha(foreground, alpha),
-    ...ANSI,
-  }
+  const background = getComputedStyle(document.documentElement).getPropertyValue("--surface-raised").trim()
+  return terminalPalette(background || "#ffffff")
 }
 
-/** A colour with an alpha channel appended, the way the reference's withAlpha does. */
-function withAlpha(colour: string, alpha: number): string {
-  const hex = colour.trim().replace("#", "")
-  if (hex.length !== 6) return colour
-  const channel = Math.round(Math.max(0, Math.min(1, alpha)) * 255)
-    .toString(16)
-    .padStart(2, "0")
-  return `#${hex}${channel}`
+const screenReader = screenReaderActive()
+// A screen reader started or stopped while the terminal is open: the reading view follows it.
+watch(screenReader, (enabled) => {
+  if (terminal) terminal.options.screenReaderMode = enabled
+})
+
+function reason(err: unknown) {
+  return err instanceof Error ? err.message : String(err)
+}
+
+function onScroll() {
+  scrolling.value = true
+  clearTimeout(scrollTimer)
+  scrollTimer = setTimeout(() => (scrolling.value = false), 800)
 }
 
 onMounted(async () => {
-  if (!host.value || !app.currentID) return
+  if (!host.value || (!props.sessionID && !props.directory)) return
 
+  const client = app.client
+  if (!client) {
+    failure.value = { text: t("term.notReady"), error: false }
+    return
+  }
+
+  // The input's spoken name, and what screen reader mode says when output comes faster than it can be read.
+  Terminal.strings.promptLabel = t("term.inputLabel")
+  Terminal.strings.tooMuchOutput = t("term.tooMuchOutput")
   terminal = new Terminal({
+    /*
+     * The row-per-line reading view and the live region, only while assistive
+     * technology is there (see lib/screen-reader.ts). Measured: the view is
+     * transparent, takes no pointer events and leaves the drawn terminal
+     * pixel-for-pixel the same, so turning it on changes nothing a mouse user
+     * sees.
+     */
+    screenReaderMode: screenReader.value,
     // Its own variable, so a terminal face can differ from the code face.
     fontFamily:
       getComputedStyle(document.documentElement).getPropertyValue("--font-terminal").trim() ||
       getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim() ||
       "monospace",
     /*
-     * These are the reference's own values, read off its terminal construction
-     * (main-8t-QUXax.js:5435594): fontSize 14, a bar cursor, 10000 lines of
-     * scrollback, an opaque background, and no newline translation - a pty
-     * already sends CRLF, so converting again doubles it.
+     * MiMo's bottom terminal: 12px text on xterm's own line height, the default
+     * block cursor blinking, and no cursor at all once the terminal loses focus -
+     * an outline left in an idle pane reads as something waiting. An opaque
+     * background, and no newline translation: a pty already sends CRLF, so
+     * converting again doubles it.
      */
-    fontSize: 14,
-    lineHeight: 1.2,
-    cursorStyle: "bar",
+    fontSize: 12,
     cursorBlink: true,
+    cursorInactiveStyle: "none",
     allowTransparency: false,
     convertEol: false,
-    // The reference animates its scroll over 100ms; xterm jumps by default.
-    smoothScrollDuration: 100,
     /*
      * Required before `unicode.activeVersion` may be assigned below. Without
      * it that assignment throws, and because it throws inside onMounted the
@@ -211,10 +182,23 @@ onMounted(async () => {
      */
     allowProposedApi: true,
     theme: palette(),
-    scrollback: 10000,
+    // MiMo's terminal keeps xterm's own 1000 lines; the server's replay is byte-capped, and xterm trims what is over.
+    scrollback: 1000,
   })
   fit = new FitAddon()
   terminal.loadAddon(fit)
+
+  /*
+   * Refit whenever the pane itself changes size, not only when the drawer is
+   * dragged. A notice above the terminal takes rows away while the drawer
+   * stays the same height, and xterm otherwise goes on drawing the rows it no
+   * longer has room for below the clip.
+   */
+  resized = new ResizeObserver(() => {
+    if (!props.active) return
+    requestAnimationFrame(() => fit?.fit())
+  })
+  resized.observe(host.value)
 
   /*
    * Wider character widths, before anything is written.
@@ -228,36 +212,10 @@ onMounted(async () => {
   terminal.loadAddon(new Unicode11Addon())
   terminal.unicode.activeVersion = "11"
 
-  /*
-   * Links. Terminal output is full of them - a dev server address, a failing
-   * test's docs link, a CI run - and every one of them was dead text.
-   *
-   * A modifier is required, exactly as the reference requires one: a bare click
-   * in a terminal is how you place a selection, and stealing it to launch a
-   * browser would make selecting a URL impossible. Alt is excluded because
-   * alt-drag is a block selection. Only http and https are offered to the main
-   * process, and it checks the scheme again on its own side.
-   */
-  terminal.loadAddon(
-    new WebLinksAddon((event, uri) => {
-      const wanted = event.ctrlKey || event.metaKey || event.shiftKey
-      if (!wanted || event.altKey) return
-      if (!uri.startsWith("http://") && !uri.startsWith("https://")) return
-      window.mcode.openExternal(uri)
-    }),
-  )
-
-  /*
-   * No SerializeAddon, though the reference has one.
-   *
-   * It exists there to carry a terminal's contents across a remount while the
-   * pty behind it keeps running. That situation does not arise here: App.vue
-   * mounts this drawer under `v-if`, so closing it unmounts every pane, and a
-   * pane's unmount closes its shell. Restoring a buffer would therefore replay
-   * the output of a process that is already dead. The addon goes back in the
-   * day the drawer stops killing its shells - see the note in the drawer.
-   */
   terminal.open(host.value)
+  // Queued after xterm's own zero timer, so it clears only once that sync has run.
+  openSyncPending = true
+  setTimeout(() => (openSyncPending = false))
 
   /*
    * The GPU renderer, for the glyphs a font cannot be relied on for.
@@ -286,27 +244,18 @@ onMounted(async () => {
 
   fit.fit()
 
+  /* True while replayed output is being parsed; see the attach below. */
+  let replaying = false
   /*
-   * A cursor blinking in a pane nobody is typing into reads as activity that
-   * is not there - and with several panes open, every one of them blinks. The
-   * reference switches the option on focus and off on blur; xterm's own
-   * cursor is drawn against its hidden textarea, so that is what to listen to.
+   * Until when a device-attributes answer is held back. The console host asks
+   * for one as a shell starts, and xterm's answer reaches it only after the
+   * output has crossed to this window - by which time the host has stopped
+   * waiting and hands the answer to the shell as typed text: "[?1;2c" at the
+   * very first prompt. A program asking later, once the shell is up, is
+   * answered as usual.
    */
-  const textarea = terminal.textarea
-  if (textarea) {
-    blinkOn = () => {
-      if (terminal) terminal.options.cursorBlink = true
-    }
-    blinkOff = () => {
-      if (terminal) terminal.options.cursorBlink = false
-    }
-    textarea.addEventListener("focus", blinkOn)
-    textarea.addEventListener("blur", blinkOff)
-    if (document.activeElement !== textarea) blinkOff()
-  }
-
-  const client = app.client
-  if (!client) return
+  let quietUntil = Date.now() + 3000
+  let used = false
 
   if (props.shellID) {
     /*
@@ -315,45 +264,76 @@ onMounted(async () => {
      * redraws to the state the process is actually in rather than to a blank
      * screen with a live prompt somewhere below it.
      */
-    shellID.value = props.shellID
-    const back = await client.request({ type: "shell.attach", shellID: props.shellID })
-    if (back.data) terminal.write(back.data)
-    if (!back.alive) {
-      shellID.value = undefined
-      emit("exited")
-    } else {
-      // Its size is whatever the last pane left it at, which is not this one's.
-      void client.request({ type: "shell.resize", shellID: props.shellID, cols: terminal.cols, rows: terminal.rows })
+    let back: { data: string; alive: boolean; used: boolean }
+    try {
+      back = await client.request({ type: "shell.attach", shellID: props.shellID })
+    } catch (err) {
+      failure.value = { text: t("term.startFailed", { reason: reason(err) }), error: true }
+      return
     }
+    shellID.value = props.shellID
+    /*
+     * The replay holds the shell's opening queries - a device-attributes
+     * request among them - and xterm answers every one it reads. Those answers
+     * belong to a start-up long past, so none is sent while the replay is
+     * parsed: the shell would take them as typed text, "[?1;2c" at the prompt.
+     */
+    if (back.data) {
+      replaying = true
+      terminal.write(back.data, () => {
+        replaying = false
+      })
+    }
+    // Typed into before this pane existed still counts, as MiMo's never resets.
+    if (back.used) {
+      used = true
+      emit("used")
+    }
+    if (!back.alive) shellID.value = undefined
+    // Its size is whatever the last pane left it at, which is not this one's.
+    else void client.request({ type: "shell.resize", shellID: props.shellID, cols: terminal.cols, rows: terminal.rows })
+    emit("attached")
   } else {
     /*
      * The grid is measured before the shell is asked for, so the very first
      * prompt is printed against the real width. Sending the size afterwards
      * cannot rewrap a prompt that has already been drawn.
      */
-    const result = await client.request({
-      type: "shell.open",
-      sessionID: app.currentID,
-      cols: terminal.cols,
-      rows: terminal.rows,
-    })
-    shellID.value = result.shellID
-    emit("opened", result.shellID)
+    try {
+      const result = await client.request({
+        type: "shell.open",
+        ...(props.sessionID ? { sessionID: props.sessionID } : { directory: props.directory }),
+        cols: terminal.cols,
+        rows: terminal.rows,
+        surface: props.surface ?? "drawer",
+      })
+      shellID.value = result.shellID
+      emit("opened", result.shellID, result.cwd)
+    } catch (err) {
+      failure.value = { text: t("term.startFailed", { reason: reason(err) }), error: true }
+      return
+    }
   }
 
+  /*
+   * A shell that ends leaves no mark, as in MiMo: no line in the scrollback
+   * and nothing on the tab. Its last output stays readable until it is closed.
+   */
   offEvents = client.on((event) => {
     if (event.type === "shell.data" && event.shellID === shellID.value) terminal?.write(event.data)
-    else if (event.type === "shell.exit" && event.shellID === shellID.value) {
-      terminal?.write(
-        `\r\n\x1b[90m[process exited${event.code === null ? "" : ` with code ${event.code}`}]\x1b[0m\r\n`,
-      )
-      shellID.value = undefined
-      emit("exited")
-    }
+    else if (event.type === "shell.exit" && event.shellID === shellID.value) shellID.value = undefined
   })
 
+  // The shell is attached or open from here, so the start-up window counts from now.
+  quietUntil = Date.now() + 3000
   terminal.onData((data) => {
-    if (shellID.value) void client.request({ type: "shell.input", shellID: shellID.value, data })
+    if (replaying || !shellID.value) return
+    if (Date.now() < quietUntil && /^\x1b\[\?[\d;]*c$/.test(data)) return
+    if (!used && typedInput(data)) {
+      used = true
+      emit("used")
+    }
+    void client.request({ type: "shell.input", shellID: shellID.value, data })
   })
 
   /*
@@ -367,24 +347,20 @@ onMounted(async () => {
   })
 
   /*
-   * Ctrl+C in a terminal interrupts, so copying takes the shift as it does in
-   * every other terminal. Returning false keeps the keystroke from also
-   * reaching the shell.
+   * Paste keys. Ctrl+V (⌘V on a Mac) pastes as MiMo's does - otherwise xterm
+   * sends ^V, which only a shell that binds it turns into a paste. Ctrl+Shift+V
+   * stays for anyone used to it. Every other key, Ctrl+C included, reaches the
+   * shell.
+   *
+   * Both halves matter. Returning false keeps xterm from sending the keystroke
+   * on; preventing the default keeps Chromium from pasting into the textarea
+   * xterm reads from, which would paste a second time.
    */
   terminal.attachCustomKeyEventHandler((event) => {
-    if (event.type !== "keydown" || !event.ctrlKey || !event.shiftKey) return true
-    const key = event.key.toLowerCase()
-    if (key !== "c" && key !== "v") return true
-
-    /*
-     * Both halves matter. Returning false keeps xterm from sending the
-     * keystroke on to the shell; preventing the default keeps Chromium from
-     * acting on it as well - Ctrl+Shift+V is its own paste-as-plain-text, which
-     * would land in the textarea xterm reads from and paste a second time.
-     */
+    const shiftPaste = event.type === "keydown" && event.ctrlKey && event.shiftKey && !event.altKey && event.key.toLowerCase() === "v"
+    if (!shiftPaste && !isPasteKey(event, app.platform === "darwin")) return true
     event.preventDefault()
-    if (key === "c") copySelection()
-    else void pasteClipboard()
+    void pasteClipboard()
     return false
   })
 
@@ -410,13 +386,16 @@ function openMenu(event: MouseEvent) {
   menu.value = { x: event.clientX, y: event.clientY }
 }
 
+/* The usable items of MiMo's native menu over a terminal: copy, paste, select all. */
 const menuItems = computed<MenuItem[]>(() => [
   { key: "copy", label: t("edit.copy"), enabled: Boolean(terminal?.hasSelection()) },
   { key: "paste", label: t("edit.paste") },
+  { key: "selectAll", label: t("edit.selectAll") },
 ])
 
 function pickMenu(key: string) {
   if (key === "copy") copySelection()
+  else if (key === "selectAll") terminal?.selectAll()
   else void pasteClipboard()
   menu.value = undefined
   terminal?.focus()
@@ -443,13 +422,10 @@ function watchTheme() {
 }
 
 onBeforeUnmount(() => {
+  clearTimeout(scrollTimer)
   offTheme?.()
   offEvents?.()
-  const textarea = terminal?.textarea
-  if (textarea && blinkOn && blinkOff) {
-    textarea.removeEventListener("focus", blinkOn)
-    textarea.removeEventListener("blur", blinkOff)
-  }
+  resized?.disconnect()
   /*
    * The GPU renderer goes first, and by hand.
    *
@@ -472,8 +448,14 @@ onBeforeUnmount(() => {
    * line used to kill a dev server for each. Ending a shell is the tab's
    * close button, and the backend sweeps whatever is left when the window
    * that opened it goes away.
+   *
+   * Still inside the tick that opened it, the terminal is let go on a timer
+   * queued behind xterm's pending sync (see openSyncPending), so that sync
+   * finds its renderer still there.
    */
-  terminal?.dispose()
+  const closing = terminal
+  if (openSyncPending) setTimeout(() => closing?.dispose())
+  else closing?.dispose()
 })
 
 /*
@@ -493,7 +475,16 @@ watch(
 </script>
 
 <template>
-  <div v-show="active" ref="host" class="term" @contextmenu.prevent.stop="openMenu" />
+  <div
+    v-show="active && !failure"
+    ref="host"
+    class="term"
+    :class="{ scrolling }"
+    data-terminal-pane
+    @scroll.capture="onScroll"
+    @contextmenu.prevent.stop="openMenu"
+  />
+  <div v-if="active && failure" class="term-host" :class="{ error: failure.error }" data-terminal-failure>{{ failure.text }}</div>
 
   <ContextMenu
     v-if="menu"
@@ -509,7 +500,6 @@ watch(
 .term {
   flex: 1;
   min-height: 0;
-  padding: 6px 8px;
   /*
    * The terminal measures a character by parking a span some hundred thousand
    * pixels off to one side. Past the origin that span is simply unreachable,
@@ -518,5 +508,88 @@ watch(
    * Clipping it here leaves it where it was meant to be - out of reach.
    */
   overflow: hidden;
+}
+
+/*
+ * The inset sits on xterm's own element rather than on the box above. The fit
+ * addon sizes the grid from that box's height and takes off only the padding
+ * of xterm's element; with border-box sizing, padding on the box was counted as
+ * room for rows, so the last row ran past the bottom whenever the height came
+ * close to a whole row - which a notice above the terminal made the usual case.
+ */
+/* MiMo's terminal body: 6 above, 8 either side, 12 below. */
+.term :deep(.xterm) {
+  padding: 6px 8px 12px;
+}
+
+/*
+ * MiMo's xterm 6 slider, drawn on the platform scrollbar: 14 wide, square, in
+ * the foreground at 20%, 40% under the pointer and 50% while dragged, and not
+ * there at all until the terminal is scrolled or pointed at.
+ */
+.term :deep(.xterm-viewport::-webkit-scrollbar) {
+  width: 14px;
+  height: 14px;
+}
+
+.term :deep(.xterm-viewport::-webkit-scrollbar-thumb) {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.term.scrolling :deep(.xterm-viewport::-webkit-scrollbar-thumb),
+.term :deep(.xterm-viewport:hover::-webkit-scrollbar-thumb) {
+  background: #1f1f1f33;
+}
+
+.term :deep(.xterm-viewport::-webkit-scrollbar-thumb:hover) {
+  background: #1f1f1f66;
+}
+
+.term :deep(.xterm-viewport::-webkit-scrollbar-thumb:active) {
+  background: #1f1f1f80;
+}
+
+:root[data-theme="dark"] .term.scrolling :deep(.xterm-viewport::-webkit-scrollbar-thumb),
+:root[data-theme="dark"] .term :deep(.xterm-viewport:hover::-webkit-scrollbar-thumb) {
+  background: #ececec33;
+}
+
+:root[data-theme="dark"] .term :deep(.xterm-viewport::-webkit-scrollbar-thumb:hover) {
+  background: #ececec66;
+}
+
+:root[data-theme="dark"] .term :deep(.xterm-viewport::-webkit-scrollbar-thumb:active) {
+  background: #ececec80;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .term.scrolling :deep(.xterm-viewport::-webkit-scrollbar-thumb),
+  :root:not([data-theme="light"]) .term :deep(.xterm-viewport:hover::-webkit-scrollbar-thumb) {
+    background: #ececec33;
+  }
+
+  :root:not([data-theme="light"]) .term :deep(.xterm-viewport::-webkit-scrollbar-thumb:hover) {
+    background: #ececec66;
+  }
+
+  :root:not([data-theme="light"]) .term :deep(.xterm-viewport::-webkit-scrollbar-thumb:active) {
+    background: #ececec80;
+  }
+}
+
+/* MiMo's .term-host: 14px text in the strong colour on a 12px inset, red only for an error. */
+.term-host {
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+  color: var(--text-strong);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  overflow-wrap: anywhere;
+}
+
+.term-host.error {
+  color: var(--error);
 }
 </style>

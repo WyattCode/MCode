@@ -1,7 +1,14 @@
-import type { Message } from "@shared/protocol"
+import type { Message, ModelModalities, ModelRef, Usage } from "@shared/protocol"
+import { schemaFor } from "./tool-schema"
+import { TOOL_MEDIA_NOTE, attachmentParts, type WirePart } from "./attachment-parts"
+import { userText } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
-import { ProviderError } from "./types"
+import { ProviderError, ProviderHttpError, headersOf, isHtmlBody, systemText, wireOfBody } from "./types"
+import { requestHistory } from "./history"
+import { guarded, stallGuard } from "./stall"
+import { readData } from "./sse"
+import { parseToolArguments } from "../tool/repair"
 
 /**
  * Adapter for OpenAI-compatible chat completions.
@@ -25,18 +32,63 @@ interface Delta {
   }[]
 }
 
-interface Chunk {
-  choices?: { delta?: Delta; finish_reason?: string | null }[]
-  usage?: { prompt_tokens?: number; completion_tokens?: number }
-  /** Sent inside a 200 stream by providers that fail after the headers. */
-  error?: { message?: string } | string
+interface ChunkUsage {
+  prompt_tokens?: number
+  completion_tokens?: number
+  prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number }
+  completion_tokens_details?: { reasoning_tokens?: number }
 }
 
-function toolSchemas(tools: ToolDefinition[]) {
+/**
+ * A chat-completions usage frame in MiMo's terms: fresh input apart from the
+ * cached tokens `prompt_tokens` includes, and output apart from the reasoning
+ * `completion_tokens` includes.
+ *
+ * MiMo's `convertOpenAICompatibleChatUsage` reads
+ * `prompt_tokens_details.cached_tokens` and
+ * `completion_tokens_details.reasoning_tokens` for **every** server that speaks
+ * this format, not only for OpenRouter. This used to zero the reasoning
+ * everywhere else and leave those tokens inside `output`, which every
+ * chat-completions reasoning model reports - DeepSeek, GLM, Qwen, MiniMax. The
+ * cost came out the same either way (reasoning is billed at the output price),
+ * but the context card's "reasoning is not counted" rule then did nothing for
+ * exactly the models it was written for.
+ *
+ * Cache writes stay OpenRouter's alone: it is the only server here that reports
+ * them, and subtracting an absent field from the input would be a guess.
+ */
+export function usageOf(reported: ChunkUsage, provider: string): Omit<Usage, "cost"> {
+  const prompt = reported.prompt_tokens ?? 0
+  const completion = reported.completion_tokens ?? 0
+  const cacheRead = reported.prompt_tokens_details?.cached_tokens ?? 0
+  const reasoning = reported.completion_tokens_details?.reasoning_tokens ?? 0
+  const cacheWrite = provider === "openrouter" ? (reported.prompt_tokens_details?.cache_write_tokens ?? 0) : 0
+  return { input: prompt - cacheRead - cacheWrite, output: completion - reasoning, reasoning, cacheRead, cacheWrite }
+}
+
+interface Chunk {
+  choices?: { delta?: Delta; finish_reason?: string | null }[]
+  usage?: ChunkUsage
+  /** Sent inside a 200 stream by providers that fail after the headers. */
+  error?: { message?: string; code?: unknown; type?: unknown } | string
+}
+
+function toolSchemas(tools: ToolDefinition[], model: ModelRef) {
   return tools.map((tool) => ({
     type: "function" as const,
-    function: { name: tool.name, description: tool.description, parameters: tool.parameters },
+    function: { name: tool.name, description: tool.description, parameters: schemaFor(model, tool.parameters) },
   }))
+}
+
+/** One piece of media as this wire carries it, wherever it is placed; the text pieces are placed by the caller. */
+function chatMedia(part: Exclude<WirePart, { kind: "text" }>): Record<string, unknown> {
+  return part.kind === "image"
+    ? { type: "image_url", image_url: { url: `data:${part.mime};base64,${part.data}` } }
+    : part.kind === "pdf"
+      ? { type: "file", file: { filename: part.name, file_data: `data:application/pdf;base64,${part.data}` } }
+      : part.kind === "audio"
+        ? { type: "input_audio", input_audio: { data: part.data, format: part.format } }
+        : { type: "video_url", video_url: { url: `data:${part.kind === "video" ? part.mime : ""};base64,${part.data}` } }
 }
 
 /**
@@ -44,32 +96,27 @@ function toolSchemas(tools: ToolDefinition[]) {
  * `role: "tool"` entries keyed by call id, which is what this format expects
  * in place of Anthropic's batched tool_result blocks.
  */
-export function toMessages(system: string, history: Message[]) {
+export function toMessages(system: string, history: Message[], inputs?: Partial<ModelModalities>, interleaved?: string) {
   const out: Record<string, unknown>[] = [{ role: "system", content: system }]
 
-  for (const message of history) {
+  for (const message of requestHistory(history)) {
     if (message.role === "user") {
-      const attachments = message.attachments ?? []
-      const images = attachments.filter((attachment) => attachment.mime.startsWith("image/"))
-      const files = attachments
-        .filter((attachment) => !attachment.mime.startsWith("image/"))
-        .map((attachment) => `<file path="${attachment.path}">\n${attachment.data}\n</file>`)
-      const text = [...files, message.text].filter(Boolean).join("\n\n")
+      // MiMo's parts: a picture the model reads goes natively; every other attachment is named by path in the turn's blocks.
+      const parts = attachmentParts(message.attachments ?? [], inputs, "chat", "user")
+      const media = parts.filter((part) => part.kind !== "text")
+      const text = [...parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])), userText(message)].filter(Boolean).join("\n\n")
 
       /*
-       * A plain string while there are no images: the multipart form is
+       * A plain string while there is no media: the multipart form is
        * understood by far fewer of the servers that speak this format,
        * and there is no reason to reach for it when there is only text.
        */
-      if (images.length) {
+      if (media.length) {
         out.push({
           role: "user",
           content: [
             ...(text ? [{ type: "text", text }] : []),
-            ...images.map((image) => ({
-              type: "image_url",
-              image_url: { url: `data:${image.mime};base64,${image.data}` },
-            })),
+            ...media.map(chatMedia),
           ],
         })
       } else if (text) {
@@ -88,9 +135,19 @@ export function toMessages(system: string, history: Message[]) {
       (part) => part.type === "tool" && (part.status === "completed" || part.status === "error"),
     )
 
+    // MiMo's interleaved reasoning: a model that reads its reasoning back gets it in its own field.
+    const reasoning = interleaved
+      ? message.parts
+          .filter((part) => part.type === "reasoning")
+          .map((part) => (part.type === "reasoning" ? part.text : ""))
+          .join("")
+          .trim()
+      : ""
+
     if (text || calls.length) {
       out.push({
         role: "assistant",
+        ...(interleaved && reasoning ? { [interleaved]: reasoning } : {}),
         content: text || null,
         ...(calls.length
           ? {
@@ -110,11 +167,18 @@ export function toMessages(system: string, history: Message[]) {
 
     for (const part of calls) {
       if (part.type !== "tool") continue
-      out.push({
-        role: "tool",
-        tool_call_id: part.callID,
-        content: part.status === "error" ? (part.error ?? "Tool failed") : (part.output ?? ""),
-      })
+      /*
+       * MiMo's tool media. A tool message on this wire takes text and nothing
+       * else, so the result keeps the words - the notes for anything the model
+       * cannot read among them - and what it can read follows as a message of
+       * its own, which is the only place this format has for a picture.
+       */
+      const pieces = part.status === "error" ? [] : attachmentParts(part.attachments ?? [], inputs, "chat")
+      const said = part.status === "error" ? (part.error ?? "Tool failed") : (part.output ?? "")
+      const notes = pieces.flatMap((piece) => (piece.kind === "text" ? [piece.text] : []))
+      out.push({ role: "tool", tool_call_id: part.callID, content: [said, ...notes].filter(Boolean).join("\n\n") })
+      const carried = pieces.filter((piece) => piece.kind !== "text")
+      if (carried.length) out.push({ role: "user", content: [{ type: "text", text: TOOL_MEDIA_NOTE }, ...carried.map(chatMedia)] })
     }
   }
 
@@ -123,11 +187,37 @@ export function toMessages(system: string, history: Message[]) {
 
 const MAX_TOKENS = 32_000
 
+/** Whether MiMo puts cache marks on a chat-completions request: Claude reached through OpenRouter or Alibaba. */
+export function cacheMarked(provider: string, modelID: string): boolean {
+  return (provider === "openrouter" || provider === "dashscope") && /claude|anthropic/i.test(modelID)
+}
+
+/**
+ * MiMo's marks on such a request: the last part of each of the last two
+ * messages after the system prompt, where that message is made of parts - a
+ * plain string carries none, as in MiMo - and the last tool definition.
+ */
+export function withCacheMarks(messages: Record<string, unknown>[], tools: Record<string, unknown>[]): void {
+  const mark = { type: "ephemeral" }
+  for (const message of messages.filter((entry) => entry.role !== "system").slice(-2)) {
+    const content = message.content
+    if (!Array.isArray(content) || content.length === 0) continue
+    content[content.length - 1] = { ...(content[content.length - 1] as Record<string, unknown>), cache_control: mark }
+  }
+  if (tools.length) tools[tools.length - 1] = { ...tools[tools.length - 1], cache_control: mark }
+}
+
 export const OpenAICompatible: ProviderAdapter = {
   async stream(request: TurnRequest, emit: Emit): Promise<TurnOutcome> {
     const root = (request.baseURL ?? "").replace(/\/+$/, "")
     if (!root) throw new Error("This provider has no base URL configured")
 
+    const messages = toMessages(systemText(request), request.history, request.inputs, request.interleaved)
+    const tools: Record<string, unknown>[] = toolSchemas(request.tools, request.model)
+    if (cacheMarked(request.model.provider, request.model.model)) withCacheMarks(messages, tools)
+
+    // MiMo's stall timeout: a stream that goes quiet for 480s is cut off and retried.
+    const guard = stallGuard(request.signal, false)
     const response = await fetch(`${root}/chat/completions`, {
       method: "POST",
       headers: {
@@ -139,6 +229,8 @@ export const OpenAICompatible: ProviderAdapter = {
          * request's, rather than being screened by a block-list.
          */
         ...request.headers,
+        // MiMo keeps a conversation's requests together with this header.
+        ...(request.sessionID ? { "x-session-affinity": request.sessionID } : {}),
         /*
          * Only when there is one. A provider whose credential lives in a header
          * has no key here, and writing `Bearer ` over the header the user typed
@@ -149,13 +241,13 @@ export const OpenAICompatible: ProviderAdapter = {
         ...(request.apiKey ? { authorization: `Bearer ${request.apiKey}` } : {}),
         "content-type": "application/json",
       },
-      signal: request.signal,
+      signal: guard.signal,
       body: JSON.stringify({
         model: request.model.model,
         stream: true,
         stream_options: { include_usage: true },
-        max_tokens: MAX_TOKENS,
-        messages: toMessages(request.system, request.history),
+        max_tokens: request.maxOutput ?? MAX_TOKENS,
+        messages,
         /*
          * The field the effort control has always meant and never sent.
          *
@@ -171,14 +263,24 @@ export const OpenAICompatible: ProviderAdapter = {
         ...(request.variants && !request.variants.includes(request.effort)
           ? {}
           : { reasoning_effort: request.effort }),
-        ...(request.tools.length ? { tools: toolSchemas(request.tools), tool_choice: "auto" } : {}),
+        ...(tools.length ? { tools, tool_choice: "auto" } : {}),
+        // MiMo's family sampling; top-k is not a chat-completions field, so it stays off this wire.
+        ...(request.sampling?.temperature !== undefined ? { temperature: request.sampling.temperature } : {}),
+        ...(request.sampling?.topP !== undefined ? { top_p: request.sampling.topP } : {}),
+        ...request.extra,
       }),
+    }).catch((err: unknown) => {
+      guard.dispose()
+      throw guard.failure(err)
     })
 
     if (!response.ok || !response.body) {
+      guard.dispose()
       const detail = await response.text().catch(() => "")
-      throw new Error(describeHttp(response.status, detail))
+      // The status and headers travel with the failure: a rate limit's retry-after decides the wait.
+      throw new ProviderHttpError(describeHttp(response.status, detail), response.status, headersOf(response), wireOfBody(detail))
     }
+    guard.alive()
 
     // Blocks are indexed for the UI; text always occupies slot 0, reasoning 1,
     // since this format has no notion of interleaved blocks.
@@ -200,10 +302,15 @@ export const OpenAICompatible: ProviderAdapter = {
       return anonymous
     }
     let finish: string | null = null
-    let usage = { input: 0, output: 0 }
+    let usage: Omit<Usage, "cost"> = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
 
-    for await (const data of sse(response.body, request.signal)) {
+    // `onRead` keeps the stall timer on the bytes themselves, so a comment or a
+    // keep-alive counts as the provider being alive, as MiMo's chunk timeout does.
+    for await (const frame of guarded(readData(response.body, { signal: request.signal, onRead: guard.alive }), guard)) {
+      // Compared after trimming, as MiMo does: some servers pad the sentinel.
+      const data = frame.trim()
       if (data === "[DONE]") break
+      if (!data) continue
       let chunk: Chunk
       try {
         chunk = JSON.parse(data)
@@ -211,12 +318,7 @@ export const OpenAICompatible: ProviderAdapter = {
         continue
       }
 
-      if (chunk.usage) {
-        usage = {
-          input: chunk.usage.prompt_tokens ?? usage.input,
-          output: chunk.usage.completion_tokens ?? usage.output,
-        }
-      }
+      if (chunk.usage) usage = usageOf(chunk.usage, request.model.provider)
 
       if (chunk.error) throw describeStreamError(chunk.error)
 
@@ -228,7 +330,13 @@ export const OpenAICompatible: ProviderAdapter = {
       if (!delta) continue
 
       const reasoning = delta.reasoning_content ?? delta.reasoning
-      if (reasoning && request.showReasoning) {
+      /*
+       * Always kept, as MiMo's processor keeps it: it is what tells a step that
+       * thought and then said nothing from a step that produced nothing at all,
+       * and a model with an `interleaved` field reads it back on the next step.
+       * The interface still draws none of it.
+       */
+      if (reasoning) {
         if (!reasoningOpen) {
           reasoningOpen = true
           emit({ type: "reasoning.start", index: 1 })
@@ -265,6 +373,14 @@ export const OpenAICompatible: ProviderAdapter = {
       }
     }
 
+    /*
+     * The reader returns rather than throwing when the signal falls between two
+     * reads, so without this a cut stream came back as a finished turn and the
+     * half-assembled tool call below was handed to the turn loop to run. The
+     * Anthropic adapter has always checked here; this is the same two lines.
+     */
+    if (request.signal.aborted) throw new DOMException("Aborted", "AbortError")
+
     if (reasoningOpen) emit({ type: "block.end", index: 1 })
     if (textOpen) emit({ type: "block.end", index: 0 })
 
@@ -284,26 +400,18 @@ export const OpenAICompatible: ProviderAdapter = {
         name: slot.name,
         // Arguments arrive as a JSON string in fragments; a provider that
         // truncates mid-object should surface as an empty input rather than
-        // taking down the turn.
-        input: parseArguments(slot.args),
+        // taking down the turn, with the reason kept so the call can be refused.
+        ...parseToolArguments(slot.args),
       }))
 
     return {
-      stop: toolCalls.length ? "tool_use" : finish === "length" ? "max_tokens" : "end_turn",
+      // A content filter ending the reply is a refusal, as MiMo's ContentFilterError is.
+      stop: toolCalls.length ? "tool_use" : finish === "length" ? "max_tokens" : finish === "content_filter" ? "refusal" : "end_turn",
       toolCalls,
-      usage: { ...usage, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+      usage: { ...usage, cost: 0 },
+      ...(finish ? { finishReason: finish } : {}),
     }
   },
-}
-
-function parseArguments(raw: string): Record<string, unknown> {
-  if (!raw.trim()) return {}
-  try {
-    const parsed = JSON.parse(raw)
-    return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {}
-  } catch {
-    return {}
-  }
 }
 
 /**
@@ -320,7 +428,14 @@ function parseArguments(raw: string): Record<string, unknown> {
  * string, sometimes twice. The innermost message is the one that says what
  * actually went wrong, so it is the one worth keeping.
  */
-function describeStreamError(error: { message?: string } | string): ProviderError {
+function describeStreamError(error: { message?: string; code?: unknown; type?: unknown } | string): ProviderError {
+  const wire =
+    typeof error === "object" && error
+      ? {
+          ...(typeof error.code === "string" || typeof error.code === "number" ? { code: String(error.code) } : {}),
+          ...(typeof error.type === "string" ? { type: error.type } : {}),
+        }
+      : {}
   // Nothing here is guaranteed to be a string, and calling a string method on
   // whatever arrived would replace the provider's error with a TypeError.
   const raw =
@@ -350,41 +465,20 @@ function describeStreamError(error: { message?: string } | string): ProviderErro
    * app phrases it; the numbers are the provider's, so they are passed through.
    */
   if (/context (size|length|window)/i.test(message)) {
-    return new ProviderError(message, "error.contextExceeded", { detail: message })
+    return new ProviderError(message, "error.contextExceeded", { detail: message }, wire)
   }
-  return new ProviderError(message || "The provider reported an error but gave no detail.")
+  return new ProviderError(message || "The provider reported an error but gave no detail.", undefined, undefined, wire)
 }
 
-function describeHttp(status: number, detail: string): string {
-  const trimmed = detail.slice(0, 300)
+export function describeHttp(status: number, detail: string): string {
+  const html = isHtmlBody(detail)
+  const trimmed = html ? "" : detail.slice(0, 300)
+  // MiMo's own answer for a page served in place of an answer on these two.
+  if (html && (status === 401 || status === 403)) return "A gateway or proxy blocked this request."
   if (status === 401 || status === 403) return "Authentication failed - check the API key in Settings."
-  if (status === 404) return `The provider does not recognise this model (404). ${trimmed}`
+  if (status === 404) return `The provider does not recognise this model (404).${trimmed ? ` ${trimmed}` : ""}`
   if (status === 429) return "Rate limited by the provider. Wait a moment and try again."
   if (status >= 500) return `The provider returned ${status}. This is usually transient.`
+  if (html) return `A gateway or proxy answered this request with a web page (${status}) rather than a reply.`
   return `Request failed (${status}). ${trimmed}`
-}
-
-/** Minimal SSE reader: yields the payload of each `data:` line. */
-async function* sse(body: ReadableStream<Uint8Array>, signal: AbortSignal): AsyncGenerator<string> {
-  const reader = body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ""
-
-  try {
-    while (true) {
-      if (signal.aborted) return
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-
-      let newline: number
-      while ((newline = buffer.indexOf("\n")) !== -1) {
-        const line = buffer.slice(0, newline).trim()
-        buffer = buffer.slice(newline + 1)
-        if (line.startsWith("data:")) yield line.slice(5).trim()
-      }
-    }
-  } finally {
-    reader.cancel().catch(() => {})
-  }
 }

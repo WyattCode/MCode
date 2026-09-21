@@ -3,9 +3,35 @@ productName: MCode
 directories:
   output: dist
   buildResources: build
+extraResources:
+  - from: resources/app-icons
+    to: app-icons
+  # The monochrome mark the macOS menu bar asks for; Windows and Linux wear the
+  # coloured icon above, as MiMo picks its tray artwork per platform.
+  - from: resources/tray
+    to: tray
+  # The built-in skills: read from resources/skills beside the asar, where the
+  # agent's shell can also run their scripts.
+  - from: resources/skills
+    to: skills
+  # The score soundfont (MuseScore_General.sf3, MIT), placed and verified by
+  # scripts/soundfont.mjs before a package build; the main process reads it.
+  - from: resources/soundfont
+    to: soundfont
+
+# The three build outputs only: the checks bundle themselves into out/ too
+# (smoke.mjs and friends, about 11 MB), and those are not part of the app.
 files:
-  - out/**/*
+  - out/main/**/*
+  - out/preload/**/*
+  - out/renderer/**/*
   - package.json
+  # Nothing in the runtime dependencies loads these: source maps, TypeScript
+  # sources and declarations (mostly @anthropic-ai/sdk's), and markdown other
+  # than a licence. electron-builder applies only these exclusions to
+  # node_modules; its own defaults already drop top-level READMEs and changelogs.
+  - "!**/node_modules/**/*.{map,ts,mts,cts}"
+  - "!**/node_modules/**/!(LICENSE|LICENCE|License|Licence|license|licence).md"
 # The backend runs in the main process, so only its runtime deps ship.
 # node-pty is the one native dependency. Its .node binaries, and the
 # OpenConsole.exe that conpty launches, cannot be loaded from inside an asar,
@@ -13,26 +39,78 @@ files:
 # what shipping them inside would produce.
 asarUnpack:
   - "**/node_modules/@lydell/node-pty*/**"
+  # FluidSynth's WebAssembly build is LGPL-2.1 and must stay a file a user can
+  # replace, so it and its licence sit in app.asar.unpacked; the page's
+  # ./vendor/ address still reaches it there.
+  - "out/renderer/vendor/**"
 
 win:
   target:
     - nsis
   icon: build/icon.ico
   artifactName: ${productName}-${version}-${arch}.${ext}
+  # MiMo's bundled runtimes - Node.js, Python with its document libraries,
+  # ripgrep - placed and verified by scripts/runtimes.mjs before a Windows
+  # package build; the main process names them to child processes
+  # (src/main/runtimes.ts). Windows x64 only for now.
+  extraResources:
+    - from: resources/runtimes/win32-x64
+      to: runtimes/win32-x64
+      filter:
+        - "**/*"
+        - "!.mcode-runtimes.json"
 
+# MiMo's installer: one click, for the current user, no pages. A first install
+# goes to %LOCALAPPDATA%\Programs\MCode; an existing per-user install (its folder
+# is in HKCU) is upgraded where it is. build/installer.nsh adds the folder name
+# and what an uninstall also removes (the mcode: link handler, the updater cache).
 nsis:
-  oneClick: false
-  allowToChangeInstallationDirectory: true
+  oneClick: true
+  perMachine: false
+  include: build/installer.nsh
   installerIcon: build/icon.ico
-  uninstallerIcon: build/icon.ico
   # Shown in Add/Remove Programs.
+  uninstallerIcon: build/icon.ico
+  # Above the one-click progress bar.
   installerHeaderIcon: build/icon.ico
 
+# electron-updater (src/main/updater.ts) reads app-update.yml beside the asar
+# for its cache folder name (mcode-updater), and a release needs the latest.yml
+# and .blockmap electron-builder writes beside the installer. Neither needs a
+# real address: MCode has no update server yet, so the feed is set at run time
+# from the settings row (or MCODE_UPDATE_URL), and this one is a reserved name
+# that can never resolve. Nothing is ever uploaded (package.mjs passes
+# --publish never).
+# The mcode: conversation links. macOS registers only a scheme its Info.plist
+# declares (CFBundleURLTypes), and the Linux .desktop file gets the matching
+# MimeType. Windows registers it in build/installer.nsh.
+protocols:
+  - name: MCode
+    schemes:
+      - mcode
+
+publish:
+  provider: generic
+  url: https://updates.invalid/mcode/
+
 mac:
+  # No zip: it is only what electron-updater would replace the app from, and
+  # macOS has no automatic updates (M10-8).
   target:
     - dmg
   icon: build/icon.icns
   category: public.app-category.developer-tools
+  # The Dock's cut of each colourway (scripts/icons.mjs), on Apple's icon grid.
+  extraResources:
+    - from: resources/app-icons-mac
+      to: app-icons-mac
+  # Voice input under the hardened runtime: the default entitlements plus the
+  # microphone, for the app and the helpers it starts.
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # macOS ends a process that asks for the microphone without saying why.
+  extendInfo:
+    NSMicrophoneUsageDescription: MCode uses the microphone only while you dictate a message.
 
 dmg:
   icon: build/icon.icns
@@ -43,3 +121,6 @@ linux:
   # electron-builder picks the size set out of this directory.
   icon: build/icons
   category: Development
+  # The .desktop file is named after package.json's desktopName, which Electron
+  # also uses as the window's app_id / WM_CLASS, so the two are matched.
+  syncDesktopName: true

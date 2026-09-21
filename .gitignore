@@ -4,5 +4,11 @@ dist/
 node_modules/
 out/
 
+# The 38 MB score soundfont; scripts/soundfont.mjs places and verifies it.
+resources/soundfont/
+
 # Emitted by tsc alongside the typechecks.
 *.tsbuildinfo
+
+# The bundled Node.js, Python and ripgrep; scripts/runtimes.mjs places and verifies them.
+resources/runtimes/

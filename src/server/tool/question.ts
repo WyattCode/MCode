@@ -40,12 +40,16 @@ export class Questions {
     questions: QuestionPrompt[]
     tool?: { messageID: string; callID: string }
     signal?: AbortSignal
+    /** The runner's repeated-call check, drawn by the window in its own words. */
+    loop?: QuestionRequest["loop"]
   }): Promise<QuestionAnswer[]> {
     const request: QuestionRequest = {
       id: Identifier.request(),
       sessionID: input.sessionID,
       questions: input.questions,
       tool: input.tool,
+      time: Date.now(),
+      ...(input.loop ? { loop: input.loop } : {}),
     }
 
     return new Promise<QuestionAnswer[]>((resolve, reject) => {
@@ -60,7 +64,7 @@ export class Questions {
        * execute, and Stop can land inside it.
        */
       if (input.signal?.aborted) {
-        reject(new ToolError(DISMISSED))
+        reject(dismissed())
         return
       }
 
@@ -71,7 +75,7 @@ export class Questions {
       const onAbort = () => {
         settle()
         this.bus.publish({ type: "question.rejected", sessionID: request.sessionID, requestID: request.id })
-        reject(new ToolError(DISMISSED))
+        reject(dismissed())
       }
       input.signal?.addEventListener("abort", onAbort, { once: true })
 
@@ -112,12 +116,17 @@ export class Questions {
     return true
   }
 
-  /** Dismisses a question. The turn sees the reference's own refusal message. */
+  /**
+   * Refuses a question outright. The turn sees the reference's own refusal message.
+   *
+   * The dock's X does not come here: MiMo's dismiss replies with empty answers,
+   * so the call completes as "Unanswered". This is left for Stop and abort.
+   */
   reject(requestID: string): boolean {
     const parked = this.pending.get(requestID)
     if (!parked) return false
     this.bus.publish({ type: "question.rejected", sessionID: parked.request.sessionID, requestID })
-    parked.reject(new ToolError(DISMISSED))
+    parked.reject(dismissed())
     return true
   }
 
@@ -154,6 +163,16 @@ export class Questions {
  */
 const DISMISSED = "The user dismissed this question"
 
+/*
+ * Carries a code as well as the model's sentence, so the transcript can tell a
+ * stopped question from a broken one without reading English.
+ */
+export const QUESTION_DISMISSED = "question.dismissed"
+
+function dismissed(): ToolError {
+  return new ToolError(DISMISSED, QUESTION_DISMISSED)
+}
+
 /**
  * The description handed to the model, verbatim.
  *
@@ -168,17 +187,24 @@ const DISMISSED = "The user dismissed this question"
  * The last three lines are the load-bearing part: they are what stops the model
  * writing its own "Other" option, because the client adds one.
  */
-const DESCRIPTION =
-  "Use this tool when you need to ask the user questions during execution. This allows you to:\r\n" +
-  "1. Gather user preferences or requirements\r\n" +
-  "2. Clarify ambiguous instructions\r\n" +
-  "3. Get decisions on implementation choices as you work\r\n" +
-  "4. Offer choices to the user about what direction to take.\r\n" +
-  "\r\n" +
-  "Usage notes:\r\n" +
-  "- When `custom` is enabled (default), a \"Type your own answer\" option is added automatically; don't include \"Other\" or catch-all options\r\n" +
-  "- Answers are returned as arrays of labels; set `multiple: true` to allow selecting more than one\r\n" +
-  '- If you recommend a specific option, make that the first option in the list and add "(Recommended)" at the end of the label\r\n'
+const DESCRIPTION = [
+  "Put a decision to the user as a card of options, instead of writing the options out in your reply and waiting.",
+  "The turn stops here until they answer, so ask only about things you genuinely cannot settle yourself.",
+  "",
+  "When to use it",
+  "- The choice is the user's to make: which of two designs to build, which file is the right one, whether to change something you were not asked to change.",
+  "- The task is ambiguous in a way that changes what you would do, and reading the project would not resolve it.",
+  "- You are about to do something with consequences the user may not want.",
+  "Do not use it for anything you can find out by reading the project, and do not ask the user to confirm work they already asked for.",
+  "",
+  "Writing the options",
+  "- Keep each label to a few words; put the detail in its description, not in the label.",
+  '- Do not add an "Other", "Something else" or "None of these" option. The window already adds a "type your own answer" row unless custom is false, so writing one yourself gives the user the same choice twice.',
+  '- If one option is the one you would pick, make it the first and end its label with "(Recommended)".',
+  "- The multiple flag, not the wording of the question, is what lets the user pick more than one. A question that reads as multi-choice but leaves multiple unset still accepts exactly one answer.",
+  "",
+  "You may ask several questions in one call; the user is walked through them one at a time. The answer comes back as the labels they chose, or as their own text when they typed it. A question the user skips comes back empty - take that as no preference and carry on rather than asking again.",
+].join("\n")
 
 /** What the model may hand over, checked before anyone is shown it. */
 function readQuestions(raw: unknown): QuestionPrompt[] {
@@ -256,6 +282,8 @@ export const QuestionTool: ToolDefinition = {
     additionalProperties: false,
   },
   async execute(input, context) {
+    // A subagent cannot put questions to the user, as MiMo's cannot; it is not offered the tool, and a call that reaches here anyway is refused.
+    if (context.subagent) throw new ToolError("A subagent cannot ask the user questions. Decide for yourself, or say in your final message what needs the user's decision.")
     const questions = readQuestions(input.questions)
     const answers = await context.questions.ask({
       sessionID: context.sessionID,

@@ -1,9 +1,10 @@
-import path from "node:path"
 import { statSync } from "node:fs"
 import { spawn as ptySpawn, type IPty } from "@lydell/node-pty"
 import { Identifier } from "@shared/id"
+import { typedInput } from "@shared/terminal-input"
 import type { Bus } from "./bus"
-import type { ShellSummary } from "@shared/protocol"
+import type { ShellSummary, ShellSurface } from "@shared/protocol"
+import { platformShell } from "./shell-path"
 
 /** How wide and how tall the drawer's grid is, in character cells. */
 export interface ShellSize {
@@ -65,21 +66,52 @@ const EXITED_LIMIT = 25
 interface Running {
   proc: IPty
   sessionID: string
+  cwd: string
   owner?: ShellOwner
+  /** Which terminal opened it; the drawer and the right panel never share a pty (N11-9). */
+  surface: ShellSurface
   /** What it has printed, oldest first, trimmed to BUFFER_LIMIT. */
   output: string[]
   bytes: number
   alive: boolean
+  /** Something was typed into it; kept past its exit, as MiMo's userInteracted is. */
+  used: boolean
+  /** Running while it waits to be claimed by a replacement window; it is killed when this fires. */
+  orphanTimer?: ReturnType<typeof setTimeout>
 }
+
+/** Time between two kills in a row; see queueKill. */
+const KILL_SPACING_MS = 400
+
+/**
+ * How long a shell outlives the window that opened it.
+ *
+ * A renderer that crashes drops its socket exactly as a reload does, so the
+ * sweep below used to kill every terminal in that window - a long build in the
+ * bottom panel died with the renderer even though the backend, and the model's
+ * turn, carried on, and the replacement window opened with no tabs at all.
+ * Keeping shells alive past a socket close would bring back the orphan the
+ * sweep was added to remove, so instead the shell is set loose for this long:
+ * the window that comes back claims it when it asks what is there, and one
+ * nobody claims is killed as before. The replacement window is up in a second
+ * or two, so this is several times the wait it needs.
+ */
+const ORPHAN_GRACE_MS = 15_000
 
 export class Shells {
   private readonly shells = new Map<string, Running>()
   /** Finished shells in the order they finished, so the oldest can be let go. */
   private readonly exited: string[] = []
+  /** Whoever is waiting for a shell to have ended, by shell id. */
+  private readonly exitWaiters = new Map<string, () => void>()
 
-  constructor(private readonly bus: Bus) {}
+  constructor(
+    private readonly bus: Bus,
+    /** How long an unclaimed shell waits before it is swept; short in the checks. */
+    private readonly graceMs = ORPHAN_GRACE_MS,
+  ) {}
 
-  open(sessionID: string, cwd: string, chosen?: string, size?: ShellSize, owner?: ShellOwner): string {
+  open(sessionID: string, cwd: string, chosen?: string, size?: ShellSize, owner?: ShellOwner, surface: ShellSurface = "drawer"): string {
     const shellID = Identifier.shell()
     const { command, args } = shellCommand(chosen)
     const grid = usable(size) ? size : FALLBACK
@@ -139,6 +171,8 @@ export class Shells {
       this.bus.publish({ type: "shell.data", shellID, data })
     })
     proc.onExit(({ exitCode }) => {
+      this.exitWaiters.get(shellID)?.()
+      this.exitWaiters.delete(shellID)
       /*
        * Kept rather than dropped. A shell that has ended still has its last
        * words on screen, and a reader who reopens the drawer expects to find
@@ -155,13 +189,30 @@ export class Shells {
       this.bus.publish({ type: "shell.exit", shellID, code: exitCode })
     })
 
-    this.shells.set(shellID, { proc, sessionID, owner, output: [], bytes: 0, alive: true })
+    this.shells.set(shellID, { proc, sessionID, cwd, owner, surface, output: [], bytes: 0, alive: true, used: false })
     return shellID
   }
 
-  write(shellID: string, data: string): void {
+  /**
+   * Whether this window may drive a shell (N11-9): only what it owns, or what
+   * nobody owns yet. Input, resize and close used to accept any id at all, so
+   * one window could type into, resize or kill another window's terminal.
+   */
+  private allowed(found: Running, owner?: ShellOwner): boolean {
+    return !owner || !found.owner || found.owner === owner
+  }
+
+  /** The window a shell's output is for, so the socket sends it there alone (N11-31); nothing while nobody owns it. */
+  ownerOf(shellID: string): ShellOwner | undefined {
+    return this.shells.get(shellID)?.owner
+  }
+
+  write(shellID: string, data: string, owner?: ShellOwner): void {
     const found = this.shells.get(shellID)
-    if (found?.alive) found.proc.write(data)
+    if (!found?.alive || !this.allowed(found, owner)) return
+    // Held here so a pane that comes back still knows to ask before closing.
+    if (!found.used && typedInput(data)) found.used = true
+    found.proc.write(data)
   }
 
   /**
@@ -172,30 +223,76 @@ export class Shells {
    * anything that redraws itself - a progress bar, an editor, a pager - paints
    * over the wrong cells.
    */
-  resize(shellID: string, cols: number, rows: number): void {
+  resize(shellID: string, cols: number, rows: number, owner?: ShellOwner): void {
     const found = this.shells.get(shellID)
-    if (!found?.alive || !usable({ cols, rows })) return
+    if (!found?.alive || !usable({ cols, rows }) || !this.allowed(found, owner)) return
     // A pty that has already exited throws rather than ignoring the call.
     try {
       found.proc.resize(cols, rows)
     } catch {}
   }
 
-  close(shellID: string): void {
+  close(shellID: string, owner?: ShellOwner): void {
     const found = this.shells.get(shellID)
-    if (!found) return
+    if (!found || !this.allowed(found, owner)) return
+    if (found.orphanTimer) clearTimeout(found.orphanTimer)
     this.shells.delete(shellID)
     const queued = this.exited.indexOf(shellID)
     if (queued >= 0) this.exited.splice(queued, 1)
     if (!found.alive) return
-    // kill() with a signal throws on Windows, so it is always called bare.
-    try {
-      found.proc.kill()
-    } catch {}
+    this.queueKill(found.proc)
   }
 
-  closeAll(): void {
+  /*
+   * Kills one at a time, a little apart. Several conpty shells killed in the
+   * same tick - closing three used terminals back to back - crashed Electron
+   * in the probe; the same closes spaced out never did. kill() with a signal
+   * throws on Windows, so it is always called bare.
+   */
+  private killQueue: Promise<void> = Promise.resolve()
+  private queued = 0
+
+  private queueKill(proc: { kill(): void }): void {
+    this.queued += 1
+    this.killQueue = this.killQueue
+      .then(() => {
+        try {
+          proc.kill()
+        } catch {}
+      })
+      .then(() => new Promise<void>((resolve) => setTimeout(resolve, KILL_SPACING_MS)))
+      .finally(() => {
+        this.queued -= 1
+      })
+  }
+
+  /**
+   * Ends every shell, and waits for them to have gone.
+   *
+   * On Windows a pty still has an exit callback to run after it is killed.
+   * Leaving the process straight after the kill ran that callback into a module
+   * that was already being torn down, and the prebuilt conpty answered with a
+   * native "Assertion failed" dialog on the user's screen. Measured on Windows:
+   * the exit arrives about three seconds after the kill however the process is
+   * ended, so the bound sits above that. It is still a bound, so a process that
+   * will not end cannot hold the app open.
+   */
+  async closeAll(timeout = 4000): Promise<void> {
+    const ending = [...this.shells.entries()]
+      .filter(([, entry]) => entry.alive)
+      .map(([shellID]) => new Promise<void>((resolve) => this.exitWaiters.set(shellID, resolve)))
     for (const shellID of [...this.shells.keys()]) this.close(shellID)
+    if (!ending.length) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    // The kills go out one spacing apart, so the bound waits for the queue too.
+    await Promise.race([
+      Promise.all(ending),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeout + this.queued * KILL_SPACING_MS)
+      }),
+    ])
+    clearTimeout(timer)
+    this.exitWaiters.clear()
   }
 
   /**
@@ -206,21 +303,37 @@ export class Shells {
    * unmounting the drawer under `v-if` took every shell with it, so a dev
    * server started in the terminal died the moment the panel was collapsed.
    */
-  list(sessionID: string, owner?: ShellOwner): ShellSummary[] {
+  list(sessionID: string, owner?: ShellOwner, surface: ShellSurface = "drawer"): ShellSummary[] {
     const found: ShellSummary[] = []
     for (const [shellID, entry] of this.shells) {
       if (entry.sessionID !== sessionID) continue
+      // The drawer lists the drawer's shells and nothing else; the right panel keeps its own by id (N11-9).
+      if (entry.surface !== surface) continue
       if (owner && entry.owner && entry.owner !== owner) continue
-      found.push({ shellID, alive: entry.alive })
+      // Asking what is there is how a window comes back to its terminals, so it
+      // is also where one left loose by a crashed window is taken over.
+      this.claim(entry, owner)
+      found.push({ shellID, cwd: entry.cwd, alive: entry.alive, used: entry.used })
     }
     return found
   }
 
   /** Everything a shell has printed, for a pane that has to redraw itself. */
-  attach(shellID: string): { data: string; alive: boolean } | undefined {
+  attach(shellID: string, owner?: ShellOwner): { data: string; alive: boolean; used: boolean } | undefined {
     const found = this.shells.get(shellID)
     if (!found) return undefined
-    return { data: found.output.join(""), alive: found.alive }
+    this.claim(found, owner)
+    return { data: found.output.join(""), alive: found.alive, used: found.used }
+  }
+
+  /** A window takes over a shell nobody owns, and the sweep waiting on it is called off. */
+  private claim(entry: Running, owner?: ShellOwner): void {
+    if (!owner || entry.owner) return
+    entry.owner = owner
+    if (entry.orphanTimer) {
+      clearTimeout(entry.orphanTimer)
+      entry.orphanTimer = undefined
+    }
   }
 
   /** Keeps the tail of what a shell printed, dropping the oldest first. */
@@ -244,7 +357,17 @@ export class Shells {
    */
   closeOwnedBy(owner: ShellOwner): void {
     for (const [shellID, entry] of [...this.shells.entries()]) {
-      if (entry.owner === owner) this.close(shellID)
+      if (entry.owner !== owner) continue
+      /*
+       * Set loose rather than killed: a crash and a reload look the same from
+       * here, and in both cases a window is on its way back. What must not
+       * happen is a shell that outlives every window, so the sweep still runs -
+       * just after the grace period, and only if nobody has claimed it.
+       */
+      entry.owner = undefined
+      if (entry.orphanTimer) clearTimeout(entry.orphanTimer)
+      entry.orphanTimer = setTimeout(() => this.close(shellID), this.graceMs)
+      entry.orphanTimer.unref?.()
     }
   }
 }
@@ -326,45 +449,7 @@ function shellCommand(chosen?: string): { command: string; args: string[] } {
  * that a reader is likely to have configured a prompt in.
  */
 function preferred(): string {
-  if (process.platform !== "win32") return process.env.SHELL || "/bin/bash"
-  return which("pwsh") ?? which("powershell") ?? gitBash() ?? process.env.COMSPEC ?? "cmd.exe"
-}
-
-/**
- * git's bundled bash, found by walking up from git itself.
- *
- * The reference goes exactly two directories up and looks in bin/, which holds
- * for the usual install because PATH gets `<root>/cmd/git.exe`. It does not
- * hold when git is found somewhere else in the same install: on this machine
- * PATH carries `<root>/mingw64/bin/git.exe` too, and two up from there is
- * `<root>/mingw64/bin/bash.exe`, which does not exist - so the shell silently
- * became cmd. Walking up until a bin/bash.exe turns up finds the same file
- * from either entry point and stops at the drive root.
- */
-function gitBash(): string | undefined {
-  const git = which("git")
-  if (!git) return undefined
-  let dir = path.dirname(git)
-  for (let up = 0; up < 4; up += 1) {
-    const parent = path.dirname(dir)
-    if (parent === dir) break
-    dir = parent
-    const bash = path.join(dir, "bin", "bash.exe")
-    if (statSync(bash, { throwIfNoEntry: false })?.size) return bash
-  }
-  return undefined
-}
-
-/** The first match for a bare command name on PATH, or undefined. */
-function which(command: string): string | undefined {
-  const dirs = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean)
-  const suffixes =
-    process.platform === "win32" ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";").filter(Boolean) : [""]
-  for (const dir of dirs) {
-    for (const suffix of suffixes) {
-      const candidate = path.join(dir, command + suffix)
-      if (statSync(candidate, { throwIfNoEntry: false })?.isFile()) return candidate
-    }
-  }
-  return undefined
+  // MiMo's terminal takes SHELL as it is (fish included); without it, the same fallback as the tool's.
+  if (process.platform !== "win32") return process.env.SHELL || platformShell()
+  return platformShell()
 }

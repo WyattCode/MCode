@@ -1,11 +1,27 @@
 import type { ClientFrame, Request, RequestOf, RequestType, ResponseMap, ServerEvent, ServerFrame } from "@shared/protocol"
+import { t } from "./i18n"
+import { socketProtocols } from "@shared/socket-auth"
 
 type EventHandler = (event: ServerEvent) => void
 
 interface Waiter {
   resolve: (value: unknown) => void
   reject: (reason: Error) => void
+  /** False while the payload waits in the queue for the socket to open. */
+  sent: boolean
+  /** Gives up on a queued payload that the socket never came back to send. */
+  expiry?: ReturnType<typeof setTimeout>
 }
+
+/**
+ * How long a request made while the socket is down waits for it to reopen.
+ *
+ * The reconnect notice promises the message goes out once the service is back,
+ * so a queued request is not failed by the next refused reconnect attempt, only
+ * after this long - and it leaves the queue then, so a request the reader was
+ * told had failed is never sent afterwards.
+ */
+export const QUEUED_REQUEST_TIMEOUT_MS = 30_000
 
 /**
  * Typed WebSocket client.
@@ -19,7 +35,10 @@ export class Client {
   private socket?: WebSocket
   private readonly waiters = new Map<string, Waiter>()
   private readonly handlers = new Set<EventHandler>()
-  private queue: string[] = []
+  /** Requests made while the socket was down, in order, until it opens. */
+  private queue: { id: string; payload: string }[] = []
+  /** Overridable so a test need not wait out the real bound. */
+  queueTimeout = QUEUED_REQUEST_TIMEOUT_MS
   private counter = 0
   private closed = false
   private retry = 0
@@ -33,40 +52,33 @@ export class Client {
     this.onState = handler
   }
 
-  /**
-   * Where to connect.
-   *
-   * Normally the backend this app started, on a port it was told at boot. A
-   * server the user names instead takes its place: the protocol is the same
-   * either way, so nothing above this line knows the difference.
-   */
-  private address: string
+  /** The backend this app started, on the port it was told at boot - the only place this window connects to. */
+  readonly server: string
 
-  constructor(private readonly port: number) {
-    this.address = `ws://127.0.0.1:${port}`
-  }
-
-  /** Points at another server, and reconnects there. */
-  useServer(url?: string): void {
-    this.address = url?.trim() || `ws://127.0.0.1:${this.port}`
-    this.retry = 0
-    this.socket?.close()
-  }
-
-  get server(): string {
-    return this.address
+  constructor(
+    port: number,
+    private readonly secret: string,
+  ) {
+    this.server = `ws://127.0.0.1:${port}`
   }
 
   connect(): void {
     if (this.closed) return
-    const socket = new WebSocket(this.address)
+    // The launch secret proves this window belongs to the app.
+    const socket = new WebSocket(this.server, socketProtocols(this.secret))
     this.socket = socket
 
     socket.addEventListener("open", () => {
       this.state.connected = true
       this.onState?.(true)
       this.retry = 0
-      for (const payload of this.queue.splice(0)) socket.send(payload)
+      for (const { id, payload } of this.queue.splice(0)) {
+        const waiter = this.waiters.get(id)
+        if (!waiter) continue
+        clearTimeout(waiter.expiry)
+        waiter.sent = true
+        socket.send(payload)
+      }
     })
 
     socket.addEventListener("message", (event) => {
@@ -84,17 +96,38 @@ export class Client {
       if (!waiter) return
       this.waiters.delete(frame.id)
       if (frame.ok) waiter.resolve(frame.data)
-      else waiter.reject(new Error(frame.error))
+      /*
+       * A failure the backend named is phrased here rather than repeated.
+       *
+       * These rejections are shown as the body of a notice, so the backend's
+       * own English sentence used to surface verbatim in a translated
+       * interface - the same fault the socket-close path below was fixed for.
+       * The sentence comes from the tables; the raw text stays on the error
+       * for anything that logs it.
+       */
+      else waiter.reject(frame.errorCode ? Object.assign(new Error(t(frame.errorCode, frame.errorParams)), { code: frame.errorCode }) : new Error(frame.error))
     })
 
     socket.addEventListener("close", () => {
       this.state.connected = false
       this.onState?.(false)
       if (this.closed) return
-      // In-flight requests will never be answered by a socket that is gone.
+      /*
+       * A request the socket carried will never be answered by a socket that is
+       * gone, so its waiter fails now. A request still in the queue was never
+       * sent: it stays pending for the reopen (or its expiry), which is what
+       * the reconnect notice tells the reader. Failing it here too reported a
+       * send as failed and then delivered it on reconnect.
+       *
+       * The sentence comes from the language tables - these rejections are the
+       * body of a notice (`notifyFailure(t("common.requestFailed"), err.message)`)
+       * - and names the local service, not the reader's network: this socket
+       * is loopback.
+       */
       for (const [id, waiter] of this.waiters) {
+        if (!waiter.sent) continue
         this.waiters.delete(id)
-        waiter.reject(new Error("Lost connection to the backend"))
+        waiter.reject(new Error(t("error.backendLost")))
       }
       this.retry = Math.min(this.retry + 1, 5)
       setTimeout(() => this.connect(), this.retry * 250)
@@ -107,9 +140,19 @@ export class Client {
     const payload = JSON.stringify(frame)
 
     return new Promise((resolve, reject) => {
-      this.waiters.set(id, { resolve: resolve as (value: unknown) => void, reject })
-      if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(payload)
-      else this.queue.push(payload)
+      const waiter: Waiter = { resolve: resolve as (value: unknown) => void, reject, sent: false }
+      this.waiters.set(id, waiter)
+      if (this.socket?.readyState === WebSocket.OPEN) {
+        waiter.sent = true
+        this.socket.send(payload)
+        return
+      }
+      this.queue.push({ id, payload })
+      waiter.expiry = setTimeout(() => {
+        this.queue = this.queue.filter((entry) => entry.id !== id)
+        this.waiters.delete(id)
+        reject(new Error(t("error.backendLost")))
+      }, this.queueTimeout)
     })
   }
 

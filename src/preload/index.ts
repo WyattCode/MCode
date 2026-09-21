@@ -1,27 +1,111 @@
-import { contextBridge, ipcRenderer } from "electron"
+import { contextBridge, ipcRenderer, webUtils } from "electron"
+import type { SoundfontReply } from "../shared/soundfont"
+import type { InstallAnswer } from "../shared/update-reason"
+import type { PickerBusy } from "../shared/native-pick"
+
+export type OfficeVersionSource = "initial" | "ai" | "ai_local" | "user" | "external"
+export interface OfficeVersionState {
+  versions: { id: string; ts: number; source: OfficeVersionSource; note: string }[]
+  cursor: number
+}
+export type OfficeVersionResult = { ok: true; state: OfficeVersionState } | { ok: false; reason: string }
+/** The automatic updater's phase, and the downloaded version once one is ready. */
+export interface UpdateStatus {
+  phase: "idle" | "checking" | "downloading" | "ready"
+  ready: { version: string; notes: string } | null
+  /** MiMo's update transaction: the last install did not finish. Given once. */
+  interrupted?: { targetVersion: string; error: string }
+}
 
 /**
  * The only surface the renderer gets. Everything else - sessions, files, the
  * agent - travels over the WebSocket, which keeps the privileged bridge small
  * enough to audit at a glance.
  */
+/* The document views watching for changes, behind the one listener onFileChanged keeps (N11-41). */
+const fileChangeHandlers = new Set<(target: string) => void>()
+const relayFileChange = (_event: unknown, target: string) => {
+  for (const handler of [...fileChangeHandlers]) handler(target)
+}
+
 const api = {
-  bootstrap: (): Promise<{ port: number; platform: string; home: string; version: string }> =>
+  bootstrap: (): Promise<{ port: number; secret: string; platform: string; home: string; version: string }> =>
     ipcRenderer.invoke("mcode:bootstrap"),
 
   /** Every directory chosen, in order; empty when the dialog was dismissed. */
-  pickDirectory: (title: string, multiple = false): Promise<string[]> =>
+  /** Where a dropped file lives on disk; empty for one that is not a file on disk. */
+  pathForFile: (file: File): string => {
+    try {
+      return webUtils.getPathForFile(file)
+    } catch {
+      return ""
+    }
+  },
+  /** Which of these paths are folders, for a drop onto the project list. */
+  directoriesOf: (paths: string[]): Promise<string[]> => ipcRenderer.invoke("mcode:directories-of", paths),
+  /** What the paths a drag named in its `text/uri-list` are; the ones that are gone do not come back. */
+  describeFiles: (paths: string[]): Promise<{ path: string; name: string; size: number; directory: boolean }[]> =>
+    ipcRenderer.invoke("mcode:describe-files", paths),
+  pickDirectory: (title: string, multiple = false): Promise<string[] | PickerBusy> =>
     ipcRenderer.invoke("mcode:pick-directory", title, multiple),
-  saveText: (suggested: string, text: string): Promise<string | undefined> =>
+  /** MiMo's 选择或新建项目文件夹: the same dialog, opening at the default project location. */
+  pickProjectFolder: (title: string, multiple = false): Promise<string[] | PickerBusy> =>
+    ipcRenderer.invoke("mcode:pick-directory", title, multiple, true),
+  saveText: (suggested: string, text: string): Promise<string | PickerBusy | undefined> =>
     ipcRenderer.invoke("mcode:save-text", suggested, text),
 
+  /** Whether the clipboard holds a picture at all - a yes or a no, never its contents. */
+  clipboardHasImage: (): Promise<boolean> => ipcRenderer.invoke("mcode:clipboard-has-image"),
+  /** A pasted picture, written under userData so it can be attached by path as MiMo attaches one. */
+  savePastedImage: (dataUrl: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("mcode:save-pasted-image", dataUrl),
+  /** The clipboard's own bitmap, for a paste that hands the page no file at all. */
+  saveClipboardImage: (): Promise<{ ok: true; path: string; dataUrl?: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("mcode:save-clipboard-image"),
+  /** A paste too large for the box: a text file in the system temp folder, attached by path. */
+  savePastedText: (text: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("mcode:save-pasted-text", text),
+
+  /** MiMo's saved composer input: read once, synchronously, as the window starts. */
+  composerInputLoad: (): { ok: boolean; text?: string } => ipcRenderer.sendSync("mcode:composer-input-load"),
+  composerInputSave: (text: string): Promise<boolean> => ipcRenderer.invoke("mcode:composer-input-save", text),
+  /** The same write, finished before the page goes away. */
+  composerInputFlush: (text: string): boolean => ipcRenderer.sendSync("mcode:composer-input-flush", text),
+
+  /** The machine's locale as the main process reads it (`app.getLocale()`), for the language nobody has chosen. */
+  systemLocale: (): string => ipcRenderer.sendSync("mcode:system-locale"),
   /** Menu bar labels; the translations live here, the menu is built there. */
   menuLabels: (labels: Record<string, string>): void => ipcRenderer.send("mcode:menu-labels", labels),
+  /* N11-16: the machine is back online, which the main process cannot see for itself. */
+  networkBack: (): void => ipcRenderer.send("mcode:network-back"),
+  /** The shortcuts as bound, and whether one is being recorded, for the application menu. */
+  menuKeys: (keys: { binds: Record<string, string>; recording: boolean }): void => ipcRenderer.send("mcode:menu-keys", keys),
 
-  /** The clipboard as text, for surfaces that copy and paste it themselves. */
-  /** Raised by the main process, and only when the window is in the background. */
-  notify: (title: string, body: string, sessionID?: string): void =>
-    ipcRenderer.send("mcode:notify", title, body, sessionID),
+  /**
+   * MiMo's task notification: the main process titles and words it, and shows
+   * it only while the window is in the background.
+   */
+  taskNotice: (notice: { kind: "done" | "confirm" | "failed" | "chat"; sessionID?: string; title?: string; project?: string; silent: boolean }): void =>
+    ipcRenderer.send("mcode:task-notice", notice),
+
+  /** The launcher badge: conversations with an unseen finish or awaiting a confirmation. */
+  badge: (count: number): void => ipcRenderer.send("mcode:badge", count),
+
+  /** The zoom every window now has, as a whole percent, after any step. */
+  onZoomChanged: (handler: (percent: number) => void): (() => void) => {
+    const listener = (_event: unknown, percent: number) => handler(percent)
+    ipcRenderer.on("mcode:zoom-changed", listener)
+    return () => ipcRenderer.off("mcode:zoom-changed", listener)
+  },
+  /** This window's zoom as a whole percent. */
+  zoomPercent: (): Promise<number> => ipcRenderer.invoke("mcode:zoom-percent"),
+
+  /** macOS: a first Cmd+Q armed the quit. */
+  onQuitHint: (handler: () => void): (() => void) => {
+    const listener = () => handler()
+    ipcRenderer.on("mcode:quit-hint", listener)
+    return () => ipcRenderer.off("mcode:quit-hint", listener)
+  },
 
   /**
    * The session a clicked notification came from, if it named one.
@@ -36,11 +120,26 @@ const api = {
     return () => ipcRenderer.off("mcode:notify-click", listener)
   },
 
+  /** A session link clicked while the app was already open. */
+  onOpenLink: (handler: (link: { sessionID: string; directory?: string }) => void): (() => void) => {
+    const listener = (_event: unknown, link: { sessionID: string; directory?: string }) => handler(link)
+    ipcRenderer.on("mcode:open-link", listener)
+    return () => ipcRenderer.off("mcode:open-link", listener)
+  },
+
+  /** The session link the app was started with, if any; asked once, after connecting. */
+  takeLink: (): Promise<{ sessionID: string; directory?: string } | undefined> => ipcRenderer.invoke("mcode:take-link"),
+
   clipboardText: (): Promise<string> => ipcRenderer.invoke("mcode:clipboard-text"),
   setClipboardText: (text: string): void => ipcRenderer.send("mcode:clipboard-write", text),
 
   /** Hands a link to the real browser. Only http and https survive the main process. */
   openExternal: (url: string): void => ipcRenderer.send("mcode:open-external", url),
+
+  /** MiMo's guide after a refused microphone: the OS privacy page for it, where the OS has one. */
+  openMicSettings: (): void => ipcRenderer.send("mcode:open-mic-settings"),
+  /** Whether the OS lets the app use the microphone; macOS asks the first time. */
+  micAccess: (): Promise<boolean> => ipcRenderer.invoke("mcode:mic-access"),
 
   /** Editing commands, which act on whatever the renderer has focused. */
   edit: (action: "undo" | "redo" | "cut" | "copy" | "paste" | "delete" | "selectAll"): void =>
@@ -50,16 +149,30 @@ const api = {
   view: (action: "reload" | "devtools" | "fullscreen"): void => ipcRenderer.send("mcode:view", action),
 
   /**
-   * Asks the main process to read the update feed.
-   *
-   * The window cannot fetch it: its content policy allows a socket to the local
-   * backend and nothing else.
+   * MiMo's updateStatus: where the main process's automatic updater stands.
+   * The window never fetches the feed itself; its content policy allows a
+   * socket to the local backend and nothing else.
    */
-  checkUpdates: (feed: string): Promise<{ version: string; url: string }> =>
-    ipcRenderer.invoke("mcode:check-updates", feed),
+  updateStatus: (): Promise<UpdateStatus> => ipcRenderer.invoke("mcode:update-status"),
 
-  /** A second window on the same backend. */
-  newWindow: (): void => ipcRenderer.send("mcode:new-window"),
+  /** MiMo's updateCheckNow: checks now, downloading and verifying a newer installer, and answers how it went. */
+  updateCheckNow: (): Promise<UpdateStatus & { outcome: "no-feed" | "current" | "ready" | "failed" | "busy"; version?: string; error?: string; during?: "check" | "download" }> =>
+    ipcRenderer.invoke("mcode:update-check"),
+
+  /** Every phase change of the updater; `ready` names the downloaded version (MiMo's updateReady). */
+  onUpdateState: (handler: (state: UpdateStatus) => void): (() => void) => {
+    const listener = (_event: unknown, state: UpdateStatus) => handler(state)
+    ipcRenderer.on("mcode:update-state", listener)
+    return () => ipcRenderer.off("mcode:update-state", listener)
+  },
+
+  /**
+   * Quits and, once the backend has closed, runs the installer that was fetched and verified.
+   *
+   * Takes no path: the window asks to install what was downloaded, and the main
+   * process is the only thing that knows what that was.
+   */
+  installUpdate: (): Promise<InstallAnswer> => ipcRenderer.invoke("mcode:install-update"),
 
   /**
    * Restarts the app.
@@ -70,9 +183,13 @@ const api = {
    * backend on the way through.
    */
   relaunch: (): void => ipcRenderer.send("mcode:relaunch"),
+  /** A renderer diagnostics line for the day's log file (MiMo's diagLog). */
+  diagLog: (line: string): void => ipcRenderer.send("mcode:diag-log", line),
+  /** The footer menu's Quit app: every window, the backend and its terminals. */
+  quitApp: (): void => ipcRenderer.send("mcode:quit"),
 
   /** Both take a project root and a path relative to it; see the main process. */
-  revealFile: (directory: string, relative: string): Promise<void> =>
+  revealFile: (directory: string, relative: string): Promise<{ ok: boolean; missing?: boolean; error?: string }> =>
     ipcRenderer.invoke("mcode:reveal-file", directory, relative),
   /**
    * `openWith` names the application to start, for the review panel's "Open in"
@@ -87,12 +204,35 @@ const api = {
    */
   openFile: (directory: string, relative: string, openWith?: string): Promise<string> =>
     ipcRenderer.invoke("mcode:open-file", directory, relative, openWith),
+  /** The ids from @shared/open-app of the apps actually installed here. */
+  installedApps: (): Promise<string[]> => ipcRenderer.invoke("mcode:installed-apps"),
+  /** The installed open-with apps' own icons as data URLs, keyed by app id. */
+  installedAppIcons: (): Promise<Record<string, string>> => ipcRenderer.invoke("mcode:installed-app-icons"),
+  /** A delivered document's installed apps for its kind (macOS only), in MiMo's order. */
+  docApps: (kind: string): Promise<{ id: string; name: string; openWith: string; icon: string }[]> => ipcRenderer.invoke("mcode:doc-apps", kind),
 
   /** Shows a file the save dialog wrote; other paths are refused by the main process. */
   revealSaved: (target: string): Promise<void> => ipcRenderer.invoke("mcode:reveal-saved", target),
   openSaved: (target: string): Promise<string> => ipcRenderer.invoke("mcode:open-saved", target),
 
   window: (action: "minimize" | "maximize" | "close"): void => ipcRenderer.send("mcode:window", action),
+
+  /** MiMo's winIsFullscreen / onWinFullscreen / winExitFullscreen, for the exit-full-screen button. */
+  isFullscreen: (): Promise<boolean> => ipcRenderer.invoke("mcode:is-fullscreen"),
+  onFullscreen: (handler: (fullScreen: boolean) => void): (() => void) => {
+    const listener = (_event: unknown, fullScreen: boolean) => handler(fullScreen)
+    ipcRenderer.on("mcode:fullscreen", listener)
+    return () => ipcRenderer.off("mcode:fullscreen", listener)
+  },
+  exitFullscreen: (): void => ipcRenderer.send("mcode:exit-fullscreen"),
+
+  /** Whether assistive technology is reading the window, and every change to that. */
+  screenReader: (): Promise<boolean> => ipcRenderer.invoke("mcode:screen-reader"),
+  onScreenReader: (handler: (enabled: boolean) => void): (() => void) => {
+    const listener = (_event: unknown, enabled: boolean) => handler(enabled)
+    ipcRenderer.on("mcode:screen-reader", listener)
+    return () => ipcRenderer.off("mcode:screen-reader", listener)
+  },
 
   zoom: (action: "in" | "out" | "reset"): void => ipcRenderer.send("mcode:zoom", action),
 
@@ -103,7 +243,144 @@ const api = {
    */
   titlebarMode: (mode: "dark" | "light"): void => ipcRenderer.send("mcode:titlebar-mode", mode),
 
+  /** MiMo's setNativeTheme: native menus, dialogs and the window's first paint follow the app theme. */
+  nativeTheme: (theme: "system" | "light" | "dark"): void => ipcRenderer.send("mcode:native-theme", theme),
 
+  /** The bundled score soundfont's bytes, only when they are exactly the verified file. */
+  soundfont: (): Promise<SoundfontReply> => ipcRenderer.invoke("mcode:soundfont"),
+
+  /** Which colourway the window and the taskbar should wear; `ok` is false when the icon could not be applied. */
+  appIcon: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("mcode:app-icon", id),
+
+  /** MiMo's 显示服务器 (Linux): the saved choice and the backend it resolves to. */
+  displayServer: (): Promise<{ supported: boolean; pref: "auto" | "wayland" | "x11"; effective: "wayland" | "x11" | null }> =>
+    ipcRenderer.invoke("mcode:display-server"),
+  /** MiMo's 硬件加速: the saved choice, which the running app started with unless changed since. */
+  hardwareAcceleration: (): Promise<{ enabled: boolean }> => ipcRenderer.invoke("mcode:hardware-acceleration"),
+  /** Takes effect at the next launch. */
+  setHardwareAcceleration: (enabled: boolean): Promise<{ ok: boolean; enabled: boolean }> =>
+    ipcRenderer.invoke("mcode:set-hardware-acceleration", enabled),
+  /** Takes effect at the next launch. */
+  setDisplayServer: (pref: "auto" | "wayland" | "x11"): Promise<{ ok: boolean; pref?: "auto" | "wayland" | "x11" }> =>
+    ipcRenderer.invoke("mcode:set-display-server", pref),
+
+  /*
+   * The browser panel. The window says where it goes and what to load; the
+   * page itself is out of its reach by design.
+   */
+  browserOpen: (bounds: { x: number; y: number; width: number; height: number }) =>
+    ipcRenderer.invoke("mcode:browser-open", bounds),
+  browserBounds: (bounds: { x: number; y: number; width: number; height: number }): void =>
+    ipcRenderer.send("mcode:browser-bounds", bounds),
+  browserNavigate: (input: string) => ipcRenderer.invoke("mcode:browser-navigate", input),
+  /** Acts on the open page, or on the page `id` names when given. */
+  browserAct: (what: "back" | "forward" | "reload" | "forceReload" | "stop" | "zoomIn" | "zoomOut" | "zoomReset", id?: string) =>
+    ipcRenderer.invoke("mcode:browser-act", what, id),
+  /** The open page onto the clipboard; false when there was nothing to take. */
+  browserScreenshot: (): Promise<boolean> => ipcRenderer.invoke("mcode:browser-screenshot"),
+  /** Clears the browser's cookies or its cache; resolves to "" or the reason it failed. */
+  browserClearSite: (what: "cookies" | "cache"): Promise<string> => ipcRenderer.invoke("mcode:browser-clear-site", what),
+  browserTab: (what: "new" | "select" | "close", id?: string) =>
+    ipcRenderer.invoke("mcode:browser-tab", what, id),
+  /** Clears the browser panel's site data and cache; resolves to "" or the reason it failed. */
+  browserClearData: (): Promise<string> => ipcRenderer.invoke("mcode:browser-clear-data"),
+  /** MiMo's video cards: what each platform says about a reply's links, asked for by the main process; null where there is no card. */
+  mediaEnrich: (urls: string[]): Promise<unknown[]> => ipcRenderer.invoke("mcode:media-enrich", urls),
+  /** A document's bytes, or that they have not changed since `ifUnchanged`. */
+  readFileBytes: (
+    root: string,
+    rel?: string,
+    ifUnchanged?: { size: number; mtimeMs: number },
+  ): Promise<
+    | { ok: true; unchanged: true; size: number; mtimeMs: number }
+    | { ok: true; unchanged?: undefined; base64: string; size: number; mtimeMs: number }
+    | { ok: false; reason: string }
+  > => ipcRenderer.invoke("mcode:read-file-bytes", root, rel, ifUnchanged),
+  /** Writes a document the view edited back in place, answering its new size and time. */
+  writeFileBytes: (
+    root: string,
+    rel: string | undefined,
+    base64: string,
+  ): Promise<{ ok: true; size: number; mtimeMs: number } | { ok: false; reason: string }> => ipcRenderer.invoke("mcode:write-file-bytes", root, rel, base64),
+  fileSize: (target: string): Promise<number> => ipcRenderer.invoke("mcode:file-size", target),
+  officeVersionInit: (target: string, base64: string, assumeAi: boolean, note: string): Promise<OfficeVersionResult> =>
+    ipcRenderer.invoke("mcode:office-version-init", target, base64, assumeAi, note),
+  officeVersionRecord: (target: string, base64: string, source: OfficeVersionSource, note: string): Promise<OfficeVersionResult> =>
+    ipcRenderer.invoke("mcode:office-version-record", target, base64, source, note),
+  officeVersionRestore: (target: string, id: string): Promise<OfficeVersionResult> =>
+    ipcRenderer.invoke("mcode:office-version-restore", target, id),
+  officeConvertLegacy: (target: string): Promise<{ ok: true; output: string; cached: boolean } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("mcode:office-convert-legacy", target),
+  revealPath: (target: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("mcode:reveal-path", target),
+  /** MiMo's 下载副本: copies a file into Downloads, numbering the name when it is taken. */
+  saveCopy: (target: string): Promise<{ ok: true; savedPath: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("mcode:save-copy", target),
+  /** A reply's path link: opens a file with its default program; executables and folders are refused there. */
+  openNativePath: (target: string): Promise<{ ok: true } | { ok: false; code: string; error: string }> =>
+    ipcRenderer.invoke("mcode:open-native-path", target),
+  /** The first absolute candidate that exists, and whether it is a folder. */
+  resolveExistingPath: (candidates: string[]): Promise<{ path: string; directory: boolean } | null> =>
+    ipcRenderer.invoke("mcode:resolve-existing-path", candidates),
+  /** Selects a file in its folder, or opens a folder. */
+  revealNativePath: (target: string): Promise<{ ok: true } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("mcode:reveal-native-path", target),
+  /** A picture on disk as base64, for copying it to the clipboard. */
+  readImageData: (target: string): Promise<{ ok: true; mime: string; base64: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("mcode:read-image-data", target),
+  /** A picture file straight onto the clipboard; fails for formats the system decoder cannot read. */
+  copyImageFromPath: (target: string): Promise<{ ok: true } | { ok: false; error: string }> => ipcRenderer.invoke("mcode:copy-image-path", target),
+  /** Saves a PNG where the person chooses; the path, or undefined when dismissed. */
+  savePng: (suggested: string, base64: string): Promise<string | PickerBusy | undefined> => ipcRenderer.invoke("mcode:save-png", suggested, base64),
+  /** A loopback address a web page is served at, with its folder beside it. */
+  officeServe: (target: string): Promise<{ ok: true; url: string } | { ok: false; error: string }> => ipcRenderer.invoke("mcode:office-serve", target),
+  /* One interactive widget from a reply, served on an origin of its own so the frame can run it without reaching anything. */
+  widgetServe: (html: string, reduceMotion: boolean): Promise<{ ok: true; url: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("mcode:widget-serve", html, reduceMotion),
+  /** Watches an open document so its view can reload when it changes on disk. */
+  watchFile: (target: string): Promise<boolean> => ipcRenderer.invoke("mcode:watch-file", target),
+  unwatchFile: (target: string): Promise<void> => ipcRenderer.invoke("mcode:unwatch-file", target),
+  /*
+   * One listener on the channel however many views watch (N11-41): each
+   * document view subscribed on its own, and a handful of open previews put the
+   * channel within reach of the ten-listener warning.
+   */
+  onFileChanged: (handler: (target: string) => void): (() => void) => {
+    if (!fileChangeHandlers.size) ipcRenderer.on("mcode:file-changed", relayFileChange)
+    fileChangeHandlers.add(handler)
+    return () => {
+      fileChangeHandlers.delete(handler)
+      if (!fileChangeHandlers.size) ipcRenderer.off("mcode:file-changed", relayFileChange)
+    }
+  },
+  onBrowserState: (handler: (state: unknown) => void): (() => void) => {
+    const listener = (_event: unknown, state: unknown) => handler(state)
+    ipcRenderer.on("mcode:browser-state", listener)
+    return () => ipcRenderer.off("mcode:browser-state", listener)
+  },
+  /** The chords the reader has bound, so the same keys pressed inside a page reach the window. */
+  browserKeys: (chords: string[]): void => ipcRenderer.send("mcode:browser-keys", chords),
+  /** A page opened a link in a new tab; the id is the page the main process already made for it. */
+  onBrowserOpenTab: (handler: (pageId: string) => void): (() => void) => {
+    const listener = (_event: unknown, pageId: string) => handler(pageId)
+    ipcRenderer.on("mcode:browser-open-tab", listener)
+    return () => ipcRenderer.off("mcode:browser-open-tab", listener)
+  },
+  /** One of the app's chords, pressed while a page had focus. */
+  onBrowserKey: (
+    handler: (key: { key: string; code: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean }) => void,
+  ): (() => void) => {
+    const listener = (_event: unknown, key: { key: string; code: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean }) =>
+      handler(key)
+    ipcRenderer.on("mcode:browser-key", listener)
+    return () => ipcRenderer.off("mcode:browser-key", listener)
+  },
+
+  /** Whether to keep an icon in the system tray. */
+  tray: (enabled: boolean): void => ipcRenderer.send("mcode:tray", enabled),
+
+  /** 开机自启: offered on Windows and macOS; the answer to a change is what the OS now says. */
+  launchAtLogin: (): Promise<{ supported: boolean; enabled: boolean }> => ipcRenderer.invoke("mcode:launch-at-login"),
+  setLaunchAtLogin: (enabled: boolean): Promise<{ ok: boolean; enabled: boolean }> => ipcRenderer.invoke("mcode:set-launch-at-login", enabled),
 
   /** Menu accelerators the renderer turns into in-app commands. */
   onMenu: (handler: (command: string) => void): (() => void) => {
@@ -118,21 +395,6 @@ const api = {
       "new-session",
       "open-project",
       "settings",
-      "palette",
-      "terminal",
-      "sidebar",
-      "files",
-      "abort",
-      "model",
-      "delete-session",
-      "back",
-      "forward",
-      "prev-session",
-      "next-session",
-      "prev-project",
-      "next-project",
-      "shortcuts",
-      "check-updates",
     ]
     const listeners = commands.map((command) => {
       const channel = `menu:${command}`

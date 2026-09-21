@@ -1,6 +1,10 @@
 import path from "node:path"
 import fs from "node:fs/promises"
 import { ToolError, type ToolContext } from "./types"
+import { historyService, isMemoryPath, memoryWritable } from "../history/service"
+import { MEMORY_SANDBOXED_AGENTS, memoryWriteRefusal, sandboxRefusal } from "../memory/guard"
+import { guardAppData } from "./app-data"
+import { worktreeTop } from "../session/worktree"
 
 /**
  * Resolves a model-supplied path against the session directory and refuses
@@ -68,7 +72,7 @@ export function truncate(text: string, limit: number): { text: string; truncated
  * stops at the deepest part that does exist and the remainder is appended: a new
  * file inside a linked directory is then judged by where that directory is.
  */
-async function truePath(target: string): Promise<string> {
+export async function truePath(target: string): Promise<string> {
   let head = target
   const tail: string[] = []
   for (;;) {
@@ -82,10 +86,92 @@ async function truePath(target: string): Promise<string> {
   }
 }
 
-export async function resolvePath(context: ToolContext, target: string): Promise<string> {
+/**
+ * `access` says what the caller will do with the path: the app's own data
+ * folder is never written by a tool, and its saved sign-ins never read.
+ */
+/** Whether `target` really lies inside `root` (or is it), links followed on both sides. */
+export async function insideReal(root: string, target: string): Promise<boolean> {
+  const relative = path.relative(await truePath(path.resolve(root)), await truePath(path.resolve(target)))
+  return !relative.startsWith("..") && !path.isAbsolute(relative)
+}
+
+/**
+ * `resolveInside`, judged by where the path really leads as well as by how it
+ * is spelled: a junction inside the project (which Windows lets anyone make)
+ * no longer passes for a folder inside it.
+ */
+export async function resolveInsideReal(directory: string, target: string): Promise<string> {
+  const resolved = resolveInside(directory, target)
+  if (!(await insideReal(directory, resolved))) {
+    throw new ToolError(`Path leads outside the project directory (${path.resolve(directory)}): ${target}`, "tool.err.outsideProject", {
+      path: target,
+      root: path.resolve(directory),
+    })
+  }
+  return resolved
+}
+
+/**
+ * The top of the git worktree a folder is in, as MiMo's `Instance.worktree`:
+ * a path anywhere under it is inside the project, so a conversation opened on
+ * a package of a repository reads and edits its siblings without asking. A
+ * drive's or the file system's root never counts, as MiMo leaves out `/`.
+ */
+export async function repositoryRoot(directory: string): Promise<string | undefined> {
+  const top = await worktreeTop(directory)
+  if (!top) return undefined
+  return path.parse(top.root).root === top.root ? undefined : top.root
+}
+
+/**
+ * memory: MiMo's checks on a write, made before any other: `/dream` and
+ * `/distill` write only memory and the project's config folder, and a write
+ * into the memory folder has to fit its layout (memory/guard.ts).
+ */
+async function guardMemoryWrite(context: ToolContext, resolved: string): Promise<void> {
+  const service = historyService()
+  if (!service) return
+  const agent = context.plan?.agent
+  if (agent && MEMORY_SANDBOXED_AGENTS.has(agent)) {
+    const refused = sandboxRefusal({
+      agent,
+      target: resolved,
+      memoryRoot: service.memoryRoot,
+      projectRoot: (await repositoryRoot(context.directory)) ?? context.directory,
+    })
+    if (refused) throw new ToolError(refused)
+  }
+  if (!isMemoryPath(resolved)) return
+  const session = await service.store.get(context.sessionID)
+  const refused = memoryWriteRefusal({
+    target: resolved,
+    memoryRoot: service.memoryRoot,
+    directory: context.directory,
+    sessionID: context.sessionID,
+    writeEnabled: memoryWritable(),
+    taskID: session?.subagent?.taskID,
+    parentID: session?.parentID,
+  })
+  if (refused) throw new ToolError(refused)
+}
+
+export async function resolvePath(context: ToolContext, target: string, access: "read" | "write" = "read"): Promise<string> {
   const resolved = path.isAbsolute(target)
     ? path.resolve(target)
     : path.resolve(context.directory, target)
+  /*
+   * A colon past the drive names an alternate data stream on Windows
+   * (`notes.txt:hidden`): a place to keep bytes that no listing, diff or git
+   * status ever shows (round 8, X19).
+   */
+  if (process.platform === "win32" && resolved.slice(path.parse(resolved).root.length).includes(":")) {
+    throw new ToolError(`Refused: ${target} names an alternate data stream (a colon after the drive), which tools do not read or write.`)
+  }
+  await guardAppData(resolved, access, target)
+  if (access === "write") await guardMemoryWrite(context, resolved)
+  // A cut output's saved file is the model's to read, as MiMo allows its truncation folder outright.
+  if (context.toolOutputs?.holds(resolved)) return resolved
   /*
    * Compared by where the files really are, not by how the path is spelled. A
    * symlink - or a junction, which Windows creates without elevation - reads as
@@ -94,11 +180,17 @@ export async function resolvePath(context: ToolContext, target: string): Promise
    * walk straight out through it.
    */
   const real = await truePath(resolved)
-  const root = await truePath(path.resolve(context.directory))
-  const relative = path.relative(root, real)
-  if (!relative.startsWith("..") && !path.isAbsolute(relative)) return resolved
+  const within = (root: string) => {
+    const relative = path.relative(root, real)
+    return !relative.startsWith("..") && !path.isAbsolute(relative)
+  }
+  if (within(await truePath(path.resolve(context.directory)))) return resolved
+  // MiMo's project is the whole repository the conversation works in, not only its folder (T10-12).
+  const repository = await repositoryRoot(context.directory)
+  if (repository && within(await truePath(repository))) return resolved
 
-  if (context.permissions.allowsOutside(context.sessionID, real)) return resolved
+  // memory: the memory folder is reached without asking, as MiMo does.
+  if (isMemoryPath(real)) return resolved
 
   // Approve the directory itself, not the file, so reading a second file in the
   // same folder does not ask again.
@@ -106,8 +198,10 @@ export async function resolvePath(context: ToolContext, target: string): Promise
   // Approved against the real location too, so the same directory reached by a
   // different route is recognised as the one already allowed.
   const scope = stats?.isDirectory() ? real : path.dirname(real)
+  if (context.permissions.allowsOutside({ directory: context.directory, sessionID: context.sessionID }, scope)) return resolved
 
   await context.permissions.ask({
+    directory: context.directory,
     sessionID: context.sessionID,
     messageID: context.messageID,
     callID: context.callID,

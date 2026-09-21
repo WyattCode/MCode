@@ -3,10 +3,10 @@
  * per-session state the composer and the panel read.
  *
  * Two kinds of assertion, for two ways this can break. The first half runs the
- * pure functions the window uses - the mention/attachment split, the variant
- * resolution, the tab-strip map - because each is a rule copied from the
+ * pure functions the window uses - the mention/attachment split, the level a
+ * model runs at, the tab-strip map - because each is a rule copied from the
  * reference and a wrong answer there is silent: the message comes back looking
- * right and sends the same file twice, or the effort pill offers a level the
+ * right and sends the same file twice, or the model pill names a level the
  * provider drops. The second half reads the components, because those functions
  * are only worth anything while something still calls them, and a seam between
  * a helper and the one component that uses it is exactly what a type checker
@@ -17,9 +17,14 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import type { UserMessage } from "../src/shared/protocol"
 import { draftFromMessage, draftLine } from "../src/renderer/src/lib/draft"
-import { cycleVariant, isLatest, resolveVariant, withoutLatest } from "../src/renderer/src/lib/model"
-import { closeTab, openTab, readStrip, stripKey, stripKeys, writeStrip } from "../src/renderer/src/lib/session-tabs"
+import { clampEffort, cycleVariant, isLatest, withoutLatest } from "../src/renderer/src/lib/model"
+import { createPinia, setActivePinia } from "pinia"
+import { useRightPanel } from "../src/renderer/src/stores/right-panel"
 import { locateOffset } from "../src/renderer/src/lib/find"
+import { agentPrompt } from "../src/server/session/prompts"
+import { firstPlanNote, laterPlanNote } from "../src/server/session/plan"
+import { GOAL_GUARD } from "../src/server/session/goal"
+import { sessionNote } from "../src/server/session/context"
 
 let passed = 0
 const problems: string[] = []
@@ -89,20 +94,25 @@ console.log("\nThe one line a rolled back message shows")
 
 // ------------------------------------------------- which steps a model accepts
 /*
- * `resolveModelVariant` reads the stored step and does not erase it; the cycle
- * walks the model's own list and falls off the end into "follow the default"
- * rather than wrapping.
+ * MiMo clamps the level a model runs at: the one set, if this model takes it;
+ * else medium; else the model's first. The menu has no "follow the default"
+ * row any more, so a model with levels always names one. The keyboard's cycle
+ * still walks the model's own list and falls off the end rather than wrapping.
  */
 console.log("\nReasoning steps, per model")
 {
-  check("a step this model takes resolves to itself", resolveVariant(["low", "high"], "high"), "high")
-  check("one it does not take resolves to nothing", resolveVariant(["low", "high"], "xhigh"), undefined)
-  check("and no steps at all resolves to nothing", resolveVariant([], "low"), undefined)
+  check("a level this model takes is kept", clampEffort(["low", "high"], "high"), "high")
+  check(
+    "one it lacks snaps to medium, or without medium to the first",
+    [clampEffort(["low", "medium", "high"], "xhigh"), clampEffort(["low", "high"], "xhigh")],
+    ["medium", "low"],
+  )
+  check("and a model without levels runs at none", clampEffort([], "low"), undefined)
 
   check("cycling a model with no steps does nothing", cycleVariant([], "low"), undefined)
   check("from unset, the first step", cycleVariant(["low", "medium", "high"], undefined), "low")
   check("then the next", cycleVariant(["low", "medium", "high"], "low"), "medium")
-  check("off the end returns to the default", cycleVariant(["low", "medium", "high"], "high"), undefined)
+  check("off the end wraps to the first, the level being app-wide", cycleVariant(["low", "medium", "high"], "high"), "low")
   check("a step this model lacks starts again", cycleVariant(["low", "medium", "high"], "xhigh"), "low")
 }
 
@@ -114,63 +124,58 @@ console.log("\nThe Latest tag")
   check("and carries no tag", isLatest("Claude Haiku 4.5"), false)
 }
 
-// ------------------------------------------------------- the panel's tab strip
-console.log("\nThe right-hand panel, remembered per session")
+// ------------------------------------------------------- the right panel's tabs
+console.log("\nThe right panel's tabs, as MiMo keeps them")
 {
-  check("no session has no key", stripKey(undefined, "s1"), undefined)
-  check("and no directory has none either", stripKey("D:/proj", undefined), undefined)
-  const one = stripKey("D:/proj", "s1")
-  const two = stripKey("D:/other", "s1")
-  check("the same session in two projects is two keys", one !== two, true)
-  check("a non-ASCII path does not throw", typeof stripKey("D:/项目", "s1"), "string")
+  setActivePinia(createPinia())
+  const rp = useRightPanel()
+  const gone: string[] = []
+  rp.setDisposer((tab) => gone.push(tab.id))
 
-  check(
-    "an opened tab goes to the front",
-    openTab({ all: ["other"] }, "context"),
-    { all: ["context", "other"], active: "context" },
-  )
-  check(
-    "opening it twice does not repeat it",
-    openTab({ all: ["context", "other"], active: "other" }, "context"),
-    { all: ["context", "other"], active: "context" },
-  )
-  check(
-    "closing the only tab falls back to the review",
-    closeTab({ all: ["context"], active: "context" }, "context"),
-    { all: [], active: "review" },
-  )
-  check(
-    "closing one with a neighbour to its left lands there",
-    closeTab({ all: ["context", "other"], active: "other" }, "other"),
-    { all: ["context"], active: "context" },
-  )
+  rp.setScope("s1")
+  const review = rp.openTool("review")
+  check("a tool opens the panel on its own tab", [rp.open, rp.active], [true, review.id])
+  const second = rp.openTool("review")
+  check("asking again adds another, numbered", [rp.tabs.length, second.ord], [2, 2])
+  const files = rp.openTool("files")
+  check("the files tab is kept single", rp.openTool("files").id, files.id)
 
-  writeStrip(one, { all: ["context"], active: "context" })
-  writeStrip(two, { all: [], active: "review" })
-  check("what one session opened is there", [readStrip(one).all, readStrip(one).active], [["context"], "context"])
-  check("and the session next door is not affected", readStrip(two).all, [])
-  check("an unknown session reads as empty", readStrip("nothing/at-all").all, [])
-}
+  rp.activate(second.id)
+  rp.close([second.id])
+  check("closing the tab on show selects its right-hand neighbour", rp.active, files.id)
+  rp.close([files.id])
+  check("or, at the end of the row, the one to its left", rp.active, review.id)
+  rp.close([review.id])
+  check("closing the last tab shuts the panel", [rp.open, rp.tabs.length], [false, 0])
+  check("and every closed tab was let go of", gone.length, 3)
 
-console.log("\nThe map cannot grow without bound")
-{
-  /*
-   * The reference caps it at 50 keys and evicts by last touch, pinning the
-   * session that is open. The pause is because the stamp is a millisecond
-   * clock: without it every key in this loop is written in the same tick and
-   * "the oldest goes" has nothing to sort on.
-   */
-  const before = stripKeys().length
-  const oldest = stripKey("D:/aged", "s0")!
-  writeStrip(oldest, { all: ["context"], active: "context" })
-  await new Promise((done) => setTimeout(done, 4))
-  for (let index = 0; index < 60; index += 1) {
-    writeStrip(stripKey("D:/bulk", `s${index}`)!, { all: [], active: "review" })
-  }
-  check("the map stops at fifty keys", stripKeys().length, 50)
-  check("and the oldest entry is the one that went", readStrip(oldest).all, [])
-  check("while the session just written is kept", readStrip(stripKey("D:/bulk", "s59")!).active, "review")
-  check("which is fewer than were written", before + 61 > 50, true)
+  const terminal = rp.openTool("terminal")
+  rp.setScope("s2")
+  check("another conversation starts with no tabs and the panel shut", [rp.tabs.length, rp.open], [0, false])
+  rp.setScope("s1")
+  check("coming back hands the conversation its tabs", [rp.tabs.map((tab) => tab.id), rp.open], [[terminal.id], true])
+
+  rp.setScope(undefined)
+  rp.openTool("browser")
+  const before = gone.length
+  rp.setScope("s1")
+  check("tabs opened on the home screen go when a conversation is entered", gone.length, before + 1)
+
+  rp.toggleFullscreen()
+  check("the open panel expands", rp.fullscreen, true)
+  rp.toggleOpen()
+  check("and putting it away lets the expansion go", [rp.open, rp.fullscreen], [false, false])
+  rp.toggleFullscreen()
+  check("a shut panel does not expand", rp.fullscreen, false)
+
+  rp.openDiff("3 files", "@@ -1 +1 @@", "live-edit")
+  check("a diff opens as a tab of its own", rp.activeTab?.type, "diff")
+  rp.toggleDiff("3 files", "@@ -1 +1 @@", "live-edit")
+  check("asking for the same diff while it is on show puts the panel away", rp.open, false)
+  rp.toggleDiff("4 files", "@@ -2 +2 @@", "live-edit")
+  check("asking again brings back the same tab, updated", [rp.tabs.filter((tab) => tab.type === "diff").length, rp.activeTab?.name], [1, "4 files"])
+
+  rp.forget("s1")
 }
 
 // --------------------------------------------------------------- the seams
@@ -178,8 +183,8 @@ console.log("\nThe map cannot grow without bound")
  * Every one of these is a call across a file boundary that nothing else
  * enforces. The composer's two new methods are reached through a template ref,
  * the two revert buttons reach them through an injected function, and the
- * effort pill's guard is one attribute - all four survive a type check with the
- * behaviour gone.
+ * effort label's guard is one attribute - all of them survive a type check with
+ * the behaviour gone.
  */
 console.log("\nWhat the components still do")
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..")
@@ -196,55 +201,34 @@ check(
   /function set\(next: Draft\) \{[^}]*attachments\.value = next\.attachments/.test(composer),
   true,
 )
+/*
+ * MiMo has no effort pill of its own: the level is named on the model pill, and
+ * chosen from a submenu beside each model. Both halves are load-bearing - the
+ * name is the clamped level, so a model without levels shows none and a side
+ * chat asks for none; and each row offers exactly its model's levels, with no
+ * 默认 row since the composer branch removed it.
+ */
 check(
-  "the effort pill is drawn only for a model with steps",
-  /<div v-if="variants\.length" class="pill-wrap">/.test(composer),
+  "the level is named on the model pill outside a side chat, and only once clamped to the model's levels",
+  /<span v-if="!smartOn && !side && effortLabel" class="model-effort"/.test(composer) &&
+    /const effortLevel = computed<Effort \| undefined>\(\(\) =>\s*clampEffort\(variants\.value,/.test(composer),
   true,
 )
 check(
-  "and its menu offers exactly those steps",
-  /EFFORT_CHOICES = computed<\(Effort \| undefined\)\[\]>\(\(\) => \[undefined, \.\.\.variants\.value\]\)/.test(composer),
+  "and a model row's level menu offers exactly that model's levels, none in a side chat",
+  /function effortsFor\(model: ModelInfo\): Effort\[\] \{\s*return props\.side \? \[\] : model\.variants\s*\}/.test(composer),
   true,
 )
 
 const stream = read(`${components}/MessageStream.vue`)
 check(
-  "reverting from the transcript puts the message back in the box",
-  /await app\.revert\(sessionID, turn\.id\)[\s\S]{0,200}restoreDraft\(message\)/.test(stream),
-  true,
-)
-
-const dock = read(`${components}/RevertDock.vue`)
-check(
-  "restoring from the dock follows the boundary",
-  /const next = app\.rolledBack\[at \+ 1\][\s\S]{0,200}restoreDraft\(next\)/.test(dock),
-  true,
-)
-check("and the dock names attachments the reference's way", dock.includes("draftLine("), true)
-/*
- * `draftLine` is free of the string table on purpose, so the dock is the only
- * place the empty-message word can come from. Dropping the argument leaves a
- * blank row that compiles and that no locale check can see, since the key would
- * still be defined in all eighteen tables.
- */
-check(
-  "and hands it the word for a message that flattens to nothing",
-  /draftLine\(message, t\("common\.attachment"\)\)/.test(dock),
+  "a retry that is not accepted puts the question back in the box",
+  /await app\.truncate\(sessionID, turn\.id\)[\s\S]{0,300}restoreDraft\(message\)/.test(stream),
   true,
 )
 
 const app = read("src/renderer/src/App.vue")
 check("App.vue is what hands the composer down", app.includes("provideRestoreDraft("), true)
-check(
-  "the panel's tabs are read per session",
-  /const strip = computed\(\(\) => readStrip\(tabsKey\.value\)\)/.test(app),
-  true,
-)
-check(
-  "and nothing resets them on a session change",
-  /watch\(\s*\(\) => app\.current\?\.id,\s*\(\) => \{\s*contextTab\.value = false/.test(app),
-  false,
-)
 
 
 /*
@@ -295,6 +279,90 @@ console.log("\nfind-in-view maps an offset back onto a node")
   // One node is the common case and must not regress.
   check("a single node, first character", `${locateOffset([9], 0).index}:${locateOffset([9], 0).offset}`, "0:0")
   check("a single node, last character", `${locateOffset([9], 8).index}:${locateOffset([9], 8).offset}`, "0:8")
+}
+
+/*
+ * The agent prompt, section by section.
+ *
+ * MiMo's desktop app gives every model one prompt: a general part, then a
+ * desktop part - since 26.920 the same two in every mode, plan included, with
+ * tone and style moved into the desktop part and skills given a section of
+ * their own. MCode does the same, and this is what says so. The headings are
+ * listed here by hand, in order, rather than read off the prompt, so a section
+ * cut out of `session/prompts.ts` or a family split creeping back fails here
+ * instead of quietly agreeing with itself.
+ */
+console.log("\nThe one agent prompt every model reads")
+{
+  const build = agentPrompt("build")
+  const headings = build.split("\n").filter((line) => /^#{1,3} /.test(line))
+  check("its sections, in the desktop prompt's order", headings, [
+    "# System",
+    "# Doing tasks",
+    "# Executing actions with care",
+    "# Using your tools",
+    "# Skills",
+    "# MCode desktop",
+    "## Reply language",
+    "## Tone and style",
+    "## Visual explanations",
+    "## Asking clarifying questions",
+    "## Task management",
+    // R18-E2: in place of the scheduling tools, which are withdrawn outside an end-to-end run.
+    "## Scheduled tasks",
+    "## Desktop verification",
+    "## Files you produce",
+    "### A file, or an answer?",
+    "### present_files",
+    "### Images and video",
+    "### Web pages",
+    "### Office documents and PDF",
+    "## Tools on this machine",
+    "## Web page work",
+    "### Slide decks",
+  ])
+  /* 26.920's general part is about 10KB and its desktop part about 18.5KB; MCode leaves out what it does not have. */
+  const split = build.indexOf("\n\n# MCode desktop\n")
+  check("the general part is in the length class of the one it answers", split > 7_000 && split < 12_000, true)
+  check("and so is the desktop part", build.length - split > 12_000 && build.length - split < 20_000, true)
+  check("every agent reads exactly the same text, plan included", [agentPrompt("plan"), agentPrompt("compose"), agentPrompt(undefined), agentPrompt("general")].every((text) => text === build), true)
+  /*
+   * R18-E3: what 26.920 moved. The general part keeps no tone rules of its
+   * own, the desktop part carries them, and the old code-references section
+   * is one line among them.
+   */
+  const general = build.slice(0, split)
+  const desktop = build.slice(split)
+  check("tone and the reply's shape are the desktop part's, not the general one's", !/^# (Tone and style|Text output|Session-specific guidance|Code references)/m.test(build) && desktop.includes("file_path:line_number") && desktop.includes("Do not think aloud") && !general.includes("No emoji"), true)
+  check("the general part states the permission rules and the scope of an approval", ["allows, asks or denies", "Approval given once covers that action in that place and nothing wider"].filter((part) => !general.includes(part)), [])
+  check("and tells the model that the conversation, not memory, is the state of things", general.includes("Memory notes can be out of date"), true)
+  check("tool names are exact and lower case", general.includes("Tool names are exact") && general.includes("in lower case"), true)
+  check("the Skills section says where a made skill goes by pointing at the list", general.includes("write it where the Skills section says new skills go"), true)
+  /*
+   * The environment check is gone as a guard (26.920 deleted both of its
+   * files); what it said survives as one sentence in the base layer, which
+   * names both platforms' ways of looking.
+   */
+  const tools = desktop.slice(desktop.indexOf("## Tools on this machine"), desktop.indexOf("## Web page work"))
+  check("one failed command is not proof a tool is missing, and each platform's way of looking is named", ["one bare command failing", "Get-Command", "where.exe", "bash -lc", "command -v"].filter((part) => !tools.includes(part)), [])
+  /*
+   * R16-B2 said the guards are Chinese and the base layers are not. 26.920
+   * turned that round: the goal guard is English, the plan and environment
+   * guards are gone, and the per-turn note is English too. A share rather
+   * than an absence, because the base carries a few Chinese trigger words.
+   */
+  const han = (text: string) => (text.match(/[\u4e00-\u9fff]/g)?.length ?? 0) / text.length
+  check("the base layers are English", han(build) < 0.05, true)
+  check("and so are the goal guard, the plan notes and the per-turn note", [GOAL_GUARD, firstPlanNote("/p/plan.md", false), laterPlanNote("/p/plan.md"), sessionNote({ mcpServers: [], configFile: "/c/config.json" })].map((text) => han(text) === 0), [true, true, true, true])
+  check("the prompt names this app and never the reference", build.startsWith("You are MCode") && !/mimo/i.test(build), true)
+  /*
+   * The interactive widget, under "Visual explanations". The three that matter
+   * are the fence (nothing renders without it), the sizing rule (a widget laid
+   * out against the viewport collapses the card to a sliver) and that it is
+   * rendered rather than delivered.
+   */
+  const widget = build.slice(build.indexOf("## Visual explanations"), build.indexOf("## Asking clarifying questions"))
+  check("the widget's fence, sizing rule and place are all stated", ["```sci-widget", "height:100vh", "window.innerHeight", "aspect-ratio", "present_files"].filter((part) => !widget.includes(part)), [])
 }
 
 if (problems.length) {

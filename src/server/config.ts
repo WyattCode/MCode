@@ -1,4 +1,7 @@
-import fs from "node:fs/promises"
+import { DEFAULT_APP_ICON } from "@shared/app-icons"
+import { migrateChime } from "@shared/chime"
+import { normalizeChord, retireKeybinds } from "@shared/chord"
+import { watch as watchFiles, type FSWatcher } from "node:fs"
 import path from "node:path"
 import os from "node:os"
 import type {
@@ -12,33 +15,65 @@ import type {
 } from "@shared/protocol"
 import {
   DEFAULT_PERMISSIONS,
+  EFFORTS,
   PERMISSION_ACTIONS,
   PERMISSION_KINDS,
   type PermissionKind,
 } from "@shared/protocol"
+import { adoptedProjects, knownFolder, listedProjects, reconciledProjects } from "@shared/projects"
+import { RepoRoots } from "./repo-roots"
+import { worktreeTop } from "./session/worktree"
+import { sanitizeConfig } from "./config-sanitize"
+import { defaultAccess, type Access } from "@shared/access"
 import type { Storage } from "./storage"
-import { writeAtomic } from "./storage"
+import { quarantine, writeAtomic } from "./storage"
+import fs from "node:fs/promises"
+import { parseCredentials, readCredentialFile, renderCredentials, sameCredentials, type SecretBox } from "./credential-file"
 import type { Bus } from "./bus"
 import {
   BUILT_IN,
+  MODELS_DEV_IDS,
   definition,
   type ModelEntry,
   type ProviderDefinition,
   type ProviderKind,
 } from "./provider/catalog"
 import { nameFromId } from "./provider/model-name"
+import { CodedError } from "@shared/errors"
+import type { Catalog, CatalogModel } from "@shared/models-dev"
 import { conversational } from "./provider/discover"
 import { modelVariants } from "./provider/variants"
+import { menuEfforts } from "@shared/effort-menu"
+import { normalizeBaseURL, normalizeModelId } from "@shared/custom-endpoint"
 import type { OAuthTokens } from "./auth/oauth"
+import { parseJsonc, renderJsonc } from "./jsonc"
 
-export const DEFAULT_MODEL: ModelRef = { provider: "anthropic", model: "claude-opus-5" }
+export const DEFAULT_MODEL: ModelRef = { provider: "", model: "" }
+
+/** Recorded in `migrations` once the project list has been filled from conversations. */
+export const PROJECT_LIST_MIGRATION = "projects-list"
+/** Round 10: linked worktrees that had become projects of their own are filed under their repository's. */
+export const REPOSITORY_PROJECTS_MIGRATION = "projects-by-repository"
+/** Round 10: project memory is filed per repository, and outside a repository in one shared folder. */
+export const MEMORY_LAYOUT_MIGRATION = "memory-by-repository"
+/** Round 12 (L12-3): a plain-text credentials.json has been encrypted with the system's secure storage. */
+export const CREDENTIALS_SEALED_MIGRATION = "credentials-sealed-r12"
+
+/**
+ * Which build's idea of the stored config this one is.
+ *
+ * None of this app's JSON documents carried a version, so a build installed
+ * over a newer one read whatever it found straight into its config object,
+ * kept the fields it did not know, possibly misread the ones it did, and wrote
+ * its own understanding back over the lot. Detecting it has to mean refusing to
+ * write, not merely refusing to read: a downgrade that still saves is exactly
+ * how the newer build's settings are lost.
+ *
+ * Raise this only when a change would be misread by a build that predates it.
+ */
+export const CONFIG_SCHEMA_VERSION = 1
 
 export type { ModelEntry }
-
-/** "provider/model" - the key models are enabled and looked up by. */
-export function modelKey(ref: ModelRef): string {
-  return `${ref.provider}/${ref.model}`
-}
 
 /**
  * One catalog entry as the window sees it.
@@ -48,7 +83,7 @@ export function modelKey(ref: ModelRef): string {
  * a catalog edit cannot leave a model advertising levels its family has never
  * accepted.
  */
-function modelInfo(kind: ProviderKind, model: ModelEntry): ModelInfo {
+function modelInfo(model: ModelEntry): ModelInfo {
   const inputs = model.inputs ?? {}
   return {
     id: model.id,
@@ -69,7 +104,8 @@ function modelInfo(kind: ProviderKind, model: ModelEntry): ModelInfo {
       pdf: inputs.pdf ?? false,
     },
     cost: { input: model.input, output: model.output },
-    variants: modelVariants(kind, model),
+    // The levels the menu offers, by MiMo's desktop rule; what each becomes on the wire is `variants()` below.
+    variants: menuEfforts(model.id, model.name),
   }
 }
 
@@ -77,17 +113,16 @@ function defaults(): AppConfig {
   return {
     model: DEFAULT_MODEL,
     theme: "system",
-    themeID: "oc-2",
     mcpServers: {},
     pinnedTabs: [],
+    pinnedProjects: [],
+    projectOrder: [],
+    taskOrder: {},
     keybinds: {},
-    serverURL: "",
-    servers: [],
-    defaultServer: "",
     updateFeed: "",
-    soundAgent: false,
-    soundPermission: false,
-    soundError: false,
+    taskDoneSound: "bloom",
+    spineSound: true,
+    projectRoot: "",
     /*
      * Empty means nobody has chosen yet, which the window answers by reading
      * the machine's own preference. A real value here would be indistinguishable
@@ -100,31 +135,31 @@ function defaults(): AppConfig {
      * The value here only matters for the moment between the two.
      */
     autoApprove: allowed(DEFAULT_PERMISSIONS),
+    allowFullAccess: false,
     directory: process.cwd(),
+    projects: [],
     closedProjects: [],
     projectNames: {},
+    projectUsed: {},
     projectIcons: {},
     projectColors: {},
-    effort: "high",
+    // MiMo's 中: one app-wide level, medium until someone picks another.
+    effort: "medium",
     agent: "build",
-    openTabs: [],
-    onboarded: false,
-    showReasoning: true,
-    expandShell: false,
-    expandEdits: false,
-    showServerButton: false,
-    showPaletteButton: false,
-    uiFont: "",
-    codeFont: "",
-    terminalFont: "",
-    notifyAgent: true,
-    notifyPermission: true,
-    notifyError: true,
-    pinchZoom: true,
-    showFileTree: true,
-    showNavigation: false,
-    showTerminal: false,
-    showAgentPicker: true,
+    goalMode: false,
+    uiFontSize: 14,
+    codeFontSize: 12,
+    instructions: "",
+    tray: true,
+    voiceMode: "smart",
+    voiceSend: false,
+    voiceFeedback: true,
+    fontSmoothing: true,
+    appIcon: DEFAULT_APP_ICON,
+    pointerCursor: true,
+    reduceMotion: "system",
+    diffMarks: "color",
+    migrations: [],
     shell: "",
     customProviders: [],
     /*
@@ -139,13 +174,100 @@ function defaults(): AppConfig {
      */
     commands: {},
     providerEndpoints: {},
-    /**
-     * Which models appear in the composer picker. Empty means "not chosen yet",
-     * and the picker falls back to showing everything a connected provider
-     * offers - otherwise connecting a provider would appear to do nothing.
-     */
-    enabledModels: [],
   }
+}
+
+/**
+ * Fields earlier builds stored and this one no longer has.
+ *
+ * Each was a setting whose row is gone because MiMo has no such setting; the
+ * behaviour is now MiMo's fixed one. A stored value would otherwise ride along
+ * in every write for ever, so it is dropped on every read - MiMo's own settings
+ * store deletes its retired keys the same way each time it loads.
+ */
+export const RETIRED_FIELDS: readonly string[] = [
+  // Round nine (S9-1): notifications always on, no permission or failure cue,
+  // no Ctrl+wheel zoom in the main window, tool rows always start closed.
+  "notifyAgent",
+  "notifyPermission",
+  "soundPermission",
+  "soundError",
+  "pinchZoom",
+  "expandShell",
+  "expandEdits",
+  // S9-2: the picker's curation list, whose switches round three removed; every model shows.
+  "enabledModels",
+  // S9-3: the hidden tab list; the numbered shortcuts count along the side column now.
+  "openTabs",
+  // S9-5: the three typeface boxes; MiMo deletes its stored faces the same way on every load.
+  "uiFont",
+  "codeFont",
+  "terminalFont",
+  // S9-6: the palette choice; MiMo has only the scheme, and MCode draws with its one palette.
+  "themeID",
+  // S9-7: the post-update notes window's switch; MiMo has no such window.
+  "releaseNotes",
+  // S9-9: the bar's terminal toggle switch, which nothing ever read.
+  "showTerminal",
+  // S9-14: the remote-backend connection MiMo does not have; the window only ever talks to its own backend.
+  "serverURL",
+  "servers",
+  "defaultServer",
+]
+
+/** Takes the retired fields out of a document; answers whether any was there. */
+function dropRetired(document: object): boolean {
+  const record = document as Record<string, unknown>
+  let dropped = false
+  for (const field of RETIRED_FIELDS) {
+    if (!(field in record)) continue
+    delete record[field]
+    dropped = true
+  }
+  return dropped
+}
+
+/** A stored value the checks replaced as it was read, and what it was replaced with. */
+interface HeldValue {
+  stored: unknown
+  read: unknown
+}
+
+/**
+ * Checks `doc` as `sanitizeConfig` does, and answers the stored values that
+ * changed on the way in (L12-5).
+ *
+ * The checks are for this process: a value this build does not know - a
+ * newer build's theme, app icon or effort level - is the default here, but it
+ * is the newer build's value on disk and stays there. Writing the checked copy
+ * back meant that opening an older build once replaced it for good.
+ */
+function sanitizeHeld(doc: AppConfig, stored: Partial<AppConfig> | undefined): Map<string, HeldValue> {
+  const before = { ...doc } as Record<string, unknown>
+  sanitizeConfig(doc, defaults())
+  const after = doc as unknown as Record<string, unknown>
+  const held = new Map<string, HeldValue>()
+  for (const [key, value] of Object.entries(stored ?? {})) {
+    if (!Object.is(before[key], after[key])) held.set(key, { stored: value, read: after[key] })
+  }
+  return held
+}
+
+/**
+ * The permission map MiMo's three levels leave behind, at `level`.
+ *
+ * MiMo has no per-tool answers, only the level; the map is how this app stores
+ * the level. So full access is every bucket allowed, and the other two levels
+ * are the defaults - the middle one is applied on top of them by `accessLevel`.
+ */
+export function levelMap(level: Access): Record<PermissionKind, PermissionAction> {
+  if (level !== "full") return { ...DEFAULT_PERMISSIONS }
+  return Object.fromEntries(PERMISSION_KINDS.map((kind) => [kind, "allow"])) as Record<PermissionKind, PermissionAction>
+}
+
+/** MiMo's defaults when nothing is stored: the middle level, and the full access switch on. */
+export function firstInstall(): Pick<AppConfig, "accessLevel" | "allowFullAccess"> {
+  return { accessLevel: "auto", allowFullAccess: true }
 }
 
 /**
@@ -262,33 +384,439 @@ function customProviderWrite(
   }
 }
 
+type CustomModelEntry = NonNullable<CustomProvider["models"]>[number]
+
+/**
+ * A custom model as it may be stored: its id stripped of every blank and its
+ * name trimmed, as MiMo saves them, and MiMo's
+ * 高级配置 checked. The image switch has three states (absent is the default),
+ * and each limit is a positive whole number of tokens, with an output limit
+ * allowed only beside an input limit. A limit that breaks those rules is
+ * refused rather than quietly dropped, so a mistyped cap never passes as set.
+ */
+export function customModelOf(model: CustomModelEntry): CustomModelEntry {
+  const out: CustomModelEntry = { id: normalizeModelId(String(model.id ?? "")), name: String(model.name ?? "").trim() }
+  if (typeof model.attachment === "boolean") out.attachment = model.attachment
+  const positive = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0
+  const context = model.limit?.context
+  const output = model.limit?.output
+  const invalid = "A model limit must be a positive whole number, and an output limit needs an input limit"
+  if (context !== undefined && !positive(context)) throw new CodedError(invalid, "provider.custom.limitInvalid")
+  if (output !== undefined && (!positive(output) || context === undefined)) throw new CodedError(invalid, "provider.custom.limitInvalid")
+  if (positive(context)) out.limit = positive(output) ? { context, output } : { context }
+  // MiMo's other model fields, kept when a config file states them.
+  const inputs = Object.fromEntries((["pdf", "audio", "video"] as const).flatMap((key) => (typeof model.inputs?.[key] === "boolean" ? [[key, model.inputs[key]]] : [])))
+  if (Object.keys(inputs).length) out.inputs = inputs
+  if (model.cacheTTL === "5m" || model.cacheTTL === "1h") out.cacheTTL = model.cacheTTL
+  if (model.interleaved === "reasoning" || model.interleaved === "reasoning_content" || model.interleaved === "reasoning_details") out.interleaved = model.interleaved
+  return out
+}
+
+/**
+ * A model as models.dev describes it, laid over what this app knew: models.dev
+ * decides limits, prices and capabilities wherever it states them, and the
+ * app's own table keeps the name it gives a model.
+ */
+export function withCatalog(entry: ModelEntry, listed: CatalogModel | undefined, keepName: boolean): ModelEntry {
+  if (!listed) return entry
+  const input = listed.modalities?.input
+  const efforts = listed.reasoning_options?.find((option) => option.type === "effort")?.values
+  const interleaved = typeof listed.interleaved === "object" && listed.interleaved && "field" in listed.interleaved ? String((listed.interleaved as { field: unknown }).field) : undefined
+  const positive = (value: number | undefined) => (value && value > 0 ? value : undefined)
+  return {
+    ...entry,
+    name: keepName || !listed.name ? entry.name : listed.name,
+    contextWindow: positive(listed.limit?.context) ?? entry.contextWindow,
+    ...(positive(listed.limit?.output) ? { maxOutput: listed.limit!.output } : {}),
+    input: listed.cost?.input ?? entry.input,
+    output: listed.cost?.output ?? entry.output,
+    ...(listed.cost?.cache_read !== undefined ? { cacheRead: listed.cost.cache_read } : {}),
+    ...(listed.cost?.cache_write !== undefined ? { cacheWrite: listed.cost.cache_write } : {}),
+    // The dearer tier past 200k, where the catalog gives both halves of it; see `costOf`.
+    ...(listed.cost?.context_over_200k?.input !== undefined && listed.cost.context_over_200k.output !== undefined
+      ? {
+          over200K: {
+            input: listed.cost.context_over_200k.input,
+            output: listed.cost.context_over_200k.output,
+            ...(listed.cost.context_over_200k.cache_read !== undefined ? { cacheRead: listed.cost.context_over_200k.cache_read } : {}),
+            ...(listed.cost.context_over_200k.cache_write !== undefined ? { cacheWrite: listed.cost.context_over_200k.cache_write } : {}),
+          },
+        }
+      : {}),
+    reasoning: listed.reasoning ?? entry.reasoning,
+    attachment: listed.attachment ?? entry.attachment,
+    toolCall: listed.tool_call ?? entry.toolCall,
+    temperature: listed.temperature ?? entry.temperature,
+    ...(input
+      ? { inputs: { text: input.includes("text"), image: input.includes("image"), audio: input.includes("audio"), video: input.includes("video"), pdf: input.includes("pdf") } }
+      : {}),
+    ...(efforts ? { efforts: efforts.filter((value): value is Effort => (EFFORTS as readonly string[]).includes(value)) } : {}),
+    ...(interleaved ? { interleaved } : {}),
+  }
+}
+
 export class Config {
   private current: AppConfig = defaults()
+  /** The models.dev catalog (provider/models-dev.ts); empty until it has loaded. */
+  private catalog: Catalog = {}
   private credentials: Record<string, string> = {}
   private oauth: Record<string, OAuthTokens> = {}
   private discovered: Record<string, ModelEntry[]> = {}
+  /** Whether a document was already on disk when this process read it; see the import migration. */
+  private existed = false
+
+  /** Which main repository a conversation folder is part of, kept between launches. */
+  readonly repoRoots: RepoRoots
 
   constructor(
     private readonly storage: Storage,
     private readonly bus: Bus,
     private readonly credentialFile: string,
-  ) {}
+    /** The system's secure storage (L12-3); absent under plain node, where the file stays plain text. */
+    private readonly secrets?: SecretBox,
+  ) {
+    this.repoRoots = new RepoRoots(storage)
+  }
+
+  /**
+   * Changes to a document that this build makes once and then leaves alone.
+   *
+   * Answers whether anything moved, so a document already migrated is not
+   * rewritten on every launch. Each entry runs only if its name is absent, and
+   * the name is recorded whether or not the value needed changing - a
+   * migration that did nothing this time still must not run again, or it would
+   * undo a choice made after it.
+   */
+  private migrate(stored?: Partial<AppConfig>): boolean {
+    const done = new Set(this.current.migrations ?? [])
+    let moved = false
+    const once = (name: string, apply: () => void) => {
+      if (done.has(name)) return
+      apply()
+      done.add(name)
+      moved = true
+    }
+
+    /*
+     * Round three renamed several commands to MiMo's ids. A chord someone bound
+     * under the old id would otherwise stop working without a word; it moves to
+     * the new id unless that one already has a binding. Commands that are gone
+     * (new terminal, the duplicate fork) take their chords with them.
+     */
+    once("keybind-ids-r3", () => {
+      const renamed: Record<string, string | undefined> = {
+        "command.palette": "app.search",
+        "model.variant.decrease": "effort.decrease",
+        "model.variant.increase": "effort.increase",
+        "view.rightMax": "panel.maximize",
+        "view.rightExpand": "panel.maximize",
+        "session.forkChat": undefined,
+        "terminal.new": undefined,
+      }
+      const binds = { ...(this.current.keybinds ?? {}) }
+      for (const [from, to] of Object.entries(renamed)) {
+        if (!(from in binds)) continue
+        if (to && !(to in binds)) binds[to] = binds[from]
+        delete binds[from]
+      }
+      this.current.keybinds = binds
+    })
+
+    /*
+     * Recording now reads the physical key, so a chord saved in the old printed
+     * form (Ctrl+Shift+{) is rewritten to the one a keystroke produces
+     * (Ctrl+Shift+[), or it would never fire again. A deleted binding ("")
+     * stays deleted.
+     */
+    once("keybind-chords-r4", () => {
+      const binds: Record<string, string> = {}
+      for (const [id, chord] of Object.entries(this.current.keybinds ?? {})) binds[id] = normalizeChord(chord)
+      this.current.keybinds = binds
+    })
+
+    /*
+     * Round five takes MiMo's eight chimes. A figure chosen from the old five
+     * moves to its nearest new one; off stays off.
+     */
+    once("chime-r5", () => {
+      this.current.taskDoneSound = migrateChime(this.current.taskDoneSound)
+    })
+
+    // Round five dropped the chords MiMo lacks; see `retireKeybinds` for what a saved binding keeps.
+    once("keybind-retired-r5", () => {
+      this.current.keybinds = retireKeybinds(this.current.keybinds ?? {})
+    })
+
+    /*
+     * Full access now needs its settings switch, and the server holds a config
+     * at full access with the switch off to the default. A config that reached
+     * full access before that rule (the auto-accept chord, the per-tool rows)
+     * turns the switch on instead, so nobody's permissions change on upgrade.
+     */
+    once("full-access-switch-r5", () => {
+      const map = this.current.permissions
+      const full = this.current.accessLevel !== "auto" && PERMISSION_KINDS.every((kind) => map[kind] !== "ask")
+      if (full && !this.current.allowFullAccess) this.current.allowFullAccess = true
+    })
+
+    /*
+     * Round nine (S9-1): the per-tool answers had no row left to change them,
+     * yet a stored "deny" still refused a tool at every level and a stored
+     * "allow" still skipped a question at the default one. MiMo has only the
+     * three levels, so the map goes back to what the level the user is on
+     * writes, and the set-aside map full access kept goes with it. The level
+     * itself - and the full access switch - are the user's and stay.
+     */
+    once("orphans-r9", () => {
+      this.current.permissions = levelMap(defaultAccess(this.current))
+      delete this.current.accessBefore
+    })
+
+    /*
+     * Round nine: MCP tool calls stop asking by default, as in MiMo (the
+     * user's decision of 2026-09-17). A document that went through the reset
+     * above before the default changed still says "ask" for MCP, which
+     * cannot be told from a choice, so it moves to the new default once; a
+     * refusal stays.
+     */
+    once("mcp-allow-r9", () => {
+      const map = this.current.permissions
+      if (map?.mcp === "ask") this.current.permissions = { ...map, mcp: "allow" }
+      const kept = this.current.accessBefore
+      if (kept?.mcp === "ask") this.current.accessBefore = { ...kept, mcp: "allow" }
+    })
+
+    /*
+     * Round sixteen, the user's 2026-09-20 decision: the two places this app
+     * was stricter than what it copies are relaxed to it.
+     *
+     * `write` is no longer a bucket of its own - MiMo and OpenCode both judge
+     * creating a file as an edit - so a stored answer for it would simply be
+     * dropped on the next save. A document that refused writes, or allowed
+     * them where edits still ask, has that answer carried onto `edit` rather
+     * than losing it: whichever of the two was stricter wins, since the reader
+     * set both to mean what may happen to their files.
+     *
+     * `webfetch` now runs without asking, as MiMo's does. A stored "ask" for
+     * it can only be the old default - the per-tool rows went in round nine and
+     * nothing since could set one - so it moves to the new default once. A
+     * refusal is a choice and stays.
+     */
+    once("write-into-edit-r16", () => {
+      const strictness = { allow: 0, ask: 1, deny: 2 }
+      const written = (stored?.permissions as Record<string, unknown> | undefined)?.write
+      const carry = (map: Partial<Record<PermissionKind, PermissionAction>> | undefined) => {
+        if (!map) return map
+        const next = { ...map }
+        if (typeof written === "string" && written in strictness) {
+          const was = written as PermissionAction
+          const now = next.edit ?? DEFAULT_PERMISSIONS.edit
+          if (strictness[was] > strictness[now]) next.edit = was
+        }
+        if (next.webfetch === "ask") next.webfetch = DEFAULT_PERMISSIONS.webfetch
+        return next
+      }
+      this.current.permissions = carry(this.current.permissions) as Record<PermissionKind, PermissionAction>
+      const kept = carry(this.current.accessBefore)
+      if (kept) this.current.accessBefore = kept
+    })
+
+    if (moved) this.current.migrations = [...done]
+    return moved
+  }
 
   async load(): Promise<void> {
-    const stored = await this.storage.read<Partial<AppConfig>>("config")
-    this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
-    this.current.autoApprove = allowed(this.current.permissions)
-    this.discovered = (await this.storage.read<Record<string, ModelEntry[]>>("models")) ?? {}
-    try {
-      const raw = JSON.parse(await fs.readFile(this.credentialFile, "utf8"))
-      // The file used to be a bare provider -> key map; keep those working.
-      const versioned = raw && typeof raw === "object" && ("keys" in raw || "oauth" in raw)
-      this.credentials = versioned ? (raw.keys ?? {}) : raw
-      this.oauth = versioned ? (raw.oauth ?? {}) : {}
-    } catch {
-      this.credentials = {}
-      this.oauth = {}
+    /*
+     * A config that will not parse must not stop the app from opening.
+     *
+     * This used to throw straight out of the backend's start-up, so a half
+     * written or hand-edited config.json left the whole app unopenable with a
+     * syntax error and no interface left to fix it from - the very scenario the
+     * byte-order-mark note in the store describes, fixed there for one cause
+     * only. The reference never throws here either: an absent file is defaults,
+     * an unparseable one is an error it reports and carries on from.
+     *
+     * The damaged file is kept rather than written over, under a name of its
+     * own, so the settings in it can still be got back by hand.
+     */
+    const read = await this.readStored()
+    const stored = read.value
+    if (read.corrupt) {
+      const aside = await this.storage.quarantine("config")
+      this.unreadable = { problem: read.corrupt, evidence: aside }
     }
+    /*
+     * A file that could not be read still means a profile that has been used
+     * before: treating it as a first run would offer to import from other apps
+     * on a machine that has been running MCode for months.
+     */
+    this.existed = stored !== undefined || read.corrupt !== undefined
+    // Read before anything is merged: what follows must not write over a newer document.
+    this.fromNewerVersion = typeof stored?.schemaVersion === "number" && stored.schemaVersion > CONFIG_SCHEMA_VERSION
+    this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
+    const retired = dropRetired(this.current)
+    // Before the migrations, which read these values as the types they claim to be; in memory only.
+    this.held = sanitizeHeld(this.current, stored)
+    /*
+     * A first install - no config on disk at all - starts where MiMo's does:
+     * 帮我审批, with full access allowed. The user chose these (2026-09-15). Only
+     * an absent file counts: a stored config that lacks the fields was written
+     * under the old defaults and keeps meaning them. A file that is there but
+     * cannot be read is not a first install either - answering one with the
+     * first-install permissions would quietly change what this machine allows.
+     */
+    if (stored === undefined && !read.corrupt) Object.assign(this.current, firstInstall())
+    const migrated = this.migrate(stored)
+    this.current.autoApprove = allowed(this.current.permissions)
+    if ((migrated || retired) && !this.fromNewerVersion) await this.persist()
+    this.discovered = await this.readDiscovered()
+    await this.loadCredentials()
+  }
+
+  /**
+   * The saved keys and sign-ins (L12-2).
+   *
+   * Any failure used to read as an empty file, and the next key saved then
+   * replaced every other key and every subscription login with nothing said.
+   * A file that is there but cannot be read is kept aside now, as a damaged
+   * config is, and the app starts without it; if it cannot even be moved,
+   * saving credentials is refused rather than writing over it.
+   */
+  private async loadCredentials(): Promise<void> {
+    const read = await readCredentialFile(this.credentialFile, this.secrets)
+    if (read.state === "read") {
+      this.credentials = read.credentials.keys
+      this.oauth = read.credentials.oauth
+      this.credentialsInPlainText = !read.sealed
+      return
+    }
+    this.credentials = {}
+    this.oauth = {}
+    if (read.state === "absent") return
+    const aside = await quarantine(this.credentialFile)
+    this.credentialsUnreadable = { problem: read.problem, evidence: aside }
+    this.credentialsBlocked = aside === undefined
+    console.warn(`[config] ${read.problem}; ${aside ? `kept as ${path.basename(aside)}` : "it could not be moved, so saving keys is refused until it is"}`)
+  }
+
+  /** Set when credentials.json was there but could not be read, with where it was kept. */
+  credentialsUnreadable: { problem: string; evidence?: string } | undefined
+
+  /** An unreadable credential file that could not be moved aside: nothing may write over it. */
+  private credentialsBlocked = false
+
+  /** Whether credentials.json on disk is plain text rather than sealed. */
+  private credentialsInPlainText = false
+
+  /**
+   * Keys and sign-ins are being kept in plain text because this system has no
+   * secure storage to seal them with - Linux without a keyring (L12-3). Said
+   * only once there is something stored; with nothing saved there is nothing
+   * exposed yet.
+   */
+  get credentialsPlaintext(): boolean {
+    if (!this.secrets || this.secrets.available()) return false
+    return Object.keys(this.credentials).length > 0 || Object.keys(this.oauth).length > 0
+  }
+
+  private writableCredentials(): void {
+    if (this.credentialsBlocked) {
+      throw new CodedError("The saved credentials could not be read and are kept as they are; nothing is written over them", "error.credentialsInvalid")
+    }
+  }
+
+  /**
+   * The model lists discovered from each provider's /models (L12-1).
+   *
+   * This was the one plain read left on the backend's start-up path: a
+   * truncated or hand-edited models.json threw out of `load`, and the app
+   * showed its error page on every launch with Retry failing the same way. The
+   * lists are only a cache of what the next discovery fetches again, so a
+   * damaged file is kept aside and the app starts without them.
+   */
+  private async readDiscovered(): Promise<Record<string, ModelEntry[]>> {
+    const read = await this.storage.readOrCorrupt<unknown>("models")
+    const value = read.value
+    if (!read.corrupt && (value === undefined || (value && typeof value === "object" && !Array.isArray(value)))) {
+      return (value as Record<string, ModelEntry[]> | undefined) ?? {}
+    }
+    const aside = await this.storage.quarantine("models")
+    console.warn(`[config] models.json could not be read (${read.corrupt ?? "not an object"}); ${aside ? `kept as ${path.basename(aside)}` : "left in place"}, starting without discovered models`)
+    return {}
+  }
+
+  /**
+   * Set when the stored config would not parse, with where it was kept.
+   *
+   * The app opens on the defaults either way; this is what lets it say so
+   * rather than leaving the reader to wonder where their settings went.
+   */
+  unreadable: { problem: string; evidence?: string } | undefined
+
+  /**
+   * Set when the stored config was written by a later build than this one.
+   *
+   * Everything still works - the settings that are understood are read as
+   * usual - but nothing is written back, so re-installing an older build and
+   * opening it once cannot strip the fields the newer one had added.
+   */
+  fromNewerVersion = false
+
+  /**
+   * config.json as stored: JSONC, so a hand edit may carry comments and
+   * trailing commas. A file that does not parse is reported with where it broke.
+   */
+  private async readStored(): Promise<{ value?: Partial<AppConfig>; corrupt?: string; text?: string }> {
+    let text: string | undefined
+    try {
+      text = await this.storage.readText("config")
+    } catch (err) {
+      return { corrupt: err instanceof Error ? err.message : String(err) }
+    }
+    if (text === undefined) return {}
+    const read = parseJsonc(text)
+    if (read.problem) {
+      return { corrupt: `config.json is not valid JSON near line ${read.problem.line}, column ${read.problem.column} (${read.problem.reason})`, text }
+    }
+    if (read.value === undefined) return { text }
+    if (!read.value || typeof read.value !== "object" || Array.isArray(read.value)) return { corrupt: "config.json does not hold an object", text }
+    return { value: read.value as Partial<AppConfig>, text }
+  }
+
+  /*
+   * What this process itself wrote lately. A key-by-key save leaves the keys
+   * in the file's own order, so the file no longer reads back identical to the
+   * settings in memory, and the folder watcher would take every save of ours
+   * - including one already overtaken by the next - for a hand edit.
+   */
+  private readonly written: string[] = []
+
+  /** Writes the settings key by key into the file as it stands, refusing one that no longer parses. */
+  private persist(): Promise<void> {
+    const file = this.storage.fileOf("config")
+    const value = this.asStored(this.current)
+    return this.storage.writeText("config", (current) => {
+      const text = renderJsonc(file, current, value)
+      this.written.push(text)
+      if (this.written.length > 16) this.written.shift()
+      return text
+    })
+  }
+
+  /**
+   * Stored values the checks replaced as they were read, kept for the file
+   * (L12-5); a field leaves this once something sets it.
+   */
+  private held = new Map<string, HeldValue>()
+
+  /** The settings as the file should say them: a replaced value nobody has changed since is written as it was stored. */
+  private asStored(current: AppConfig): AppConfig {
+    if (!this.held.size) return current
+    const out = { ...current } as Record<string, unknown>
+    for (const [key, entry] of this.held) {
+      if (JSON.stringify(out[key]) === JSON.stringify(entry.read)) out[key] = entry.stored
+    }
+    return out as unknown as AppConfig
   }
 
   /** The last credential write, so two of them cannot interleave. */
@@ -302,15 +830,50 @@ export class Config {
    * rename treatment as the document store.
    */
   private async persistCredentials(): Promise<void> {
-    const next = this.persisting.catch(() => {}).then(() =>
-      writeAtomic(
-        this.credentialFile,
-        JSON.stringify({ keys: this.credentials, oauth: this.oauth }, null, 2),
-        0o600,
-      ),
-    )
+    const next = this.persisting.catch(() => {}).then(async () => {
+      // Sealed whenever the system can; see migrateCredentials for the first time.
+      const sealed = Boolean(this.secrets?.available())
+      await writeAtomic(this.credentialFile, renderCredentials({ keys: this.credentials, oauth: this.oauth }, this.secrets), 0o600)
+      this.credentialsInPlainText = !sealed
+    })
     this.persisting = next
     await next
+  }
+
+  /**
+   * Round 12 (L12-3), once: a plain-text credentials.json is encrypted with
+   * the system's secure storage, as MiMo keeps its provider keys.
+   *
+   * The sealed copy is written beside the file and read back and compared
+   * before it replaces anything, so the plain one is only dropped once the
+   * sealed one is known to open to the same keys. Anything that goes wrong
+   * leaves the plain file as it was, unrecorded, and this is tried again at
+   * the next launch; never recorded either while the system cannot seal.
+   */
+  async migrateCredentials(): Promise<void> {
+    if (this.fromNewerVersion) return
+    if ((this.current.migrations ?? []).includes(CREDENTIALS_SEALED_MIGRATION)) return
+    const box = this.secrets
+    if (!box?.available() || this.credentialsBlocked) return
+    try {
+      if (this.credentialsInPlainText) {
+        const credentials = { keys: this.credentials, oauth: this.oauth }
+        const next = this.persisting.catch(() => {}).then(() =>
+          writeAtomic(this.credentialFile, renderCredentials(credentials, box), 0o600, true, async (written) => {
+            const back = parseCredentials(await fs.readFile(written, "utf8"), box)
+            if (back.state !== "read" || !back.sealed || !sameCredentials(back.credentials, credentials)) {
+              throw new Error("the encrypted copy did not read back the same")
+            }
+          }),
+        )
+        this.persisting = next
+        await next
+        this.credentialsInPlainText = false
+      }
+      await this.set({ migrations: [...(this.current.migrations ?? []), CREDENTIALS_SEALED_MIGRATION] })
+    } catch (err) {
+      console.warn(`[config] the saved keys were not encrypted this time (${err instanceof Error ? err.message : String(err)}); the plain file is kept and this is tried again at the next launch`)
+    }
   }
 
   /** Tokens from a subscription login, if this provider has one. */
@@ -319,6 +882,7 @@ export class Config {
   }
 
   async setTokens(provider: string, tokens: OAuthTokens | undefined): Promise<void> {
+    this.writableCredentials()
     if (tokens) this.oauth[provider] = tokens
     else delete this.oauth[provider]
     await this.persistCredentials()
@@ -328,12 +892,122 @@ export class Config {
     return this.current
   }
 
-  async set(patch: Partial<AppConfig>): Promise<AppConfig> {
+  private watcher?: FSWatcher
+
+  /**
+   * Hand edits to config.json take effect without reopening the app.
+   *
+   * MiMo's MCP page says an edited config file counts from the next
+   * conversation; this reloads the document whenever the file on disk comes to
+   * say something other than what this process holds, and announces it the
+   * way a change made in the window is announced - so MCP servers reconnect and
+   * the window redraws. The folder is watched rather than the file, because a
+   * save by rename (this app's own, and many editors') replaces the file a
+   * watcher would be holding. A file that does not parse is left alone until it
+   * does.
+   */
+  watch(): void {
+    if (this.watcher) return
+    const file = this.storage.fileOf("config")
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      this.watcher = watchFiles(path.dirname(file), (_event, name) => {
+        if (name && name.toString() !== path.basename(file)) return
+        clearTimeout(timer)
+        timer = setTimeout(() => void this.reloadFromDisk(), 150)
+      })
+      this.watcher.unref()
+    } catch {
+      // A folder that cannot be watched only means edits wait for the next launch.
+    }
+  }
+
+  /** Told after a hand edit has been taken in, with the settings before and after it. */
+  private reloadListeners: ((before: AppConfig, after: AppConfig) => void | Promise<void>)[] = []
+
+  onReload(listener: (before: AppConfig, after: AppConfig) => void | Promise<void>): void {
+    this.reloadListeners.push(listener)
+  }
+
+  /**
+   * A hand edit, taken in under the same rules as a launch and a change made in
+   * the window.
+   *
+   * It used to be spread over the defaults and nothing else: a document marked
+   * as written by a later build was then written over by the next change, a
+   * custom provider deleted from the file was simply gone rather than disabled,
+   * and turning full access off left every conversation already at full access
+   * there until its next question.
+   */
+  async reloadFromDisk(): Promise<void> {
+    // A file that stopped parsing is left alone: the next save refuses and says where it broke.
+    const read = await this.readStored()
+    const stored = read.value
+    if (!stored || (read.text !== undefined && this.written.includes(read.text))) return
+    if (JSON.stringify(stored) === JSON.stringify(this.current)) return
+    const before = this.current
+    // As load reads it: a later build's document is taken in but never written back over.
+    this.fromNewerVersion = typeof stored.schemaVersion === "number" && stored.schemaVersion > CONFIG_SCHEMA_VERSION
+    let next: AppConfig = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
+    dropRetired(next)
+    const held = sanitizeHeld(next, stored)
+    // As set keeps it: a custom provider taken out of the file is disabled, not lost.
+    if (JSON.stringify(next.customProviders) !== JSON.stringify(before.customProviders)) {
+      next = { ...next, ...customProviderWrite(before.customProviders, next) }
+    }
+    next.autoApprove = allowed(next.permissions)
+    this.current = next
+    this.held = held
+    this.bus.publish({ type: "config.updated", config: this.current })
+    for (const listener of this.reloadListeners) await Promise.resolve(listener(before, next)).catch(() => undefined)
+  }
+
+  /**
+   * One change at a time (N11-34). A save that fails rolls the settings back to
+   * how it found them, and two overlapping saves meant that roll-back also
+   * threw away the other save's change - gone from memory and never written.
+   * Queued, "how it found them" is exactly the state before this change.
+   */
+  private setting: Promise<unknown> = Promise.resolve()
+
+  /** Settles the settings save and the credential write in flight, for quit (L12-6). */
+  async drain(): Promise<void> {
+    await Promise.allSettled([this.setting, this.persisting])
+  }
+
+  set(patch: Partial<AppConfig>): Promise<AppConfig> {
+    const next = this.setting.catch(() => undefined).then(() => this.setNow(patch))
+    this.setting = next
+    return next
+  }
+
+  private async setNow(patch: Partial<AppConfig>): Promise<AppConfig> {
+    const previous = this.current
+    const held = new Map(this.held)
+    try {
+      return await this.apply(patch)
+    } catch (err) {
+      // A save that could not be written leaves the settings as they were, so memory never runs ahead of the file.
+      this.current = previous
+      this.held = held
+      throw err
+    }
+  }
+
+  private async apply(patch: Partial<AppConfig>): Promise<AppConfig> {
     const before = this.current.permissions
     const providersBefore = this.current.customProviders
+    const projectsBefore = { projects: this.current.projects, closedProjects: this.current.closedProjects }
     this.current = { ...this.current, ...patch }
+    // A value set now is the one to write, even where it equals what a stored one was read as.
+    for (const key of Object.keys(patch)) this.held.delete(key)
+    dropRetired(this.current)
     if (patch.customProviders) {
       this.current = { ...this.current, ...customProviderWrite(providersBefore, this.current) }
+    }
+    // A folder taken out of the removed set is a project again, and one put in it leaves the list.
+    if (patch.projects || patch.closedProjects) {
+      this.current.projects = reconciledProjects(projectsBefore, this.current)
     }
     /*
      * A patch may speak either vocabulary. The map wins when both are present:
@@ -348,9 +1022,114 @@ export class Config {
       this.current.permissions = before
     }
     this.current.autoApprove = allowed(this.current.permissions)
-    await this.storage.write("config", this.current)
+    /*
+     * Never written over a document a later build wrote.
+     *
+     * Reading one is fine - the fields this build understands still mean what
+     * they say - but writing this build's understanding back would drop every
+     * field the newer one had added. Detecting a newer document has to mean
+     * refusing the write, not only refusing to trust the read, and refusing it
+     * out loud so the user is told rather than left with settings that quietly
+     * do not stick.
+     */
+    if (this.fromNewerVersion) {
+      throw new CodedError("The stored settings were written by a newer version of this app", "error.configNewer")
+    }
+    this.current = { ...this.current, schemaVersion: CONFIG_SCHEMA_VERSION }
+    await this.persist()
     this.bus.publish({ type: "config.updated", config: this.current })
     return this.current
+  }
+
+  /**
+   * Folders neither listed nor removed join the project list, as MiMo derives them.
+   *
+   * `byRepository` is for a conversation's own folder: one that is not a known
+   * project is filed under the main repository it belongs to, so a
+   * conversation in a linked worktree or a subdirectory adds the repository's
+   * project rather than one of its own, and a folder that is gone adds nothing.
+   * A folder the reader chose as a project (移动至项目) is taken as it is.
+   */
+  async adoptProjects(directories: readonly string[], options: { byRepository?: boolean } = {}): Promise<void> {
+    const folders = options.byRepository ? await this.projectFolders(directories) : directories
+    const patch = adoptedProjects(this.current, folders)
+    if (patch) await this.set(patch)
+  }
+
+  private async projectFolders(directories: readonly string[]): Promise<string[]> {
+    const known = [...(this.current.projects ?? []), ...(this.current.closedProjects ?? [])]
+    const out: string[] = []
+    for (const directory of directories) {
+      const listed = knownFolder(known, directory)
+      if (listed) {
+        out.push(listed)
+        continue
+      }
+      const { roots, missing } = await this.repoRoots.resolve([directory])
+      if (missing.includes(directory)) continue
+      const root = roots[directory]
+      out.push(root ? (knownFolder(known, root) ?? root) : directory)
+    }
+    return out
+  }
+
+  /**
+   * Once: a listed project that is a linked worktree of another repository
+   * leaves the list, and that repository's folder joins it, so the worktree's
+   * conversations are filed under the repository as new ones now are. Only
+   * linked worktrees - a subdirectory may have been added as a project on
+   * purpose - and nothing about the conversations themselves changes.
+   */
+  async migrateRepositoryProjects(): Promise<void> {
+    if (this.fromNewerVersion) return
+    const done = this.current.migrations ?? []
+    if (done.includes(REPOSITORY_PROJECTS_MIGRATION)) return
+    const leaving = new Set<string>()
+    const joining: string[] = []
+    for (const directory of listedProjects(this.current)) {
+      const top = await worktreeTop(directory).catch(() => undefined)
+      if (!top || top.main) continue
+      const root = await this.repoRoots.rootOf(directory).catch(() => undefined)
+      if (!root) continue
+      leaving.add(directory)
+      joining.push(root)
+    }
+    const kept = (list: string[] | undefined) => (list ?? []).filter((entry) => !leaving.has(entry))
+    const trimmed = { ...this.current, projects: kept(this.current.projects) }
+    const known = [...trimmed.projects, ...(trimmed.closedProjects ?? [])]
+    const adopted = adoptedProjects(trimmed, joining.map((root) => knownFolder(known, root) ?? root))
+    await this.set({
+      projects: adopted?.projects ?? trimmed.projects,
+      ...(leaving.size ? { pinnedProjects: kept(this.current.pinnedProjects), projectOrder: kept(this.current.projectOrder) } : {}),
+      migrations: [...done, REPOSITORY_PROJECTS_MIGRATION],
+    })
+  }
+
+  /**
+   * Round ten (R10-6): project memory moves from one folder per conversation
+   * folder to one per repository, once. `move` does the moving and is handed
+   * every folder this profile knows of; the migration is recorded only when it
+   * finished, so a failure is tried again at the next launch.
+   */
+  async migrateMemory(directories: readonly string[], move: (directories: string[]) => Promise<unknown>): Promise<void> {
+    if (this.fromNewerVersion) return
+    const done = this.current.migrations ?? []
+    if (done.includes(MEMORY_LAYOUT_MIGRATION)) return
+    await move([...directories, ...listedProjects(this.current), ...(this.current.closedProjects ?? [])])
+    await this.set({ migrations: [...(this.current.migrations ?? []), MEMORY_LAYOUT_MIGRATION] })
+  }
+
+  /**
+   * Once, when the list first exists: every folder the side column listed from
+   * its conversations becomes an entry, newest conversation first. Names, pins,
+   * the removed set and the dragged order are separate fields and stay as they
+   * were.
+   */
+  async migrateProjects(directories: readonly string[]): Promise<void> {
+    if (this.fromNewerVersion) return
+    const done = this.current.migrations ?? []
+    if (done.includes(PROJECT_LIST_MIGRATION)) return
+    await this.set({ ...adoptedProjects(this.current, directories), migrations: [...done, PROJECT_LIST_MIGRATION] })
   }
 
   /**
@@ -395,6 +1174,7 @@ export class Config {
   }
 
   async setApiKey(provider: string, apiKey: string): Promise<void> {
+    this.writableCredentials()
     if (apiKey) this.credentials[provider] = apiKey
     else {
       delete this.credentials[provider]
@@ -412,22 +1192,6 @@ export class Config {
       }
     }
     await this.persistCredentials()
-  }
-
-  /**
-   * Returns the app to its first-run state: no keys, no subscription tokens, no
-   * discovered catalogs, no preferences. Sessions are cleared by the caller,
-   * which owns them.
-   */
-  async reset(): Promise<void> {
-    this.credentials = {}
-    this.oauth = {}
-    this.discovered = {}
-    await this.persistCredentials()
-    await this.storage.write("models", this.discovered)
-    this.current = defaults()
-    await this.storage.write("config", this.current)
-    this.bus.publish({ type: "config.updated", config: this.current })
   }
 
   async setDiscovered(provider: string, models: ModelEntry[]): Promise<void> {
@@ -455,9 +1219,11 @@ export class Config {
       .map<ProviderDefinition>((entry) => ({
         id: entry.id,
         name: entry.name,
-        kind: "openai-compatible",
+        // MiMo lets a custom provider name its SDK; here that is the protocol it speaks.
+        kind: entry.protocol === "anthropic" ? "anthropic" : entry.protocol === "responses" ? "openai-responses" : "openai-compatible",
         description: "provider.desc.custom",
-        baseURL: entry.baseURL,
+        // Tidied as a save would be, so an address stored before that rule still reaches the right path.
+        baseURL: normalizeBaseURL(entry.baseURL),
         headers: entry.headers,
         /*
          * The typed-in list becomes the provider's catalog, and `handEntered`
@@ -466,10 +1232,19 @@ export class Config {
          * endpoints have no such route, and asking is how a working provider
          * ends up showing an empty picker.
          */
+        /* MiMo's 高级配置 reaches the catalog: limits feed compaction and max_tokens, the image switch the attachment check. */
         models: entry.models?.map((model) => ({
           id: model.id,
           name: model.name,
-          contextWindow: 0,
+          contextWindow: model.limit?.context ?? 0,
+          ...(model.limit?.output ? { maxOutput: model.limit.output } : {}),
+          ...(typeof model.attachment === "boolean" ? { attachment: model.attachment } : {}),
+          // MiMo's modalities: the image switch, and the other inputs a config file may state.
+          ...(typeof model.attachment === "boolean" || model.inputs
+            ? { inputs: { text: true, ...model.inputs, ...(typeof model.attachment === "boolean" ? { image: model.attachment } : {}) } }
+            : {}),
+          ...(model.cacheTTL ? { cacheTTL: model.cacheTTL } : {}),
+          ...(model.interleaved ? { interleaved: model.interleaved } : {}),
           input: 0,
           output: 0,
         })),
@@ -488,12 +1263,34 @@ export class Config {
     return this.definitions().find((entry) => entry.id === id)
   }
 
+  /** Hands over a newer models.dev catalog; what `models()` answers changes with it. */
+  useModelCatalog(catalog: Catalog): void {
+    this.catalog = catalog
+  }
+
+  /** The models.dev catalog as it stands. */
+  modelCatalog(): Catalog {
+    return this.catalog
+  }
+
+  /**
+   * A provider's models with what models.dev says about each. Custom
+   * providers are left as typed: their ids are the user's, not models.dev's.
+   */
+  models(provider: string): ModelEntry[] {
+    const listed = this.catalog[MODELS_DEV_IDS[provider] ?? ""]?.models
+    const entries = this.listedModels(provider)
+    if (!listed || this.definition(provider)?.handEntered) return entries
+    const curated = new Set((this.definition(provider)?.models ?? []).map((entry) => entry.id))
+    return entries.map((entry) => withCatalog(entry, listed[entry.id], curated.has(entry.id) || entry.name !== nameFromId(entry.id)))
+  }
+
   /**
    * A discovered list wins when we have one - it is fresher than anything
    * baked in here - and the static catalog is the fallback for providers that
    * expose no /models endpoint, or whose discovery has not run or failed.
    */
-  models(provider: string): ModelEntry[] {
+  private listedModels(provider: string): ModelEntry[] {
     const discovered = this.discovered[provider]
     /*
      * Read through `this.definition`, not the module-level one: that only knows
@@ -589,7 +1386,7 @@ export class Config {
     if (!entry) return undefined
     const kind = this.definition(ref.provider)?.kind
     if (!kind) return undefined
-    return modelVariants(kind, entry)
+    return modelVariants(kind, entry, ref.provider)
   }
 
   providers(): ProviderStatus[] {
@@ -610,20 +1407,16 @@ export class Config {
       authenticated: Boolean(this.oauth[entry.id]),
       environment: this.environmentKey(entry.id),
       authMethods: entry.authMethods ?? [],
-      models: this.models(entry.id).map((model) => modelInfo(entry.kind, model)),
+      models: this.models(entry.id).map((model) => modelInfo(model)),
     }))
   }
 
-  /** Models offered in the composer picker, honouring the enabled list. */
+  /** Models offered in the composer picker: every model of every usable provider, as MiMo lists them. */
   enabled(): { provider: string; model: ModelEntry }[] {
-    const chosen = new Set(this.current.enabledModels)
     const out: { provider: string; model: ModelEntry }[] = []
     for (const provider of this.definitions()) {
       if (!this.usable(provider.id)) continue
-      for (const model of this.models(provider.id)) {
-        const key = modelKey({ provider: provider.id, model: model.id })
-        if (chosen.size === 0 || chosen.has(key)) out.push({ provider: provider.id, model })
-      }
+      for (const model of this.models(provider.id)) out.push({ provider: provider.id, model })
     }
     return out
   }

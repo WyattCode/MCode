@@ -17,17 +17,26 @@ import type { Attachment, AgentName,
   SessionInfo,
 } from "@shared/protocol"
 import { Client } from "../lib/client"
-import { t } from "../lib/i18n"
-import { notify, notifyFailure } from "../lib/toast"
-
-/** One reviewer's remark, against a file and a line in its diff. */
-export interface ReviewNote {
-  id: string
-  file: string
-  line: number
-  text: string
-  created: number
-}
+import { drafts, scheduleDraftSave } from "../lib/composer-drafts"
+import { useAnnotations } from "./annotations"
+import { setChordPlatform } from "../lib/keys"
+import { language, sessionTitle, t } from "../lib/i18n"
+import { mcpNeedsSignIn } from "../lib/mcp-status"
+import { visibleChatOrder } from "../lib/visible-chats"
+import { projectName } from "../lib/project"
+import { hushSpeech } from "../lib/voice"
+import { knownFolder, listedProjects, projectsByRecency } from "@shared/projects"
+import type { GroupContext } from "@shared/session-group"
+import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fallback"
+import type { AutomationTask, ChatLink, CustomProvider } from "@shared/protocol"
+import { notice, notify, notifyFailure } from "../lib/toast"
+import { findModel } from "../lib/model"
+import { forgetRunEnded, noteRunEnded, noteToolWrites } from "../lib/ai-touch"
+import { endOfficeWatches, watchAnnotatedSend } from "../lib/annotation-fx"
+import { noteDeliveryTurnEnded, noteDeliveryUpdate } from "../lib/delivered"
+import { readLegacyMessage } from "@shared/subagent"
+import { isScheduledPrompt } from "@shared/scheduled"
+import { returnFileNotices, takeFileNotices } from "../lib/file-notices"
 
 export const useApp = defineStore("app", () => {
   const client = shallowRef<Client>()
@@ -35,6 +44,10 @@ export const useApp = defineStore("app", () => {
   /** Down long enough to be worth saying so, rather than mid-restart. */
   const offline = ref(false)
   let offlineTimer: ReturnType<typeof setTimeout> | undefined
+  /* The notice that says the connection is coming back, and the beat it waits first. */
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  const RECONNECT_TOAST = "app-reconnect"
+  const RECONNECT_DELAY = 400
   const platform = ref("")
   const version = ref("")
   /** Loopback port the agent server bound to; shown in the server popover. */
@@ -43,6 +56,8 @@ export const useApp = defineStore("app", () => {
   const sessions = ref<SessionInfo[]>([])
   const currentID = ref<string>()
   const messages = ref<Message[]>([])
+  /** The conversation switched to whose messages have not arrived; MiMo shows 正在加载对话… meanwhile. */
+  const loadingID = ref<string>()
   /**
    * Sessions with a turn in flight.
    *
@@ -51,10 +66,164 @@ export const useApp = defineStore("app", () => {
    * may have moved on by the time the turn ends.
    */
   const running = ref(new Set<string>())
+  /** session chat: each conversation's messages in flight with others, as the server last reported them. */
+  const chatLinks = shallowRef<Record<string, ChatLink[]>>({})
+  const chatLinksOf = (sessionID: string): ChatLink[] => chatLinks.value[sessionID] ?? []
+  /** automation: the scheduled tasks, for the block a conversation row's tooltip draws. */
+  const automationTasks = shallowRef<AutomationTask[]>([])
+  /*
+   * When each running turn began, as far as this window saw it, and the last
+   * turn to end on its own with how long it took - which is what decides
+   * whether it was long enough to chime for. A stopped or failed turn is
+   * dropped from the clock rather than reported.
+   */
+  const turnStarted = new Map<string, number>()
+  const finished = ref<{ sessionID: string; elapsed: number }>()
+  /* automation: conversations whose running turn is a scheduled task's run, and the last run the user should be told about. */
+  const automationRuns = ref(new Set<string>())
+  const automationNotice = ref<{ sessionID: string; at: number; failed: boolean }>()
+  /*
+   * N11-17: the turns waiting between attempts, as the backend last reported
+   * them. A retry never reaches disk, so a window that reloaded into one read
+   * back a message with no parts, no finish and no error, and drew nothing at
+   * all. This is put back onto the message once its transcript is loaded.
+   */
+  const liveRetries = new Map<string, { messageID: string; attempt: number; message: string; next: number; kind?: string; max?: number }>()
+
+  /** Puts a waiting turn's retry back onto the message it belongs to, wherever that message is held. */
+  function applyRetry(sessionID: string, list: Message[] | undefined): void {
+    const waiting = liveRetries.get(sessionID)
+    if (!waiting || !list) return
+    const message = list.find((candidate) => candidate.id === waiting.messageID)
+    if (message?.role !== "assistant") return
+    message.retry = { attempt: waiting.attempt, message: waiting.message, next: waiting.next, kind: waiting.kind, max: waiting.max }
+  }
+  /*
+   * session chat: conversations whose current turn is answering a message
+   * another conversation sent. Their end is a reply rather than a task
+   * finishing, and MiMo says so in its own words (N11-3).
+   */
+  const answeredAnother = new Set<string>()
+  /* N11-14: folders whose git write is queued behind another one on the same repository. */
+  const gitWaiting = ref(new Set<string>())
+  /**
+   * Bumped whenever the window comes back into focus, as MiMo's shell bumps its
+   * `fsNonce`.
+   *
+   * Anything reading the working tree - the review tab - takes it as part of
+   * what it reads on, so coming back from an editor re-reads the files rather
+   * than waiting for the conversation to move.
+   */
+  const fsNonce = ref(0)
+  const bumpFsNonce = () => (fsNonce.value += 1)
+  /**
+   * Bumped when this window switched or created a branch, as MiMo re-detects
+   * the side column's branch names straight after the home chip or the info
+   * card changes one, rather than at the next focus.
+   */
+  const branchNonce = ref(0)
+  const branchesChanged = () => (branchNonce.value += 1)
+  /**
+   * What the home screen's next task works in, when the reader has said.
+   *
+   * MiMo's 不使用项目 and its project pick are navigation state, so they outlive
+   * the home screen: opening a conversation and coming back finds the same
+   * answer. Held here rather than in HomeHero, which is unmounted the moment a
+   * conversation opens - which is how an explicit 不使用项目 used to be
+   * forgotten, and the next message fell back into the last project.
+   */
+  const homeProject = ref<string>()
+
+  /** Starts the clock on turns not seen beginning, and forgets the ones no longer running. */
+  function clockTurns(ids: Iterable<string>) {
+    const now = Date.now()
+    const live = new Set(ids)
+    for (const id of live) if (!turnStarted.has(id)) turnStarted.set(id, now)
+    for (const id of [...turnStarted.keys()]) if (!live.has(id)) turnStarted.delete(id)
+  }
   const busy = computed(() => (currentID.value ? running.value.has(currentID.value) : false))
+  /**
+   * Conversations whose earlier message is being edited or retried: truncated,
+   * then sent again. As in MiMo, the composer refuses a send into one until the
+   * replacement has gone out, so a new message cannot land in between.
+   */
+  const replacing = ref(new Set<string>())
+  function markReplacing(sessionID: string, on: boolean) {
+    const next = new Set(replacing.value)
+    if (on) next.add(sessionID)
+    else next.delete(sessionID)
+    replacing.value = next
+  }
+  /** Sessions whose transcript is being summarised right now. */
+  const summarising = ref(new Set<string>())
+  /**
+   * Whether this session is being summarised.
+   *
+   * Its own flag rather than part of `busy`, because the transcript has to
+   * say something during a compaction that follows a refusal - and a
+   * refusal is exactly when it would otherwise say nothing at all.
+   */
+  const compacting = computed(() => (currentID.value ? summarising.value.has(currentID.value) : false))
+  /**
+   * Why the app could not start: the one message the boot screen reads, and
+   * set by nothing else. A failure after boot leaves the app where it was and
+   * is said in a toast (a send, a subtask) or under the transcript (a turn).
+   */
   const error = ref<string>()
-  /** A compaction is a model call, so it needs the same busy treatment. */
-  const compacting = ref(false)
+  /** Why the open conversation's last turn ended in an error, for the banner under its transcript. */
+  const turnError = ref<string>()
+
+  /*
+   * Side chats: conversations started beside the open one, in the side column.
+   * They are kept apart from `sessions` so that no list - the side column, the
+   * tabs, the palette, the home screen - ever shows one, and they carry their
+   * own transcript so the open conversation and the side chat never share one.
+   */
+  const sideSessions = ref<SessionInfo[]>([])
+  /*
+   * MiMo keeps every side chat tab mounted with its own transcript, and several
+   * can stream at once, so each loaded side conversation keeps its messages and
+   * error here by id. `sideID` is the one the box on show speaks for.
+   */
+  const sideID = ref<string>()
+  const sideTranscripts = ref<Record<string, Message[]>>({})
+  const sideErrors = ref<Record<string, string | undefined>>({})
+  const sidePartIndexes = new Map<string, Map<string, { messageID: string; index: number }>>()
+  const sideMessages = computed<Message[]>(() => (sideID.value ? sideTranscripts.value[sideID.value] ?? [] : []))
+  const sideError = computed(() => (sideID.value ? sideErrors.value[sideID.value] : undefined))
+  const side = computed(() => sideSessions.value.find((session) => session.id === sideID.value))
+  const sideBusy = computed(() => (sideID.value ? running.value.has(sideID.value) : false))
+  /*
+   * subagents: the subagents' own conversations. Like side chats, no list shows
+   * them; their transcripts load into the side transcripts by id, so the 子智能体
+   * tab draws one with the side chat's stream.
+   */
+  const subagentSessions = ref<SessionInfo[]>([])
+  /** subagents: conversations sent a notice while idle, whose next reply is a turn the server started. */
+  const noticeWoken = new Set<string>()
+  const isSubagent = (sessionID: string) => subagentSessions.value.some((session) => session.id === sessionID)
+  /** subagents: the conversation a subagent works for, or the session itself; its questions queue there. */
+  function rootOf(sessionID: string): string {
+    let id = sessionID
+    for (let depth = 0; depth < 8; depth++) {
+      const parent = subagentSessions.value.find((session) => session.id === id)?.parentID
+      if (!parent) break
+      id = parent
+    }
+    return id
+  }
+  const isSide = (sessionID: string) => sideSessions.value.some((session) => session.id === sessionID) || isSubagent(sessionID)
+  const sideMessagesOf = (sessionID?: string): Message[] => (sessionID ? sideTranscripts.value[sessionID] ?? [] : [])
+  const sideErrorOf = (sessionID?: string) => (sessionID ? sideErrors.value[sessionID] : undefined)
+  const sideSessionOf = (sessionID?: string) =>
+    sideSessions.value.find((session) => session.id === sessionID) ?? subagentSessions.value.find((session) => session.id === sessionID)
+  const sideBusyOf = (sessionID?: string) => (sessionID ? running.value.has(sessionID) : false)
+  function sideStreamingOf(sessionID?: string): AssistantMessage | undefined {
+    if (!sideBusyOf(sessionID)) return undefined
+    const list = sideMessagesOf(sessionID)
+    const last = list[list.length - 1]
+    return last?.role === "assistant" ? last : undefined
+  }
 
   const config = ref<AppConfig>()
   const providers = ref<ProviderStatus[]>([])
@@ -79,10 +248,42 @@ export const useApp = defineStore("app", () => {
    * conversation blocked on approval used to be invisible, which looked like
    * the model had simply stopped.
    */
-  const pendingPermissions = ref(new Map<string, PermissionRequest>())
+  /*
+   * A queue per session, oldest first. Tools can ask while another question is
+   * still up, and keeping only the latest stranded the earlier one: the server
+   * went on waiting for an answer to a request nothing on screen showed.
+   */
+  const pendingPermissions = ref(new Map<string, PermissionRequest[]>())
   const permission = computed(() =>
-    currentID.value ? pendingPermissions.value.get(currentID.value) : undefined,
+    currentID.value ? pendingPermissions.value.get(currentID.value)?.[0] : undefined,
   )
+  /** How many requests the current session has waiting, the one shown included. */
+  const permissionQueue = computed(() =>
+    currentID.value ? (pendingPermissions.value.get(currentID.value)?.length ?? 0) : 0,
+  )
+
+  function groupPermissions(requests: PermissionRequest[]) {
+    const grouped = new Map<string, PermissionRequest[]>()
+    for (const request of [...requests].sort((a, b) => a.time - b.time)) {
+      // subagents: a subagent's request waits with the conversation it works for.
+      const key = rootOf(request.sessionID)
+      grouped.set(key, [...(grouped.get(key) ?? []), request])
+    }
+    return grouped
+  }
+
+  /** Takes one answered request out of its session's queue. */
+  function dropPermission(requestID: string) {
+    for (const [sessionID, queue] of pendingPermissions.value) {
+      if (!queue.some((request) => request.id === requestID)) continue
+      const next = new Map(pendingPermissions.value)
+      const rest = queue.filter((request) => request.id !== requestID)
+      if (rest.length) next.set(sessionID, rest)
+      else next.delete(sessionID)
+      pendingPermissions.value = next
+      return
+    }
+  }
 
   /**
    * Sessions that finished a turn while the user was looking elsewhere.
@@ -116,6 +317,16 @@ export const useApp = defineStore("app", () => {
     )
   }
 
+  /**
+   * Clears every "something happened here" mark at once - the priority
+   * filter's mark-all-read. Finished and failed turns both count as unread
+   * here, so both marks go.
+   */
+  function markAllRead() {
+    unseen.value = new Set()
+    sessionErrors.value = new Map()
+  }
+
   /** Whether a session's last turn ended badly, for the dot on its row. */
   function failed(sessionID: string): boolean {
     return sessionErrors.value.has(sessionID)
@@ -133,15 +344,6 @@ export const useApp = defineStore("app", () => {
   const current = computed(() => sessions.value.find((session) => session.id === currentID.value))
 
   /**
-   * Sessions with a tab in the title bar, in the order they are drawn.
-   *
-   * Held as its own list rather than read off `sessions`: which conversations
-   * exist and which the user still wants to hand are different questions, and
-   * a project with forty sessions would otherwise arrive as forty tabs.
-   */
-  const tabs = ref<string[]>([])
-
-  /**
    * Tabs the user has pinned, which sort to the front of the strip.
    *
    * Held in config rather than in memory so a pinned tab is still pinned
@@ -153,120 +355,59 @@ export const useApp = defineStore("app", () => {
     return pinned.value.has(sessionID)
   }
 
+  /* A new pin goes to the end of 置顶, as MiMo adds it, and a toast says what happened. */
   async function togglePinned(sessionID: string) {
     const next = new Set(pinned.value)
-    if (next.has(sessionID)) next.delete(sessionID)
+    const was = next.has(sessionID)
+    if (was) next.delete(sessionID)
     else next.add(sessionID)
     await patchConfig({ pinnedTabs: [...next] })
+    notify(t(was ? "side.unpinnedToast" : "side.pinnedToast"))
   }
 
-  /** Recently closed tabs, newest last, for Ctrl+Shift+T. */
-  const closedTabs = ref<{ sessionID: string; at: number }[]>([])
-
-  /**
-   * Puts back the last tab that was closed.
-   *
-   * Sessions outlive their tabs, so this is only about the strip - but a
-   * session that has since been deleted has nothing to come back to, and is
-   * skipped rather than reopened as a blank.
+  /*
+   * How the side column's Recent list is ordered. MiMo keeps this in its store,
+   * starts every launch at 最近 and never saves it; the digit and bracket
+   * shortcuts count along the same order.
    */
-  async function reopenTab(): Promise<boolean> {
-    while (closedTabs.value.length) {
-      const entry = closedTabs.value.pop()!
-      if (!entry || tabs.value.includes(entry.sessionID)) continue
-      if (!sessions.value.some((session) => session.id === entry.sessionID)) continue
-      tabs.value.splice(Math.min(entry.at, tabs.value.length), 0, entry.sessionID)
-      rememberTabs()
-      await open(entry.sessionID)
-      return true
-    }
-    return false
-  }
+  const recentSort = ref<"recent" | "name">("recent")
 
-  /** The same list as rows to draw, with ids no longer on disk left out. */
-  const tabSessions = computed(() =>
-    tabs.value
-      .map((id) => sessions.value.find((session) => session.id === id))
-      .filter((session): session is SessionInfo => Boolean(session)),
+  /** MiMo's visible conversations, in the order the numbered and bracket shortcuts count them. */
+  const visibleChats = computed(() =>
+    visibleChatOrder(
+      sessions.value,
+      config.value?.pinnedTabs ?? [],
+      recentSort.value,
+      (session) => (session.title && session.title.trim() ? sessionTitle(session.title) : t("side.newTask")),
+      language.value,
+    ),
   )
 
   /**
-   * Written back to config so the set survives a restart.
+   * Conversations, the most recently viewed first, for Ctrl+Tab.
    *
-   * Failures are swallowed: a tab that does not come back next launch is a
-   * smaller problem than an error banner over a click that otherwise worked.
+   * In memory only: the order things were looked at in belongs to this sitting,
+   * not to something worth restoring tomorrow.
    */
-  function rememberTabs() {
-    if (!config.value) return
-    void patchConfig({ openTabs: [...tabs.value] }).catch(() => {})
-  }
-
-  /** Gives a session a tab, if it has not got one already. */
-  function track(sessionID: string) {
-    if (tabs.value.includes(sessionID)) return
-    tabs.value.push(sessionID)
-    rememberTabs()
-  }
-
-  /**
-   * Takes the tab away, and moves on if it was the open one.
-   *
-   * The neighbour to the right is preferred, which is where the eye already is
-   * after closing something; the left one is taken only at the end of the row.
-   */
-  function closeTab(sessionID: string) {
-    const at = tabs.value.indexOf(sessionID)
-    if (at === -1) return
-    // Remembered so it can be brought back, with the place it sat in: a tab
-    // reopened at the far end of the strip is not the tab that was closed.
-    closedTabs.value.push({ sessionID, at })
-    if (closedTabs.value.length > 20) closedTabs.value.shift()
-    tabs.value.splice(at, 1)
-    rememberTabs()
-    if (currentID.value !== sessionID) return
-    const next = tabs.value[at] ?? tabs.value[at - 1]
-    if (next) void open(next)
-    else currentID.value = undefined
-  }
-
-  /**
-   * Moves a tab to a new place in the row.
-   *
-   * The order is the user's, not the sessions' - which is why it is stored
-   * rather than derived, and why dragging one tab past another has to be
-   * written back the same way opening one is.
-   */
-  function moveTab(sessionID: string, to: number) {
-    const from = tabs.value.indexOf(sessionID)
-    if (from === -1) return
-    const target = Math.max(0, Math.min(tabs.value.length - 1, to))
-    if (from === target) return
-    tabs.value.splice(from, 1)
-    tabs.value.splice(target, 0, sessionID)
-    rememberTabs()
-  }
-
-  /** Drops tabs for sessions that are gone, wherever they went. */
-  function forgetTab(sessionID: string) {
-    const at = tabs.value.indexOf(sessionID)
-    if (at === -1) return
-    tabs.value.splice(at, 1)
-    rememberTabs()
-  }
+  const recent = ref<string[]>([])
 
   /**
    * Drops every trace of a session that no longer exists.
    *
-   * Seven collections here are keyed by session id and only two of them were
+   * Several collections here are keyed by session id and only some of them were
    * being cleared, so a long-lived window accumulated entries nothing could
-   * reach - a slow leak rather than anything on screen. Reopening a closed tab
-   * was never at risk: it already skips an entry whose session has gone.
+   * reach - a slow leak rather than anything on screen.
    */
   function forgetSession(sessionID: string) {
-    forgetTab(sessionID)
-    closedTabs.value = closedTabs.value.filter((entry) => entry.sessionID !== sessionID)
+    held.delete(sessionID)
+    forgetDrafts(sessionID)
 
     if (running.value.delete(sessionID)) running.value = new Set(running.value)
+    turnStarted.delete(sessionID)
+    answeredAnother.delete(sessionID)
+    noticeWoken.delete(sessionID)
+    liveRetries.delete(sessionID)
+    forgetRunEnded(sessionID)
     if (unseen.value.has(sessionID)) {
       const next = new Set(unseen.value)
       next.delete(sessionID)
@@ -278,63 +419,6 @@ export const useApp = defineStore("app", () => {
       pendingPermissions.value = next
     }
     noteError(sessionID, undefined)
-    if (notes.value.has(sessionID)) {
-      const next = new Map(notes.value)
-      next.delete(sessionID)
-      notes.value = next
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // Review notes
-  // -------------------------------------------------------------------------
-
-  /**
-   * A remark against one line of a diff.
-   *
-   * These are the reviewer's working notes, not part of the conversation: they
-   * are written while reading a change and are meant to be handed to the model
-   * in one go. Kept in the window rather than on disk for that reason - once
-   * they have been sent they have served their purpose.
-   */
-  const notes = ref(new Map<string, ReviewNote[]>())
-
-  /** The notes on the open session, oldest first. */
-  const sessionNotes = computed(() => (currentID.value ? (notes.value.get(currentID.value) ?? []) : []))
-
-  function addNote(file: string, line: number, text: string) {
-    const session = currentID.value
-    const body = text.trim()
-    if (!session || !body) return
-    const list = notes.value.get(session) ?? []
-    notes.value.set(session, [
-      ...list,
-      { id: `n${Date.now()}${list.length}`, file, line, text: body, created: Date.now() },
-    ])
-    // A Map is not deeply reactive on its own; replacing it is what redraws.
-    notes.value = new Map(notes.value)
-  }
-
-  function removeNote(id: string) {
-    const session = currentID.value
-    if (!session) return
-    notes.value.set(session, (notes.value.get(session) ?? []).filter((note) => note.id !== id))
-    notes.value = new Map(notes.value)
-  }
-
-  function clearNotes() {
-    const session = currentID.value
-    if (!session) return
-    notes.value.delete(session)
-    notes.value = new Map(notes.value)
-  }
-
-  /** Puts the row back on boot, minus anything deleted while the app was shut. */
-  function restoreTabs() {
-    const alive = (config.value?.openTabs ?? []).filter((id) =>
-      sessions.value.some((session) => session.id === id),
-    )
-    tabs.value = alive
   }
 
   /**
@@ -343,14 +427,98 @@ export const useApp = defineStore("app", () => {
    */
   const partIndex = reactive(new Map<string, { messageID: string; index: number }>())
 
+  /*
+   * The transcripts of the conversations left most recently, newest last.
+   *
+   * MiMo keeps every conversation's messages in its store once they are read
+   * (`msgsByConvo`), so coming back to one draws what it already has and
+   * refreshes it in place; this app emptied the list and read the whole
+   * conversation again on every switch, which on a 150-turn one meant the
+   * loading line and 580ms before anything was back. The copies here follow
+   * the same message events the open conversation does, so they are current
+   * when they are shown, and the read that follows only replaces one that
+   * turned out to differ.
+   */
+  const HELD_MAX = 8
+  const held = new Map<string, Message[]>()
+
+  function hold(sessionID: string | undefined) {
+    if (!sessionID || loadingID.value === sessionID || !messages.value.length) return
+    held.delete(sessionID)
+    held.set(sessionID, messages.value)
+    while (held.size > HELD_MAX) {
+      const oldest = held.keys().next().value
+      if (oldest === undefined) break
+      held.delete(oldest)
+    }
+    // held is an ordinary Map, so it says for itself when what this window follows has changed (N11-4).
+    declareWatched()
+  }
+
+  /** What a transcript looks like, cheaply: enough to tell whether a fresh read changed anything. */
+  function transcriptKey(list: readonly Message[]): string {
+    return list
+      .map((message) =>
+        message.role === "user"
+          ? `${message.id}:${message.text.length}:${message.attachments?.length ?? 0}`
+          : `${message.id}:${message.finish ?? ""}:${message.time.completed ?? ""}:${message.error ?? ""}:${message.reverted ? 1 : 0}:` +
+            message.parts.map((part) => `${part.id}${part.type === "tool" ? part.status : part.type === "text" || part.type === "reasoning" ? part.text.length : ""}`).join(","),
+      )
+      .join("|")
+  }
+
   function reindex(message: Message) {
     if (message.role !== "assistant") return
     message.parts.forEach((part, index) => partIndex.set(part.id, { messageID: message.id, index }))
   }
 
+  function sideReindex(sessionID: string, message: Message) {
+    if (message.role !== "assistant") return
+    let index = sidePartIndexes.get(sessionID)
+    if (!index) sidePartIndexes.set(sessionID, (index = new Map()))
+    const into = index
+    message.parts.forEach((part, at) => into.set(part.id, { messageID: message.id, index: at }))
+  }
+
+  function forgetSideTranscript(sessionID: string) {
+    const transcripts = { ...sideTranscripts.value }
+    delete transcripts[sessionID]
+    sideTranscripts.value = transcripts
+    const errors = { ...sideErrors.value }
+    delete errors[sessionID]
+    sideErrors.value = errors
+    sidePartIndexes.delete(sessionID)
+  }
+
+  function setSideError(sessionID: string, message: string | undefined) {
+    sideErrors.value = { ...sideErrors.value, [sessionID]: message }
+  }
+
   function apply(event: ServerEvent) {
     switch (event.type) {
       case "session.updated": {
+        // subagents: kept apart from every list; one that has just been made is already working.
+        if (event.session.parentID) {
+          const at = subagentSessions.value.findIndex((session) => session.id === event.session.id)
+          if (at === -1) subagentSessions.value.push(event.session)
+          else subagentSessions.value[at] = event.session
+          // Its record says whether a turn of it is under way; one stored before the record had that is judged by its age.
+          const state = event.session.subagent?.status
+          const working = state ? state === "running" : at === -1 && Date.now() - event.session.created < 60_000
+          if (working !== running.value.has(event.session.id)) {
+            const next = new Set(running.value)
+            if (working) next.add(event.session.id)
+            else next.delete(event.session.id)
+            running.value = next
+          }
+          break
+        }
+        if (event.session.sideOf) {
+          const at = sideSessions.value.findIndex((session) => session.id === event.session.id)
+          if (at === -1) sideSessions.value.push(event.session)
+          else sideSessions.value[at] = event.session
+          break
+        }
         const existing = sessions.value.findIndex((session) => session.id === event.session.id)
         if (existing === -1) sessions.value.unshift(event.session)
         else sessions.value[existing] = event.session
@@ -358,6 +526,20 @@ export const useApp = defineStore("app", () => {
         break
       }
       case "session.deleted": {
+        // subagents: goes with its transcript, and nothing else.
+        if (isSubagent(event.sessionID)) {
+          subagentSessions.value = subagentSessions.value.filter((session) => session.id !== event.sessionID)
+          if (running.value.delete(event.sessionID)) running.value = new Set(running.value)
+          forgetSideTranscript(event.sessionID)
+          forgetDrafts(event.sessionID)
+          break
+        }
+        if (sideSessions.value.some((session) => session.id === event.sessionID)) {
+          sideSessions.value = sideSessions.value.filter((session) => session.id !== event.sessionID)
+          if (sideID.value === event.sessionID) closeSide()
+          forgetSideTranscript(event.sessionID)
+          break
+        }
         const removed = sessions.value.find((session) => session.id === event.sessionID)
         sessions.value = sessions.value.filter((session) => session.id !== event.sessionID)
         forgetSession(event.sessionID)
@@ -383,10 +565,68 @@ export const useApp = defineStore("app", () => {
        * message or replaces one, so a window holding the old list would go on
        * showing rolled back turns that are no longer on disk. Read again.
        */
+      // session chat: always the whole picture, so it replaces what was there.
+      case "automation.tasks":
+        automationTasks.value = event.tasks
+        break
+      case "session.chatLinks":
+        chatLinks.value = event.links
+        break
       case "session.reverted":
+        // A held copy cannot be shortened by events, so one that lost messages is read again when it is next opened.
+        held.delete(event.sessionID)
         if (event.sessionID === currentID.value) void reread(event.sessionID)
         break
       case "message.updated": {
+        // subagents: a saved subagent call from before the actor rename reads as an actor call.
+        event.message = readLegacyMessage(event.message)
+        /*
+         * subagents: news of background subagents can wake an idle conversation,
+         * a turn the window did not send. It is marked busy when that turn's
+         * first reply arrives, so the working marks and Stop show as for any turn.
+         */
+        {
+          const message = event.message
+          // cron, automation: a scheduled prompt starts a turn nobody sent from this window; it shows working, is timed and notifies like one.
+          if (message.role === "user" && !message.steered && !running.value.has(message.sessionID) && (message.inbox?.automationID || isScheduledPrompt(message.text))) {
+            running.value = new Set(running.value).add(message.sessionID)
+            turnStarted.set(message.sessionID, Date.now())
+          }
+          if (message.role === "user" && message.notices?.length && !message.steered) noticeWoken.add(message.sessionID)
+          else if (message.role === "assistant" && !message.finish && !message.time.completed && noticeWoken.delete(message.sessionID) && !running.value.has(message.sessionID)) {
+            running.value = new Set(running.value).add(message.sessionID)
+          }
+        }
+        // MiMo's present_files and pdf_locate opens, for every conversation, on show or not.
+        noteDeliveryUpdate(event.message)
+        if (event.message.role === "user") {
+          if (event.message.inbox?.direction === "request") answeredAnother.add(event.message.sessionID)
+          else if (!event.message.steered) answeredAnother.delete(event.message.sessionID)
+        }
+        noteToolWrites(
+          event.message,
+          (sessions.value.find((session) => session.id === event.message.sessionID) ?? sideSessions.value.find((session) => session.id === event.message.sessionID))?.directory,
+        )
+        {
+          // Every loaded side chat follows its own conversation, on show or not.
+          const list = sideTranscripts.value[event.message.sessionID]
+          if (list) {
+            const at = list.findIndex((message) => message.id === event.message.id)
+            if (at === -1) list.push(event.message)
+            else list[at] = event.message
+            sideReindex(event.message.sessionID, event.message)
+            break
+          }
+        }
+        {
+          // A conversation left a moment ago keeps following its own messages, so coming back shows them as they are.
+          const kept = held.get(event.message.sessionID)
+          if (kept) {
+            const at = kept.findIndex((message) => message.id === event.message.id)
+            if (at === -1) kept.push(event.message)
+            else kept[at] = event.message
+          }
+        }
         if (event.message.sessionID !== currentID.value) break
         const index = messages.value.findIndex((message) => message.id === event.message.id)
         if (index === -1) messages.value.push(event.message)
@@ -394,36 +634,158 @@ export const useApp = defineStore("app", () => {
         reindex(event.message)
         break
       }
+      case "git.waiting": {
+        const next = new Set(gitWaiting.value)
+        if (event.waiting) next.add(event.directory)
+        else next.delete(event.directory)
+        gitWaiting.value = next
+        break
+      }
+      case "message.part.updated": {
+        /*
+         * N11-4: one part of a reply, rather than the whole message again. The
+         * message itself always arrives first as message.updated, so a part for
+         * a message this window does not hold is a conversation it is not
+         * drawing, and there is nothing to put it into.
+         */
+        const changed = event.part
+        // What a finished call means for this window is the same wherever the conversation is; both read the part alone.
+        const alone = { id: event.messageID, sessionID: event.sessionID, role: "assistant", parts: [changed] } as unknown as Message
+        noteDeliveryUpdate(alone)
+        noteToolWrites(alone, (sessions.value.find((session) => session.id === event.sessionID) ?? sideSessions.value.find((session) => session.id === event.sessionID))?.directory)
+        const into = (list: Message[] | undefined) => {
+          const message = list?.find((candidate) => candidate.id === event.messageID)
+          if (!message || message.role !== "assistant") return undefined
+          const at = message.parts.findIndex((part) => part.id === changed.id)
+          if (at === -1) message.parts.push(changed)
+          else message.parts[at] = changed
+          return message
+        }
+        {
+          const list = sideTranscripts.value[event.sessionID]
+          if (list) {
+            const message = into(list)
+            if (message) sideReindex(event.sessionID, message)
+            break
+          }
+        }
+        into(held.get(event.sessionID))
+        if (event.sessionID !== currentID.value) break
+        const message = into(messages.value)
+        if (message) reindex(message)
+        break
+      }
       case "message.delta": {
+        if (sideTranscripts.value[event.sessionID]) {
+          const location = sidePartIndexes.get(event.sessionID)?.get(event.partID)
+          const message = location && sideTranscripts.value[event.sessionID]?.find((candidate) => candidate.id === location.messageID)
+          if (location && message?.role === "assistant") {
+            const part = message.parts[location.index]
+            if (part?.type === "text" || part?.type === "reasoning") part.text += event.text
+          }
+          break
+        }
         if (event.sessionID !== currentID.value) break
         const location = partIndex.get(event.partID)
         if (!location) break
         const message = messages.value.find((candidate) => candidate.id === location.messageID)
         if (message?.role !== "assistant") break
         const part = message.parts[location.index]
-        if (part?.type === "text" || part?.type === "reasoning") part.text += event.text
+        if (part?.type !== "text" && part?.type !== "reasoning") break
+        /*
+         * N11-32: a window that connected mid-step holds the copy written to
+         * disk, which lags by up to 500ms. Appending onto it left a hole in the
+         * middle of the paragraph that only the next part - or the end of the
+         * step - closed, which in a long plain answer can be minutes.
+         */
+        if (part.text.length !== event.at) {
+          noteDeltaGap(event.sessionID)
+          break
+        }
+        part.text += event.text
         break
       }
-      case "session.idle":
+      case "automation.run": {
+        const runs = new Set(automationRuns.value)
+        if (event.phase === "started") runs.add(event.sessionID)
+        else {
+          runs.delete(event.sessionID)
+          // The server has already judged the run; a failure must not be announced as a completion (N11-3).
+          if (event.notify) automationNotice.value = { sessionID: event.sessionID, at: Date.now(), failed: event.outcome === "failed" || event.outcome === "skipped" }
+        }
+        automationRuns.value = runs
+        break
+      }
+      case "session.compacting": {
+        // A new Set each time, so the computed that reads it actually changes.
+        const next = new Set(summarising.value)
+        if (event.active) next.add(event.sessionID)
+        else next.delete(event.sessionID)
+        summarising.value = next
+        break
+      }
+      case "session.idle": {
+        // subagents: its end is its parent's business; no chime, unread dot or history for it.
+        if (isSubagent(event.sessionID)) {
+          if (running.value.delete(event.sessionID)) running.value = new Set(running.value)
+          break
+        }
+        liveRetries.delete(event.sessionID)
+        noteRunEnded(event.sessionID)
+        noteDeliveryTurnEnded(event.sessionID)
+        endOfficeWatches(event.sessionID)
         running.value.delete(event.sessionID)
+        const began = turnStarted.get(event.sessionID)
+        turnStarted.delete(event.sessionID)
+        if (began !== undefined) finished.value = { sessionID: event.sessionID, elapsed: Date.now() - began }
         if (event.sessionID === currentID.value) void refreshHistory(event.sessionID)
         // A turn that ended somewhere the user is not looking is the thing the
-        // unread dot exists to report.
-        else if (tabs.value.includes(event.sessionID)) {
+        // unread dot exists to report, for any conversation MiMo knows of.
+        else if (sessions.value.some((session) => session.id === event.sessionID)) {
           unseen.value = new Set(unseen.value).add(event.sessionID)
         }
         break
-      case "session.error":
+      }
+      case "session.error": {
+        // A failure the backend named is said in the reader's language.
+        const said = event.errorCode ? t(event.errorCode, event.errorParams) : event.error
+        // subagents: shown in its own transcript in the 子智能体 tab, nowhere else.
+        if (isSubagent(event.sessionID)) {
+          if (running.value.delete(event.sessionID)) running.value = new Set(running.value)
+          setSideError(event.sessionID, said)
+          break
+        }
+        noteRunEnded(event.sessionID)
+        endOfficeWatches(event.sessionID)
         running.value.delete(event.sessionID)
-        noteError(event.sessionID, event.error)
+        turnStarted.delete(event.sessionID)
+        noteError(event.sessionID, said)
         // The banner is only for the session on screen; the record is kept for
         // all of them, so the sidebar can mark the ones that went wrong.
-        if (event.sessionID === currentID.value) error.value = event.error
+        if (event.sessionID === currentID.value) turnError.value = said
+        if (isSide(event.sessionID)) setSideError(event.sessionID, said)
         break
-      case "permission.requested":
-        pendingPermissions.value.set(event.request.sessionID, event.request)
-        pendingPermissions.value = new Map(pendingPermissions.value)
+      }
+      /*
+       * A notice the backend raised for a conversation, said in the reader's
+       * language: MiMo's `kind: "notice"` harness event. The backend raises
+       * each at most once per conversation, and the id keeps a second window
+       * from stacking a duplicate of the same one.
+       */
+      case "session.notice": {
+        notice.warning(t(event.code), { id: `${event.code}:${event.sessionID}` })
         break
+      }
+      case "permission.requested": {
+        // subagents: filed under the conversation a subagent works for, so its dock and its row show it.
+        const key = rootOf(event.request.sessionID)
+        const queue = pendingPermissions.value.get(key) ?? []
+        if (queue.some((request) => request.id === event.request.id)) break
+        const next = new Map(pendingPermissions.value)
+        next.set(key, [...queue, event.request])
+        pendingPermissions.value = next
+        break
+      }
       /*
        * MCP health, kept here rather than in whichever panel asked for it.
        *
@@ -449,15 +811,9 @@ export const useApp = defineStore("app", () => {
         if (changed && commandsFor) void refreshCommands(commandsFor)
         break
       }
-      case "permission.resolved": {
-        for (const [sessionID, request] of pendingPermissions.value) {
-          if (request.id !== event.requestID) continue
-          pendingPermissions.value.delete(sessionID)
-          pendingPermissions.value = new Map(pendingPermissions.value)
-          break
-        }
+      case "permission.resolved":
+        dropPermission(event.requestID)
         break
-      }
       case "config.updated": {
         /*
          * Some config lives inside the provider list too - an endpoint override
@@ -486,7 +842,9 @@ export const useApp = defineStore("app", () => {
         if (
           before &&
           commandsFor &&
-          JSON.stringify(before.commands) !== JSON.stringify(event.config.commands)
+          (JSON.stringify(before.commands) !== JSON.stringify(event.config.commands) ||
+            // skills: a skill switched on or off, here or by hand in config.json, joins or leaves the slash menu.
+            JSON.stringify(before.disabledSkills ?? []) !== JSON.stringify(event.config.disabledSkills ?? []))
         ) {
           void refreshCommands(commandsFor)
         }
@@ -497,8 +855,23 @@ export const useApp = defineStore("app", () => {
         authState.value = { provider: event.provider, stage: "done" }
         void ensureUsableModel(event.provider)
         break
+      case "auth.expired":
+        providers.value = event.providers
+        notifyFailure(t("auth.expired", { name: event.name }), {
+          id: `auth.expired:${event.provider}`,
+          duration: 0,
+          action: { label: t("auth.signInAgain"), run: () => requestConnect(event.provider) },
+        })
+        break
+      case "providers.updated":
+        providers.value = event.providers
+        break
       case "auth.failed":
         authState.value = { provider: event.provider, stage: "failed", message: event.message }
+        break
+      // skills: MiMo says so when a SKILL.md cannot be parsed; the backend sends each broken file once.
+      case "skill.problem":
+        notifyFailure(t("skills.malformed", { path: event.path }), { body: event.message, id: `skill.problem:${event.path}` })
         break
     }
   }
@@ -506,6 +879,7 @@ export const useApp = defineStore("app", () => {
   async function start() {
     const bootstrap = await window.mcode.bootstrap()
     platform.value = bootstrap.platform
+    setChordPlatform(bootstrap.platform)
     version.value = bootstrap.version
     port.value = bootstrap.port
 
@@ -513,7 +887,7 @@ export const useApp = defineStore("app", () => {
     // reconnecting in the background, racing the new one for the same events.
     client.value?.close()
 
-    const instance = new Client(bootstrap.port)
+    const instance = new Client(bootstrap.port, bootstrap.secret)
     client.value = instance
     instance.on(apply)
     /*
@@ -529,27 +903,61 @@ export const useApp = defineStore("app", () => {
        * Held back a moment before it is admitted to. The socket drops briefly
        * whenever the backend restarts, and a window that announced every one of
        * those would cry wolf; a server that is genuinely not there stays down
-       * far longer than this.
+       * far longer than this. Timed from the drop: each refused reconnect
+       * attempt closes again well inside this, and restarting the clock on
+       * every one meant it never ran out.
        */
-      if (offlineTimer !== undefined) {
+      if (up) {
         clearTimeout(offlineTimer)
         offlineTimer = undefined
+        offline.value = false
+      } else if (offlineTimer === undefined && !offline.value) {
+        offlineTimer = setTimeout(() => {
+          offlineTimer = undefined
+          offline.value = true
+          /*
+           * After boot the conversation stays on screen, as MiMo's does: only
+           * the reconnect notice escalates, keeping its promise about queued
+           * messages and adding what to do if the service stays away. The boot
+           * overlay is for a service that never started.
+           */
+          if (booted) {
+            if (reconnectTimer !== undefined) clearTimeout(reconnectTimer)
+            reconnectTimer = undefined
+            notice.danger(t("error.connectionRecovering"), { id: RECONNECT_TOAST, body: t("error.connectionStillDown"), duration: 0, closable: false })
+          }
+        }, 2500)
       }
-      if (up) offline.value = false
-      else offlineTimer = setTimeout(() => (offline.value = true), 2500)
+      /*
+       * And said out loud in the meantime. Frames raised while the socket is
+       * down are queued rather than refused, so without this a message sent in
+       * the gap looked like nothing happened at all - until either it suddenly
+       * went, or the whole screen became the boot overlay. MiMo says the same
+       * thing here: the connection is coming back, and what you sent will go
+       * the moment it is. Held a beat so a restart that is over in a blink
+       * shows nothing.
+       */
+      if (reconnectTimer !== undefined) {
+        clearTimeout(reconnectTimer)
+        reconnectTimer = undefined
+      }
+      if (up) notice.dismiss(RECONNECT_TOAST)
+      // Once escalated it stays so until the socket is back.
+      else if (booted && !offline.value) {
+        reconnectTimer = setTimeout(() => {
+          notice.warning(t("error.connectionRecovering"), { id: RECONNECT_TOAST, duration: 0, closable: false })
+        }, RECONNECT_DELAY)
+      }
     })
     /*
-     * A chosen server is read from the browser's own storage rather than from
-     * config: config lives on the server, and asking it where to connect would
-     * require being connected already.
+     * The window only ever talks to the backend this app started, as MiMo's
+     * does. The addresses an earlier build kept for other servers are taken
+     * away so they cannot linger.
      */
-    /*
-     * A default outranks the address last connected to: it is the answer to
-     * "where should this app start", where the other is only a record of where
-     * it happened to finish.
-     */
-    const stored = localStorage.getItem("mcode.defaultServerURL") ?? localStorage.getItem("mcode.serverURL")
-    if (stored) instance.useServer(stored)
+    try {
+      localStorage.removeItem("mcode.defaultServerURL")
+      localStorage.removeItem("mcode.serverURL")
+    } catch {}
     instance.connect()
 
     // Poll briefly for the first open rather than racing the socket.
@@ -572,11 +980,31 @@ export const useApp = defineStore("app", () => {
     })
     connected.value = true
 
-    config.value = (await instance.request({ type: "config.get" })).config
+    const settings = await instance.request({ type: "config.get" })
+    config.value = settings.config
+    /*
+     * MiMo's CONFIG_INVALID, said rather than only noted.
+     *
+     * A settings file that would not parse was recorded in the backend and
+     * nowhere else: the app opened on the defaults and the reader was left to
+     * work out for themselves where their settings had gone. The damaged file
+     * is kept, so the notice stays up until it is dismissed.
+     */
+    if (settings.unreadable) notice.warning(t("error.configInvalid"), { duration: 0 })
+    else if (settings.fromNewerVersion) notice.warning(t("error.configNewer"), { duration: 0 })
+    // L12-2: the keys and sign-ins are a file of their own, and their loss is said on its own.
+    if (settings.credentialsUnreadable) notice.warning(t("error.credentialsInvalid"), { duration: 0 })
+    // L12-3: MiMo refuses to save without secure storage; this keeps them in plain text and says so.
+    else if (settings.credentialsPlaintext) notice.warning(t("error.credentialsPlaintext"), { duration: 0 })
     providers.value = (await instance.request({ type: "provider.list" })).providers
     const listed = await instance.request({ type: "session.list" })
-    sessions.value = listed.sessions
+    // subagents: listed apart from both, as their own conversations are.
+    subagentSessions.value = listed.sessions.filter((session) => session.parentID)
+    sessions.value = listed.sessions.filter((session) => !session.sideOf && !session.parentID)
+    sideSessions.value = listed.sessions.filter((session) => session.sideOf)
     running.value = new Set(listed.running)
+    clockTurns(listed.running)
+    summarising.value = new Set(listed.compacting)
     /*
      * Questions a tool is still parked on.
      *
@@ -587,8 +1015,10 @@ export const useApp = defineStore("app", () => {
      * which denies the question and kills the turn. The list answers with them
      * for the same reason it answers with which sessions are running.
      */
-    pendingPermissions.value = new Map(listed.permissions.map((request) => [request.sessionID, request]))
-    restoreTabs()
+    pendingPermissions.value = groupPermissions(listed.permissions)
+    chatLinks.value = listed.chatLinks ?? {}
+    automationTasks.value = listed.automations ?? []
+    noteRetries(listed.retries)
     booted = true
     /*
      * Everything the first screen reads has now arrived.
@@ -605,6 +1035,18 @@ export const useApp = defineStore("app", () => {
     // some panel that shows it first happens to be opened.
     void loadMcp()
 
+    /*
+     * Stored documents the backend found damaged or unreadable at start-up -
+     * a store it had to start again, conversations it could not read - said
+     * the way an unreadable settings file is, and left up until dismissed.
+     */
+    void instance
+      .request({ type: "storage.problems" })
+      .then(({ problems }) => {
+        for (const problem of problems) notice.warning(t(problem.code, problem.params), { duration: 0 })
+      })
+      .catch(() => undefined)
+
     // A default left pointing at a provider whose key was since removed would
     // fail on the first prompt with no hint as to why.
     await ensureUsableModel()
@@ -613,11 +1055,86 @@ export const useApp = defineStore("app", () => {
     // project is chosen there. Auto-creating one would skip past it.
   }
 
+  /**
+   * A deleted conversation's waiting words and annotations go with it (N11-24),
+   * as MiMo drops a conversation's draft and composer state on deletion. They
+   * stayed for the life of the profile, and every one of them was written out
+   * again with every keystroke anywhere, since the draft file is saved whole.
+   */
+  function forgetDrafts(sessionID: string): void {
+    const annotations = useAnnotations()
+    let changed = false
+    for (const key of [`main:${sessionID}`, `side:${sessionID}`]) {
+      if (drafts.delete(key)) changed = true
+      if (annotations.list(key).length) {
+        annotations.put(key, [])
+        changed = true
+      }
+    }
+    if (changed) scheduleDraftSave()
+  }
+
+  /** What session.list said about the turns that are waiting between attempts. */
+  function noteRetries(rows: Record<string, { messageID: string; attempt: number; message: string; next: number; kind?: string; max?: number }> | undefined): void {
+    liveRetries.clear()
+    for (const [sessionID, row] of Object.entries(rows ?? {})) liveRetries.set(sessionID, row)
+    for (const [sessionID, list] of Object.entries(sideTranscripts.value)) applyRetry(sessionID, list)
+    for (const [sessionID, list] of held) applyRetry(sessionID, list)
+    if (currentID.value) applyRetry(currentID.value, messages.value)
+  }
+
+  /*
+   * A delta that did not line up: the transcript on screen is missing
+   * something, so it is read again. Debounced, because a window that connected
+   * mid-step will see several in a row.
+   */
+  let gapTimer: ReturnType<typeof setTimeout> | undefined
+
+  function noteDeltaGap(sessionID: string): void {
+    if (sessionID !== currentID.value || gapTimer) return
+    gapTimer = setTimeout(() => {
+      gapTimer = undefined
+      if (currentID.value === sessionID) void open(sessionID).catch(() => undefined)
+    }, 300)
+  }
+
   function api() {
     const instance = client.value
     if (!instance) throw new Error("Not connected")
     return instance
   }
+
+  /*
+   * N11-4: the conversations whose fine-grained events this window wants -
+   * the one on screen, the side chats and subagent transcripts it holds, and
+   * the few it keeps in case the reader comes straight back. Sent whenever the
+   * set changes, and again after a reconnect.
+   */
+  let declared = ""
+
+  function declareWatched(): void {
+    const instance = client.value
+    if (!instance) return
+    const wanted = [
+      ...(currentID.value ? [currentID.value] : []),
+      ...Object.keys(sideTranscripts.value),
+      ...held.keys(),
+    ]
+    const unique = [...new Set(wanted)].sort()
+    const key = unique.join(",")
+    if (key === declared) return
+    declared = key
+    void instance.request({ type: "session.watch", sessionIDs: unique }).catch(() => {
+      // A socket that dropped; the reconnect declares again.
+      declared = ""
+    })
+  }
+
+  watch(
+    [currentID, () => Object.keys(sideTranscripts.value).sort().join(",")],
+    () => declareWatched(),
+    { immediate: true },
+  )
 
   /** Set once the first load is done, so the opening connect is not a return. */
   let booted = false
@@ -643,7 +1160,7 @@ export const useApp = defineStore("app", () => {
    */
   const runtimeStatus = computed<"down" | "attention" | "warning" | "ok">(() => {
     if (!connected.value) return "down"
-    if (mcpServers.value.some((entry) => entry.status === "needs_auth")) return "attention"
+    if (mcpServers.value.some((entry) => mcpNeedsSignIn(entry.status))) return "attention"
     if (mcpServers.value.some((entry) => entry.status === "failed")) return "warning"
     return "ok"
   })
@@ -657,29 +1174,47 @@ export const useApp = defineStore("app", () => {
   /** Which directory the command list was last asked about. */
   let commandsFor: string | undefined
 
+  /* Where that list stands, so MiMo's slash menu can say loading or failed rather than "no commands". */
+  const commandsState = ref<"idle" | "loading" | "ready" | "failed">("idle")
+
+  /* MiMo's background load tries once more this long after a failure. */
+  const COMMAND_RETRY_MS = 1500
+
   /**
    * Re-reads the commands a project offers.
    *
    * Asked per directory because two of the three sources are the project's own
-   * files. `?? []` rather than a throw on an unknown response: `command.list`
-   * has no case in the server's request switch yet (that line is handed back),
-   * and until it does the request resolves to undefined - the menu should then
-   * show this app's own commands and nothing else, not fail to open.
+   * files. A refused or missing answer is a failure, not an empty list: the
+   * menu says so, asks again the next time it opens, and a failed read is tried
+   * once more after a moment on its own.
    */
-  async function refreshCommands(directory?: string) {
+  async function refreshCommands(directory?: string, retry = true) {
     const where = directory ?? current.value?.directory ?? config.value?.directory
     if (!where) {
       commands.value = []
       commandsFor = undefined
+      commandsState.value = "idle"
       return
     }
     commandsFor = where
+    commandsState.value = "loading"
     const result = await client.value
       ?.request({ type: "command.list", directory: where })
       .catch(() => undefined)
     // A second refresh may have overtaken this one; the newer answer wins.
     if (commandsFor !== where) return
-    commands.value = result?.commands ?? []
+    if (!result) {
+      commands.value = []
+      commandsState.value = "failed"
+      if (retry) {
+        setTimeout(() => {
+          if (commandsFor === where && commandsState.value === "failed") void refreshCommands(where, false)
+        }, COMMAND_RETRY_MS)
+      }
+      return
+    }
+    commands.value = result.commands
+    commandsState.value = "ready"
   }
 
   /**
@@ -691,11 +1226,21 @@ export const useApp = defineStore("app", () => {
   async function resync() {
     try {
       const listed = await api().request({ type: "session.list" })
-      sessions.value = listed.sessions
+      subagentSessions.value = listed.sessions.filter((session) => session.parentID)
+      sessions.value = listed.sessions.filter((session) => !session.sideOf && !session.parentID)
+      sideSessions.value = listed.sessions.filter((session) => session.sideOf)
       running.value = new Set(listed.running)
+      clockTurns(listed.running)
+      summarising.value = new Set(listed.compacting)
       // The same replay as on boot: a socket that dropped missed anything
       // published while it was down, a permission request included.
-      pendingPermissions.value = new Map(listed.permissions.map((request) => [request.sessionID, request]))
+      pendingPermissions.value = groupPermissions(listed.permissions)
+      chatLinks.value = listed.chatLinks ?? {}
+      automationTasks.value = listed.automations ?? []
+      noteRetries(listed.retries)
+      // A fresh socket knows nothing about this window; say again what it is drawing.
+      declared = ""
+      declareWatched()
       if (currentID.value) await open(currentID.value)
     } catch {
       // A socket that dropped again; the next open will bring another attempt.
@@ -710,20 +1255,49 @@ export const useApp = defineStore("app", () => {
      */
     history.value = { undo: 0, redo: 0 }
     void refreshHistory(sessionID)
+    /*
+     * MiMo switches at once: the conversation clicked is the one on screen,
+     * saying 正在加载对话… until its messages arrive, and nothing of the one left
+     * stays to be clicked. Opening the one already on screen again (a resync)
+     * keeps what it shows. A failed read leaves the line up, as MiMo's does.
+     */
+    if (currentID.value !== sessionID) {
+      hold(currentID.value)
+      // Coming back to one still held draws it at once, as MiMo does; the read below refreshes it.
+      const kept = held.get(sessionID)
+      held.delete(sessionID)
+      currentID.value = sessionID
+      partIndex.clear()
+      turnError.value = undefined
+      if (kept) {
+        loadingID.value = undefined
+        messages.value = kept
+        messages.value.forEach(reindex)
+      } else {
+        loadingID.value = sessionID
+        messages.value = []
+      }
+    }
     const result = await api().request({ type: "session.get", sessionID })
-    currentID.value = sessionID
+    // Left for another conversation while this one was read: its answer is not shown.
+    if (currentID.value !== sessionID) return
+    loadingID.value = undefined
     if (unseen.value.has(sessionID)) {
       const next = new Set(unseen.value)
       next.delete(sessionID)
       unseen.value = next
     }
-    track(sessionID)
-    messages.value = result.messages
-    partIndex.clear()
-    result.messages.forEach(reindex)
-    error.value = undefined
+    recent.value = [sessionID, ...recent.value.filter((id) => id !== sessionID)].slice(0, 50)
+    const fresh = result.messages.map(readLegacyMessage)
+    // Replaced only when the read differs from what is on show: an identical list would be drawn again for nothing.
+    if (transcriptKey(fresh) !== transcriptKey(messages.value)) {
+      messages.value = fresh
+      partIndex.clear()
+      messages.value.forEach(reindex)
+    }
+    applyRetry(sessionID, messages.value)
+    turnError.value = undefined
     noteError(sessionID, undefined)
-    clearPermission(sessionID)
     /*
      * Two of the three command sources are files under the session's own
      * directory, so the list belongs to the project rather than to the app.
@@ -747,18 +1321,27 @@ export const useApp = defineStore("app", () => {
       .request({ type: "session.get", sessionID })
       .catch(() => undefined)
     if (!result || currentID.value !== sessionID) return
-    messages.value = result.messages
+    messages.value = result.messages.map(readLegacyMessage)
     partIndex.clear()
-    result.messages.forEach(reindex)
+    messages.value.forEach(reindex)
   }
 
-  async function create(directory?: string) {
-    const result = await api().request({ type: "session.create", directory })
+  async function create(directory?: string, options: { scratch?: boolean } = {}) {
+    const result = await api().request({
+      type: "session.create",
+      directory,
+      ...(options.scratch ? { scratch: true } : {}),
+    })
     // The session.updated event usually lands before this response, so only
     // insert if it did not - otherwise the list gets a duplicate row.
     if (!sessions.value.some((session) => session.id === result.session.id)) {
       sessions.value.unshift(result.session)
     }
+    // Known to be empty, so it opens straight onto its hero rather than a loading line.
+    hold(currentID.value)
+    currentID.value = result.session.id
+    messages.value = []
+    partIndex.clear()
     await open(result.session.id)
     return result.session
   }
@@ -772,16 +1355,30 @@ export const useApp = defineStore("app", () => {
    * twenty turns in arrived in the fork with none of what made it worth asking,
    * and the model answered it cold.
    */
-  async function forkFrom(messageID: string) {
+  /*
+   * MiMo names a branch off a reply 「{title} (分支)」 and keeps the title for
+   * 在新对话中继续; `here` is the reply's own toast, 已从此处创建分支, where the
+   * others say they branched the current conversation. A failure says so.
+   */
+  async function forkFrom(messageID: string, how: { titleSuffix?: boolean; here?: boolean } = {}) {
     if (!currentID.value) return undefined
-    const { session } = await api().request({
-      type: "session.fork",
-      sessionID: currentID.value,
-      messageID,
-    })
+    const result = await api()
+      .request({
+        type: "session.fork",
+        sessionID: currentID.value,
+        messageID,
+        ...(how.titleSuffix ? { titleSuffix: true } : {}),
+      })
+      .catch(() => undefined)
+    if (!result) {
+      notifyFailure(t("stream.forkFailed"))
+      return undefined
+    }
+    const { session } = result
     // Same guard as create(): the session.updated event usually lands first.
     if (!sessions.value.some((entry) => entry.id === session.id)) sessions.value.unshift(session)
     await open(session.id)
+    notify(how.here ? t("stream.forkedFromHere") : t("stream.forkedFromCurrent"))
     return session
   }
 
@@ -798,7 +1395,15 @@ export const useApp = defineStore("app", () => {
   const history = ref<{ undo: number; redo: number }>({ undo: 0, redo: 0 })
 
   async function refreshHistory(sessionID: string) {
-    history.value = (await api().request({ type: "session.history", sessionID })).history
+    const result = await api().request({ type: "session.history", sessionID })
+    /*
+     * Left for another conversation while this one was read: its depth is not
+     * this screen's. Two switches in a row issue two reads, and the backend
+     * answers each as it finishes, so the slower one used to land last and
+     * offer the conversation on screen an undo belonging to the one left.
+     */
+    if (currentID.value !== sessionID) return
+    history.value = result.history
   }
 
   /**
@@ -846,19 +1451,68 @@ export const useApp = defineStore("app", () => {
   })
 
   /**
-   * Rolls the conversation back to a message, or puts back what was rolled
-   * back when given none.
+   * MiMo's edit and retry: the messages from this one on are deleted, and no
+   * file moves.
    *
-   * The server decides where the boundary actually lands, because the project
-   * can only be returned to points a turn was recorded at - so the answer is
-   * read back from the session it returns rather than assumed here.
+   * Taken off the list here as well as on the server. No event says messages
+   * left, and a reread racing the resend that follows could come back without
+   * the question just sent.
    */
-  async function revert(sessionID: string, messageID?: string) {
-    const result = await api().request({ type: "session.revert", sessionID, messageID })
+  async function truncate(sessionID: string, messageID: string) {
+    const result = await api().request({ type: "session.revert", sessionID, messageID, files: false })
     const at = sessions.value.findIndex((entry) => entry.id === result.session.id)
     if (at >= 0) sessions.value[at] = result.session
-    history.value = result.history
-    return result.files
+    if (sessionID === currentID.value) {
+      const cut = messages.value.findIndex((message) => message.id === messageID)
+      if (cut >= 0) {
+        messages.value = messages.value.slice(0, cut)
+        partIndex.clear()
+        messages.value.forEach(reindex)
+      }
+      history.value = result.history
+    }
+    // A side chat keeps its transcript by id, loaded whether or not its tab is the one on show.
+    const sideList = sideTranscripts.value[sessionID]
+    if (sideList) {
+      const cut = sideList.findIndex((message) => message.id === messageID)
+      if (cut >= 0) {
+        const kept = sideList.slice(0, cut)
+        sideTranscripts.value = { ...sideTranscripts.value, [sessionID]: kept }
+        sidePartIndexes.delete(sessionID)
+        kept.forEach((message) => sideReindex(sessionID, message))
+      }
+    }
+  }
+
+  /*
+   * MiMo's search result: go to a message in the open conversation and flash
+   * it. The stream carries it out; this records the ask with when it was made,
+   * so asking for the same message twice still reads as a change.
+   */
+  const revealRequest = ref<{ id: string; at: number }>()
+  function revealMessage(id: string) {
+    revealRequest.value = { id, at: Date.now() }
+  }
+
+  /*
+   * The edited-files card's current diff, one patch per file. Kept per set of
+   * paths, as MiMo keeps its figures, so a transcript of many cards asks once
+   * for each; 审阅 asks afresh.
+   */
+  function askTurnDiff(directory: string, files: string[]) {
+    return api().request({ type: "git.diffFiles", directory, files })
+  }
+  const turnDiffs = new Map<string, ReturnType<typeof askTurnDiff>>()
+  function turnDiff(directory: string, files: string[], fresh = false) {
+    const key = [directory, ...[...files].sort()].join("\n")
+    const kept = fresh ? undefined : turnDiffs.get(key)
+    if (kept) return kept
+    const asked = askTurnDiff(directory, files)
+    turnDiffs.delete(key)
+    turnDiffs.set(key, asked)
+    if (turnDiffs.size > 64) turnDiffs.delete(turnDiffs.keys().next().value as string)
+    asked.catch(() => turnDiffs.delete(key))
+    return asked
   }
 
   async function redo(sessionID: string) {
@@ -868,15 +1522,12 @@ export const useApp = defineStore("app", () => {
   }
 
   async function compact(sessionID: string) {
-    compacting.value = true
-    try {
-      const { session } = await api().request({ type: "session.compact", sessionID })
-      const at = sessions.value.findIndex((entry) => entry.id === session.id)
-      if (at >= 0) sessions.value[at] = session
-      return session
-    } finally {
-      compacting.value = false
-    }
+    // No flag of its own: the server says when a summary starts and stops, for
+    // this and for the automatic one alike, and the button reads that.
+    const { session } = await api().request({ type: "session.compact", sessionID })
+    const at = sessions.value.findIndex((entry) => entry.id === session.id)
+    if (at >= 0) sessions.value[at] = session
+    return session
   }
 
   /**
@@ -920,23 +1571,68 @@ export const useApp = defineStore("app", () => {
     await api().request({ type: "session.rename", sessionID, title })
   }
 
-  /** Returns false when the message was not accepted, so the draft can survive. */
-  async function send(text: string, attachments: Attachment[] = []): Promise<boolean> {
-    // An attachment with no words is still something to answer.
-    if (!currentID.value || (!text.trim() && !attachments.length)) return false
-    error.value = undefined
-    noteError(currentID.value, undefined)
+  /**
+   * Which project the side column files a conversation under, as MiMo's
+   * `moveToProject` does. Nothing else moves - not the transcript, and not the
+   * folder it works in - so the project's commands are still the right ones.
+   */
+  async function move(sessionID: string, directory: string) {
+    await api().request({ type: "session.move", sessionID, directory })
+  }
 
-    // Caught here rather than in the backend so it can be said in the user's
-    // language - the server has no idea which one that is.
-    const chosen = current.value?.model
+  /*
+   * Marked unread by hand, which is the one way into this set that is not an
+   * answer arriving while the reader was somewhere else. Opening the session
+   * clears it again, as it always did.
+   */
+  function markUnread(sessionID: string) {
+    if (unseen.value.has(sessionID)) return
+    unseen.value = new Set(unseen.value).add(sessionID)
+  }
+
+  /* The row menu's other half, as MiMo toggles it: the finished-while-away and the failed mark both go. */
+  function markRead(sessionID: string) {
+    if (unseen.value.has(sessionID)) {
+      const next = new Set(unseen.value)
+      next.delete(sessionID)
+      unseen.value = next
+    }
+    if (sessionErrors.value.has(sessionID)) noteError(sessionID, undefined)
+  }
+
+  /** Returns false when the message was not accepted, so the draft can survive. */
+  /* `to` names a side chat; without it the message goes to the open conversation. */
+  async function send(
+    text: string,
+    attachments: Attachment[] = [],
+    to?: string,
+    annotations: import("@shared/protocol").Annotation[] = [],
+    /* What a slash command named, for the turn this starts only. */
+    command?: { agent?: import("@shared/protocol").TurnAgent; model?: import("@shared/protocol").ModelRef },
+    /* 追求目标: this message is the goal the conversation is judged against from now on. */
+    goal?: string,
+  ): Promise<boolean> {
+    const target = to ?? currentID.value
+    // An attachment, or a place pointed at, with no words is still something to answer.
+    if (!target || (!text.trim() && !attachments.length && !annotations.length)) return false
+    const onSide = isSide(target)
+    if (onSide) setSideError(target, undefined)
+    else turnError.value = undefined
+    noteError(target, undefined)
+
+    /*
+     * MiMo's 暂无可用模型: a conversation whose model no connected provider
+     * serves is not sent. It is said as a notice rather than in the transcript,
+     * the model list is asked for again, and the draft stays.
+     */
+    const chosen = (onSide ? sideSessionOf(target) : sessions.value.find((session) => session.id === target))?.model
     const provider = providers.value.find((entry) => entry.id === chosen?.provider)
-    if (provider && !provider.configured) {
-      error.value = t("error.noProvider", { name: provider.name })
+    if (!chosen || !provider?.configured) {
+      notifyFailure(t("model.none"))
+      void refreshProviders().catch(() => undefined)
       return false
     }
 
-    const target = currentID.value
     /*
      * Whether this message is starting the work or joining work already under
      * way. A message can now be sent into a turn that is running, and if that
@@ -946,33 +1642,121 @@ export const useApp = defineStore("app", () => {
      */
     const joined = running.value.has(target)
     running.value.add(target)
+    if (!joined) turnStarted.set(target, Date.now())
+    // Documents the user changed since the last message go with this one, for the model to read first.
+    const fileNotices = onSide ? [] : takeFileNotices(target)
     try {
-      await api().request({ type: "session.prompt", sessionID: target, text, attachments })
+      await api().request({
+        type: "session.prompt",
+        sessionID: target,
+        text,
+        attachments,
+        ...(annotations.length ? { annotations } : {}),
+        ...(fileNotices.length ? { fileNotices } : {}),
+        ...(command?.agent ? { agent: command.agent } : {}),
+        ...(command?.model ? { model: command.model } : {}),
+        ...(goal ? { goal } : {}),
+      })
+      // MiMo's officeWatch: the documents its annotations sit on glow while the run works, a steer joining the glow.
+      if (annotations.length) watchAnnotatedSend(target, annotations, text)
       return true
     } catch (err) {
-      if (!joined) running.value.delete(target)
-      error.value = err instanceof Error ? err.message : String(err)
+      returnFileNotices(target, fileNotices)
+      if (!joined) {
+        running.value.delete(target)
+        turnStarted.delete(target)
+      }
+      /*
+       * A message that was not accepted is a notice, as MiMo's composer says
+       * it, with the draft kept by the caller. The side chat says it under its
+       * own transcript, where the reader is looking.
+       */
+      const reason = err instanceof Error ? err.message : String(err)
+      if (onSide) setSideError(target, reason)
+      else notifyFailure(t("common.requestFailed"), reason)
       return false
     }
   }
 
-  async function abort() {
-    const target = currentID.value
+  /*
+   * 停止, with MiMo's persistence behind it: three attempts, 400 ms apart.
+   *
+   * The backend's own stop cannot fail - it is a synchronous abort on a runner
+   * it already holds - so the only exposed part is getting the request there.
+   * A socket dropping at the moment of the press used to leave the turn running
+   * with nothing said anywhere, because every call site let the promise go.
+   */
+  const ABORT_TRIES = 3
+  const ABORT_GAP = 400
+
+  async function abort(to?: string) {
+    const target = to ?? currentID.value
     if (!target) return
-    await api().request({ type: "session.abort", sessionID: target })
-    running.value.delete(target)
+    // 停止 stops the narration too: a line already being read out belongs to the turn being stopped.
+    hushSpeech()
+    // Before the request: the idle that follows a stop may arrive ahead of its answer.
+    turnStarted.delete(target)
+    let failure: unknown
+    for (let attempt = 1; attempt <= ABORT_TRIES; attempt++) {
+      try {
+        await api().request({ type: "session.abort", sessionID: target })
+        running.value.delete(target)
+        return
+      } catch (err) {
+        failure = err
+        if (attempt < ABORT_TRIES) await new Promise((resolve) => setTimeout(resolve, ABORT_GAP))
+      }
+    }
+    // The turn is still running, and stays marked so; what the reader must not have is silence.
+    notifyFailure(t("error.abortFailed"), failure instanceof Error ? failure.message : String(failure))
+  }
+
+  /**
+   * 继续: the interrupted last turn runs on with no new message.
+   *
+   * False when the server would not carry it on, so the box can say so. Marked
+   * running before the request, as a send is, because the turn's first events
+   * can arrive ahead of the answer.
+   */
+  async function resume(to?: string): Promise<boolean> {
+    const target = to ?? currentID.value
+    if (!target || running.value.has(target)) return false
+    if (isSide(target)) setSideError(target, undefined)
+    else turnError.value = undefined
+    noteError(target, undefined)
+    running.value.add(target)
+    turnStarted.set(target, Date.now())
+    try {
+      await api().request({ type: "session.resume", sessionID: target })
+      return true
+    } catch {
+      running.value.delete(target)
+      turnStarted.delete(target)
+      return false
+    }
   }
 
   /** The request whose answer is in flight, so the panel can disable itself. */
   const responding = ref<string>()
 
-  async function respond(response: PermissionResponse) {
+  /** Takes one turn's file changes back out of the project; the card turns into its reverted form on the message update. */
+  async function revertTurn(sessionID: string, messageIDs: string[]) {
+    return api().request({ type: "session.revertTurn", sessionID, messageIDs })
+  }
+
+  async function respond(response: PermissionResponse, reason?: string) {
     const request = permission.value
     if (!request || responding.value === request.id) return
     responding.value = request.id
     try {
-      await api().request({ type: "permission.respond", requestID: request.id, response })
-      clearPermission(request.sessionID)
+      const said = response === "reject" ? reason?.trim() : undefined
+      await api().request({
+        type: "permission.respond",
+        requestID: request.id,
+        response,
+        ...(said ? { reason: said } : {}),
+      })
+      dropPermission(request.id)
     } catch (err) {
       // The request stays up: the tool is still waiting on an answer, and
       // clearing it here would strand the turn with nothing on screen.
@@ -982,16 +1766,30 @@ export const useApp = defineStore("app", () => {
     }
   }
 
-  /** Undefined clears it, which is how a session goes back to the default. */
-  async function setEffort(effort?: Effort) {
-    if (!currentID.value) return
-    await api().request({ type: "session.effort", sessionID: currentID.value, effort })
+  /** MiMo's per-conversation access level; the home screen's chip changes the default instead. */
+  async function setAccess(sessionID: string, access: "ask" | "auto" | "full") {
+    await api().request({ type: "session.access", sessionID, access })
   }
 
-  async function setModel(model: ModelRef) {
-    if (!currentID.value) return
-    await api().request({ type: "session.model", sessionID: currentID.value, model })
-    await patchConfig({ model })
+  /** MiMo's effort is one app-wide level: every conversation, and the next, runs at it. */
+  async function setEffort(effort: Effort) {
+    await patchConfig({ effort })
+  }
+
+  async function setModel(model: ModelRef, to?: string) {
+    const target = to ?? currentID.value
+    if (!target) return
+    await api().request({ type: "session.model", sessionID: target, model })
+    // A side chat's model is its own; the default follows the open conversation.
+    if (!isSide(target)) await patchConfig({ model, smart: false })
+  }
+
+  /** Puts a conversation on Smart, and makes Smart the start for the next one. */
+  async function setSmart(to?: string) {
+    const target = to ?? currentID.value
+    if (!target) return
+    await api().request({ type: "session.smart", sessionID: target })
+    if (!isSide(target)) await patchConfig({ smart: true })
   }
 
   /**
@@ -1009,24 +1807,176 @@ export const useApp = defineStore("app", () => {
     await patchConfig({ agent })
   }
 
-  async function patchConfig(patch: Partial<AppConfig>) {
-    config.value = (await api().request({ type: "config.set", patch })).config
+  /*
+   * 追求目标: the plus menu's switch, the same shape as the agent - set on the
+   * open conversation if there is one, and written as the default either way so
+   * the next conversation starts where this choice left off.
+   */
+  async function setGoalMode(on: boolean, to?: string) {
+    const target = to ?? currentID.value
+    if (target) {
+      const result = await api().request({ type: "session.goalMode", sessionID: target, on })
+      const at = sessions.value.findIndex((entry) => entry.id === result.session.id)
+      if (at >= 0) sessions.value[at] = result.session
+    }
+    await patchConfig({ goalMode: on })
+  }
+
+  /** 追求目标: on or off for the open conversation, or - from the home screen - for the next task. */
+  async function toggleGoalMode(home = false) {
+    const target = home ? undefined : currentID.value
+    const session = target ? sessions.value.find((entry) => entry.id === target) : undefined
+    const next = !(session ? (session.goalMode ?? false) : (config.value?.goalMode ?? false))
+    await setGoalMode(next, target)
+    notify(t(next ? "toast.goalOn" : "toast.goalOff"))
+  }
+
+  /** 追求目标: writes the goal itself, or - with null - takes it off the conversation. */
+  async function setGoal(sessionID: string, condition: string | null) {
+    const result = await api().request({ type: "session.goal", sessionID, condition })
+    const at = sessions.value.findIndex((entry) => entry.id === result.session.id)
+    if (at >= 0) sessions.value[at] = result.session
+  }
+
+  /*
+   * 追求目标: 退出目标模式 from the bar - the goal goes and the switch goes with
+   * it, because the reader pressed it while one was being pursued and means
+   * both. Turning the switch off from the menu leaves a live goal alone.
+   */
+  async function leaveGoal(sessionID: string) {
+    await setGoal(sessionID, null)
+    await setGoalMode(false, sessionID)
+  }
+
+  /* MiMo's shortcut: voice input flips between 智能编辑 and 快速输入. */
+  async function toggleVoiceMode() {
+    await patchConfig({ voiceMode: (config.value?.voiceMode ?? "smart") === "fast" ? "smart" : "fast" })
+  }
+
+  /*
+   * MiMo's switch notices (store:composer): said once a pick has landed, never
+   * for a change the app made by itself. What was in force is read first, so
+   * picking it again says nothing.
+   */
+
+  /** The model a conversation, a side chat or (without an id) the next task is on; Smart is its own pick. */
+  function modelPick(to?: string): string {
+    const session = to ? (isSide(to) ? sideSessionOf(to) : sessions.value.find((entry) => entry.id === to)) : undefined
+    const smart = session ? session.smart : config.value?.smart
+    const model = session?.model ?? config.value?.model
+    return smart ? "smart" : model ? `${model.provider}/${model.model}` : ""
+  }
+
+  function announceModel(before: string, chosen: ModelRef | "smart") {
+    if ((chosen === "smart" ? "smart" : `${chosen.provider}/${chosen.model}`) === before) return
+    const name = chosen === "smart" ? t("model.smart") : (findModel(providers.value, chosen)?.name ?? chosen.model)
+    notify(t("toast.modelPrefix", { name }))
+  }
+
+  function announceAccess(level: "ask" | "auto" | "full") {
+    const key = level === "full" ? "composer.access.fullItem" : level === "auto" ? "composer.access.auto" : "composer.access.ask"
+    notify(t("toast.permPrefix", { perm: t(key) }))
+  }
+
+  /* MiMo's modes, one at a time: 计划 is the plan agent, anything else builds. */
+  function modeOf(sessionID?: string): "build" | "plan" {
+    const session = sessionID ? sessions.value.find((entry) => entry.id === sessionID) : undefined
+    const agent = session ? session.agent : (config.value?.agent ?? "build")
+    return agent === "plan" ? "plan" : "build"
+  }
+
+  function announceMode(before: "build" | "plan", sessionID?: string) {
+    const after = modeOf(sessionID)
+    if (after === before) return
+    notify(t("toast.switchedMode", { mode: t(after === "plan" ? "composer.planMode" : "composer.buildMode") }))
+  }
+
+  /*
+   * MiMo's pref writer: tried twice, and a second failure is said, naming the
+   * keys. The config on screen is only ever the server's answer, so a change
+   * that was not saved falls back to the value that was. `quiet` is for callers
+   * that say their own failure.
+   */
+  async function patchConfig(patch: Partial<AppConfig>, options: { quiet?: boolean } = {}) {
+    let failure: unknown
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        config.value = (await api().request({ type: "config.set", patch })).config
+        return
+      } catch (err) {
+        failure = err
+      }
+    }
+    // A failure the backend named (a config file that no longer parses says where) is said under the title.
+    const named = failure instanceof Error && "code" in failure ? failure.message : undefined
+    if (!options.quiet) notifyFailure(t("toast.prefSaveFailed", { key: Object.keys(patch).join(", ") }), named)
+    throw failure
   }
 
   /**
-   * Remembers which saved server to connect to at launch.
-   *
-   * Mirrored into the browser own storage for the same reason the current
-   * address is: the next launch has to know where to connect before it has a
-   * connection to ask. An id with no server behind it clears the choice rather
-   * than being written, so a deleted row cannot send the next launch at an
-   * address that is gone.
+   * Which main repository each conversation folder belongs to, and which
+   * folders are gone, as the backend last answered (MiMo's repoRoots). Asked
+   * again whenever the set of folders changes and when the window comes back.
    */
-  async function setDefaultServer(id: string) {
-    const entry = config.value?.servers?.find((row) => row.id === id)
-    if (entry) localStorage.setItem("mcode.defaultServerURL", entry.url)
-    else localStorage.removeItem("mcode.defaultServerURL")
-    await patchConfig({ defaultServer: entry ? id : "" })
+  const repoRoots = ref<Record<string, string>>({})
+  const missingFolders = ref<ReadonlySet<string>>(new Set())
+  const folderKey = computed(() => {
+    const folders = new Set<string>(listedProjects(config.value))
+    for (const session of sessions.value) if (session.directory && !session.scratch) folders.add(session.directory)
+    return [...folders].sort().join("\n")
+  })
+  let rootsAsked = 0
+  async function refreshRepoRoots() {
+    const directories = folderKey.value ? folderKey.value.split("\n") : []
+    if (!client.value || !connected.value) return
+    const asked = ++rootsAsked
+    const answer = await client.value.request({ type: "git.repoRoots", directories }).catch(() => undefined)
+    if (!answer || asked !== rootsAsked) return
+    repoRoots.value = answer.roots
+    missingFolders.value = new Set(answer.missing)
+  }
+  watch([folderKey, connected], () => void refreshRepoRoots())
+  watch(fsNonce, () => void refreshRepoRoots())
+
+  /* What `sessionGroup` needs to file a conversation the way MiMo does. */
+  const groupContext = computed<GroupContext>(() => {
+    const listed = listedProjects(config.value)
+    const roots = repoRoots.value
+    const missing = missingFolders.value
+    return {
+      listed: new Set(listed),
+      root: (directory) => {
+        const root = roots[directory]
+        return root ? (knownFolder(listed, root) ?? root) : undefined
+      },
+      missing: (directory) => missing.has(directory),
+    }
+  })
+
+  /* The project list the side column, the home picker and move-to-project read, most recent first. */
+  const projects = computed(() => projectsByRecency(config.value, sessions.value, groupContext.value))
+
+  /**
+   * MiMo's project add: onto the list with no conversation. `used` makes it the
+   * latest pick, so it heads the list; `switched` says the caller makes it the
+   * current project, which is the only time MiMo's "already exists, switched to
+   * it" is true here. `silent` says nothing at all.
+   */
+  async function addProject(directory: string, options: { used?: boolean; switched?: boolean; silent?: boolean } = {}) {
+    const result = await api().request({ type: "project.add", directory, ...(options.used ? { used: true } : {}) })
+    config.value = result.config
+    if (options.silent || (result.existed && !options.switched)) return
+    const name = projectName(directory, result.config.projectNames)
+    // MiMo: added is a success; already there goes through its danger notice.
+    if (result.existed) notifyFailure(t("side.projectExists", { name }))
+    else notify(t("side.projectAdded", { name }), { level: "success" })
+  }
+
+  /** MiMo's remove: off the list, conversations kept. */
+  async function removeProjects(directories: string[]) {
+    if (!directories.length) return
+    config.value = (await api().request({ type: "project.remove", directories })).config
+    notify(directories.length > 1 ? t("side.projectsRemoved", { count: directories.length }) : t("side.projectRemoved"), { level: "success" })
   }
 
   /**
@@ -1036,22 +1986,30 @@ export const useApp = defineStore("app", () => {
    * default was in place beforehand.
    */
   async function ensureUsableModel(prefer?: string) {
-    const usable = (id: string) => providers.value.find((entry) => entry.id === id)?.configured
     const chosen = config.value?.model
 
-    // Nothing to do when the current pick already works and no move was asked for.
-    if (!prefer && chosen && usable(chosen.provider)) return
+    // Nothing to do when the current pick still works and no move was asked for.
+    const preferReady = Boolean(prefer && providers.value.some((entry) => entry.id === prefer && entry.configured && entry.models.length))
+    if ((!prefer || !preferReady) && modelAvailable(providers.value, chosen)) return
 
-    const target =
-      providers.value.find((entry) => entry.id === prefer && entry.configured && entry.models.length) ??
-      providers.value.find((entry) => entry.configured && entry.models.length)
-    const model = target?.models[0]
-    if (!target || !model) return
-
-    const ref = { provider: target.id, model: model.id }
+    const ref = fallbackModel(availableModels(providers.value), preferReady ? prefer : undefined)
+    if (!ref) return
     await patchConfig({ model: ref })
-    // An open session keeps its own model, so it has to be moved explicitly.
-    if (currentID.value) await api().request({ type: "session.model", sessionID: currentID.value, model: ref })
+    // An open session keeps its own model, so it has to be moved explicitly; the others follow on their next turn.
+    const open = currentID.value ? sessions.value.find((entry) => entry.id === currentID.value) : undefined
+    if (open && !modelAvailable(providers.value, open.model)) await api().request({ type: "session.model", sessionID: open.id, model: ref })
+    else if (open && preferReady) await api().request({ type: "session.model", sessionID: open.id, model: ref })
+  }
+
+  /**
+   * The model a conversation runs on, as the window shows it: its own while
+   * that is still there, otherwise the app's - which is what its next turn
+   * will move to (MiMo's conversations follow the global model once theirs
+   * has gone).
+   */
+  function shownModel(ref: ModelRef | undefined): ModelRef | undefined {
+    if (ref && modelAvailable(providers.value, ref)) return ref
+    return config.value?.model?.model ? config.value.model : ref
   }
 
   /**
@@ -1067,41 +2025,12 @@ export const useApp = defineStore("app", () => {
     message?: string
   }>()
 
-  /** Wipes keys, subscriptions, preferences and history, then reopens setup. */
-  async function resetEverything() {
-    const result = await api().request({ type: "app.reset" })
-    config.value = result.config
-    providers.value = result.providers
-    sessions.value = []
-    tabs.value = []
-    currentID.value = undefined
-    messages.value = []
-    // Otherwise a device code from the login that was just wiped would still be
-    // sitting on the fresh onboarding screen.
-    authState.value = undefined
-    pendingPermissions.value = new Map()
-    unseen.value = new Set()
+  async function gitStatus(directory: string) {
+    return api().request({ type: "git.status", directory })
   }
 
-  async function gitStatus(directory: string, scope?: "worktree" | "branch") {
-    return api().request({ type: "git.status", directory, scope })
-  }
-
-  async function gitInit(directory: string) {
-    return api().request({ type: "git.init", directory })
-  }
-
-  async function gitDiff(
-    directory: string,
-    file: string,
-    context?: number,
-    scope?: "worktree" | "branch",
-  ) {
-    return (await api().request({ type: "git.diff", directory, file, context, scope })).patch
-  }
-
-  async function gitRevert(directory: string, file: string) {
-    return api().request({ type: "git.revert", directory, file })
+  async function gitDiff(directory: string, file: string) {
+    return (await api().request({ type: "git.diff", directory, file })).patch
   }
 
   /** Facts about a directory, straight from disk. */
@@ -1129,6 +2058,12 @@ export const useApp = defineStore("app", () => {
   async function signOut(provider: string) {
     providers.value = (await api().request({ type: "auth.signOut", provider })).providers
     await ensureUsableModel()
+  }
+
+  /** Asks the window to open the connect dialog, on one provider when named. */
+  const connectRequest = ref<{ provider?: string; at: number }>()
+  function requestConnect(provider?: string) {
+    connectRequest.value = { provider, at: Date.now() }
   }
 
   /** Re-reads the provider list, which carries config-derived fields. */
@@ -1181,6 +2116,7 @@ export const useApp = defineStore("app", () => {
     apiKey: string
     headers?: Record<string, string>
     models: CustomModel[]
+    protocol?: CustomProvider["protocol"]
   }) {
     providers.value = (await api().request({ type: "provider.addCustom", ...entry })).providers
     await ensureUsableModel()
@@ -1190,7 +2126,137 @@ export const useApp = defineStore("app", () => {
     providers.value = (await api().request({ type: "provider.removeCustom", provider })).providers
   }
 
+  /** Removes one model from a saved custom provider now, as MiMo's confirmed 删除自定义模型 does. */
+  async function removeCustomModel(provider: string, model: string) {
+    providers.value = (await api().request({ type: "provider.removeCustomModel", provider, model })).providers
+    await ensureUsableModel()
+  }
+
+  /** Saves an edited custom provider under its own id; a blank key keeps the one held. */
+  async function updateCustomProvider(entry: {
+    id: string
+    name: string
+    baseURL: string
+    apiKey: string
+    headers?: Record<string, string>
+    models: CustomModel[]
+    protocol?: CustomProvider["protocol"]
+  }) {
+    providers.value = (await api().request({ type: "provider.updateCustom", ...entry })).providers
+    await ensureUsableModel()
+  }
+
+  /** Copies a custom provider under the id chosen (or a free one), and answers that id. */
+  async function copyCustomProvider(provider: string, name: string, id?: string): Promise<string> {
+    const result = await api().request({ type: "provider.copyCustom", provider, name, ...(id ? { id } : {}) })
+    providers.value = result.providers
+    return result.id
+  }
+
+  /** MiMo 26.920's 测试连接: what `<baseURL>/models` lists with this key (blank uses the one held for `provider`). */
+  async function probeProvider(entry: {
+    baseURL: string
+    apiKey: string
+    provider?: string
+    headers?: Record<string, string>
+    protocol?: CustomProvider["protocol"]
+  }) {
+    return api().request({ type: "provider.probe", ...entry })
+  }
+
   /** The turn currently streaming, if any - used to anchor the scroll. */
+  /**
+   * Opens a side chat beside a conversation: a new, numbered conversation in
+   * the same project that no list shows. An empty one this conversation already
+   * has is taken up again rather than leaving a trail of blank ones behind.
+   */
+  async function openSide(parentID: string, taken: string[] = []) {
+    const parent = sessions.value.find((session) => session.id === parentID)
+    if (!parent) return
+    // A conversation another open chat tab holds is that tab's, even while it is still empty.
+    const previous = sideSessions.value
+      .filter((session) => session.sideOf === parentID && !taken.includes(session.id))
+      .sort((a, b) => b.updated - a.updated)[0]
+    let chosen: SessionInfo | undefined
+    if (previous) {
+      const got = await api().request({ type: "session.get", sessionID: previous.id }).catch(() => undefined)
+      if (got && !got.messages.length) chosen = previous
+    }
+    if (!chosen) {
+      const created = await api().request({
+        type: "session.create",
+        directory: parent.directory,
+        title: t("side.chatNumbered", { n: sideSessions.value.length + 1 }),
+        sideOf: parentID,
+      })
+      chosen = created.session
+      if (!sideSessions.value.some((session) => session.id === created.session.id)) sideSessions.value.push(created.session)
+    }
+    if (!sideTranscripts.value[chosen.id]) sideTranscripts.value = { ...sideTranscripts.value, [chosen.id]: [] }
+    setSideError(chosen.id, undefined)
+    sideID.value = chosen.id
+    return chosen.id
+  }
+
+  /**
+   * Reads a side conversation that already exists into its own transcript,
+   * once: after that its events keep it current whether or not it is on show.
+   * False when it could not be read, so the side chat and the 子智能体 tab can
+   * say so and try again.
+   */
+  async function loadSide(sessionID: string): Promise<boolean> {
+    if (sideTranscripts.value[sessionID]) return true
+    const result = await api().request({ type: "session.get", sessionID }).catch(() => undefined)
+    if (sideTranscripts.value[sessionID]) return true
+    if (!result) return false
+    sidePartIndexes.delete(sessionID)
+    const read = result.messages.map(readLegacyMessage)
+    read.forEach((message) => sideReindex(sessionID, message))
+    sideTranscripts.value = { ...sideTranscripts.value, [sessionID]: read }
+    return true
+  }
+
+  /**
+   * subagents: a slash command marked `subtask`, run as a subagent in the open
+   * conversation. The line as typed is the message; marked running before the
+   * request, as a send is, because the turn's first events can arrive first.
+   */
+  async function subtask(text: string, command: { description: string; prompt: string }): Promise<boolean> {
+    const target = currentID.value
+    if (!target) return false
+    turnError.value = undefined
+    noteError(target, undefined)
+    const joined = running.value.has(target)
+    running.value.add(target)
+    if (!joined) turnStarted.set(target, Date.now())
+    try {
+      await api().request({ type: "session.subtask", sessionID: target, text, description: command.description, prompt: command.prompt })
+      return true
+    } catch (err) {
+      if (!joined) {
+        running.value.delete(target)
+        turnStarted.delete(target)
+      }
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+      return false
+    }
+  }
+
+  /**
+   * Shows a side conversation that already exists: the one a right panel chat
+   * tab holds, coming back to it after another tab or another conversation.
+   */
+  async function showSide(sessionID: string) {
+    sideID.value = sessionID
+    await loadSide(sessionID)
+  }
+
+  function closeSide() {
+    sideID.value = undefined
+  }
+
+  const sideStreaming = computed<AssistantMessage | undefined>(() => sideStreamingOf(sideID.value))
+
   const streaming = computed<AssistantMessage | undefined>(() => {
     if (!busy.value) return undefined
     const last = messages.value[messages.value.length - 1]
@@ -1204,80 +2270,141 @@ export const useApp = defineStore("app", () => {
     mcpServers,
     runtimeStatus,
     loadMcp,
-    offline,
     platform,
     version,
     port,
     sessions,
     currentID,
     current,
-    tabs,
-    tabSessions,
-    closeTab,
-    moveTab,
-    sessionNotes,
-    addNote,
-    removeNote,
-    clearNotes,
+    visibleChats,
+    recentSort,
     messages,
+    loadingID,
     busy,
+    replacing,
+    markReplacing,
+    compacting,
     error,
+    turnError,
     config,
     providers,
     commands,
+    commandsState,
     refreshCommands,
+    toggleVoiceMode,
+    setGoalMode,
+    toggleGoalMode,
+    setGoal,
+    leaveGoal,
     permission,
+    permissionQueue,
+    revertTurn,
     responding,
     pendingPermissions,
     unseen,
     unread,
     failed,
+    markAllRead,
+    running,
+    // session chat
+    chatLinks,
+    chatLinksOf,
+    automationTasks,
+    finished,
+    automationRuns,
+    automationNotice,
+    answeredAnother,
+    gitWaiting,
     clearPermission,
-    reopenTab,
+    recent,
     forkFrom,
     isPinned,
     togglePinned,
     streaming,
+    side,
+    sideID,
+    // subagents
+    subagentSessions,
+    rootOf,
+    subtask,
+    sideMessages,
+    sideBusy,
+    sideStreaming,
+    sideError,
+    sideMessagesOf,
+    sideErrorOf,
+    sideSessionOf,
+    sideBusyOf,
+    sideStreamingOf,
+    openSide,
+    loadSide,
+    showSide,
+    closeSide,
     start,
     open,
     create,
     remove,
     rename,
+    move,
+    markUnread,
+    markRead,
     archive,
     compact,
     history,
     refreshHistory,
     undo,
     redo,
-    revert,
+    truncate,
+    turnDiff,
+    revealRequest,
+    revealMessage,
     revertedAt,
     rolledBack,
     visible,
     systemPrompt,
-    compacting,
     send,
     abort,
+    resume,
     respond,
     setModel,
+    setSmart,
     setEffort,
+    setAccess,
     setAgent,
     patchConfig,
-    setDefaultServer,
+    fsNonce,
+    groupContext,
+    branchNonce,
+    branchesChanged,
+    bumpFsNonce,
+    homeProject,
+    modelPick,
+    announceModel,
+    announceAccess,
+    modeOf,
+    announceMode,
+    projects,
+    addProject,
+    removeProjects,
     setProviderEndpoint,
     setApiKey,
     authState,
     workspaceInfo,
     gitStatus,
-    gitInit,
     gitDiff,
-    gitRevert,
-    resetEverything,
     beginAuth,
     cancelAuth,
     signOut,
     ensureUsableModel,
+    connectRequest,
+    requestConnect,
+    shownModel,
     discoverModels,
     addCustomProvider,
     removeCustomProvider,
+    removeCustomModel,
+    updateCustomProvider,
+    copyCustomProvider,
+    probeProvider,
   }
 })

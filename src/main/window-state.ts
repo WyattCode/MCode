@@ -1,6 +1,9 @@
 import fs from "node:fs"
 import path from "node:path"
 import { app, screen, type BrowserWindow, type Rectangle } from "electron"
+import { WINDOW_MIN, WINDOW_PREFERRED, firstRunSize, readSavedWindow, windowStateToSave, type SavedWindow } from "./desktop-rules"
+import { writeAtomicSync } from "./atomic-write"
+import { fillsWorkArea, linuxMaximizeToggle, startBounds } from "./work-area"
 
 /**
  * Remembers where the window was and how big it was.
@@ -8,86 +11,30 @@ import { app, screen, type BrowserWindow, type Rectangle } from "electron"
  * Kept out of the app config on purpose: this is a property of the machine and
  * its monitors, not of the user's preferences, and it must be readable before
  * the backend has started - the window is created first.
- */
-
-interface State {
-  bounds: Rectangle
-  maximized: boolean
-  fullScreen: boolean
-}
-
-const FILE = "window.json"
-/** First-run size only; the position is left to the OS, which centres it. */
-const DEFAULT = { width: 1280, height: 840 }
-const MIN = { width: 720, height: 480 }
-/** Writes are cheap but pointless mid-drag; settle first. */
-const SETTLE = 400
-/**
- * How far the measured window may sit from what was asked for before it counts
- * as the user having resized it.
  *
- * Restoring bounds does not reproduce them exactly - fractional display scaling
- * rounds the round-trip by a pixel or three. Saving the measured value fed that
- * error back in, so the window grew a little on every launch and kept growing.
+ * MiMo's rule: the state is written when the last window closes (or hides to
+ * the tray) and when the app quits, not on every move; a minimised or
+ * full-screen window writes nothing, and full screen is never restored.
  */
-const JITTER = 4
+
+export const WINDOW_STATE_FILE = "window.json"
+/* MiMo's minimum; a remembered size smaller than it is grown to it. */
+const MIN = WINDOW_MIN
 
 function file(): string {
-  return path.join(app.getPath("userData"), FILE)
+  return path.join(app.getPath("userData"), WINDOW_STATE_FILE)
 }
 
-function read(): State | undefined {
+function read(): SavedWindow | undefined {
   try {
-    const raw = JSON.parse(fs.readFileSync(file(), "utf8"))
-    const { x, y, width, height } = raw?.bounds ?? {}
-    if (![x, y, width, height].every((value) => Number.isFinite(value))) return undefined
-    return {
-      bounds: { x, y, width, height },
-      maximized: Boolean(raw.maximized),
-      fullScreen: Boolean(raw.fullScreen),
-    }
+    return readSavedWindow(JSON.parse(fs.readFileSync(file(), "utf8")))
   } catch {
     return undefined
   }
 }
 
 /**
- * Keeps the window somewhere it can actually be seen.
- *
- * Saved coordinates go stale: a monitor gets unplugged, a laptop leaves its
- * dock, the resolution changes. Restoring them blindly puts the window off the
- * edge of the world, where it looks like the app failed to start.
- */
-function visible(bounds: Rectangle): Rectangle {
-  const width = Math.max(MIN.width, Math.round(bounds.width))
-  const height = Math.max(MIN.height, Math.round(bounds.height))
-  const display = screen.getDisplayMatching({ ...bounds, width, height })
-  const area = display.workArea
-
-  // A window is usable as long as a decent strip of its title bar is on screen.
-  const overlapX = Math.min(bounds.x + width, area.x + area.width) - Math.max(bounds.x, area.x)
-  const overlapY = Math.min(bounds.y + height, area.y + area.height) - Math.max(bounds.y, area.y)
-  const reachable = overlapX >= 120 && overlapY >= 40
-
-  if (reachable) {
-    return {
-      x: Math.round(bounds.x),
-      y: Math.round(bounds.y),
-      width: Math.min(width, area.width),
-      height: Math.min(height, area.height),
-    }
-  }
-
-  const fitted = { width: Math.min(width, area.width), height: Math.min(height, area.height) }
-  return {
-    x: Math.round(area.x + (area.width - fitted.width) / 2),
-    y: Math.round(area.y + (area.height - fitted.height) / 2),
-    ...fitted,
-  }
-}
-
-/**
- * Bounds and flags to pass to the BrowserWindow constructor.
+ * Bounds and the maximised flag to pass to the BrowserWindow constructor.
  *
  * x and y come back undefined when there is nothing remembered, which is not a
  * gap to fill in: omitting them is what makes Electron centre the window. An
@@ -100,87 +47,96 @@ export function restore(): {
   width: number
   height: number
   maximized: boolean
-  fullScreen: boolean
 } {
   const saved = read()
-  const flags = { maximized: saved?.maximized ?? false, fullScreen: saved?.fullScreen ?? false }
   if (!saved) {
-    const area = screen.getPrimaryDisplay().workArea
-    return {
-      width: Math.min(DEFAULT.width, area.width),
-      height: Math.min(DEFAULT.height, area.height),
-      ...flags,
-    }
+    // First run: MiMo's share of the primary work area; the position is left to the OS, which centres it.
+    return { ...firstRunSize(screen.getPrimaryDisplay().workArea), maximized: false }
   }
-  return { ...visible(saved.bounds), ...flags }
+  /*
+   * Saved coordinates go stale: a monitor gets unplugged, a laptop leaves its
+   * dock, the resolution or the scaling changes. The window is put wholly on a
+   * screen that is there now.
+   */
+  const areas = screen.getAllDisplays().map((display) => display.workArea)
+  return { ...startBounds(saved.bounds, areas, MIN), maximized: saved.maximized }
+}
+
+/** What is on disk for each window, so measurement noise never ratchets the size up. */
+const baselines = new WeakMap<BrowserWindow, Rectangle>()
+
+/** Writes this window's state now, unless it is minimised or full screen (MiMo keeps the older state then). */
+export function saveWindowState(window: BrowserWindow): void {
+  if (window.isDestroyed()) return
+  const baseline = baselines.get(window)
+  if (!baseline) return
+  // On Linux a window that fills the work area is maximized (MiMo's); its normal bounds are the ones it had before.
+  const fills = fillsItsWorkArea(window)
+  const state = windowStateToSave(
+    {
+      minimized: window.isMinimized(),
+      fullScreen: window.isFullScreen(),
+      maximized: fills || window.isMaximized(),
+      // The un-maximised geometry, which is what restoring needs.
+      normalBounds: fills ? (beforeFill.get(window) ?? baseline) : window.getNormalBounds(),
+    },
+    baseline,
+  )
+  if (!state) return
+  baselines.set(window, state.bounds)
+  try {
+    writeAtomicSync(file(), JSON.stringify(state, null, 2))
+  } catch {
+    // Losing the remembered size is not worth interrupting anything over.
+  }
+}
+
+/*
+ * Linux, MiMo's way (I13-7): maximize sizes the window to its display's work
+ * area instead of asking the window manager. The bounds it had before are kept
+ * here, as the OS keeps normal bounds for a native maximize.
+ */
+const beforeFill = new WeakMap<BrowserWindow, Rectangle>()
+
+function fillsItsWorkArea(window: BrowserWindow): boolean {
+  if (process.platform !== "linux") return false
+  try {
+    const bounds = window.getBounds()
+    return fillsWorkArea(bounds, screen.getDisplayMatching(bounds).workArea)
+  } catch {
+    return false
+  }
+}
+
+/** The maximize toggle of the title bar and the menu. */
+export function toggleMaximize(window: BrowserWindow): void {
+  if (process.platform !== "linux") {
+    if (window.isMaximized()) window.unmaximize()
+    else window.maximize()
+    return
+  }
+  const current = window.getBounds()
+  const area = screen.getDisplayMatching(current).workArea
+  const next = linuxMaximizeToggle(current, area, beforeFill.get(window) ?? baselines.get(window), { min: MIN, preferred: WINDOW_PREFERRED })
+  if (next.maximized) beforeFill.set(window, current)
+  else beforeFill.delete(window)
+  window.setBounds(next.bounds)
+}
+
+/** A window saved as maximized opens that way; on Linux, filling the work area of the display its bounds are on. */
+export function maximizeAtStart(window: BrowserWindow, bounds: Rectangle): void {
+  if (process.platform !== "linux") return window.maximize()
+  beforeFill.set(window, bounds)
+  window.setBounds(screen.getDisplayMatching(bounds).workArea)
 }
 
 /**
- * Where an additional window should open.
- *
- * Restoring the remembered bounds for every window put each new one exactly on
- * top of the last, which looks like nothing happened. Stepping down and across
- * is the long-standing convention, and it wraps back to the corner rather than
- * marching off the screen.
+ * Saves this window's state when it closes or hides as the last window. The
+ * quit path saves every window itself (saveWindowState), before it hides them.
  */
-export function cascade(from: Rectangle): Rectangle {
-  const STEP = 28
-  const area = screen.getDisplayMatching(from).workArea
-  const next = { ...from, x: from.x + STEP, y: from.y + STEP }
-  const past = next.x + from.width > area.x + area.width || next.y + from.height > area.y + area.height
-  if (!past) return next
-  return { ...from, x: area.x + STEP, y: area.y + STEP }
-}
-
-/** Starts saving position, size and maximised state for this window. */
-export function track(window: BrowserWindow, requested: Rectangle): void {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  /** What is on disk, so measurement noise never ratchets the size up. */
-  let baseline = requested
-
-  const write = () => {
-    if (window.isDestroyed()) return
-    // getNormalBounds is the un-maximised geometry, which is what restoring
-    // needs; getBounds while maximised would pin the window to full screen
-    // for good.
-    const measured = window.getNormalBounds()
-    const settled =
-      Math.abs(measured.x - baseline.x) <= JITTER &&
-      Math.abs(measured.y - baseline.y) <= JITTER &&
-      Math.abs(measured.width - baseline.width) <= JITTER &&
-      Math.abs(measured.height - baseline.height) <= JITTER
-
-    baseline = settled ? baseline : measured
-
-    const state: State = {
-      bounds: baseline,
-      maximized: window.isMaximized(),
-      fullScreen: window.isFullScreen(),
-    }
-    try {
-      fs.mkdirSync(path.dirname(file()), { recursive: true })
-      fs.writeFileSync(file(), JSON.stringify(state, null, 2), "utf8")
-    } catch {
-      // Losing the remembered size is not worth interrupting anything over.
-    }
-  }
-
-  const later = () => {
-    if (timer) clearTimeout(timer)
-    timer = setTimeout(write, SETTLE)
-  }
-
-  // Listed one by one: the overloaded signature does not accept a union.
-  window.on("resize", later)
-  window.on("move", later)
-  window.on("maximize", later)
-  window.on("unmaximize", later)
-  window.on("enter-full-screen", later)
-  window.on("leave-full-screen", later)
-
-  // A debounce that never fires is a debounce that loses the last change.
+export function track(window: BrowserWindow, requested: Rectangle, isLast: () => boolean): void {
+  baselines.set(window, requested)
   window.on("close", () => {
-    if (timer) clearTimeout(timer)
-    write()
+    if (isLast()) saveWindowState(window)
   })
 }

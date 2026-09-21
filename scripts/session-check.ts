@@ -13,7 +13,10 @@
  * adapters, the runner, the store, the request handlers and the bus are all the
  * real ones.
  */
+// First, so every server the checks start avoids the ports fetch refuses.
+import "./safe-listen"
 import http from "node:http"
+import { execFileSync } from "node:child_process"
 import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
@@ -24,6 +27,9 @@ import { Bus } from "../src/server/bus"
 import { Config } from "../src/server/config"
 import { Permissions } from "../src/server/permission"
 import { SessionStore } from "../src/server/session/store"
+
+// round 5: these providers are scripted reply by reply, and a background title request would take one.
+process.env.MCODE_GENERATE_TITLES = "0"
 import { SessionRunner } from "../src/server/session/runner"
 import { Shells } from "../src/server/shell"
 import { McpServers } from "../src/server/mcp"
@@ -55,6 +61,30 @@ let onRequest: ((n: number) => void) | undefined
  * the real runner call a tool is for a provider to ask for one.
  */
 let script: { name: string; input: Record<string, unknown> }[][] = []
+/**
+ * What the fake says to a summary request - one that ends on the compaction
+ * instruction, as a compaction now does (round 5, E8: the conversation is
+ * replayed as messages rather than quoted). Written in the instruction's
+ * sections, because a reply that is not is refused.
+ */
+const FAKE_SUMMARY = "## Task overview\n- a summary of the work so far\n\n## Current state\n- (none)\n\n## Next steps\n1. (none)"
+/** When set, the fake answers a summary request with this instead - a model that carries on. */
+let summaryReply: string | undefined
+/** When set, the usage the fake reports for a plain reply, so a window can be crossed by count. */
+let reportedUsage: { prompt_tokens: number; completion_tokens: number } | undefined
+/**
+ * When set, the next chat request is refused with this body and status 400 -
+ * the shape of a provider whose context the conversation has outgrown.
+ */
+let refuseNext: string | undefined
+/**
+ * When set, the fake counts input tokens in proportion to the request it is
+ * given - the first one it sees is `tokens` - and refuses any request whose
+ * input plus its `max_tokens` would exceed `window`, in the words the user's
+ * own server used. That is the arithmetic that defeated the first attempt at
+ * a rescue: 230,145 + 32,000 is one token over 262,144.
+ */
+let enforceWindow: { window: number; tokens: number; baseline?: number } | undefined
 /** Tool calls need ids that pair a call with its result, and no two may match. */
 let callNumber = 0
 
@@ -80,6 +110,49 @@ const server = http.createServer((request, response) => {
 
     requests.push(body)
     onRequest?.(requests.length)
+    if (enforceWindow) {
+      const asked = JSON.parse(body || "{}") as { max_tokens?: number; messages?: { role?: string; content?: unknown }[] }
+      /*
+       * The conversation only, never the system prompt. A turn's system
+       * prompt is long and a compaction's is one paragraph, so counting it
+       * would make every summary request look light enough to fit and the
+       * case would pass whatever ceiling the summary asked for.
+       */
+      /*
+       * A summary request replays the conversation as messages and ends on the
+       * compaction instruction; a turn carries the same messages. Either way it
+       * is the conversation's length that stands for its tokens, so the
+       * instruction is left out and the same conversation weighs the same
+       * however it is sent.
+       */
+      const turns = (asked.messages ?? []).filter((message) => message.role !== "system")
+      const summarising = String(turns.at(-1)?.content ?? "").includes("this conversation is about to be compacted")
+      const weight = (summarising ? turns.slice(0, -1) : turns).reduce(
+        (sum, message) => sum + (typeof message.content === "string" ? message.content.length : 0),
+        0,
+      )
+      enforceWindow.baseline ??= weight
+      const input = Math.round((enforceWindow.tokens * weight) / (enforceWindow.baseline || weight))
+      const output = asked.max_tokens ?? 0
+      if (input + output > enforceWindow.window) {
+        response.writeHead(400, { "content-type": "application/json" })
+        response.end(
+          JSON.stringify({
+            error: {
+              message: `This model's maximum context length is ${enforceWindow.window} tokens. However, you requested ${output} output tokens and your prompt contains at least ${input} input tokens, for a total of at least ${input + output} tokens. Please reduce the length of the input prompt or the number of requested output tokens.`,
+            },
+          }),
+        )
+        return
+      }
+    }
+    if (refuseNext !== undefined) {
+      const refusal = refuseNext
+      refuseNext = undefined
+      response.writeHead(400, { "content-type": "application/json" })
+      response.end(refusal)
+      return
+    }
 
     const asked = script.shift()
     if (asked) {
@@ -112,8 +185,8 @@ const server = http.createServer((request, response) => {
 
     response.writeHead(200, { "content-type": "text/event-stream" })
     const chunks = [
-      { choices: [{ delta: { content: "a summary" } }] },
-      { choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 5 } },
+      { choices: [{ delta: { content: body.includes("this conversation is about to be compacted") ? (summaryReply ?? FAKE_SUMMARY) : "a summary" } }] },
+      { choices: [{ delta: {}, finish_reason: "stop" }], usage: reportedUsage ?? { prompt_tokens: 10, completion_tokens: 5 } },
     ]
     let first = true
     for (const chunk of chunks) {
@@ -144,10 +217,18 @@ async function main(): Promise<void> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-session-check-"))
   const project = path.join(root, "project")
   await fs.mkdir(project, { recursive: true })
+  /*
+   * A repository, because undoing a shell command means comparing the project
+   * against itself, and that is only recorded inside git - see
+   * `scripts/snapshot-check.ts` for why it is not done anywhere else.
+   */
+  execFileSync("git", ["init", "-q"], { cwd: project })
 
   const storage = new Storage(path.join(root, "storage"))
   const bus = new Bus()
   const config = new Config(storage, bus, path.join(root, "credentials.json"))
+  // A stored config, so the checks run at the default level rather than a first install's 帮我审批.
+  await storage.write("config", {})
   await config.load()
   await config.set({
     customProviders: [{ id: "fake", name: "Fake", baseURL: `http://127.0.0.1:${port}/v1` }],
@@ -182,7 +263,8 @@ async function main(): Promise<void> {
   const auth = { accessToken: async () => undefined } as never
   const runner = new SessionRunner(sessions, bus, config, permissions, auth, storage)
   const shells = new Shells(bus)
-  const mcp = new McpServers(bus, config)
+  // A home of its own, so the reader's ~/.claude.json servers are never started here.
+  const mcp = new McpServers(bus, config, undefined, root)
   /*
    * The request handlers are part of what a window sees, so the checks that
    * care about reconnecting drive them rather than the pieces underneath.
@@ -399,7 +481,7 @@ async function main(): Promise<void> {
     const mixed = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
     script = [
       [
-        { name: "edit", input: { path: byEdit, oldString: "the first line", newString: "a different line" } },
+        { name: "edit", input: { file_path: byEdit, old_string: "the first line", new_string: "a different line" } },
         { name: "bash", input: rewrite },
       ],
     ]
@@ -433,6 +515,350 @@ async function main(): Promise<void> {
   }
 
   /*
+   * Outside a repository nothing is recorded, because staging a folder that
+   * git knows nothing about means hashing every byte in it (see
+   * `scripts/snapshot-check.ts`). What must survive that is undo of ordinary
+   * edits: the tools say which file they wrote and the history is built from
+   * what they said, with no comparison of the project needed. Only a turn
+   * that also ran something opaque loses the ability, and says so.
+   */
+  console.log("undo in a folder that is not a repository")
+  {
+    const loose = path.join(root, "loose")
+    await fs.mkdir(loose, { recursive: true })
+    const edited = path.join(loose, "edited.txt")
+    await fs.writeFile(edited, "the first line\n", "utf8")
+
+    const plain = await sessions.create({ directory: loose, model: { provider: "fake", model: "m" } })
+    script = [[{ name: "edit", input: { file_path: edited, old_string: "the first line", new_string: "a different line" } }]]
+    const edits = idle(plain.id)
+    await runner.prompt({ sessionID: plain.id, text: "edit it" })
+    await edits
+
+    check("the edit landed", (await fs.readFile(edited, "utf8")).startsWith("a different line"))
+    let refusal: string | undefined
+    let restored = -1
+    try {
+      restored = await runner.undo(plain.id)
+    } catch (failure) {
+      refusal = (failure as Error).message
+    }
+    check("an edit-only turn is still undoable without git", refusal === undefined, String(refusal))
+    check("and the file came back", (await fs.readFile(edited, "utf8")) === "the first line\n", String(restored))
+
+    // The same folder, a turn that also ran a shell command: that one cannot.
+    await fs.writeFile(edited, "the first line\n", "utf8")
+    const opaque = await sessions.create({ directory: loose, model: { provider: "fake", model: "m" } })
+    script = [
+      [
+        { name: "edit", input: { file_path: edited, old_string: "the first line", new_string: "changed again" } },
+        { name: "bash", input: rewrite },
+      ],
+    ]
+    const both = idle(opaque.id)
+    await runner.prompt({ sessionID: opaque.id, text: "edit it and shell something" })
+    await both
+
+    let told: string | undefined
+    try {
+      await runner.undo(opaque.id)
+    } catch (failure) {
+      told = (failure as Error).message
+    }
+    check("a turn with a shell command in it is refused instead", Boolean(told), String(told))
+    check(
+      "and the refusal says the project was never recorded",
+      (told ?? "").includes("not a git repository"),
+      String(told),
+    )
+  }
+
+  /*
+   * A conversation that has outgrown its model. MiMo answers it two ways and
+   * MCode now does the same: a provider that refuses the request as too long
+   * has the conversation compacted, the request posted again and the step
+   * retried once; and a model whose window is known is compacted once the
+   * tokens it reports reach 90% of that window. The screen this came from was
+   * the first kind - a discovered vLLM model, window unknown to MCode,
+   * answering 400 with "maximum context length is 262144 tokens" after 230k
+   * of transcript went out with a 32k answer requested on top, and the turn
+   * ending in red.
+   */
+  console.log("a request refused as too long is compacted and retried")
+  {
+    const refused = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    script = []
+    const first = idle(refused.id)
+    await runner.prompt({ sessionID: refused.id, text: "something to have a transcript" })
+    await first
+
+    const before = requests.length
+    refuseNext = JSON.stringify({
+      error: {
+        message:
+          "This model's maximum context length is 262144 tokens. However, you requested 32000 output tokens and your prompt contains at least 230145 input tokens.",
+      },
+    })
+    script = []
+    const second = idle(refused.id)
+    await runner.prompt({ sessionID: refused.id, text: "and again" })
+    await second
+
+    const after = await sessions.get(refused.id)
+    const transcript = await sessions.messages(refused.id)
+    const assistants = transcript.filter((message) => message.role === "assistant")
+    const errored = assistants.find((message) => message.error)
+    const last = assistants[assistants.length - 1]
+    check("the refusal is on the transcript", Boolean(errored), errored?.error ?? "(none)")
+    check("the session was compacted", Boolean(after?.compacted), JSON.stringify(after?.compacted ?? null))
+    check("with the summary the model gave", after?.compacted?.summary === FAKE_SUMMARY, after?.compacted?.summary)
+    check("and the step was retried and finished", last?.finish === "end_turn" && !last.error, String(last?.finish))
+    // refusal, then the summary request, then the retry
+    check("three requests: refusal, summary, retry", requests.length - before === 3, String(requests.length - before))
+    const retry = JSON.parse(requests[requests.length - 1] ?? "{}") as { messages?: { content?: unknown }[]; max_tokens?: number }
+    const summaryRequest = JSON.parse(requests[requests.length - 2] ?? "{}") as {
+      max_tokens?: number
+      messages?: { role?: string; content?: unknown }[]
+    }
+    /*
+     * Round 5 (E8), MiMo's shape: the conversation replayed as its own
+     * messages with the instruction added last, rather than quoted inside one
+     * message. A model that carries on instead of summarising is still caught:
+     * a reply without the instruction's sections is refused (see below).
+     */
+    const summaryTurns = (summaryRequest.messages ?? []).filter((message) => message.role !== "system")
+    check(
+      "the summary request replays the conversation, the instruction last",
+      summaryTurns.length > 1 &&
+        summaryTurns.some((message) => String(message.content).includes("something to have a transcript")) &&
+        String(summaryTurns.at(-1)?.content).includes("## Task overview"),
+      JSON.stringify(summaryTurns.map((message) => message.role)),
+    )
+    check(
+      "and asks for the model's usual output cap, as MiMo's does",
+      summaryRequest.max_tokens === 32000,
+      String(summaryRequest.max_tokens),
+    )
+    check(
+      "the retry went out from the summary",
+      (retry.messages ?? []).some((m) => typeof m.content === "string" && m.content.includes("a summary")),
+    )
+    check("a model with no known ceiling asks for the reference's 32k", retry.max_tokens === 32000, String(retry.max_tokens))
+    refuseNext = undefined
+  }
+
+  /*
+   * The same thing against a provider that enforces its window rather than
+   * refusing to order. Round 5 (E8): MiMo's summary asks for the model's usual
+   * output, so a conversation whose summary cannot fit either is left as it
+   * was - no half-made summary replaces it - and the turn ends on the
+   * provider's refusal. The compaction still says it started and stopped.
+   */
+  /*
+   * A turn that keeps calling tools. Unlimited by default, as the reference
+   * has it - it used to stop at sixty and end in red, which on a long
+   * refactor throws away everything the model had worked out. With a limit
+   * configured, the step at the limit goes out with no tools and an
+   * instruction to summarise, and the turn ends in words.
+   */
+  /*
+   * Round nine: there is no palette to choose any more (MiMo has only the
+   * scheme), so a stored palette - picked on purpose or not - is dropped when
+   * the document loads, and the window draws with MCode 2.0.
+   */
+  console.log("a stored palette is dropped, as MiMo has none")
+  {
+    const load = async (stored: Record<string, unknown>) => {
+      const dir = path.join(root, `migrate-${Math.random().toString(36).slice(2)}`)
+      const store = new Storage(dir)
+      await store.write("config", stored)
+      const loaded = new Config(store, new Bus(), path.join(dir, "credentials.json"))
+      await loaded.load()
+      return loaded.get() as unknown as Record<string, unknown>
+    }
+    const chosen = await load({ themeID: "dracula", theme: "dark" })
+    check("a palette chosen on purpose is gone", !("themeID" in chosen), String(chosen.themeID))
+    check("while the scheme stays", chosen.theme === "dark", String(chosen.theme))
+  }
+
+  console.log("a turn at its step limit answers in words")
+  {
+    await config.set({ maxSteps: 1 })
+    const capped = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    const before = requests.length
+    // One tool step, then whatever the limit allows.
+    script = [[{ name: "bash", input: { command: "node -e \"0\"", description: "A step" } }]]
+    const done = idle(capped.id)
+    await runner.prompt({ sessionID: capped.id, text: "keep going" })
+    await done
+
+    const sent = requests.slice(before).map((body) => JSON.parse(body) as { tools?: unknown[]; messages?: { role?: string; content?: unknown }[] })
+    const last = sent[sent.length - 1]
+    check("it took the step, then one more", sent.length === 2, String(sent.length))
+    check("the last request carried no tools", !last?.tools || last.tools.length === 0, JSON.stringify(last?.tools?.length ?? 0))
+    const closing = (last?.messages ?? []).at(-1)
+    check(
+      "and told the model to answer in words",
+      typeof closing?.content === "string" && closing.content.includes("MAXIMUM STEPS REACHED"),
+      JSON.stringify(closing?.content ?? "").slice(0, 60),
+    )
+    /*
+     * As the user, not the assistant. A trailing assistant message is a
+     * prefill to Anthropic and cannot be sent alongside extended thinking,
+     * which is on by default here.
+     */
+    check("as a user turn, so a prefill is never sent", closing?.role === "user", String(closing?.role))
+    const messages = await sessions.messages(capped.id)
+    const reply = messages.filter((message) => message.role === "assistant").at(-1)
+    check("the turn ended without an error", !reply?.error && reply?.finish === "end_turn", String(reply?.error ?? reply?.finish))
+    await config.set({ maxSteps: undefined })
+  }
+
+  console.log("a summary too large for the window leaves the conversation as it was")
+  {
+    const compactionEvents: boolean[] = []
+    let sawListedWhileCompacting: boolean | undefined
+    const stopWatching = bus.subscribe((event) => {
+      if (event.type !== "session.compacting") return
+      compactionEvents.push(event.active)
+      if (!event.active) return
+      // Asked while the summary is in flight, which is the only moment the
+      // answer can be wrong.
+      sawListedWhileCompacting = runner.compactingSessions().includes(event.sessionID)
+    })
+    const tight = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    script = []
+    const settle = idle(tight.id)
+    await runner.prompt({ sessionID: tight.id, text: "fill the window ".repeat(1500) })
+    await settle
+
+    // 230,145 of transcript against a 262,144 window: a 32,000 answer is one
+    // token too many, and so is a summary asking for the same.
+    enforceWindow = { window: 262144, tokens: 230145 }
+    script = []
+    const second = idle(tight.id)
+    await runner.prompt({ sessionID: tight.id, text: "and one more" })
+    await second
+    enforceWindow = undefined
+    stopWatching()
+
+    const after = await sessions.get(tight.id)
+    const messages = await sessions.messages(tight.id)
+    /*
+     * A summary of a long transcript takes minutes on a local model - five,
+     * measured - and the last thing on screen before it starts is the
+     * provider's refusal, in red. So the app says a compaction is under way
+     * and says when it stops; without that it looks like it gave up, which is
+     * how the working version of this was read the first time.
+     */
+    check("it said a compaction had started", compactionEvents.includes(true), JSON.stringify(compactionEvents))
+    /*
+     * And a window that reconnects while the summary is still streaming is
+     * told, rather than keeping whatever it last heard - the event that ends a
+     * compaction goes out once, so a socket that was down for it would show
+     * the session summarising until the app was restarted.
+     */
+    check(
+      "session.list reports a session compacting mid-summary",
+      sawListedWhileCompacting === true,
+      String(sawListedWhileCompacting),
+    )
+    check("and that it had finished", compactionEvents.at(-1) === false, JSON.stringify(compactionEvents))
+    const last = messages.filter((message) => message.role === "assistant").at(-1)
+    check("a summary that cannot fit leaves the conversation uncompacted", !after?.compacted, JSON.stringify(after?.compacted ?? null))
+    check("and the turn ends on the provider's refusal", last?.finish === "error" && Boolean(last.error), String(last?.finish ?? last?.error))
+  }
+
+  /*
+   * The failure that was actually seen: the model answers a summary request
+   * with the next step of the task. Accepting that replaces the conversation
+   * with one sentence, silently. It is refused instead, and the session keeps
+   * the context it had.
+   */
+  console.log("a reply that is not a summary is refused")
+  {
+    const kept = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    script = []
+    const settled = idle(kept.id)
+    await runner.prompt({ sessionID: kept.id, text: "some work to summarise" })
+    await settled
+
+    summaryReply = "I'll check the GameCategory enum next."
+    let refused: string | undefined
+    try {
+      await runner.compact(kept.id)
+    } catch (failure) {
+      refused = (failure as Error).message
+    }
+    summaryReply = undefined
+    const after = await sessions.get(kept.id)
+    check("the compaction is refused", Boolean(refused), String(refused))
+    check("and the session keeps its context", !after?.compacted, JSON.stringify(after?.compacted ?? null))
+  }
+
+  console.log("a model with a known window is compacted by count")
+  {
+    // A 10,000 window leaves MiMo's 90%, 9,000, usable, and the fake reports
+    // 9,000 + 5 for the turn: over the line. Large enough that the summary
+    // request itself still fits, which a 20-token window never did.
+    await config.setDiscovered("fake", [
+      { id: "m", name: "M", contextWindow: 10000, maxOutput: 1000, input: 0, output: 0 },
+    ])
+    reportedUsage = { prompt_tokens: 9000, completion_tokens: 5 }
+    const counted = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    const before = requests.length
+    script = []
+    const turn = idle(counted.id)
+    await runner.prompt({ sessionID: counted.id, text: "hello" })
+    await turn
+    const after = await sessions.get(counted.id)
+    // Round 5 (E8): MiMo compacts a turn that ended over the line when the next one starts, not at its end.
+    check("a turn that ends over the line is not compacted there", !after?.compacted, JSON.stringify(after?.compacted ?? null))
+    check("in one request: the answer", requests.length - before === 1, String(requests.length - before))
+    const answer = JSON.parse(requests[before] ?? "{}") as { max_tokens?: number }
+    check("and the request asked for the model's own ceiling", answer.max_tokens === 1000, String(answer.max_tokens))
+    const next = idle(counted.id)
+    await runner.prompt({ sessionID: counted.id, text: "and the next" })
+    await next
+    const nextAfter = await sessions.get(counted.id)
+    check("the next turn starts with an automatic compaction", nextAfter?.compacted?.trigger === "automatic", JSON.stringify(nextAfter?.compacted ?? null))
+    check("in three requests: the answer, the summary, the next answer", requests.length - before === 3, String(requests.length - before))
+
+    /*
+     * The same crossing, but the model will not summarise. The next turn's
+     * compaction is ahead of need: it failing must not turn that turn into an
+     * error. MiMo's quiet compaction returns and the turn carries on.
+     */
+    const ahead = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    /*
+     * Watched on the bus, not read off the message: a failure that escaped the
+     * compaction would leave the answer looking finished and only show up as
+     * an error event.
+     */
+    const aheadErrors: string[] = []
+    const offAhead = bus.subscribe((event) => {
+      if (event.type === "session.error" && event.sessionID === ahead.id) aheadErrors.push(event.error)
+    })
+    script = []
+    const crossing = idle(ahead.id)
+    await runner.prompt({ sessionID: ahead.id, text: "hello again" })
+    await crossing
+    summaryReply = "Let me look at one more file first."
+    const quiet = idle(ahead.id)
+    await runner.prompt({ sessionID: ahead.id, text: "and once more" })
+    await quiet
+    summaryReply = undefined
+    offAhead()
+    check("and no error is reported for it", aheadErrors.length === 0, JSON.stringify(aheadErrors).slice(0, 120))
+    const aheadAfter = await sessions.get(ahead.id)
+    const aheadLast = (await sessions.messages(ahead.id)).filter((message) => message.role === "assistant").at(-1)
+    check("a failed compaction ahead of need leaves the turn finished", aheadLast?.finish === "end_turn" && !aheadLast.error, String(aheadLast?.error ?? aheadLast?.finish))
+    check("and nothing is compacted", !aheadAfter?.compacted, JSON.stringify(aheadAfter?.compacted ?? null))
+    reportedUsage = undefined
+    await config.setDiscovered("fake", [])
+  }
+
+  /*
    * Two ways a restore can hand back something other than what it took.
    *
    * A project carrying "* text=auto" tells git to store text with LF endings,
@@ -449,6 +875,7 @@ async function main(): Promise<void> {
   {
     const awkward = path.join(root, "awkward")
     await fs.mkdir(awkward, { recursive: true })
+    execFileSync("git", ["init", "-q"], { cwd: awkward })
     await fs.writeFile(path.join(awkward, ".gitattributes"), "* text=auto\n", "utf8")
 
     const crlf = path.join(awkward, "windows.txt")
@@ -533,6 +960,7 @@ async function main(): Promise<void> {
   console.log("rolling a conversation back to a message")
   const rollback = path.join(root, "rollback")
   await fs.mkdir(rollback, { recursive: true })
+  execFileSync("git", ["init", "-q"], { cwd: rollback })
   const marker = path.join(root, "mark.js")
   await fs.writeFile(
     marker,
@@ -686,10 +1114,11 @@ async function main(): Promise<void> {
 
   {
     /*
-     * A turn that answered more than one message, because the user typed again
-     * while it was running. There is no state on disk between those messages,
-     * so a rollback aimed at the second has to take the whole turn back and say
-     * so by moving the boundary to where it really went.
+     * A message typed while a turn was running. Once the model takes it, MiMo
+     * 26.914 settles the work so far as a turn of its own and the steer opens
+     * the next one, so the undo recording is split at that step: a rollback
+     * aimed at the steer takes back only what came after it, and one aimed at
+     * the question before it takes the rest.
      */
     const steered = await sessions.create({ directory: rollback, model: { provider: "fake", model: "m" } })
     await turnWriting(steered.id, "settle the ground", "ground.txt", "ground")
@@ -710,16 +1139,24 @@ async function main(): Promise<void> {
     await stopped(steered.id)
     onRequest = undefined
     check("the steered message joined the turn", joined.startsWith("msg_"), joined)
+    const filed = (await sessions.peekSnapshot(steered.id, "undo"))?.messages ?? []
+    check("the work before the steer was taken is filed under the question alone", filed.join() === opening, filed.join())
 
     const rolled = (await handle(runtime, { type: "session.revert", sessionID: steered.id, messageID: joined })) as {
       session: { revert?: { messageID: string } }
     }
     check(
-      "rolling back to a steered message takes the whole turn that answered it",
-      rolled.session.revert?.messageID === opening,
-      `${rolled.session.revert?.messageID} rather than ${opening}`,
+      "rolling back to a steer stops at the steer (it opened a turn of its own)",
+      rolled.session.revert?.messageID === joined,
+      `${rolled.session.revert?.messageID} rather than ${joined}`,
     )
-    check("the file that turn wrote is gone", (await held("steered.txt")) === "(absent)")
+    check("the file written before the steer was taken stays", (await held("steered.txt")) === "steered")
+
+    const further = (await handle(runtime, { type: "session.revert", sessionID: steered.id, messageID: opening })) as {
+      session: { revert?: { messageID: string } }
+    }
+    check("rolling back to the question before it reaches the boundary asked for", further.session.revert?.messageID === opening, further.session.revert?.messageID)
+    check("and takes back the file that turn wrote", (await held("steered.txt")) === "(absent)")
     check("and the turn before it is untouched", (await held("ground.txt")) === "ground")
   }
 
@@ -1054,7 +1491,6 @@ async function main(): Promise<void> {
         history,
         tools: [],
         effort: "high",
-        showReasoning: false,
         signal: new AbortController().signal,
         baseURL: `http://127.0.0.1:${port}/codex`,
       },
@@ -1322,7 +1758,7 @@ async function main(): Promise<void> {
     await say({ read: "deny" })
     const watch = listen(session.id)
     let refused: string | undefined
-    await call("read", "read", { path: "secrets.txt" }).catch((error: Error) => (refused = error.message))
+    await call("read", "read", { file_path: "secrets.txt" }).catch((error: Error) => (refused = error.message))
     check("a denied read is refused", (refused ?? "").includes("set to Deny"), String(refused))
     check("the subject is the file it was about", (refused ?? "").includes("secrets.txt"), String(refused))
     check("and no question was raised for it", watch.seen.length === 0, `${watch.seen.length} raised`)
@@ -1337,9 +1773,9 @@ async function main(): Promise<void> {
     await asking
     check("and answering it lets the call through", settled)
 
-    await say({ list: "allow" })
+    await say({ glob: "allow" })
     let quiet = false
-    await call("list", "list", { path: "src" }).then(() => (quiet = true))
+    await call("glob", "glob", { pattern: "src/*" }).then(() => (quiet = true))
     check("an allowed one asks nothing", quiet && watch.seen.length === 1, `${watch.seen.length} raised`)
 
     /*
@@ -1378,7 +1814,7 @@ async function main(): Promise<void> {
     const session = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
     const watch = listen(session.id)
     const before = requests.length
-    script = [[{ name: "read", input: { path: "notes.txt" } }]]
+    script = [[{ name: "read", input: { file_path: "notes.txt" } }]]
     let done = idle(session.id)
     await runner.prompt({ sessionID: session.id, text: "read it" })
     await done
@@ -1408,7 +1844,7 @@ async function main(): Promise<void> {
     await say({})
     const openSession = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
     const quiet = listen(openSession.id)
-    script = [[{ name: "read", input: { path: "notes.txt" } }]]
+    script = [[{ name: "read", input: { file_path: "notes.txt" } }]]
     done = idle(openSession.id)
     await runner.prompt({ sessionID: openSession.id, text: "read it" })
     await done
@@ -1434,7 +1870,12 @@ async function main(): Promise<void> {
   {
     const older = path.join(root, "older")
     const storageOld = new Storage(path.join(older, "storage"))
-    await storageOld.write("config", { autoApprove: ["bash", "outside"] })
+    /*
+     * Marked as past round nine's reset (S9-1), which otherwise puts every
+     * per-tool answer back to what the access level writes: this is about how
+     * the old vocabulary is read, which the store still does.
+     */
+    await storageOld.write("config", { autoApprove: ["bash", "outside"], migrations: ["orphans-r9"] })
     const configOld = new Config(storageOld, new Bus(), path.join(older, "credentials.json"))
     await configOld.load()
     const kept = configOld.get().permissions
@@ -1442,7 +1883,8 @@ async function main(): Promise<void> {
     check("a bucket they approved runs without asking", kept.bash === "allow", String(kept.bash))
     check("and so does the other one", kept.outside === "allow", String(kept.outside))
     check("one they did not approve still asks", kept.edit === "ask", String(kept.edit))
-    check("and nothing is refused, because they never said so", kept.write === "ask", String(kept.write))
+    // R16-C6: `write` is no longer a bucket of its own, so what is asserted is that the old list refused nothing.
+    check("and nothing is refused, because they never said so", Object.values(kept).every((action) => action !== "deny"), JSON.stringify(kept))
     /*
      * The five that never asked are the point of this one: they are new to the
      * list, and their owner cannot have had an opinion about them. Reading an
@@ -1450,6 +1892,14 @@ async function main(): Promise<void> {
      */
     check("a bucket that never asked still does not", kept.read === "allow", String(kept.read))
     check("the old list still reads back", configOld.get().autoApprove.includes("bash"))
+
+    // Not yet through round nine's reset, the same document lands on the default level's answers.
+    const unmarked = path.join(root, "older-unmarked")
+    const storageUnmarked = new Storage(path.join(unmarked, "storage"))
+    await storageUnmarked.write("config", { autoApprove: ["bash", "outside"] })
+    const configUnmarked = new Config(storageUnmarked, new Bus(), path.join(unmarked, "credentials.json"))
+    await configUnmarked.load()
+    check("before round nine's reset it runs, the reset puts the approvals back to asking", configUnmarked.get().permissions.bash === "ask" && configUnmarked.get().permissions.read === "allow")
 
     // A config from before any of this, which is most of them.
     const bare = path.join(root, "bare")
@@ -1472,7 +1922,7 @@ async function main(): Promise<void> {
   }
 
   // Left as the rest of this run expects to find it.
-  await say({ bash: "allow", edit: "allow", write: "allow", webfetch: "allow", outside: "allow", mcp: "allow" })
+  await say({ bash: "allow", edit: "allow", webfetch: "allow", outside: "allow", mcp: "allow" })
 
   // --- disconnecting a provider the environment supplies --------------------
   console.log("disconnecting an environment-backed provider")
@@ -1546,7 +1996,7 @@ async function main(): Promise<void> {
     check("and offers no model", config.enabled().every((entry) => entry.provider !== "bynothing"))
   }
 
-  shells.closeAll()
+  await shells.closeAll()
   mcp.close()
   server.close()
   console.log("")

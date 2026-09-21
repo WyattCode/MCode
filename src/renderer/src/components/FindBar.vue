@@ -4,19 +4,13 @@ import type { Find } from "../lib/find"
 import { t } from "../lib/i18n"
 
 /**
- * The find-in-view bar: a needle, a position, two steps and a close.
+ * Find in the conversation, as MiMo draws it: a floating card 54px below the
+ * top of the conversation pane and 20px in from its end, holding a 15px glass,
+ * a 180px field, the count, previous / next and close.
  *
- * Shaped after opencode's `FileSearchBar` (main-8t-QUXax.js @1393688), down to
- * its measurements - a 32px pill with an 8px gap and 12px of inset, a 160px
- * input, a 10ch right-aligned tabular counter that reads `0/0` before anything
- * matches, 24px icon buttons, and the two steps disabled rather than hidden
- * while the count is zero. The three glyphs are its own sprite's paths.
- *
- * It floats over the pane rather than sitting inside it, so opening it neither
- * reflows the conversation nor takes a row from it. The reference does the same
- * with a Portal and a fixed position measured off the viewer; this measures off
- * whatever element it is anchored to, and re-measures on resize because the
- * pane's width moves with the review panel.
+ * The count is MiMo's: `cur/total` with 0 before anything is selected, "no
+ * matches" once a needle finds nothing, and `cur/total(未展开 N)` when some of
+ * the matches sit in folded steps that are not on screen.
  */
 const props = defineProps<{
   find: Find
@@ -27,20 +21,23 @@ const props = defineProps<{
 const input = ref<HTMLInputElement>()
 const box = ref({ top: 0, end: 0 })
 
-/** Where the bar sits: just inside the anchor's top trailing corner. */
 function measure(): void {
   const host = props.anchor()
   if (!host) return
   const rect = host.getBoundingClientRect()
-  box.value = { top: Math.round(rect.top + 12), end: Math.round(window.innerWidth - rect.right + 12) }
+  box.value = { top: Math.round(rect.top + 54), end: Math.round(window.innerWidth - rect.right + 20) }
 }
 
 const style = computed(() => ({ top: `${box.value.top}px`, insetInlineEnd: `${box.value.end}px` }))
 
-/** `0/0` until something matches, then the reference's one-based position. */
-const position = computed(() =>
-  props.find.count.value ? `${props.find.index.value + 1}/${props.find.count.value}` : "0/0",
-)
+const label = computed(() => {
+  const visible = props.find.count.value
+  const hidden = props.find.hidden.value
+  const total = visible + hidden
+  if (total === 0 && props.find.query.value.trim()) return t("stream.find.empty")
+  const cur = visible ? props.find.index.value + 1 : 0
+  return hidden > 0 ? t("stream.find.countHidden", { cur, total, hidden }) : `${cur}/${total}`
+})
 
 watch(
   () => props.find.open.value,
@@ -65,135 +62,131 @@ watch(input, (element) => props.find.setInput(element))
 </script>
 
 <template>
-  <div v-if="find.open.value" class="find" :style="style" @pointerdown.stop>
-    <svg class="ico" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path
-        d="M13 13L10.6418 10.6418M11.9552 7.47761C11.9552 9.95053 9.95053 11.9552 7.47761 11.9552C5.0047 11.9552 3 9.95053 3 7.47761C3 5.0047 5.0047 3 7.47761 3C9.95053 3 11.9552 5.0047 11.9552 7.47761Z"
-        stroke="currentColor"
-        stroke-linecap="square"
-        vector-effect="non-scaling-stroke"
-      />
+  <div v-if="find.open.value" class="find" data-find-bar :style="style" @pointerdown.stop>
+    <svg class="glass" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" />
+      <path d="m20 20-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
     </svg>
 
     <input
       ref="input"
       class="needle"
-      :placeholder="t('ui.fileSearch.placeholder')"
+      :placeholder="t('stream.find.placeholder')"
       :value="find.query.value"
       @input="find.setQuery(($event.target as HTMLInputElement).value)"
       @keydown="find.onInputKeydown($event)"
     />
 
-    <div class="count">{{ position }}</div>
+    <span class="count" data-find-count>{{ label }}</span>
 
-    <div class="steps">
-      <button
-        type="button"
-        class="step"
-        :disabled="find.count.value === 0"
-        :aria-label="t('ui.fileSearch.previousMatch')"
-        @click="find.next(-1)"
-      >
-        <svg class="ico back" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <path d="M6.6665 8.33325L9.99984 11.6666L13.3332 8.33325" stroke="currentColor" stroke-linecap="square" />
-        </svg>
-      </button>
-      <button
-        type="button"
-        class="step"
-        :disabled="find.count.value === 0"
-        :aria-label="t('ui.fileSearch.nextMatch')"
-        @click="find.next(1)"
-      >
-        <svg class="ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <path d="M6.6665 8.33325L9.99984 11.6666L13.3332 8.33325" stroke="currentColor" stroke-linecap="square" />
-        </svg>
-      </button>
-    </div>
-
-    <button type="button" class="step" :aria-label="t('ui.fileSearch.close')" @click="find.close()">
-      <svg class="ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-        <path d="M6 6L14 14M14 6L6 14" stroke="currentColor" stroke-linecap="square" />
+    <button
+      type="button"
+      class="step"
+      data-find-prev
+      :disabled="find.count.value === 0"
+      :aria-label="t('stream.find.prev')"
+      @click="find.next(-1)"
+    >
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="m18 15-6-6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </button>
+    <button
+      type="button"
+      class="step"
+      data-find-next
+      :disabled="find.count.value === 0"
+      :aria-label="t('stream.find.next')"
+      @click="find.next(1)"
+    >
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </button>
+    <button type="button" class="step" data-find-close :aria-label="t('stream.find.close')" @click="find.close()">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M18 6 6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
     </button>
   </div>
 </template>
 
 <style scoped>
-/* `fixed z-50 flex h-8 items-center gap-2 rounded-md border px-3 shadow-md`. */
+/*
+ * The card never grows past the width MiMo draws it at with a 42px count:
+ * a longer count ("1/12 (3 masqués)") takes its room from the field instead,
+ * so a translated count cannot push the card across the reading column.
+ */
 .find {
   position: fixed;
-  z-index: 50;
+  z-index: 170;
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding-inline: 12px;
+  gap: 6px;
+  max-inline-size: calc(2 * 10px + 2 * 1px + 15px + 180px + 42px + 3 * 22px + 5 * 6px);
+  padding: 6px 10px;
   background: var(--surface-base);
-  border: 1px solid var(--border-base);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md, 0 4px 12px rgb(0 0 0 / 0.28));
+  border: 1px solid var(--border-weak);
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.14);
 }
 
-/* `w-40 bg-transparent outline-none text-14-regular text-text-strong`. */
+.glass {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  color: var(--text-weak);
+}
+
 .needle {
-  width: 160px;
+  flex: 0 1 180px;
+  width: 180px;
+  min-inline-size: 72px;
+  color: var(--text-base);
+  font-size: calc(13px * var(--ui-font-scale, 1));
   background: transparent;
   border: none;
   outline: none;
-  color: var(--text-strong);
-  font-size: 14px;
 }
 
 .needle::placeholder {
   color: var(--text-weak);
 }
 
-/*
- * A fixed 10ch so the two step buttons do not shuffle sideways as the count
- * goes from 1/9 to 10/99 - which is the whole reason the reference pins it.
- */
 .count {
   flex-shrink: 0;
-  width: 10ch;
+  min-width: 42px;
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-variant-numeric: tabular-nums;
-  text-align: end;
+  text-align: center;
+  white-space: nowrap;
 }
 
-.steps {
-  display: flex;
-  align-items: center;
-}
-
-/* `size-6 grid place-items-center rounded` with the weak/strong hover pair. */
 .step {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   color: var(--text-weak);
-  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+
+.step svg {
+  width: 15px;
+  height: 15px;
 }
 
 .step:hover:not(:disabled) {
-  color: var(--text-strong);
   background: var(--surface-hover);
 }
 
 .step:disabled {
   opacity: 0.4;
-  pointer-events: none;
-}
-
-.ico {
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-}
-
-.back {
-  transform: rotate(180deg);
 }
 </style>

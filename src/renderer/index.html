@@ -1,31 +1,237 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!--
-      Sockets may go anywhere; nothing else may.
-
-      connect-src named ws://127.0.0.1:* alone, which meant the app could talk
-      only to a backend on that literal address. Not ws://localhost - the same
-      machine under its other name was refused - and no other machine at all, so
-      the Servers dialog, the saved-server list and the stored server address
-      were a feature that could not work, failing silently because a blocked
-      socket looks exactly like a server that is not answering.
+      Sockets may reach this machine only: the window talks to the backend this
+      app started on 127.0.0.1, as MiMo's does, and to nothing else (the
+      localhost name is for the development server's own socket). There is no
+      remote-server connection any more.
 
       Everything else stays shut. Scripts and styles are still 'self' only, so
       no page content can bring in code, and http/https are still not reachable
       from here - the one thing that needed them, the update feed, is fetched by
       the main process instead.
+
+      Frames may show the main process's page preview server, which gives every
+      served folder its own origin at http://<token>.localhost:<port> (loopback,
+      as Chromium resolves any *.localhost name) - so one served page cannot
+      read another's files. Media may play from data and blob addresses (an
+      attached video), the preview server (a video file on disk) and the web (a
+      video link in a reply) - only ever once the video preview has been opened
+      by a press.
+
+      Images may load from the web and from the preview server, as MiMo shows
+      a reply's ![](https://...) picture and a picture on disk named by its
+      path; blob addresses carry a picture being copied. An <img> cannot run
+      script, and connect-src still keeps the web out of reach, so this opens no
+      way for page code to send a request of its own.
+
+      Requests may reach the preview server alone (http://*.localhost:*, which
+      is loopback): MiMo's SVG file card reads a served .svg's text for its
+      code tab, and that server answers other origins for .svg files only.
+
+      Images may also load from mcode-media:, MiMo's cover proxy for a video
+      card: the main process answers it only with a picture from a fixed list
+      of platform image hosts (@shared/media-platform COVER_HOSTS), so this
+      names one scheme, not the hosts behind it.
+
+      Scripts may also compile WebAssembly ('wasm-unsafe-eval'): a reply's ABC
+      score plays through FluidSynth's WebAssembly build, a file of the app's
+      own under vendor/. The keyword allows WebAssembly compilation only - JS
+      eval and new Function stay refused - and the soundfont it plays comes from
+      the main process over IPC, so no host is added for it anywhere.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ws: wss:"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https: mcode-media:; font-src 'self' data:; connect-src 'self' ws://127.0.0.1:* ws://localhost:* http://*.localhost:*; frame-src 'self' http://*.localhost:*; media-src 'self' data: blob: http: https:"
     />
     <title>MCode</title>
+    <!--
+      Something on screen before the app mounts, as MiMo does it.
+
+      MiMo ships a startup mark inside its mount point with the CSS for it
+      inline here in the head, so it is painted as the HTML is parsed - before
+      the bundle has been fetched, let alone evaluated - and its root's mount
+      replaces it. MCode showed the window at 385-511ms and painted it at
+      402-541ms with nothing in it, then took until 460-734ms to put the first
+      real screen up: a third of a second and more of an empty coloured plane.
+
+      The mark is MCode's own - the ribbon M its wordmark is built from, drawn
+      here as one stroked path so it costs no request and no decode - never the
+      reference's artwork. Vue's mount() empties #app before its first render,
+      so the app replaces this with no seam and nothing has to clear it, and
+      `aria-hidden` keeps a placeholder with nothing to say out of the reading.
+
+      Every rule below is on a startup-mark class and the box is positioned off
+      the viewport rather than off body, so none of it can reach the app's own
+      markup or race the stylesheet the bundle brings.
+    -->
+    <style>
+      .startup-mark {
+        position: fixed;
+        display: flex;
+        inset: 0;
+        align-items: center;
+        justify-content: center;
+        -webkit-app-region: drag;
+      }
+
+      .startup-mark-glyph {
+        position: relative;
+        width: 72px;
+        height: 72px;
+        opacity: 0;
+        animation: startup-mark-in 180ms ease-out 60ms forwards;
+      }
+
+      .startup-mark-base,
+      .startup-mark-sweep {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      .startup-mark-base {
+        color: rgb(0 0 0 / 0.16);
+      }
+
+      /*
+       * A highlight band swept across the mark and cut to its shape by a mask of
+       * the same path. The gradient is laid out over 220% so the band is a band
+       * rather than the whole glyph, and it runs from past one edge to past the
+       * other so no half-lit stroke is left behind at either end.
+       */
+      .startup-mark-sweep {
+        background-image: linear-gradient(
+          112deg,
+          transparent 22%,
+          rgb(0 0 0 / 0.16) 38%,
+          rgb(0 0 0 / 0.34) 49%,
+          rgb(0 0 0 / 0.16) 56%,
+          transparent 74%
+        );
+        background-position: 140% 0;
+        background-repeat: no-repeat;
+        background-size: 220% 100%;
+        animation: startup-mark-sweep 2200ms cubic-bezier(0.4, 0, 0.2, 1) infinite;
+        -webkit-mask-image: url("data:image/svg+xml,%3csvg%20width='72'%20height='72'%20viewBox='0%200%2072%2072'%20xmlns='http://www.w3.org/2000/svg'%3e%3cpath%20d='M11%2057C11%2024%2020%2017%2027%2025C30%2028.5%2033.5%2037%2036%2044C38.5%2037%2042%2028.5%2045%2025C52%2017%2061%2024%2061%2057'%20fill='none'%20stroke='black'%20stroke-width='9'%20stroke-linecap='round'%20stroke-linejoin='round'/%3e%3c/svg%3e");
+        mask-image: url("data:image/svg+xml,%3csvg%20width='72'%20height='72'%20viewBox='0%200%2072%2072'%20xmlns='http://www.w3.org/2000/svg'%3e%3cpath%20d='M11%2057C11%2024%2020%2017%2027%2025C30%2028.5%2033.5%2037%2036%2044C38.5%2037%2042%2028.5%2045%2025C52%2017%2061%2024%2061%2057'%20fill='none'%20stroke='black'%20stroke-width='9'%20stroke-linecap='round'%20stroke-linejoin='round'/%3e%3c/svg%3e");
+        -webkit-mask-position: center;
+        mask-position: center;
+        -webkit-mask-repeat: no-repeat;
+        mask-repeat: no-repeat;
+        -webkit-mask-size: contain;
+        mask-size: contain;
+      }
+
+      /*
+       * The window's own backgroundColor is already the saved theme's plane
+       * (boot-prefs drives nativeTheme before any page loads), but the page's
+       * data-theme is not written until the app mounts - so, as MiMo does here,
+       * the machine's preference is what this reads, and a chosen theme takes
+       * over the moment there is one.
+       */
+      :root[data-theme="dark"] .startup-mark-base {
+        color: rgb(255 255 255 / 0.18);
+      }
+
+      :root[data-theme="dark"] .startup-mark-sweep {
+        background-image: linear-gradient(
+          112deg,
+          transparent 22%,
+          rgb(255 255 255 / 0.18) 38%,
+          rgb(255 255 255 / 0.42) 49%,
+          rgb(255 255 255 / 0.18) 56%,
+          transparent 74%
+        );
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) .startup-mark-base {
+          color: rgb(255 255 255 / 0.18);
+        }
+
+        :root:not([data-theme="light"]) .startup-mark-sweep {
+          background-image: linear-gradient(
+            112deg,
+            transparent 22%,
+            rgb(255 255 255 / 0.18) 38%,
+            rgb(255 255 255 / 0.42) 49%,
+            rgb(255 255 255 / 0.18) 56%,
+            transparent 74%
+          );
+        }
+      }
+
+      /*
+       * Reduced motion keeps the mark and drops the movement: the fade-in is
+       * replaced by the mark simply being there, and the sweep stops. MCode's
+       * own setting writes data-motion="on" once the app has mounted; before
+       * that, and whenever the setting follows the machine, the machine's
+       * preference is what decides.
+       */
+      @media (prefers-reduced-motion: reduce) {
+        .startup-mark-glyph {
+          opacity: 1;
+          animation: none;
+        }
+
+        .startup-mark-sweep {
+          animation: none;
+        }
+      }
+
+      :root[data-motion="on"] .startup-mark-glyph {
+        opacity: 1;
+        animation: none;
+      }
+
+      :root[data-motion="on"] .startup-mark-sweep {
+        animation: none;
+      }
+
+      @keyframes startup-mark-in {
+        0% {
+          opacity: 0;
+        }
+
+        100% {
+          opacity: 1;
+        }
+      }
+
+      @keyframes startup-mark-sweep {
+        0% {
+          background-position: 140% 0;
+        }
+
+        100% {
+          background-position: -105% 0;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div class="startup-mark" aria-hidden="true">
+        <div class="startup-mark-glyph">
+          <svg class="startup-mark-base" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg">
+            <path
+              d="M11 57C11 24 20 17 27 25C30 28.5 33.5 37 36 44C38.5 37 42 28.5 45 25C52 17 61 24 61 57"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="9"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <div class="startup-mark-sweep"></div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -1,10 +1,16 @@
 import fs from "node:fs/promises"
+import { existsSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import type { AgentName, CommandDefinition, CommandInfo, Effort, ModelRef } from "@shared/protocol"
-import { AGENT_NAMES, EFFORTS } from "@shared/protocol"
-import { hints } from "@shared/command"
+import { spawn } from "node:child_process"
+import type { AppConfig, CommandDefinition, CommandInfo, Effort, ModelRef, TurnAgent } from "@shared/protocol"
+import { COMMAND_AGENTS, EFFORTS } from "@shared/protocol"
+import { MODEL_TIERS, expandTemplate, fileReferences, hints, shellPlaceholders, substituteShell } from "@shared/command"
 import type { McpServers } from "./mcp"
+import { parseFrontmatter } from "./frontmatter"
+import { MAX_DEPTH, PROJECT_CONFIG_DIR, discoverSkills, enabledSkills, scan } from "./skill"
+import { shell } from "./tool/bash"
+import { builtinCommands } from "./command-builtin"
 
 /**
  * Everything a slash can reach, from the three places the reference looks.
@@ -22,67 +28,64 @@ import type { McpServers } from "./mcp"
  *   3. skills, which are SKIPPED when the name is taken (`if (commands[item.name])
  *      continue`) - the one source that yields rather than overwrites.
  *
- * Two deliberate departures from it, both because this app is not that one:
+ * Before all three, the engine's own commands, as MiMo's engine seeds them
+ * (`command-builtin.ts`): /init, /review, /dream, /distill and /rebuild,
+ * in that order, each in this app's own words.
  *
- * - The reference seeds two built-in commands, `init` and `review`, whose
- *   templates are bundled prompt files. They are not copied. `initialize_default`
- *   is a prompt about writing `AGENTS.md` for "future OpenCode sessions" and
- *   naming `opencode.json`, so transcribing it would put the other product's
- *   name and config format into this app's prompts, and `review` duplicates a
- *   panel this app already has. Their absence is reported rather than hidden.
+ * One deliberate departure from it, because this app is not that one:
+ *
  * - Templates are resolved EAGERLY here. The reference holds each one behind a
  *   getter and only touches it when the command runs on its server; this app
- *   expands the template in the window, so the text has to be on the wire when
- *   the list is. The only source this actually costs anything for is MCP,
- *   where each prompt is one extra round trip per listing.
+ *   shows the list in the window, so the text has to be on the wire when the
+ *   list is. The only source this actually costs anything for is MCP, where
+ *   each prompt is one extra round trip per listing. Listing never runs a
+ *   template's shell placeholders: that happens in `expandCommand`, when the
+ *   command is sent.
  */
-
-/** Where a project keeps its own commands and skills, the way `.opencode` does. */
-const PROJECT_CONFIG_DIR = ".mcode"
-
-/**
- * The folders the reference reads skills out of, minus its remote sources.
- *
- * `EXTERNAL_SKILL_PATTERN` is `skills/**\/SKILL.md` under `.claude` and
- * `.agents` (@22131300), and `OPENCODE_SKILL_PATTERN` is
- * `{skill,skills}/**\/SKILL.md` under each config directory. Its
- * `skills.urls` puller, which downloads a remote index into a cache, is not
- * replicated: nothing in this app configures one.
- */
-const EXTERNAL_SKILL_DIRS = [".claude", ".agents"]
-
-/** How deep any of these scans will walk before giving up. */
-const MAX_DEPTH = 8
 
 interface Deps {
-  /** Only `get()` is used, so a check can hand this a plain object. */
-  config: { get(): { commands?: Record<string, CommandDefinition> } }
+  /** Only these fields are read, so a check can hand this a plain object. */
+  config: { get(): { commands?: Record<string, CommandDefinition>; model?: ModelRef; shell?: string; disabledSkills?: string[] } & Pick<AppConfig, "skillPaths" | "sessionChat"> }
   /** Only the prompt half of the MCP surface is used. */
   mcp: Pick<McpServers, "prompts" | "getPrompt">
+  /** The app's data directory, whose `command(s)` and `skill(s)` folders hold the user's global ones. */
+  storage?: { directory: string }
+  /** The home folder whose `.claude` and `.mcode` folders are read; a check points it somewhere harmless. */
+  home?: string
 }
+
+/** What finding command files needs: no MCP. */
+type Folders = Pick<Deps, "config" | "storage" | "home">
 
 export async function listCommands(deps: Deps, directory: string): Promise<CommandInfo[]> {
   const commands: Record<string, CommandInfo> = {}
 
-  for (const [name, entry] of Object.entries(deps.config.get().commands ?? {})) {
-    commands[name] = fromDefinition(name, entry)
+  // The app's own come first, as MiMo's engine seeds them; a project or global command of the same name replaces one in place.
+  const builtin = builtinCommands(directory)
+  for (const [name, entry] of Object.entries(await ownCommands(deps, directory, builtin))) {
+    commands[name] = { ...fromDefinition(name, entry), ...(builtin[name] === entry ? { own: true } : {}) }
   }
 
-  for (const [name, entry] of Object.entries(await fileCommands(directory))) {
-    commands[name] = fromDefinition(name, entry)
-  }
-
-  for (const [name, prompt] of Object.entries(await promptCommands(deps.mcp))) {
+  for (const [name, prompt] of Object.entries(await promptCommands(deps.mcp, directory))) {
     commands[name] = prompt
   }
 
-  for (const skill of await skillCommands(directory)) {
+  for (const skill of await skillCommands(directory, deps.storage?.directory, deps.config.get(), deps.home)) {
     // The one source that yields: a skill never displaces a command.
     if (commands[skill.name]) continue
     commands[skill.name] = skill
   }
 
   return Object.values(commands)
+}
+
+/**
+ * The app's own commands over which the config document's and then the
+ * markdown files' are laid: the commands whose placeholders may run.
+ */
+async function ownCommands(deps: Folders, directory: string, builtin = builtinCommands(directory)): Promise<Record<string, CommandDefinition>> {
+  const config = deps.config.get()
+  return { ...builtin, ...(config.commands ?? {}), ...(await fileCommands(deps, directory, config.model)) }
 }
 
 function fromDefinition(name: string, entry: CommandDefinition): CommandInfo {
@@ -98,10 +101,164 @@ function fromDefinition(name: string, entry: CommandDefinition): CommandInfo {
   }
 }
 
+/* ------------------------------------------------------ sending a command */
+
+export interface ExpandedCommand {
+  prompt: string
+  files: { name: string; path: string }[]
+}
+
+/**
+ * A project or global command filled in the way MiMo's session.command fills it.
+ *
+ * Measured from MiMo's engine, and followed as it is:
+ *
+ * - the arguments go in first (`expandTemplate`), unescaped, so words typed
+ *   after the name reach a placeholder's command as they were typed;
+ * - every ``!`cmd` `` then runs at once in the preferred shell - here the
+ *   configured one, with the bash tool's argument forms - and is replaced by
+ *   what it wrote to stdout, trailing newline included. Stderr is dropped, the
+ *   exit code is ignored, and a command that cannot start gives the empty
+ *   string. There is no timeout, no output cap and no permission prompt,
+ *   because MiMo has none; the access level does not refuse it either;
+ * - the whole prompt is trimmed, and the files it names with `@` are found.
+ *
+ * One departure: MiMo passes no working directory, so its commands run wherever
+ * its engine process was started. They run in the conversation's folder here,
+ * which is where a template's relative paths are written from.
+ *
+ * Only commands from the config document and command folders get here. An MCP
+ * prompt and a skill line are filled in by the window and run their commands
+ * through `runShellPlaceholders` below, which is the same substitution.
+ */
+export async function expandCommand(
+  deps: Folders,
+  input: { directory: string; name: string; arguments: string },
+): Promise<ExpandedCommand> {
+  const command = (await ownCommands(deps, input.directory))[input.name]
+  if (!command) throw new Error(`There is no command /${input.name} in this project`)
+  const filled = expandTemplate(command.template, input.arguments)
+  const chosen = deps.config.get().shell
+  const outputs = await Promise.all(shellPlaceholders(filled).map((script) => runPlaceholder(script, input.directory, chosen)))
+  const prompt = substituteShell(filled, outputs).trim()
+  return { prompt, files: await referencedFiles(prompt, input.directory, deps.home ?? os.homedir()) }
+}
+
+/** One placeholder's stdout; anything that goes wrong is the empty string. */
+function runPlaceholder(script: string, cwd: string, chosen?: string): Promise<string> {
+  const { command, args, verbatim } = shell(chosen)
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = []
+    try {
+      // Stderr is not piped at all: it is never read, and an unread pipe that fills would stall the command.
+      const child = spawn(command, args(script), {
+        cwd,
+        env: process.env,
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+        windowsVerbatimArguments: verbatim,
+      })
+      child.stdout?.on("data", (chunk: Buffer) => chunks.push(chunk))
+      child.once("error", () => resolve(""))
+      child.once("close", () => resolve(Buffer.concat(chunks).toString("utf8")))
+    } catch {
+      resolve("")
+    }
+  })
+}
+
+/**
+ * The ``!`cmd` `` placeholders of a template the window filled in itself.
+ *
+ * MiMo runs a template's backtick commands whatever the template came from, so
+ * an MCP server's prompt and the arguments typed after a skill run theirs as a
+ * project command's do - the user's 2026-09-16 decision. Same shell, same
+ * folder, same silence about a command that fails, because it is the same
+ * substitution; text with no placeholder in it is handed straight back and
+ * nothing is started.
+ */
+export async function runShellPlaceholders(deps: Pick<Deps, "config">, input: { directory: string; text: string }): Promise<string> {
+  const scripts = shellPlaceholders(input.text)
+  if (!scripts.length) return input.text
+  const chosen = deps.config.get().shell
+  const outputs = await Promise.all(scripts.map((script) => runPlaceholder(script, input.directory, chosen)))
+  return substituteShell(input.text, outputs)
+}
+
+/**
+ * The existing files a prompt names with `@`, as MiMo resolves them.
+ *
+ * `~/` starts at the home folder; anything else at the repository root, or at
+ * the conversation's folder outside a repository (MiMo's root there is the top
+ * of the drive, which no template means). MiMo also attaches a folder, and
+ * takes a name that is no file for an agent's; neither has a form in a message
+ * here, so both are left as the text they are.
+ */
+async function referencedFiles(prompt: string, directory: string, home: string): Promise<ExpandedCommand["files"]> {
+  const root = repositoryRoot(directory) ?? directory
+  const out: ExpandedCommand["files"] = []
+  for (const name of fileReferences(prompt)) {
+    const target = name.startsWith("~/") ? path.join(home, name.slice(2)) : path.resolve(root, name)
+    const stat = await fs.stat(target).catch(() => undefined)
+    if (stat?.isFile()) out.push({ name, path: target })
+  }
+  return out
+}
+
+function repositoryRoot(directory: string): string | undefined {
+  let at = path.resolve(directory)
+  for (;;) {
+    if (existsSync(path.join(at, ".git"))) return at
+    const parent = path.dirname(at)
+    if (parent === at) return undefined
+    at = parent
+  }
+}
+
 /* -------------------------------------------------------- markdown commands */
 
 /**
- * The commands a project carries as files.
+ * The folders command files are read from, in the order they are merged - a
+ * later folder wins a name.
+ *
+ * MiMo's own order: the home `.claude` folder and the `.claude` folders from the
+ * conversation's directory up to the repository root; then the global config
+ * folder; the `.mcode` folders over the same walk; and the home `.mcode`. Each
+ * walk lists the nearest folder first, so of two project folders defining the
+ * same name the OUTER one wins - the reverse of skills, and measured rather
+ * than chosen. MiMo's desktop turns `.claude` skills off but not `.claude`
+ * commands, so those are read.
+ */
+async function commandRoots(deps: Folders, directory: string): Promise<string[]> {
+  const home = deps.home ?? os.homedir()
+  const roots = [
+    path.join(home, ".claude"),
+    ...upward(directory, ".claude"),
+    ...(deps.storage ? [deps.storage.directory] : []),
+    ...upward(directory, PROJECT_CONFIG_DIR),
+    path.join(home, PROJECT_CONFIG_DIR),
+  ].map((root) => path.resolve(root))
+  // A folder met twice keeps its first place.
+  return [...new Set(roots)].filter((root) => existsSync(root))
+}
+
+/** Each `<dir>/<target>` from `directory` up to the repository root (or the top of the drive), nearest first. */
+function upward(directory: string, target: string): string[] {
+  const found: string[] = []
+  let at = path.resolve(directory)
+  for (;;) {
+    const candidate = path.join(at, target)
+    if (existsSync(candidate)) found.push(candidate)
+    if (existsSync(path.join(at, ".git"))) break
+    const parent = path.dirname(at)
+    if (parent === at) break
+    at = parent
+  }
+  return found
+}
+
+/**
+ * The commands a project and the user carry as files.
  *
  * The reference scans `{command,commands}/**\/*.md` in each config directory
  * with `dot: true` and names each one after its path below that folder, minus
@@ -109,25 +266,27 @@ function fromDefinition(name: string, entry: CommandDefinition): CommandInfo {
  * (`configEntryNameFromPath` stripping the `command/` or `commands/` prefix,
  * @3239300). The nesting is kept because two folders can each hold a `web.md`.
  */
-async function fileCommands(directory: string): Promise<Record<string, CommandDefinition>> {
+async function fileCommands(deps: Folders, directory: string, defaultModel?: ModelRef): Promise<Record<string, CommandDefinition>> {
   const out: Record<string, CommandDefinition> = {}
-  for (const folder of ["command", "commands"]) {
-    const root = path.join(directory, PROJECT_CONFIG_DIR, folder)
-    for (const file of await markdownFiles(root, MAX_DEPTH)) {
-      const parsed = await readDocument(file)
-      if (!parsed) continue
-      const relative = path.relative(root, file).split(path.sep).join("/")
-      const name = relative.replace(/\.md$/i, "")
-      if (!name) continue
-      const template = parsed.body.trim()
-      if (!template) continue
-      out[name] = {
-        template,
-        description: text(parsed.data.description),
-        agent: agent(parsed.data.agent),
-        model: model(parsed.data.model),
-        variant: variant(parsed.data.variant),
-        subtask: boolean(parsed.data.subtask),
+  for (const base of await commandRoots(deps, directory)) {
+    for (const folder of ["command", "commands"]) {
+      const root = path.join(base, folder)
+      for (const file of await markdownFiles(root, MAX_DEPTH)) {
+        const parsed = await readDocument(file)
+        if (!parsed) continue
+        const relative = path.relative(root, file).split(path.sep).join("/")
+        const name = relative.replace(/\.md$/i, "")
+        if (!name) continue
+        const template = parsed.body.trim()
+        if (!template) continue
+        out[name] = {
+          template,
+          description: text(parsed.data.description),
+          agent: agent(parsed.data.agent),
+          model: model(parsed.data.model, defaultModel),
+          variant: variant(parsed.data.variant),
+          subtask: boolean(parsed.data.subtask),
+        }
       }
     }
   }
@@ -139,17 +298,17 @@ async function fileCommands(directory: string): Promise<Record<string, CommandDe
 /**
  * One command per prompt every connected MCP server offers.
  *
- * `hints` is `$1`, `$2` … one per declared argument, and the template is the
+ * `hints` is `$1`, `$2` - one per declared argument, and the template is the
  * prompt fetched with those same tokens standing in for its arguments - so the
  * words typed after the slash land in the places the server left for them.
  * That substitution is the reference's (@32868400) and it is why an MCP prompt
  * needs no placeholder syntax of its own.
  */
-async function promptCommands(mcp: Deps["mcp"]): Promise<Record<string, CommandInfo>> {
+async function promptCommands(mcp: Deps["mcp"], directory: string): Promise<Record<string, CommandInfo>> {
   const out: Record<string, CommandInfo> = {}
   let listed: Awaited<ReturnType<McpServers["prompts"]>> = {}
   try {
-    listed = await mcp.prompts()
+    listed = await mcp.prompts(directory)
   } catch {
     return out
   }
@@ -161,6 +320,7 @@ async function promptCommands(mcp: Deps["mcp"]): Promise<Record<string, CommandI
         prompt.client,
         prompt.name,
         Object.fromEntries(args.map((argument, index) => [argument.name, `$${index + 1}`])),
+        directory,
       )
     } catch {
       // A prompt that cannot be fetched is still listed, with nothing to send.
@@ -182,93 +342,36 @@ async function promptCommands(mcp: Deps["mcp"]): Promise<Record<string, CommandI
 /* ----------------------------------------------------------------- skills */
 
 /**
- * Every SKILL.md this project can see, as a command that sends its body.
+ * Every skill this conversation can reach, as a command that sends its body.
  *
- * The two lines appended after the body are the reference's, verbatim
- * (@32871000). They are what makes a skill's own `scripts/` and `references/`
- * paths resolvable, and a skill whose file sits at `<built-in>` gets neither -
- * this app has no built-in skill, so the branch is simply absent.
- *
- * Frontmatter must carry a `name`; the reference's `isSkillFrontmatter` accepts
- * exactly `name: string` with an optional `description: string`, and a file
- * failing that is skipped rather than named after its folder.
+ * MiMo's command service lists a skill with its content as the whole template
+ * - no base-directory lines after it, those belong to the skill tool's output -
+ * and marks the shipped ones `bundled`, which is `builtin` here.
  */
-async function skillCommands(directory: string): Promise<CommandInfo[]> {
-  const roots: string[] = []
-  for (const folder of ["skill", "skills"]) {
-    roots.push(path.join(directory, PROJECT_CONFIG_DIR, folder))
-  }
-  for (const external of EXTERNAL_SKILL_DIRS) {
-    roots.push(path.join(directory, external, "skills"))
-    roots.push(path.join(os.homedir(), external, "skills"))
-  }
-
-  const out: CommandInfo[] = []
-  const seen = new Set<string>()
-  for (const root of roots) {
-    for (const file of await skillFiles(root, MAX_DEPTH)) {
-      const parsed = await readDocument(file)
-      if (!parsed) continue
-      const name = text(parsed.data.name)
-      if (!name) continue
-      // The reference logs a duplicate skill name and keeps the first; the
-      // second is dropped either way, so only the keeping is replicated.
-      if (seen.has(name)) continue
-      seen.add(name)
-      const base = path.dirname(file)
-      out.push({
-        name,
-        description: text(parsed.data.description),
-        source: "skill",
-        template: [
-          parsed.body,
-          "",
-          `Base directory for this skill: ${base}`,
-          "Relative paths in this skill (e.g., scripts/, references/) are relative to this base directory.",
-        ].join("\n"),
-        hints: [],
-      })
-    }
-  }
-  return out
+async function skillCommands(
+  directory: string,
+  storageDirectory: string | undefined,
+  settings: Pick<AppConfig, "skillPaths" | "sessionChat" | "disabledSkills">,
+  home?: string,
+): Promise<CommandInfo[]> {
+  const { skills } = await discoverSkills({ directory, storageDirectory, settings, home })
+  // A switched-off skill is not offered after a slash, as MiMo's list leaves out a denied one.
+  return enabledSkills(skills, settings.disabledSkills).map((skill) => ({
+    name: skill.name,
+    description: skill.description || undefined,
+    source: "skill" as const,
+    ...(skill.builtin ? { builtin: true } : {}),
+    // The window labels a skill chip from these, as MiMo labels one from the skill rather than the command.
+    ...(skill.localizations ? { localizations: skill.localizations } : {}),
+    template: skill.content,
+    hints: [],
+  }))
 }
 
 /* --------------------------------------------------------------- scanning */
 
 async function markdownFiles(root: string, depth: number): Promise<string[]> {
   return scan(root, depth, (name) => /\.md$/i.test(name))
-}
-
-async function skillFiles(root: string, depth: number): Promise<string[]> {
-  return scan(root, depth, (name) => name === "SKILL.md")
-}
-
-/**
- * Walks a folder for the files a scan wants, in a stable order.
- *
- * Sorted because the order decides which of two skills with the same declared
- * name is kept, and an unsorted `readdir` would make that answer depend on the
- * filesystem. A missing folder is not an error: most projects have none of
- * these, and the slash menu still has to open.
- */
-async function scan(root: string, depth: number, wanted: (name: string) => boolean): Promise<string[]> {
-  if (depth <= 0) return []
-  let entries: import("node:fs").Dirent[]
-  try {
-    entries = await fs.readdir(root, { withFileTypes: true })
-  } catch {
-    return []
-  }
-  const found: string[] = []
-  for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
-    const full = path.join(root, entry.name)
-    if (entry.isDirectory()) {
-      found.push(...(await scan(full, depth - 1, wanted)))
-      continue
-    }
-    if (entry.isFile() && wanted(entry.name)) found.push(full)
-  }
-  return found
 }
 
 /* ------------------------------------------------------------ frontmatter */
@@ -278,32 +381,12 @@ interface Document {
   body: string
 }
 
-/**
- * A markdown file split into its frontmatter and its body.
- *
- * Deliberately not a YAML parser. Every key either of these two documents can
- * carry is a scalar - name, description, agent, model, variant, subtask - so
- * `key: value` with optional quotes is the whole grammar that is needed, and a
- * file using anything richer loses only the key it wrote that way. Bringing in
- * a YAML dependency to read six strings would be the larger mistake.
- */
+/** A command file split into its frontmatter and its body; one whose frontmatter cannot be read is skipped. */
 async function readDocument(file: string): Promise<Document | undefined> {
-  let raw: string
-  try {
-    raw = await fs.readFile(file, "utf8")
-  } catch {
-    return undefined
-  }
-  const text = raw.replace(/^﻿/, "")
-  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text)
-  if (!match) return { data: {}, body: text }
-  const data: Record<string, unknown> = {}
-  for (const line of match[1].split(/\r?\n/)) {
-    const pair = /^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*)$/.exec(line)
-    if (!pair) continue
-    data[pair[1]] = pair[2].trim().replace(/^["']|["']$/g, "")
-  }
-  return { data, body: text.slice(match[0].length) }
+  const raw = await fs.readFile(file, "utf8").catch(() => undefined)
+  if (raw === undefined) return undefined
+  const parsed = parseFrontmatter(raw)
+  return parsed.error ? undefined : { data: parsed.data, body: parsed.body }
 }
 
 function text(value: unknown): string | undefined {
@@ -316,9 +399,9 @@ function boolean(value: unknown): boolean | undefined {
   return undefined
 }
 
-function agent(value: unknown): AgentName | undefined {
+function agent(value: unknown): TurnAgent | undefined {
   const name = text(value)
-  return name && (AGENT_NAMES as readonly string[]).includes(name) ? (name as AgentName) : undefined
+  return name && (COMMAND_AGENTS as readonly string[]).includes(name) ? (name as TurnAgent) : undefined
 }
 
 function variant(value: unknown): Effort | undefined {
@@ -327,14 +410,18 @@ function variant(value: unknown): Effort | undefined {
 }
 
 /**
- * `provider/model`, which is how the reference writes a model in frontmatter.
+ * `provider/model`, or one of MiMo's model tier names.
  *
  * Split on the FIRST slash only: a model id can contain one - `openai/gpt-oss`
- * behind a gateway - and splitting on all of them would lose half the name.
+ * behind a gateway - and splitting on all of them would lose half the name. A
+ * name without a slash is a model group in MiMo; this app configures no groups,
+ * so, as MiMo does without them, `ultra`, `standard` and `lite` are the default
+ * model and any other group name maps to nothing.
  */
-function model(value: unknown): ModelRef | undefined {
+function model(value: unknown, defaultModel?: ModelRef): ModelRef | undefined {
   const raw = text(value)
   if (!raw) return undefined
+  if (!raw.includes("/")) return (MODEL_TIERS as readonly string[]).includes(raw) && defaultModel ? { ...defaultModel } : undefined
   const at = raw.indexOf("/")
   if (at <= 0 || at === raw.length - 1) return undefined
   return { provider: raw.slice(0, at), model: raw.slice(at + 1) }

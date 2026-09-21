@@ -52,6 +52,21 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
       <div class="column">
         <div class="wordmark" role="img" :aria-label="t('hero.title')" />
 
+        <p class="slogan">{{ t("home.slogan") }}</p>
+
+        <!--
+          Where the box goes while the session is empty.
+          
+          opencode puts the prompt inside this block rather than at the foot of
+          the window: measured, its wordmark ends at 329, the box runs 361 to
+          465, and the project row sits at 497 - one centred group with 32
+          between each part. The box is teleported in rather than rendered
+          here, so it is the same component either way and does not lose what
+          was typed into it, or its own shape, the moment a session stops being
+          empty.
+        -->
+        <div id="hero-dock" class="dock-slot" />
+
         <div class="foot">
           <button class="chip" v-tip="{ label: directory, placement: 'top' }">
             <span class="avatar" :style="{ '--h': hue }">
@@ -122,23 +137,51 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
   padding-bottom: 120px;
 }
 
+/*
+ * 720, which is what opencode's is - measured rather than read, because its
+ * hero's width is not a literal anywhere in the bundle. At three window widths
+ * its column comes back 720, 720 and 686: fixed until the window is too narrow
+ * to hold it, then shrinking with the padding. This was 800.
+ */
+/*
+ * 2.0: the width of the card, not of opencode's hero.
+ *
+ * MiMo has no empty-task screen at all - starting one puts you on its home
+ * screen, greeting and box - so that is what an empty session shows here:
+ * the mark, the greeting, and the same 712 box a conversation is answered in,
+ * with the line saying which project it points at kept underneath.
+ */
 .column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   width: 100%;
-  max-width: 800px;
+  max-width: 712px;
 }
 
-/*
- * Barely there: the mark is set at the background's own weight, so it reads as
- * part of the surface rather than as something placed on it.
- */
-.wordmark {
+.dock-slot {
+  display: flex;
+  flex-direction: column;
   width: 100%;
-  height: 129px;
-  background-image: var(--wordmark);
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: contain;
-  opacity: 0.07;
+}
+
+/* The mark at its own size, as MiMo sets it on the home screen: 132 by 36. */
+.wordmark {
+  width: 132px;
+  height: 36px;
+  background: var(--wordmark) center / contain no-repeat;
+  opacity: 0.92;
+}
+
+/* 18/600/28.8 at 0.4px, measured on MiMo's greeting - the home screen's own. */
+.slogan {
+  margin: 22px 0 26px;
+  color: var(--text-strong);
+  font-size: calc(18px * var(--ui-font-scale, 1));
+  font-weight: 600;
+  line-height: calc(28.8px * var(--ui-font-scale, 1));
+  letter-spacing: 0.4px;
+  text-align: center;
 }
 
 /* One step below the mark, which is the gap the reference sets between the
@@ -148,9 +191,14 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
   align-items: center;
   justify-content: center;
   min-height: 28px;
-  margin-top: 16px;
+  margin-top: 26px;
+  /*
+   * No margin of its own: the column's 32px gap is the whole distance, and this
+   * used to be added to it for 48. The reference measures 32 between the box
+   * and this row, the same as between the wordmark and the box.
+   */
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .chip {
@@ -178,7 +226,7 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
 .chip-name {
   overflow: hidden;
   min-width: 0;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -189,12 +237,12 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: calc(16px * var(--ui-font-scale, 1));
+  height: calc(16px * var(--ui-font-scale, 1));
   color: #fff;
   background: hsl(var(--h) 42% 46%);
   border-radius: var(--radius-sm);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 1;
 }
@@ -220,7 +268,7 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
 .missing {
   margin-top: 6px;
   color: var(--error);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   text-align: center;
 }
 </style>

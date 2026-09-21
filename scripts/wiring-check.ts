@@ -79,10 +79,10 @@ for (const table of ["MENU_COMMAND_IDS", "KEY_COMMAND_IDS"]) {
 /*
  * The content policy and the code have to agree about what the window can talk
  * to, and neither one reports a disagreement: a request the policy forbids does
- * not raise an error the caller can catch, it just never happens. Two features
- * were dead this way at once - the update check, whose fetch could not leave the
- * process, and every remote server, because the policy named the literal
- * 127.0.0.1 and so refused even ws://localhost.
+ * not raise an error the caller can catch, it just never happens. The update
+ * check was dead this way, its fetch unable to leave the process. Round nine
+ * removed the remote-server connection MiMo does not have, so the socket
+ * sources go back to naming this machine alone.
  */
 const html = read("src/renderer/index.html")
 const policy = /content="(default-src[^"]*)"/.exec(html)?.[1] ?? ""
@@ -92,16 +92,19 @@ if (!connect) {
   problems.push("index.html declares no connect-src, so what the window may reach is unstated")
 } else {
   /*
-   * MCode offers to connect to a server on another machine, so the policy has to
-   * allow a socket to one. Compared token by token rather than by searching the
-   * whole line: "ws:" is a substring of "ws://127.0.0.1:*", so a search finds
-   * the scheme in exactly the host-limited source this is meant to reject.
+   * The window talks to its own backend and nothing else, so a socket source
+   * must name this machine: the backend's 127.0.0.1, or localhost for the
+   * development server. A bare scheme (`ws:`, `wss:`) would let page code open a
+   * socket to any host. Compared token by token rather than by searching the
+   * whole line: "ws:" is a substring of "ws://127.0.0.1:*".
    */
   const sources = connect.trim().split(/\s+/)
-  if (!sources.includes("ws:") && !sources.includes("wss:")) {
-    problems.push(
-      `connect-src allows no socket scheme, only ${sources.join(" ")} - so no server but the one on that exact address can be reached`,
-    )
+  const sockets = sources.filter((source) => /^wss?:/.test(source))
+  if (!sockets.includes("ws://127.0.0.1:*")) {
+    problems.push(`connect-src does not allow ws://127.0.0.1:*, so the window cannot reach its own backend`)
+  }
+  for (const source of sockets.filter((source) => source !== "ws://127.0.0.1:*" && source !== "ws://localhost:*")) {
+    problems.push(`connect-src allows the socket source ${source}, which reaches beyond this machine`)
   }
   /*
    * The other direction. http and https are deliberately not reachable from the
@@ -145,11 +148,17 @@ if (!connect) {
  */
 const componentDir = path.join(root, "src/renderer/src/components")
 const componentFiles = fs.readdirSync(componentDir).filter((name) => name.endsWith(".vue"))
+/* The right panel's tabs live in a folder of their own, and mount components as any other does. */
+const rightFiles = fs
+  .readdirSync(path.join(componentDir, "right"))
+  .filter((name) => name.endsWith(".vue"))
+  .map((name) => path.join("right", name))
 
 /** Everywhere a component could be used, including other components. */
 const consumers = [
   appSource,
   ...componentFiles.map((name) => fs.readFileSync(path.join(componentDir, name), "utf8")),
+  ...rightFiles.map((name) => fs.readFileSync(path.join(componentDir, name), "utf8")),
   ...fs
     .readdirSync(path.join(componentDir, "parts"), { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".vue"))
@@ -180,22 +189,9 @@ function tagEnd(source: string, from: number): number {
   return source.length
 }
 
-/*
- * Events raised only from a mode nothing mounts.
- *
- * ProjectPanel can render docked, as a popover or as a bare menu, and it raises
- * "close" only when it is floating - `if (floating.value) emit("close")`. The
- * app mounts it docked and nowhere else, so the event cannot fire. That is an
- * unused mode rather than a control that does nothing, and it is written down
- * here so the check keeps reporting the failures that matter. If the floating
- * modes are ever mounted, the binding has to come with them; if they are
- * removed, this line goes too.
- */
-const UNMOUNTED_MODES = new Set(["ProjectPanel.vue:close"])
-
 let checkedEvents = 0
-for (const file of componentFiles) {
-  const name = file.replace(/\.vue$/, "")
+for (const file of [...componentFiles, ...rightFiles]) {
+  const name = path.basename(file).replace(/\.vue$/, "")
   const source = fs.readFileSync(path.join(componentDir, file), "utf8")
 
   // What the component actually raises, rather than what it declares: a
@@ -219,7 +215,7 @@ for (const file of componentFiles) {
     const bound = tags.some(
       (tag) => tag.includes(`@${event}=`) || tag.includes(`@${event}.`) || tag.includes(`v-on:${event}`),
     )
-    if (bound || UNMOUNTED_MODES.has(`${file}:${event}`)) continue
+    if (bound) continue
     problems.push(`${file} raises "${event}" but no parent binds @${event}`)
   }
 }
@@ -241,7 +237,7 @@ console.log(`component events checked: ${checkedEvents}`)
 const ringSource = (() => {
   const file = path.join(componentDir, "ContextRing.vue")
   if (!fs.existsSync(file)) {
-    problems.push("ContextRing.vue is gone, so the ring the header and the Context tab share has no home")
+    problems.push("ContextRing.vue is gone, so the ring the composer and the Context tab share has no home")
     return ""
   }
   return fs.readFileSync(file, "utf8")
@@ -266,13 +262,13 @@ if (ringSource) {
 }
 
 /*
- * Both call sites, with the geometry each one is supposed to have. The header
- * passes neither prop and takes the component's 14/1.5 defaults; the tab has to
- * ask for 16/2, so that is what is checked for.
+ * Both call sites, with the geometry each one is supposed to have. The composer
+ * draws MiMo's 18px ring on a 2.4 stroke. The header held one too until it took
+ * MiMo's bottom panel toggle in that place instead, and the review panel's Context
+ * tab went with that panel.
  */
 const ringSites: [string, string[]][] = [
-  ["SessionHeader.vue", ["<ContextRing"]],
-  ["FilePanel.vue", ["<ContextRing", ':size="16"', ':stroke="2"']],
+  ["Composer.vue", ["<ContextRing", ':size="18"', ':stroke="2.4"']],
 ]
 for (const [file, needles] of ringSites) {
   const source = fs.readFileSync(path.join(componentDir, file), "utf8")
@@ -282,103 +278,7 @@ for (const [file, needles] of ringSites) {
   }
 }
 
-// ------------------------------------------------------------ the large-diff guard
-/*
- * A guard that shows its message and renders anyway is not a guard.
- *
- * The expensive half is the parse and the DOM, not the sentence, so the check
- * is that `rows` actually refuses - and that the escape hatch is still there,
- * because a refusal with no way through is the reader unable to see their own
- * diff.
- */
-const patchSource = fs.readFileSync(path.join(componentDir, "ReviewPatch.vue"), "utf8")
-if (!/const MAX_CHANGED_LINES = 500\b/.test(patchSource)) {
-  problems.push("ReviewPatch.vue no longer sets the reference's 500-changed-line limit")
-}
-if (!/if \(tooLarge\.value\) return \[\]/.test(patchSource)) {
-  problems.push("ReviewPatch.vue shows the large-diff message but still parses the diff behind it")
-}
-/*
- * The button has to be wired, not merely labelled.
- *
- * Searching for the bare word "renderAnyway" was the first attempt and it was a
- * check that could not fail: the i18n key is
- * `ui.sessionReview.largeDiff.renderAnyway`, so the word is in the file whether
- * or not anything handles the click. Both halves of the seam are named here
- * instead - the handler and the binding that reaches it.
- */
-if (!/function renderAnyway\b/.test(patchSource)) {
-  problems.push("ReviewPatch.vue has no renderAnyway handler, so a large diff cannot be forced open")
-}
-if (!/@click="renderAnyway"/.test(patchSource)) {
-  problems.push("ReviewPatch.vue's Render anyway button is not wired to renderAnyway")
-}
-
-/*
- * No `---` / `+++` test inside the hunk loop, in either the parser or the
- * counter.
- *
- * Both loops throw away everything before the first `@@`, and git writes the
- * two file headers before it, so past that point such a test can only match a
- * real changed line whose own text begins `--` or `++`. Driven in the app while
- * the test was still there: a patch that deleted `-- a sql comment` and added
- * `++i;` drew neither row and then numbered the rest of the hunk one short, so
- * a review note filed against the last line landed on the one above it.
- *
- * Written as "the strings do not appear anywhere in the file" rather than as a
- * regex over the loop, because the failure mode being guarded is somebody
- * re-adding the skip, and it can be re-added in either loop or in a helper.
- */
-for (const header of ['startsWith("---")', 'startsWith("+++")']) {
-  if (!patchSource.includes(header)) continue
-  problems.push(
-    `ReviewPatch.vue tests ${header} past the first hunk, which drops changed lines whose own text begins -- or ++`,
-  )
-}
-
-/*
- * The reference has exactly three strings in this family - title, meta and
- * renderAnyway - and no fourth. A `.description` or a `.button` invented to fill
- * out the block would be a hand-written string wearing a reference key's name,
- * which is the one thing no locale check can catch: it would be present in all
- * 18 tables and defined, and simply not be the reference's.
- */
-const LARGE_DIFF_KEYS = ["title", "meta", "renderAnyway"]
-for (const leaf of LARGE_DIFF_KEYS) {
-  if (patchSource.includes(`ui.sessionReview.largeDiff.${leaf}`)) continue
-  problems.push(`ReviewPatch.vue does not use ui.sessionReview.largeDiff.${leaf}`)
-}
-for (const used of patchSource.matchAll(/ui\.sessionReview\.largeDiff\.([A-Za-z]+)/g)) {
-  if (LARGE_DIFF_KEYS.includes(used[1])) continue
-  problems.push(
-    `ReviewPatch.vue reads ui.sessionReview.largeDiff.${used[1]}, which the reference does not have`,
-  )
-}
-
-/*
- * The Context tab's x says "Close tab", not "Close".
- *
- * Two different strings that both exist and both read plausibly, which is why
- * this went unnoticed: `common.close` is defined in all 18 tables, so no locale
- * check has anything to report about it.
- */
-/*
- * Both the name it is announced by and the name it is shown by, because the
- * reference uses the key for both - `aria-label` and the tooltip title on the
- * same control. Looking for the key anywhere in the block was the first
- * attempt, and it passed with the aria-label changed back to `common.close`,
- * because the tooltip beside it still carried the word.
- */
-const panelSource = fs.readFileSync(path.join(componentDir, "FilePanel.vue"), "utf8")
-const closeBlock = panelSource.slice(panelSource.indexOf('class="tab-close"'), panelSource.indexOf('class="tab-close"') + 400)
-for (const [attribute, pattern] of [
-  ["aria-label", /:aria-label="t\('common\.closeTab'\)"/],
-  ["tooltip", /v-tip="\{ label: t\('common\.closeTab'\)/],
-] as [string, RegExp][]) {
-  if (pattern.test(closeBlock)) continue
-  problems.push(`FilePanel.vue's Context tab close does not take its ${attribute} from common.closeTab`)
-}
-console.log("context ring and review guard: checked")
+console.log("context ring: checked")
 
 // -------------------------------------------------------- unreachable backend
 /*
@@ -418,6 +318,117 @@ console.log("context ring and review guard: checked")
     problems.push(`the backend answers ${name} and nothing in the interface sends it`)
   }
   console.log(`backend requests: ${declared.length}, all reachable from the interface`)
+
+  /*
+   * A setting nothing reads.
+   *
+   * `showReasoning` had a switch in settings, a default in the config and a
+   * field in the protocol - and no reader anywhere, so turning it off did
+   * nothing at all and changing its default did nothing either. The switch
+   * still moved, which is what made it invisible: it looked like a working
+   * setting from every side except the one that mattered.
+   *
+   * A setting is read when something other than the settings dialog and the
+   * defaults mentions it. Writing it back does not count as reading it, so the
+   * dialog's own `patchConfig({ x: !config?.x })` is excluded along with the
+   * dialog itself.
+   */
+  const config = read("src/shared/protocol.ts")
+  const block = config.slice(config.indexOf("export interface AppConfig"))
+  const END = String.fromCharCode(10) + "}"
+  const fields = [...block.slice(0, block.indexOf(END)).matchAll(/^\s{2}(\w+)[?]?:/gm)].map((m) => m[1])
+  /*
+   * The backend counts as a reader. A permission or a shell setting is acted on
+   * where the work happens, not in the window - `autoApprove` is read only in
+   * `src/server/config.ts`, and scanning the renderer alone reported it dead.
+   */
+  const backend: string[] = []
+  for (const area of ["src/server", "src/main"]) {
+    const collect = (relative: string) => {
+      for (const entry of fs.readdirSync(path.join(root, relative), { withFileTypes: true })) {
+        const next = `${relative}/${entry.name}`
+        if (entry.isDirectory()) collect(next)
+        else if (next.endsWith(".ts")) backend.push(next)
+      }
+    }
+    collect(area)
+  }
+  /*
+   * Declaring a default is not reading one either.
+   *
+   * Counting the backend as a reader is right - a permission is acted on where
+   * the work happens - but `defaults()` lives in the backend too, and every
+   * field is named there exactly once, by definition. Left in, it satisfied
+   * every field and the check could not fail for any of them. It did not fail
+   * for a field whose renderer-side reader had been deleted, which is how this
+   * was found: by deleting one and watching the check pass anyway.
+   */
+  const defaultsBody = (source: string) => {
+    const start = source.indexOf("function defaults(): AppConfig {")
+    if (start === -1) return ""
+    const end = source.indexOf(String.fromCharCode(10) + "}", start)
+    return end === -1 ? source.slice(start) : source.slice(start, end)
+  }
+  const texts = [...files.filter((file) => !file.endsWith("SettingsDialog.vue")), ...backend].map((file) => {
+    const source = read(file)
+    const body = defaultsBody(source)
+    return body ? source.split(body).join("") : source
+  })
+  const readers = texts.join(String.fromCharCode(10))
+  /*
+   * Only a read counts as a read.
+   *
+   * This used to accept the field's name as a whole word anywhere, and a word
+   * is not a read: `showTerminal` had no reader at all, yet the command table's
+   * string key "cmd.showTerminal" satisfied it, and names as common as `shell`,
+   * `theme` or `model` could hardly fail. A field is read now only as a property
+   * access (`.field`, `?.field`, `["field"]`) or by destructuring
+   * (`{ field } = ...`), and dotted string keys - an i18n key, a command id -
+   * are blanked out first. A Vue binding is a quoted expression too, so a
+   * quoted string straight after `=` is left alone.
+   */
+  const BACKSLASH = String.fromCharCode(92)
+  const keyLike = new RegExp(`(^|[^=])(["'])[A-Za-z_][${BACKSLASH}w-]*(?:${BACKSLASH}.[${BACKSLASH}w-]+)+${BACKSLASH}2`, "g")
+  const accessible = readers.replace(keyLike, "$1$2$2")
+  const isRead = (field: string) =>
+    new RegExp(`${BACKSLASH}.${field}(?![${BACKSLASH}w$])`).test(accessible) ||
+    new RegExp(`${BACKSLASH}[${BACKSLASH}s*["']${field}["']${BACKSLASH}s*${BACKSLASH}]`).test(readers) ||
+    new RegExp(`${BACKSLASH}{[^{}]*${BACKSLASH}b${field}${BACKSLASH}b[^{}]*${BACKSLASH}}${BACKSLASH}s*=(?![=>])`).test(accessible)
+  const unread = fields.filter((field) => !isRead(field))
+  for (const field of unread) {
+    problems.push(`the config carries ${field} and nothing outside settings reads it`)
+  }
+  console.log(`config fields: ${fields.length}, each read somewhere other than the settings dialog`)
+}
+
+// ------------------------------------------------------- the preload's bridge
+/*
+ * Every method the preload exposes on `window.mcode` is a privileged capability
+ * handed to a page that renders model output, so one nothing calls is not
+ * harmless clutter: it is reach with no owner. `browserClose` sat there for
+ * rounds, with a live handler in main, before an audit noticed. A method counts
+ * as called when the renderer accesses it as a property anywhere - some call
+ * sites go through a local `bridge` variable rather than `window.mcode` itself.
+ */
+{
+  const start = preloadSource.indexOf("const api = {")
+  const end = preloadSource.indexOf("\n}\n", start)
+  const exposed = [...preloadSource.slice(start, end).matchAll(/^ {2}([A-Za-z_$][\w$]*)\s*[:(]/gm)].map((match) => match[1])
+  const rendererText: string[] = []
+  const walk = (directory: string) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const full = path.join(directory, entry.name)
+      if (entry.isDirectory()) walk(full)
+      else if (/\.(ts|vue)$/.test(entry.name)) rendererText.push(fs.readFileSync(full, "utf8"))
+    }
+  }
+  walk(path.join(root, "src/renderer"))
+  const renderer = rendererText.join("\n")
+  if (start === -1 || exposed.length < 50) problems.push(`the preload's api object was not found (${exposed.length} methods read)`)
+  for (const method of exposed) {
+    if (!new RegExp(`\\??\\.\\s*${method}(?![\\w$])`).test(renderer)) problems.push(`the preload exposes mcode.${method}, which nothing in the renderer calls`)
+  }
+  console.log(`bridge methods: ${exposed.length}, each called by the renderer`)
 }
 
 if (problems.length) {

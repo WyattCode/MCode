@@ -13,34 +13,157 @@ body,
   margin: 0;
 }
 
+/* MiMo's two fallback stacks, set over the generated ones. */
+:root {
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei",
+    "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei", Inter, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, Menlo, "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Noto Sans Mono",
+    "Liberation Mono", "PingFang SC", "Microsoft YaHei", "Noto Sans Mono CJK SC", "Source Han Mono SC",
+    "WenQuanYi Micro Hei Mono", monospace;
+}
+
+* {
+  overscroll-behavior-x: none;
+}
+
+/* MiMo's body type: 14px on a 1.6 line at 400, with no synthesised bold. */
 body {
   background: var(--surface-base);
   /* text-base is the default body colour; text-strong is for emphasis. */
   color: var(--text-base);
   font-family: var(--font-sans);
-  font-size: var(--font-size-base);
-  /*
-   * Four-forty, not four hundred. opencode sets Inter's variable axis to 440
-   * for body text and 530 for emphasis; at 400 every label in this app read a
-   * shade lighter than the same label in the reference, everywhere at once.
-   */
-  font-weight: 440;
-  line-height: var(--line-height-large);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  font-synthesis-weight: none;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
 
-/* The whole app is keyboard-first, so focus must always be visible - but only
-   for keyboard users, never as a click artifact. */
+/*
+ * No ring on focus anywhere by default, as in MiMo: rings belong to the few
+ * controls that draw their own (`.field` below, and per component).
+ */
 :focus {
   outline: none;
 }
 
-:focus-visible {
+/*
+ * The keyboard's ring, beyond MiMo, which draws almost none: a control reached
+ * from the keyboard shows the accent outline the menus and cards already use.
+ * A pointer never matches :focus-visible on these, so nothing changes under
+ * the mouse. `:where` keeps the weight of a single pseudo-class, so a control
+ * that draws its own keyboard state still wins; the inset keeps the ring
+ * inside scrollers that clip.
+ */
+:where(
+    button,
+    a[href],
+    summary,
+    select,
+    input:is([type="checkbox"], [type="radio"], [type="range"]),
+    [role="button"],
+    [role="tab"],
+    [role="switch"],
+    [role="checkbox"],
+    [role="radio"],
+    [role="option"],
+    [role="menuitem"],
+    [role="link"],
+    [tabindex]:not([tabindex="-1"])
+  ):focus-visible {
   outline: 2px solid var(--interactive);
-  outline-offset: 1px;
-  border-radius: var(--radius-sm);
+  outline-offset: -2px;
 }
+
+/*
+ * A text field matches :focus-visible however it was focused, so its ring
+ * waits for `data-focus-key` (lib/focus-ring.ts), which a Tab press sets and
+ * any pointer press clears. Clicking into a field draws what it always did.
+ */
+:root[data-focus-key] :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]), textarea, [contenteditable="true"]):focus {
+  outline: 2px solid var(--interactive);
+  outline-offset: -2px;
+}
+
+/* In Windows high contrast the ring takes the system highlight. */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline-color: Highlight;
+  }
+}
+
+/* MiMo's text selection colour, light and dark. */
+::selection {
+  background: #b3d7ff;
+}
+
+:root[data-theme="dark"] ::selection {
+  background: #33518a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) ::selection {
+    background: #33518a;
+  }
+}
+
+/*
+ * MiMo's selectable text: the interface itself cannot be selected, only content
+ * and code can. Content is marked `data-selectable="content"`; the classes
+ * after it are the content surfaces that do not carry the mark yet (reply text,
+ * the user bubble, the terminal and the PDF text layer).
+ */
+#app {
+  user-select: none;
+}
+
+:is(pre, code),
+[data-selectable="content"],
+[data-selectable="content"] .xterm,
+.text[data-annotate="answer"],
+.user-bubble,
+.xterm,
+.textLayer {
+  user-select: text;
+}
+
+[data-selectable="none"] {
+  user-select: none;
+}
+
+:where(input, textarea, [contenteditable="true"]) {
+  user-select: text;
+}
+
+:is(input, textarea):placeholder-shown {
+  user-select: none;
+}
+
+/*
+ * Menus, notices and tips float over the 50px caption band, which the home strip
+ * and the conversation header mark as a window drag region. As MiMo marks its
+ * portalled layers, they are never part of it.
+ */
+.toasts,
+.toasts .notice,
+.menu,
+.select-pop,
+.app-tip {
+  -webkit-app-region: no-drag;
+}
+
+/*
+ * No `border-radius` here, and that is the point.
+ *
+ * This rule used to set one, which does not round the ring - it rounds the
+ * element, for as long as the element is focused. Every control on the
+ * launcher is 6px and `--radius-sm` is 4px, so taking focus visibly squared
+ * off the corners of whatever had it. An outline already follows the border
+ * radius the element itself declares, so there was nothing to gain either.
+ *
+ * A focus ring marks an element. It must not restyle it.
+ */
 
 button {
   font: inherit;
@@ -65,75 +188,97 @@ textarea {
   border: none;
 }
 
+/* MiMo's code type: the mono stack, inline code a step smaller than its line. */
 code,
-pre,
-kbd {
+kbd,
+samp,
+pre {
   font-family: var(--font-mono);
-  font-size: 12px;
+}
+
+code {
+  font-size: 0.875em;
+}
+
+pre code {
+  font-size: inherit;
 }
 
 /*
- * Scrollbars appear while a surface is being used, and are quiet otherwise.
- *
- * opencode hides the platform scrollbar outright and draws its own: a twelve
- * pixel lane carrying a four pixel pill with fully rounded ends, held at
- * opacity 0 and faded in for as long as the surface is scrolled or hovered.
- *
- * The geometry below is that pill exactly. The behaviour is reached a different
- * way, because a platform scrollbar has no opacity to animate: the fill is
- * transparent at rest and coloured in when wanted, which looks the same and
- * needs no wrapper element around every scrolling area. The one thing CSS
- * cannot know on its own is that scrolling is happening, and a single
- * document-level listener supplies it - see lib/scrollbars.ts.
- *
- * Between those two designs this was permanently visible, which drew a grey
- * rail down the edge of every list in the app whether or not it could scroll.
+ * MiMo's scrollbars: a 10px lane with a 6px pill (a 2px transparent border),
+ * transparent at rest and coloured only while the surface is being scrolled.
+ * lib/scrollbars.ts marks the scrolled element and clears it 500ms after the
+ * last scroll; hovering does not reveal it.
  */
 ::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 
-/*
- * Four of the twelve pixels are the pill; the rest is given away as a
- * transparent border, which is how a thumb is inset without a track drawn
- * behind it.
- *
- * Absent until the surface is used. opencode holds its thumb at opacity 0 and
- * fades it in while scrolling; a platform scrollbar cannot be faded, but it can
- * be given a transparent fill and coloured in, which comes to the same thing on
- * screen. What tells the stylesheet that scrolling is happening is one document
- * listener - see lib/scrollbars.ts. Colouring it permanently, as this did, put
- * a grey rail down the edge of every list in the app whether or not it could
- * scroll at all.
- */
+::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 ::-webkit-scrollbar-thumb {
-  background: transparent;
-  border: 4px solid transparent;
-  border-radius: 9999px;
+  background-color: transparent;
   background-clip: padding-box;
-  transition: background-color 0.2s ease-in-out;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  transition: background-color 0.2s cubic-bezier(0.4, 0, 1, 1);
 }
 
-/* Being scrolled, or under the pointer: both are moments the thumb is wanted. */
-[data-scrolling="true"]::-webkit-scrollbar-thumb,
-*:hover::-webkit-scrollbar-thumb {
-  background: var(--border-weak);
-  background-clip: padding-box;
+[data-scrollbar-active]::-webkit-scrollbar-thumb {
+  background-color: #0000002e;
+  transition-duration: 0.12s;
+  transition-timing-function: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
-/* On the thumb itself, which is about to be dragged. */
-::-webkit-scrollbar-thumb:hover {
-  background: var(--border-strong);
-  background-clip: padding-box;
+[data-scrollbar-active]::-webkit-scrollbar-thumb:hover {
+  background-color: #0000004d;
+}
+
+:root[data-theme="dark"] [data-scrollbar-active]::-webkit-scrollbar-thumb {
+  background-color: #ffffff2e;
+}
+
+:root[data-theme="dark"] [data-scrollbar-active]::-webkit-scrollbar-thumb:hover {
+  background-color: #ffffff4d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) [data-scrollbar-active]::-webkit-scrollbar-thumb {
+    background-color: #ffffff2e;
+  }
+
+  :root:not([data-theme="light"]) [data-scrollbar-active]::-webkit-scrollbar-thumb:hover {
+    background-color: #ffffff4d;
+  }
+}
+
+/* MiMo's thin variant. */
+.u-scrollbar-thin::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
 }
 
 ::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::-webkit-scrollbar-thumb {
+    transition: none;
+  }
+}
+
+html[data-motion="on"] ::-webkit-scrollbar-thumb {
+  transition: none;
 }
 
 /* ------------------------------------------------------------------ */
@@ -144,11 +289,11 @@ kbd {
   display: inline-flex;
   align-items: center;
   min-width: 18px;
-  height: 18px;
+  height: calc(18px * var(--ui-font-scale, 1));
   padding: 0 5px;
   justify-content: center;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-font-scale, 1));
   color: var(--text-base);
   background: var(--surface-raised-hover);
   border: 1px solid var(--border-weak);
@@ -172,36 +317,75 @@ kbd {
   color: var(--text-strong);
 }
 
+/*
+ * opencode's `button-v2` at its normal size: `height: 28px; padding: 0 11px`,
+ * over a base of `13px / 530 / 20px` at `-0.04px` with `min-height: 24px`.
+ * The height was already right; the padding was 12, and the type was not set
+ * at all - every button inherited whatever its surroundings used, so the same
+ * control read differently in a dialog and in the composer.
+ *
+ * Its edge is an elevation, not a border. opencode's neutral variant is
+ * `background-color: var(--v2-background-bg-button-neutral); box-shadow:
+ * var(--v2-elevation-button-neutral)` with no border at all. That second token
+ * is `--shadow-input` here - its comment has said "elevation/button-neutral"
+ * all along, which I missed once and then wrote down as absent.
+ *
+ * The fill needs no change: bg-button-neutral is `alpha-light-6` in the dark
+ * scheme, and 6% white over bg-base (#161616) composites to #242424, which is
+ * exactly what `--surface-raised-hover` already is. In the light scheme it is
+ * grey-50, which is what that token already is there too.
+ */
 .btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
-  padding: 0 12px;
+  min-height: 24px;
+  height: calc(28px * var(--ui-font-scale, 1));
+  padding: 0 11px;
   color: var(--text-strong);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-weight: 530;
+  line-height: calc(20px * var(--ui-font-scale, 1));
+  letter-spacing: -0.04px;
   background: var(--surface-raised-hover);
-  border: 1px solid var(--border-weak);
+  border: 0;
   border-radius: var(--radius-sm);
-  transition: background 0.12s, border-color 0.12s;
+  box-shadow: var(--shadow-input);
+  transition: background 0.12s, box-shadow 0.12s;
 }
 
+/*
+ * Hover lifts the fill rather than the edge. opencode defines no hover for the
+ * neutral variant in the stylesheet this was read from - only for `ghost` -
+ * so this is the app's own answer to a question the reference does not put,
+ * and it is a step of the same overlay the rest of the interface hovers with.
+ */
 .btn:hover {
-  border-color: var(--border-strong);
+  background: var(--surface-layer);
 }
 
+/*
+ * A filled button carries no neutral edge: the elevation belongs to the
+ * unfilled one, and under a solid colour it only muddies the corner.
+ */
 .btn.primary {
   color: var(--button-primary-text);
   background: var(--button-primary);
-  border-color: transparent;
+  box-shadow: none;
 }
 
 .btn.primary:hover {
   filter: brightness(1.08);
 }
 
+/*
+ * Danger is the neutral button with danger text, which is what opencode makes
+ * it: `background-color: var(--v2-background-bg-button-neutral); color:
+ * var(--v2-state-fg-danger); box-shadow: var(--v2-elevation-button-neutral)`.
+ * It used to draw a red border, which the reference does not.
+ */
 .btn.danger {
   color: var(--error);
-  border-color: color-mix(in srgb, var(--error) 40%, transparent);
 }
 
 /*
@@ -225,7 +409,7 @@ kbd {
 .field {
   box-sizing: border-box;
   width: 100%;
-  height: 28px;
+  height: calc(28px * var(--ui-font-scale, 1));
   padding: 0 8px;
   background: linear-gradient(180deg, rgb(255 255 255 / 0.02) 0%, rgb(255 255 255 / 0) 100%),
     var(--surface-base);
@@ -266,15 +450,34 @@ kbd {
   z-index: 100;
   display: flex;
   justify-content: center;
+  /*
+   * No blur. MiMo's `.overlay` is the scrim colour and nothing else; only the
+   * search overlay blurs (8px, over its own darker scrim), and the settings
+   * shell uses a lighter scrim that does not blur either.
+   */
   background: var(--scrim);
-  backdrop-filter: blur(2px);
 }
 
+/*
+ * A dialog is not painted like a menu, and this drew both the same.
+ *
+ * opencode separates them. Its menu is
+ * `[data-component="menu-v2-content"] { background: var(--v2-background-bg-layer-01);
+ * border-radius: 6px; box-shadow: var(--v2-elevation-floating) }` - which is
+ * what `--surface-menu` and `--shadow-lg` are here, and what this app's menus
+ * already use. Its dialog is `[data-component="dialog-v2"] [data-slot="dialog-container"]
+ * { background: var(--v2-background-bg-base) }` - one step darker. Both sit
+ * under elevation/floating, which is `0 8px 16px`; `--shadow-overlay` is 16/32
+ * and corresponds to nothing the reference puts on either.
+ *
+ * Ten components read this class and five read `.menu`, so the two now say
+ * different things rather than the same thing twice.
+ */
 .dialog {
-  background: var(--surface-menu);
+  background: var(--surface-raised);
   border: 0;
   border-radius: 6px;
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 
@@ -305,18 +508,18 @@ kbd {
 .dialog-title {
   margin: 0;
   color: var(--text-strong);
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 530;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   letter-spacing: -0.13px;
   user-select: none;
 }
 
 .dialog-sub {
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   letter-spacing: -0.04px;
   user-select: none;
 }
@@ -346,60 +549,224 @@ kbd {
 /* ------------------------------------------------------------------ */
 
 /*
- * Drawn rather than delegated to the OS `title` bubble, which arrives late in
- * the system font and cannot be themed to match anything around it.
+ * MiMo's tooltip, value for value.
+ *
+ * Its content is portalled to the body, so it takes the body's type (line
+ * height 1.6) and MiMo's root colours rather than any surface it floats over:
+ * #fffefd on a #f1f1f1 line, text at #151c13cc, the `--shadow-tip` pair, and
+ * z-index 1000. It is as wide as its text up to 420px and wraps past that,
+ * breaking anywhere a long path demands.
  */
 .app-tip {
   position: fixed;
-  z-index: 300;
+  z-index: 1000;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: 420px;
+  padding: 5px 8px;
+  color: #151c13cc;
+  background: #fffefd;
+  border: 1px solid #f1f1f1;
+  border-radius: 8px;
+  box-shadow:
+    0 2px 8px #0000000d,
+    0 1px 2px #0000000a;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
+/*
+ * MiMo's information card over a conversation: 20 round on a half-pixel
+ * input-border line, 10 by 14 of padding, the composer's shadow, the title in
+ * medium over quieter 11px lines, 3 apart.
+ */
+.app-tip.card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  max-width: 388px;
+  padding: 10px 14px;
+  border: 0.5px solid #151c130f;
+  border-radius: 20px;
+  box-shadow:
+    0 1px 2px #0000000d,
+    0 6px 18px #0000001b;
+}
+
+.app-tip-title {
+  color: #151c13;
+  font-weight: 500;
+}
+
+.app-tip-line {
+  color: #151c1366;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+}
+
+/*
+ * session chat: MiMo's card lines for messages between conversations - 11px in
+ * its blue, a 9px mark 6 before the words (a dot in a faint ring while waiting
+ * for a reply, a bare 5px dot while handling one), underlined under the pointer
+ * when the line opens the other conversation. A card holding one takes the
+ * pointer so the line can be pressed.
+ */
+.app-tip.interactive {
+  pointer-events: auto;
+}
+
+.app-tip-link {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 6px;
-  color: var(--text-strong);
-  background: var(--surface-raised-hover);
+  max-width: 100%;
+  padding: 0;
+  color: #2f6fed;
+  background: none;
+  border: 0;
   border-radius: 4px;
-  box-shadow: var(--shadow-lg);
-  font-size: 11px;
-  line-height: 1.3;
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  /*
-   * Nudged out of the control it belongs to rather than fading in place, which
-   * reads as a box appearing from nowhere near whatever the pointer last
-   * crossed.
-   */
-  transition:
-    opacity 0.12s ease,
-    transform 0.12s ease;
+  font: inherit;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  text-align: start;
+  overflow-wrap: anywhere;
 }
 
-.app-tip[data-side="right"] {
-  transform: translateX(-4px);
+button.app-tip-link {
+  cursor: pointer;
 }
 
-.app-tip[data-side="left"] {
-  transform: translateX(4px);
+button.app-tip-link:hover {
+  text-decoration: underline;
+}
+
+.app-tip-link-mark {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 9px;
+  height: 9px;
+}
+
+.app-tip-link[data-direction="inbound"] .app-tip-link-mark {
+  width: 5px;
+  height: 5px;
+}
+
+.app-tip-link[data-direction="outbound"] .app-tip-link-mark::before {
+  position: absolute;
+  inset: 0;
+  background: currentColor;
+  border-radius: 50%;
+  opacity: 0.25;
+  content: "";
+}
+
+.app-tip-link-dot {
+  position: relative;
+  width: 5px;
+  height: 5px;
+  background: currentColor;
+  border-radius: 50%;
+}
+
+:root[data-theme="dark"] .app-tip-link {
+  color: #5a9cff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .app-tip-link {
+    color: #5a9cff;
+  }
+}
+
+:root[data-theme="dark"] .app-tip {
+  color: #f4f4f5;
+  background: #181818;
+  border-color: #2e2e2e;
+  box-shadow:
+    0 2px 8px #0000004d,
+    0 1px 2px #00000040;
+}
+
+:root[data-theme="dark"] .app-tip.card {
+  box-shadow: 0 1px 3px #0006;
+}
+
+:root[data-theme="dark"] .app-tip-title {
+  color: #fff;
+}
+
+:root[data-theme="dark"] .app-tip-line {
+  color: #777;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .app-tip {
+    color: #f4f4f5;
+    background: #181818;
+    border-color: #2e2e2e;
+    box-shadow:
+      0 2px 8px #0000004d,
+      0 1px 2px #00000040;
+  }
+
+  :root:not([data-theme="light"]) .app-tip.card {
+    box-shadow: 0 1px 3px #0006;
+  }
+
+  :root:not([data-theme="light"]) .app-tip-title {
+    color: #fff;
+  }
+
+  :root:not([data-theme="light"]) .app-tip-line {
+    color: #777;
+  }
+}
+
+/*
+ * No slide: MiMo fades in from 0 and scales up from .95 over 150ms ease, out
+ * of the edge that faces the control, and plays the same thing backwards to
+ * close. The motion setting's global rule above shortens both to nothing.
+ */
+.app-tip[data-side="top"] {
+  transform-origin: 50% 100%;
 }
 
 .app-tip[data-side="bottom"] {
-  transform: translateY(-4px);
+  transform-origin: 50% 0;
 }
 
-.app-tip[data-side="top"] {
-  transform: translateY(4px);
+.app-tip[data-side="right"] {
+  transform-origin: 0 50%;
 }
 
-.app-tip.on {
-  opacity: 1;
-  transform: none;
+.app-tip[data-side="left"] {
+  transform-origin: 100% 50%;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .app-tip {
-    transition: opacity 0.12s ease;
-    transform: none;
+.app-tip[data-state="open"] {
+  animation: app-tip-in 0.15s ease;
+}
+
+.app-tip[data-state="closed"] {
+  animation: app-tip-out 0.15s ease forwards;
+}
+
+@keyframes app-tip-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
+@keyframes app-tip-out {
+  to {
+    opacity: 0;
+    transform: scale(0.95);
   }
 }
 
@@ -417,29 +784,6 @@ kbd {
   width: 1px;
   height: 1px;
   white-space: nowrap;
-}
-
-.app-tip-keys {
-  display: inline-flex;
-  gap: 2px;
-}
-
-/* One cap per key, sized so a single letter still reads as a square. */
-.app-tip-key {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 4px;
-  color: var(--text-base);
-  background: var(--surface-key);
-  border-radius: 2px;
-  font-size: 11px;
-  font-weight: 530;
-  letter-spacing: 0.05px;
-  /* opencode sets its caps in capitals however the binding was written. */
-  text-transform: uppercase;
 }
 
 /*
@@ -464,9 +808,10 @@ kbd {
   animation: dialog-overlay-in 0.15s ease-out;
 }
 
+/* MiMo's shared dialog: the card fades in from .95 over its motion-slow .2s; closing is lib/modal.ts. */
 .scrim [role="dialog"],
 .overlay [role="dialog"] {
-  animation: dialog-content-in 0.15s ease-out;
+  animation: dialog-content-in 0.2s ease;
 }
 
 @keyframes dialog-overlay-in {
@@ -481,7 +826,7 @@ kbd {
 @keyframes dialog-content-in {
   from {
     opacity: 0;
-    transform: scale(0.98);
+    transform: scale(0.95);
   }
   to {
     opacity: 1;
@@ -495,5 +840,181 @@ kbd {
   .scrim [role="dialog"],
   .overlay [role="dialog"] {
     animation: none;
+  }
+}
+
+/*
+ * The hand over what can be pressed.
+ *
+ * A button is not a link and the platform does not put a hand on one, so this
+ * is a preference rather than a fix; it is on by default because every control
+ * in this window is drawn rather than native, and a drawn control with an
+ * arrow over it reads as decoration.
+ */
+html[data-cursor="pointer"] button:not(:disabled),
+html[data-cursor="pointer"] summary,
+html[data-cursor="pointer"] [role="button"]:not([aria-disabled="true"]),
+html[data-cursor="pointer"] [role="tab"],
+html[data-cursor="pointer"] [role="option"],
+html[data-cursor="pointer"] [role="menuitem"],
+html[data-cursor="pointer"] [role="radio"],
+html[data-cursor="pointer"] [role="switch"],
+html[data-cursor="pointer"] label:has(> input[type="checkbox"]) {
+  cursor: pointer;
+}
+
+/*
+ * And taking it away again.
+ *
+ * Turning the setting off has to say so rather than merely stop saying the
+ * opposite: most controls in this window set `cursor: pointer` in their own
+ * stylesheet, and a rule that only added the hand would leave every one of
+ * them showing it. The selector carries `html`, so it outweighs the single
+ * class those rules are written with.
+ */
+html[data-cursor="default"] button:not(:disabled),
+html[data-cursor="default"] summary,
+html[data-cursor="default"] [role="button"]:not([aria-disabled="true"]),
+html[data-cursor="default"] [role="tab"],
+html[data-cursor="default"] [role="option"],
+html[data-cursor="default"] [role="menuitem"],
+html[data-cursor="default"] [role="radio"],
+html[data-cursor="default"] [role="switch"],
+html[data-cursor="default"] label:has(> input[type="checkbox"]) {
+  cursor: default;
+}
+
+/*
+ * Motion held back.
+ *
+ * Not `animation: none`, which would leave an element wherever its first frame
+ * put it - a spinner frozen mid-turn, a panel stopped half open. A duration
+ * near zero runs the whole thing and lands it where it was going.
+ *
+ * `!important` because these have to beat the rule that set the duration, and
+ * those live in component stylesheets this one does not know the names of.
+ */
+html[data-motion="on"] *,
+html[data-motion="on"] *::before,
+html[data-motion="on"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* Following the machine means following it while the window is open. */
+@media (prefers-reduced-motion: reduce) {
+  html[data-motion="system"] *,
+  html[data-motion="system"] *::before,
+  html[data-motion="system"] *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/*
+ * A drawing is measured while it is being drawn: mermaid gives a label's
+ * foreignObject a scratch size, reads back the size the text took and lays the
+ * graph out from that. A transition on every property, however short, hands
+ * that read the scratch size instead - every node comes back two thousand
+ * wide, and the diagram lands in a viewport of almost nothing. So inside a
+ * drawing a size change arrives at once; its animations still run their course.
+ */
+html[data-motion="on"] svg,
+html[data-motion="on"] svg * {
+  transition-duration: 0s !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-motion="system"] svg,
+  html[data-motion="system"] svg * {
+    transition-duration: 0s !important;
+  }
+}
+
+/*
+ * Syntax colours carry GitHub's light and dark in each token (shiki's dual
+ * themes). The light is the token's own colour; under a dark theme - chosen, or
+ * followed from the system - the dark one takes over, as MiMo's stylesheet does.
+ */
+:root[data-theme="dark"] .shiki,
+:root[data-theme="dark"] .shiki span {
+  color: var(--shiki-dark) !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .shiki,
+  :root:not([data-theme="light"]) .shiki span {
+    color: var(--shiki-dark) !important;
+  }
+}
+
+/*
+ * Text drawn the lighter way, or the way the platform draws everything else.
+ *
+ * On by default because this interface is mostly light text on a dark ground,
+ * where the system's stem darkening reads as a smear; a reader who prefers
+ * their machine's own rendering can have it back.
+ */
+html[data-smoothing="on"],
+html[data-smoothing="on"] body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html[data-smoothing="off"],
+html[data-smoothing="off"] body {
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+}
+
+/*
+ * The file-kind colours the files tree, its search results and the box's
+ * attachment chips all draw their file-page glyph in - one hue per kind of
+ * file, lighter under the dark theme, as MiMo colours the same nine classes.
+ *
+ * Global rather than inside one component's scoped block: the same file has to
+ * read the same way wherever it is drawn, and the composer and the files tab
+ * are not in the same tree. Not tokens - tokens.css is generated whole from the
+ * palette, and these are a fixed table, not derived from it.
+ */
+:root {
+  --ft-dim: #151c1366;
+  --ft-dir: #e0a63b;
+  --ft-code: #2f6fed;
+  --ft-web: #ff6a2b;
+  --ft-data: #0d9488;
+  --ft-doc: #16a34a;
+  --ft-media: #ec4899;
+  --ft-shell: #a855f7;
+  --ft-archive: #b45309;
+}
+
+:root[data-theme="dark"] {
+  --ft-dim: #777;
+  --ft-dir: #f0b850;
+  --ft-code: #5a9cff;
+  --ft-web: #ff8a52;
+  --ft-data: #2dd4bf;
+  --ft-doc: #4ade80;
+  --ft-media: #f472b6;
+  --ft-shell: #c084fc;
+  --ft-archive: #d9822b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ft-dim: #777;
+    --ft-dir: #f0b850;
+    --ft-code: #5a9cff;
+    --ft-web: #ff8a52;
+    --ft-data: #2dd4bf;
+    --ft-doc: #4ade80;
+    --ft-media: #f472b6;
+    --ft-shell: #c084fc;
+    --ft-archive: #d9822b;
   }
 }

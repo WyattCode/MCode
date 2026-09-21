@@ -26,6 +26,12 @@ interface ModelRow {
   id?: string
   context_length?: number
   context_window?: number
+  /**
+   * vLLM's and SGLang's name for the same number, and the only one they send.
+   * A local server that reported 262,144 here was read as having no window at
+   * all, so nothing could be compacted before it refused a request.
+   */
+  max_model_len?: number
   max_output_length?: number
   supported_features?: string[]
   supported_parameters?: string[]
@@ -192,7 +198,8 @@ export async function discoverModels(
         // Cased here too, so a list is presentable even before the merge sees it.
         name: nameFromId(id),
         // Providers disagree on the field name, and many omit it entirely.
-        contextWindow: row?.context_length ?? row?.context_window ?? native.get(id) ?? 0,
+        contextWindow:
+          row?.context_length ?? row?.context_window ?? row?.max_model_len ?? native.get(id) ?? 0,
         input: 0,
         output: 0,
         ...capabilities(row, template),
@@ -209,6 +216,62 @@ export async function discoverModels(
     )
   }
   return models
+}
+
+/** MiMo 26.920's 测试连接: ten seconds for `/models` to answer. */
+export const PROBE_TIMEOUT = 10_000
+
+/** What 测试连接 reports: the ids the endpoint lists, or which way it failed. */
+export type ProbeResult = { ok: true; models: string[] } | { ok: false; reason: "http"; status: number } | { ok: false; reason: "json" | "timeout" } | { ok: false; reason: "network"; message: string }
+
+/**
+ * MiMo 26.920's 测试连接: `GET <base>/models` with the key, and the ids it
+ * lists - strings, or rows carrying `id` or `model`, under `data` or `models`.
+ * Every id is kept, chat model or not: this is a check that the address and key
+ * work, and the list only offers ids to pick from.
+ *
+ * An Anthropic gateway takes its key as `x-api-key` with a version header, so
+ * that protocol sends those beside the bearer token MiMo sends to everyone.
+ */
+export async function probeModels(input: {
+  baseURL: string
+  apiKey: string
+  headers?: Record<string, string>
+  protocol?: "openai" | "anthropic" | "responses"
+  fetcher?: typeof fetch
+  timeout?: number
+}): Promise<ProbeResult> {
+  const root = input.baseURL.trim().replace(/\/+$/, "")
+  const key = input.apiKey.trim()
+  const headers: Record<string, string> = {
+    ...input.headers,
+    accept: "application/json",
+    ...(key ? { authorization: `Bearer ${key}` } : {}),
+    ...(key && input.protocol === "anthropic" ? { "x-api-key": key, "anthropic-version": "2023-06-01" } : {}),
+  }
+  let response: Response
+  try {
+    response = await (input.fetcher ?? fetch)(`${root}/models`, { headers, signal: AbortSignal.timeout(input.timeout ?? PROBE_TIMEOUT) })
+  } catch (err) {
+    const name = err instanceof Error || err instanceof DOMException ? err.name : ""
+    if (name === "TimeoutError" || name === "AbortError") return { ok: false, reason: "timeout" }
+    return { ok: false, reason: "network", message: err instanceof Error ? err.message : String(err) }
+  }
+  if (!response.ok) return { ok: false, reason: "http", status: response.status }
+  let body: unknown
+  try {
+    body = JSON.parse(await response.text())
+  } catch {
+    return { ok: false, reason: "json" }
+  }
+  const record = body && typeof body === "object" ? (body as { data?: unknown; models?: unknown }) : {}
+  const rows = Array.isArray(record.data) ? record.data : Array.isArray(record.models) ? record.models : []
+  const models: string[] = []
+  for (const row of rows) {
+    const id = typeof row === "string" ? row : row && typeof row === "object" ? ((row as { id?: unknown }).id ?? (row as { model?: unknown }).model) : undefined
+    if (typeof id === "string" && id && !models.includes(id)) models.push(id)
+  }
+  return { ok: true, models }
 }
 
 /**

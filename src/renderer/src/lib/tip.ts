@@ -1,183 +1,389 @@
 import type { App, DirectiveBinding } from "vue"
+import { shownChord } from "./keys"
 
 /**
  * Tooltips drawn by the app.
  *
- * The native `title` attribute hands the job to the OS: a pale yellow-ish box
- * in the system font, half a second late, in the wrong place, and impossible to
- * theme. Everything else here is drawn by us, so these are too.
+ * MiMo has exactly one styled tooltip - a Radix Tooltip under a single
+ * provider mounted at the root - and every value here is read from it: when a
+ * tip opens, when it closes, where it sits and how it animates. The native
+ * `title` attribute is still right where MiMo uses it (secondary controls in
+ * the side panel, resize handles); this is for the controls MiMo gives its
+ * drawn tip.
  *
- * One element is shared by every target rather than one per button - there is
- * only ever a single tooltip on screen, and thousands of hidden nodes to keep
- * in sync would be waste.
+ * A node is made per opening rather than one shared node repositioned: a tip
+ * that closes plays its exit while the next plays its entrance, which one
+ * shared node cannot show.
  */
 
-type Placement = "right" | "top" | "bottom" | "left"
+export type Placement = "right" | "top" | "bottom" | "left"
 
-interface Tip {
-  label: string
-  /** Rendered dimmer beside the label, e.g. a shortcut. */
+export interface Tip {
+  /** Optional when a card is given: the card's title names the control instead. */
+  label?: string
+  /** A shortcut, written after the label and a space as MiMo writes it: "返回 Ctrl+[". */
   hint?: string
+  /** MiMo's default side is top; it flips to the opposite side when there is no room. */
   placement?: Placement
+  /**
+   * MiMo's information card, as its conversation rows and title show one: a
+   * title in medium weight over a few quieter lines (project, folder, when it
+   * last changed). Empty lines are left out.
+   */
+  card?: { title: string; lines: (string | TipLine | undefined)[] }
+  /** Forced shut, and shut if already up. MiMo passes it while the trigger's own menu is open. */
+  disabled?: boolean
+  /** Forced open until it turns false, as MiMo's context-usage card stays once clicked. */
+  pinned?: boolean
+  /** "hover" leaves focus alone, as MiMo's menu-row descriptions do; the default opens on both. */
+  trigger?: "hover" | "hoverFocus"
 }
 
-/** Distance from the control, and the closest a tip may sit to the window edge. */
-const GAP = 8
-const EDGE = 6
 /**
- * How long the pointer must rest before a tip appears.
- *
- * Short enough to feel answerable, long enough that crossing a toolbar on the
- * way somewhere else does not set off a trail of boxes. Matches the roughly
- * half-second the platform's own tooltips wait.
+ * session chat: a card line about a message between two conversations, as
+ * MiMo's side column card draws one - a 9px mark for which way it goes, then
+ * the words. One with an action is a button, and a card holding one stays open
+ * while the pointer crosses over to it.
  */
-const DELAY = 500
-/**
- * Once one tip has been shown, neighbours follow immediately for this long.
- *
- * Waiting again at every button turns reading a toolbar into a sequence of
- * pauses; the first wait establishes that the user is looking for labels.
- */
-const WARM = 400
+export interface TipLine {
+  text: string
+  direction: "outbound" | "inbound"
+  /** The button's native title. */
+  title?: string
+  action?: () => void
+}
 
-let node: HTMLElement | undefined
-let timer: ReturnType<typeof setTimeout> | undefined
-let current: HTMLElement | undefined
-/** When the last tip was dismissed, for the warm window above. */
+/** MiMo's `sideOffset`: the distance from the control. */
+export const GAP = 6
+/** MiMo's `collisionPadding`: the closest a tip may sit to the window edge. */
+export const EDGE = 8
+/** MiMo's provider `delayDuration`: how long the pointer rests before a tip appears. */
+export const DELAY = 200
+/**
+ * MiMo's provider `skipDelayDuration`.
+ *
+ * For this long after any tip closes, the next one opens without waiting.
+ * Every close starts it - a click on the control included - because MiMo's
+ * provider starts the same timer whichever way a tip was dismissed.
+ */
+export const WARM = 300
+
+export interface Box {
+  left: number
+  top: number
+  right: number
+  bottom: number
+  width: number
+  height: number
+}
+
+export interface Size {
+  width: number
+  height: number
+}
+
+/** How long a tip waits before opening, given when the last one closed (0 for never). */
+export function openDelay(now: number, lastClosed: number): number {
+  return lastClosed > 0 && now - lastClosed < WARM ? 0 : DELAY
+}
+
+/** The text of a plain tip: the label, then the shortcut after one space. */
+export function tipText(tip: Pick<Tip, "label" | "hint">): string {
+  const label = tip.label ?? ""
+  if (!tip.hint) return label
+  return label ? `${label} ${tip.hint}` : tip.hint
+}
+
+const OPPOSITE: Record<Placement, Placement> = { right: "left", left: "right", top: "bottom", bottom: "top" }
+
+/** Where a tip would sit on a given side of the control, centred along it. */
+function offer(anchor: Box, self: Size, side: Placement) {
+  const middleY = anchor.top + (anchor.height - self.height) / 2
+  const middleX = anchor.left + (anchor.width - self.width) / 2
+  if (side === "right") return { left: anchor.right + GAP, top: middleY }
+  if (side === "left") return { left: anchor.left - self.width - GAP, top: middleY }
+  if (side === "top") return { left: middleX, top: anchor.top - self.height - GAP }
+  return { left: middleX, top: anchor.bottom + GAP }
+}
+
+/** How far a tip on this side runs past the padded window edge along the axis it extends. */
+function overflow(anchor: Box, self: Size, side: Placement, view: Size) {
+  const spot = offer(anchor, self, side)
+  if (side === "left" || side === "right") {
+    return Math.max(0, EDGE - spot.left) + Math.max(0, spot.left + self.width - (view.width - EDGE))
+  }
+  return Math.max(0, EDGE - spot.top) + Math.max(0, spot.top + self.height - (view.height - EDGE))
+}
+
+/**
+ * Picks the side and the position, the way MiMo's popper does.
+ *
+ * The preferred side if it fits, else the opposite one, else whichever of the
+ * two overflows less. Along the control the tip is then shifted inside the
+ * padding, but never so far that it stops overlapping the control's span -
+ * the side axis itself is not clamped, exactly as MiMo leaves it.
+ */
+export function fit(anchor: Box, self: Size, preferred: Placement, view: Size): { left: number; top: number; side: Placement } {
+  const first = overflow(anchor, self, preferred, view)
+  const second = overflow(anchor, self, OPPOSITE[preferred], view)
+  const side = first === 0 || first <= second ? preferred : OPPOSITE[preferred]
+  const spot = offer(anchor, self, side)
+  const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high)
+  if (side === "top" || side === "bottom") {
+    const shifted = clamp(spot.left, EDGE, view.width - self.width - EDGE)
+    return { left: clamp(shifted, anchor.left - self.width, anchor.right), top: spot.top, side }
+  }
+  const shifted = clamp(spot.top, EDGE, view.height - self.height - EDGE)
+  return { left: spot.left, top: clamp(shifted, anchor.top - self.height, anchor.bottom), side }
+}
+
+interface Layer {
+  node: HTMLElement
+  target: HTMLElement
+}
+
+interface State {
+  value: Tip | string
+  /** Opened by pointer movement since the pointer last entered: MiMo opens once per entry. */
+  moved: boolean
+  /** A press is in progress on the control, so the focus it gives does not open the tip. */
+  pressed: boolean
+  cleanup: () => void
+}
+
+const states = new WeakMap<HTMLElement, State>()
+/** The tip opened by pointer or focus. */
+let open: Layer | undefined
+/** A tip held open by `pinned`, which pointer and focus leave alone. */
+let pinned: Layer | undefined
+let pending: { target: HTMLElement; timer: ReturnType<typeof setTimeout> } | undefined
+/** When the last tip closed, for the warm window. */
 let last = 0
+let watcher: ResizeObserver | undefined
+/** session chat: the short wait after the pointer leaves a control whose card has lines to press. */
+let lingering: ReturnType<typeof setTimeout> | undefined
+/** The time the pointer has to cross the 6px gap into such a card. */
+const LINGER = 150
 
-function element(): HTMLElement {
-  if (node) return node
-  node = document.createElement("div")
-  node.className = "app-tip"
-  node.setAttribute("role", "tooltip")
-  document.body.appendChild(node)
-  return node
+function cancelLinger() {
+  if (lingering) clearTimeout(lingering)
+  lingering = undefined
 }
 
 function parse(value: Tip | string): Tip {
   return typeof value === "string" ? { label: value } : value
 }
 
-/**
- * @param clicked dismissed by a click rather than by the pointer moving on.
- *
- * Clicking ends the hunt for labels, so the next control waits the full delay
- * again; carrying the warm window through a click made tips jump out at someone
- * who had already found what they wanted.
- */
-function hide(clicked = false) {
-  if (timer) clearTimeout(timer)
-  timer = undefined
-  if (node?.classList.contains("on")) last = clicked ? 0 : Date.now()
-  current = undefined
-  node?.classList.remove("on")
+function read(el: HTMLElement): Tip {
+  return parse(states.get(el)?.value ?? "")
 }
 
-/** Where a tip would sit on a given side of the control. */
-function offer(anchor: DOMRect, self: DOMRect, placement: Placement) {
-  const middleY = anchor.top + (anchor.height - self.height) / 2
-  const middleX = anchor.left + (anchor.width - self.width) / 2
-  if (placement === "right") return { left: anchor.right + GAP, top: middleY }
-  if (placement === "left") return { left: anchor.left - self.width - GAP, top: middleY }
-  if (placement === "top") return { left: middleX, top: anchor.top - self.height - GAP }
-  return { left: middleX, top: anchor.bottom + GAP }
+function showable(tip: Tip) {
+  return Boolean(tip.label || tip.card?.title) && !tip.disabled
 }
 
-/**
- * Picks a side with room, rather than squeezing the tip into one without.
- *
- * Clamping alone was wrong: a tip on a control near the right edge slid back
- * over the control it was describing. Only the axis the tip extends along
- * decides the side; the other is clamped, which merely shifts the box along the
- * control instead of covering it.
- */
-function fit(anchor: DOMRect, self: DOMRect, preferred: Placement) {
-  const opposite: Record<Placement, Placement> = { right: "left", left: "right", top: "bottom", bottom: "top" }
-  const vw = window.innerWidth
-  const vh = window.innerHeight
+/** session chat: whether a card has a line to press, which makes the card itself take the pointer. */
+function pressable(tip: Tip): boolean {
+  return Boolean(tip.card?.lines.some((line) => typeof line === "object" && line.action))
+}
 
-  for (const placement of [preferred, opposite[preferred]]) {
-    const spot = offer(anchor, self, placement)
-    const room =
-      placement === "left" || placement === "right"
-        ? spot.left >= EDGE && spot.left + self.width <= vw - EDGE
-        : spot.top >= EDGE && spot.top + self.height <= vh - EDGE
-    if (room) return { ...spot, side: placement }
+/* session chat: one link line - the mark, then the words; pressed, it closes the card and does its action. */
+function linkLine(line: TipLine): HTMLElement {
+  const row = document.createElement(line.action ? "button" : "div")
+  row.className = "app-tip-link"
+  row.dataset.convoTipChatlink = ""
+  row.dataset.direction = line.direction
+  if (line.action) {
+    row.setAttribute("type", "button")
+    if (line.title) row.title = line.title
+    const action = line.action
+    row.addEventListener("click", (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      hide()
+      action()
+    })
   }
-  return { ...offer(anchor, self, preferred), side: preferred }
+  const mark = document.createElement("span")
+  mark.className = "app-tip-link-mark"
+  mark.setAttribute("aria-hidden", "true")
+  const dot = document.createElement("span")
+  dot.className = "app-tip-link-dot"
+  mark.appendChild(dot)
+  const words = document.createElement("span")
+  words.textContent = line.text
+  row.append(mark, words)
+  return row
 }
 
-function place(target: HTMLElement, tip: Tip) {
-  const box = element()
-  box.textContent = ""
-
-  const label = document.createElement("span")
-  label.textContent = tip.label
-  box.appendChild(label)
-
-  /*
-   * A shortcut is drawn as the keys you press, not as the string "Ctrl+K".
-   * Each token gets its own cap, which is what makes a two-key binding legible
-   * at eleven pixels.
-   */
-  if (tip.hint) {
-    const keys = document.createElement("span")
-    keys.className = "app-tip-keys"
-    for (const token of tip.hint.split("+")) {
-      const cap = document.createElement("span")
-      cap.className = "app-tip-key"
-      cap.textContent = token.trim()
-      keys.appendChild(cap)
+function render(node: HTMLElement, tip: Tip) {
+  node.textContent = ""
+  node.classList.toggle("card", Boolean(tip.card))
+  node.classList.toggle("interactive", pressable(tip))
+  if (!tip.card) {
+    node.textContent = tipText({ label: tip.label, hint: tip.hint && shownChord(tip.hint) })
+    return
+  }
+  const title = document.createElement("div")
+  title.className = "app-tip-title"
+  title.textContent = tip.card.title
+  node.appendChild(title)
+  for (const text of tip.card.lines) {
+    if (!text) continue
+    if (typeof text === "object") {
+      node.appendChild(linkLine(text))
+      continue
     }
-    box.appendChild(keys)
+    const line = document.createElement("div")
+    line.className = "app-tip-line"
+    line.textContent = text
+    node.appendChild(line)
   }
-
-  // Measured before it is shown, so the box never appears at a stale position.
-  const anchor = target.getBoundingClientRect()
-  const self = box.getBoundingClientRect()
-  const preferred = tip.placement ?? "right"
-  const spot = fit(anchor, self, preferred)
-  // The entrance slides out of the control, so the eye is sent back to it.
-  box.dataset.side = spot.side ?? preferred
-  // Flushed before `on` lands: without it the browser only recomputes once, at
-  // the end, and interpolates from the previous tip's direction - a tip below a
-  // toolbar button would slide in from the left because the last one did.
-  void box.offsetHeight
-
-  // Never let it leave the window; a tooltip half off-screen is worse than none.
-  const left = Math.min(Math.max(EDGE, spot.left), window.innerWidth - self.width - EDGE)
-  const top = Math.min(Math.max(EDGE, spot.top), window.innerHeight - self.height - EDGE)
-
-  box.style.left = `${Math.round(left)}px`
-  box.style.top = `${Math.round(top)}px`
-  box.classList.add("on")
 }
 
-function show(target: HTMLElement, tip: Tip) {
-  if (!tip.label) return
-  current = target
-  if (timer) clearTimeout(timer)
-  const warm = Date.now() - last < WARM
-  timer = setTimeout(
-    () => {
-      if (current !== target || !target.isConnected) return
-      place(target, tip)
-    },
-    warm ? 0 : DELAY,
-  )
+/** Measured from the corner, so the box's own size is never squeezed by where it last sat. */
+function position(layer: Layer, tip: Tip) {
+  const { node, target } = layer
+  node.style.left = "0px"
+  node.style.top = "0px"
+  const anchor = target.getBoundingClientRect()
+  const self = { width: node.offsetWidth, height: node.offsetHeight }
+  const spot = fit(anchor, self, tip.placement ?? "top", { width: window.innerWidth, height: window.innerHeight })
+  // The side picks the transform origin, so the scale grows out of the control.
+  node.dataset.side = spot.side
+  node.style.left = `${Math.round(spot.left)}px`
+  node.style.top = `${Math.round(spot.top)}px`
+}
+
+function reposition() {
+  for (const layer of [open, pinned]) {
+    if (layer?.target.isConnected) position(layer, read(layer.target))
+  }
+}
+
+function watch() {
+  if (typeof ResizeObserver === "undefined") return
+  watcher ??= new ResizeObserver(reposition)
+  watcher.disconnect()
+  for (const layer of [open, pinned]) {
+    if (!layer) continue
+    watcher.observe(layer.target)
+    watcher.observe(layer.node)
+  }
+}
+
+function openLayer(target: HTMLElement, tip: Tip): Layer {
+  const node = document.createElement("div")
+  node.className = "app-tip"
+  node.setAttribute("role", "tooltip")
+  render(node, tip)
+  document.body.appendChild(node)
+  const layer = { node, target }
+  // session chat: a card with lines to press stays open while the pointer is on it.
+  node.addEventListener("pointerenter", () => {
+    if (node.classList.contains("interactive")) cancelLinger()
+  })
+  node.addEventListener("pointerleave", (event) => {
+    if (!node.classList.contains("interactive")) return
+    if (event.relatedTarget instanceof Node && target.contains(event.relatedTarget)) return
+    hideFor(target)
+  })
+  position(layer, tip)
+  // Set last, after measuring: the entrance scales the box, which would skew the measurement.
+  node.dataset.state = "open"
+  return layer
+}
+
+/** Plays the exit, reversed from the entrance, then removes the node. */
+function closeLayer(layer: Layer) {
+  const { node } = layer
+  node.removeAttribute("role")
+  node.dataset.state = "closed"
+  const done = () => node.remove()
+  if (getComputedStyle(node).animationName === "none") return done()
+  node.addEventListener("animationend", done, { once: true })
+  // A window in the background advances no animation clock, so animationend may never come.
+  setTimeout(done, 400)
+}
+
+function cancel() {
+  if (pending) clearTimeout(pending.timer)
+  pending = undefined
+}
+
+/** Closes the pointer/focus tip; every close starts the warm window. */
+function hide() {
+  cancel()
+  if (!open) return
+  closeLayer(open)
+  open = undefined
+  last = Date.now()
+  watch()
+}
+
+function hideFor(el: HTMLElement) {
+  if (pending?.target === el) cancel()
+  if (open?.target === el) hide()
+}
+
+function show(el: HTMLElement) {
+  cancel()
+  const tip = read(el)
+  if (!el.isConnected || !showable(tip) || pinned?.target === el) return
+  if (open?.target === el) return
+  // Opening one closes any other, as MiMo's provider does.
+  if (open) hide()
+  open = openLayer(el, tip)
+  watch()
+}
+
+function enter(el: HTMLElement) {
+  const tip = read(el)
+  if (!showable(tip) || pinned?.target === el || open?.target === el) return
+  cancel()
+  // With a tip already up, the provider is not delayed.
+  const delay = open ? 0 : openDelay(Date.now(), last)
+  if (delay === 0) return show(el)
+  pending = { target: el, timer: setTimeout(() => show(el), delay) }
+}
+
+/** Applies the latest value: content, `disabled` and `pinned`. */
+function sync(el: HTMLElement) {
+  const tip = read(el)
+  if (tip.disabled) hideFor(el)
+  const wantsPin = Boolean(tip.pinned) && showable(tip)
+  if (wantsPin && pinned?.target !== el) {
+    if (pinned) closeLayer(pinned)
+    if (open?.target === el) {
+      pinned = open
+      open = undefined
+    } else {
+      pinned = openLayer(el, tip)
+    }
+    watch()
+  } else if (!wantsPin && pinned?.target === el) {
+    // Released while the pointer still rests on it: it stays up as an ordinary tip.
+    if (!tip.disabled && showable(tip) && el.matches(":hover") && !open) open = pinned
+    else closeLayer(pinned)
+    pinned = undefined
+    watch()
+  }
+  for (const layer of [open, pinned]) {
+    if (layer?.target !== el) continue
+    render(layer.node, tip)
+    position(layer, tip)
+  }
 }
 
 /**
  * Gives an icon-only control a name a screen reader can read.
  *
- * These buttons used to carry `title`, which the browser exposes as the
- * accessible name. A drawn tooltip is only pixels, so without this the whole
- * chrome announces itself as a row of unlabelled buttons. Anything that already
- * has a name of its own - visible text, or an explicit aria-label - is left
- * alone.
+ * A drawn tooltip is only pixels, so without this the whole chrome announces
+ * itself as a row of unlabelled buttons. Anything that already has a name of
+ * its own - visible text, or an explicit aria-label - is left alone.
  */
 function name(el: HTMLElement, tip: Tip) {
+  // A card describes something already named by its own text.
   if (!tip.label) return
   const own = el.getAttribute("aria-label")
   if (el.dataset.tipNamed !== "1" && (own || el.textContent?.trim())) return
@@ -188,62 +394,129 @@ function name(el: HTMLElement, tip: Tip) {
 
 export const tip = {
   mounted(el: HTMLElement, binding: DirectiveBinding<Tip | string>) {
-    const read = () => parse(binding.value)
-    name(el, read())
-    const enter = () => show(el, read())
-    const leave = () => hide()
     /*
-     * Only for focus the browser considers worth showing a ring for.
-     *
-     * A dialog that moves focus to its first control on open was making that
-     * control's tooltip appear unbidden, over the dialog's own heading. Keyboard
-     * focus still gets one; being focused by code does not.
+     * The value is read at the moment of use, from what `updated` last stored.
+     * The binding this hook receives is not the one later updates carry, so a
+     * tip whose label only exists once something changes stayed empty for good.
      */
-    const focused = () => {
-      if (el.matches(":focus-visible")) enter()
+    const state: State = { value: binding.value, moved: false, pressed: false, cleanup: () => undefined }
+    states.set(el, state)
+    name(el, read(el))
+
+    // MiMo opens on pointer movement, once per entry, and never for touch.
+    const move = (event: PointerEvent) => {
+      if (event.pointerType === "touch" || state.moved) return
+      state.moved = true
+      enter(el)
     }
+    const leave = (event: PointerEvent) => {
+      state.moved = false
+      // session chat: leaving for a card with lines to press - or for the gap before it - keeps the card up.
+      const layer = open
+      if (layer?.target === el && layer.node.classList.contains("interactive")) {
+        if (event.relatedTarget instanceof Node && layer.node.contains(event.relatedTarget)) return
+        cancelLinger()
+        lingering = setTimeout(() => {
+          lingering = undefined
+          if (!layer.node.matches(":hover")) hideFor(el)
+        }, LINGER)
+        return
+      }
+      hideFor(el)
+    }
+    // A press closes it, and the focus the press gives does not reopen it.
+    const release = () => {
+      state.pressed = false
+    }
+    const press = () => {
+      state.pressed = true
+      document.addEventListener("pointerup", release, { once: true })
+      hideFor(el)
+    }
+    const click = () => hideFor(el)
+    /*
+     * Any focus opens it at once, without the delay, as MiMo's does - not only
+     * keyboard focus. `trigger: "hover"` opts a control out.
+     */
+    const focus = () => {
+      if (state.pressed || read(el).trigger === "hover") return
+      show(el)
+    }
+    const blur = () => hideFor(el)
 
-    el.addEventListener("mouseenter", enter)
-    el.addEventListener("mouseleave", leave)
-    // Focus gets one too, so the keyboard is not told less than the mouse.
-    el.addEventListener("focus", focused)
-    el.addEventListener("blur", leave)
-    // A tooltip lingering over the thing that was just clicked is noise.
-    const click = () => hide(true)
-    el.addEventListener("mousedown", click)
-
-    Object.assign(el as unknown as Record<string, unknown>, {
-      __tipCleanup: () => {
-        el.removeEventListener("mouseenter", enter)
-        el.removeEventListener("mouseleave", leave)
-        el.removeEventListener("focus", focused)
-        el.removeEventListener("blur", leave)
-        el.removeEventListener("mousedown", click)
-      },
-    })
+    el.addEventListener("pointermove", move)
+    el.addEventListener("pointerleave", leave)
+    el.addEventListener("pointerdown", press)
+    el.addEventListener("click", click)
+    el.addEventListener("focus", focus)
+    el.addEventListener("blur", blur)
+    state.cleanup = () => {
+      el.removeEventListener("pointermove", move)
+      el.removeEventListener("pointerleave", leave)
+      el.removeEventListener("pointerdown", press)
+      el.removeEventListener("click", click)
+      el.removeEventListener("focus", focus)
+      el.removeEventListener("blur", blur)
+      document.removeEventListener("pointerup", release)
+    }
+    sync(el)
   },
 
   updated(el: HTMLElement, binding: DirectiveBinding<Tip | string>) {
+    const state = states.get(el)
+    if (!state) return
+    state.value = binding.value
     // Re-applied so the name follows a language change, not just the tooltip.
-    name(el, parse(binding.value))
-    if (current === el && node?.classList.contains("on")) place(el, parse(binding.value))
+    name(el, read(el))
+    sync(el)
   },
 
   unmounted(el: HTMLElement) {
-    if (current === el) hide()
-    ;(el as unknown as { __tipCleanup?: () => void }).__tipCleanup?.()
+    hideFor(el)
+    if (pinned?.target === el) {
+      pinned.node.remove()
+      pinned = undefined
+      watch()
+    }
+    states.get(el)?.cleanup()
+    states.delete(el)
   },
 }
 
 export function installTips(app: App): void {
   app.directive("tip", tip)
-  // Wrapped, not passed directly: hide() takes a flag, and an Event is truthy.
-  const dismiss = () => hide()
-  window.addEventListener("scroll", dismiss, true)
-  window.addEventListener("resize", dismiss)
-  // Anything that moves the page out from under the pointer invalidates it.
-  window.addEventListener("wheel", dismiss, { passive: true })
-  window.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") hide()
-  })
+  // A press anywhere dismisses the open tip, as MiMo's dismissable layer does.
+  document.addEventListener(
+    "pointerdown",
+    (event) => {
+      // session chat: a press on a line inside the card is the line's, not a press elsewhere.
+      if (open && event.target instanceof Node && open.node.contains(event.target)) return
+      hide()
+    },
+    true,
+  )
+  // Only a scroll that moves the control closes its tip; a list scrolling elsewhere does not.
+  window.addEventListener(
+    "scroll",
+    (event) => {
+      if (open && event.target instanceof Node && event.target.contains(open.target)) hide()
+    },
+    true,
+  )
+  // A resized window moves the tip with its control rather than dismissing it.
+  window.addEventListener("resize", reposition)
+  window.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key !== "Escape" || !open) return
+      const layer = open.target.closest('[aria-modal="true"], [role="dialog"], [role="alertdialog"], [role="menu"]')
+      hide()
+      // MiMo's tip is the top layer: over a dialog or menu, Escape shuts the tip and leaves the layer under it open.
+      if (layer) {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+      }
+    },
+    true,
+  )
 }

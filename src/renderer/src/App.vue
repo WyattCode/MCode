@@ -1,35 +1,49 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
-import { AGENT_NAMES, DEFAULT_PERMISSIONS, PERMISSION_KINDS } from "@shared/protocol"
-import type { Worktree } from "@shared/protocol"
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { AGENT_NAMES } from "@shared/protocol"
 import { useApp } from "./stores/app"
-import TitleBar from "./components/TitleBar.vue"
-import HomeView from "./components/HomeView.vue"
+import { pickDirectory, pickProjectFolder, saveText } from "./lib/native-pick"
+import Sidebar from "./components/Sidebar.vue"
+import HomeHero from "./components/HomeHero.vue"
 import SessionHero from "./components/SessionHero.vue"
 import SessionHeader from "./components/SessionHeader.vue"
 import ContextMenu from "./components/ContextMenu.vue"
 import AppMenu from "./components/AppMenu.vue"
 import MessageStream from "./components/MessageStream.vue"
+import SessionSpine from "./components/SessionSpine.vue"
 import Composer from "./components/Composer.vue"
-import TodoDock from "./components/TodoDock.vue"
-import RevertDock from "./components/RevertDock.vue"
-import FilePanel from "./components/FilePanel.vue"
+import InfoPanel from "./components/InfoPanel.vue"
+import { DEFAULT_APP_ICON } from "@shared/app-icons"
+// Pages, dialogs and previews that are not drawn at start: each its own chunk (see the note at TerminalDrawer).
+const ArtifactsView = defineAsyncComponent(() => import("./components/ArtifactsView.vue"))
+const PluginsView = defineAsyncComponent(() => import("./components/PluginsView.vue"))
+import RightPanel from "./components/RightPanel.vue"
 import CommandPalette, { type PaletteMode } from "./components/CommandPalette.vue"
-import PermissionDialog from "./components/PermissionDialog.vue"
-import SettingsDialog from "./components/SettingsDialog.vue"
+import QuestionDock from "./components/QuestionDock.vue"
+import { useQuestions } from "./stores/questions"
+import type SettingsDialogComponent from "./components/SettingsDialog.vue"
+const SettingsDialog = defineAsyncComponent(() => import("./components/SettingsDialog.vue"))
 import ProjectDialog from "./components/ProjectDialog.vue"
-import ServerPopover from "./components/ServerPopover.vue"
-import ServersDialog from "./components/ServersDialog.vue"
+const ImagePreview = defineAsyncComponent(() => import("./components/ImagePreview.vue"))
+import LiveEditPill from "./components/LiveEditPill.vue"
+import { acceptsDrop, outsideWindow } from "./lib/attach"
+import { fileRequest, reviewRequest } from "./lib/review-request"
+import { foldedMatches } from "./lib/find-folded"
+import { deliveryShown, setDeliveryView } from "./lib/delivered"
+import { closeImagePreview, closeVideoPreview, imagePreview, videoPreview } from "./lib/image-preview"
+const VideoPreview = defineAsyncComponent(() => import("./components/VideoPreview.vue"))
 import RenameDialog from "./components/RenameDialog.vue"
-import TerminalDrawer from "./components/TerminalDrawer.vue"
-import ProjectPanel from "./components/ProjectPanel.vue"
+import { markUpdateFailed, markUpdateReady, updateState } from "./components/UpdatePill.vue"
+import { interruptedReason } from "@shared/update-reason"
+import type TerminalDrawerComponent from "./components/TerminalDrawer.vue"
 import Toasts from "./components/Toasts.vue"
 import ConfirmDialog from "./components/ConfirmDialog.vue"
-import ConnectDialog from "./components/ConnectDialog.vue"
-import EditMenu from "./components/EditMenu.vue"
-import ManageModelsDialog from "./components/ManageModelsDialog.vue"
-import McpDialog from "./components/McpDialog.vue"
-import Onboarding from "./components/Onboarding.vue"
+import NewProjectDialog from "./components/NewProjectDialog.vue"
+import type { MenuItem } from "./lib/menu"
+const ConnectDialog = defineAsyncComponent(() => import("./components/ConnectDialog.vue"))
+import { connectableProviders, groupProviders, type Group } from "./lib/connect"
+import SearchOverlay from "./components/SearchOverlay.vue"
+import ErrorBoundary from "./components/ErrorBoundary.vue"
 import {
   LANGUAGES,
   RTL_LANGUAGES,
@@ -39,105 +53,303 @@ import {
   sessionTitle,
   t,
   detectLanguage,
+  languageReady,
+  loadLanguage,
+  rememberLanguage,
 } from "./lib/i18n"
 import { toggleSteps } from "./lib/steps"
 import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
 import { cycleVariant, findModel } from "./lib/model"
-import { closeTab, openTab, readStrip, stripKey, writeStrip } from "./lib/session-tabs"
-import { notify, notifyFailure } from "./lib/toast"
-import { projectName } from "./lib/project"
+import { PANEL_MIN_WIDTH, useRightPanel } from "./stores/right-panel"
+import { arbitratePanel, boundChord, clampSideWidth, panelWidthShown, sideFits, toolHints } from "./lib/right-tools"
+import { exportConversationById, exportConversationMarkdown, transcriptOf } from "./lib/convo-export"
+import { ZOOM_TOAST, dismiss, notify, notifyFailure, zoomNotice } from "./lib/toast"
+import { openDocument } from "./lib/office-open"
+import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
+import { folderName, projectName } from "./lib/project"
+import { addDraftSkill, bindDraftSources, drafts, flushDrafts, homeFilled, loadDrafts, scheduleDraftSave } from "./lib/composer-drafts"
 import { renderMarkdown } from "./lib/markdown"
-import { chordOf } from "./lib/keys"
+import { chordOf, controlChord, controlHeld, keyOfCode, modHeld, recordingChord } from "./lib/keys"
+import { normalizeChord } from "@shared/chord"
+import { projectOf } from "./lib/session-project"
 import FindBar from "./components/FindBar.vue"
-import { createFind, openFind, stepFind } from "./lib/find"
-import { play } from "./lib/sound"
-import { themeTokens } from "./lib/theme-engine"
-import { DEFAULT_THEME, THEMES, themeByID } from "./lib/theme-palettes"
+import AnnotationComposer from "./components/AnnotationComposer.vue"
+import AnnotationMarkers from "./components/AnnotationMarkers.vue"
+import { HOME_SCOPE, useAnnotations } from "./stores/annotations"
+import { mainAnnotationScope } from "./lib/annotate"
+import { createFind, openFind } from "./lib/find"
+import { chime, confirmChime } from "./lib/sound"
+import { stepTarget } from "./lib/visible-chats"
+import { fontScale } from "./lib/font-scale"
+import { announce } from "./lib/announce"
+import { dialogOpen, dismissMenus } from "./lib/escape-layer"
+import { chimeOf, longTask } from "@shared/chime"
 
 const app = useApp()
+// The confirm dock's queue: permissions and questions for the session on screen.
+const confirmDock = useQuestions()
 
 /** "home" is the launcher; "session" is a project workspace. */
-const view = ref<"home" | "session">("home")
-const leftPanel = ref(false)
+const view = ref<"home" | "session" | "artifacts" | "plugins">("home")
 /*
- * Shut to begin with, as opencode's is: a session opens on the conversation
- * alone and the review is asked for. This used to start open, so every new
- * window gave half its width to a panel that, on a project with no changes,
- * said only that there were none.
+ * The 2.0 side column; up unless it has been put away. MiMo saves the user's own
+ * fold and starts from it; a fold made for a narrow window is not saved.
  */
-const rightPanel = ref(false)
+const SIDE_COLLAPSED_KEY = "mcode.sidebarCollapsed"
+const leftPanel = ref(
+  (() => {
+    try {
+      return localStorage.getItem(SIDE_COLLAPSED_KEY) !== "true"
+    } catch {
+      return true
+    }
+  })(),
+)
+function setSide(open: boolean) {
+  leftPanel.value = open
+  try {
+    localStorage.setItem(SIDE_COLLAPSED_KEY, String(!open))
+  } catch {}
+}
+const toggleSide = () => setSide(!leftPanel.value)
 
 /*
- * The file column inside the review panel. Its own thing, because opencode
- * gives it its own shortcut: Ctrl+Shift+R shows or hides the panel, Ctrl+\\
- * folds the column away inside it.
+ * MiMo's saved composer input: read before any composer mounts, so every box
+ * starts with its draft; the annotations waiting go back to their boxes; saved
+ * as they change and once more as the page goes.
  */
-const fileTreeOpen = ref(true)
+const restoredDrafts = loadDrafts()
+const annotationStore = useAnnotations()
+for (const [scope, list] of Object.entries(restoredDrafts.annotations)) {
+  if (!annotationStore.list(scope).length) annotationStore.put(scope, list)
+}
+bindDraftSources({
+  annotations: () => annotationStore.byScope,
+  current: () => (isHome.value ? "home" : app.currentID ? `main:${app.currentID}` : undefined),
+})
+watch(() => annotationStore.byScope, scheduleDraftSave)
+window.addEventListener("pagehide", flushDrafts)
+window.addEventListener("beforeunload", flushDrafts)
+/*
+ * N11-16: the machine is back on the network. The main process cannot see
+ * this, and the backend, sitting in it, would otherwise wait out the rest of a
+ * sixty-second backoff before finding out. An application-lifetime listener,
+ * like the two above.
+ */
+window.addEventListener("online", () => window.mcode.networkBack())
+let draftScreenRestored = false
+/* The project a task typed on the home screen will be created in. */
+const homeDirectory = ref<string>()
+/* The folder the home screen has picked, which its bottom panel's terminal opens in. */
+const homeShellDirectory = ref<string>()
+
 
 /*
- * How wide the review panel is, once someone has dragged the edge. Held here
- * rather than in the panel so it survives the panel being closed and reopened.
+ * The info card beside a conversation (2.0, after Xiaomi MiMo's): the plan,
+ * what the session produced and what it read. Open unless the reader put it
+ * away, and remembered per machine - it is a way of reading, not a property
+ * of any one session. Storage can be missing or refuse (a locked-down
+ * profile), in which case the card simply starts open every time.
  */
-const reviewWidth = ref<number>()
+const INFO_KEY = "mcode.infoPanel"
+const infoOpen = ref(readInfoOpen())
+
+function readInfoOpen(): boolean {
+  try {
+    return localStorage.getItem(INFO_KEY) !== "0"
+  } catch {
+    return true
+  }
+}
+
+function setInfoOpen(next: boolean) {
+  infoOpen.value = next
+  try {
+    localStorage.setItem(INFO_KEY, next ? "1" : "0")
+  } catch {
+    // Remembered for this run only.
+  }
+}
 
 /*
- * The right-hand panel's tab strip: which tabs it offers, and which is up.
- *
- * Two bits rather than one. `contextTab` is whether Context is in the strip at
- * all - opencode puts it there only once something has asked for it and takes
- * it out again when it is closed - and `panelTab` is which of the two is being
- * read. Held apart because opencode leaves the Context tab in the strip while
- * the review is being read, so going back to the figures is one click on a tab
- * that is still there rather than a fresh trip through the ring.
- *
- * Both live here rather than in the panel because the ring in the session
- * header is what usually opens the Context tab, and the header is a sibling of
- * the panel: neither of the two can see the other, and only this can see both.
- *
- * Neither is a plain ref any more. They read and write one entry of a
- * per-session map (lib/session-tabs.ts), which is how the reference holds the
- * same state - so a Context tab opened in one conversation is still open when
- * that conversation is returned to, and is not there in the next one. What used
- * to do that job, a watch emptying both on every session change, is gone: the
- * map already answers per session, and the watch would now be erasing the very
- * thing that is being remembered.
+ * MiMo's two ways of showing the card. Beside the conversation while the main
+ * column is at least 790 wide - 480 of chat and the 310 the card takes - and
+ * floating over it below that. Floating is its own flag, never remembered,
+ * shut whenever the column crosses the line either way, and shut again by a
+ * click anywhere outside the card.
  */
-/** The one tab this app has beside the permanent review. */
-const CONTEXT_TAB = "context"
+const INFO_INLINE_MIN = 790
+const INFO_PANEL_WIDTH = 310
+const mainWidth = ref(0)
+const viewportWide = ref(false)
+const infoFloating = computed(() => mainWidth.value > 0 && mainWidth.value < INFO_INLINE_MIN)
+const infoOverlayOpen = ref(false)
+watch(infoFloating, () => (infoOverlayOpen.value = false))
 
-const tabsKey = computed(() => stripKey(app.current?.directory, app.current?.id))
-const strip = computed(() => readStrip(tabsKey.value))
+function toggleInfo() {
+  if (infoFloating.value) infoOverlayOpen.value = !infoOverlayOpen.value
+  else setInfoOpen(!infoOpen.value)
+}
 
-const contextTab = computed({
-  get: () => strip.value.all.includes(CONTEXT_TAB),
-  set: (open: boolean) =>
-    writeStrip(tabsKey.value, open ? openTab(strip.value, CONTEXT_TAB) : closeTab(strip.value, CONTEXT_TAB)),
+function closeInfo() {
+  if (infoFloating.value) infoOverlayOpen.value = false
+  else setInfoOpen(false)
+}
+
+/*
+ * Only beside a conversation: the home screen and an empty session have nothing
+ * to list. Not while the right panel is expanded over the conversation either,
+ * as MiMo draws nothing of the card then.
+ */
+const infoShowing = computed(
+  () =>
+    !isHome.value &&
+    !empty.value &&
+    !(rp.open && rp.fullscreen) &&
+    (infoFloating.value ? infoOverlayOpen.value : infoOpen.value),
+)
+const infoInline = computed(() => infoShowing.value && !infoFloating.value)
+
+/*
+ * How much of the column the card holds clear: only what keeps MiMo's 768
+ * reading column (1000 on a 2000px screen) out from under a 310 card, so a wide
+ * window gives up nothing at all.
+ */
+const infoInset = computed(() => {
+  if (!infoInline.value) return "0px"
+  const column = viewportWide.value ? 1000 : 768
+  const need = column + INFO_PANEL_WIDTH * 2 - mainWidth.value
+  return `${Math.max(0, Math.min(INFO_PANEL_WIDTH, need))}px`
 })
 
-const panelTab = computed<"review" | "context">({
-  get: () => (strip.value.active === CONTEXT_TAB ? "context" : "review"),
-  set: (tab) => writeStrip(tabsKey.value, { all: strip.value.all, active: tab }),
+let mainObserver: ResizeObserver | undefined
+onMounted(() => {
+  const pane = mainPane.value
+  if (!pane) return
+  mainObserver = new ResizeObserver(([entry]) => {
+    if (!entry) return
+    mainWidth.value = entry.contentRect.width
+    viewportWide.value = window.innerWidth >= 2000
+  })
+  mainObserver.observe(pane)
 })
+onBeforeUnmount(() => mainObserver?.disconnect())
 
 /*
- * Turned off entirely, the panel is not something a shortcut should be able to
- * bring back - the setting is the answer, not a suggestion.
+ * A version the main process's updater has downloaded and is waiting to run.
+ *
+ * MiMo checks on its own, 5 s after launch and every 3 h, and downloads a newer
+ * installer without asking; the capsule, its bubble and the settings row take a
+ * ready update from here, and nothing interrupts.
  */
-const showFileTree = computed(() => app.config?.showFileTree !== false)
+const downloadedUpdate = ref<string>()
+/** A check in flight, so the update page can say 检查中… and not start another. */
+const updateChecking = ref(false)
+/** The one notice a check asked for by hand lives under, from 正在检查更新… to its answer. */
+const UPDATE_CHECK_TOAST = "update-check"
+
+type UpdateStatus = Awaited<ReturnType<typeof window.mcode.updateStatus>>
+
+function takeUpdateState(state: UpdateStatus) {
+  if (!state.ready) return
+  downloadedUpdate.value = state.ready.version
+  // A capsule already installing, or failed, for this same version keeps its phase.
+  if (updateState.phase === "idle" || updateState.version !== state.ready.version) markUpdateReady(state.ready.version, state.ready.notes)
+}
+
+let offUpdateState: (() => void) | undefined
+onMounted(() => {
+  // The ready event may have gone out before this window was listening.
+  void window.mcode
+    .updateStatus()
+    .then((state) => {
+      takeUpdateState(state)
+      /* MiMo's interrupted-update notice: the last install did not finish, said once, by its reason; the capsule offers 重试. */
+      if (state.interrupted) {
+        const { reason, hint } = interruptedReason(state.interrupted.error)
+        markUpdateFailed(reason, hint, state.interrupted.targetVersion || undefined)
+      }
+    })
+    .catch(() => {})
+  offUpdateState = window.mcode.onUpdateState((state) => {
+    takeUpdateState(state)
+    /* A check asked for by hand says when it has moved on to downloading, as MiMo's toasts do. */
+    if (updateChecking.value && state.phase === "downloading") notify(t("update.downloading"), { id: UPDATE_CHECK_TOAST, duration: 0, closable: false })
+  })
+})
+onBeforeUnmount(() => offUpdateState?.())
+
 const terminalOpen = ref(false)
+/** How tall the docked terminal is, so the info card can end above it. */
+const drawerHeight = ref(0)
+
+/*
+ * MiMo's drop overlay: while files are dragged over the main column, it says
+ * they will be added. Only files and links count, as in MiMo - dragged text is
+ * not a file - and not while a dialog or overlay has the window. Over the side
+ * column or the side panel nothing lights, because nothing would be added.
+ */
+const fileDrag = ref(false)
+
+function trackDrag(event: DragEvent) {
+  if (!acceptsDrop(event.dataTransfer?.types)) return
+  /*
+   * The box takes the drag for itself. MiMo stops the event there, so the
+   * column behind never learns of it and shows only the box's own ring; a
+   * listener on the window cannot be stopped, so the box is recognised by its
+   * element instead.
+   */
+  const target = event.target instanceof Element ? event.target : undefined
+  const overBox = Boolean(target?.closest(".composer-wrap, .box"))
+  const overMain = Boolean(target?.closest(".main"))
+  // The copy a closing dialog leaves behind carries the scrim's classes for
+  // 200ms; it is a picture of a layer, not one, and must not hold the drop
+  // ring back, as escape-layer and the click guard already know.
+  const covered = [...document.querySelectorAll(".scrim, .overlay")].some((node) => !node.closest("[data-modal-exit]"))
+  fileDrag.value = overMain && !overBox && !covered
+}
+
+function leaveDrag(event: DragEvent) {
+  // Leaving one element for another inside the window is not leaving the window.
+  if (outsideWindow(event)) fileDrag.value = false
+}
+
+function endDrag() {
+  fileDrag.value = false
+}
+
+/*
+ * MiMo has no window of what changed after an update - its update pill says so
+ * before the update. The key an earlier build kept the last version it had
+ * shown notes for under is taken away so it cannot linger.
+ */
+try {
+  localStorage.removeItem("mcode.highlights.v1")
+} catch {}
 
 /*
  * Find-in-view over the conversation.
  *
  * opencode mounts its find on the file and diff viewers; this app has one here
  * because the conversation is the long scrolling thing a reader most often
- * wants to search. FilePanel and ReviewPatch can each mount a second host in
- * two lines when someone owns those files - the module keeps a set of hosts and
- * hands Ctrl+F to whichever one the focus is in.
+ * wants to search. The module keeps a set of hosts and hands Ctrl+F to
+ * whichever one the focus is in, so another viewer can mount one of its own.
  */
 const mainPane = ref<HTMLElement>()
-const find = createFind({ wrapper: () => mainPane.value })
+const find = createFind({ wrapper: () => mainPane.value, hidden: foldedMatches })
 onMounted(() => find.mount())
+
+/*
+ * The bar is mounted on the pane, and every view lives in that pane: opening
+ * another conversation, or leaving for the artifacts or plugins page, puts
+ * different text under a bar that is still counting the old one's matches and
+ * still holding ranges that have left the document. The scan is run again so
+ * the count, the highlights and 上一个/下一个 describe what is on screen.
+ */
+watch([() => app.currentID, view, () => app.messages.length], () => {
+  if (!find.open.value) return
+  void nextTick(() => find.refresh({ reset: true }))
+})
 
 /*
  * A notification that was clicked opens what it was about.
@@ -150,45 +362,79 @@ onMounted(() => {
     if (sessionID && sessionID !== app.currentID) void app.open(sessionID)
   })
   onBeforeUnmount(off)
+  const offLink = window.mcode.onOpenLink(receiveLink)
+  onBeforeUnmount(offLink)
 })
 onBeforeUnmount(() => find.unmount())
-const mcpOpen = ref(false)
 const paletteOpen = ref(false)
+/* MiMo's search over conversations, projects and artifacts: the side column's magnifier and Ctrl+K. */
+const searchOpen = ref(false)
+const searchOverlay = ref<InstanceType<typeof SearchOverlay>>()
+
+/* Ctrl+K opens the search, or plays its exit when it is already up. */
+function toggleSearch() {
+  if (!searchOpen.value) searchOpen.value = true
+  else if (searchOverlay.value) searchOverlay.value.close()
+  else searchOpen.value = false
+}
 const settingsOpen = ref(false)
 /** Non-default landing page for the settings dialog, when opened from a shortcut. */
-const settingsSection = ref<"general" | "keys" | "server" | "providers" | "models">()
-
-/** The server control opens its own panel rather than general settings. */
-const serverPanel = ref(false)
+const settingsSection = ref<"general" | "keys" | "models" | "mcp" | "archive">()
 /*
- * Three things need a line of text from the user, and Electron has no
- * window.prompt to fall back on - it throws outright. Each is a flag rather
- * than a promise so the dialog stays declarative like every other overlay.
+ * The header, so the rename command can start the title's own editor. Renaming
+ * is inline now - there is no dialog left for a flag to open.
  */
-const renaming = ref(false)
-/** The project a new workspace is being branched from, while it is being named. */
-const namingWorkspace = ref<string>()
-const choosingServer = ref(false)
-/** Whether the saved-servers dialog is up. */
-const managingServers = ref(false)
 
-function openSettings() {
-  settingsSection.value = undefined
+/*
+ * The model menu's "configure custom models" lands on the models page, as MiMo's
+ * does; the MCP command and Ctrl+; land on the MCP page, MiMo's only MCP screen.
+ */
+function openSettings(section?: unknown) {
+  settingsSection.value = section === "models" || section === "mcp" || section === "archive" ? section : undefined
   settingsOpen.value = true
 }
 
-/**
- * The title bar's server control carries a server icon and a status light, so
- * it has to land on the server page - sending it to general settings made the
- * icon a lie.
- */
-function openServerInfo() {
-  settingsSection.value = "server"
-  settingsOpen.value = true
-}
 /** Directory whose presentation is being edited, if any. */
 const editingProject = ref<string>()
+
+/* MiMo's single rename dialog, for a conversation or for a project. */
+const renamingSession = ref<{ id: string; title: string }>()
+const renamingProject = ref<string>()
+
+function beginRename(sessionID = app.currentID) {
+  const session = app.sessions.find((entry) => entry.id === sessionID)
+  if (session) renamingSession.value = { id: session.id, title: sessionTitle(session.title) }
+}
+
+/* The dialog closes first, then the rename runs, as MiMo orders it. */
+async function submitSessionRename(title: string) {
+  const target = renamingSession.value
+  renamingSession.value = undefined
+  if (target && title !== target.title) await app.rename(target.id, title)
+}
+
+/* MiMo's project rename: another project already under that name is refused, and the new name is said. */
+async function submitProjectRename(name: string) {
+  const directory = renamingProject.value
+  renamingProject.value = undefined
+  if (!directory) return
+  const names = app.config?.projectNames ?? {}
+  if (app.projects.some((other) => other !== directory && projectName(other, names) === name)) {
+    notifyFailure(t("toast.projectNameTaken", { name }))
+    return
+  }
+  await app.patchConfig({ projectNames: { ...names, [directory]: name } })
+  notify(t("toast.projectRenamedTo", { name }), { level: "success" })
+}
+
+/* MiMo's revealInFinder: the file manager's name once it is shown, or why it could not be. */
+async function revealFolder(directory: string) {
+  const result = await window.mcode.revealFile(directory, "")
+  if (result.ok) notify(revealLabel())
+  else notifyFailure(t("rp.files.revealFailed", { error: result.error || t("rp.files.pathNotExist") }))
+}
 const composer = ref<InstanceType<typeof Composer>>()
+const homeHero = ref<InstanceType<typeof HomeHero>>()
 const stream = ref<InstanceType<typeof MessageStream>>()
 
 /*
@@ -206,145 +452,7 @@ provideRestoreDraft((message) => {
   }
   composer.value?.set(draftFromMessage(message))
 })
-const paletteMode = ref<PaletteMode>("all")
-
-/**
- * Starts a workspace: a second checkout of the project, on its own branch.
- *
- * A session is opened in it straight away, because a workspace with nothing
- * working in it is just a directory - the point is to take this conversation
- * somewhere it cannot collide with the one next door.
- */
-function newWorkspace() {
-  const directory = app.current?.directory ?? app.config?.directory
-  if (!directory) return
-  namingWorkspace.value = directory
-}
-
-async function createWorkspace(directory: string, name: string) {
-  namingWorkspace.value = undefined
-  if (!name.trim()) return
-  try {
-    const made = await app.client?.request({
-      type: "workspace.create",
-      directory,
-      name: name.trim(),
-    })
-    if (!made) return
-    await app.create(made.directory)
-    notify(t("workspace.created", { name: made.branch }))
-  } catch (err) {
-    notifyFailure(t("workspace.failed"), err instanceof Error ? err.message : String(err))
-  }
-}
-
-/**
- * The workspace being deleted, and what deleting it would cost.
- *
- * `workspace.remove` has been on the wire and handled by the server since
- * workspaces were built, and nothing in the interface ever called it - a
- * workspace could be made and switched to but never removed, so the worktrees
- * piled up and the only way out was the command line.
- *
- * The state is the whole confirmation rather than a flag, because the warning
- * depends on what git says: `git worktree remove --force` discards uncommitted
- * work without asking, and the reference tells you before that happens
- * (`workspace.status.dirty`, "unmerged changes detected in this workspace").
- */
-const deletingWorkspace = ref<{ target: string; from: string; dirty: boolean }>()
-
-/** The other checkouts of the repository the open session sits in. */
-async function worktreesHere(): Promise<{ list: Worktree[]; here: string } | undefined> {
-  const here = app.current?.directory ?? app.config?.directory
-  if (!here) return undefined
-  const listed = await app.client?.request({ type: "workspace.list", directory: here })
-  if (!listed?.worktrees.length) return undefined
-  return { list: listed.worktrees, here }
-}
-
-/** Whether the session on screen is in a workspace that could be removed. */
-const inRemovableWorkspace = ref(false)
-
-async function refreshWorkspaceKind() {
-  const found = await worktreesHere().catch(() => undefined)
-  const here = found?.here
-  inRemovableWorkspace.value = Boolean(
-    here && found?.list.some((entry) => entry.directory === here && !entry.main),
-  )
-}
-
-async function askDeleteWorkspace() {
-  // A repository git cannot read is a reason to say so, not to leave a
-  // rejected promise behind the `void` at the call site.
-  const found = await worktreesHere().catch(() => undefined)
-  if (!found) return
-  const { list, here } = found
-  const main = list.find((entry) => entry.main)
-  if (!main || main.directory === here) {
-    // The repository's own checkout is not a workspace and cannot be removed.
-    notify(t("workspace.deleteMain"))
-    return
-  }
-
-  /*
-   * Asked from the main checkout, because a worktree cannot be removed from
-   * inside itself - and asked before the dialog so the dialog can say what is
-   * at stake rather than warning about it afterwards.
-   */
-  let dirty = false
-  try {
-    const status = await app.gitStatus(here)
-    dirty = Boolean(status.changed.length)
-  } catch {
-    // A repository that cannot be read is treated as having something to lose.
-    dirty = true
-  }
-  deletingWorkspace.value = { target: here, from: main.directory, dirty }
-}
-
-async function confirmDeleteWorkspace() {
-  const asked = deletingWorkspace.value
-  deletingWorkspace.value = undefined
-  if (!asked) return
-  try {
-    await app.client?.request({ type: "workspace.remove", directory: asked.from, target: asked.target })
-    // The directory the session was in is gone, so it cannot be left open on it.
-    await app.create(asked.from)
-    notify(t("workspace.deleted"))
-  } catch (err) {
-    notifyFailure(t("workspace.deleteFailed"), err instanceof Error ? err.message : String(err))
-  }
-  void refreshWorkspaceKind()
-}
-
-/*
- * Re-asked whenever the session changes, because the answer is a property of
- * the directory that session sits in - and the command's enabled state is read
- * long before anyone opens the palette.
- */
-watch(() => app.current?.directory ?? app.config?.directory, () => void refreshWorkspaceKind(), {
-  immediate: true,
-})
-
-/** Opens a session in another checkout of the same repository. */
-async function switchWorkspace() {
-  const directory = app.current?.directory ?? app.config?.directory
-  if (!directory) return
-  const listed = await app.client?.request({ type: "workspace.list", directory })
-  const others = (listed?.worktrees ?? []).filter((entry) => entry.directory !== directory)
-  if (!others.length) {
-    notify(t("workspace.none"))
-    return
-  }
-  // One other checkout needs no picker; more than one goes through the palette
-  // the same way projects do.
-  if (others.length === 1) {
-    await app.create(others[0].directory)
-    return
-  }
-  workspaceChoices.value = others.map((entry) => entry.directory)
-  openPalette("projects")
-}
+const paletteMode = ref<PaletteMode>("files")
 
 /**
  * Writes out what the app has been complaining about.
@@ -370,86 +478,73 @@ async function exportLog() {
     `MCode log`,
     `exported ${new Date().toISOString()}`,
     `platform ${navigator.userAgent}`,
-    `theme ${app.config?.themeID ?? "oc-2"} / ${app.config?.theme ?? "system"}`,
+    `theme ${app.config?.theme ?? "system"}`,
     `language ${language.value}`,
     "",
   ]
   const body = logLines.length ? logLines : [t("log.empty")]
-  const saved = await window.mcode.saveText("mcode-log.txt", [...header, ...body].join("\n"))
-  if (saved) notify(t("log.saved"), saved, revealAction(saved))
+  const saved = await saveText("mcode-log.txt", [...header, ...body].join("\n"))
+  if (saved) notify(t("log.saved"), { action: revealAction(saved) })
 }
 
 /**
- * Points the window at another server, or back at the local one.
- *
- * The address is remembered, so the choice survives a restart - a server the
- * user has to re-enter every morning is not a server they will use.
- */
-function chooseServer() {
-  choosingServer.value = true
-}
-
-async function applyServer(answer: string) {
-  choosingServer.value = false
-  const url = answer.trim()
-  if (url && !/^wss?:\/\//.test(url)) {
-    notifyFailure(t("server.badURL"))
-    return
-  }
-  /*
-   * The socket moves first. Writing the config is a request over it, so doing
-   * that first meant a server that had stopped answering could not be left -
-   * the write to change the address had to reach the address being changed.
-   * Local storage is what the next boot reads, and is written here too.
-   */
-  if (url) localStorage.setItem("mcode.serverURL", url)
-  else localStorage.removeItem("mcode.serverURL")
-  app.client?.useServer(url)
-  void app.patchConfig({ serverURL: url })
-  notify(url ? t("server.switched", { url }) : t("server.local"))
-}
-
-/**
- * Asks the configured feed whether there is a newer release.
+ * MiMo's updateCheckNow, from the settings row, the menu or the palette.
  *
  * There is no update service behind this app, so the feed is whatever the user
- * points it at - a JSON document with a `version`. With none configured the
- * command says so rather than pretending to have checked.
+ * points it at - an update folder with electron-builder's latest.yml. The main
+ * process reads it and downloads and verifies a newer installer (the window's
+ * content policy reaches nothing but the local backend); this only says how it
+ * went. With no feed configured the command says so rather than pretending to
+ * have checked.
  */
 async function checkForUpdates() {
-  const feed = app.config?.updateFeed?.trim()
-  if (!feed) {
-    notifyFailure(t("update.noFeed"))
-    return
-  }
+  if (updateChecking.value) return
+  updateChecking.value = true
+  /*
+   * MiMo's sticky 正在检查更新…, up for as long as the check (and a download)
+   * runs, with no ✕; the result then takes its place under the same id, so the
+   * one notice turns into the answer rather than a second one appearing.
+   */
+  const checking = notify(t("update.checking"), { id: UPDATE_CHECK_TOAST, duration: 0, closable: false })
   try {
-    /*
-     * Asked of the main process rather than fetched here. This window is served
-     * under a content policy that lets it open a socket to the local backend and
-     * reach nothing else, so its own fetch of the feed never left the process -
-     * the check reported "Failed to fetch" whatever the feed said.
-     */
-    const { version } = await window.mcode.checkUpdates(feed)
-    if (!version) throw new Error("the feed named no version")
-    notify(version === app.version ? t("update.current") : t("update.available", { version }))
+    const result = await window.mcode.updateCheckNow()
+    takeUpdateState(result)
+    if (result.outcome === "current") notify(t("update.current"), { id: checking })
+    else if (result.outcome === "ready") notify(t("update.readyToast"), { id: checking, level: "success" })
+    else if (result.outcome === "no-feed") notifyFailure(t("update.noFeed"), { id: checking })
+    else if (result.outcome === "failed") {
+      notifyFailure(t(result.during === "download" ? "update.failed" : "update.checkFailed"), { id: checking, body: result.error ?? "" })
+    } else dismiss(checking)
   } catch (err) {
-    /*
-     * Electron wraps anything thrown in a handler as "Error invoking remote
-     * method 'mcode:check-updates': ...", which tells the reader about our IPC
-     * rather than about their feed. Only the reason is worth showing.
-     */
-    notifyFailure(t("update.failed"), reasonOf(err))
+    // Electron prefixes the IPC plumbing; only the reason is worth showing.
+    notifyFailure(t("update.checkFailed"), { id: checking, body: reasonOf(err) })
+  } finally {
+    updateChecking.value = false
   }
 }
 
-/** Chord to command id, for whatever the user has re-bound. */
+/**
+ * Chord to command id, for whatever the user has re-bound.
+ *
+ * Read in the physical-key spelling `chordOf` produces, so a binding written
+ * the old printed way (Ctrl+Shift+{) that reached the config some other way
+ * than the load-time migration still fires.
+ */
 const rebound = computed(() => {
   const out = new Map<string, string>()
   for (const [id, chord] of Object.entries(app.config?.keybinds ?? {})) {
-    if (chord) out.set(chord, id)
+    // Only a chord written as text is one; the backend drops anything else as it reads the file.
+    if (chord && typeof chord === "string") out.set(normalizeChord(chord), id)
   }
   return out
 })
+/* The application menu names the chords as bound (MiMo's menu does), and none while one is being recorded. */
+watch(
+  [() => app.config?.keybinds, recordingChord],
+  ([binds, recording]) => window.mcode.menuKeys?.({ binds: { ...(binds ?? {}) }, recording }),
+  { immediate: true, deep: true },
+)
+
 /**
  * Built-in chords whose command has been moved somewhere else.
  *
@@ -468,16 +563,29 @@ const retiredChords = computed(() => {
   const out = new Set<string>()
   for (const command of bindableCommands.value) {
     const custom = binds[command.id]
-    if (!custom || !command.hint || custom === command.hint) continue
+    // Absent means untouched; an empty string means its built-in chord was deleted on the shortcuts page.
+    if (custom === undefined || !command.hint || custom === command.hint) continue
     if (claimed.has(command.hint)) continue
     out.add(command.hint)
   }
   return out
 })
 
-const drawer = ref<InstanceType<typeof TerminalDrawer>>()
-/* Set while the project picker is standing in for a workspace picker. */
-const workspaceChoices = ref<string[]>([])
+/*
+ * The terminal is fetched the first time one is opened rather than built into
+ * the shell. MiMo keeps its terminal out of the entry chunk the same way -
+ * ./vendor/xterm.js, addon-fit.js and pty-term.js are injected into the
+ * document only when a terminal is first attached - while this bundle carried
+ * xterm, its two addons and its stylesheet in the always-loaded chunk because
+ * the drawer was imported like any other panel. Measured: the entry chunk was
+ * 6 197 212 B against MiMo's 2 271 966 B, and was the only built file holding
+ * xterm at all. The drawer is only ever rendered behind `terminalUp`, so the
+ * fetch happens on the press that opens it.
+ */
+const TerminalDrawer = defineAsyncComponent(() => import("./components/TerminalDrawer.vue"))
+
+const drawer = ref<InstanceType<typeof TerminalDrawerComponent>>()
+const rightPanel = ref<InstanceType<typeof RightPanel>>()
 
 /**
  * Runs what was typed in the composer's shell mode.
@@ -505,7 +613,111 @@ async function runShellCommand(command: string) {
  * are the same list with a different filter, so they are the same surface here
  * rather than three dialogs that would drift apart.
  */
-function openPalette(mode: PaletteMode = "all") {
+/*
+ * The project picker answers two questions: which project a new task starts
+ * in, and which project a conversation moves to. Which one is being asked is
+ * held in `movingSession` while the picker is up.
+ */
+async function pickedProject(directory: string) {
+  const moving = movingSession.value
+  const many = movingMany.value
+  movingSession.value = undefined
+  movingMany.value = undefined
+  if (many?.length) {
+    for (const sessionID of many) await app.move(sessionID, directory)
+    selecting.value = undefined
+    return
+  }
+  if (moving) {
+    await app.move(moving, directory)
+    return
+  }
+  startIn(directory)
+}
+
+/* Set while the picker is being used to move everything that is ticked. */
+const movingMany = ref<string[]>()
+
+/** A conversation ticked or unticked in the side column's selection mode. */
+function toggleSelected(sessionID: string) {
+  const current = selecting.value ?? []
+  selecting.value = current.includes(sessionID)
+    ? current.filter((entry) => entry !== sessionID)
+    : [...current, sessionID]
+}
+
+/**
+ * What the selection bar asks for.
+ *
+ * Each of these is the single-conversation action run over the set, so the
+ * rules that already hold - leaving an archived session, the confirmation
+ * before a delete - hold here too.
+ */
+async function runBatch(action: "archive" | "move" | "delete" | "cancel" | "all" | "none", ids: string[] = []) {
+  const chosen = selecting.value ?? []
+  if (action === "cancel") {
+    selecting.value = undefined
+    return
+  }
+  // MiMo's select all: every conversation the column lists; its other half ticks none.
+  if (action === "all" || action === "none") {
+    selecting.value = action === "all" ? [...ids] : []
+    return
+  }
+  if (!chosen.length) return
+  if (action === "archive") {
+    await archiveSessions([...chosen])
+    selecting.value = undefined
+    return
+  }
+  if (action === "move") {
+    movingMany.value = [...chosen]
+    openPalette("projects")
+    return
+  }
+  deletingMany.value = [...chosen]
+}
+
+async function confirmDeleteMany() {
+  const targets = deletingMany.value ?? []
+  deletingMany.value = undefined
+  for (const sessionID of targets) await app.remove(sessionID)
+  selecting.value = undefined
+  // MiMo's removeMany: one notice for the batch.
+  if (targets.length) notify(t("toast.convosDeleted", { n: targets.length }), { level: "success" })
+}
+
+/*
+ * MiMo's archive notice (store:threads): one per action, with 撤销 for the
+ * conversations still archived and 已归档 to the Settings page. With nothing
+ * to archive it says that instead.
+ */
+async function archiveSessions(ids: string[]) {
+  if (!ids.length) {
+    notify(t("toast.noConvosToArchive"))
+    return
+  }
+  for (const sessionID of ids) await app.archive(sessionID, true)
+  notify(ids.length === 1 ? t("toast.convoArchived") : t("toast.archivedNConvos", { count: ids.length }), {
+    level: "success",
+    links: [
+      { label: t("toast.archiveUndo"), run: () => void undoArchive(ids) },
+      { label: t("toast.viewArchived"), run: () => openSettings("archive") },
+    ],
+  })
+}
+
+/* Only what is still archived comes back; if none is, MiMo says the undo failed. */
+async function undoArchive(ids: readonly string[]) {
+  const still = ids.filter((id) => app.sessions.some((session) => session.id === id && session.archived))
+  if (!still.length) {
+    notifyFailure(t("toast.archiveUndoFailed"))
+    return
+  }
+  for (const sessionID of still) await app.archive(sessionID, false)
+}
+
+function openPalette(mode: PaletteMode) {
   paletteMode.value = mode
   paletteOpen.value = true
 }
@@ -529,7 +741,6 @@ function addSelection() {
 /** Which rail badge has its panel open, and where to anchor it. */
 
 const theme = computed(() => app.config?.theme ?? "system")
-const themeID = computed(() => app.config?.themeID ?? DEFAULT_THEME)
 
 // The palette is defined against :root, so the override has to land on <html>.
 // Setting it on a wrapper element silently does nothing - "system" would still
@@ -544,9 +755,9 @@ watch(
 )
 
 /*
- * Which scheme is actually showing. "System" is the default, so the palette
- * below cannot be chosen from the setting alone - it has to follow the OS, and
- * follow it while the window is open rather than only at startup.
+ * Which scheme is actually showing. "System" is the default, so it cannot be
+ * read from the setting alone - it has to follow the OS, and follow it while
+ * the window is open rather than only at startup.
  */
 const schemeQuery = window.matchMedia("(prefers-color-scheme: dark)")
 const systemDark = ref(schemeQuery.matches)
@@ -555,158 +766,406 @@ const darkScheme = computed(() =>
   theme.value === "system" ? systemDark.value : theme.value === "dark",
 )
 
-/**
- * Paints the chosen palette onto the document.
- *
- * The stylesheet already carries a full set of colours - they are OC-2, run
- * through this same generator - so this writes over them rather than filling a
- * blank. Setting the properties inline is what lets one theme override all
- * three of the stylesheet's blocks at once, media query included.
+/*
+ * The colours are the stylesheet's, as MiMo's are: tokens.css carries MCode's
+ * one palette for both schemes, and `data-theme` above picks between them.
+ * The caption buttons are the OS's, drawn over a transparent fill. It knows the
+ * system theme but not this app's, so it has to be told which one won.
+ */
+watch(darkScheme, (dark) => window.mcode.titlebarMode(dark ? "dark" : "light"), { immediate: true })
+
+/*
+ * MiMo's native theme: main sets the OS-drawn surfaces (context menus, the
+ * tray menu, message boxes, the pre-paint background) to the chosen scheme and
+ * keeps it for the next launch's first paint.
+ */
+watch(theme, (value) => window.mcode.nativeTheme(value), { immediate: true })
+
+/*
+ * MiMo's exit-full-screen button. On Windows the caption buttons are the OS's
+ * overlay, and full screen takes them away with nothing left to click; the
+ * button stands in until the window leaves full screen.
+ */
+const fullScreen = ref(false)
+let offFullscreen: (() => void) | undefined
+onMounted(() => {
+  void window.mcode
+    .isFullscreen()
+    .then((value) => (fullScreen.value = value))
+    .catch(() => {})
+  offFullscreen = window.mcode.onFullscreen((value) => (fullScreen.value = value))
+})
+onBeforeUnmount(() => offFullscreen?.())
+const exitFullScreen = () => window.mcode.exitFullscreen()
+
+/*
+ * The icon the window wears. Main cannot read the config document, so it is
+ * told - at startup as well as on a change, because a window created before
+ * the config arrived is wearing the packaged default.
  */
 watch(
-  [themeID, darkScheme],
-  ([id, dark]) => {
-    const tokens = themeTokens(themeByID(id), dark)
-    for (const [name, value] of Object.entries(tokens)) {
-      document.documentElement.style.setProperty(name, value)
-    }
-    // The caption buttons are the OS's, drawn over a transparent fill. It knows
-    // the system theme but not this app's, so it has to be told which one won.
-    window.mcode.titlebarMode(dark ? "dark" : "light")
-  },
+  () => app.config?.appIcon ?? DEFAULT_APP_ICON,
+  (id) => void window.mcode.appIcon(id),
+  { immediate: true },
+)
+
+/* And whether there is an icon in the corner at all. */
+watch(
+  () => app.config?.tray ?? true,
+  (enabled) => window.mcode.tray(enabled),
   { immediate: true },
 )
 
 /*
- * A chosen typeface goes in front of the built-in stack rather than replacing
- * it: a name that turns out not to be installed then falls through to what was
- * there before instead of dropping the app to Times New Roman. The name is
- * quoted so a face with a space in it - "JetBrains Mono" - survives.
+ * Choices that are answered by the stylesheet rather than by a component: the
+ * cursor over what can be pressed, whether anything animates, how a diff marks
+ * its changed lines, and how text is smoothed.
+ *
+ * They land on <html> because each one reaches across the whole window - a
+ * wrapper element would leave out every dialog, menu and tooltip, which are
+ * exactly the places a transition is most noticeable.
  */
 watch(
-  () => [app.config?.uiFont, app.config?.codeFont, app.config?.terminalFont] as const,
-  ([ui, code, terminal]) => {
+  () =>
+    [
+      app.config?.pointerCursor ?? true,
+      app.config?.reduceMotion ?? "system",
+      app.config?.diffMarks ?? "color",
+      app.config?.fontSmoothing ?? true,
+    ] as const,
+  ([cursor, motion, marks, smoothing]) => {
+    const root = document.documentElement
+    root.setAttribute("data-cursor", cursor ? "pointer" : "default")
+    root.setAttribute("data-motion", motion)
+    root.setAttribute("data-diff-marks", marks)
+    root.setAttribute("data-smoothing", smoothing ? "on" : "off")
+  },
+  { immediate: true },
+)
+
+
+/*
+ * The two sizes on the appearance page, carried the way MiMo carries them: a
+ * scale on the root that every size in the interface is multiplied by - text
+ * by the UI scale, code in the transcript and the diffs by the code one. At
+ * the defaults both are 1 and nothing moves. Worked out as MiMo's does: a size
+ * is clamped to its range before it becomes a scale, and anything that is not
+ * a positive number is no scale at all.
+ */
+watch(
+  () => [app.config?.uiFontSize, app.config?.codeFontSize] as const,
+  ([ui, code]) => {
     const style = document.documentElement.style
-    const put = (variable: string, chosen: string | undefined, fallback: string) => {
-      const name = (chosen ?? "").trim()
-      if (!name) style.removeProperty(variable)
-      else style.setProperty(variable, `"${name.replace(/"/g, "")}", ${fallback}`)
-    }
-    put("--font-sans", ui, "var(--font-sans-stack)")
-    put("--font-mono", code, "var(--font-mono-stack)")
-    put("--font-terminal", terminal, "var(--font-mono-stack)")
+    style.setProperty("--ui-font-scale", String(fontScale(ui, 14, 10, 24)))
+    style.setProperty("--code-font-scale", String(fontScale(code, 12, 9, 24)))
   },
   { immediate: true },
 )
 
 // The i18n table reads a module-level ref, so mirror config into it whenever
 // the setting changes - every t() call re-renders off that ref.
+let languageAsked = 0
 watch(
   () => app.config?.language,
-  (next) => {
+  async (next) => {
     /*
      * Absent means nobody has chosen, so the machine's own preference decides.
      * An unknown code falls back to English rather than leaving the window
      * half-translated in whatever was showing before.
      */
-    if (!next) language.value = detectLanguage()
-    else if (LANGUAGES.some((entry) => entry.id === next)) language.value = next as Language
-    else language.value = "en"
+    const chosen: Language = !next ? detectLanguage() : LANGUAGES.some((entry) => entry.id === next) ? (next as Language) : "en"
+    /*
+     * Most tables are a chunk of their own (lib/i18n.ts): the words showing
+     * stay until the table asked for is in hand, so nothing is ever drawn
+     * half in one language. A later change of mind wins over a slower fetch.
+     */
+    const asked = ++languageAsked
+    if (!languageReady(chosen)) await loadLanguage(chosen)
+    if (asked !== languageAsked) return
+    language.value = chosen
+    // Remembered only once the settings have spoken, never the guess made before they arrive.
+    if (app.config) rememberLanguage(chosen)
     // Arabic reads the other way, and the layout has to turn with it.
     document.documentElement.dir = RTL_LANGUAGES.includes(language.value) ? "rtl" : "ltr"
+    /*
+     * The table's id is its BCP-47 tag. Screen readers pick their voice by it,
+     * `:lang()` and the font fallback pick Japanese or Traditional glyphs for a
+     * shared Han character by it, and echarts in a PPTX picks its own language
+     * by it.
+     */
+    document.documentElement.lang = language.value
     // The menu bar is built in the main process, which cannot read that ref.
     publishMenuLabels()
   },
   { immediate: true },
 )
-/**
- * First run takes over the whole workspace until a provider is connected or
- * the step is skipped - an empty launcher would give no hint that the app
- * needs a key before it can do anything.
- */
-const onboarding = computed(() => app.connected && app.config !== undefined && !app.config.onboarded)
-const isHome = computed(() => view.value === "home" || !app.current)
-/** Empty transcript shows the hero instead of a blank scroller. */
-const empty = computed(() => app.messages.length === 0)
-
-/** Whether the review side of the right-hand panel is on offer at all. */
-const canReview = computed(() => rightPanel.value && showFileTree.value)
+const isArtifacts = computed(() => view.value === "artifacts")
+const isPlugins = computed(() => view.value === "plugins")
+const isHome = computed(
+  () => !isArtifacts.value && !isPlugins.value && (view.value === "home" || !app.current),
+)
+/** Empty transcript shows the hero instead of a blank scroller; one still loading shows its loading line instead. */
+const empty = computed(() => app.messages.length === 0 && app.loadingID !== app.currentID)
 
 /*
- * The panel is up when either of its tabs has been asked for.
- *
- * One expression, used both for mounting the panel and for the class that
- * drops the workspace panel out of a narrow row. Those were written out twice
- * and did not say quite the same thing, so the row could be told the panel was
- * there while nothing was mounted.
+ * The terminal docks along the foot of the main column. Not on the artifacts
+ * and plugins pages; on the home screen, as MiMo allows, once there is a
+ * project folder for it to open in, since no conversation has one yet.
  */
-const reviewPanelUp = computed(
-  () => !isHome.value && !onboarding.value && (canReview.value || contextTab.value),
+const terminalUp = computed(
+  () =>
+    terminalOpen.value &&
+    !isArtifacts.value &&
+    !isPlugins.value &&
+    (!isHome.value || Boolean(homeShellDirectory.value)),
 )
 
 /*
- * Which tab is actually up, as against the one last picked.
- *
- * Opencode resolves this the same way and in the same order: honour the active
- * tab while it is still in the strip, otherwise fall back to the review, and
- * only then to whatever is left. It matters because the review side can be
- * taken away underneath the reader - by the title bar's toggle, or by the file
- * tree setting - while `panelTab` still says "review".
+ * MiMo's right panel (stores/right-panel.ts, RightPanel.vue): one panel of tabs
+ * beside the conversation. Its tabs belong to the conversation on show - the
+ * home screen's to nothing - and it is put away on the artifacts and plugins
+ * pages, as MiMo's is on its own pages.
  */
-const shownTab = computed<"review" | "context">(() => {
-  if (panelTab.value === "context" && contextTab.value) return "context"
-  if (canReview.value) return "review"
-  return "context"
+const rp = useRightPanel()
+watch(
+  () => (isHome.value ? undefined : app.currentID),
+  (scope) => rp.setScope(scope),
+  { immediate: true },
+)
+/*
+ * MiMo's automatic opens (lib/delivered): a conversation is on show when it is
+ * the one in the middle of its conversation view, or the side chat tab open in
+ * the panel. An open held for one runs when it comes on show.
+ */
+setDeliveryView({
+  shown: (sessionID) =>
+    (!isHome.value && !isArtifacts.value && !isPlugins.value && app.currentID === sessionID) ||
+    (rp.open && rp.activeTab?.type === "chat" && rp.activeTab.convoId === sessionID),
+  directory: (sessionID) => (app.sessions.find((session) => session.id === sessionID) ?? app.sideSessionOf(sessionID))?.directory ?? app.current?.directory,
+})
+watch([() => (isHome.value || isArtifacts.value || isPlugins.value ? undefined : app.currentID)], ([shown]) => deliveryShown(shown))
+watch([() => rp.open, () => rp.activeTab], ([open, tab]) => {
+  if (open && tab?.type === "chat") deliveryShown(tab.convoId)
+})
+/* MiMo puts both the panel and the terminal away on its own pages. */
+watch([isArtifacts, isPlugins], ([artifacts, plugins]) => {
+  if (artifacts || plugins) {
+    rp.setOpen(false)
+    terminalOpen.value = false
+  }
 })
 
-/*
- * What the ring in the session header reports as pressed.
- *
- * The figures being up, not merely asked for: with the review showing over the
- * top of an open Context tab the ring is not what the reader is looking at, and
- * saying otherwise made the next press appear to do nothing.
- */
-const contextShowing = computed(() => reviewPanelUp.value && shownTab.value === "context")
+/* A conversation that is gone takes its tabs' shells and pages with it. */
+watch(
+  () => app.sessions.map((session) => session.id),
+  (now, before) => {
+    for (const id of before ?? []) if (!now.includes(id)) rp.forget(id)
+  },
+)
+
+/* The panel on screen beside the main column, whose title row then ends at the column. */
+const panelBeside = computed(() => rp.open)
+
+/* What the panel's tools work in: the conversation's project, or the one picked on the home screen. */
+const panelDirectory = computed(() => (isHome.value ? homeShellDirectory.value : app.current?.directory))
+
+/* The title bar's button and Ctrl+Alt+B: the panel, with its launcher while it holds no tabs. */
+function toggleSidePanel() {
+  rp.toggleOpen()
+}
+
+/* MiMo's tool shortcuts ask for a conversation: on the home screen they do nothing. */
+const inConversation = computed(() => !isHome.value && Boolean(app.currentID))
 
 /*
- * The ring, and the palette entry behind it.
- *
- * Pressing it while the figures are up puts the tab away; the panel goes with
- * it only when nothing else was holding the panel open, which is what opencode
- * does - it remembers whether the ring is what opened the panel and closes it
- * again only in that case. Here `canReview` is that memory: if the panel was
- * already up for the review, dropping the tab leaves the review showing.
+ * The box goes into MiMo's floating chat while the panel is expanded over the
+ * conversation - the same composer, moved, so a draft and its attachments come
+ * along. `#float-dock` lives in the right panel and is always in the page, so
+ * the Teleport always finds it.
  */
-function toggleContext() {
-  if (contextShowing.value) {
-    contextTab.value = false
-    panelTab.value = "review"
-    return
-  }
-  contextTab.value = true
-  panelTab.value = "context"
+const floatingComposer = computed(() => inConversation.value && rp.open && rp.fullscreen)
+
+/* The panel tools' shortcuts and the side panel toggle's, as bound now rather than as shipped. */
+const panelHints = computed(() => toolHints(bindableCommands.value, app.config?.keybinds ?? {}))
+const sidePanelHint = computed(() => boundChord("view.right", "Ctrl+Alt+B", app.config?.keybinds ?? {}))
+
+/*
+ * MiMo's narrow window: with the side column and the panel both open beside a
+ * conversation left under 480, the panel shuts if the column was just opened;
+ * otherwise the column folds, and comes back by itself once there is room.
+ */
+const windowWidth = ref(window.innerWidth)
+const onWindowResize = () => (windowWidth.value = window.innerWidth)
+onMounted(() => window.addEventListener("resize", onWindowResize))
+onBeforeUnmount(() => window.removeEventListener("resize", onWindowResize))
+
+/*
+ * MiMo's side column width, dragged at its edge: kept as last let go, and shown
+ * clamped to what the window leaves beside an open panel, so a narrower window
+ * narrows it without forgetting the choice.
+ */
+const SIDE_WIDTH_KEY = "mcode.sideWidth"
+const storedSideWidth = ref(
+  (() => {
+    try {
+      return parseInt(localStorage.getItem(SIDE_WIDTH_KEY) ?? "", 10)
+    } catch {
+      return NaN
+    }
+  })(),
+)
+const sideWidth = computed(() =>
+  clampSideWidth(storedSideWidth.value, windowWidth.value, rp.open ? Math.max(PANEL_MIN_WIDTH, rp.width) : 0),
+)
+function resizeSide(width: number, done: boolean) {
+  storedSideWidth.value = clampSideWidth(width, windowWidth.value, rp.open ? Math.max(PANEL_MIN_WIDTH, rp.width) : 0)
+  if (!done) return
+  try {
+    localStorage.setItem(SIDE_WIDTH_KEY, String(storedSideWidth.value))
+  } catch {}
+}
+
+/* P6-3: a project picked, brought in or made on the home screen opens the side column, as MiMo's does. */
+const revealSide = () => setSide(true)
+onMounted(() => window.addEventListener("mcode:reveal-side", revealSide))
+onBeforeUnmount(() => window.removeEventListener("mcode:reveal-side", revealSide))
+let sideAutoFolded = false
+watch(
+  [windowWidth, leftPanel, () => rp.open, () => rp.width, () => rp.fullscreen],
+  ([viewport, sideOpen], [, sideBefore]) => {
+    if (sideOpen) sideAutoFolded = false
+    // MiMo weighs the panel as drawn, narrowed toward 300 beside the column, not as dragged.
+    const panelWidth = panelWidthShown(rp.width, viewport, sideWidth.value, PANEL_MIN_WIDTH)
+    const room = { viewport, sideWidth: sideWidth.value, sideOpen, panelOpen: rp.open, panelWidth, fullscreen: rp.fullscreen }
+    const outcome = arbitratePanel(room, sideOpen && !sideBefore)
+    if (outcome === "close-panel") rp.setOpen(false)
+    else if (outcome === "collapse-side") {
+      leftPanel.value = false
+      sideAutoFolded = true
+    } else if (!sideOpen && sideAutoFolded && sideFits({ ...room, sideOpen: true })) leftPanel.value = true
+  },
+)
+
+/* Ctrl+Shift+G: another review tab. */
+function openReviewTab() {
+  if (inConversation.value) rp.openTool("review")
+}
+
+/* Ctrl+P: the files tab, the one there is. */
+function openFilesTab() {
+  if (inConversation.value) rp.openTool("files")
+}
+
+/* Ctrl+Alt+S: another side chat. */
+function openSideChatTab() {
+  if (inConversation.value) rp.openTool("chat")
+}
+
+/* The composer's plus menu: MiMo opens its terminal as a tab of the panel. */
+function openTerminalTab() {
+  if (inConversation.value) rp.openTool("terminal")
+  else terminalOpen.value = true
+}
+
+/* Ctrl+T: another browser tab. */
+function openBrowserTab() {
+  if (inConversation.value && browserAllowed.value) rp.openTool("browser")
 }
 
 /*
- * The title bar's button and Ctrl+Shift+R, which put the whole panel away.
- *
- * The Context tab goes with it. Opencode mounts its tab strip inside the review
- * panel, so closing the panel takes every tab with it - and without this the
- * button read as broken: with the figures up it would drop the review side and
- * leave the panel sitting there, having apparently done nothing.
- *
- * `rightPanel` alone is not the question any more, because the panel can be up
- * on the Context tab with `rightPanel` false. What is being toggled is whether
- * the panel is on screen at all.
+ * Ctrl+Shift+B, MiMo's browser toggle: put the panel away while a browser tab is
+ * the one on show; otherwise bring the browser tab there is forward, or open one.
  */
-function toggleReviewPanel() {
-  if (reviewPanelUp.value) {
-    rightPanel.value = false
-    contextTab.value = false
-    panelTab.value = "review"
+function toggleBrowserTab() {
+  if (!browserAllowed.value) return
+  if (rp.open && rp.activeTab?.type === "browser") {
+    rp.setOpen(false)
     return
   }
-  rightPanel.value = true
+  const existing = rp.tabs.find((tab) => tab.type === "browser")
+  if (existing) {
+    rp.activate(existing.id)
+    rp.setOpen(true)
+  } else openBrowserTab()
+}
+
+/* A browser tab on show, for the keys that reach into it. */
+const browserShowing = computed(() => rp.open && rp.activeTab?.type === "browser")
+
+/* Ctrl+L goes to the browser's address bar while a browser tab is showing, else to the box. */
+function focusBrowserAddress() {
+  const pane = browserShowing.value ? rightPanel.value?.activeBrowser() : undefined
+  if (pane) pane.focusAddress()
+  else composer.value?.focus()
+}
+
+/* C25: Ctrl+R reloads the browser tab on show, else the panel's first browser tab, as MiMo's lj() picks. */
+const hasBrowserTab = computed(() => rp.tabs.some((tab) => tab.type === "browser"))
+function reloadBrowser(force = false) {
+  void rightPanel.value?.reloadTarget()?.reload(force)
+}
+
+/*
+ * Ctrl+period is MiMo's annotate while a browser tab shows a page. A blank tab
+ * has nothing to mark, so `toggleAnnotate` says no and the chord falls back to
+ * stepping the agent, as it does everywhere else.
+ */
+function annotateBrowser() {
+  const annotated = browserShowing.value ? rightPanel.value?.activeBrowser()?.toggleAnnotate() : false
+  if (!annotated && app.currentID) void cycleAgent(1)
+}
+
+/*
+ * The pill over the composer toggles its own diff tab (the latest turn, source
+ * "live-edit"); the window only tells it whether that tab is the one on show.
+ */
+const LIVE_EDIT = "live-edit"
+const liveEditShowing = computed(
+  () => rp.open && rp.activeTab?.type === "diff" && rp.activeTab.source === LIVE_EDIT,
+)
+
+/* The "edited N files" card at the end of a turn: 审阅 brings the review tab there is forward, or opens one. */
+watch(reviewRequest, () => {
+  if (!inConversation.value) return
+  const review = rp.tabs.find((tab) => tab.type === "review")
+  if (review) {
+    rp.activate(review.id)
+    rp.setOpen(true)
+  } else rp.openTool("review")
+})
+/**
+ * A file named on the edited-files card, opened the way MiMo opens one.
+ *
+ * The recorded path is resolved first - against the project as well as as it
+ * stands - and a path that is no longer there is said so rather than doing
+ * nothing. What can be previewed opens in the panel (a document in the Office
+ * tab, anything else in the files tab, rooted at its own folder when it lies
+ * outside the project); a folder is shown in the system's file manager. Nothing
+ * is handed to an external editor any more.
+ */
+watch(fileRequest, async (asked) => {
+  if (!asked) return
+  const root = app.current?.directory?.replace(/[\\/]+$/, "")
+  const candidates = [asked.path, ...(root ? [`${root}/${asked.path}`] : [])]
+  const found = await window.mcode.resolveExistingPath(candidates).catch(() => null)
+  if (!found) {
+    notifyFailure(t("harnessRow.pathNotExist"))
+    return
+  }
+  if (found.directory) {
+    const shown = await window.mcode.revealPath(found.path).catch(() => ({ ok: false, error: "" }))
+    if (!shown.ok) notifyFailure(t("harnessRow.revealFailed", { error: shown.error ?? "" }))
+    return
+  }
+  await openDocument({ path: found.path }, root)
+})
+
+function copyWorkingDirectory() {
+  const directory = app.current?.directory
+  if (!directory) return
+  window.mcode.setClipboardText(directory)
+  // MiMo's notice is the title alone; the path is already on the clipboard.
+  notify(t("menu.copiedDirectory"))
 }
 
 /*
@@ -720,116 +1179,164 @@ function toggleReviewPanel() {
  * keeps it. Resetting here would erase exactly what the map exists to hold.
  */
 
-async function openProject(directory: string) {
-  // Opening a directory that was closed brings it - and its sessions - back.
-  const closed = app.config?.closedProjects ?? []
-  if (closed.includes(directory)) {
-    await app.patchConfig({ closedProjects: closed.filter((entry) => entry !== directory) })
+/*
+ * Folders dropped onto the side column's Projects, as MiMo takes them: each
+ * goes onto the project list with no conversation made, and the home screen
+ * comes up with the last one picked. A drop that held no folder says so.
+ */
+async function addDroppedProjects(directories: string[]) {
+  if (!directories.length) {
+    notifyFailure(t("side.dropNotDir"))
+    return
   }
-  /*
-   * Archived sessions are excluded on purpose. `find` matched them, so a
-   * project whose sessions had all been archived opened one and was bounced
-   * straight back out by the rule that the workspace never sits inside an
-   * archived session - clicking the project looked like it did nothing at all.
-   * Sorted, because "resume where I left off" means the newest, not whichever
-   * happens to come first in the array.
-   */
-  const existing = app.sessions
-    .filter((session) => session.directory === directory && !session.archived)
-    .sort((a, b) => b.updated - a.updated)[0]
-  if (existing) await app.open(existing.id)
-  else await app.create(directory)
-  view.value = "session"
-  await focusComposer()
+  await addAndBrowse(directories)
 }
 
-/**
- * Always starts a fresh session, unlike openProject, which resumes the existing
- * one. Both are reachable from the project panel, and a button labelled "new
- * session" reusing an old one reads as the button doing nothing.
+/* MiMo's add then browseProject: listed, the last one the latest pick, and home with it chosen. */
+async function addAndBrowse(directories: string[]) {
+  const last = directories[directories.length - 1]!
+  for (const directory of directories) {
+    await app.addProject(directory, { used: directory === last, switched: directory === last })
+  }
+  startIn(last)
+}
+
+/*
+ * Starting a task no longer creates anything: it puts the home screen up with
+ * that project chosen, and the session is created by the send. A session made
+ * on the way to the screen is a row in the side column that nobody asked for -
+ * and MiMo has none of them.
  */
+function startIn(directory?: string) {
+  homeDirectory.value = directory
+  goHome()
+  void focusComposer()
+}
+
+/*
+ * MiMo's 已经是新任务了: the home screen is already up in that project with
+ * nothing typed, attached or chipped, so starting afresh would change nothing.
+ */
+function alreadyNewTask(directory: string | undefined): boolean {
+  if (view.value !== "home" || homeDirectory.value !== directory || homeFilled.value) return false
+  notify(t("toast.alreadyNewTask"))
+  return true
+}
+
+/* The side column's 新建任务, MiMo's newChatGlobal. */
+function newTaskFromSide() {
+  if (alreadyNewTask(homeDirectory.value)) return
+  goHome()
+  void focusComposer()
+}
+
 async function newSessionIn(directory: string) {
-  const closed = app.config?.closedProjects ?? []
-  if (closed.includes(directory)) {
-    await app.patchConfig({ closedProjects: closed.filter((entry) => entry !== directory) })
-  }
-  await app.create(directory)
-  view.value = "session"
-  await focusComposer()
+  if (alreadyNewTask(directory)) return
+  await app.addProject(directory, { used: true, silent: true })
+  startIn(directory)
 }
 
+/*
+ * DL15, MiMo's open-folder: each folder chosen goes onto the project list, so
+ * the side column shows it at once, and the home screen comes up with the last
+ * one picked. No conversation is made.
+ */
 async function browse() {
-  // Several at once, the way the reference opens projects. The last one chosen
-  // is the one landed on, so a batch still ends somewhere definite.
-  const directories = await window.mcode.pickDirectory(t("cmd.openProject"), true)
-  for (const directory of directories) await openProject(directory)
+  const directories = await pickProjectFolder(t("dialog.pickProjectFolder"), true)
+  if (!directories.length) return
+  await addAndBrowse(directories)
 }
 
-async function newSession() {
-  await app.create(app.current?.directory)
+/**
+ * A numbered slot's conversation. Sets the view as well as the session, because
+ * the one already current opens nothing and would otherwise leave the shortcut
+ * with no effect at all while the launcher is up.
+ */
+async function selectTab(id: string) {
+  if (app.currentID !== id) await app.open(id)
   view.value = "session"
-  await focusComposer()
+  push({ view: "session", sessionID: id })
 }
+
+/** Starts a task from the 2.0 home screen, in the project picked there. */
+function newSession() {
+  if (!alreadyNewTask(app.current?.directory)) startIn(app.current?.directory)
+}
+
+const settingsDialog = ref<InstanceType<typeof SettingsDialogComponent>>()
 
 /**
- * Another shell, opening the drawer first if it is not already up.
- *
- * The drawer owns the tabs, and it only exists while open, so the first call
- * has to wait a tick for it to mount before there is anything to ask.
+ * MiMo's new task clears the screen before it runs: every menu, the search,
+ * the palette, Settings - asking first when an environment has unsaved edits -
+ * and the previews. A dialog that asks something (a rename, a confirmation)
+ * keeps the key, and then this answers false and does nothing.
  */
-async function newTerminal() {
-  const wasOpen = terminalOpen.value
-  terminalOpen.value = true
-  if (!wasOpen) await nextTick()
-  // A freshly mounted drawer already starts one shell; a second call here
-  // would leave two open for a single keystroke.
-  if (wasOpen) drawer.value?.add()
-}
-
-/**
- * Every permission bucket at once, on and off.
- *
- * Worth knowing while reading this: MCode's list is global, where the
- * reference scopes the same flag per session or per directory. Turning it on
- * here grants far more than the reference's equivalent does, which is why both
- * edges toast rather than only the one that reduces access.
- *
- * The question this button answers is "will anything stop and ask me", which is
- * why a bucket counts as satisfied when it is anything other than Ask. Reading
- * it as "is everything set to Allow" instead would leave the button stuck
- * showing off forever the moment a single bucket was refused, since the button
- * is not permitted to lift a refusal and so could never reach that state.
- */
-function autoAcceptAll(): boolean {
-  const current = app.config?.permissions
-  return PERMISSION_KINDS.every((kind) => (current?.[kind] ?? DEFAULT_PERMISSIONS[kind]) !== "ask")
-}
-
-async function toggleAutoAccept() {
-  const on = autoAcceptAll()
-  const next = { ...DEFAULT_PERMISSIONS, ...app.config?.permissions }
-  /*
-   * A bucket the user set to Deny is left alone by both edges of this button.
-   * Turning interruptions off is a statement about being asked, not about being
-   * refused, and a switch that quietly undid a refusal would be the more
-   * dangerous of the two readings.
-   */
-  for (const kind of PERMISSION_KINDS) {
-    if (next[kind] === "deny") continue
-    next[kind] = on ? DEFAULT_PERMISSIONS[kind] : "allow"
+function newTaskOverLayers(): boolean {
+  const asking = [...document.querySelectorAll('[aria-modal="true"]')].some(
+    (node) => !node.closest("[data-new-task-clears]") && !node.closest("[data-modal-exit]"),
+  )
+  if (asking || editingProject.value || renamingSession.value || renamingProject.value) return false
+  dismissMenus()
+  searchOpen.value = false
+  paletteOpen.value = false
+  closeImagePreview()
+  closeVideoPreview()
+  if (settingsOpen.value && settingsDialog.value) {
+    settingsDialog.value.leaveThen(() => {
+      settingsOpen.value = false
+      newSession()
+    })
+    return true
   }
-  await app.patchConfig({ permissions: next })
-  if (on) notify(t("toast.autoOffTitle"), t("toast.autoOffBody"))
-  else notify(t("toast.autoOnTitle"), t("toast.autoOnBody"))
+  settingsOpen.value = false
+  newSession()
+  return true
 }
 
-async function focusComposer() {
-  await new Promise((resolve) => setTimeout(resolve, 0))
+/** Whether a chord is the one new task answers to: Ctrl+N, or wherever it has been re-bound. */
+function isNewTaskChord(chord: string): boolean {
+  if (!chord) return false
+  const bound = rebound.value.get(chord)
+  if (bound) return bound === "session.new"
+  return chord === "Ctrl+N" && !retiredChords.value.has(chord)
+}
+
+/* What a click in the thread leaves alone because it takes the click or the keyboard itself: MiMo's list. */
+const THREAD_CONTROLS =
+  "button, a, input, textarea, select, label, [contenteditable], [role=button], [role=textbox], [role=link], [role=menuitem], [role=checkbox], [role=tab]"
+
+/** MiMo: a click on the thread, not on a control and with nothing selected, puts the caret at the end of the box. */
+function onThreadClick(event: MouseEvent) {
+  if (window.getSelection()?.toString()) return
+  if ((event.target as Element | null)?.closest?.(THREAD_CONTROLS)) return
   composer.value?.focus()
+}
+
+/*
+ * The home screen draws a box of its own (HomeHero's), so a new task focuses
+ * that one; the conversation's box is not on screen there, and focusing it
+ * left the keyboard on the page body.
+ */
+async function focusComposer() {
+  await nextTick()
+  if (isHome.value) homeHero.value?.focus()
+  else composer.value?.focus()
 }
 
 /** Reachable from the model menu, so an empty list has somewhere to go. */
 const connectOpen = ref(false)
+/** The vendor a request named (an expired sign-in's "sign in again"), or none to browse. */
+const connectGroup = ref<Group>()
+watch(
+  () => app.connectRequest,
+  (request) => {
+    if (!request) return
+    connectGroup.value = request.provider
+      ? groupProviders(connectableProviders(app.providers)).find((group) => group.entries.some((entry) => entry.id === request.provider))
+      : undefined
+    connectOpen.value = true
+  },
+)
 
 /** The session waiting on an answer before it is removed for good. */
 const deletingSession = ref<string>()
@@ -838,7 +1345,40 @@ const deletingSession = ref<string>()
 const appMenu = ref<{ x: number; y: number }>()
 
 /** Where the session's own menu was opened from, if it is open. */
-const sessionMenu = ref<{ x: number; y: number }>()
+const sessionMenu = ref<{ x: number; y: number; sessionID?: string; header?: boolean; nested?: boolean }>()
+
+/* Which conversation the open menu is about: the row's, else the open one. */
+const menuSession = computed(() =>
+  app.sessions.find((entry) => entry.id === (sessionMenu.value?.sessionID ?? app.currentID)),
+)
+
+/* Set while the project picker is being used to move a conversation. */
+const movingSession = ref<string>()
+
+/* The project row's menu, and which project folder it is about. */
+const projectMenu = ref<{ x: number; y: number; directory: string }>()
+
+/*
+ * Selection mode in the side column: the conversations ticked, or absent when
+ * the column is being read rather than managed. The set is held here because
+ * what it is for - archiving, moving, deleting - is held here too.
+ */
+const selecting = ref<string[]>()
+const deletingMany = ref<string[]>()
+
+/* Project selection mode, MiMo's project batch management: the projects ticked, or absent. */
+const selectingProjects = ref<string[]>()
+/* Projects waiting on the removal question: one from its menu, or the ticked set. */
+const removingProjects = ref<{ directories: string[]; batch: boolean }>()
+/* The new-project dialog, and the conversation to move into what it makes, if any. */
+const namingProject = ref<{ sessionID?: string }>()
+
+/* The title the delete question names, or MiMo's "untitled" for one never given a title. */
+const deletingTitle = computed(() => {
+  const session = app.sessions.find((entry) => entry.id === deletingSession.value)
+  const title = session && session.title !== "New session" ? session.title.trim() : ""
+  return title || t("confirm.untitledChat")
+})
 
 /**
  * The session menu's contents: what each entry does comes from the palette's
@@ -855,12 +1395,239 @@ const sessionMenu = ref<{ x: number; y: number }>()
  * values carry none - and marks the entries that open something rather than
  * acting at once.
  */
-const SESSION_MENU: { id: string; label: string; asks?: boolean }[] = [
-  { id: "session.rename", label: "common.rename" },
-  { id: "session.export", label: "common.export", asks: true },
-  { id: "session.archive", label: "common.archive" },
-  { id: "session.delete", label: "common.delete", asks: true },
+/*
+ * MiMo's conversation menu, row for row: the wording names the conversation
+ * rather than "this session", there are no trailing dots, and every row
+ * carries a glyph. The four groups are its own.
+ */
+const FOLDER_ICON = "M2 4.4c0-.6.5-1 1-1h2.6l1.2 1.5h6.2c.5 0 1 .4 1 1v6.2c0 .6-.5 1-1 1H3c-.5 0-1-.4-1-1z"
+const COPY_ICON = "M5.6 5.6h7.2v7.2H5.6zM3.2 10.4V3.2h7.2"
+
+/*
+ * MiMo's order since this round: rename, pin, read or unread, continue; move
+ * (a submenu), archive, batch; show in the file manager (not on a row under
+ * its project), copy the directory, export; delete.
+ */
+const SESSION_MENU: MenuRow[] = [
+  { id: "session.rename", label: "common.rename", icon: "M11.2 2.6 13.4 4.8 5.6 12.6 2.8 13.2 3.4 10.4z" },
+  { id: "row.pin", label: "menu.pin", icon: "M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" },
+  {
+    id: "row.unread",
+    label: "menu.markUnread",
+    icon: "M1.8 8S4 3.8 8 3.8 14.2 8 14.2 8 12 12.2 8 12.2 1.8 8 1.8 8zM8 9.6a1.6 1.6 0 1 0 0-3.2 1.6 1.6 0 0 0 0 3.2z",
+  },
+  {
+    id: "row.continue",
+    label: "menu.continueNew",
+    icon: "M4.6 4.8v6.6M4.6 4.8a1.4 1.4 0 1 0 0-2.8 1.4 1.4 0 0 0 0 2.8zM4.6 7.6h4.2a2 2 0 0 1 2 2v1.4M10.8 11a1.4 1.4 0 1 0 0 2.8 1.4 1.4 0 0 0 0-2.8z",
+  },
+  {
+    id: "row.move",
+    label: "menu.moveToProject",
+    icon: "M2 4.4c0-.6.5-1 1-1h2.6l1.2 1.5h6.2c.5 0 1 .4 1 1v6.2c0 .6-.5 1-1 1H3c-.5 0-1-.4-1-1zM8 7.4v4M6.4 9l1.6-1.6L9.6 9",
+    divided: true,
+  },
+  {
+    id: "session.archive",
+    label: "menu.archive",
+    icon: "M2.2 3h11.6v2.6H2.2zM3.2 5.6h9.6V13H3.2zM6.4 8.2h3.2",
+  },
+  { id: "row.batch", label: "menu.batch", icon: "M2.4 4.4h1.6M6.6 4.4h7M2.4 8h1.6M6.6 8h7M2.4 11.6h1.6M6.6 11.6h7" },
+  { id: "row.reveal", label: "menu.revealIn", icon: FOLDER_ICON, divided: true },
+  /* MCode's own: MiMo reaches this state from its review service, which MCode does not have. */
+  {
+    id: "row.reviewRestricted",
+    label: "menu.restrictConversation",
+    icon: "M8 2.4 13.6 4v4.2c0 3.2-2.2 5.2-5.6 6.2-3.4-1-5.6-3-5.6-6.2V4zM6 7.8 7.4 9.2 10.2 6.4",
+  },
+  { id: "row.copyDirectory", label: "menu.copyDirectory", icon: COPY_ICON },
+  { id: "session.export", label: "menu.export", icon: "M8 2.6v7.2M5.2 7.2 8 10l2.8-2.8M2.8 12.2h10.4" },
+  {
+    id: "session.delete",
+    label: "menu.delete",
+    icon: "M3 4.4h10M6.4 4.4V2.8h3.2v1.6M4.4 4.4l.7 8.4h5.8l.7-8.4M6.8 6.8v3.8M9.2 6.8v3.8",
+    divided: true,
+    danger: true,
+  },
 ]
+
+/* A row of either conversation menu. */
+type MenuRow = {
+  id: string
+  label: string
+  icon: string
+  hint?: string
+  divided?: boolean
+  danger?: boolean
+  children?: MenuRow[]
+}
+
+/*
+ * The conversation header's own menu, which MiMo keeps shorter than a row's:
+ * pin, rename and archive with their shortcuts beside them, then the side chat,
+ * 复制 › (the working directory, the session ID, the session link, or the whole
+ * conversation as Markdown) and branch, then delete. Branch carries it all into
+ * a new conversation.
+ */
+const HEADER_MENU: MenuRow[] = [
+  { id: "row.pin", label: "menu.pin", icon: "M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4", hint: "Ctrl+Alt+P" },
+  { id: "session.rename", label: "menu.renameConversation", icon: "M11.2 2.6 13.4 4.8 5.6 12.6 2.8 13.2 3.4 10.4z", hint: "Ctrl+Alt+R" },
+  { id: "session.archive", label: "menu.archive", icon: "M2.2 3h11.6v2.6H2.2zM3.2 5.6h9.6V13H3.2zM6.4 8.2h3.2", hint: "Ctrl+Alt+A" },
+  /* MCode's own: MiMo reaches this state from its review service, which MCode does not have. */
+  {
+    id: "row.reviewRestricted",
+    label: "menu.restrictConversation",
+    icon: "M8 2.4 13.6 4v4.2c0 3.2-2.2 5.2-5.6 6.2-3.4-1-5.6-3-5.6-6.2V4zM6 7.8 7.4 9.2 10.2 6.4",
+  },
+  { id: "session.side", label: "menu.openSideChat", icon: "M2.4 3h11.2v10H2.4zM9.6 3v10", hint: "Ctrl+Alt+S", divided: true },
+  {
+    id: "row.copy",
+    label: "menu.copy",
+    icon: COPY_ICON,
+    children: [
+      { id: "row.copyDirectory", label: "menu.copyDirectory", icon: FOLDER_ICON },
+      { id: "row.copyID", label: "menu.copySessionID", icon: "M8 2.4a5.6 5.6 0 1 0 0 11.2A5.6 5.6 0 0 0 8 2.4zM8 5v3.2l2.2 1.4" },
+      {
+        id: "row.copyLink",
+        label: "menu.copySessionLink",
+        icon: "M6.8 9.2a2.6 2.6 0 0 0 3.7 0l2-2a2.6 2.6 0 0 0-3.7-3.7l-.9.9M9.2 6.8a2.6 2.6 0 0 0-3.7 0l-2 2a2.6 2.6 0 0 0 3.7 3.7l.9-.9",
+      },
+      { id: "row.copyMarkdown", label: "menu.copyMarkdown", icon: "M2.2 4h11.6v8H2.2zM4.4 10V6l1.6 1.8L7.6 6v4M10.8 6v4M9.4 8.6l1.4 1.4 1.4-1.4" },
+    ],
+  },
+  { id: "row.continue", label: "menu.fork", icon: "M4.6 4.8v6.6M4.6 4.8a1.4 1.4 0 1 0 0-2.8 1.4 1.4 0 0 0 0 2.8zM4.6 7.6h4.2a2 2 0 0 1 2 2v1.4M10.8 11a1.4 1.4 0 1 0 0 2.8 1.4 1.4 0 0 0 0-2.8z" },
+  { id: "session.delete", label: "menu.delete", icon: "M3 4.4h10M6.4 4.4V2.8h3.2v1.6M4.4 4.4l.7 8.4h5.8l.7-8.4M6.8 6.8v3.8M9.2 6.8v3.8", divided: true, danger: true },
+]
+
+/*
+ * The shortcut a row shows is the one that will work: the reader's own
+ * binding when they have moved it, else the default. Pinning is a row action
+ * here and a command on the shortcuts page, so it is looked up by that name.
+ */
+const hintFor = (entry: MenuRow) =>
+  entry.hint &&
+  ((binds, id) => (id in binds ? binds[id] : entry.hint))(
+    app.config?.keybinds ?? {},
+    entry.id === "row.pin" ? "session.pin" : entry.id,
+  )
+
+/*
+ * The rows that are this menu's own rather than commands: they name a
+ * conversation, where a command acts on whichever one is open. A command
+ * cannot take an argument here - the palette and the keyboard reach the same
+ * table - so these live beside it and the menu dispatches both.
+ */
+/* Whether a row is showing its unread mark: a turn that finished, or failed, while away. */
+const showsUnread = (sessionID: string) => app.unseen.has(sessionID) || app.failed(sessionID)
+
+/* MiMo names the platform's file manager in the row: File Explorer, Finder, or a file manager. */
+const revealLabel = () =>
+  t("menu.revealIn", {
+    manager: t(
+      app.platform === "win32" ? "menu.fileManagerWin" : app.platform === "darwin" ? "menu.fileManagerMac" : "menu.fileManagerOther",
+    ),
+  })
+
+const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void | Promise<void>> = {
+  "row.pin": (sessionID) => app.togglePinned(sessionID),
+  /* MiMo's toggle: a row showing its unread mark is marked read, any other unread. */
+  "row.unread": (sessionID) => {
+    if (showsUnread(sessionID)) app.markRead(sessionID)
+    else app.markUnread(sessionID)
+  },
+  "row.continue": async (sessionID) => {
+    if (app.currentID !== sessionID) await app.open(sessionID)
+    const last = app.messages[app.messages.length - 1]
+    if (last) await app.forkFrom(last.id)
+    else notifyFailure(t("stream.forkNeedsMessage"))
+  },
+  "row.batch": (sessionID) => {
+    selectingProjects.value = undefined
+    selecting.value = [sessionID]
+  },
+  /* Out of its project, into a folder of its own; the side column follows the session update. */
+  "row.moveOut": async (sessionID) => {
+    try {
+      await app.client?.request({ type: "session.moveOut", sessionID })
+    } catch (failure) {
+      notifyFailure(t("menu.moveOut"), reasonOf(failure))
+    }
+  },
+  "row.newProjectMove": (sessionID) => {
+    namingProject.value = { sessionID }
+  },
+  "row.copyMarkdown": async (sessionID) => {
+    if (app.currentID !== sessionID) await app.open(sessionID)
+    window.mcode.setClipboardText(transcriptMarkdown())
+    notify(t("menu.copiedMarkdown"))
+  },
+  /* Round 3 AR15 (artifacts agent): MiMo's 导出对话记录 saves the named conversation as Markdown without opening it. */
+  "session.export": (sessionID) => exportConversationById(sessionID),
+  /* MiMo's copy notices are the title alone; what was copied is already on the clipboard. */
+  "row.copyDirectory": (sessionID, header) => {
+    const target = app.sessions.find((entry) => entry.id === sessionID)
+    if (!target?.directory) {
+      notifyFailure(t(header ? "menu.noCwdLinked" : "menu.noWorkDir"))
+      return
+    }
+    window.mcode.setClipboardText(target.directory)
+    notify(t("menu.copiedDirectory"))
+  },
+  "row.copyID": (sessionID) => {
+    window.mcode.setClipboardText(sessionID)
+    notify(t("menu.copiedSessionID"))
+  },
+  "row.copyLink": (sessionID) => {
+    const target = app.sessions.find((entry) => entry.id === sessionID)
+    if (!target) return
+    window.mcode.setClipboardText(sessionLink(sessionID, target.directory))
+    notify(t("menu.copiedLink"))
+  },
+  "row.reveal": async (sessionID) => {
+    const target = app.sessions.find((entry) => entry.id === sessionID)
+    if (!target?.directory) {
+      notifyFailure(t("menu.noWorkDir"))
+      return
+    }
+    await revealFolder(target.directory)
+  },
+  /*
+   * MCode's own way in to MiMo's `reviewRestricted`: MiMo's own review service
+   * reports a filtered turn, and MCode has none, so the state would otherwise be
+   * unreachable. Marks the conversation as one that cannot be continued, or
+   * lifts that when it already is.
+   */
+  "row.reviewRestricted": async (sessionID) => {
+    const target = app.sessions.find((entry) => entry.id === sessionID)
+    if (!target) return
+    try {
+      await app.client?.request({ type: "session.reviewRestricted", sessionID, restricted: !target.reviewRestricted })
+      notify(t(target.reviewRestricted ? "menu.allowContinue" : "menu.restrictConversation"))
+    } catch (failure) {
+      notifyFailure(t("menu.restrictConversation"), reasonOf(failure))
+    }
+  },
+}
+
+/*
+ * What 移动至项目 › lists: the side column's projects, newest first, the one the
+ * conversation is in lit, 移出项目 above them while it is in one, and 新建项目…
+ * kept below whatever the search leaves.
+ */
+function moveMenu(target?: (typeof app.sessions)[number]): Pick<MenuItem, "children" | "search" | "footer" | "childWidth"> {
+  const current = target ? projectOf(target) : undefined
+  const rows: MenuItem[] = app.projects.map((directory) => ({
+      key: `move:${directory}`,
+      label: projectName(directory, app.config?.projectNames),
+      active: directory === current,
+    }))
+  return {
+    childWidth: 200,
+    search: { placeholder: t("menu.moveSearch"), empty: t("menu.moveNoMatch") },
+    children: current ? [{ key: "row.moveOut", label: t("menu.moveOut"), sticky: true }, ...rows] : rows,
+    footer: [{ key: "row.newProjectMove", label: t("menu.newProjectMove"), icon: `${FOLDER_ICON}M8 7.2v3.6M6.2 9h3.6` }],
+  }
+}
 
 /*
  * Built from the UNFILTERED list, because `commands` drops anything disabled
@@ -869,21 +1636,181 @@ const SESSION_MENU: { id: string; label: string; asks?: boolean }[] = [
  * session's menu lost Export entirely and came up two rows shorter than the
  * same menu a moment later.
  */
-const sessionMenuItems = computed(() =>
-  SESSION_MENU.map((entry) => {
-    const command = bindableCommands.value.find((item) => item.id === entry.id)
-    if (!command) return undefined
-    const short = t(entry.label)
-    return {
-      key: entry.id,
-      // A key with no string of its own falls back to the command's sentence
-      // rather than showing the key, which is what `t` returns when it misses.
-      label: (short === entry.label ? command.title : short) + (entry.asks ? "…" : ""),
-      enabled: command.enabled,
-      divided: entry.id === "session.delete",
+function menuRow(entry: MenuRow): MenuItem | undefined {
+  const target = menuSession.value
+  const base = {
+    key: entry.id,
+    divided: Boolean(entry.divided),
+    icon: entry.icon,
+    danger: Boolean(entry.danger),
+    hint: hintFor(entry) || undefined,
+  }
+  if (entry.children) {
+    const children = entry.children.map(menuRow).filter((item): item is MenuItem => Boolean(item))
+    return { ...base, label: t(entry.label), enabled: Boolean(target), children }
+  }
+  if (entry.id === "row.move") return { ...base, label: t(entry.label), enabled: Boolean(target), ...moveMenu(target) }
+  if (ROW_ACTIONS[entry.id]) {
+    const label =
+      entry.id === "row.pin"
+        ? t(target && app.isPinned(target.id) ? "menu.unpin" : "menu.pin")
+        : entry.id === "row.unread"
+          ? t(target && showsUnread(target.id) ? "menu.markRead" : "menu.markUnread")
+          : entry.id === "row.reveal"
+            ? revealLabel()
+            : entry.id === "row.reviewRestricted"
+              ? t(target?.reviewRestricted ? "menu.allowContinue" : "menu.restrictConversation")
+              : t(entry.label)
+    return { ...base, label, enabled: Boolean(target) }
+  }
+  const command = bindableCommands.value.find((item) => item.id === entry.id)
+  if (!command) return undefined
+  const short = t(entry.label)
+  return {
+    ...base,
+    // A key with no string of its own falls back to the command's sentence
+    // rather than showing the key, which is what `t` returns when it misses.
+    label: short === entry.label ? command.title : short,
+    // A row's menu acts on its own conversation (runSessionMenu opens it first where it must), so whether one
+    // is open now says nothing about it; only the header's menu, which names the open one, keeps the command's rule.
+    enabled: Boolean(target) && (!sessionMenu.value?.header || command.enabled !== false),
+  }
+}
+
+const sessionMenuItems = computed(() => {
+  const header = Boolean(sessionMenu.value?.header)
+  let rows = header ? HEADER_MENU : SESSION_MENU
+  // A row listed under its project has no "show in" row, so copying the directory takes its rule.
+  if (!header && sessionMenu.value?.nested) {
+    rows = rows
+      .filter((entry) => entry.id !== "row.reveal")
+      .map((entry) => (entry.id === "row.copyDirectory" ? { ...entry, divided: true } : entry))
+  }
+  return rows.map(menuRow).filter((item): item is MenuItem => Boolean(item))
+})
+
+/*
+ * MiMo's project menu, row for row: rename, pin, archive its conversations,
+ * batch management, show in the file explorer, copy the working directory,
+ * change the folder location, remove. Removing only takes the project out of
+ * the side column - its conversations and its folder stay, and opening the
+ * folder again brings it back, the same as closing a project always has.
+ */
+const PROJECT_MENU: { id: string; label: string; icon: string; divided?: boolean; danger?: boolean }[] = [
+  { id: "rename", label: "menu.renameProject", icon: "M11.2 2.6 13.4 4.8 5.6 12.6 2.8 13.2 3.4 10.4z" },
+  /* MCode's own: the icon and colour a project wears, which MiMo's name-only rename has no room for. */
+  { id: "appearance", label: "menu.projectAppearance", icon: "M8 2.4a5.6 5.6 0 1 0 0 11.2c.8 0 1.2-.5 1.2-1 0-.6-.4-.8-.4-1.3 0-.6.5-1 1.1-1h1.3a2.4 2.4 0 0 0 2.4-2.4C13.6 4.6 11.1 2.4 8 2.4zM5.2 7.4h.01M6.6 4.9h.01M9.6 4.9h.01" },
+  { id: "pin", label: "menu.pinProject", icon: "M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" },
+  { id: "archive", label: "menu.archiveProject", icon: "M2.2 3h11.6v2.6H2.2zM3.2 5.6h9.6V13H3.2zM6.4 8.2h3.2", divided: true },
+  { id: "batch", label: "menu.batch", icon: "M2.4 4.4h1.6M6.6 4.4h7M2.4 8h1.6M6.6 8h7M2.4 11.6h1.6M6.6 11.6h7" },
+  { id: "reveal", label: "files.reveal", icon: "M2 4.4c0-.6.5-1 1-1h2.6l1.2 1.5h6.2c.5 0 1 .4 1 1v6.2c0 .6-.5 1-1 1H3c-.5 0-1-.4-1-1z", divided: true },
+  { id: "copyDirectory", label: "menu.copyDirectory", icon: "M5.6 5.6h7.2v7.2H5.6zM3.2 10.4V3.2h7.2" },
+  { id: "relocate", label: "menu.relocateProject", icon: "M2 4.4c0-.6.5-1 1-1h2.6l1.2 1.5h6.2c.5 0 1 .4 1 1v6.2c0 .6-.5 1-1 1H3c-.5 0-1-.4-1-1zM8 7.4v4M6.4 9l1.6-1.6L9.6 9" },
+  { id: "remove", label: "menu.removeProject", icon: "M4.4 4.4l7.2 7.2M11.6 4.4l-7.2 7.2", divided: true, danger: true },
+]
+
+/* A project's conversations that are still in the side column. */
+const projectSessions = (directory: string) =>
+  app.sessions.filter((session) => session.directory === directory && !session.archived)
+
+/* Settings keyed by a project's folder follow it when the folder changes. */
+function rekey<T>(map: Record<string, T> | undefined, from: string, to: string): Record<string, T> {
+  const next = { ...(map ?? {}) }
+  if (from in next) {
+    next[to] = next[from]
+    delete next[from]
+  }
+  return next
+}
+
+const PROJECT_ACTIONS: Record<string, (directory: string) => void | Promise<void>> = {
+  rename: (directory) => {
+    renamingProject.value = directory
+  },
+  appearance: (directory) => {
+    editingProject.value = directory
+  },
+  /* MiMo's pinToFront: the latest pin heads 置顶, and a toast says what happened. */
+  pin: async (directory) => {
+    const pinned = app.config?.pinnedProjects ?? []
+    const was = pinned.includes(directory)
+    await app.patchConfig({
+      pinnedProjects: was ? pinned.filter((entry) => entry !== directory) : [directory, ...pinned],
+    })
+    notify(t(was ? "side.projectUnpinnedToast" : "side.projectPinnedToast"))
+  },
+  archive: async (directory) => {
+    await archiveSessions(projectSessions(directory).map((session) => session.id))
+  },
+  /* MiMo's project batch management chooses projects, starting with this one. */
+  batch: (directory) => {
+    selecting.value = undefined
+    selectingProjects.value = [directory]
+  },
+  reveal: (directory) => revealFolder(directory),
+  copyDirectory: (directory) => {
+    window.mcode.setClipboardText(directory)
+    notify(t("menu.copiedDirectory"))
+  },
+  /*
+   * The folder was moved or renamed on disk: every conversation that worked in
+   * the old path works in the new one, archived ones included, and the name,
+   * icon, colour and pin the project had come along with it.
+   */
+  relocate: async (directory) => {
+    const [next] = await pickDirectory(t("menu.relocateProject"), false)
+    if (!next || next === directory) return
+    // MiMo refuses a folder that is already another project's, rather than merging the two.
+    if (app.projects.includes(next) || app.sessions.some((entry) => entry.directory === next && !entry.archived)) {
+      notifyFailure(t("toast.projectPathTaken", { name: projectName(next, app.config?.projectNames) }))
+      return
     }
-  }).filter((item): item is { key: string; label: string; enabled: boolean; divided: boolean } => Boolean(item)),
-)
+    for (const session of app.sessions.filter((entry) => entry.directory === directory)) await app.move(session.id, next)
+    const config = app.config
+    if (!config) return
+    const swap = (list: string[] | undefined) => (list ?? []).map((entry) => (entry === directory ? next : entry))
+    await app.patchConfig({
+      projectNames: rekey(config.projectNames, directory, next),
+      projectIcons: rekey(config.projectIcons, directory, next),
+      projectColors: rekey(config.projectColors, directory, next),
+      pinnedProjects: swap(config.pinnedProjects),
+      projects: swap(config.projects),
+      projectOrder: swap(config.projectOrder),
+      closedProjects: swap(config.closedProjects),
+    })
+    notify(t("toast.projectPathChanged", { name: projectName(next, app.config?.projectNames) }), { level: "success" })
+  },
+  /* Asked first, as MiMo asks: the project leaves the list, its conversations stay. */
+  remove: (directory) => {
+    removingProjects.value = { directories: [directory], batch: false }
+  },
+}
+
+/* Takes projects off the project list; adding the folder again brings each back. */
+async function closeProjects(directories: string[]) {
+  await app.removeProjects(directories)
+}
+
+const projectMenuItems = computed<MenuItem[]>(() => {
+  const directory = projectMenu.value?.directory
+  const pinned = directory ? (app.config?.pinnedProjects ?? []).includes(directory) : false
+  const live = directory ? projectSessions(directory).length : 0
+  return PROJECT_MENU.filter((entry) => !(entry.id === "batch" && pinned)).map((entry) => ({
+    key: entry.id,
+    label: entry.id === "reveal" ? revealLabel() : t(entry.id === "pin" && pinned ? "side.unpinProject" : entry.label),
+    // Archiving needs a conversation to act on. Batch management chooses projects, and a pinned one has no such row.
+    enabled: Boolean(directory) && (entry.id !== "archive" || live > 0),
+    divided: Boolean(entry.divided),
+    icon: entry.icon,
+    danger: Boolean(entry.danger),
+  }))
+})
+
+async function runProjectMenu(key: string) {
+  const directory = projectMenu.value?.directory
+  projectMenu.value = undefined
+  if (directory) await PROJECT_ACTIONS[key]?.(directory)
+}
 
 /**
  * Runs an application-menu item.
@@ -914,59 +1841,151 @@ function runAppMenu(key: string) {
     window.mcode.view(key)
     return
   }
-  if (key === "new-window") {
-    window.mcode.newWindow()
-    return
-  }
   if (key === "zoom-in" || key === "zoom-out" || key === "zoom-reset") {
     window.mcode.zoom(key === "zoom-in" ? "in" : key === "zoom-out" ? "out" : "reset")
     return
   }
-  if (key === "minimize" || key === "maximize" || key === "close" || key === "quit") {
-    window.mcode.window(key === "quit" ? "close" : key)
+  /* 退出 quits for real; only closing a window may hide it to the tray. */
+  if (key === "quit") {
+    window.mcode.quitApp()
+    return
+  }
+  if (key === "minimize" || key === "maximize" || key === "close") {
+    window.mcode.window(key)
   }
 }
 
-function runSessionMenu(key: string) {
+/*
+ * A row's menu acts on the conversation it names. The entries that have to
+ * show it - renaming edits the header, exporting writes what is on screen -
+ * open it first and then run the command that already exists, so there is one
+ * implementation of each rather than two that can drift.
+ */
+async function runSessionMenu(key: string) {
+  const target = menuSession.value?.id
+  const header = Boolean(sessionMenu.value?.header)
   sessionMenu.value = undefined
-  void commands.value.find((entry) => entry.id === key)?.run()
+  if (!target) return
+  // A project chosen in the move submenu.
+  if (key.startsWith("move:")) {
+    const directory = key.slice("move:".length)
+    const moving = app.sessions.find((entry) => entry.id === target)
+    if (moving && projectOf(moving) !== directory) await app.move(target, directory)
+    return
+  }
+  const own = ROW_ACTIONS[key]
+  if (own) {
+    await own(target, header)
+    return
+  }
+  // Archiving and deleting need nothing on screen, so the row's conversation is not opened just to go away.
+  if (key === "session.archive") {
+    await archiveSessions([target])
+    return
+  }
+  if (key === "session.delete") {
+    deletingSession.value = target
+    return
+  }
+  if (app.currentID !== target) {
+    view.value = "session"
+    await app.open(target)
+  }
+  await commands.value.find((entry) => entry.id === key)?.run()
+}
+
+/* A double-click on a row's title renames it in the same dialog its menu's rename opens. */
+function renameFromSide(sessionID: string) {
+  beginRename(sessionID)
 }
 
 async function confirmDeleteSession() {
   const target = deletingSession.value
   deletingSession.value = undefined
-  if (target) await app.remove(target)
+  if (!target) return
+  await app.remove(target)
+  notify(t("toast.convoDeleted"), { level: "success" })
 }
-const manageModelsOpen = ref(false)
+
+/* A project ticked or unticked in project selection mode. */
+function toggleProjectSelected(directory: string) {
+  const current = selectingProjects.value ?? []
+  selectingProjects.value = current.includes(directory)
+    ? current.filter((entry) => entry !== directory)
+    : [...current, directory]
+}
+
+/* What MiMo's project selection bar asks for. */
+async function runProjectBatch(action: "archive" | "remove" | "exit" | "all" | "none", directories: string[] = []) {
+  if (action === "exit") {
+    selectingProjects.value = undefined
+    return
+  }
+  if (action === "all" || action === "none") {
+    selectingProjects.value = action === "all" ? [...directories] : []
+    return
+  }
+  const chosen = selectingProjects.value ?? []
+  if (!chosen.length) return
+  if (action === "archive") {
+    for (const directory of chosen) {
+      for (const session of projectSessions(directory)) await app.archive(session.id, true)
+    }
+    selectingProjects.value = undefined
+    // MiMo's batch project archive is silent per project and says the count once, with no links.
+    notify(t("toast.projectsArchivedN", { count: chosen.length }), { level: "success" })
+    return
+  }
+  removingProjects.value = { directories: [...chosen], batch: true }
+}
+
+async function confirmRemoveProjects() {
+  const removing = removingProjects.value
+  removingProjects.value = undefined
+  if (!removing) return
+  await closeProjects(removing.directories)
+  if (removing.batch) selectingProjects.value = undefined
+}
+
+/*
+ * The new-project dialog's answer, from the Projects "+" or from 新建项目… in the
+ * move submenu. With a source folder, that folder under the name given;
+ * without, a new empty folder. A conversation waiting on it moves in and opens;
+ * otherwise the project is added and opened, as a dropped folder is.
+ */
+async function createNamedProject(title: string, source?: string) {
+  const moving = namingProject.value?.sessionID
+  namingProject.value = undefined
+  let directory = source
+  if (!directory) {
+    try {
+      directory = (await app.client?.request({ type: "project.createBlank", name: title }))?.directory
+    } catch (failure) {
+      notifyFailure(t("menu.createFailed", { error: reasonOf(failure) }))
+      return
+    }
+  }
+  if (!directory) return
+  if (source && title !== folderName(source)) {
+    await app.patchConfig({ projectNames: { ...(app.config?.projectNames ?? {}), [source]: title } })
+  }
+  if (moving) {
+    await app.addProject(directory, { silent: true })
+    await app.move(moving, directory)
+    if (app.currentID !== moving) await app.open(moving)
+    view.value = "session"
+    return
+  }
+  // DL15: MiMo lands on the home screen with the new project picked, and makes no conversation for it.
+  await addAndBrowse([directory])
+}
 
 /**
- * The conversation as a Markdown file.
- *
- * Tool traffic is left out: the point of an export is what was asked and what
- * was answered, and the six shell invocations in between are noise on paper.
+ * The conversation on show as Markdown, in MiMo's shape (lib/convo-export.ts).
+ * Round 3 AR16 (artifacts agent).
  */
 function transcriptMarkdown(): string {
-  const session = app.current
-  const when = (at: number) => new Date(at).toLocaleString()
-  const lines = [`# ${session ? sessionTitle(session.title) : t("session.new")}`, ""]
-  if (session) {
-    lines.push(`- ${session.directory}`, `- ${when(session.created)}`, "")
-  }
-
-  for (const message of app.messages) {
-    if (message.role === "user") {
-      lines.push(`## ${t("export.asked")}`, "", message.text, "")
-      continue
-    }
-    const text = message.parts
-      .filter((part) => part.type === "text")
-      .map((part) => (part.type === "text" ? part.text : ""))
-      .join("\n\n")
-      .trim()
-    if (!text) continue
-    lines.push(`### ${t("export.answered")}`, "", text, "")
-  }
-  return lines.join("\n")
+  return transcriptOf(app.current ? sessionTitle(app.current.title) : "", app.messages)
 }
 
 /**
@@ -978,26 +1997,14 @@ function transcriptMarkdown(): string {
  * transcript drops them: this is the format meant to be parsed, so leaving
  * parts out would defeat it.
  */
-function exportFilename(): string {
-  const session = app.current
-  const raw = session ? sessionTitle(session.title) || session.id : "session"
-  const clean = raw
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/gi, "-")
-    .replace(/^-+|-+$/g, "")
-  return `${clean || session?.id || "session"}.json`
-}
-
 /**
  * Says that writing a file did not work, and leaves the app alone otherwise.
  *
- * `app.error` is the one message the boot screen reads, and setting it does
- * more than show a line of text: it hides the empty-session hero, takes the
- * blank class off the body, and puts a raw exception in the stream with nothing
- * to dismiss it. That is right for a backend that never started - there is no
- * app to go back to - and wrong for a save that failed, which leaves everything
- * else exactly where it was. So this goes in a toast, which times out and has a
- * close button.
+ * `app.error` is the one message the boot screen reads, and setting it
+ * replaces the whole window with that screen. That is right for a backend that
+ * never started - there is no app to go back to - and wrong for a save that
+ * failed, which leaves everything else exactly where it was. So this goes in a
+ * toast, which times out and has a close button, as send failures do.
  *
  * `what` names the thing that was being attempted, so the message is not just a
  * bare errno with no subject.
@@ -1019,28 +2026,9 @@ function reasonOf(failure: unknown): string {
   return raw.replace(/^Error invoking remote method '[^']*':\s*/, "")
 }
 
-async function exportSessionData() {
-  if (!app.current) return
-  const data = { info: app.current, messages: app.messages }
-  try {
-    const saved = await window.mcode.saveText(exportFilename(), JSON.stringify(data, null, 2))
-    if (saved) notify(t("toast.exported"), saved, revealAction(saved))
-  } catch (failure) {
-    reportSaveFailure(t("toast.exportFailed"), failure)
-  }
-}
-
 async function exportSession() {
   if (!app.messages.length) return
-  const name = (app.current ? sessionTitle(app.current.title) : "session")
-    .replace(/[\\/:*?"<>|]/g, "-")
-    .slice(0, 60)
-  try {
-    const saved = await window.mcode.saveText(`${name}.md`, transcriptMarkdown())
-    if (saved) notify(t("toast.exported"), saved, revealAction(saved))
-  } catch (failure) {
-    reportSaveFailure(t("toast.exportFailed"), failure)
-  }
+  await exportConversationMarkdown(app.current ? sessionTitle(app.current.title) : "", app.messages)
 }
 
 /**
@@ -1119,12 +2107,11 @@ async function shareSession() {
   ].join("\n")
 
   try {
-    const saved = await window.mcode.saveText(`${name}.html`, page)
+    const saved = await saveText(`${name}.html`, page)
     // The page is meant to be looked at, so this one opens rather than reveals.
     if (saved) {
-      notify(t("share.saved"), saved, {
-        label: t("share.view"),
-        run: () => void window.mcode.openSaved(saved),
+      notify(t("share.saved"), {
+        action: { label: t("share.view"), run: () => void window.mcode.openSaved(saved) },
       })
     }
   } catch (failure) {
@@ -1154,7 +2141,7 @@ async function undoTurn() {
   if (!id) return
   try {
     const files = await app.undo(id)
-    notify(t("toast.undone", { n: files }), t("toast.undoneBody"))
+    notify(t("toast.undone", { n: files }))
   } catch (failure) {
     notifyFailure(t("toast.undoFailed"), reasonOf(failure))
   }
@@ -1176,39 +2163,78 @@ async function compactSession() {
   if (!id) return
   try {
     await app.compact(id)
-    notify(t("toast.compacted"), t("toast.compactedBody"))
+    notify(t("toast.compacted"))
   } catch (failure) {
     notifyFailure(t("toast.compactFailed"), reasonOf(failure))
   }
 }
 
-/**
- * Turns the review's notes into a message and hands it to the composer.
- *
- * Not sent outright: the notes are the reviewer's shorthand, and being able to
- * add a sentence before pressing enter is the difference between a list of
- * complaints and an instruction.
- */
-function sendNotes(notes: { file: string; line: number; text: string }[]) {
-  if (!notes.length) return
-  const byFile = new Map<string, typeof notes>()
-  for (const note of notes) byFile.set(note.file, [...(byFile.get(note.file) ?? []), note])
+/* The artifacts page is a place, so it is worth being able to come back to. */
+function goArtifacts() {
+  view.value = "artifacts"
+  push({ view: "artifacts" })
+}
 
-  const lines: string[] = []
-  for (const [file, list] of byFile) {
-    lines.push(`${file}`)
-    for (const note of [...list].sort((a, b) => a.line - b.line)) {
-      lines.push(`  L${note.line}: ${note.text}`)
+/* The in-app browser, unless it has been switched off in settings - which also closes its tabs. */
+const browserAllowed = computed(() => app.config?.browserEnabled !== false)
+watch(browserAllowed, (allowed) => {
+  if (!allowed) rp.close(rp.tabs.filter((tab) => tab.type === "browser").map((tab) => tab.id))
+})
+
+/*
+ * MiMo's priority filter: the side column led by what wants attention, then
+ * the rest of the week by day. Remembered, as MiMo remembers it, because it is
+ * a way of working through the day rather than a glance at the list.
+ */
+const PRIORITY_KEY = "mcode.priorityFilter"
+const priorityFilter = ref(
+  (() => {
+    try {
+      return localStorage.getItem(PRIORITY_KEY) === "true"
+    } catch {
+      return false
     }
-  }
-  composer.value?.insert(lines.join("\n"))
-  app.clearNotes()
-  /* The notes are in the composer now, so the panel gets out of the way of
-     reading them - the whole panel, since a Context tab left open in the strip
-     would have held it on screen doing exactly what this is trying to undo. */
-  rightPanel.value = false
-  contextTab.value = false
-  panelTab.value = "review"
+  })(),
+)
+watch(priorityFilter, (on) => {
+  try {
+    localStorage.setItem(PRIORITY_KEY, String(on))
+  } catch {}
+})
+
+/* The priority section's archive-all, which MiMo applies to every conversation. */
+async function archiveAll() {
+  await archiveSessions(app.sessions.filter((entry) => !entry.archived).map((entry) => entry.id))
+}
+
+/* So is the plugins page, which MiMo opens in the workspace rather than over it. */
+function goPlugins() {
+  view.value = "plugins"
+  push({ view: "plugins" })
+}
+
+/* A conversation picked in the side column always shows it, even the current one sitting behind the artifacts page. */
+async function openFromSide(sessionID: string) {
+  view.value = "session"
+  if (app.currentID !== sessionID) await app.open(sessionID)
+}
+
+/* subagents: MiMo 26.920's chip on a side column row - the conversation, then its 子智能体 tab. */
+async function openSubagentsFromSide(sessionID: string) {
+  await openFromSide(sessionID)
+  rp.openSubagents()
+}
+
+/** A file's session, opened from the artifacts page. */
+async function openFromArtifacts(sessionID: string) {
+  view.value = "session"
+  await app.open(sessionID)
+}
+
+/* A8: a conversation found by what was said in it opens at that message, as MiMo's requestReveal does. */
+async function openFromSearch(sessionID: string, messageID?: string) {
+  await openFromArtifacts(sessionID)
+  if (messageID) app.revealMessage(messageID)
 }
 
 function goHome() {
@@ -1216,25 +2242,43 @@ function goHome() {
   push({ view: "home" })
 }
 
-/**
- * Steps through the open tabs.
- *
- * Wraps at both ends: with three conversations open, going back from the first
- * should reach the last rather than stop, which is what makes the pair of
- * shortcuts usable without looking at the row.
+/*
+ * The skill card's 在对话中试用, as MiMo's: the skill goes as a chip into the
+ * open conversation's box when there is one, otherwise into a new task's, and
+ * a note says so.
  */
+async function trySkill(name: string, title: string) {
+  const current = app.current
+  if (current && !current.archived && !current.parentID && !current.sideOf) {
+    addDraftSkill(`main:${current.id}`, name)
+    await openFromSide(current.id)
+    push({ view: "session", sessionID: current.id })
+  } else {
+    addDraftSkill("home", name)
+    goHome()
+  }
+  notify(t("skillDetail.tryInChatToast", { name: title }))
+}
+
+/* MiMo's 让 Agent 配置: a new task with the skill-writing skill as its only chip and a request already written. */
+function configureSkill(name: string, title: string) {
+  addDraftSkill("home", "skill-creator", { only: true, text: t("skillDetail.configureDraft", { name: title, id: name }) })
+  goHome()
+}
+
 /**
- * Steps to the next session with something waiting.
+ * Steps to the next conversation with something waiting, along the side
+ * column's visible order.
  *
  * Wraps around and stops where it started, so pressing it with nothing unread
- * leaves the screen alone rather than walking the whole strip.
+ * leaves the screen alone rather than walking the whole list.
  */
 async function stepUnread(by: 1 | -1) {
-  const tabs = app.tabs
-  if (!tabs.length) return
-  const at = app.currentID ? tabs.indexOf(app.currentID) : -1
-  for (let step = 1; step <= tabs.length; step += 1) {
-    const candidate = tabs[(at + by * step + tabs.length * step) % tabs.length]
+  const chats = app.visibleChats
+  if (!chats.length) return
+  const at = app.currentID ? chats.indexOf(app.currentID) : -1
+  for (let step = 1; step <= chats.length; step += 1) {
+    const candidate = chats[(at + by * step + chats.length * step) % chats.length]
     if (candidate && app.unread(candidate)) {
       await app.open(candidate)
       return
@@ -1242,12 +2286,71 @@ async function stepUnread(by: 1 | -1) {
   }
 }
 
+/*
+ * A link that opens this conversation from anywhere else, as MiMo copies one:
+ * the session and the project it sits in, under this app's own scheme.
+ */
+function copySessionLink() {
+  const session = app.current
+  if (!session) return
+  window.mcode.setClipboardText(sessionLink(session.id, session.directory))
+  notify(t("menu.copiedLink"))
+}
+
+/* A link that arrives before the app has connected waits for it. */
+let linksReady = false
+let queuedLink: SessionLinkTarget | undefined
+
+function receiveLink(link: SessionLinkTarget) {
+  if (!linksReady) {
+    queuedLink = link
+    return
+  }
+  void openLink(link)
+}
+
+async function openLink(link: SessionLinkTarget) {
+  try {
+    if (link.sessionID !== app.currentID) await app.open(link.sessionID)
+    view.value = "session"
+  } catch {
+    notifyFailure(t("menu.linkMissing"))
+  }
+}
+
+/*
+ * Ctrl+Tab walks the conversations in the order they were last viewed: a quick
+ * press goes back to the previous one, and pressing Tab again with Ctrl still
+ * held goes further back. The order is taken when the walk starts and kept
+ * until the modifiers are let go, because every step opens a conversation and
+ * would otherwise reshuffle the list being walked.
+ */
+let recentWalk: { order: string[]; at: number } | undefined
+
+async function stepRecent(by: 1 | -1) {
+  if (!recentWalk) {
+    const live = new Set(app.sessions.filter((session) => !session.archived).map((session) => session.id))
+    const order = app.recent.filter((id) => live.has(id))
+    if (order.length < 2) return
+    recentWalk = { order, at: app.currentID ? Math.max(0, order.indexOf(app.currentID)) : 0 }
+  }
+  const walk = recentWalk
+  walk.at = (walk.at + by + walk.order.length) % walk.order.length
+  const target = walk.order[walk.at]
+  if (target !== app.currentID) await app.open(target)
+  view.value = "session"
+}
+
+function endRecentWalk(event?: KeyboardEvent) {
+  if (event && (event.ctrlKey || event.metaKey || event.altKey)) return
+  recentWalk = undefined
+}
+const forgetRecentWalk = () => endRecentWalk()
+
+/* MiMo's previous / next conversation, along the side column's visible order. */
 async function stepSession(by: 1 | -1) {
-  const tabs = app.tabs
-  if (tabs.length < 2) return
-  const at = app.currentID ? tabs.indexOf(app.currentID) : -1
-  const next = tabs[(at + by + tabs.length) % tabs.length]
-  if (next) await app.open(next)
+  const next = stepTarget(app.visibleChats, app.currentID, by)
+  if (next) await selectTab(next)
 }
 
 /**
@@ -1290,7 +2393,7 @@ function leaveProject(directory: string) {
 // ---------------------------------------------------------------------------
 
 interface Location {
-  view: "home" | "session"
+  view: "home" | "session" | "artifacts" | "plugins"
   sessionID?: string
 }
 
@@ -1321,6 +2424,10 @@ async function apply(location: Location) {
       }
       if (app.currentID !== location.sessionID) await app.open(location.sessionID)
       view.value = "session"
+    } else if (location.view === "artifacts") {
+      view.value = "artifacts"
+    } else if (location.view === "plugins") {
+      view.value = "plugins"
     } else {
       view.value = "home"
     }
@@ -1356,18 +2463,30 @@ async function forward() {
  * The palette narrows this to what is actionable; the shortcuts page must not,
  * because a chord belongs to a command rather than to a moment.
  */
-const bindableCommands = computed(() => {
+/* One command, as the palette, the menus, the key table and the shortcuts page all read it. */
+interface AppCommand {
+  id: string
+  group: string
+  title: string
+  hint?: string
+  enabled?: boolean | (() => boolean)
+  hidden?: boolean
+  danger?: boolean
+  run: () => unknown
+}
+
+const bindableCommands = computed((): AppCommand[] => {
   const hasSession = Boolean(app.currentID)
   const inWorkspace = !isHome.value
 
-  const all = [
+  const all: AppCommand[] = [
     // Session
-    { id: "session.new", group: "key.groupGeneral", title: t("cmd.newSession"), hint: "Ctrl+T", run: newSession },
+    { id: "session.new", group: "key.groupGeneral", title: t("side.newTask"), hint: "Ctrl+N", run: newSession },
     {
       id: "view.model",
       group: "key.groupModels",
       title: t("cmd.switchModel"),
-      hint: "Ctrl+'",
+      hint: "Ctrl+Shift+M",
       // The picker hangs off the composer's model pill, and the composer is
       // only mounted inside a project - so on the home screen this command had
       // nothing to open, and both menus offered it anyway.
@@ -1376,72 +2495,46 @@ const bindableCommands = computed(() => {
     },
     {
       id: "session.abort",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.abort"),
       enabled: app.busy,
       run: () => app.abort(),
     },
     {
       id: "session.rename",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.rename"),
+      hint: "Ctrl+Alt+R",
       enabled: hasSession,
-      run: () => (renaming.value = true),
+      run: () => beginRename(),
     },
     {
       id: "session.undo",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.undo"),
       enabled: hasSession && !app.busy && app.history.undo > 0,
       run: undoTurn,
     },
     {
       id: "session.redo",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.redo"),
       enabled: hasSession && !app.busy && app.history.redo > 0,
       run: redoTurn,
     },
     {
       id: "session.share",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("share.session"),
       enabled: hasSession && app.messages.length > 0,
       run: shareSession,
     },
     {
-      /*
-       * The Context view, without reaching for the ring.
-       *
-       * The ring is the way in that opencode gives, and it is only drawn once a
-       * turn has reported what it spent - so on a session that has not answered
-       * yet, and for anyone working without a pointer, this is the only door.
-       */
-      id: "session.context",
-      group: "key.groupSession",
-      title: t("context.usage.view"),
-      enabled: hasSession && app.messages.length > 0,
-      run: toggleContext,
-    },
-    {
-      id: "session.export",
-      group: "key.groupSession",
-      title: t("cmd.export"),
-      enabled: hasSession && app.messages.length > 0,
-      run: exportSessionData,
-    },
-    {
       id: "session.exportMarkdown",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.exportMarkdown"),
       enabled: hasSession && app.messages.length > 0,
       run: exportSession,
-    },
-    {
-      id: "app.server",
-      group: "key.groupGeneral",
-      title: t("server.switch"),
-      run: () => void chooseServer(),
     },
     {
       id: "app.update",
@@ -1464,34 +2557,25 @@ const bindableCommands = computed(() => {
     },
     {
       id: "session.compact",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.compact"),
       // A model call, and pointless on a conversation that is one exchange long.
       enabled: hasSession && !app.busy && !app.compacting && app.messages.length > 1,
       run: compactSession,
     },
     {
-      // The title swaps with the state, so the row always names what pressing
-      // it will do rather than what is currently true.
-      id: "permissions.autoaccept",
-      group: "key.groupSession",
-      title: autoAcceptAll() ? t("cmd.autoAcceptOff") : t("cmd.autoAcceptOn"),
-      hint: "Ctrl+Shift+A",
-      run: () => void toggleAutoAccept(),
-    },
-    {
       id: "session.archive",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.archive"),
-      hint: "Ctrl+Shift+Backspace",
+      hint: "Ctrl+Alt+A",
       enabled: hasSession,
       run: async () => {
-        if (app.currentID) await app.archive(app.currentID, true)
+        if (app.currentID) await archiveSessions([app.currentID])
       },
     },
     {
       id: "session.delete",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.delete"),
       danger: true,
       enabled: hasSession,
@@ -1510,110 +2594,88 @@ const bindableCommands = computed(() => {
       group: "key.groupGeneral",
       title: leftPanel.value ? t("cmd.hideSessions") : t("cmd.showSessions"),
       hint: "Ctrl+B",
-      enabled: hasSession,
-      run: () => (leftPanel.value = !leftPanel.value),
+      // On every screen, as MiMo's is: the home screen has a side column to fold too.
+      run: () => toggleSide(),
+    },
+    // MiMo's panel and browser chords.
+    {
+      id: "view.bottom",
+      group: "key.groupGeneral",
+      title: t("key.bottomPanel"),
+      hint: "Ctrl+J",
+      enabled: inWorkspace,
+      run: () => (terminalOpen.value = !terminalOpen.value),
     },
     {
-      id: "view.server",
+      id: "view.browser",
       group: "key.groupGeneral",
-      title: t("cmd.server"),
-      enabled: inWorkspace,
-      run: () => (serverPanel.value = !serverPanel.value),
+      title: t("key.browserPanel"),
+      hint: "Ctrl+Shift+B",
+      enabled: browserAllowed.value,
+      run: toggleBrowserTab,
+    },
+    {
+      id: "browser.tab",
+      group: "key.groupGeneral",
+      title: t("key.browserTab"),
+      hint: "Ctrl+T",
+      enabled: inConversation.value && browserAllowed.value,
+      run: openBrowserTab,
+    },
+    { id: "browser.address", group: "key.groupGeneral", title: t("key.browserAddress"), hint: "Ctrl+L", run: focusBrowserAddress },
+    {
+      id: "browser.reload",
+      group: "key.groupGeneral",
+      title: t("key.browserReload"),
+      hint: "Ctrl+R",
+      enabled: hasBrowserTab.value,
+      run: () => reloadBrowser(),
+    },
+    {
+      id: "browser.forceReload",
+      group: "key.groupGeneral",
+      title: t("key.browserForceReload"),
+      hint: "Ctrl+Shift+R",
+      enabled: hasBrowserTab.value,
+      run: () => reloadBrowser(true),
+    },
+    {
+      id: "view.review",
+      group: "key.groupConversation",
+      title: t("key.reviewTab"),
+      hint: "Ctrl+Shift+G",
+      enabled: inConversation.value,
+      run: openReviewTab,
+    },
+    {
+      id: "app.copyDirectory",
+      group: "key.groupConversation",
+      title: t("menu.copyDirectory"),
+      hint: "Ctrl+Shift+C",
+      enabled: hasSession,
+      run: copyWorkingDirectory,
     },
     {
       id: "view.right",
-      group: "key.groupSession",
-      title: reviewPanelUp.value ? t("cmd.hideFiles") : t("cmd.showFiles"),
-      hint: "Ctrl+Shift+R",
-      enabled: inWorkspace,
-      run: toggleReviewPanel,
+      group: "key.groupConversation",
+      title: t("key.sidePanel"),
+      hint: "Ctrl+Alt+B",
+      run: toggleSidePanel,
     },
     {
       id: "view.terminal",
       group: "key.groupTerminal",
       title: terminalOpen.value ? t("cmd.hideTerminal") : t("cmd.showTerminal"),
-      hint: "Ctrl+`",
+      // MiMo's `ctrl`: Control on a Mac too, where Command+` cycles windows.
+      hint: controlChord("`", app.platform),
       enabled: inWorkspace,
       run: () => (terminalOpen.value = !terminalOpen.value),
     },
-    {
-      id: "terminal.new",
-      group: "key.groupTerminal",
-      title: t("key.newTerminal"),
-      hint: "Ctrl+Alt+T",
-      enabled: inWorkspace,
-      run: () => void newTerminal(),
-    },
-
-    ...(["build", "plan"] as const).map((entry) => ({
-      id: `agent.${entry}`,
-      group: "key.groupModels",
-      title: t("cmd.useAgent", { name: t(`agent.${entry}`) }),
-      enabled: (app.config?.agent ?? "build") !== entry,
-      run: async () => {
-        await app.patchConfig({ agent: entry })
-      },
-    })),
-    ...(["system", "dark", "light"] as const).map((entry) => ({
-      id: `scheme.${entry}`,
-      group: "key.groupGeneral",
-      title: t("cmd.useScheme", { name: t(`set.theme${entry[0].toUpperCase()}${entry.slice(1)}`) }),
-      enabled: (app.config?.theme ?? "system") !== entry,
-      run: async () => {
-        await app.patchConfig({ theme: entry })
-      },
-    })),
-    ...LANGUAGES.map((entry) => ({
-      id: `language.${entry.id}`,
-      group: "key.groupGeneral",
-      title: t("cmd.useLanguage", { name: entry.label }),
-      run: () => void setLanguage(entry.id),
-    })),
-    {
-      id: "language.cycle",
-      group: "key.groupGeneral",
-      title: t("cmd.cycleLanguage"),
-      run: () => void cycleLanguage(),
-    },
-    ...THEMES.map((entry) => ({
-      id: `theme.${entry.id}`,
-      group: "key.groupGeneral",
-      title: t("cmd.useTheme", { name: entry.name }),
-      run: () => void setTheme(entry.id, entry.name),
-    })),
     // App
-    {
-      /*
-       * The reference's "Delete workspace". Only offered from inside one: the
-       * repository's own checkout is not a workspace, and the entry would do
-       * nothing there.
-       */
-      id: "workspace.remove",
-      group: "key.groupGeneral",
-      title: t("workspace.delete"),
-      enabled: inWorkspace && inRemovableWorkspace.value,
-      run: () => void askDeleteWorkspace(),
-    },
-    {
-      id: "workspace.new",
-      group: "key.groupGeneral",
-      title: t("workspace.new"),
-      hint: "Ctrl+Shift+W",
-      enabled: hasSession,
-      run: () => void newWorkspace(),
-    },
-    {
-      id: "workspace.switch",
-      group: "key.groupGeneral",
-      title: t("workspace.switch"),
-      enabled: hasSession,
-      run: () => void switchWorkspace(),
-    },
     {
       id: "composer.promptMode",
       group: "key.groupPrompt",
       title: t("cmd.promptMode"),
-      hint: "Ctrl+Shift+E",
       enabled: hasSession,
       run: () => composer.value?.setMode("normal"),
     },
@@ -1621,28 +2683,30 @@ const bindableCommands = computed(() => {
       id: "composer.shellMode",
       group: "key.groupPrompt",
       title: t("cmd.shellMode"),
-      hint: "Ctrl+Shift+X",
       enabled: hasSession,
       run: () => composer.value?.setMode("shell"),
+    },
+    // MiMo's 发送消息 row; Enter itself is answered by the composer.
+    {
+      id: "composer.send",
+      group: "key.groupPrompt",
+      title: t("cmd.sendMessage"),
+      enabled: hasSession,
+      run: () => void composer.value?.submit(),
     },
     {
       id: "app.openFile",
       group: "key.groupNavigation",
       title: t("cmd.openFile"),
       hint: "Ctrl+P",
-      /*
-       * There is nothing to list without a project open. The palette's file
-       * mode reads the current session's directory, so on the launcher this
-       * offered a picker that came up empty and a choice that did nothing.
-       */
-      enabled: inWorkspace,
-      run: () => openPalette("files"),
+      // MiMo's: the right panel's files tab, which needs a conversation to hold it.
+      enabled: inConversation.value,
+      run: openFilesTab,
     },
     {
       id: "app.attachFile",
       group: "key.groupNavigation",
       title: t("cmd.attachFile"),
-      hint: "Ctrl+U",
       enabled: hasSession,
       run: () => composer.value?.pick(),
     },
@@ -1662,36 +2726,32 @@ const bindableCommands = computed(() => {
       id: "app.addSelection",
       group: "key.groupGeneral",
       title: t("cmd.addSelection"),
-      hint: "Ctrl+Shift+L",
       enabled: hasSession,
       run: () => addSelection(),
     },
     {
       id: "app.searchSessions",
       group: "key.groupGeneral",
-      title: t("cmd.searchSessions"),
-      hint: "Ctrl+F",
+      // No chord: MiMo's Ctrl+F is only the find bar's.
+      title: t("conv.search"),
       run: () => openPalette("sessions"),
     },
     {
       id: "app.searchProjects",
       group: "key.groupGeneral",
       title: t("cmd.searchProjects"),
-      hint: "Ctrl+Shift+O",
       run: () => openPalette("projects"),
     },
     {
       id: "session.prevUnread",
-      group: "key.groupSession",
-      title: t("cmd.prevUnread"),
-      hint: "Alt+Shift+↑",
+      group: "key.groupConversation",
+      title: t("conv.prevUnread"),
       run: () => void stepUnread(-1),
     },
     {
       id: "session.nextUnread",
-      group: "key.groupSession",
-      title: t("cmd.nextUnread"),
-      hint: "Alt+Shift+↓",
+      group: "key.groupConversation",
+      title: t("conv.nextUnread"),
       run: () => void stepUnread(1),
     },
     {
@@ -1702,58 +2762,47 @@ const bindableCommands = computed(() => {
        * transcript, which is the same thing when there is nothing to focus.
        */
       id: "view.steps",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.toggleSteps"),
       enabled: inWorkspace,
       run: toggleSteps,
     },
     {
       id: "session.prevMessage",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.prevMessage"),
-      hint: "Ctrl+Alt+[",
       run: () => stream.value?.stepMessage(-1),
     },
     {
       id: "session.nextMessage",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.nextMessage"),
-      hint: "Ctrl+Alt+]",
       run: () => stream.value?.stepMessage(1),
-    },
-    {
-      id: "session.reopenTab",
-      group: "key.groupGeneral",
-      title: t("cmd.reopenTab"),
-      hint: "Ctrl+Shift+T",
-      run: () => void app.reopenTab(),
     },
     {
       id: "app.mcp",
       group: "key.groupModels",
       title: t("cmd.mcp"),
-      hint: "Ctrl+;",
-      run: () => (mcpOpen.value = true),
+      run: () => openSettings("mcp"),
     },
     {
       id: "session.previous",
-      group: "key.groupSession",
-      title: t("key.prevSession"),
-      hint: "Alt+↑",
+      group: "key.groupConversation",
+      title: t("conv.prev"),
+      hint: "Ctrl+Shift+[",
       run: () => void stepSession(-1),
     },
     {
       id: "session.next",
-      group: "key.groupSession",
-      title: t("key.nextSession"),
-      hint: "Alt+↓",
+      group: "key.groupConversation",
+      title: t("conv.next"),
+      hint: "Ctrl+Shift+]",
       run: () => void stepSession(1),
     },
     {
       id: "agent.cycle",
       group: "key.groupModels",
       title: t("key.cycleAgent"),
-      hint: "Ctrl+.",
       enabled: hasSession,
       run: () => void cycleAgent(1),
     },
@@ -1761,89 +2810,184 @@ const bindableCommands = computed(() => {
       id: "agent.cycle.reverse",
       group: "key.groupModels",
       title: t("key.cycleAgentBack"),
-      hint: "Ctrl+Shift+.",
       enabled: hasSession,
       run: () => void cycleAgent(-1),
     },
     {
+      // Unbound, as MiMo leaves it.
       id: "model.variant.cycle",
       group: "key.groupModels",
       title: t("key.cycleEffort"),
-      hint: "Ctrl+Shift+D",
       run: () => void cycleEffort(),
+    },
+    {
+      id: "effort.decrease",
+      group: "key.groupModels",
+      title: t("key.decreaseEffort"),
+      run: () => void stepEffort(-1),
+    },
+    {
+      id: "effort.increase",
+      group: "key.groupModels",
+      title: t("key.increaseEffort"),
+      run: () => void stepEffort(1),
+    },
+    {
+      // MiMo's 切换语音模式, unbound: voice input between 智能编辑 and 快速输入.
+      id: "voice.toggle",
+      group: "key.groupPrompt",
+      title: t("key.label.toggle-voice"),
+      run: () => void app.toggleVoiceMode(),
+    },
+    {
+      // 追求目标, unbound: for the open conversation, or on the home screen for the next task.
+      id: "composer.goal.toggle",
+      group: "key.groupPrompt",
+      title: t("key.label.toggle-goal"),
+      run: () => void app.toggleGoalMode(isHome.value),
     },
     {
       id: "project.previous",
       group: "key.groupGeneral",
       title: t("key.prevProject"),
-      hint: "Ctrl+Alt+↑",
       run: () => void stepProject(-1),
     },
     {
       id: "project.next",
       group: "key.groupGeneral",
       title: t("key.nextProject"),
-      hint: "Ctrl+Alt+↓",
       run: () => void stepProject(1),
-    },
-    {
-      id: "fileTree.toggle",
-      group: "key.groupNavigation",
-      title: t("key.toggleTree"),
-      hint: "Ctrl+\\",
-      enabled: inWorkspace,
-      run: () => (fileTreeOpen.value = !fileTreeOpen.value),
-    },
-    {
-      id: "theme.cycle",
-      group: "key.groupGeneral",
-      title: t("cmd.cycleTheme"),
-      hint: "Ctrl+Shift+T",
-      run: () => void cycleTheme(),
-    },
-    {
-      id: "theme.scheme.cycle",
-      group: "key.groupGeneral",
-      title: t("cmd.cycleScheme"),
-      hint: "Ctrl+Shift+S",
-      run: () => void cycleScheme(),
     },
     {
       id: "input.focus",
       group: "key.groupGeneral",
       title: t("key.focusInput"),
-      hint: "Ctrl+L",
+      hint: "Ctrl+Shift+L",
       enabled: hasSession,
       run: () => composer.value?.focus(),
     },
     {
-      id: "tab.close",
+      // MiMo's 查找: the find bar in the conversation. Ctrl+F itself is answered in onKeydown.
+      id: "app.find",
       group: "key.groupGeneral",
-      title: t("key.closeTab"),
+      title: t("key.label.find"),
+      hint: "Ctrl+F",
+      run: () => void openFind(),
+    },
+    {
+      // MiMo's: the window closes, hiding to the tray when that is on. A tab closes from its own ✕.
+      id: "window.close",
+      group: "key.groupGeneral",
+      title: t("key.closeWindow"),
       hint: "Ctrl+W",
+      run: () => window.mcode.window("close"),
+    },
+    /*
+     * The numbered slots, counted along the side column as MiMo counts them:
+     * pinned conversations first, then the rest in the order they are listed.
+     */
+    ...Array.from({ length: 9 }, (_, index) => ({
+      id: `tab.goto.${index + 1}`,
+      group: "key.groupConversation",
+      title: t("key.gotoTab", { n: index + 1 }),
+      hint: `Ctrl+${index + 1}`,
+      enabled: () => app.visibleChats.length > index,
+      run: () => {
+        const target = app.visibleChats[index]
+        if (target) void selectTab(target)
+      },
+    })),
+    {
+      id: "session.side",
+      group: "key.groupConversation",
+      title: t("side.chat"),
+      hint: "Ctrl+Alt+S",
+      enabled: inConversation.value,
+      run: openSideChatTab,
+    },
+    {
+      id: "view.priority",
+      group: "key.groupGeneral",
+      title: priorityFilter.value ? t("side.priorityOff") : t("side.priorityOn"),
+      hint: "Ctrl+Alt+U",
+      run: () => (priorityFilter.value = !priorityFilter.value),
+    },
+    {
+      id: "session.pin",
+      group: "key.groupConversation",
+      title: t("key.togglePin"),
+      hint: "Ctrl+Alt+P",
       enabled: hasSession,
       run: () => {
-        if (app.currentID) app.closeTab(app.currentID)
+        if (app.currentID) app.togglePinned(app.currentID)
+      },
+    },
+    {
+      id: "session.copyID",
+      group: "key.groupConversation",
+      title: t("key.copyID"),
+      hint: "Ctrl+Alt+C",
+      enabled: hasSession,
+      run: () => {
+        if (!app.currentID) return
+        window.mcode.setClipboardText(app.currentID)
+        notify(t("menu.copiedID"))
+      },
+    },
+    {
+      id: "session.copyLink",
+      group: "key.groupConversation",
+      title: t("key.copyLink"),
+      hint: "Ctrl+Alt+L",
+      enabled: hasSession,
+      run: copySessionLink,
+    },
+    {
+      id: "session.nextRecent",
+      group: "key.groupConversation",
+      title: t("key.nextRecent"),
+      hint: controlChord("Tab", app.platform),
+      run: async () => {
+        await stepRecent(1)
+        endRecentWalk()
+      },
+    },
+    {
+      id: "session.prevRecent",
+      group: "key.groupConversation",
+      title: t("key.prevRecent"),
+      hint: controlChord("Shift+Tab", app.platform),
+      run: async () => {
+        await stepRecent(-1)
+        endRecentWalk()
+      },
+    },
+    {
+      id: "app.shortcuts",
+      group: "key.groupGeneral",
+      title: t("key.showShortcuts"),
+      hint: "Ctrl+Shift+/",
+      run: () => {
+        settingsSection.value = "keys"
+        settingsOpen.value = true
       },
     },
     { id: "app.back", group: "key.groupGeneral", title: t("key.back"), hint: "Ctrl+[", run: () => void back() },
     { id: "app.forward", group: "key.groupGeneral", title: t("key.forward"), hint: "Ctrl+]", run: () => void forward() },
     {
-      // Hidden the way the reference hides it: opening the palette from inside
-      // the palette is not an offer worth making, but the chord is still worth
-      // being able to change.
-      id: "command.palette",
+      // MiMo's 搜索: the search overlay.
+      id: "app.search",
       group: "key.groupGeneral",
       title: t("key.palette"),
       hint: "Ctrl+K",
-      hidden: true,
-      run: () => openPalette("all"),
+      run: () => {
+        searchOpen.value = true
+      },
     },
     {
       id: "terminal.close",
       group: "key.groupTerminal",
       title: t("key.closeTerminal"),
-      hint: "Ctrl+W",
       enabled: terminalOpen.value,
       run: () => drawer.value?.closeActive(),
     },
@@ -1868,25 +3012,17 @@ const bindableCommands = computed(() => {
       hint: "Ctrl+0",
       run: () => window.mcode.zoom("reset"),
     },
-    /*
-     * One per slot rather than one row covering the range: each carries its own
-     * chord, so each has to be separately bindable. Hidden, because nine near
-     * identical rows would crowd out everything else in the palette.
-     */
-    ...openProjects.value.slice(0, 9).map((directory, at) => ({
-      id: `project.${at + 1}`,
-      group: "key.groupGeneral",
-      title: t("key.openProjectNumbered", { name: projectName(directory, app.config?.projectNames) }),
-      hint: `Ctrl+${at + 1}`,
-      hidden: true,
-      run: () => void app.create(directory),
-    })),
     {
+      // MiMo's branchConvo: the whole conversation at once, titled 「… (分支)」; the store toasts either way.
       id: "session.fork",
-      group: "key.groupSession",
-      title: t("cmd.fork"),
-      enabled: hasSession && app.messages.some((message) => message.role === "user"),
-      run: () => openPalette("messages"),
+      group: "key.groupConversation",
+      title: t("key.label.fork-chat"),
+      enabled: hasSession,
+      run: () => {
+        const last = app.messages[app.messages.length - 1]
+        if (!last) notifyFailure(t("stream.forkNeedsMessage"))
+        else void app.forkFrom(last.id, { titleSuffix: true })
+      },
     },
     {
       id: "provider.connect",
@@ -1895,8 +3031,26 @@ const bindableCommands = computed(() => {
       run: () => (connectOpen.value = true),
     },
     { id: "app.settings", group: "key.groupGeneral", title: t("cmd.settings"), hint: "Ctrl+,", run: openSettings },
+    // MiMo's unbound rows: copy as Markdown, and the maximised side panel (only while the panel is open).
+    {
+      id: "session.copyMarkdown",
+      group: "key.groupConversation",
+      title: t("menu.copyMarkdown"),
+      enabled: hasSession && app.messages.length > 0,
+      run: () => {
+        if (app.currentID) void ROW_ACTIONS["row.copyMarkdown"](app.currentID, false)
+      },
+    },
+    {
+      id: "panel.maximize",
+      group: "key.groupConversation",
+      title: t("key.toggleMaxSide"),
+      enabled: rp.open,
+      run: () => rp.toggleFullscreen(),
+    },
   ]
 
+  /* The shortcuts page draws lib/shortcut-page's fixed list out of these; every command keeps its chord. */
   return all
 })
 
@@ -1913,63 +3067,72 @@ const commands = computed(() => bindableCommands.value.filter((command) => comma
  */
 const modalOpen = computed(
   () =>
+    Boolean(imagePreview.value) ||
+    Boolean(videoPreview.value) ||
     settingsOpen.value ||
-    mcpOpen.value ||
-    renaming.value ||
-    choosingServer.value ||
-    managingServers.value ||
-    Boolean(namingWorkspace.value) ||
-    Boolean(editingProject.value),
+    Boolean(editingProject.value) ||
+    Boolean(renamingSession.value) ||
+    Boolean(renamingProject.value),
 )
 
-/** Steps to the next colour scheme, in the order the settings list them. */
-async function cycleScheme() {
-  const order = ["system", "dark", "light"] as const
-  const next = order[(order.indexOf(theme.value) + 1) % order.length]
-  await app.patchConfig({ theme: next })
-  notify(t("cmd.useScheme", { name: t(`set.theme${next[0].toUpperCase()}${next.slice(1)}`) }))
-}
+/*
+ * The commands that act on the open conversation, which MiMo gives no target
+ * while anything covers it.
+ */
+const CONVERSATION_COMMANDS = new Set([
+  "session.pin",
+  "session.rename",
+  "session.archive",
+  "session.delete",
+  "session.side",
+  "session.fork",
+  "session.share",
+  "session.copyID",
+  "session.copyLink",
+  "session.copyMarkdown",
+  "session.exportMarkdown",
+  "session.compact",
+  "view.priority",
+])
 
 /**
- * Steps to the next language, naming it in the language being moved to.
- *
- * Naming it in its own language rather than the outgoing one is what makes the
- * step legible when you have cycled somewhere you cannot read.
+ * Whether a layer covers the conversation: MiMo's target for a conversation
+ * command is empty while a dialog, the search, the palette or a preview is up.
+ * Read from the page as well as from the flags above, so the search, the
+ * palette and every confirmation count without a list of them to keep.
  */
-async function setLanguage(id: string) {
-  const entry = LANGUAGES.find((candidate) => candidate.id === id)
-  await app.patchConfig({ language: id })
-  // Named in the language just chosen, which is what makes the step legible
-  // when you have landed somewhere you cannot read.
-  notify(t("toast.languageTitle"), t("toast.languageBody", { name: entry?.label ?? id }))
+function conversationCovered(): boolean {
+  return modalOpen.value || searchOpen.value || paletteOpen.value || dialogOpen()
 }
 
-async function cycleLanguage() {
-  const current = language.value
-  const index = LANGUAGES.findIndex((entry) => entry.id === current)
-  await setLanguage(LANGUAGES[(index + 1) % LANGUAGES.length].id)
-}
+/* The box MiMo's annotations go to: the open conversation's, or the home screen's. */
+const annotationScope = computed(() => (isHome.value || !app.currentID ? HOME_SCOPE : app.currentID))
+watch(annotationScope, (scope) => (mainAnnotationScope.value = scope), { immediate: true })
 
-/** Steps to the next palette, naming it - there are thirty-seven to walk. */
-async function setTheme(id: string, name: string) {
-  await app.patchConfig({ themeID: id })
-  notify(t("toast.themeTitle"), name)
-}
-
-async function cycleTheme() {
-  const index = THEMES.findIndex((entry) => entry.id === themeID.value)
-  const next = THEMES[(index + 1) % THEMES.length]
-  await setTheme(next.id, next.name)
-}
-
-/** Stops the browser opening a file the user let go of by accident. */
+/**
+ * Stops the browser opening a file the user let go of by accident.
+ *
+ * Only a file: a drag carrying words is left to the browser, so dropping a
+ * phrase from a page into the box - or moving a selection inside it - inserts
+ * it the way it does anywhere else. Swallowing every drop made both do nothing.
+ */
 function swallowDrop(event: DragEvent) {
-  event.preventDefault()
+  if (acceptsDrop(event.dataTransfer?.types)) event.preventDefault()
 }
 
 function onKeydown(event: KeyboardEvent) {
-  const mod = event.ctrlKey || event.metaKey
+  const platform = app.platform
+  // MiMo's `mod`: Command on a Mac and Ctrl elsewhere, never the two folded together.
+  const mod = modHeld(event, platform)
+  // Read by where the key sits: with Option held a Mac types another character.
+  const letter = (keyOfCode(event.code) ?? event.key).toLowerCase()
   if (event.isComposing || event.keyCode === 229) return
+
+  /* New task runs over whatever is on screen, clearing it first, as MiMo's does; the rest stays put behind a modal. */
+  if (isNewTaskChord(chordOf(event, platform)) && !commandDisabled("session.new") && newTaskOverLayers()) {
+    event.preventDefault()
+    return
+  }
 
   /*
    * A shortcut the user has re-bound wins over the built-in table, and is
@@ -1977,11 +3140,13 @@ function onKeydown(event: KeyboardEvent) {
    * rebinding move an action onto a combination the table knows nothing about.
    */
   if (!modalOpen.value) {
-    const chord = chordOf(event)
+    const chord = chordOf(event, platform)
     const bound = rebound.value.get(chord)
     if (bound) {
       const command = commands.value.find((entry) => entry.id === bound)
       if (command && command.enabled !== false) {
+        if (TYPING_OFF.has(command.id) && typingIn(event.target)) return
+        if (CONVERSATION_COMMANDS.has(command.id) && conversationCovered()) return
         event.preventDefault()
         void command.run()
         return
@@ -1995,52 +3160,83 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   /*
-   * Alt+arrow walks the visit history. The bar used to carry a pair of arrow
-   * buttons for this; the new one is a row of tabs, and the shortcut is what
-   * keeps the history reachable now that they are gone.
+   * Ctrl+Tab and Ctrl+Shift+Tab, through the recently viewed conversations.
+   * Control rather than Command: on a Mac, Cmd+Tab belongs to the system.
    */
-  if (event.altKey && !mod && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+  if (controlHeld(event) && !event.altKey && event.key === "Tab") {
     if (modalOpen.value) return
     event.preventDefault()
-    void (event.key === "ArrowLeft" ? back() : forward())
+    void stepRecent(event.shiftKey ? -1 : 1)
     return
   }
 
-  /*
-   * Alt+up and down step through the open conversations; adding Ctrl steps
-   * through the projects instead. Same axis, one level out - which is why they
-   * share a key and differ by a modifier.
-   */
-  if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+  /* The side panel, on MiMo's chord and on every screen, as its title-bar button is; its review tab is Ctrl+Shift+G. */
+  if (mod && event.altKey && letter === "b") {
     if (modalOpen.value) return
     event.preventDefault()
-    const by = event.key === "ArrowUp" ? -1 : 1
-    // Adding shift narrows the walk to the conversations asking for attention.
-    if (event.shiftKey) void stepUnread(by)
-    else void (mod ? stepProject(by) : stepSession(by))
+    toggleSidePanel()
     return
   }
 
-  /*
-   * Ctrl+Alt+bracket moves through the conversation itself, where the bare
-   * bracket moves through the history of what was visited.
-   */
-  if (mod && event.altKey && (event.key === "[" || event.key === "]")) {
-    if (modalOpen.value) return
+  /* Pinning the open conversation, and copying the id of it. */
+  if (mod && event.altKey && letter === "p") {
+    if (conversationCovered() || !app.currentID) return
     event.preventDefault()
-    stream.value?.stepMessage(event.key === "[" ? -1 : 1)
+    app.togglePinned(app.currentID)
     return
   }
 
-  /*
-   * A new terminal, from wherever. This used to live inside the drawer, which
-   * is mounted only while the drawer is open, so the key did nothing in the one
-   * state where someone is most likely to press it.
-   */
-  if (mod && event.altKey && event.key.toLowerCase() === "t") {
-    if (modalOpen.value || isHome.value) return
+  /* Renaming and archiving the open conversation, on MiMo's chords. */
+  if (mod && event.altKey && letter === "r") {
+    if (conversationCovered() || !app.currentID || isHome.value) return
     event.preventDefault()
-    void newTerminal()
+    beginRename()
+    return
+  }
+
+  if (mod && event.altKey && letter === "a") {
+    if (conversationCovered() || !app.currentID) return
+    event.preventDefault()
+    void archiveSessions([app.currentID])
+    return
+  }
+
+  /* A side chat tab, on MiMo's chord. */
+  if (mod && event.altKey && letter === "s") {
+    if (conversationCovered()) return
+    event.preventDefault()
+    openSideChatTab()
+    return
+  }
+
+  /* The priority filter, on MiMo's own chord. */
+  if (mod && event.altKey && letter === "u") {
+    if (conversationCovered()) return
+    event.preventDefault()
+    priorityFilter.value = !priorityFilter.value
+    return
+  }
+
+  if (mod && event.altKey && letter === "c") {
+    if (conversationCovered() || !app.currentID) return
+    event.preventDefault()
+    window.mcode.setClipboardText(app.currentID)
+    notify(t("menu.copiedID"))
+    return
+  }
+
+  if (mod && event.altKey && letter === "l") {
+    if (conversationCovered() || !app.current) return
+    event.preventDefault()
+    copySessionLink()
+    return
+  }
+
+  /* MiMo's terminal toggle is its `ctrl` chord: Control+` on a Mac as well. */
+  if (controlHeld(event) && !event.altKey && !event.shiftKey && event.code === "Backquote") {
+    if (modalOpen.value || paletteOpen.value) return
+    event.preventDefault()
+    if (!commandDisabled("view.terminal")) terminalOpen.value = !terminalOpen.value
     return
   }
 
@@ -2070,62 +3266,49 @@ function onKeydown(event: KeyboardEvent) {
    * handler table keyed on the bare letter cannot tell Ctrl+T from Ctrl+Shift+T.
    */
   /*
-   * Backspace is not a letter, so it cannot ride in the table below - and it
-   * is destructive enough that it should not be reachable by a near miss.
-   */
-  if (event.shiftKey && event.key === "Backspace") {
-    if (modalOpen.value || !app.currentID) return
-    event.preventDefault()
-    void app.archive(app.currentID, true)
-    return
-  }
-
-  /*
    * Find first, and only if a host will have it.
    *
    * `openFind` answers false when the chord was typed into a text field or when
-   * no host wants it, and that is deliberately not the same as doing nothing:
-   * Ctrl+F then falls through to the session palette below, which is where this
-   * app has always had it. Ctrl+G steps, Ctrl+Shift+G steps back, and neither
-   * does anything at all unless a bar is open.
+   * no host wants it, and then Ctrl+F does nothing, as MiMo's does.
    */
   if (!event.shiftKey && event.key === "f" && openFind(event)) {
     event.preventDefault()
     return
   }
-  if (event.key === "g" && stepFind(event.shiftKey ? -1 : 1, event)) {
+
+  /*
+   * MiMo's previous and next chat. Read by where the key sits rather than by
+   * what it types: with Shift held a bracket prints a brace on some layouts
+   * and something else entirely on others.
+   */
+  if (mod && event.shiftKey && !event.altKey && (event.code === "BracketLeft" || event.code === "BracketRight")) {
+    if (modalOpen.value) return
     event.preventDefault()
+    void stepSession(event.code === "BracketLeft" ? -1 : 1)
     return
   }
 
   if (event.shiftKey) {
     const shifted: Record<string, () => void> = {
-      // The panel itself. Folding the column inside it is Ctrl+backslash.
-      r: toggleReviewPanel,
-      // Step the reasoning effort, which otherwise only lives in settings.
-      d: () => void cycleEffort(),
-      // Approve everything, or stop. Symmetric, and it always says so.
-      a: () => void toggleAutoAccept(),
-      // Searching the projects rather than the sessions inside one.
-      o: () => openPalette("projects"),
-      // A second checkout of the project, on its own branch.
-      w: () => void newWorkspace(),
-      // The two composer modes, on the reference's keys.
-      x: () => composer.value?.setMode("shell"),
-      e: () => composer.value?.setMode("normal"),
-      // Whatever is selected on screen, handed to the composer.
-      l: () => addSelection(),
-      // Agents, backwards; forwards is Ctrl+period.
-      ".": () => void cycleAgent(-1),
-      // The reference lists this key twice, for reopening a tab and for
-      // stepping the theme. Reopening wins while there is a tab to bring back,
-      // which is what the key means everywhere else; with none, it steps.
-      t: async () => {
-        if (!(await app.reopenTab())) await cycleTheme()
+      // MiMo's: a reload that skips the cache, while there is a page to reload.
+      r: () => reloadBrowser(true),
+      // MiMo's model picker and working directory.
+      m: () => composer.value?.openModelMenu(),
+      c: copyWorkingDirectory,
+      g: openReviewTab,
+      // The box, on MiMo's chord; Ctrl+L is the browser's address bar.
+      l: () => composer.value?.focus(),
+      // MiMo's browser toggle.
+      b: toggleBrowserTab,
+      // And the list of all of these, which is a settings page here.
+      "?": () => {
+        settingsSection.value = "keys"
+        settingsOpen.value = true
       },
-      // The scheme, then the palette. Stepping rather than opening a dialog is
-      // what makes them worth a key: the answer is on screen immediately.
-      s: () => void cycleScheme(),
+      "/": () => {
+        settingsSection.value = "keys"
+        settingsOpen.value = true
+      },
     }
     const shiftedHandler = shifted[event.key.toLowerCase()]
     if (!shiftedHandler) return
@@ -2135,55 +3318,50 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   /*
-   * Ctrl and a digit opens the project in that position, the way a browser
-   * switches to the nth tab.
+   * Ctrl and a digit opens the conversation in that slot of the side column's
+   * visible order, the way MiMo does. The project in that position is Ctrl+Alt
+   * and the digit.
    */
   if (/^[1-9]$/.test(event.key)) {
-    const directory = openProjects.value[Number(event.key) - 1]
-    if (!directory) return
+    const target = app.visibleChats[Number(event.key) - 1]
+    if (!target) return
     event.preventDefault()
-    void app.create(directory)
+    void selectTab(target)
     return
   }
 
+  /*
+   * The table below is Ctrl alone. With Alt held a chord is a different one -
+   * Ctrl+Alt+T is not Ctrl+T (MiMo has no Ctrl+Alt+T) - and AltGr, which types
+   * brackets on many layouts, arrives as Ctrl+Alt and is not a shortcut.
+   */
+  if (event.altKey) return
+
   const handlers: Record<string, () => void> = {
-    k: () => (paletteOpen.value ? (paletteOpen.value = false) : openPalette("all")),
-    // The reference's file picker, session search and attach, on its keys.
-    p: () => openPalette("files"),
-    f: () => openPalette("sessions"),
-    u: () => composer.value?.pick(),
-    b: () => (leftPanel.value = !leftPanel.value),
-    "`": () => (terminalOpen.value = !terminalOpen.value),
-    m: () => composer.value?.openModelMenu(),
+    k: toggleSearch,
+    // MiMo's files tab.
+    p: openFilesTab,
+    b: () => toggleSide(),
     ",": openSettings,
-    ";": () => (mcpOpen.value = true),
     n: () => void newSession(),
-    // The reference binds a new session to Ctrl+T, the way a browser binds a
-    // new tab; Ctrl+N is kept because it is what this app has always used.
-    t: () => void newSession(),
+    // MiMo's: Ctrl+T is a browser tab, and the bottom panel is Ctrl+J.
+    t: () => void openBrowserTab(),
+    j: () => (terminalOpen.value = !terminalOpen.value),
+    r: () => reloadBrowser(),
     o: () => void browse(),
-    w: () => {
-      if (app.currentID) app.closeTab(app.currentID)
-    },
-    /*
-     * Ctrl+backslash folds the file column, not the panel. Hiding the panel is
-     * Ctrl+Shift+R, below - the same split opencode makes, and the reason it
-     * needs two keys is that the two are genuinely different questions.
-     */
-    "\\": () => (fileTreeOpen.value = !fileTreeOpen.value),
-    // Focus the composer without reaching for the pointer.
-    l: () => composer.value?.focus(),
-    // The model picker, on the key opencode uses for it. There is one picker
-    // and it hangs off the pill, so both keys open the same menu.
-    "'": () => composer.value?.openModelMenu(),
-    // Agents, forwards. Reverse is Ctrl+Shift+period.
-    ".": () => void cycleAgent(1),
-    // The reference walks the visit history on these as well as on Alt+arrow.
+    // MiMo's: the window closes, hiding to the tray when that is on.
+    w: () => window.mcode.window("close"),
+    // The browser's address bar while it is open, else the box.
+    l: focusBrowserAddress,
+    // MiMo's annotate, while a browser tab is showing.
+    ".": annotateBrowser,
     "[": back,
     "]": forward,
   }
   const handler = handlers[event.key]
   if (!handler) return
+  // MiMo's back and forward alone stay out of text fields: the bracket is left to what is being typed.
+  if ((event.key === "[" || event.key === "]") && typingIn(event.target)) return
   /*
    * Claimed before the availability test, not after: Ctrl+P belongs to the
    * browser's print dialog otherwise, so letting an unavailable chord fall
@@ -2196,19 +3374,17 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 const menuCommands: Record<string, () => void> = {
-  "new-session": () => void newSession(),
+  "new-session": () => void newTaskOverLayers(),
   back: () => void back(),
   forward: () => void forward(),
   "prev-session": () => void stepSession(-1),
   "next-session": () => void stepSession(1),
   "prev-project": () => void stepProject(-1),
   "next-project": () => void stepProject(1),
-  files: () => (fileTreeOpen.value = !fileTreeOpen.value),
   "open-project": () => void browse(),
   settings: openSettings,
-  palette: () => (paletteOpen.value = true),
   terminal: () => (terminalOpen.value = !terminalOpen.value),
-  sidebar: () => (leftPanel.value = !leftPanel.value),
+  sidebar: () => toggleSide(),
   abort: () => void app.abort(),
   model: () => composer.value?.openModelMenu(),
   "delete-session": () => {
@@ -2243,10 +3419,9 @@ const MENU_COMMAND_IDS: Record<string, string> = {
   "next-session": "session.next",
   "prev-project": "project.previous",
   "next-project": "project.next",
-  files: "fileTree.toggle",
   "open-project": "project.open",
   settings: "app.settings",
-  palette: "command.palette",
+  palette: "app.search",
   terminal: "view.terminal",
   sidebar: "view.left",
   abort: "session.abort",
@@ -2298,13 +3473,21 @@ function commandDisabled(id: string): boolean {
  * command - attach, the MCP dialog - are unaffected and keep answering.
  */
 const KEY_COMMAND_IDS: Record<string, string> = {
-  k: "command.palette",
+  k: "app.search",
   p: "app.openFile",
   b: "view.left",
-  "`": "view.terminal",
-  m: "view.model",
+  j: "view.bottom",
   "[": "app.back",
   "]": "app.forward",
+}
+
+/* MiMo's only two commands marked off in form fields (`formTags: false`). */
+const TYPING_OFF = new Set(["app.back", "app.forward"])
+
+/** A form field or editable text, where MiMo leaves those two chords to the typing. */
+function typingIn(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)
 }
 
 /**
@@ -2322,57 +3505,169 @@ const disabledMenuItems = computed(() => {
   return out
 })
 
-/**
- * Ctrl+wheel is the other way people expect to zoom. preventDefault stops
- * Chromium applying its own page zoom on top of ours.
+/*
+ * MiMo's task notifications.
+ *
+ * A turn that ends normally - not stopped, not failed - in any conversation says
+ * the task finished, and a permission or a question arriving for any
+ * conversation says it needs a confirmation. The main process titles them
+ * "project · conversation" and drops them while the window is in front. They are
+ * silent only when this app made a sound of its own instead: a finish past a
+ * minute with the chime on, or a confirmation whose two-tone cue was heard. A
+ * long finish in the conversation on screen is held while it stays there, and
+ * sent once it is left.
+ *
+ * MiMo has no switch for either notice, and neither does this.
  */
-function onWheel(event: WheelEvent) {
-  if (!event.ctrlKey && !event.metaKey) return
-  // Turned off, the gesture goes back to being an ordinary scroll.
-  if (app.config?.pinchZoom === false) return
-  event.preventDefault()
-  if (event.deltaY === 0) return
-  window.mcode.zoom(event.deltaY < 0 ? "in" : "out")
+const chimeOn = () => chimeOf(app.config?.taskDoneSound) !== "off"
+
+function noticeAbout(sessionID: string) {
+  const session = app.sessions.find((entry) => entry.id === sessionID)
+  return {
+    sessionID,
+    title: session ? sessionTitle(session.title) : undefined,
+    project: session && projectOf(session) ? projectName(projectOf(session)!, app.config?.projectNames) : undefined,
+  }
 }
+
+function watching(sessionID: string) {
+  return app.currentID === sessionID && !isHome.value && !document.hidden
+}
+
+const heldNotices = new Set<string>()
+/* automation: whether the completion chime played for a scheduled run, so its own notice does not sound a second time. */
+const automationChimed = new Map<string, boolean>()
+
+function flushNotices() {
+  for (const sessionID of [...heldNotices]) {
+    if (watching(sessionID)) continue
+    heldNotices.delete(sessionID)
+    window.mcode.taskNotice({ kind: "done", ...noticeAbout(sessionID), silent: true })
+  }
+}
+
+/* Leaving the window sends what was held. */
+document.addEventListener("visibilitychange", () => {
+  flushNotices()
+})
+watch([() => app.currentID, isHome], flushNotices)
 
 /*
- * Three occasions worth interrupting someone for, each its own setting.
- *
- * The main process drops the notification when the window is focused, so
- * nothing here has to reason about whether the user is already looking.
+ * A turn that ended on its own. The store times each turn from when it was seen
+ * to start and reports only those that finished normally, in any conversation:
+ * a stopped or failed turn is dropped from its clock rather than reported. So a
+ * quick reply stays quiet, and one past a minute chimes wherever it ended.
  */
-function alertDesktop(kind: "agent" | "permission" | "error", body: string, sessionID?: string) {
-  recordLog(kind === "error" ? "ERROR" : "INFO", body)
-  const config = app.config
-  /*
-   * Sound and banner are decided separately: the reason to want one is not the
-   * reason to want the other. Someone watching the window wants the tone and
-   * not the banner; someone away from it wants the reverse.
-   */
-  if (kind === "agent" && config?.soundAgent) play("done")
-  if (kind === "permission" && config?.soundPermission) play("permission")
-  if (kind === "error" && config?.soundError) play("error")
-
-  if (kind === "agent" && config?.notifyAgent === false) return
-  if (kind === "permission" && config?.notifyPermission === false) return
-  if (kind === "error" && config?.notifyError === false) return
-  window.mcode.notify(t(`notify.${kind}`), body, sessionID)
-}
-
-// A turn that was running and now is not has finished, one way or another.
 watch(
-  () => app.busy,
-  (running, was) => {
-    if (running || !was) return
-    alertDesktop("agent", app.current?.title ?? "", app.currentID)
+  () => app.finished,
+  (turn) => {
+    if (!turn) return
+    const choice = chimeOf(app.config?.taskDoneSound)
+    const chiming = choice !== "off" && longTask(turn.elapsed)
+    if (choice !== "off" && longTask(turn.elapsed)) chime(choice)
+    const about = noticeAbout(turn.sessionID)
+    recordLog("INFO", about.title ?? turn.sessionID)
+    /*
+     * Beyond MiMo, whose thread says nothing as a turn ends: a screen reader
+     * hears it, with the conversation's name when it is not the one on screen.
+     * A subagent's own turns are left to the notice below.
+     */
+    const done = t("notify.done")
+    if (app.currentID === turn.sessionID) announce(done)
+    else if (about.title !== undefined) announce(`${about.title} · ${done}`)
+    /*
+     * automation: a scheduled task's run is told about by its own policy,
+     * below - but the chime above has already played for it, so whether it did
+     * is carried across. Every other notice here passes `silent: chiming` for
+     * the same reason; the run's notice passed `silent: false` and a long
+     * scheduled run therefore both chimed and sounded the system notification.
+     */
+    if (app.automationRuns.has(turn.sessionID)) {
+      automationChimed.set(turn.sessionID, chiming)
+      return
+    }
+    if (chiming && watching(turn.sessionID)) {
+      heldNotices.add(turn.sessionID)
+      return
+    }
+    window.mcode.taskNotice({ kind: app.answeredAnother.has(turn.sessionID) ? "chat" : "done", ...about, silent: chiming })
   },
 )
 
+/*
+ * A background subagent of the conversation on screen finishing, said to a
+ * screen reader: the 子智能体 tab changes without a word otherwise.
+ */
+const SUBAGENT_OUTCOME = { success: "subagents.status.completed", failure: "subagents.status.error", cancelled: "subagents.status.rejected" } as const
+const subagentRunning = new Map<string, boolean>()
+
 watch(
-  () => app.permission,
-  (request) => {
-    if (request) alertDesktop("permission", request.title, request.sessionID ?? app.currentID)
+  () => app.subagentSessions.map((session) => ({ session, running: session.subagent?.status === "running" })),
+  (entries) => {
+    // Subagents come and go with their parent; what is no longer in the list
+    // has nothing left to announce, so its last state is dropped with it.
+    const live = new Set(entries.map(({ session }) => session.id))
+    for (const id of subagentRunning.keys()) if (!live.has(id)) subagentRunning.delete(id)
+    for (const { session, running } of entries) {
+      const was = subagentRunning.get(session.id)
+      subagentRunning.set(session.id, running)
+      const outcome = session.subagent?.outcome
+      if (!was || running || !session.subagent?.background || !outcome) continue
+      if (app.rootOf(session.id) !== app.currentID) continue
+      announce(`${session.title || t("subagentActivity.fallbackName")} · ${t(SUBAGENT_OUTCOME[outcome])}`)
+    }
   },
+)
+
+/*
+ * automation: MiMo tells the user about a scheduled task's run when the task's
+ * notification policy says to, failures included.
+ *
+ * `session.idle` always reaches this window before the run's own end does - the
+ * backend settles the run on that very event - so whether the completion chime
+ * played for this conversation is already known by the time the notice lands.
+ * A run with no record of a chime never had one.
+ */
+watch(
+  () => app.automationNotice,
+  (notice) => {
+    if (!notice) return
+    const chimed = automationChimed.get(notice.sessionID) === true
+    automationChimed.delete(notice.sessionID)
+    window.mcode.taskNotice({ kind: notice.failed ? "failed" : "done", ...noticeAbout(notice.sessionID), silent: chimed })
+  },
+)
+
+/* Every undecided permission and question, across conversations. */
+const awaitingConfirm = computed(() => [
+  ...[...app.pendingPermissions.values()].flat().map((request) => ({ id: request.id, sessionID: request.sessionID })),
+  ...[...confirmDock.pending.values()].map((request) => ({ id: request.id, sessionID: request.sessionID })),
+])
+
+/* The ones already announced, so a queue changing does not announce them again. */
+const announcedConfirms = new Set<string>()
+
+watch(awaitingConfirm, (entries) => {
+  const live = new Set(entries.map((entry) => entry.id))
+  for (const id of [...announcedConfirms]) if (!live.has(id)) announcedConfirms.delete(id)
+  for (const entry of entries) {
+    if (announcedConfirms.has(entry.id)) continue
+    announcedConfirms.add(entry.id)
+    /*
+     * The two-tone cue first, then the notice - and the notice is silent only
+     * because the cue was heard. Not bounded by the long-task threshold, as
+     * MiMo's is not: a question is waiting however quickly it arrived.
+     */
+    const cued = chimeOn() && confirmChime()
+    window.mcode.taskNotice({ kind: "confirm", ...noticeAbout(entry.sessionID), silent: cued })
+  }
+})
+
+/* MiMo's launcher badge: conversations with an unseen finish or waiting on a confirmation. */
+watch(
+  () => new Set([...app.unseen, ...awaitingConfirm.value.map((entry) => entry.sessionID)]).size,
+  (count) => window.mcode.badge(count),
+  { immediate: true },
 )
 
 /*
@@ -2386,7 +3681,9 @@ watch(
     return last && last.role === "assistant" ? last.error : undefined
   },
   (message) => {
-    if (message) alertDesktop("error", message, app.currentID)
+    if (!message) return
+    // Logged; MiMo makes no sound and sends no notification for a failure.
+    recordLog("ERROR", message)
   },
 )
 
@@ -2394,47 +3691,51 @@ watch(
  * The projects a digit can reach, ordered the way the home screen orders them:
  * whichever was worked on most recently is Ctrl+1.
  */
-const openProjects = computed(() => {
-  const closed = new Set(app.config?.closedProjects ?? [])
-  const seen = new Map<string, number>()
-  for (const session of app.sessions) {
-    if (closed.has(session.directory)) continue
-    seen.set(session.directory, Math.max(seen.get(session.directory) ?? 0, session.updated))
-  }
-  return [...seen.entries()].sort((a, b) => b[1] - a[1]).map(([directory]) => directory)
-})
+const openProjects = computed(() => app.projects)
 
 /** Steps the session's agent, wrapping - there are only ever a handful. */
 async function cycleAgent(by: 1 | -1) {
   const current = app.current?.agent ?? app.config?.agent ?? "build"
   const at = AGENT_NAMES.indexOf(current)
   const next = AGENT_NAMES[(at + by + AGENT_NAMES.length) % AGENT_NAMES.length]
-  if (next) await app.setAgent(next)
+  if (!next) return
+  const before = app.modeOf(app.currentID)
+  await app.setAgent(next)
+  app.announceMode(before, app.currentID)
 }
 
 /**
- * And the reasoning effort - for this session, and with a way back to unset.
- *
- * Walking off the end returns to no setting at all rather than wrapping to the
- * first step. Unset is not a sixth level: it is the session deferring to the
- * app-wide default, and there is no other way back to that once a session has
- * been given a setting of its own.
+ * And the reasoning effort: MiMo's one app-wide level, cycled through the
+ * steps the model in use has and wrapping at the end.
  */
 async function cycleEffort() {
-  if (!app.currentID) return
   /*
    * The steps this model has, not all five: the pill beside it now offers only
    * those, and a keyboard that could still reach a sixth would be the pointer
    * and the keyboard disagreeing about what the control is. A model with no
-   * steps at all draws no pill and this does nothing, which is the reference's
-   * `if (variants.length === 0) return void 0` (main-8t-QUXax.js @2829562).
+   * steps at all draws no pill and this does nothing.
    */
-  const variants = findModel(app.providers, app.current?.model)?.variants ?? []
+  const variants = findModel(app.providers, app.shownModel(app.current?.model) ?? app.config?.model)?.variants ?? []
+  const next = cycleVariant(variants, app.config?.effort)
+  if (next) await app.setEffort(next)
+}
+
+/** MiMo's decrease and increase rows: one step along this model's efforts, stopping at either end. */
+async function stepEffort(by: 1 | -1) {
+  const variants = findModel(app.providers, app.shownModel(app.current?.model) ?? app.config?.model)?.variants ?? []
   if (!variants.length) return
-  await app.setEffort(cycleVariant(variants, app.current?.effort))
+  const current = app.config?.effort
+  const at = current ? variants.indexOf(current) : -1
+  const next = at === -1 ? variants[0] : variants[at + by]
+  if (next && next !== current) await app.setEffort(next)
 }
 
 let offMenu: (() => void) | undefined
+let offZoom: (() => void) | undefined
+let offQuitHint: (() => void) | undefined
+
+/* The platform for the zoom notice's key, before the backend has said it. */
+const platformName = () => app.platform || (/Mac/.test(navigator.userAgent) ? "darwin" : "win32")
 
 // A session arriving from anywhere - palette, sidebar, rail - means we are no
 // longer home, and it is a place worth being able to come back to.
@@ -2455,10 +3756,31 @@ onMounted(async () => {
    */
   window.addEventListener("dragover", swallowDrop)
   window.addEventListener("drop", swallowDrop)
+  window.addEventListener("dragover", trackDrag)
+  window.addEventListener("dragleave", leaveDrag)
+  window.addEventListener("drop", endDrag)
+  window.addEventListener("dragend", endDrag)
+  // A drag the system took over never sends `dragend`; the next press is when the app knows it is over.
+  window.addEventListener("pointerdown", endDrag, true)
   window.addEventListener("keydown", onKeydown)
+  window.addEventListener("keyup", endRecentWalk)
+  window.addEventListener("blur", forgetRecentWalk)
+  // MiMo re-reads the working tree whenever its window comes back; the review tab reads on this.
+  window.addEventListener("focus", app.bumpFsNonce)
   schemeQuery.addEventListener("change", onSchemeChange)
-  window.addEventListener("wheel", onWheel, { passive: false })
   offMenu = window.mcode.onMenu(runMenuCommand)
+  // MiMo's zoom notice after every step, and once at load when the window is not at 100%.
+  offZoom = window.mcode.onZoomChanged((percent) =>
+    notify(zoomNotice(percent, platformName()), { id: ZOOM_TOAST, duration: 5000 }),
+  )
+  void window.mcode
+    .zoomPercent()
+    .then((percent) => {
+      if (Math.round(percent) !== 100) notify(zoomNotice(percent, platformName()), { id: ZOOM_TOAST, duration: 8000 })
+    })
+    .catch(() => undefined)
+  // macOS: a first Cmd+Q only arms the quit, and says so.
+  offQuitHint = window.mcode.onQuitHint(() => notify(t("quit.hint"), { id: "quit-shortcut", duration: 2000 }))
   await boot()
 })
 
@@ -2477,13 +3799,19 @@ async function boot() {
     return
   }
 
-  // A key already present in the environment means setup is effectively done;
-  // marking it so keeps the gate a single flag, which is what lets the Settings
-  // reset bring the page back even with a provider still connected.
-  if (app.config && !app.config.onboarded && app.providers.some((entry) => entry.configured)) {
-    await app.patchConfig({ onboarded: true })
-  }
   if (app.currentID) view.value = "session"
+
+  // MiMo opens again on the conversation whose draft was on screen when the app closed.
+  const draftScreen = restoredDrafts.current?.startsWith("main:") ? restoredDrafts.current.slice("main:".length) : undefined
+  if (!draftScreenRestored && draftScreen && !app.currentID && drafts.has(`main:${draftScreen}`) && app.sessions.some((session) => session.id === draftScreen)) {
+    draftScreenRestored = true
+    await app.open(draftScreen).catch(() => undefined)
+  }
+
+  linksReady = true
+  const link = queuedLink ?? (await window.mcode.takeLink().catch(() => undefined))
+  queuedLink = undefined
+  if (link) await openLink(link)
 }
 
 /*
@@ -2531,82 +3859,118 @@ watch(
 
 onBeforeUnmount(() => {
   window.removeEventListener("dragover", swallowDrop)
+  window.removeEventListener("dragover", trackDrag)
+  window.removeEventListener("dragleave", leaveDrag)
+  window.removeEventListener("drop", endDrag)
+  window.removeEventListener("dragend", endDrag)
+  window.removeEventListener("pointerdown", endDrag, true)
   window.removeEventListener("drop", swallowDrop)
   window.removeEventListener("keydown", onKeydown)
+  window.removeEventListener("keyup", endRecentWalk)
+  window.removeEventListener("blur", forgetRecentWalk)
+  window.removeEventListener("focus", app.bumpFsNonce)
   schemeQuery.removeEventListener("change", onSchemeChange)
-  window.removeEventListener("wheel", onWheel)
   offMenu?.()
+  offZoom?.()
+  offQuitHint?.()
 })
 </script>
 
 <template>
-  <div class="app">
-    <TitleBar
-      :right-panel="reviewPanelUp"
-      :home="isHome"
-      @menu="(x, y) => (appMenu = { x, y })"
-      @go-home="goHome"
-      @toggle-right="toggleReviewPanel"
-      @palette="paletteOpen = true"
-      @server="serverPanel = !serverPanel"
-      @new-session="newSession"
-      @back="back"
-      @forward="forward"
-      @terminal="terminalOpen = !terminalOpen"
-      @close-tab="app.closeTab($event)"
-    />
-
+  <div class="app" :data-platform="app.platform || undefined">
+    <!-- MiMo's one title-bar button on the right, on every screen: the side panel. -->
+    <button
+      class="side-panel-toggle"
+      :class="{ on: rp.open }"
+      :aria-pressed="rp.open"
+      :aria-label="t('key.sidePanel')"
+      v-tip="{ label: t('key.sidePanel'), hint: sidePanelHint }"
+      @click="toggleSidePanel"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="2.5" y="2.5" width="19" height="19" rx="4" />
+        <path d="M15 2.5v19" />
+      </svg>
+    </button>
     <div
       class="body"
       :class="{
-        blank: !isHome && !onboarding && empty && !app.error,
-        /* Counts the panel whichever of its two tabs it is showing: it is the
-           same column taking the same width either way. */
-        'with-review': reviewPanelUp,
+        /* The side panel expanded over the main column. */
+        'panel-full': rp.open && rp.fullscreen,
       }"
     >
-      <ProjectPanel
-        v-if="leftPanel && app.current && !onboarding"
-        mode="docked"
-        :directory="app.current.directory"
-        @open="app.open($event)"
-        @create="newSessionIn"
-        @edit="(dir) => (editingProject = dir)"
-        @closed="leaveProject"
+      <!-- MiMo's per-region boundaries: a region that fails to render shows its own strip. -->
+      <ErrorBoundary :reset-key="view">
+      <Sidebar
+        :collapsed="!leftPanel"
+        :page="view"
+        :priority="priorityFilter"
+        :can-back="canGoBack"
+        :can-forward="canGoForward"
+        :width="sideWidth"
+        @resize="resizeSide"
+        @toggle-priority="priorityFilter = !priorityFilter"
+        @archive-all="archiveAll"
+        @newTask="newTaskFromSide"
+        @artifacts="goArtifacts"
+        @menu="(id, x, y, nested) => (sessionMenu = { x, y, sessionID: id, nested })"
+        @projectMenu="(directory, x, y) => (projectMenu = { x, y, directory })"
+        :selecting="selecting"
+        :selecting-projects="selectingProjects"
+        :menu-directory="projectMenu?.directory"
+        :menu-session="sessionMenu && !sessionMenu.header ? sessionMenu.sessionID : undefined"
+        @select="toggleSelected"
+        @batch="runBatch"
+        @projectSelect="toggleProjectSelected"
+        @projectBatch="runProjectBatch"
+        @newBlank="namingProject = {}"
+        @search="searchOpen = true"
+        @back="back"
+        @forward="forward"
+        @toggle="toggleSide"
+        @browse="browse"
+        @dropFolders="addDroppedProjects"
+        @open="openFromSide"
+        @openSubagents="openSubagentsFromSide"
+        @rename="renameFromSide"
+        @createIn="newSessionIn"
+        @settings="openSettings"
       />
+      </ErrorBoundary>
 
-      <main ref="mainPane" class="main">
+      <main ref="mainPane" class="main" :class="{ 'info-open': infoInline, 'info-shown': infoShowing, beside: panelBeside }">
+        <ErrorBoundary :reset-key="`${view}:${app.currentID ?? ''}`">
         <!-- A turn can run for minutes; the bar is the only thing that says so
              without the user watching the transcript for movement. -->
-        <div v-if="app.busy && !onboarding" class="progress"><span /></div>
+        <div v-if="app.busy" class="progress"><span /></div>
 
         <!--
           Ahead of everything else: if the backend never opened there is no
           project, no session and no stream, so none of the usual places an
           error can appear exist yet.
         -->
-        <div v-if="!app.connected && (app.error || app.offline)" class="boot">
-          <p class="boot-msg">{{ app.error || t("boot.unreachable", { url: app.client?.server ?? "" }) }}</p>
+        <!-- Boot failures only: a drop after boot keeps the view, and the reconnect notice escalates instead. -->
+        <div v-if="app.error" class="boot">
+          <p class="boot-msg">{{ app.error }}</p>
           <button class="boot-retry" @click="retry">{{ t("common.retry") }}</button>
-          <button v-if="app.config?.serverURL" class="boot-retry" @click="applyServer('')">
-            {{ t("boot.useLocal") }}
-          </button>
         </div>
 
-        <Onboarding v-else-if="onboarding" @done="app.patchConfig({ onboarded: true })" />
+        <ArtifactsView v-else-if="isArtifacts" @open="openFromArtifacts" />
 
-        <HomeView
+        <PluginsView v-else-if="isPlugins" @manage="openSettings('mcp')" @try-skill="trySkill" @configure-skill="configureSkill" />
+
+        <HomeHero
           v-else-if="isHome"
-          @open="openProject"
-          @browse="browse"
-          @session="app.open($event)"
-          @create="newSessionIn"
-          @edit="(dir) => (editingProject = dir)"
-          @settings="openSettings"
-          @help="paletteOpen = true"
+          ref="homeHero"
+          :directory="homeDirectory"
+          @directory="(directory?: string) => (homeShellDirectory = directory)"
+          @open-settings="openSettings"
+          @connect="connectOpen = true"
+          @shell="runShellCommand"
+          @terminal="terminalOpen = true"
         />
 
-        <template v-else-if="!onboarding">
+        <template v-else>
           <!--
             The header is not part of the empty state.
             
@@ -2621,14 +3985,30 @@ onBeforeUnmount(() => {
             before the first message used to vanish silently.
           -->
           <SessionHeader
-            :context-open="contextShowing"
-            @rename="renaming = true"
-            @menu="(x, y) => (sessionMenu = { x, y })"
-            @context="toggleContext"
+            :info-open="infoShowing"
+            :bottom-open="terminalUp"
+            :side-collapsed="!leftPanel"
+            :panel-beside="panelBeside"
+            :has-content="!empty"
+            :menu-open="Boolean(sessionMenu?.header)"
+            @info="toggleInfo"
+            @rename="beginRename()"
+            @menu="(x, y) => (sessionMenu = { x, y, header: true })"
+            @bottom="terminalOpen = !terminalOpen"
           />
 
-          <SessionHero v-if="empty && !app.error" />
-          <MessageStream v-else ref="stream" />
+          <SessionHero v-if="empty" />
+          <MessageStream v-else ref="stream" @click="onThreadClick" />
+          <SessionSpine v-if="!empty" :scroller="stream?.scroller" />
+          <!-- MiMo's boundaries inside the page: the info panel, and the composer's dock zone, each apart from the transcript. -->
+          <ErrorBoundary :reset-key="app.currentID ?? ''">
+          <InfoPanel
+            :visible="infoShowing"
+            :floating="infoFloating"
+            :bottom-inset="terminalUp ? drawerHeight : 0"
+            @close="closeInfo"
+          />
+          </ErrorBoundary>
 
           <!--
             The dock, which is the same region in every state a session can be
@@ -2637,127 +4017,169 @@ onBeforeUnmount(() => {
             one shape on an empty session and another the moment they sent - and
             the composer was torn down and rebuilt on that first message.
           -->
-          <PermissionDialog
-            v-if="app.permission"
-            :request="app.permission"
-            :covered="modalOpen || paletteOpen"
-          />
+          <!-- MiMo's confirm dock: the first undecided permission or question, in arrival order. -->
+          <ErrorBoundary :reset-key="app.currentID ?? ''">
+          <QuestionDock />
           <!--
-            The plan, above the box it is being carried out from. Drawn only
-            when a turn has recorded one, so an ordinary conversation is not
-            given a strip of empty chrome.
+            While the session is empty the box belongs inside the hero, between
+            the wordmark and the project row, which is where opencode puts it.
+
+            Teleported rather than rendered in two places. `v-if`/`v-else`
+            would be two vnodes and so two component instances: the box would
+            be destroyed and rebuilt on the first message, losing a draft mid
+            sentence and any attachment gathered with it. Teleport moves the
+            same instance's DOM and leaves the instance alone.
           -->
-          <TodoDock />
           <!--
-            What a rollback took out, and the way back. Drawn only while a
-            rollback stands, because otherwise there is nothing on screen at all
-            to say that the end of the conversation was set aside rather than
-            lost - and no way to ask for it back.
+            The target is switched, not disabled. Vue resolves a Teleport's
+            target once, at mount, and a later `disabled` flip only moves the
+            content to that cached node. A session opened with messages in it
+            mounted this with no hero on screen, so the cached target was null,
+            and the first new session then moved the composer into nothing -
+            the hero came up with no input box under it. Changing `to` is the
+            one thing that makes Vue resolve again, and SessionHero is drawn
+            above this in the same parent, so `#hero-dock` exists by the time
+            the Teleport is patched. `#main-dock` is a `display: contents`
+            placeholder at the composer's ordinary position, so the layout of
+            `main` is what it was when the box rendered here in place.
           -->
-          <RevertDock />
-          <Composer
-            ref="composer"
-            :commands="commands"
-            @open-settings="openSettings"
-            @connect="connectOpen = true"
-            @manage-models="manageModelsOpen = true"
-            @shell="runShellCommand"
-          />
+          <!--
+            MiMo's "N files changed" pill, hung over the composer's top edge.
+            Zero tall, so it takes no room from the conversation; not drawn
+            while the confirm dock is up, which it would sit on top of.
+          -->
+          <div v-if="!empty && !confirmDock.queue.length" class="live-edit-anchor">
+            <LiveEditPill :expanded="liveEditShowing" />
+          </div>
+          <div id="main-dock" class="main-dock" />
+          <Teleport :to="floatingComposer ? '#float-dock' : empty ? '#hero-dock' : '#main-dock'">
+            <Composer
+              ref="composer"
+              :resizable="!floatingComposer"
+              @open-settings="openSettings"
+              @connect="connectOpen = true"
+              @shell="runShellCommand"
+              @terminal="openTerminalTab"
+            />
+          </Teleport>
+          </ErrorBoundary>
         </template>
+
+        <!--
+          MiMo's home screen keeps the bottom panel's button at the end of the
+          main column's title row (a conversation has its own in the header):
+          4px before the side panel toggle, or at the column's end once a panel
+          stands beside it. After the home strip in the document, so its no-drag
+          wins over that strip's drag. Unlit when pressed, as MiMo's is.
+        -->
+        <button
+          v-if="isHome"
+          class="home-bottom"
+          :aria-pressed="terminalUp"
+          :disabled="!homeShellDirectory"
+          :aria-label="t('key.bottomPanel')"
+          v-tip="{ label: t('key.bottomPanel'), hint: 'Ctrl+J' }"
+          @click="terminalOpen = !terminalOpen"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="2.5" y="2.5" width="19" height="19" rx="4" />
+            <path d="M2.5 15h19" />
+          </svg>
+        </button>
+
+        <!--
+          The terminal, docked along the foot of the conversation the way MiMo
+          has it: the full width of this column, under the composer, with its
+          own edge to drag. Not in the right-hand column, which is the review's.
+        -->
+        <!--
+          The drawer styles bp-enter/leave itself. Deliberately unkeyed: MiMo
+          keeps one bottom panel whose tabs outlive the view, so stepping from
+          the home screen into a conversation must not remount it. It used to
+          be keyed by view and folder, which threw the tab list away - a dev
+          server started at home vanished from the drawer the moment a
+          conversation opened, still running with nothing attached to it. The
+          drawer already answers a change of folder by itself: an untouched
+          terminal is restarted in the new one and a used one gets MiMo's
+          notice above it.
+        -->
+        <Transition name="bp">
+          <TerminalDrawer
+            v-if="terminalUp"
+            ref="drawer"
+            :sessionID="isHome ? undefined : app.currentID"
+            :directory="isHome ? homeShellDirectory : undefined"
+            @close="terminalOpen = false"
+            @height="(px: number) => (drawerHeight = px)"
+          />
+        </Transition>
+
+        <!-- MiMo's drop overlay over the main column; the drop itself is the composer's. -->
+        <div v-if="fileDrag" class="drop-overlay" data-drop-overlay aria-hidden="true">
+          <div class="drop-card">{{ t("composer.dropOverlay") }}</div>
+        </div>
+        </ErrorBoundary>
       </main>
 
       <!-- Floats over the pane, so opening it neither reflows nor shortens it. -->
       <FindBar :find="find" :anchor="() => mainPane" />
 
-      <!--
-        One panel with two tabs, the way opencode has it, rather than two panels
-        taking turns in the same column. The two used to swap places here, which
-        meant opening the figures made the review vanish, closing them made it
-        reappear, and nothing on screen said the two were the same panel or
-        which of them was being read.
-      -->
-      <FilePanel
-        v-if="reviewPanelUp"
-        v-model:tree-open="fileTreeOpen"
-        v-model:width="reviewWidth"
-        v-model:context-tab="contextTab"
-        :can-review="canReview"
-        :panel-tab="shownTab"
-        @update:panel-tab="panelTab = $event"
-        @notes="sendNotes"
-        @export="exportSessionData"
+      <!-- MiMo's annotation box, for a selection in a reply or the files tab's code, or a whole file. -->
+      <!-- The video preview is the one modal the box works over: its boxed regions are annotated with it. -->
+      <AnnotationComposer :scope="annotationScope" :disabled="modalOpen && !videoPreview" />
+      <AnnotationMarkers :mainScope="annotationScope" :disabled="modalOpen" />
+
+      <!-- MiMo's right panel: tabs beside the conversation, or its launcher while it holds none. -->
+      <ErrorBoundary :reset-key="app.currentID ?? ''">
+      <RightPanel
+        ref="rightPanel"
+        :sessionID="isHome ? undefined : app.currentID"
+        :directory="panelDirectory"
+        :browserAllowed="browserAllowed"
+        :sidebarWidth="leftPanel ? sideWidth : 0"
+        :sideCollapsed="!leftPanel"
+        :hints="panelHints"
+        :modalOpen="modalOpen"
+        :searchOpen="searchOpen"
+        @open-settings="openSettings"
+        @connect="connectOpen = true"
+        @shell="runShellCommand"
+        @terminal="openTerminalTab"
       />
+      </ErrorBoundary>
     </div>
 
-    <TerminalDrawer v-if="terminalOpen && !isHome" ref="drawer" @close="terminalOpen = false" />
 
-    <McpDialog v-if="mcpOpen" @close="mcpOpen = false" />
 
     <CommandPalette
       v-if="paletteOpen"
-      :commands="commands"
       :mode="paletteMode"
-      :projects="workspaceChoices.length ? workspaceChoices : openProjects"
-      @close="paletteOpen = false; workspaceChoices = []"
+      :projects="openProjects"
+      @close="paletteOpen = false"
       @file="composer?.mention($event)"
-      @project="app.create($event)"
-      @message="app.forkFrom($event)"
+      @project="pickedProject"
     />
 
-    <ServerPopover
-      v-if="serverPanel"
-      @close="serverPanel = false"
-      @manage="
-        () => {
-          serverPanel = false
-          managingServers = true
-        }
-      "
+    <SearchOverlay
+      v-if="searchOpen"
+      ref="searchOverlay"
+      @close="searchOpen = false"
+      @open="openFromSearch"
+      @project="startIn"
     />
 
-    <RenameDialog
-      v-if="namingWorkspace"
-      :value="''"
-      :heading="t('workspace.namePrompt')"
-      :confirm="t('workspace.new')"
-      @close="namingWorkspace = undefined"
-      @submit="(name) => createWorkspace(namingWorkspace!, name)"
-    />
-
-    <ServersDialog
-      v-if="managingServers"
-      @close="managingServers = false"
-      @connect="applyServer"
-    />
-
-    <RenameDialog
-      v-if="choosingServer"
-      :value="app.config?.serverURL ?? ''"
-      :heading="t('server.prompt')"
-      placeholder="ws://host:port"
-      @close="choosingServer = false"
-      @submit="applyServer"
-    />
-
-    <RenameDialog
-      v-if="renaming && app.current"
-      :value="sessionTitle(app.current.title)"
-      @close="renaming = false"
-      @submit="
-        (title) => {
-          renaming = false
-          if (app.currentID) void app.rename(app.currentID, title)
-        }
-      "
-    />
-
+    <!-- MiMo's settings boundary: a page that fails to draw shows its strip, not the fatal page. -->
+    <ErrorBoundary v-if="settingsOpen" :reset-key="settingsSection">
     <SettingsDialog
-      v-if="settingsOpen"
+      ref="settingsDialog"
       :section="settingsSection"
       :commands="bindableCommands"
+      :update-checking="updateChecking"
+      :update-ready="downloadedUpdate"
       @close="settingsOpen = false"
       @check-updates="checkForUpdates"
     />
+    </ErrorBoundary>
 
     <ProjectDialog
       v-if="editingProject"
@@ -2765,25 +4187,72 @@ onBeforeUnmount(() => {
       @close="editingProject = undefined"
     />
 
-  </div>
-  <ConnectDialog v-if="connectOpen" @close="connectOpen = false" />
+    <RenameDialog
+      v-if="renamingSession"
+      :value="renamingSession.title"
+      :heading="t('rename.convoTitle')"
+      :subtitle="t('rename.subtitle')"
+      @close="renamingSession = undefined"
+      @submit="submitSessionRename"
+    />
 
+    <RenameDialog
+      v-if="renamingProject"
+      :value="projectName(renamingProject, app.config?.projectNames)"
+      :heading="t('rename.projectTitle')"
+      :subtitle="t('rename.subtitle')"
+      @close="renamingProject = undefined"
+      @submit="submitProjectRename"
+    />
+
+  </div>
+  <ConnectDialog v-if="connectOpen" :group="connectGroup" @close="(connectOpen = false), (connectGroup = undefined)" />
+  <ImagePreview />
+  <VideoPreview />
+
+  <!-- MiMo's wording for several at once: the count in the title and in the question. -->
   <ConfirmDialog
-    v-if="deletingWorkspace"
-    :title="t('workspace.delete')"
-    :body="deletingWorkspace.dirty ? t('workspace.deleteDirty') : t('workspace.deleteBody')"
+    v-if="deletingMany?.length"
+    :title="t('batch.deleteN', { count: deletingMany.length })"
+    :body="t('batch.deleteManyBody', { count: deletingMany.length })"
     :confirm-label="t('common.delete')"
-    @confirm="confirmDeleteWorkspace"
-    @close="deletingWorkspace = undefined"
+    @confirm="confirmDeleteMany"
+    @close="deletingMany = undefined"
   />
 
+  <!-- And for one, the conversation's own title in the question. -->
   <ConfirmDialog
     v-if="deletingSession"
-    :title="t('confirm.deleteSession')"
-    :body="t('confirm.deleteSessionBody')"
-    :confirm-label="t('cmd.delete')"
+    :title="t('confirm.deleteChatTitle')"
+    :body="t('confirm.deleteChatBody', { title: deletingTitle })"
+    :confirm-label="t('common.delete')"
     @confirm="confirmDeleteSession"
     @close="deletingSession = undefined"
+  />
+
+  <!-- Removing a project, or the ticked set, only takes it off the list. -->
+  <ConfirmDialog
+    v-if="removingProjects"
+    :title="
+      removingProjects.batch
+        ? t('batch.projectsRemoveTitle', { count: removingProjects.directories.length })
+        : t('side.removeProjectTitle')
+    "
+    :body="
+      removingProjects.batch
+        ? t('batch.projectsRemoveBody', { count: removingProjects.directories.length })
+        : t('side.removeProjectBody', { name: projectName(removingProjects.directories[0] ?? '', app.config?.projectNames) })
+    "
+    :confirm-label="t('side.removeProjectOk')"
+    @confirm="confirmRemoveProjects"
+    @close="removingProjects = undefined"
+  />
+
+  <NewProjectDialog
+    v-if="namingProject"
+    :value="t('home.blankDefault')"
+    @close="namingProject = undefined"
+    @submit="createNamedProject"
   />
 
   <AppMenu
@@ -2795,26 +4264,48 @@ onBeforeUnmount(() => {
     @close="appMenu = undefined"
   />
 
+  <!-- MiMo's side column menus: the conversation row's at 164, the project's at 150. -->
   <ContextMenu
     v-if="sessionMenu"
     :x="sessionMenu.x"
     :y="sessionMenu.y"
     :items="sessionMenuItems"
+    :side="!sessionMenu.header"
+    :min-width="sessionMenu.header ? undefined : 164"
     @pick="runSessionMenu"
     @close="sessionMenu = undefined"
   />
 
-  <!-- Listens at the document, so every text field gets the same menu. -->
-  <EditMenu />
-
-  <ManageModelsDialog
-    v-if="manageModelsOpen"
-    @close="manageModelsOpen = false"
-    @connect="manageModelsOpen = false; connectOpen = true"
+  <ContextMenu
+    v-if="projectMenu"
+    :x="projectMenu.x"
+    :y="projectMenu.y"
+    :items="projectMenuItems"
+    side
+    :min-width="150"
+    @pick="runProjectMenu"
+    @close="projectMenu = undefined"
   />
 
   <Toasts />
 
+  <!-- Last in the document on purpose: see .rail-no-drag. -->
+  <div v-if="!leftPanel" class="rail-no-drag" :data-platform="app.platform || undefined" aria-hidden="true" />
+  <!-- MiMo's exit-full-screen button: Windows only, where full screen hides the overlay caption buttons. -->
+  <button
+    v-if="app.platform === 'win32' && fullScreen"
+    type="button"
+    class="exit-fs"
+    data-exit-fullscreen
+    :title="t('side.exitFullscreen')"
+    :aria-label="t('side.exitFullscreen')"
+    @click="exitFullScreen"
+  >
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3" />
+    </svg>
+  </button>
+  <div class="toggles-no-drag" aria-hidden="true" />
 </template>
 
 <style scoped>
@@ -2833,7 +4324,7 @@ onBeforeUnmount(() => {
 .boot-msg {
   max-width: 460px;
   color: var(--text-weak);
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--ui-font-scale, 1));
   line-height: 1.65;
 }
 
@@ -2843,7 +4334,7 @@ onBeforeUnmount(() => {
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .boot-retry:hover {
@@ -2889,80 +4380,37 @@ onBeforeUnmount(() => {
 }
 
 /*
- * The workspace is a single raised panel, inset from all three free edges and
- * from the title bar above it. Everything the session is made of - the side
- * panels included - lives on this one plane, which is what leaves the window
- * reading as a frame around the work rather than as more of the same colour.
- */
-/*
- * Two cards with a gutter between them, not one card with a divider in it.
+ * One flush plane, not cards floating on a frame.
  *
- * Measured on the reference with its review panel open: its conversation is a
- * card at `8,44 600x861` and its panel another at `616,44 829x861` - both on a
- * 10px radius over rgb(22,22,22), both inset 8 from the window, and 8 apart.
- * This was a single card that the panel divided with a 1px line, so the two
- * regions read as halves of one sheet rather than as two surfaces.
- *
- * The row itself now paints nothing; the fill and the corners belong to the
- * regions inside it, which is what lets the gutter show through.
+ * MiMo's `<main>` is `flex min-w-0 flex-1 flex-col overflow-hidden bg-panel
+ * shadow-[var(--shadow-panel)]` with no margin, no radius and no gutter, and
+ * `--shadow-panel` is `none` in both schemes - so the workspace never lifts off
+ * the window at all. What divides it from the side column is a single hairline:
+ * main carries `border-left: 1px solid var(--color-line-soft)`, and the side
+ * panel beyond it carries its own leading border. The only rounding left
+ * anywhere is the side panel's own full-screen state.
  */
 .body {
   position: relative;
   display: flex;
   flex: 1;
-  gap: 8px;
   min-height: 0;
-  margin: 8px;
 }
 
-/* Each region is its own card. */
-.body > .main,
-.body > .panel,
-.body > .panel-host {
+/*
+ * The conversation's plane, flush to the column beside it. The hairline is
+ * MiMo's `--color-line-soft` - fainter than the lines inside the panel, because
+ * it separates two surfaces rather than two rows.
+ */
+.body > .main {
   overflow: hidden;
   background: var(--surface-raised);
-  border-radius: 10px;
+  border-inline-start: 1px solid var(--border-muted);
 }
 
-/*
- * Only the panel is raised, and its shadow is elevation/raised - measured layer
- * for layer on the reference, whose conversation card computes `box-shadow:
- * none` while its review panel carries the full four. The asymmetry is the part
- * that could not have been guessed: the panel sits above the conversation
- * rather than the two lying in the same plane.
- */
-.body > .panel,
-.body > .panel-host {
-  box-shadow: var(--shadow-md);
-}
-
-/*
- * A session with nothing in it is set down rather than lifted. The plane itself
- * is the same one a transcript sits on - the reference changes only the
- * elevation, and painting the panel the frame's own colour instead left the
- * composer's fill showing as a band across the foot of an empty session.
- */
-.body.blank {
-  box-shadow: none;
-}
-
-/*
- * Three columns need more room than a small window has.
- *
- * The workspace panel, the conversation and the review panel each have a width
- * below which they stop working - 280, 440 and 360 - and 1080 plus the body's
- * own margins is more than a 1000px window. Something has to give, and it is
- * the workspace panel: the review panel is the work being looked at, the
- * conversation is where the work is done, and the project list is navigation
- * that the title bar and the home screen both still offer.
- *
- * Only when the review panel is actually up. On its own the workspace panel is
- * fine at any width the window can be.
- */
-@media (max-width: 1095px) {
-  .body.with-review .panel.docked {
-    display: none;
-  }
+/* The docked terminal keeps the height it was dragged to; the transcript gives way. */
+.main > .drawer {
+  flex: none;
 }
 
 .main {
@@ -2971,10 +4419,303 @@ onBeforeUnmount(() => {
   flex: 1;
   flex-direction: column;
   /*
-   * Falls back to the full width on a window too narrow to give it 440, which
-   * is the case where something has to overflow and the conversation is not
-   * the thing that should.
+   * MiMo's main column has no floor of its own: the side column and the panel
+   * are sized to leave it 480, and when the window is too narrow for that
+   * beside the panel's 300, the conversation is what narrows, so nothing is
+   * pushed past the window's edge.
    */
-  min-width: min(440px, 100%);
+  min-width: 0;
+}
+
+/* The composer's ordinary dock; `contents` keeps it out of the layout. */
+.main-dock {
+  display: contents;
+}
+
+/*
+ * The folded column's controls - the toggle and 新建任务 - float over the
+ * start of the main column, and the main column's own top strip (the
+ * home screen's, or the conversation header) is a window drag region. Electron
+ * works drag regions out in document order, so that strip, coming later, took
+ * the buttons back into the title bar and Windows swallowed every click on
+ * them. This patch is the last thing in the document, so its no-drag wins; it
+ * takes no pointer events, so the clicks still land on the buttons beneath.
+ */
+/*
+ * MiMo's exit-full-screen button: 26 square and 7 round, 20 in from the start
+ * edge and centred on the 44px controls row, over the side column's own row.
+ * Its 16px glyph is the four inward corners.
+ */
+.exit-fs {
+  position: fixed;
+  top: 9px;
+  inset-inline-start: 20px;
+  z-index: 205;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--text-weak);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.exit-fs:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
+/* It lies outside .app, last in the document, so it carries the platform itself. */
+.rail-no-drag:not([data-platform="darwin"]) {
+  inset-inline-start: 18px;
+}
+
+.rail-no-drag {
+  position: fixed;
+  top: 13px;
+  inset-inline-start: 75px;
+  z-index: 1;
+  width: 56px;
+  height: 24px;
+  pointer-events: none;
+  -webkit-app-region: no-drag;
+}
+
+/*
+ * The same trap on the right: the side panel toggle sits fixed at the end of
+ * the title bar, and the home strip, the conversation header or the side
+ * panel's own head, later in the document, dragged over it. Covers the toggle,
+ * 9px from the caption buttons.
+ */
+.toggles-no-drag {
+  position: fixed;
+  top: 13px;
+  inset-inline-end: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 9px);
+  z-index: 1;
+  width: 24px;
+  height: 24px;
+  pointer-events: none;
+  -webkit-app-region: no-drag;
+}
+
+/*
+ * Laid over the composer's own box: its 4px top inset is added back so the
+ * pill hangs 8px clear of the box, and the info card's width is kept off the
+ * end the way the composer keeps it, so the two centre on the same column.
+ */
+.live-edit-anchor {
+  position: relative;
+  top: 4px;
+  flex: none;
+  height: 0;
+}
+
+.main.info-open .live-edit-anchor {
+  margin-inline-end: v-bind(infoInset);
+}
+
+/*
+ * MiMo's: the column tinted 8% of the accent inside a 2px dashed line at 55%,
+ * and a card in the middle - 12 round, 10 by 18 of padding, 14px medium text
+ * in the accent - that lets the drop through to what is underneath.
+ */
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 250;
+  display: grid;
+  place-items: center;
+  /* MiMo's accent is orange in both schemes. */
+  background: color-mix(in srgb, #ff6a2b 8%, transparent);
+  border: 2px dashed color-mix(in srgb, #ff6a2b 55%, transparent);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+/*
+ * The information panel is inset into this same column rather than being a
+ * column of its own, so an overlay at `inset: 0` covered it too. It stops where
+ * the conversation stops, as MiMo's does.
+ */
+.main.info-open .drop-overlay {
+  inset-inline-end: v-bind(infoInset);
+}
+
+.drop-card {
+  padding: 10px 18px;
+  color: #ff6a2b;
+  background: var(--surface-base);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
+}
+
+/*
+ * 2.0 shell. Xiaomi MiMo's window has no title strip and no inset panel: the
+ * side column runs the full height on the deepest surface and the main plane
+ * sits flush beside it, one hairline between them.
+ */
+.body {
+  gap: 0;
+  margin: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* The same selector the inset panel was drawn with, so this one wins. */
+.body > .main {
+  margin: 0;
+  background: var(--surface-raised);
+  border: 0;
+  border-inline-start: 1px solid var(--border-weaker);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/*
+ * With the info card beside it the conversation makes room the way MiMo's
+ * does: only as much as keeps the 768 reading column clear of the 310 card,
+ * held at the inline end of the transcript and of the dock, so the column and
+ * the composer centre in what is left - and the jump-to-bottom button, centred
+ * inside the transcript, moves with them. Floating, the card takes nothing.
+ */
+.main.info-open :deep(.stream) {
+  padding-inline-end: v-bind(infoInset);
+}
+
+.main.info-open :deep(.composer),
+.main.info-open :deep(.confirm-wrap) {
+  padding-inline-end: calc(24px + v-bind(infoInset));
+}
+
+/* MiMo moves the find bar clear of the card whenever the card is up: 20 plus its 310. */
+.main.info-shown ~ [data-find-bar] {
+  margin-inline-end: 310px;
+}
+
+/* Left of the caption buttons where Windows draws them, level with the header's own row: MiMo's 24px in a 32px row 9 down. */
+.side-panel-toggle {
+  position: fixed;
+  top: 13px;
+  inset-inline-end: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 9px);
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  /* MiMo's title-bar icon colour: near the strongest text on dark, 60% of it on light. */
+  color: color-mix(in srgb, var(--text-strong) 60%, transparent);
+  border-radius: 7px;
+  -webkit-app-region: no-drag;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .side-panel-toggle,
+  :root:not([data-theme="light"]) .home-bottom {
+    color: var(--text-strong);
+  }
+}
+
+:root[data-theme="dark"] .side-panel-toggle,
+:root[data-theme="dark"] .home-bottom {
+  color: var(--text-strong);
+}
+
+/* MiMo on Windows: every title-bar glyph 12px, in one solid colour on light and dark alike. */
+.app[data-platform="win32"] .side-panel-toggle,
+.app[data-platform="win32"] .home-bottom:not(:disabled) {
+  color: var(--text-strong);
+}
+
+.app[data-platform="win32"] .side-panel-toggle svg,
+.app[data-platform="win32"] .home-bottom svg {
+  width: 12px;
+  height: 12px;
+}
+
+/*
+ * MiMo warms its light theme on Windows and Linux, and only there:
+ * `html:not([data-theme=dark]) #app.plat-win32, ... #app.plat-linux` sets a
+ * warm-grey side column (#f8f7f5) against the white main plane, with warm
+ * lines (#f0ebe5) instead of neutral ones. macOS keeps the neutral set, and
+ * dark is untouched in every platform.
+ *
+ * Written as the positive light condition rather than `:not(dark)`, and hung on
+ * `.app` rather than `:root`: the palette is written inline onto <html> at boot,
+ * so only a rule matching a descendant of it can win.
+ */
+:root[data-theme="light"] .app[data-platform="win32"],
+:root[data-theme="light"] .app[data-platform="linux"] {
+  --surface-base: #f8f7f5;
+  --surface-hover: #f1f0ec;
+  --surface-selected: #eeedec;
+  --border-weak: #f0ebe5;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .app[data-platform="win32"],
+  :root:not([data-theme="dark"]) .app[data-platform="linux"] {
+    --surface-base: #f8f7f5;
+    --surface-hover: #f1f0ec;
+    --surface-selected: #eeedec;
+    --border-weak: #f0ebe5;
+  }
+}
+
+.side-panel-toggle:hover,
+.home-bottom:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
+.side-panel-toggle.on {
+  color: var(--text-strong);
+  background: var(--surface-selected);
+}
+
+/*
+ * The home screen's bottom panel button, in the main column's title row: MiMo's
+ * 4px before the side panel toggle, or 12 from the column's end with a panel beside it.
+ */
+.home-bottom {
+  position: absolute;
+  top: 13px;
+  inset-inline-end: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 37px);
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: color-mix(in srgb, var(--text-strong) 60%, transparent);
+  border-radius: 7px;
+  -webkit-app-region: no-drag;
+}
+
+.main.beside .home-bottom {
+  inset-inline-end: 12px;
+}
+
+/* "No project" leaves the terminal nowhere to open. */
+.home-bottom:disabled {
+  background: transparent;
+  cursor: default;
+  opacity: 0.35;
+}
+
+/*
+ * MiMo's expanded side panel: the main column folds to nothing and the panel
+ * takes its room.
+ */
+.body.panel-full > .main {
+  flex: 0 0 0;
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+  border-inline-start-width: 0;
 }
 </style>

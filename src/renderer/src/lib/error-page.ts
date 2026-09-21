@@ -36,6 +36,15 @@ declare global {
  */
 let taken = false
 
+/* MiMo's diagLog: the same failure into the day's log file, which outlives devtools nobody opened. */
+function diag(what: string, error: unknown): void {
+  try {
+    window.mcode?.diagLog(`${what}: ${formatError(error)}`)
+  } catch {
+    // The bridge is what failed to load, perhaps; the console has it already.
+  }
+}
+
 /**
  * True when there is nothing left on screen for the person to work with.
  *
@@ -55,6 +64,7 @@ function takeWindow(error: unknown, failed: App): void {
   // Whoever has devtools open should still get the untouched value, with the
   // real stack, rather than only the formatted copy shown in the panel.
   console.error("MCode: fatal renderer error", error)
+  diag("fatal renderer error", error)
 
   // A tree that failed while rendering can fail again while being taken down.
   try {
@@ -107,6 +117,7 @@ export function installErrorPage(app: App): void {
   window.addEventListener("unhandledrejection", (event) => {
     if (!windowIsBlank()) {
       console.warn("MCode: unhandled rejection, workspace still rendering", event.reason)
+      diag("unhandled rejection", event.reason)
       return
     }
     takeWindow(event.reason, app)

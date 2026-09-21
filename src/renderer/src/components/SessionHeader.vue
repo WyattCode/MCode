@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed } from "vue"
+import { computed, ref } from "vue"
 import { useApp } from "../stores/app"
-import ContextRing from "./ContextRing.vue"
-import { language, sessionTitle, t } from "../lib/i18n"
-import { readContext } from "./session-context"
+import { useRightPanel } from "../stores/right-panel"
+import ContextMenu from "./ContextMenu.vue"
+import { useOpenWith } from "../lib/open-with"
+import { sessionTitle, t } from "../lib/i18n"
+import { convoCard } from "../lib/convo-card"
 
 /**
  * The bar across the top of an open conversation.
@@ -15,75 +17,47 @@ import { readContext } from "./session-context"
  */
 const app = useApp()
 
-/** Whether the Context view this header's ring opens is currently up. */
-defineProps<{ contextOpen?: boolean }>()
+/**
+ * Whether the Context view this header's ring opens is currently up, and
+ * whether the info card beside the conversation is.
+ */
+/* `sideCollapsed`: the side column is folded away, and its toggle and 新建任务 float over this header's start. */
+/* `hasContent`: something has been said, which is when MiMo offers the info card at all. */
+/* `panelBeside`: a side panel stands to the right, so this row ends at the column instead of under the toggle. */
+/* `menuOpen`: this conversation's menu is up, which keeps its "more" tip shut as MiMo's is. */
+defineProps<{ infoOpen?: boolean; bottomOpen?: boolean; sideCollapsed?: boolean; hasContent?: boolean; panelBeside?: boolean; menuOpen?: boolean }>()
 
-const emit = defineEmits<{ rename: []; menu: [x: number, y: number]; context: [] }>()
+/* `rename` asks the app for MiMo's rename dialog; the header no longer edits in place. */
+const emit = defineEmits<{ rename: []; menu: [x: number, y: number]; info: []; bottom: [] }>()
 
 const title = computed(() => (app.current ? sessionTitle(app.current.title) : ""))
 
-/**
- * How full the model's context is.
- *
- * The arithmetic is shared with the Context view the ring opens, so the two
- * cannot come to different answers about the same session.
- *
- * Undefined until a turn has reported usage against a model whose window is
- * known. The readout is drawn anyway, at zero - which is what opencode does:
- * every figure it renders is `context()?.usage ?? 0`, `info()?.cost ?? 0`,
- * `total.toLocaleString() ?? "0"`. This app used to hide the whole control
- * until the first turn finished, so a new session had no ring at all where the
- * reference shows US$0.00 / 0% / 0 from the moment it opens.
- */
-const context = computed(() => {
-  const reading = readContext(app.messages, app.providers)
-  if (!reading?.window || reading.percent === undefined) return undefined
-  return { used: reading.used, window: reading.window, percent: reading.percent }
-})
-
-/** Read out here rather than in the template, so the ring takes a plain number. */
-const percent = computed(() => context.value?.percent ?? 0)
+/* MiMo's card over the title: the project, the folder and when it last changed. */
+const card = computed(() => (app.current ? convoCard(app.current, app.config?.projectNames, [], undefined, app.groupContext, app.automationTasks) : undefined))
+const pinned = computed(() => Boolean(app.current && app.isPinned(app.current.id)))
 
 /*
- * Money and thousands separators in the language the app is set to, not the
- * one the machine happens to be in. Someone who has put this interface into
- * German is reading German, and 1.234 is how German writes that number however
- * the operating system is configured; Arabic goes further and wants its own
- * digits. The language ids are already BCP-47 tags, which is what Intl asks
- * for.
- *
- * Dollars whatever the language, because the number is dollars: providers
- * price in them and nothing here converts it. Dressing it as the reader's own
- * currency would change what it says without changing what it is.
+ * MiMo's open-location control: the folder the conversation works in. MiMo
+ * takes it away while the side panel shows a document, a browser or a web page,
+ * whose own bars say where they are.
  */
-const money = computed(
-  () => new Intl.NumberFormat(language.value, { style: "currency", currency: "USD" }),
+const rp = useRightPanel()
+const OWN_LOCATION = ["office", "browser", "html"]
+const directory = computed(() =>
+  rp.open && OWN_LOCATION.includes(rp.activeTab?.type ?? "") ? undefined : app.current?.directory,
 )
+const { label: openLabel, items: openItems, open: openIn, pick: pickOpen } = useOpenWith(() => app.platform)
+const appMenu = ref<{ x: number; y: number }>()
 
-/**
- * What the readout says when the pointer rests on it.
- *
- * Cost is the session's running total rather than the last turn's, because
- * that is the number anyone asking "what has this cost me" means; the other
- * two describe the turn the ring is drawn from.
- */
-const rows = computed(() => {
-  const reading = context.value
-  return [
-    { key: "cost", name: t("context.usage.cost"), value: money.value.format(app.current?.usage.cost ?? 0) },
-    { key: "usage", name: t("context.usage.usage"), value: `${reading?.percent ?? 0}%` },
-    { key: "tokens", name: t("context.usage.tokens"), value: (reading?.used ?? 0).toLocaleString(language.value) },
-  ]
-})
+function openAppMenu(event: MouseEvent) {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  appMenu.value = { x: Math.round(rect.left), y: Math.round(rect.bottom + 4) }
+}
 
-/**
- * What the button points its description at.
- *
- * A constant rather than a generated id because exactly one session header is
- * ever on screen; two of them would need two ids and this would be the thing
- * that broke.
- */
-const TIP_ID = "session-context-figures"
+function pickApp(key: string) {
+  appMenu.value = undefined
+  if (directory.value) void pickOpen(key, directory.value)
+}
 
 function openMenu(event: MouseEvent) {
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
@@ -92,63 +66,100 @@ function openMenu(event: MouseEvent) {
 </script>
 
 <template>
-  <div class="head">
+  <div class="head" :class="{ 'after-rail': sideCollapsed, beside: panelBeside }">
     <div class="left">
-      <h1 class="title" :title="title" @click="emit('rename')">{{ title }}</h1>
+      <!-- MiMo marks a pinned conversation before its title. -->
+      <span
+        v-if="pinned"
+        class="pin-mark"
+        :aria-label="t('header.pinnedTip')"
+        :title="t('header.pinnedTip')"
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+        </svg>
+      </span>
+      <!-- A plain label; a double-click opens MiMo's rename dialog. -->
+      <h1 class="title" v-tip="card ? { card, placement: 'bottom' } : ''" @dblclick="emit('rename')">{{ title }}</h1>
+
+      <!--
+        Beside the name rather than at the far end of the bar: it is this
+        conversation's menu, and MiMo keeps it against the title it belongs to.
+        The buttons at the other end drive the panels, which are not the
+        conversation.
+      -->
+      <button class="ico options" v-tip="{ label: t('header.moreTip'), disabled: menuOpen }" @click="openMenu">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <circle cx="5" cy="12" r="1.7" />
+          <circle cx="12" cy="12" r="1.7" />
+          <circle cx="19" cy="12" r="1.7" />
+        </svg>
+      </button>
     </div>
 
     <div class="right">
       <!--
-        A control again, and this time one with somewhere to go.
-
-        It spent a while as a plain readout: it had been a button with a hover
-        fill and no click handler, which invited a press and swallowed it, and
-        the honest answer at the time was to stop looking like a button, because
-        the Context view the reference opens from here did not exist. It does
-        now, so the press is real - and the tooltip says so on its last line, in
-        the reference's own words.
+        MiMo's first tool: the face opens the project folder in the app last
+        chosen, the caret chooses another. Only while there is a folder.
       -->
+      <div v-if="directory" class="open-with">
+        <button
+          class="open-face"
+          :aria-label="t('header.openDirTip', { name: openLabel })"
+          v-tip="t('header.openDirTip', { name: openLabel })"
+          @click="openIn(directory)"
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path
+              d="M2 4.5C2 3.67 2.67 3 3.5 3H6l1.5 1.75h5c.83 0 1.5.67 1.5 1.5v5.25c0 .83-.67 1.5-1.5 1.5h-9c-.83 0-1.5-.67-1.5-1.5v-7Z"
+              stroke="currentColor"
+              stroke-width="1.2"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <span>{{ t("header.openLocation") }}</span>
+        </button>
+        <button
+          class="open-caret"
+          :aria-label="t('header.pickApp')"
+          v-tip="{ label: t('header.pickApp'), disabled: Boolean(appMenu) }"
+          @click="openAppMenu"
+        >
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M6.7 8.3 10 11.7l3.3-3.4" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+      </div>
+      <ContextMenu v-if="appMenu" :x="appMenu.x" :y="appMenu.y" :items="openItems" @pick="pickApp" @close="appMenu = undefined" />
+      <!-- The info card beside the conversation; lit while it is up, as MiMo's toggle is. -->
       <button
-        class="readout"
-        :aria-label="t('context.usage.view')"
-        :aria-describedby="TIP_ID"
-        :aria-pressed="Boolean(contextOpen)"
-        @click="emit('context')"
+        v-if="hasContent"
+        class="ico info"
+        :aria-pressed="Boolean(infoOpen)"
+        :aria-label="t('info.tip')"
+        v-tip="t('info.tip')"
+        @click="emit('info')"
       >
-        <!--
-          The header's geometry, which the reference keeps deliberately smaller
-          than the same ring in the Context tab: 14px on a 1.5 stroke here,
-          16px on a 2 stroke there. Those are this component's defaults, so
-          they are not repeated at the call.
-        -->
-        <ContextRing :percent="percent" />
-
-        <!--
-          Left in the page rather than mounted on hover, and so left in the
-          accessibility tree: the ring itself is a picture, and this is the only
-          statement of what it is a picture of. Someone who cannot bring a
-          pointer to rest on it still gets the three numbers read out.
-
-          Reached by aria-describedby rather than simply by being inside the
-          button, because the button carries an aria-label and a label replaces
-          whatever a control contains: without this the figures would have gone
-          silent the moment the ring became pressable again. The id can be a
-          fixed string because there is one session header on screen.
-        -->
-        <div :id="TIP_ID" class="tip">
-          <div v-for="row in rows" :key="row.key" class="tip-row">
-            <span class="tip-name">{{ row.name }}</span>
-            <span class="tip-value">{{ row.value }}</span>
-          </div>
-          <!-- What pressing it does, which is the one thing the three figures
-               above do not say. -->
-          <div class="tip-hint">{{ t("context.usage.clickToView") }}</div>
-        </div>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9.5 6h11M9.5 12h11M9.5 18h11M4 6h.01M4 12h.01M4 18h.01" />
+        </svg>
       </button>
 
-      <button class="ico" v-tip="{ label: t('session.options'), placement: 'bottom' }" @click="openMenu">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M2.5 7.5H3.5V8.5H2.5V7.5Z" stroke="currentColor" stroke-width="1" /><path d="M7.5 7.5H8.5V8.5H7.5V7.5Z" stroke="currentColor" stroke-width="1" /><path d="M12.5 7.5H13.5V8.5H12.5V7.5Z" stroke="currentColor" stroke-width="1" />
+      <!--
+        The bottom panel, MiMo's second tool here: the terminal docked under the
+        conversation, also on Ctrl+J. The context ring this slot used to hold
+        lives in the composer, where MiMo keeps it.
+      -->
+      <button
+        class="ico bottom"
+        :aria-pressed="Boolean(bottomOpen)"
+        :aria-label="t('key.bottomPanel')"
+        v-tip="{ label: t('key.bottomPanel'), hint: 'Ctrl+J' }"
+        @click="emit('bottom')"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="2.5" y="2.5" width="19" height="19" rx="4" />
+          <path d="M2.5 15h19" />
         </svg>
       </button>
     </div>
@@ -173,7 +184,19 @@ function openMenu(event: MouseEvent) {
   display: flex;
   flex: 1;
   align-items: center;
+  /* MiMo's row: pin, title and menu 8 apart. */
+  gap: 8px;
   min-width: 0;
+}
+
+.pin-mark {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 14px;
+  height: 26px;
+  margin-inline-end: 2px;
+  color: var(--text-weak);
 }
 
 /*
@@ -188,9 +211,9 @@ function openMenu(event: MouseEvent) {
   padding: 4px 8px;
   color: var(--text-strong);
   border-radius: 6px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
-  line-height: 16px;
+  line-height: calc(16px * var(--ui-font-scale, 1));
   letter-spacing: -0.04px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -198,9 +221,6 @@ function openMenu(event: MouseEvent) {
   transition: background 0.12s;
 }
 
-.title:hover {
-  background: var(--surface-hover);
-}
 
 .right {
   display: flex;
@@ -226,133 +246,142 @@ function openMenu(event: MouseEvent) {
 }
 
 /*
- * The same 28px box as the button beside it, and now the same behaviour: the
- * fill on hover is what tells a reader the ring can be pressed, which is the
- * whole difference between this and the readout it was while there was nothing
- * behind it.
+ * 2.0 has no title strip, so the conversation's own header is what drags the
+ * window, and it has to stay clear of the caption buttons Windows draws over
+ * its top-right corner. env(titlebar-area-*) describes exactly that band when
+ * the overlay is present - the width it leaves for content - and is absent on
+ * macOS, where the traffic lights sit over the side column instead; so the
+ * reserve below is the caption buttons' width where they exist and nothing
+ * where they do not.
  */
-.readout {
-  position: relative;
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  transition: background 0.12s;
+.head {
+  /* MiMo's header: 46 tall with its row pushed four down, so the title sits
+     on the same line as the side column's buttons. */
+  height: 46px;
+  padding-block: 4px 0;
+  /* Clear of the caption buttons, and of the side panel button App.vue keeps beside them:
+     its 9px inset and 24px, then MiMo's 4px before this row's last button. */
+  /* (the start is pushed past the rail's controls row by .after-rail, below) */
+  padding-inline-end: calc(37px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  -webkit-app-region: drag;
 }
 
-.readout:hover,
-/* Held open, so the control stays lit while the view it opened is on screen. */
-.readout[aria-pressed="true"] {
-  background: var(--surface-hover);
+/* MiMo's topbar inset once a side panel stands beside the column: the toggle is over the panel now. */
+.head.beside {
+  padding-inline-end: 12px;
+}
+
+/* MiMo's title: 14 on regular weight in a 26px line, no padding, at most 320 wide. */
+.title {
+  height: calc(26px * var(--ui-font-scale, 1));
+  max-width: 320px;
+  padding: 0;
+  border-radius: 0;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  line-height: calc(26px * var(--ui-font-scale, 1));
+  letter-spacing: 0;
 }
 
 /*
- * Built here rather than through v-tip, which draws one line in a box that
- * never wraps and so cannot hold a column of name-and-value rows.
- *
- * The box itself is the reference's, measured: 5px by 6px of padding, a 4px
- * radius, 11px type at weight 530 on a 12px line, and the whole thing 120px
- * wide with 8px between rows. That is also all but exactly what v-tip draws,
- * so the two do not read as coming from different applications.
- *
- * What it does not share is v-tip's warm window - move here straight from the
- * button beside it and this one still waits its half second, where two v-tips
- * in a row would not.
+ * MiMo's title-bar buttons: 24 square, 7 round, in its title-bar icon colour -
+ * near the strongest text on a dark ground, that text at 60% on a light one.
  */
-.tip {
-  position: absolute;
-  z-index: 300;
-  /* Clear of the ring by the same gap v-tip leaves its own controls. */
-  inset-block-start: calc(100% + 8px);
-  /* Anchored to the end of the row, growing inwards: the ring sits against the
-     window's edge, and a box hung from its start would leave the window. */
-  inset-inline-end: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 120px;
-  padding: 5px 6px;
+.ico {
+  width: 24px;
+  height: 24px;
+  color: color-mix(in srgb, var(--text-strong) 60%, transparent);
+  border-radius: 7px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ico:not(.options) {
+    color: var(--text-strong);
+  }
+}
+
+:root[data-theme="dark"] .ico:not(.options) {
   color: var(--text-strong);
-  background: var(--surface-raised-hover);
-  border-radius: 4px;
-  box-shadow: var(--shadow-lg);
-  font-size: 11px;
-  font-weight: 530;
-  line-height: 12px;
-  letter-spacing: 0.05px;
-  /* Figures that change as a turn runs, so the columns must not shift under
-     them as digits swap. */
-  font-variant-numeric: tabular-nums;
-  /* Nothing here is a control, so nothing here should look selectable. */
-  user-select: none;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.12s ease;
 }
 
-/*
- * The pause matches the half second v-tip waits, which is roughly what the
- * platform's own tooltips wait: long enough that a pointer crossing the header
- * on its way elsewhere does not set the box off. Only on the way in - a tip
- * that lingered after the pointer left would follow it down the page.
- */
-.readout:hover .tip {
-  opacity: 1;
-  transition-delay: 0.5s;
+/* MiMo on Windows: the panel toggles' glyphs 12px, in one solid colour on light and dark alike. */
+.app[data-platform="win32"] .ico:not(.options) {
+  color: var(--text-strong);
 }
 
-/*
- * No pause for the keyboard. The delay exists to keep a pointer crossing the
- * header from setting off a trail of boxes; arriving here by Tab is a decision,
- * not a passing-through, and waiting half a second after it looks broken.
- */
-.readout:focus-visible .tip {
-  opacity: 1;
+.app[data-platform="win32"] .ico:not(.options) svg {
+  width: 12px;
+  height: 12px;
 }
 
-.tip-row {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  min-width: 0;
-}
-
-.tip-name {
+/* Against the title, and never squeezed by a long one: MiMo's 26px menu in the muted colour. */
+.ico.options {
   flex-shrink: 0;
-  color: var(--text-base);
+  width: 26px;
+  height: 26px;
+  color: var(--text-weak);
 }
 
 /*
- * Pushed to the far end so the three values line up as a column, and cut with
- * an ellipsis rather than allowed to widen the box: a currency some locale
- * writes long would otherwise stretch the tooltip out of shape.
+ * MiMo's open-location control, measured: one bordered piece 24 tall with a
+ * 10px corner; the face is 14px medium text after a 14px glyph, 10 in from the
+ * left and 4 before the caret, which is 2 and 6 either side of its chevron.
  */
-.tip-value {
+.open-with {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  height: calc(24px * var(--ui-font-scale, 1));
   overflow: hidden;
-  min-width: 0;
-  margin-inline-start: auto;
+  border: 1px solid var(--border-weak);
+  border-radius: 10px;
+}
+
+.open-face {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  padding-inline: 10px 4px;
   color: var(--text-strong);
-  text-align: end;
-  text-overflow: ellipsis;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
+  line-height: 1;
   white-space: nowrap;
 }
 
-/*
- * Set below the figures by a rule, because it is not one of them: the three
- * rows above describe the session, and this one describes the control. Allowed
- * to wrap - it is a sentence, and cutting it off is worse than two lines.
- */
-.tip-hint {
-  padding-block-start: 6px;
+.open-caret {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding-inline: 2px 6px;
   color: var(--text-weak);
-  border-block-start: 1px solid var(--border-weaker);
-  /* The rows above are single lines and take the box's tight 12px leading. A
-     sentence that wraps needs the room between the two lines that a row does
-     not, or the descenders of the first sit on the second. */
-  line-height: 1.35;
-  text-align: start;
+}
+
+.open-face:hover,
+.open-caret:hover {
+  background: var(--surface-hover);
+}
+
+/* The info card's toggle stays lit, in the selected tint, while the card is up; the bottom panel's does not. */
+.info[aria-pressed="true"] {
+  color: var(--text-strong);
+  background: var(--surface-selected);
+}
+
+.left > *,
+.right {
+  -webkit-app-region: no-drag;
+}
+
+/* The side column folded to its rail: the toggle, back, forward and search float over the start of this row. */
+/* MiMo 26.920's inset past the folded controls: 新建任务's end (107 + 24) less 2, the window's own x now that no rail stands before it. */
+.head.after-rail {
+  padding-inline-start: 129px;
+}
+
+/* Left-aligned folded controls (the user's choice, off macOS): 新建任务 ends at 18 + 24 + 8 + 24 = 74, less the same 2. */
+.app:not([data-platform="darwin"]) .head.after-rail {
+  padding-inline-start: 72px;
 }
 </style>

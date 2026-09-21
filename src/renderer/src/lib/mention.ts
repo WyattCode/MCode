@@ -1,5 +1,3 @@
-import type { Attachment } from "@shared/protocol"
-
 /**
  * Naming a file in the prompt by typing @.
  *
@@ -84,42 +82,4 @@ export function mentionedIn(text: string): string[] {
   const out: string[] = []
   for (const found of text.matchAll(NAMED)) out.push(found[1])
   return out
-}
-
-/**
- * Whether the file came back as prose rather than as bytes read as prose.
- *
- * The server reads every file as UTF-8, so a PNG arrives as a page of
- * replacement characters and NULs. Sending that costs tokens and tells the
- * model nothing, so it is refused here and the user is told which file it was.
- */
-function textual(content: string): boolean {
-  // A NUL byte is the giveaway: no text file has one, and almost every
-  // binary does within its first few bytes.
-  if (content.includes("\u0000")) return false
-  // Failing that, a file that is mostly U+FFFD was not text either.
-  return (content.split("\ufffd").length - 1) * 50 <= content.length
-}
-
-/**
- * The mentioned file as something the message can carry.
- *
- * The path stays relative to the project, because that is how the file was
- * named in the sentence and how the providers wrap it - `<file path="...">` -
- * so the model reads the same path the person wrote.
- */
-export function mentionAttachment(path: string, content: string): Attachment | undefined {
-  if (!textual(content)) return undefined
-  return { path, mime: "text/plain", data: content }
-}
-
-/**
- * The project-relative path as the file system knows it.
- *
- * The separator is taken from the root rather than assumed, so a Windows
- * project does not end up asking for a path that is half forward slashes.
- */
-export function absolutePath(root: string, relative: string): string {
-  const separator = root.includes("\\") ? "\\" : "/"
-  return root.replace(/[\\/]+$/, "") + separator + relative.split("/").join(separator)
 }

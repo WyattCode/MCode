@@ -10,7 +10,7 @@
 
 import type { Effort, ModelModalities } from "@shared/protocol"
 
-export type ProviderKind = "anthropic" | "openai-compatible" | "chatgpt"
+export type ProviderKind = "anthropic" | "openai-compatible" | "chatgpt" | "openai-responses"
 
 /**
  * How a provider can be connected. Subscriptions authorise over OAuth; the
@@ -26,6 +26,20 @@ export interface ModelEntry {
   /** USD per million tokens. Zero means unknown, and the cost readout hides it. */
   input: number
   output: number
+  /** USD per million cached tokens read and written; absent prices count as nothing, as MiMo's do. */
+  cacheRead?: number
+  cacheWrite?: number
+  /**
+   * The dearer prices past 200k of context, where the catalog states them
+   * (`cost.context_over_200k`, which MiMo carries as `experimentalOver200K`).
+   * A Claude model's rates double over that line, so a long conversation's cost
+   * was reported systematically low without it.
+   */
+  over200K?: { input: number; output: number; cacheRead?: number; cacheWrite?: number }
+  /** MiMo's `cachePromptTTL`: a model that asks for the hour-long prompt cache. */
+  cacheTTL?: "5m" | "1h"
+  /** MiMo's `interleaved.field`: where an OpenAI-compatible model reads its earlier reasoning back from. */
+  interleaved?: string
   /**
    * What the model can do, in the reference's own vocabulary.
    *
@@ -293,6 +307,8 @@ const ANTHROPIC_MODELS: ModelEntry[] = [
     contextWindow: 1_000_000,
     input: 5,
     output: 25,
+    cacheRead: 0.5,
+    cacheWrite: 6.25,
     reasoning: true,
     attachment: true,
     toolCall: true,
@@ -306,6 +322,8 @@ const ANTHROPIC_MODELS: ModelEntry[] = [
     contextWindow: 1_000_000,
     input: 3,
     output: 15,
+    cacheRead: 0.3,
+    cacheWrite: 3.75,
     reasoning: true,
     attachment: true,
     toolCall: true,
@@ -319,6 +337,8 @@ const ANTHROPIC_MODELS: ModelEntry[] = [
     contextWindow: 1_000_000,
     input: 5,
     output: 25,
+    cacheRead: 0.5,
+    cacheWrite: 6.25,
     reasoning: true,
     attachment: true,
     toolCall: true,
@@ -332,6 +352,8 @@ const ANTHROPIC_MODELS: ModelEntry[] = [
     contextWindow: 1_000_000,
     input: 5,
     output: 25,
+    cacheRead: 0.5,
+    cacheWrite: 6.25,
     reasoning: true,
     attachment: true,
     toolCall: true,
@@ -345,6 +367,8 @@ const ANTHROPIC_MODELS: ModelEntry[] = [
     contextWindow: 1_000_000,
     input: 5,
     output: 25,
+    cacheRead: 0.5,
+    cacheWrite: 6.25,
     reasoning: true,
     attachment: true,
     toolCall: true,
@@ -358,6 +382,8 @@ const ANTHROPIC_MODELS: ModelEntry[] = [
     contextWindow: 1_000_000,
     input: 3,
     output: 15,
+    cacheRead: 0.3,
+    cacheWrite: 3.75,
     reasoning: true,
     attachment: true,
     toolCall: true,
@@ -371,6 +397,8 @@ const ANTHROPIC_MODELS: ModelEntry[] = [
     contextWindow: 200_000,
     input: 1,
     output: 5,
+    cacheRead: 0.1,
+    cacheWrite: 1.25,
     reasoning: true,
     attachment: true,
     toolCall: true,
@@ -426,7 +454,7 @@ export const BUILT_IN: ProviderDefinition[] = [
   },
   {
     id: "xiaomi",
-    name: "Xiaomi MiMo",
+    name: "Xiaomi MiMo API",
     kind: "openai-compatible",
     description: "provider.desc.xiaomi",
     recommended: true,
@@ -445,7 +473,7 @@ export const BUILT_IN: ProviderDefinition[] = [
      * provider rather than a toggle.
      */
     id: "xiaomi-plan",
-    name: "Xiaomi MiMo Token Plan",
+    name: "MiMo Token Plan",
     kind: "openai-compatible",
     description: "provider.desc.xiaomiPlan",
     order: 3,
@@ -486,7 +514,7 @@ export const BUILT_IN: ProviderDefinition[] = [
   {
     id: "moonshot",
     order: 7,
-    name: "Moonshot",
+    name: "Kimi / Moonshot",
     kind: "openai-compatible",
     description: "provider.desc.moonshot",
     baseURL: "https://api.moonshot.cn/v1",
@@ -504,7 +532,7 @@ export const BUILT_IN: ProviderDefinition[] = [
   {
     id: "dashscope",
     order: 9,
-    name: "Alibaba DashScope",
+    name: "Qwen",
     kind: "openai-compatible",
     description: "provider.desc.dashscope",
     baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -552,7 +580,7 @@ export const BUILT_IN: ProviderDefinition[] = [
     kind: "openai-compatible",
     description: "provider.desc.minimax",
     order: 12,
-    baseURL: "https://api.minimax.chat/v1",
+    baseURL: "https://api.minimaxi.com/v1",
     keyURL: "https://platform.minimaxi.com/user-center/basic-information",
   },
   {
@@ -664,6 +692,39 @@ export const BUILT_IN: ProviderDefinition[] = [
     authMethods: ["local"],
   },
 ]
+
+/**
+ * Which models.dev provider describes each built-in's models - matched by the
+ * endpoint each one serves, the mainland one where models.dev lists two. A
+ * provider missing here (and every custom provider) has no models.dev record,
+ * as a provider id models.dev does not know has none in MiMo.
+ */
+export const MODELS_DEV_IDS: Record<string, string> = {
+  anthropic: "anthropic",
+  openai: "openai",
+  chatgpt: "openai",
+  xiaomi: "xiaomi",
+  "xiaomi-plan": "xiaomi-token-plan-cn",
+  google: "google",
+  openrouter: "openrouter",
+  deepseek: "deepseek",
+  moonshot: "moonshotai-cn",
+  zhipu: "zhipuai",
+  dashscope: "alibaba-cn",
+  xai: "xai",
+  groq: "groq",
+  siliconflow: "siliconflow-cn",
+  volcengine: "volcengine",
+  minimax: "minimax-cn",
+  stepfun: "stepfun",
+  mistral: "mistral",
+  together: "togetherai",
+  fireworks: "fireworks-ai",
+  cerebras: "cerebras",
+  perplexity: "perplexity",
+  nvidia: "nvidia",
+  lmstudio: "lmstudio",
+}
 
 export function definition(id: string): ProviderDefinition | undefined {
   return BUILT_IN.find((entry) => entry.id === id)

@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, nextTick, ref } from "vue"
 import { t } from "../lib/i18n"
+import { isRovingKey } from "../lib/composer-menu"
+import { focusRow } from "../lib/menu-keys"
+import { controlChord, shownChord } from "../lib/keys"
+import { useEscapeLayer } from "../lib/escape-layer"
+import { useApp } from "../stores/app"
 
 /**
  * The application menu, drawn in the window.
@@ -18,6 +23,7 @@ const emit = defineEmits<{ close: []; run: [command: string] }>()
  * as the menu being broken rather than the item being unavailable.
  */
 const props = defineProps<{ x: number; y: number; disabled?: Set<string> }>()
+const app = useApp()
 
 interface Item {
   key: string
@@ -37,10 +43,9 @@ const groups = computed<Group[]>(() => [
     key: "file",
     label: t("menu.file"),
     items: [
-      { key: "new-session", label: t("menu.newSession"), hint: "Ctrl+N" },
+      { key: "new-session", label: t("side.newTask"), hint: "Ctrl+N" },
       { key: "open-project", label: t("menu.openProject"), hint: "Ctrl+O" },
       { key: "settings", label: t("menu.settings"), hint: "Ctrl+," },
-      { key: "new-window", label: t("menu.newWindow"), hint: "Ctrl+Shift+N" },
       { key: "close", label: t("menu.close"), divided: true },
       { key: "quit", label: t("menu.quit") },
     ],
@@ -62,10 +67,8 @@ const groups = computed<Group[]>(() => [
     key: "view",
     label: t("menu.view"),
     items: [
-      { key: "palette", label: t("menu.palette"), hint: "Ctrl+K" },
       { key: "sidebar", label: t("menu.sidebar"), hint: "Ctrl+B", divided: true },
-      { key: "terminal", label: t("menu.terminal"), hint: "Ctrl+`" },
-      { key: "files", label: t("menu.files"), hint: "Ctrl+\\" },
+      { key: "terminal", label: t("menu.terminal"), hint: controlChord("`", app.platform) },
       { key: "reload", label: t("menu.reload"), divided: true },
       { key: "devtools", label: t("menu.devTools") },
       { key: "zoom-reset", label: t("menu.resetZoom"), hint: "Ctrl+0", divided: true },
@@ -76,11 +79,11 @@ const groups = computed<Group[]>(() => [
   },
   {
     key: "session",
-    label: t("menu.session"),
+    label: t("key.groupConversation"),
     items: [
       { key: "abort", label: t("menu.stop"), hint: "Ctrl+." },
-      { key: "model", label: t("menu.switchModel"), hint: "Ctrl+M" },
-      { key: "delete-session", label: t("menu.deleteSession"), divided: true },
+      { key: "model", label: t("menu.switchModel"), hint: "Ctrl+Shift+M" },
+      { key: "delete-session", label: t("menu.delete"), divided: true },
     ],
   },
   {
@@ -89,8 +92,8 @@ const groups = computed<Group[]>(() => [
     items: [
       { key: "back", label: t("menu.back"), hint: "Ctrl+[" },
       { key: "forward", label: t("menu.forward"), hint: "Ctrl+]" },
-      { key: "prev-session", label: t("menu.prevSession"), hint: "Alt+Up", divided: true },
-      { key: "next-session", label: t("menu.nextSession"), hint: "Alt+Down" },
+      { key: "prev-session", label: t("conv.prev"), hint: "Alt+Up", divided: true },
+      { key: "next-session", label: t("conv.next"), hint: "Alt+Down" },
       { key: "prev-project", label: t("menu.prevProject"), hint: "Ctrl+Alt+Up", divided: true },
       { key: "next-project", label: t("menu.nextProject"), hint: "Ctrl+Alt+Down" },
     ],
@@ -144,35 +147,31 @@ function pick(item: Item) {
   emit("close")
 }
 
+// The submenu closes first: one Escape per level, as a menu does.
+useEscapeLayer(() => {
+  if (!open.value) {
+    emit("close")
+    return
+  }
+  const row = [...(panel.value?.querySelectorAll<HTMLElement>(".row") ?? [])].find((entry) => entry.dataset.group === open.value)
+  open.value = undefined
+  row?.focus()
+}, () => emit("close"))
+
 function onKey(event: KeyboardEvent) {
   const rows = [...(panel.value?.querySelectorAll<HTMLElement>(".row") ?? [])]
   const items = [...(panel.value?.querySelectorAll<HTMLButtonElement>(".sub .item:not(:disabled)") ?? [])]
   const active = document.activeElement as HTMLElement | null
   const inSub = Boolean(active && items.includes(active as HTMLButtonElement))
 
-  if (event.key === "Escape") {
-    // The submenu closes first: one Escape per level, as a menu does.
-    if (open.value) {
-      const row = rows.find((entry) => entry.dataset.group === open.value)
-      open.value = undefined
-      row?.focus()
-      return
-    }
-    emit("close")
-    return
-  }
-
-  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-    const walk = inSub ? items : rows
+  if (isRovingKey(event.key)) {
+    const walk: HTMLElement[] = inSub ? items : rows
     if (!walk.length) return
     event.preventDefault()
-    const at = walk.indexOf(active as HTMLElement & HTMLButtonElement)
-    const step = event.key === "ArrowDown" ? 1 : -1
-    // Wraps, which is what a menu does at either end.
-    const next = walk[(at + step + walk.length) % walk.length]
-    next.focus()
+    // Wraps at either end; Home and End jump there.
+    focusRow(walk, event.key)
     // Focusing a group opens it, the same way hovering one does.
-    if (!inSub) showFrom(next)
+    if (!inSub && document.activeElement instanceof HTMLElement) showFrom(document.activeElement)
     return
   }
 
@@ -220,7 +219,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
         <div v-if="item.divided" class="rule" />
         <button class="item" :disabled="props.disabled?.has(item.key)" @click="pick(item)">
           <span class="item-label">{{ item.label }}</span>
-          <span v-if="item.hint" class="keys">{{ item.hint }}</span>
+          <span v-if="item.hint" class="keys">{{ shownChord(item.hint) }}</span>
         </button>
       </template>
     </div>
@@ -249,10 +248,10 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
 .brand {
   display: flex;
   align-items: center;
-  height: 28px;
+  height: calc(28px * var(--ui-font-scale, 1));
   padding: 0 12px;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
 }
 
@@ -260,11 +259,11 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 28px;
+  height: calc(28px * var(--ui-font-scale, 1));
   padding: 0 12px;
   color: var(--text-strong);
   border-radius: 4px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   cursor: default;
 }
 
@@ -310,11 +309,11 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
   justify-content: space-between;
   gap: 16px;
   width: 100%;
-  height: 28px;
+  height: calc(28px * var(--ui-font-scale, 1));
   padding: 0 12px;
   color: var(--text-strong);
   border-radius: 4px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   text-align: start;
 }
 

@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue"
+import { computed, onMounted, ref } from "vue"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
+import { composing } from "../lib/keys"
+import { useEscapeLayer } from "../lib/escape-layer"
 import { projectHue } from "../lib/project"
 
 /**
@@ -37,16 +39,12 @@ const nameField = ref<HTMLInputElement>()
 
 // Every other dialog closes on Escape, and the first thing anyone does here is
 // edit the name - so land the caret there rather than making them click it.
-function onKeydown(event: KeyboardEvent) {
-  if (event.key === "Escape") emit("close")
-}
+useEscapeLayer(() => emit("close"))
 
 onMounted(() => {
-  window.addEventListener("keydown", onKeydown)
   nameField.value?.focus()
   nameField.value?.select()
 })
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
 async function readIcon(chosen: File | undefined) {
   error.value = undefined
@@ -102,7 +100,7 @@ async function save() {
     <div v-modal class="dialog">
       <header>
         <h2>{{ t("proj.editTitle") }}</h2>
-        <button class="x" v-tip="{ label: t('common.close'), placement: 'bottom' }" @click="emit('close')">
+        <button class="x" v-tip="t('common.close')" @click="emit('close')">
           <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
             <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
           </svg>
@@ -116,7 +114,7 @@ async function save() {
         v-model="name"
         class="field"
         spellcheck="false"
-        @keydown.enter="save"
+        @keydown.enter="!composing($event) && save()"
       />
 
       <label class="label">{{ t("proj.icon") }}</label>
@@ -197,9 +195,9 @@ header {
 h2 {
   margin: 0;
   color: var(--text-strong);
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 530;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   letter-spacing: -0.13px;
 }
 
@@ -217,21 +215,27 @@ h2 {
 .label {
   margin-top: 8px;
   color: var(--text-weak);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
 .field {
-  height: 36px;
+  /*
+   * No border. opencode's shared `text-input-v2` is a 60% fill of bg-layer-02
+   * that goes solid on focus, at radius 6 - `--surface-layer` and
+   * `--radius-md` here. Focus used to move a border colour that no longer
+   * exists.
+   */
+  height: calc(36px * var(--ui-font-scale, 1));
   padding: 0 12px;
   color: var(--text-strong);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
+  background: color-mix(in srgb, var(--surface-layer) 60%, transparent);
+  border: 0;
   border-radius: var(--radius-md);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
 .field:focus {
-  border-color: var(--interactive);
+  background: var(--surface-layer);
   outline: none;
 }
 
@@ -253,9 +257,9 @@ h2 {
 }
 
 .preview {
-  width: 68px;
-  height: 68px;
-  font-size: 26px;
+  width: calc(68px * var(--ui-font-scale, 1));
+  height: calc(68px * var(--ui-font-scale, 1));
+  font-size: calc(26px * var(--ui-font-scale, 1));
   border: 1px solid transparent;
 }
 
@@ -278,7 +282,7 @@ h2 {
 
 .hint {
   color: var(--text-weaker);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
 .hidden {
@@ -291,9 +295,9 @@ h2 {
 }
 
 .swatch {
-  width: 40px;
-  height: 40px;
-  font-size: 15px;
+  width: calc(40px * var(--ui-font-scale, 1));
+  height: calc(40px * var(--ui-font-scale, 1));
+  font-size: calc(15px * var(--ui-font-scale, 1));
   border: 2px solid transparent;
 }
 
@@ -303,7 +307,7 @@ h2 {
 
 .error {
   color: var(--text-critical);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
 footer {
@@ -314,11 +318,11 @@ footer {
 }
 
 .ghost {
-  height: 32px;
+  height: calc(32px * var(--ui-font-scale, 1));
   padding: 0 14px;
   color: var(--text-base);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .ghost:hover {
@@ -327,18 +331,18 @@ footer {
 }
 
 .go {
-  height: 32px;
+  height: calc(32px * var(--ui-font-scale, 1));
   padding: 0 18px;
   color: var(--surface-base);
   background: var(--text-strong);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
 }
 
 .link {
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   text-decoration: underline;
   text-underline-offset: 2px;
 }

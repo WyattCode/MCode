@@ -1,47 +1,23 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useApp } from "../stores/app"
 import { sessionTitle, t } from "../lib/i18n"
+import { composing } from "../lib/keys"
 import { projectName } from "../lib/project"
 import { badgeStyle, fileBadge } from "../lib/filetype"
 
-interface Command {
-  id: string
-  title: string
-  /**
-   * i18n key for the category this command belongs to. Not drawn here - the
-   * palette heads the whole run with one "Commands" title - but it orders the
-   * list and names the section the shortcuts page files it under.
-   */
-  group?: string
-  hint?: string
-  danger?: boolean
-  /**
-   * Kept out of the palette while staying bindable. Opening the palette from
-   * within the palette is the case this exists for.
-   */
-  hidden?: boolean
-  run: () => unknown
-}
-
 /**
- * What this palette is for.
- *
- * "all" is the command palette proper; the rest are the same surface opened on
- * one kind of thing, which is how the reference offers its file, session and
- * project pickers rather than building three dialogs.
+ * What this picker is for: one surface opened on one kind of thing, which is
+ * how the reference offers its file, session and project pickers rather than
+ * building three dialogs. MiMo has no command list, so there is no mixed mode.
  */
-export type PaletteMode = "all" | "files" | "sessions" | "projects" | "messages"
+export type PaletteMode = "files" | "sessions" | "projects"
 
-const props = withDefaults(
-  defineProps<{ commands: Command[]; mode?: PaletteMode; projects?: string[] }>(),
-  { mode: "all", projects: () => [] },
-)
+const props = withDefaults(defineProps<{ mode: PaletteMode; projects?: string[] }>(), { projects: () => [] })
 const emit = defineEmits<{
   close: []
   file: [path: string]
   project: [directory: string]
-  message: [messageID: string]
 }>()
 
 const app = useApp()
@@ -72,9 +48,8 @@ function score(text: string, needle: string): number | undefined {
 }
 
 /**
- * The project file list is fetched once per open and filtered locally. Asking
- * the backend on every keystroke would walk the tree again for no benefit -
- * the list is already capped server-side.
+ * What the picker shows before anything is typed: the first files of the
+ * project, fetched once per open.
  */
 async function loadFiles() {
   const directory = app.current?.directory
@@ -83,53 +58,67 @@ async function loadFiles() {
   files.value = result.files.map((file) => file.path)
 }
 
+/*
+ * N11-23: once something is typed, the project is searched for it, as MiMo's
+ * picker asks its searchFiles on every keystroke. Filtering the list fetched on
+ * open only ever reached the first 500 files in breadth-first order - on a large
+ * project, almost none of them. The answers are ranked here as before.
+ */
+const searched = ref<string[]>()
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+let searchTicket = 0
+
+watch(query, (next) => {
+  if (searchTimer) clearTimeout(searchTimer)
+  const needle = next.trim()
+  if (!needle || props.mode !== "files") {
+    searched.value = undefined
+    return
+  }
+  searchTimer = setTimeout(() => void searchFiles(needle), SEARCH_DEBOUNCE_MS)
+})
+
+async function searchFiles(needle: string) {
+  const directory = app.current?.directory
+  if (!directory || !app.client) return
+  const ticket = ++searchTicket
+  const result = await app.client.request({ type: "file.search", directory, query: needle, limit: SCOPED_LIMIT }).catch(() => undefined)
+  // A slower answer to an older query never replaces a newer one.
+  if (ticket !== searchTicket || !result) return
+  searched.value = result.entries.map((entry) => entry.rel)
+}
+
+const SEARCH_DEBOUNCE_MS = 120
+
+onBeforeUnmount(() => {
+  if (searchTimer) clearTimeout(searchTimer)
+})
+
 type Row =
   | { kind: "file"; id: string; path: string; rank: number }
-  | { kind: "command"; id: string; command: Command; rank: number }
   | { kind: "session"; id: string; sessionID: string; title: string; hint?: string; rank: number }
   | { kind: "project"; id: string; directory: string; title: string; rank: number }
-  | { kind: "message"; id: string; messageID: string; text: string; title: string; rank: number }
-
-const FILE_LIMIT = 8
 
 /**
- * How many of one kind to show when the palette is opened for that kind alone.
- *
- * Higher than the mixed list allows, because nothing else is competing for the
- * room - opening the file picker to eight entries would be a worse file picker
- * than the one it replaced.
+ * How many of one kind to show. Nothing else competes for the room, so the
+ * file picker opens with its files rather than eight of them.
  */
 const SCOPED_LIMIT = 200
 
-const scoped = computed(() => props.mode !== "all")
-
-/** Says what is being searched, so a scoped palette explains itself. */
-const placeholder = computed(() =>
-  props.mode === "all" ? t("search.placeholder") : t(`search.in.${props.mode}`),
-)
+/** Says what is being searched, so the picker explains itself. */
+const placeholder = computed(() => t(`search.in.${props.mode}`))
 
 /** One flat, ranked list - the sections are only a rendering detail. */
 const rows = computed<Row[]>(() => {
   const needle = query.value.trim()
 
-  const fileRows = files.value
+  // Typed: the backend's search, while its answer is on the way the first files as before.
+  const fileRows = (needle && searched.value ? searched.value : files.value)
     .map((path) => ({ path, rank: score(path, needle) }))
     .filter((entry): entry is { path: string; rank: number } => entry.rank !== undefined)
     .sort((a, b) => a.rank - b.rank)
-    /*
-     * Files are the long tail; in the mixed list they would bury everything
-     * else, so they wait for a query. Asked for on their own, they are the
-     * whole point and show straight away.
-     */
-    .slice(0, props.mode === "files" ? SCOPED_LIMIT : needle ? FILE_LIMIT : 0)
+    .slice(0, SCOPED_LIMIT)
     .map<Row>((entry) => ({ kind: "file", id: `file:${entry.path}`, path: entry.path, rank: entry.rank }))
-
-  const commandRows = props.commands
-    .filter((command) => !command.hidden)
-    .map((command) => ({ command, rank: score(command.title, needle) }))
-    .filter((entry): entry is { command: Command; rank: number } => entry.rank !== undefined)
-    .sort((a, b) => a.rank - b.rank)
-    .map<Row>((entry) => ({ kind: "command", id: entry.command.id, command: entry.command, rank: entry.rank }))
 
   // Closing a project hides it everywhere else, so its sessions have no
   // business still being reachable from here.
@@ -139,7 +128,7 @@ const rows = computed<Row[]>(() => {
     .map((session) => ({ session, rank: score(sessionTitle(session.title), needle) }))
     .filter((entry): entry is { session: (typeof app.sessions)[number]; rank: number } => entry.rank !== undefined)
     .sort((a, b) => a.rank - b.rank)
-    .slice(0, props.mode === "sessions" ? SCOPED_LIMIT : 8)
+    .slice(0, SCOPED_LIMIT)
     .map<Row>((entry) => ({
       kind: "session",
       id: `open:${entry.session.id}`,
@@ -168,54 +157,13 @@ const rows = computed<Row[]>(() => {
           }))
       : []
 
-  /*
-   * Only the questions, not the answers: forking replays a message, and an
-   * assistant turn is not something that can be sent again.
-   */
-  const messageRows =
-    props.mode === "messages"
-      ? app.messages
-          // The id travels with the text: a fork is made at a point in the
-          // conversation, and the text alone cannot say which point.
-          .flatMap((message) =>
-            message.role === "user" && message.text.trim()
-              ? [{ messageID: message.id, text: message.text.trim() }]
-              : [],
-          )
-          .map((entry) => ({ ...entry, rank: score(entry.text, needle) }))
-          .filter((entry): entry is { messageID: string; text: string; rank: number } => entry.rank !== undefined)
-          .sort((a, b) => a.rank - b.rank)
-          .slice(0, SCOPED_LIMIT)
-          .map<Row>((entry, at) => ({
-            kind: "message",
-            id: `message:${at}`,
-            messageID: entry.messageID,
-            text: entry.text,
-            title: entry.text.replace(/\s+/g, " ").slice(0, 120),
-            rank: entry.rank,
-          }))
-      : []
-
-  /*
-   * A scoped palette shows only what it was opened for. The commands stay in
-   * the mixed list, which is the one a bare Ctrl+K opens.
-   */
-  if (props.mode === "messages") return messageRows
+  // Only what it was opened for.
   if (props.mode === "files") return fileRows
   if (props.mode === "sessions") return sessionRows
-  if (props.mode === "projects") return projectRows
-  return [...fileRows, ...commandRows, ...sessionRows]
+  return projectRows
 })
 
-/**
- * Heading to draw above each row, if any.
- *
- * One heading per kind, and nothing finer. Commands used to be broken into
- * their own sub-groups while browsing, but the reference draws a single
- * "Commands" heading over the whole run - measured with its palette open, where
- * five commands spanning five different categories sat under one title. The
- * category a command belongs to still matters; it just is not shown here.
- */
+/** Heading to draw above each row, if any: one per kind, and nothing finer. */
 const headers = computed(() => {
   const labels = new Map<number, string>()
   const seenKind = new Set<string>()
@@ -232,9 +180,7 @@ const headers = computed(() => {
 const LABELS: Record<Row["kind"], string> = {
   file: "search.files",
   project: "search.projects",
-  command: "search.commands",
-  session: "search.sessions",
-  message: "search.messages",
+  session: "searchOverlay.convos",
 }
 
 async function choose(index: number) {
@@ -247,16 +193,10 @@ async function choose(index: number) {
     emit("close")
     return
   }
-  if (row.kind === "message") {
-    emit("message", row.messageID)
-    emit("close")
-    return
-  }
   if (row.kind === "file") emit("file", row.path)
   emit("close")
   await nextTick()
-  if (row.kind === "command") await row.command.run()
-  else if (row.kind === "session") await app.open(row.sessionID)
+  if (row.kind === "session") await app.open(row.sessionID)
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -269,7 +209,7 @@ function onKeydown(event: KeyboardEvent) {
   } else if (event.key === "ArrowUp" || (event.key === "p" && event.ctrlKey)) {
     event.preventDefault()
     active.value = (active.value - 1 + rows.value.length) % Math.max(1, rows.value.length)
-  } else if (event.key === "Enter") {
+  } else if (event.key === "Enter" && !composing(event)) {
     event.preventDefault()
     void choose(active.value)
   }
@@ -289,7 +229,7 @@ onMounted(() => {
 
 <template>
   <div class="overlay palette-overlay" @mousedown.self="emit('close')">
-    <div v-modal class="dialog palette" @keydown="onKeydown">
+    <div v-modal class="dialog palette" data-new-task-clears @keydown="onKeydown">
       <div class="search">
         <input
           ref="input"
@@ -309,7 +249,7 @@ onMounted(() => {
 
           <button
             class="row"
-            :class="{ sel: index === active, danger: row.kind === 'command' && row.command.danger }"
+            :class="{ sel: index === active }"
             @mousemove="active = index"
             @click="choose(index)"
           >
@@ -320,25 +260,15 @@ onMounted(() => {
               <span class="title mono">{{ row.path }}</span>
             </template>
 
-            <template v-else-if="row.kind === 'command'">
-              <span class="title">{{ row.command.title }}</span>
-              <span v-if="row.command.hint" class="hint">{{ row.command.hint }}</span>
-            </template>
-
             <template v-else-if="row.kind === 'session'">
               <span class="title">{{ row.title }}</span>
               <span v-if="row.hint" class="hint">{{ row.hint }}</span>
             </template>
 
             <!-- A project is named once; the path underneath is the hint. -->
-            <template v-else-if="row.kind === 'project'">
-              <span class="title">{{ row.title }}</span>
-              <span class="hint">{{ row.directory }}</span>
-            </template>
-
-            <!-- A question, trimmed to a line; the fork starts by asking it again. -->
             <template v-else>
               <span class="title">{{ row.title }}</span>
+              <span class="hint">{{ row.directory }}</span>
             </template>
           </button>
         </template>
@@ -364,6 +294,7 @@ onMounted(() => {
   flex-direction: column;
   width: min(640px, 92vw);
   max-height: 66vh;
+  /* Wider corners than the shared 6px: opencode's palette card measures 12. */
   border-radius: 12px;
 }
 
@@ -373,14 +304,27 @@ onMounted(() => {
 
 .search-in {
   width: 100%;
-  height: 36px;
+  height: calc(36px * var(--ui-font-scale, 1));
   padding: 0 12px;
   color: var(--text-strong);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
-  border-radius: var(--radius-lg);
+  /*
+   * A fill, not a box. opencode's `text-input-v2` draws no border at all:
+   * `background: color-mix(in srgb, var(--v2-background-bg-layer-02) 60%, transparent)`
+   * at rest and the same colour solid once it has focus, `border-radius: 6px`,
+   * `outline: 0`. bg-layer-02 is `--surface-layer` here. This was a 1px border
+   * over `--surface-base` at `--radius-lg`, which is 8.
+   */
+  background: color-mix(in srgb, var(--surface-layer) 60%, transparent);
+  border: 0;
+  border-radius: 6px;
   outline: none;
-  font-size: 14px;
+  transition: background-color 0.12s ease-in-out;
+  /* 13, which is what opencode's palette field measures - and what its rows use. */
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.search-in:focus {
+  background: var(--surface-layer);
 }
 
 .search-in::placeholder {
@@ -399,14 +343,14 @@ onMounted(() => {
 .empty {
   padding: 22px;
   color: var(--text-weak);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   text-align: center;
 }
 
 .group {
   padding: 8px 12px 4px;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
 }
 
@@ -428,20 +372,16 @@ onMounted(() => {
   background: rgb(255 255 255 / 0.06);
 }
 
-.row.danger .title {
-  color: var(--error);
-}
-
 .badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 17px;
-  height: 15px;
+  height: calc(15px * var(--ui-font-scale, 1));
   flex-shrink: 0;
   border-radius: 3px;
   font-family: var(--font-mono);
-  font-size: 8.5px;
+  font-size: calc(8.5px * var(--ui-font-scale, 1));
   font-weight: 530;
 }
 
@@ -449,7 +389,7 @@ onMounted(() => {
   flex: 1;
   overflow: hidden;
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -457,13 +397,13 @@ onMounted(() => {
 .title.mono {
   color: var(--text-base);
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
 .hint {
   flex-shrink: 0;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .foot {
@@ -473,7 +413,7 @@ onMounted(() => {
   color: var(--text-weak);
   background: var(--surface-raised-hover);
   border-top: 1px solid var(--border-weak);
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--ui-font-scale, 1));
 }
 
 .foot .kbd {

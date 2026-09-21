@@ -16,36 +16,137 @@ export interface HistoryDepth {
   redo: number
 }
 
+/**
+ * 追求目标: one conversation's goal.
+ *
+ * `done` is absent while the goal is being pursued. Once the judge has
+ * answered - met, or out of reach, or out of tries - it is filled in and the
+ * goal stops driving turns, but stays on the conversation so the bar above the
+ * composer can say how it ended until the reader dismisses it.
+ */
+export interface SessionGoal {
+  /** What the user asked for, as they wrote it; the judge is asked about this sentence. */
+  condition: string
+  /** When it was set, for the bar's clock. */
+  startedAt: number
+  /** How many times the judge has sent a turn back, against `MAX_GOAL_REACT`. */
+  attempts: number
+  /** How it ended: met, or blocked - unreachable, or past the bound. */
+  done?: { status: "complete" | "blocked"; reason: string; at: number }
+}
+
 export interface SessionInfo {
   id: string
   title: string
+  /**
+   * Where the title came from: the first prompt's fallback, the model's
+   * generated title, or the user's own rename. MiMo generates once, only over
+   * the fallback, so a rename is never replaced. Absent on sessions stored
+   * before this existed, which are treated as already named.
+   */
+  titleSource?: "fallback" | "generated" | "user"
+  /** MiMo's `interactiveNotified`: the reader has been told once that a command wanting to be typed at was skipped. */
+  interactiveNotice?: boolean
   /** Absolute path of the project directory this session operates in. */
   directory: string
   model: ModelRef
   agent: AgentName
   /**
-   * This session's reasoning effort, or absent to follow the app default.
-   *
-   * Absent is a real state rather than a missing value - it is what the cycle
-   * returns to after the last step, and what a session starts in - but it
-   * resolves to the app-wide setting at the point the turn runs, not to
-   * "whatever the provider does".
+   * 追求目标: whether the plus menu's switch is on for this conversation, so
+   * the next message sent becomes its goal. Absent is off, which is what every
+   * conversation stored before this field existed reads as.
    */
-  effort?: Effort
+  goalMode?: boolean
+  /**
+   * 追求目标: the goal this conversation is pursuing, and how it ended.
+   *
+   * Stored with the conversation rather than held in memory, so a goal is
+   * still being pursued after the app restarts - as MiMo's is, which keeps its
+   * own per-conversation goals in the desktop's preferences.
+   */
+  goal?: SessionGoal
+  /**
+   * plan: two words fixed when the conversation is made, which name its plan
+   * file (`<created>-<slug>.md`) as MiMo's session slug names its own.
+   * Conversations stored before this have none and fall back to their id.
+   */
+  slug?: string
+  /**
+   * On Smart: the first message picks between the fast and the main model, and
+   * `model` then holds the one it picked.
+   */
+  smart?: boolean
+  /** Which of the two Smart picked; absent until the first message. */
+  smartRoute?: "fast" | "main"
+  /**
+   * Started with no project: its directory is a folder made for it alone.
+   *
+   * The side column lists these under Recent rather than as projects, since
+   * a folder nobody chose is not something anyone would go back to by name.
+   */
+  scratch?: boolean
+  /**
+   * Which project the side column files this conversation under, when that is
+   * not the folder it works in - MiMo's `groupProject`.
+   *
+   * 移动至项目 only changes where a conversation is listed. Its working
+   * directory, and with it the commands, the relative paths and the
+   * per-project approvals, stay exactly where they were. An empty string is
+   * MiMo's "moved out": listed under no project at all. Absent - every
+   * conversation stored before this field - is filed by `directory`, which is
+   * what those conversations have always done.
+   */
+  group?: string
+  /**
+   * A side chat, and the conversation it was opened beside.
+   *
+   * A side chat is a conversation of its own, in the same project, that no
+   * list shows: it lives in the side column of the conversation it belongs to.
+   */
+  sideOf?: string
+  /** The conversation this one was branched from, for the marker at its top. */
+  forkOf?: string
+  /**
+   * This conversation's own access level, as MiMo keeps one per conversation.
+   * Absent follows the app's default level.
+   */
+  access?: "ask" | "auto" | "full"
+  /*
+   * subagents: a subagent's own conversation, and where in its parent it was
+   * started - the parent conversation, the assistant message and the task call.
+   * No list shows one; it is reached from the parent's 子智能体 tab.
+   */
+  parentID?: string
+  parentMessageID?: string
+  parentCallID?: string
+  /** subagents: its kind and its numbered name within the parent (`general-1`), which picks its avatar, and where it stands. */
+  subagent?: SubagentState
+  /** tasks: the task tool's registry for this conversation, shared with its subagents; the info card's 任务清单. */
+  tasks?: TaskItem[]
   created: number
   updated: number
   /** Rolling totals across every assistant turn in the session. */
   usage: Usage
   /** Put away rather than deleted: hidden everywhere, restorable from settings. */
   archived?: boolean
+  /** When it was put away (ms), so the archived list reads newest-archived first as MiMo's does. */
+  archivedAt?: number
   /**
    * Where the conversation was summarised, if it has been.
    *
    * Everything up to and including `messageID` is sent to the model as
    * `summary` instead of verbatim. The messages themselves are kept: the point
-   * is to shrink the context, not to lose the history.
+   * is to shrink the context, not to lose the history. `trigger` is what set it
+   * off, MiMo's label, and `files` the files the summarised part worked on,
+   * each with what happened to it, which the next request lists.
    */
-  compacted?: { messageID: string; summary: string; at: number }
+  compacted?: {
+    messageID: string
+    summary: string
+    at: number
+    trigger?: "manual" | "automatic" | "provider-overflow"
+    files?: string[]
+  }
   /**
    * Where the conversation has been rolled back to, if it has been.
    *
@@ -61,6 +162,21 @@ export interface SessionInfo {
    * which is what makes it possible to put them back.
    */
   revert?: { messageID: string; at: number }
+  /** session chat: what this conversation is for, as a tool recorded it for other conversations to read. */
+  chat?: { purpose?: string; task?: string; taskStatus?: ChatTaskStatus }
+  /**
+   * A review took this conversation's turn away, and it may not be continued:
+   * MiMo's `reviewRestricted`.
+   *
+   * MiMo's content review reports a filtered turn (`mimo:turnFiltered`), and
+   * when the review itself is what took it - not the user - it marks the
+   * conversation so, after which its box invites a new conversation rather than
+   * a message and refuses to send one. MCode has no review service of its own,
+   * so nothing sets this on its own; the state, the wording and the refusal are
+   * nonetheless MiMo's, so the moment a review source exists it has somewhere
+   * to land. Absent is every conversation that was never restricted.
+   */
+  reviewRestricted?: boolean
 }
 
 export interface Usage {
@@ -79,6 +195,23 @@ export interface ModelRef {
 
 export type ToolStatus = "pending" | "running" | "completed" | "error"
 
+/**
+ * What an edit, a write or a notebook edit records about the file it changed,
+ * under `metadata.filediff`: MiMo's `filediff` on the same results.
+ *
+ * `patch` is the change exactly as the file has it, which is what the undo
+ * reverses - `metadata.diff` beside it is the same change with the shared
+ * indentation taken off, for showing. `additions` and `deletions` are how many
+ * lines this one call added and removed, which the turn's own counts could not
+ * say for a single step.
+ */
+export interface FileDiff {
+  file: string
+  patch: string
+  additions: number
+  deletions: number
+}
+
 export interface ToolPart {
   type: "tool"
   id: string
@@ -90,12 +223,28 @@ export interface ToolPart {
   /** Human-readable one-liner shown in the collapsed card, e.g. a command. */
   title?: string
   output?: string
-  /** Tool-specific structured payload the UI renders richly (diffs, matches). */
+  /**
+   * Tool-specific structured payload the UI renders richly (diffs, matches).
+   *
+   * Two keys are the runner's rather than the tool's: `recoverable: true` on an
+   * error part marks a call refused before it ran because its arguments did not
+   * fit the schema (drawn as skipped), and `permissions` holds the
+   * `PermissionRecord`s the call's questions were answered with, so the
+   * transcript can redraw them after a reload.
+   */
   metadata?: Record<string, unknown>
   error?: string
   /** i18n key for `error`, when the failure was one the tool anticipated. */
   errorCode?: string
   errorParams?: Record<string, string>
+  /**
+   * Media the call is handing to the model, as MiMo hands a tool result's
+   * attachments over: a picture `read` was pointed at, what an MCP server
+   * answered with, a file `history` found. One attached by path is read from
+   * disk each time a request is built, exactly as a user's attachment is, so
+   * the transcript never carries its bytes.
+   */
+  attachments?: Attachment[]
   time: { created: number; started?: number; completed?: number }
 }
 
@@ -110,9 +259,90 @@ export interface ReasoningPart {
   id: string
   text: string
   time: { created: number; completed?: number }
+  /**
+   * The provider's own token for handing this thinking back to it: Anthropic's
+   * signature over the block, or the Responses API's `encrypted_content`. MiMo
+   * keeps both for the same reason and only ever returns them to the model that
+   * wrote them.
+   */
+  signature?: string
+  /**
+   * The Responses API's id for the reasoning item this belongs to, sent back
+   * beside the encrypted content so the item is recognised as the same one.
+   */
+  itemID?: string
 }
 
 export type AssistantPart = TextPart | ReasoningPart | ToolPart
+
+/**
+ * One file a stored session produced, as the artifacts page needs it.
+ *
+ * `at` is when the session last wrote it; `modified` is what the file system
+ * says now. The two differ when something outside the app has edited the file
+ * since, which is worth being able to see.
+ */
+export interface ArtifactFile {
+  /** Project-relative where the file is inside the project, absolute otherwise. */
+  path: string
+  at: number
+  /** False once the file has been deleted or moved away. */
+  exists: boolean
+  size?: number
+  modified?: number
+  /**
+   * Something to hand over, or a step on the way to it - MiMo's artifact `role`.
+   *
+   * Absent when the answer was worked out from the transcripts rather than read
+   * from the artifact store.
+   */
+  role?: "deliverable" | "intermediate"
+}
+
+/** Where a search found its words inside one conversation, as the overlay draws it. */
+export interface MessageHit {
+  sessionID: string
+  messageID: string
+  /** A single line around the words, with ellipses where it was cut. */
+  text: string
+  /** Where the words sit inside `text`. */
+  ranges: { start: number; end: number }[]
+  /** How well the message matched, on the overlay's scale (shared/search-score.ts). */
+  score: number
+}
+
+/** skills: one skill as the plugins page and its detail card show it. */
+export interface SkillSummary {
+  name: string
+  description: string
+  builtin: boolean
+  /** False when `disabledSkills` names it. */
+  enabled: boolean
+  /** Lives in the user's global skills folder, so the card offers to uninstall it. */
+  removable: boolean
+  location: string
+  icon?: string
+  localizations?: Record<string, { displayName?: string; brief?: string }>
+}
+
+/** What one stored session produced, newest file first. */
+export interface SessionArtifacts {
+  sessionID: string
+  title: string
+  directory: string
+  updated: number
+  files: ArtifactFile[]
+}
+
+/** How many files each of the artifacts page's tabs holds - MiMo's facets. */
+export interface ArtifactFacets {
+  total: number
+  doc: number
+  app: number
+  other: number
+}
+
+import type { FileNotice } from "./file-notices"
 
 export interface UserMessage {
   id: string
@@ -122,13 +352,250 @@ export interface UserMessage {
   /** Files pinned into the prompt by the user. */
   attachments: Attachment[]
   time: { created: number }
+  /**
+   * Sent into a turn that was already running (MiMo's 插话). Until the model
+   * takes it the transcript shows it waiting at the end of that turn; once
+   * taken it is a question like any other and opens the next turn (26.914).
+   */
+  steered?: boolean
+  /**
+   * plan: written by the app rather than typed - the word that the user
+   * approved a plan, put where the user's next message would be. The model
+   * reads it; the transcript leaves it out, as MiMo leaves out the synthetic
+   * message its plan_exit writes.
+   */
+  synthetic?: boolean
+  /** 追求目标: this message became the conversation's goal, which the transcript marks on it. */
+  setsGoal?: boolean
+  /** Places the user pointed at with this message (MiMo's 注释); the model reads them after the text. */
+  annotations?: Annotation[]
+  /** Documents the user changed since the last message; the model reads them before the text, the transcript does not show them. */
+  fileNotices?: FileNotice[]
+  /**
+   * skills: written by the runner, never drawn - the skills this message named
+   * with `/name`, and the hint an attached office document brings. The model
+   * reads them after the text.
+   */
+  reminders?: string[]
+  /**
+   * Notes the runner attached when the message was sent - MiMo's runtime
+   * context: the reply language, the working directory and, on a
+   * conversation's first message, what this app offers; also where attached
+   * files are, and the one note about changing a repository's main worktree.
+   * The model reads each in a system-reminder before everything else; the
+   * transcript does not show them.
+   */
+  context?: string[]
+  /**
+   * The repeated spans of assistant steps that were taken out of the request
+   * after this message (session/loop-health.ts). Remembered here so a later
+   * turn keeps them out too: once a stretch of the conversation is known to be
+   * a model going round in circles, sending it again only invites more of it.
+   * The transcript is untouched - the user still sees every step.
+   */
+  crops?: MessageCrop[]
+  /**
+   * subagents: written by the runner, not the user - what became of background
+   * subagents. `text` is what the model reads; the transcript draws pills.
+   */
+  notices?: SubagentNotice[]
+  /**
+   * Who sent this message when it was not typed: the parent of a subagent
+   * (`from: "main"`, drawn under 来自 {source} 的消息), or - session chat - another
+   * conversation, named by its title, with its id and whether it asks or answers.
+   */
+  inbox?: MessageSource
+}
+
+/** A span of assistant steps left out of the request because they repeated one another. */
+export interface MessageCrop {
+  /** The first and last step of the span, inclusive; message ids sort chronologically. */
+  from: string
+  to: string
+  /** What the span shared (session/loop-health.ts `streakKey`); only steps that still match it are dropped. */
+  key: string
+}
+
+export interface MessageSource {
+  from: string
+  /** session chat: the conversation that sent it. */
+  sessionID?: string
+  /** session chat: a message to handle, or the reply to one this conversation sent. */
+  direction?: "request" | "reply"
+  /** automation: sent by this scheduled task's run; `from` is the task's title. */
+  automationID?: string
+}
+
+/* session chat: the task statuses a conversation's record can hold, as MiMo's update_session takes them. */
+export const CHAT_TASK_STATUSES = ["idle", "working", "blocked", "done"] as const
+export type ChatTaskStatus = (typeof CHAT_TASK_STATUSES)[number]
+
+/**
+ * automation: one scheduled task, as the side column needs it.
+ *
+ * MiMo's release build draws a task block in a conversation row's tooltip: the
+ * task's name, and either when this conversation's run happened or when the
+ * task next runs. That is the one piece of its scheduled-task interface that
+ * is not locked behind its E2E flag, so it is the only one this app draws.
+ */
+export interface AutomationTask {
+  id: string
+  title: string
+  /** The conversation it runs in, when it runs in one that already exists. */
+  targetThreadId?: string
+  /** When it next runs; absent while it is paused or has run out of occurrences. */
+  nextAt?: number
+  /** The conversations its runs went to, newest first, with when each started. */
+  runs: { sessionID: string; at: number }[]
+}
+
+/**
+ * session chat: one message between two conversations, from one side's view.
+ *
+ * Outbound is the caller waiting on a reply; inbound is the target handling a
+ * message (`kind: "request"`) or the caller handling the reply that came back
+ * (`kind: "reply"`). A queued one waits behind `queueAhead` others for its
+ * target. `peerID` is null once the other conversation is gone.
+ */
+export interface ChatLink {
+  peerID: string | null
+  peerTitle: string
+  direction: "outbound" | "inbound"
+  kind: "request" | "reply"
+  phase: "running" | "queued"
+  queueAhead: number
+}
+
+/** subagents: what a background subagent's parent is told, in MiMo's five outcomes. */
+export type SubagentNoticeStatus = "completed" | "failed" | "cancelled" | "stalled" | "ended"
+
+export interface SubagentNotice {
+  /** The numbered name the model uses (`explore-1`). */
+  subagentID: string
+  sessionID: string
+  description: string
+  status: SubagentNoticeStatus
+  /** The first line of its answer or its error, shown as the pill's title. */
+  summary?: string
+  /** For a stall: how many seconds nothing has happened in it. */
+  quietSeconds?: number
+  /** The status its final message reported (MiMo's Status header), as the parent's model is told it. */
+  reported?: "success" | "partial" | "failed" | "blocked"
+}
+
+/**
+ * subagents: a subagent's own record. `status` is running while a turn of it
+ * is under way and idle between turns; `outcome` is how its last turn ended.
+ * Sessions stored before background subagents carry only `type` and `id`.
+ */
+export interface SubagentState {
+  type: SubagentType
+  id: string
+  /** Started with spawn, so it works on after the parent's turn and reports back. */
+  background?: boolean
+  status?: "running" | "idle"
+  outcome?: "success" | "failure" | "cancelled"
+  error?: string
+  /** Turns taken, counting each follow-up sent to it. */
+  turns?: number
+  /** When its last turn ended. */
+  ended?: number
+  /** The task registry's task it was started for, when the id named one. */
+  taskID?: string
+  /**
+   * tasks: how its last successful turn was reconciled - the status its parent
+   * was given, and the tasks it still held unfinished (MiMo's completion gate).
+   */
+  reported?: { status?: "success" | "partial" | "failed" | "blocked"; unfinished?: string[] }
+  /** The slash command that started it. */
+  command?: string
+  /** The JSON Schema its result has to match (MiMo's output_schema). */
+  outputSchema?: Record<string, unknown>
+}
+
+/** tasks: MiMo's five task statuses. */
+export const TASK_STATUSES = ["open", "in_progress", "blocked", "done", "abandoned"] as const
+export type TaskStatus = (typeof TASK_STATUSES)[number]
+
+/** tasks: one entry of a conversation's task registry. */
+export interface TaskItem {
+  /** T1, T2 at the top; T1.1 under T1. */
+  id: string
+  summary: string
+  status: TaskStatus
+  parentID?: string
+  /** Who last took it on: `main`, or a subagent's name. */
+  owner?: string
+  created: number
+  updated: number
+  /** When it was done or abandoned. */
+  ended?: number
+  /** The latest note given with a change. */
+  note?: string
+}
+
+/** One place the user pointed at: a passage of a reply, code in the files tab, or a whole file. */
+export interface Annotation {
+  id: string
+  kind: "answer" | "code" | "file" | "pdf" | "docx" | "pptx" | "xlsx" | "chart" | "html" | "image" | "video"
+  /** The file's absolute path, for a file or code shown from one. */
+  path?: string
+  /** A PDF or Word selection's page, from 1. */
+  page?: number
+  /** A slide's index from 0, with its p:sldId id and the shape whose text the selection matched. */
+  slide?: number
+  slideId?: string
+  shapeId?: string
+  shapeName?: string
+  /** Where on the slide, as fractions of its box: left, top, width, height. */
+  region?: { fx: number; fy: number; fw: number; fh: number }
+  /** Drawn as a box on the slide rather than a picked piece. */
+  boxed?: boolean
+  /** A spreadsheet's sheet by name and id, and the cell or range as A1 (for a chart, the sheet it sits on). */
+  sheet?: string
+  sheetId?: string
+  a1?: string
+  /** A chart's title, kind and the cell references its data comes from. */
+  chartTitle?: string
+  chartKind?: string
+  dataRef?: string
+  /** A video frame: the moment, in seconds, whose region was boxed. */
+  timeSec?: number
+  /** A web page module: the CSS selector that finds it and its tag. */
+  selector?: string
+  tag?: string
+  /** Where the selection sits: PDF points from a PDF page's bottom-left corner, or CSS pixels from a Word page's top-left. */
+  rect?: { x: number; y: number; w: number; h: number; pageW: number; pageH: number }
+  /** The file's name, for a whole file. */
+  name?: string
+  /** The selected text, whitespace folded; absent for a whole file. */
+  quote?: string
+  /** Which occurrence of the quote in its block was selected, and how many there are. */
+  occ?: number
+  occTotal?: number
+  /** What the user wrote about it; empty when it is only pointed at. */
+  text: string
 }
 
 export interface Attachment {
   path: string
   mime: string
-  /** base64 for binary, utf8 text otherwise. */
+  /** base64 for binary, utf8 text otherwise; empty for a file attached by path. */
   data: string
+  /**
+   * MiMo attaches a file by its path: nothing is copied into the message, and
+   * the file is read from disk each time a request is built, so a file of any
+   * size can be attached. `path` is absolute, or project-relative for an @
+   * mention; the server fills in `mime` when the message is sent.
+   */
+  byPath?: boolean
+  /**
+   * A copy of the file taken when a tool read it, which requests read instead
+   * of `path`: MiMo puts the bytes into the tool result there and then, so what
+   * the model was shown stays what it was shown, whatever happens to the file
+   * afterwards. `path` still names the file the model asked for.
+   */
+  copy?: string
 }
 
 export interface AssistantMessage {
@@ -136,7 +603,7 @@ export interface AssistantMessage {
   sessionID: string
   role: "assistant"
   model: ModelRef
-  agent: AgentName
+  agent: TurnAgent
   /**
    * What this turn ran at, recorded because the session's setting can change
    * between turns. Always set on turns run since this field existed; absent on
@@ -151,7 +618,136 @@ export interface AssistantMessage {
   /** i18n key for `error`, when the failure was one the app can phrase itself. */
   errorCode?: string
   errorParams?: Record<string, string>
+  /**
+   * The file changes of the turn this message ends were taken back out of the
+   * project with the card's 撤销. The transcript stays; only the files moved.
+   */
+  reverted?: boolean
+  /**
+   * Set while the provider request is being tried again (MiMo's 正在重新连接).
+   *
+   * Only ever on the copy published with `message.updated`, never written to
+   * disk: the next update for the message comes without it, which is how the
+   * row goes away once the stream resumes.
+   */
+  retry?: {
+    attempt: number
+    message: string
+    next: number
+    /** MiMo's kind of failure (stream, network, rate_limit, server) and the attempts it allows, 0 when it waits indefinitely. */
+    kind?: string
+    max?: number
+  }
   time: { created: number; completed?: number }
+}
+
+/** A project's local branches, for the home screen's branch chip. */
+export interface BranchState {
+  repo: boolean
+  /** On a detached HEAD, or a repository with no commit yet: no branch to show. */
+  detached: boolean
+  branch?: string
+  branches: string[]
+}
+
+/** How a branch switch or creation went. */
+export interface CheckoutResult {
+  ok: boolean
+  branch?: string
+  /** Refused because the working tree has uncommitted changes; ask before forcing. */
+  dirty?: boolean
+  /** Forced across uncommitted changes, which left conflict markers. */
+  conflicts?: boolean
+  code?: "untracked-overwrite" | "local-overwrite" | "branch-exists" | "branch-invalid"
+  error?: string
+  /** The branch is checked out in this other worktree instead. */
+  worktree?: { directory: string; name: string }
+}
+
+/** One changed file's line counts. */
+export interface GitFileLines {
+  path: string
+  additions: number
+  deletions: number
+}
+
+/** The info card's 环境信息: the project's changes against HEAD, counted in lines. */
+export interface GitSummary {
+  /** False outside a repository, or without git: the section is not drawn. */
+  repo: boolean
+  /** False when the repository was found but its changes could not be read. */
+  ok: boolean
+  branch?: string
+  detached: boolean
+  fileCount: number
+  additions: number
+  deletions: number
+  /** Per file, relative to the project directory; untracked files count as wholly added. */
+  files: GitFileLines[]
+  /** Origin (or upstream) is a GitHub repository: the section ends with the pull-request row. */
+  github?: boolean
+}
+
+/** MiMo's pull-request row: the branch's newest pull request on GitHub, or why there is none to show. */
+export type PullRequestState =
+  | { ok: true; kind: "none" }
+  | { ok: true; kind: "open" | "draft" | "closed" | "merged"; number: number; title: string; url: string }
+  | {
+      ok: false
+      code: "not-a-repo" | "no-remote" | "detached" | "unsupported-remote" | "network" | "rate-limited" | "unauthorized" | "bad-response"
+    }
+
+/** What the commit or push card decides its buttons from. */
+export interface CommitState {
+  ok: boolean
+  error?: string
+  /** Absent when detached. */
+  branch?: string
+  isDetached: boolean
+  hasHead: boolean
+  hasChanges: boolean
+  hasStaged: boolean
+  stagedAdditions: number
+  stagedDeletions: number
+  hasUpstream: boolean
+  /** Commits HEAD has that origin's branch of the same name does not, and the other way round. */
+  ahead: number
+  behind: number
+  hasOrigin: boolean
+  hasOriginBranch: boolean
+  /** Every changed path, relative to the repository root. */
+  changedPaths: string[]
+}
+
+export interface CommitResult {
+  ok: boolean
+  /** The new commit's short hash. */
+  hash?: string
+  code?: "nothing-to-commit" | "ident-missing" | "hook-rejected"
+  error?: string
+}
+
+export interface PushResult {
+  ok: boolean
+  /** `detached`: the checkout is on no branch, so there is nothing to push. */
+  code?: "auth" | "rejected" | "no-remote" | "detached"
+  error?: string
+}
+
+/** What taking one turn's file changes back did, file by file. */
+export interface TurnRevertResult {
+  /** Edited files put back to how the turn found them. */
+  restored: number
+  /** Files the turn created, deleted. */
+  removed: number
+  /** Files whose changed lines were no longer there, left alone. */
+  failed: number
+  /**
+   * Files nothing could take back, left as they are: an edited file in no
+   * repository, or a file created outside the project that git tracks. MiMo
+   * calls these outside, and so does the card.
+   */
+  outside: number
 }
 
 export type Message = UserMessage | AssistantMessage
@@ -161,18 +757,28 @@ export type Message = UserMessage | AssistantMessage
 // ---------------------------------------------------------------------------
 
 /** How one file differs from HEAD, in the vocabulary the review speaks. */
-export type GitChangeKind = "added" | "deleted" | "modified"
+export type GitChangeKind = "added" | "deleted" | "modified" | "renamed"
 
 /** One shell the backend is holding, as the drawer needs to know it. */
 export interface ShellSummary {
   shellID: string
+  /** The directory it was started in, so the drawer can tell it apart from the conversation's. */
+  cwd: string
   /** False once the process has ended; its output is still there to read. */
   alive: boolean
+  /** Typed into at some point, so closing it asks first. */
+  used: boolean
 }
 
 export interface GitChange {
   path: string
   kind: GitChangeKind
+  /**
+   * The letter MiMo's review draws: git's working-tree column, else its index
+   * column, "A" for an untracked path. Anything besides M, A, D, R and C (a
+   * conflict's U, a type change's T) is shown as it is.
+   */
+  code: string
 }
 
 export interface GitStatus {
@@ -188,6 +794,8 @@ export interface GitStatus {
    * files"; the review is the one place that also has to say how each moved.
    */
   entries: GitChange[]
+  /** git could not report the changes; what it said instead. The lists are then empty and mean nothing. */
+  error?: string
 }
 
 export interface PermissionRequest {
@@ -204,10 +812,37 @@ export interface PermissionRequest {
   subject: string
   /** Unified diff or command preview rendered inside the dialog. */
   preview?: string
+  /**
+   * A command that loses work. It is asked every time: no "always" is offered,
+   * and an earlier "always" for the bucket does not cover it.
+   */
+  forced?: boolean
   time: number
 }
 
 export type PermissionResponse = "once" | "always" | "reject"
+
+/**
+ * How a question that was put to the user ended.
+ *
+ * `cancelled` is a turn stopped while it was on screen; `policy` is one closed
+ * by its bucket being switched to Allow or Deny in settings meanwhile.
+ */
+export type PermissionDecision = "allow-once" | "allow-always" | "reject" | "reject-with-reason" | "cancelled" | "policy"
+
+/** A decided permission question, kept on the tool part it gated. */
+export interface PermissionRecord {
+  requestID: string
+  kind: string
+  /** A command that loses work, which the row names as a delete. */
+  forced?: boolean
+  subject: string
+  preview?: string
+  decided: PermissionDecision
+  /** What the user wrote when refusing. */
+  reason?: string
+  time: number
+}
 
 // ---------------------------------------------------------------------------
 // The question tool
@@ -264,6 +899,13 @@ export interface QuestionPrompt {
   /** "Allow selecting multiple choices". Absent is one answer only. */
   multiple?: boolean
   custom?: boolean
+  /**
+   * plan: the plan file this question is about, which makes it plan_exit's
+   * card - the window says it in the user's own language and offers to open
+   * the file. MiMo tags the same question with a key and the path beside it;
+   * the path alone is what its window reads back out.
+   */
+  plan?: string
 }
 
 /**
@@ -279,6 +921,15 @@ export interface QuestionRequest {
   sessionID: string
   questions: QuestionPrompt[]
   tool?: { messageID: string; callID: string }
+  /** When it was asked, so the dock can queue it with permission requests in arrival order. */
+  time: number
+  /**
+   * Not the model's question but the runner's: MiMo's repeated-call check, put
+   * when a tool is called three times running with the same input. The window
+   * draws it in its own language; the answers are the keys `once`, `always` and
+   * `reject`, or typed feedback, which refuses.
+   */
+  loop?: { tool: string }
 }
 
 /**
@@ -339,10 +990,22 @@ export interface CommandInfo {
   name: string
   description?: string
   /** Which agent to run it as, when it names one. */
-  agent?: AgentName
+  agent?: TurnAgent
   /** Which model to run it on, when it names one. */
   model?: ModelRef
   source: CommandSource
+  /** A skill shipped with the app (MiMo's `bundled`). */
+  builtin?: boolean
+  /**
+   * A skill's own translated names, from its `locales/<language>.json`.
+   *
+   * Carried so a skill chip in the box can be labelled the way the plugins page
+   * labels the same skill - MiMo names a chip from the skill, and falls back to
+   * the command only when it cannot find it.
+   */
+  localizations?: Record<string, { displayName?: string; brief?: string }>
+  /** One of the app's own commands (/init, /review, /dream, /distill, /rebuild) that nothing has replaced. */
+  own?: boolean
   /**
    * The prompt text, with its placeholders still in it.
    *
@@ -374,7 +1037,7 @@ export interface CommandInfo {
 export interface CommandDefinition {
   template: string
   description?: string
-  agent?: AgentName
+  agent?: TurnAgent
   model?: ModelRef
   variant?: Effort
   subtask?: boolean
@@ -392,6 +1055,24 @@ export interface CommandDefinition {
 export const AGENT_NAMES = ["build", "plan"] as const
 
 export type AgentName = (typeof AGENT_NAMES)[number]
+
+/**
+ * The agents a slash command can run one turn as: the two presets, and MiMo's
+ * two consolidation agents - `dream` (tidies project memory) and `distill`
+ * (packages repeated work as skills and commands) - which only a command
+ * starts, and which never become a conversation's own setting.
+ */
+export const COMMAND_AGENTS = [...AGENT_NAMES, "dream", "distill"] as const
+
+export type TurnAgent = (typeof COMMAND_AGENTS)[number]
+
+/**
+ * subagents: the kinds of subagent the task tool starts. A general one works
+ * with the parent's tools; an explore one only reads, the way Plan does.
+ */
+export const SUBAGENT_TYPES = ["general", "explore"] as const
+
+export type SubagentType = (typeof SUBAGENT_TYPES)[number]
 
 /**
  * The reasoning steps, in the order the cycle walks them.
@@ -424,27 +1105,48 @@ export const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "ma
 export type Effort = (typeof EFFORTS)[number]
 
 /**
+ * The other coding tools whose skill folders can be read too, in the order
+ * MiMo's engine lists them: `~/.<tool>/skills` and each project's
+ * `.<tool>/skills`. `agents` is the open standard.
+ */
+export const SKILL_PATH_SOURCES = ["claude", "codex", "opencode", "agents"] as const
+
+export type SkillPathSource = (typeof SKILL_PATH_SOURCES)[number]
+
+/** MiMo 26.920's defaults: `.agents` read, the three brand folders not. */
+export const SKILL_PATH_DEFAULTS: Record<SkillPathSource, boolean> = { claude: false, codex: false, opencode: false, agents: true }
+
+/** Which tools' folders are read, each unset one at MiMo's default. */
+export function skillPathCompat(stored: Partial<Record<SkillPathSource, boolean>> | undefined): Record<SkillPathSource, boolean> {
+  const out = { ...SKILL_PATH_DEFAULTS }
+  for (const source of SKILL_PATH_SOURCES) if (typeof stored?.[source] === "boolean") out[source] = stored[source]
+  return out
+}
+
+/**
  * Every bucket a tool call is judged against.
  *
  * The order is the order the settings screen draws, and it follows the
  * reference's own row order so the two screens read the same way down the page.
- * Two entries have no counterpart there: the reference judges every kind of
- * file change as one "edit", where this app separates creating a file from
- * changing one, and it has no notion of an MCP server at all.
+ * One entry has no counterpart there: the reference has no notion of an MCP
+ * server at all.
+ *
+ * Creating a file is judged as an edit, as the reference judges it and as
+ * OpenCode does - a `write` bucket of its own asked one question the reference
+ * never asks, which is the app being stricter than what it copies rather than
+ * equal to it (the user's decision, 2026-09-20).
  *
  * A name absent from here cannot be configured and cannot be refused, which is
- * how `read`, `list`, `glob`, `grep` and `todowrite` came to be beyond reach:
- * their tools each declare a bucket, and nothing had a list to match it to.
+ * how `read`, `list`, `glob` and `grep` came to be beyond reach: their tools
+ * each declare a bucket, and nothing had a list to match it to.
  */
 export const PERMISSION_KINDS = [
   "read",
   "edit",
-  "write",
   "glob",
   "grep",
   "list",
   "bash",
-  "todowrite",
   "webfetch",
   "outside",
   "mcp",
@@ -460,24 +1162,30 @@ export type PermissionAction = (typeof PERMISSION_ACTIONS)[number]
 /**
  * What each bucket does when the user has never said.
  *
- * These are the behaviours this app already had, written down: looking at the
- * project - and keeping a todo list, which is the model talking to itself -
- * happened without asking, and everything that changed a file, ran a command or
- * reached the network asked first. Naming them here rather than leaving them
+ * Looking at the project happens without asking, and everything that changes a
+ * file or runs a command asks first. Naming them here rather than leaving them
  * implicit is what lets a stored setting be told apart from an untouched one.
+ *
+ * Fetching a web page is allowed, as it is in MiMo, whose desktop makes only
+ * edits and commands ask. It had asked here, which is the app being stricter
+ * than what it copies (the user's decision, 2026-09-20); the bucket can still
+ * be set to ask or deny, and full access does not change a refusal.
+ *
+ * An MCP tool call runs without asking, as in MiMo, whose engine allows every
+ * tool by default and whose desktop only makes edits and commands ask. The
+ * user chose that (2026-09-17); the bucket can still be set to ask or deny, and
+ * a server's own `tools` rules can make single tools ask.
  */
 export const DEFAULT_PERMISSIONS: Record<PermissionKind, PermissionAction> = {
   read: "allow",
   edit: "ask",
-  write: "ask",
   glob: "allow",
   grep: "allow",
   list: "allow",
   bash: "ask",
-  todowrite: "allow",
-  webfetch: "ask",
+  webfetch: "allow",
   outside: "ask",
-  mcp: "ask",
+  mcp: "allow",
 }
 
 /**
@@ -491,7 +1199,6 @@ export const DEFAULT_PERMISSIONS: Record<PermissionKind, PermissionAction> = {
  */
 export const SELF_ASKING_KINDS: readonly PermissionKind[] = [
   "edit",
-  "write",
   "bash",
   "webfetch",
   "outside",
@@ -515,7 +1222,7 @@ export const ENFORCED_KINDS: readonly PermissionKind[] = PERMISSION_KINDS
 export const NETWORK_KINDS: readonly PermissionKind[] = ["webfetch", "mcp"]
 
 /** Kinds that can change something outside this app's own state. */
-export const WRITING_KINDS: readonly PermissionKind[] = ["edit", "write", "bash", "outside"]
+export const WRITING_KINDS: readonly PermissionKind[] = ["edit", "bash", "outside"]
 
 /**
  * How a Model Context Protocol server is reached.
@@ -533,18 +1240,190 @@ export interface McpServerConfig {
   /** Remote: where to POST, and anything the endpoint needs to let us in. */
   url?: string
   headers?: Record<string, string>
+  /**
+   * Remote: how to sign in, as MiMo's engine takes it. Absent means sign-in is
+   * detected from a 401 and done with dynamic client registration; an object
+   * supplies a registered client, scopes or a redirect; false turns it off.
+   */
+  oauth?: McpOAuthConfig | false
   /** Absent counts as on, so a server added by hand starts working. */
   enabled?: boolean
+  /**
+   * MiMo's per-server `timeout`, in milliseconds: how long connecting may take
+   * (30s without it) and how long each tool call may take (a minute without it).
+   */
+  timeout?: number
+  /** MiMo's per-server `sampling`: whether the server may have a model write for it. Unset asks. */
+  sampling?: "deny" | "ask" | "allow"
+  /**
+   * Per-tool rules, by the server's own tool name (`*` and `?` match as in
+   * permission rules; the last matching rule wins): false or "deny" keeps the
+   * tool from the model, "ask" asks before each call even where MCP calls are
+   * allowed, true or "allow" never asks. Written by hand into the config file.
+   */
+  tools?: Record<string, boolean | "allow" | "ask" | "deny">
+}
+
+export interface McpOAuthConfig {
+  /** A client registered with the authorization server; without it one is registered dynamically. */
+  clientId?: string
+  clientSecret?: string
+  /** Scopes to ask for, space-separated. */
+  scope?: string
+  /** Default http://127.0.0.1:19876/mcp/oauth/callback. */
+  redirectUri?: string
 }
 
 /** One checkout of a repository - what this app calls a workspace. */
+/**
+ * How spoken input is turned into text.
+ *
+ * "fast" writes down what was heard. "smart" reads it once more and tidies it -
+ * false starts, filler, the punctuation nobody says out loud - which takes a
+ * round trip and is why it is a choice.
+ */
+/** A development server answering on this machine right now. */
+export interface LocalServer {
+  port: number
+  url: string
+  /** The page's own title, when it gave one. */
+  title: string
+  /** MiMo's card name: the title with its spaces folded, up to 60 characters, else `localhost:PORT`. */
+  name: string
+  /** MiMo's card subtitle, always `localhost:PORT`. */
+  label: string
+}
+
+export type VoiceMode = "fast" | "smart"
+
+/**
+ * The composer's text and its caret or selection, for 智能编辑 to act on.
+ *
+ * Offsets are UTF-16 code units, which is what a textarea reports and accepts,
+ * so the window can put the caret back exactly where the answer says.
+ */
+export interface VoiceDraft {
+  text: string
+  selectionStart: number
+  selectionEnd: number
+}
+
+/** What 智能编辑 made of one utterance: the whole new text and where the caret or selection lands. */
+export type VoiceEdit = VoiceDraft
+
+/**
+ * Why 智能编辑's pass over a transcript did not happen.
+ *
+ * `noModel`: the conversation has no chat model to rewrite with. `refused`:
+ * the model's endpoint turned the request down. `unreadable`: it answered
+ * something that is not an edit. Each degrades to the plain transcript, and
+ * each is said out loud rather than passed off as 快速输入.
+ */
+export type VoiceEditFailure = "noModel" | "refused" | "unreadable"
+
+/**
+ * Why the microphone is not worth opening, in MiMo's five kinds.
+ *
+ * `unauthorized` is a provider that wants a key and has none; `asrUnavailable`
+ * a transcription model that is not set up or not offered; `chatUnavailable`
+ * the conversation model 智能编辑 would rewrite with; `unreachable` an endpoint
+ * that did not answer the probe; `failed` anything else.
+ */
+export type VoicePrecheckFailure = "unauthorized" | "asrUnavailable" | "chatUnavailable" | "unreachable" | "failed"
+
+/**
+ * MiMo's close decision for a window.
+ *
+ * A quit in progress, or any other window still open, closes normally. The last
+ * window is hidden instead of closed on macOS, or wherever the tray switch is on,
+ * so the app keeps running behind its tray or menu bar icon; otherwise it closes.
+ */
+/**
+ * The conversation an event is only of use to, or nothing when every window
+ * should have it (N11-4).
+ *
+ * A text delta is dropped on arrival by a window that is not showing the
+ * conversation, and a running tool's changing output is drawn nowhere else
+ * either - those two are the whole of the high-frequency traffic. Everything
+ * structural - a new message, a part being announced, a tool that has finished
+ * or failed - goes to every window, because a window acts on those wherever
+ * they happened: the automatic opens and the file notices both read a completed
+ * call in any conversation.
+ */
+/** The two places a terminal lives; each owns its own shells (N11-9). */
+export type ShellSurface = "drawer" | "panel"
+
+export function narrowcastSession(event: ServerEvent): string | undefined {
+  if (event.type === "message.delta") return event.sessionID
+  if (event.type === "message.part.updated" && event.part.type === "tool" && (event.part.status === "running" || event.part.status === "pending")) return event.sessionID
+  return undefined
+}
+
+export function closeHidesToTray(state: {
+  quitting: boolean
+  otherWindows: number
+  platform: string
+  trayEnabled: boolean
+}): boolean {
+  if (state.quitting || state.otherWindows > 0) return false
+  return state.platform === "darwin" || state.trayEnabled
+}
+
+/** Usage gathered under one heading - a day, a model, or everything. */
+export interface UsageBucket {
+  /** A date as YYYY-MM-DD, or a model as "provider/model". */
+  key: string
+  usage: Usage
+  /** How many assistant turns went into it (background requests add spend, not turns). */
+  turns: number
+  /** Requests with a price, and requests that used tokens on a model with no known price. */
+  priced: number
+  unpriced: number
+}
+
+export interface UsageSummary {
+  total: Usage
+  turns: number
+  priced: number
+  unpriced: number
+  /** Oldest first, one entry per day that actually has turns in it. */
+  byDay: UsageBucket[]
+  /** Heaviest first. */
+  byModel: UsageBucket[]
+  /** How many days back every figure was gathered over. */
+  days: number
+}
+
+/** One file this app keeps, or looks for, and whether it is actually there. */
+export interface AppPath {
+  /** What to call it in the list. */
+  name: string
+  /** Absolute, because the point of the page is to be able to go and open it. */
+  path: string
+  exists: boolean
+  /** Where it is read from: the app's own storage, or the open project. */
+  scope: "app" | "project"
+}
+
+export interface AppPaths {
+  /** The folder everything the app stores lives under. */
+  storage: string
+  /** The user's home folder, which a path inside it is shown relative to (`~`). */
+  home: string
+  files: AppPath[]
+}
+
+/** Where the global AGENTS.md stands: read into every conversation, switched off (renamed), or not written. */
+export type AgentsFileState = "loaded" | "disabled" | "none"
+
 export interface Worktree {
   directory: string
   branch?: string
   main: boolean
 }
 
-export type McpStatus = "connected" | "pending" | "failed" | "needs_auth" | "disabled"
+/** `needs_client_registration`: the server wants a sign-in but cannot register a client, so its config needs a client id. */
+export type McpStatus = "connected" | "pending" | "failed" | "needs_auth" | "needs_client_registration" | "disabled"
 
 export interface McpServerState {
   name: string
@@ -555,26 +1434,53 @@ export interface McpServerState {
   tools: number
 }
 
-/**
- * A server the user has saved, so it can be returned to by name.
- *
- * The address is the identity as far as connecting goes, but the id is what the
- * list is keyed by: an address can be edited, and a row that changed identity
- * when its address changed would lose its place and its default flag.
- */
-export interface ServerEntry {
-  id: string
-  /** What to call it in the list. Empty means show the address instead. */
+/** Where an importable MCP server was found: Claude Code, Kiro or Codex. */
+export type McpImportSource = "claude" | "kiro" | "codex"
+
+/** A server another tool has configured, as the import view lists it - never its variables or headers. */
+export interface McpImportItem {
+  source: McpImportSource
   name: string
-  /** A ws:// or wss:// address. */
-  url: string
+  type: "local" | "remote"
+  /** The command line, or the address. */
+  summary: string
+  /** Already configured here under this name, so it is skipped. */
+  exists: boolean
+}
+
+/** One tool a server offers, as the MCP settings page lists it. */
+export interface McpToolInfo {
+  name: string
+  description?: string
 }
 
 export interface AppConfig {
+  /**
+   * Which build's idea of this document it is.
+   *
+   * Absent on every config written before this existed, which is read as the
+   * first version. It is here so that an older build installed over a newer
+   * one can tell that the document it is reading was not written for it: none
+   * of these documents carried a version, so a downgrade silently reinterpreted
+   * whatever it found and wrote its own understanding back over the rest.
+   */
+  schemaVersion?: number
   model: ModelRef
+  /** New conversations start on Smart rather than on `model`. */
+  smart?: boolean
+  /** Smart's fast model, for easy everyday requests; empty follows `model`. */
+  smartFast?: ModelRef
+  /** Smart's main model, for everything else; empty follows `model`. */
+  smartMain?: ModelRef
+  /** Whether the in-app browser is offered at all; absent is on. */
+  browserEnabled?: boolean
+  /**
+   * Whether a video card under a reply asks its platform for the title and
+   * cover (and the cover proxy fetches it); absent is on. Off, the cards still
+   * show, from the link alone, and nothing is fetched to draw them.
+   */
+  videoCardDetails?: boolean
   theme: "dark" | "light" | "system"
-  /* Which named palette the colours are generated from. */
-  themeID: string
   /**
    * Shortcuts the user has changed, as command id to chord.
    *
@@ -583,37 +1489,45 @@ export interface AppConfig {
    */
   keybinds: Record<string, string>
   /**
-   * A server to talk to instead of the one this app started.
+   * How many tool steps a turn may take before it has to answer in words.
    *
-   * Empty means the local backend. The protocol is identical, so a remote
-   * server is simply a different address for the same conversation.
-   */
-  serverURL: string
-  /**
-   * Saved servers, in the order they were added.
+   * Unset means no limit, which is the reference's default (`agent.steps ??
+   * Infinity`). MCode used to stop at sixty and end the turn in red, which on
+   * a long refactor arrives in the middle of the work with everything the
+   * model had learned thrown away.
    *
-   * Separate from serverURL, which is whichever one is connected now: a server
-   * can be saved without being in use, and the one in use can be an address
-   * typed once and never kept.
+   * With a number, the step at the limit goes out with no tools and an
+   * instruction to summarise instead - the reference's own behaviour, and the
+   * reason its setting is described as "before forcing text-only response".
    */
-  servers: ServerEntry[]
-  /**
-   * The saved server to connect to at launch, by id.
-   *
-   * Empty means start the local backend, which is what an app with no servers
-   * saved has always done.
-   */
-  defaultServer: string
+  maxSteps?: number
   /** Where to look for a newer release, if anywhere. */
   updateFeed: string
-  /** Whether each notification also makes a sound. Off by default. */
-  soundAgent: boolean
-  soundPermission: boolean
-  soundError: boolean
+  /** The chime a task that ran past a minute makes when it ends. */
+  taskDoneSound: "off" | "rhodes" | "handpan" | "vibes" | "bloom" | "harp" | "kalimba" | "bowl" | "koto"
+  /** Whether moving along or pressing the conversation navigator plays a scale. On by default. */
+  spineSound: boolean
+  /**
+   * Where a task with no project gets its folder. Empty means MCodeProjects
+   * in the home directory.
+   */
+  projectRoot: string
   /** Sessions whose tabs survive a close-others and sort to the front. */
   pinnedTabs: string[]
+  /** Project folders pinned to the top of the side column's project list. */
+  pinnedProjects: string[]
+  /** The side column's project order as dragged; folders not in it keep their recency slot. */
+  projectOrder: string[]
+  /** Each project's task order as dragged, by project folder. */
+  taskOrder: Record<string, string[]>
   /** Model Context Protocol servers, by the name they are shown under. */
   mcpServers: Record<string, McpServerConfig>
+  /**
+   * MiMo's `experimental.mcp_timeout`: how long, in milliseconds, a tool call
+   * may take on a server that sets no `timeout` of its own (a minute when
+   * unset). Written by hand into the config file.
+   */
+  mcpTimeout?: number
   /** UI display language. Simplified Chinese is the default. */
   /*
    * A language code the renderer offers. Kept as a plain string here so
@@ -640,39 +1554,83 @@ export interface AppConfig {
    * bar's auto-accept toggle still speaks it.
    */
   autoApprove: PermissionKind[]
+  /**
+   * The map as it stood when the composer's access chip was turned to full,
+   * so turning it back puts the user's own answers back rather than the
+   * factory ones. Absent whenever the chip is not holding one.
+   */
+  accessBefore?: Partial<Record<PermissionKind, PermissionAction>>
+  /**
+   * The composer's access level. "auto" is the middle one: changes inside the
+   * project, reaching outside it and everyday commands go ahead; deleting and
+   * risky commands still ask. Absent, the level is read off `permissions` -
+   * "full" when nothing asks, otherwise "ask" - which is what every config
+   * written before this field meant.
+   */
+  accessLevel?: "ask" | "auto" | "full"
+  /**
+   * Whether full access can be picked in the composer at all. Off to begin
+   * with: skipping every question is something to turn on deliberately.
+   */
+  allowFullAccess: boolean
   /** Working directory for new sessions. */
   directory: string
+  /**
+   * MiMo's project list: every project folder, newest added first, whether or
+   * not it has a conversation. The side column, the home picker and the 环境
+   * page all read it. Never shares a folder with `closedProjects`.
+   */
+  projects: string[]
   /**
    * Project directories hidden from the rail. Closing a project only hides it -
    * its sessions are kept, so reopening the directory brings them all back.
    */
   closedProjects: string[]
-  /**
-   * Width in pixels of the docked project panel, once someone has dragged it.
-   * Optional because absent has to stay distinguishable from a deliberate
-   * choice: the panel then uses its own default rather than a number written
-   * on first launch that would look like the user had picked it.
-   */
-  sidebarWidth?: number
   /** Optional display name per project directory, keyed by absolute path. */
   projectNames: Record<string, string>
+  /** When each project was last picked on the home screen (ms), so the picker lists it first even before it has a task. */
+  projectUsed: Record<string, number>
   /** Per-project badge artwork, stored as a data URL so it survives a move. */
   projectIcons: Record<string, string>
   /** Per-project badge hue override; absent means derived from the path. */
   projectColors: Record<string, string>
-  /** Sampling effort a new session starts with; each may then differ. */
+  /** The reasoning effort every turn runs at: MiMo keeps one app-wide level, not one per conversation. */
   effort: Effort
   /** Which agent preset new sessions start in. */
   agent: AgentName
+  /** 追求目标: whether new conversations start with the switch on; each may then differ. */
+  goalMode: boolean
   /**
-   * Sessions with a tab in the title bar, in the order they are drawn.
-   *
-   * Kept in config rather than in the window, so closing the app and
-   * reopening it leaves the same set of conversations to hand.
+   * Which model names a conversation after its first message - MiMo's engine
+   * `small_model`, and like it set only in the config file: MiMo's settings
+   * have no row for it. Absent is the conversation's own model, which is also
+   * where an unusable choice falls back to.
    */
-  openTabs: string[]
-  /** Set once the first-run setup has been completed or skipped. */
-  onboarded: boolean
+  titleModel?: ModelRef
+  /**
+   * memory: MiMo's `memory.disable_write`, set only in the config file as
+   * MiMo's is. `disableWrite` refuses every write under the memory folder and
+   * tells the model its memory is read-only; searching and reading go on.
+   */
+  memory?: { disableWrite?: boolean }
+  /**
+   * skills: the skills switched off by name - kept out of the prompt, the skill
+   * tools, the slash menu and `/name` loading, as MiMo's `permission.skill`
+   * denies them.
+   */
+  disabledSkills?: string[]
+  /**
+   * skills: which other coding tools' skill folders are read as well, MiMo's
+   * 技能兼容路径. Absent keys take `SKILL_PATH_DEFAULTS`: the open `.agents`
+   * folders on, the three brand folders off.
+   */
+  skillPaths?: Partial<Record<SkillPathSource, boolean>>
+  /**
+   * The lab's session chat: whether the model is offered the tools and the
+   * skill that reach other conversations and local agents. Absent is on, as
+   * MiMo ships it.
+   */
+  sessionChat?: boolean
   /** OpenAI-compatible providers the user added by base URL. */
   customProviders: CustomProvider[]
   /**
@@ -706,59 +1664,100 @@ export interface AppConfig {
    * instead of in the document.
    */
   commands: Record<string, CommandDefinition>
+
   /**
-   * "provider/model" keys shown in the composer picker. Empty means the user
-   * has not curated the list yet, and every connected model is offered.
+   * The base size, in px, of the interface's text and of code in the
+   * transcript and diffs. MiMo's defaults, 14 and 12; each becomes a scale on
+   * the root that the sizes in the interface are multiplied by.
    */
-  enabledModels: string[]
-  /** Show the model's summarized reasoning in the stream. */
-  showReasoning: boolean
-  /** Start shell tool calls expanded in the transcript. */
-  expandShell: boolean
-  /** Start edit, write and patch tool calls expanded in the transcript. */
-  expandEdits: boolean
-  /*
-   * What the title bar carries besides the review toggle.
-   *
-   * opencode keeps its bar to one control and puts these two behind settings
-   * that ship off, which is why a bar with three buttons on it did not look
-   * like the same application.
-   */
-  showServerButton: boolean
-  showPaletteButton: boolean
+  uiFontSize: number
+  codeFontSize: number
 
-  /*
-   * Type. Empty means the built-in stack, which is what almost everyone wants;
-   * the override exists because a person who has chosen a face to read code in
-   * has usually chosen it for a reason.
-   */
-  uiFont: string
-  codeFont: string
-  terminalFont: string
-
-  /** Desktop notifications, by occasion. */
-  notifyAgent: boolean
-  notifyPermission: boolean
-  notifyError: boolean
-
-  /** Whether pinch and Ctrl+wheel resize the interface. */
-  pinchZoom: boolean
-
-  /** Whether a session offers the review panel at all. */
-  showFileTree: boolean
   /**
-   * Two title-bar controls the reference keeps behind a setting.
+   * Standing instructions from the user, added to every session's prompt.
    *
-   * Both default to false, which is opencode's own default (`defaultSettings`
-   * at main-8t-QUXax.js @1901464 has showNavigation and showTerminal false), so
-   * the bar looks exactly as it did until a reader turns one on. Its strings
-   * name the buttons precisely: "the back and forward buttons in the desktop
-   * title bar" and "the terminal button in the desktop title bar".
+   * A project's own AGENTS.md says how that project is written; this says how
+   * this person wants to be worked with, wherever they are working. Kept
+   * separate from the project files for exactly that reason - one travels with
+   * the repository and the other travels with the reader.
    */
-  showNavigation: boolean
-  showTerminal: boolean
-  /** Whether the composer offers the agent switcher. */
-  showAgentPicker: boolean
+  instructions: string
+  /**
+   * MiMo's `instructions` setting: more instruction files to read into every
+   * conversation, as paths or globs (`docs/*.md`, `~/notes/rules.md`), each
+   * looked for from the working folder up to the repository's top, or as web
+   * addresses, which are fetched as MiMo fetches them - five seconds each, and
+   * left out when that fails. Set in the config file; the settings have no row for it.
+   */
+  instructionFiles?: string[]
+  /** How spoken input is written down. */
+  voiceMode: VoiceMode
+  /**
+   * Whether saying "send" at the end of a recording sends the message.
+   *
+   * Off by default, which is what the reference does - a word that submits
+   * whatever is in the box is not something to turn on for someone.
+   */
+  voiceSend: boolean
+  /** Whether the app reads short progress lines aloud. */
+  voiceFeedback: boolean
+  /**
+   * Which model writes the speech down.
+   *
+   * Absent means the feature is not set up: the window says so rather than
+   * recording into nothing. It is kept apart from the chat model because a
+   * provider that is good at one is not necessarily offering the other.
+   */
+  voiceModel?: ModelRef
+  /**
+   * Whether the app keeps an icon in the system tray (the menu bar on macOS).
+   *
+   * On by default, as in MiMo. While it is on, closing the last window hides it
+   * to the tray and the app keeps running, which is MiMo's rule and the reason
+   * the switch's description says so; see closeHidesToTray. Quitting from the
+   * tray, the app menu or the footer menu still quits.
+   */
+  tray: boolean
+  /** Whether text is drawn with the lighter antialiasing or the system's own. */
+  fontSmoothing: boolean
+  /**
+   * Which of the app's colourways the icon wears.
+   *
+   * An id rather than a path: the artwork is the app's own and ships with it,
+   * and a path in the config document would be a way to point the window at a
+   * file that is not there.
+   */
+  appIcon: string
+  /** Whether pointing at something pressable turns the cursor into a hand. */
+  pointerCursor: boolean
+  /**
+   * Whether the interface animates.
+   *
+   * Three states rather than two, because "follow the machine" is a different
+   * answer from "no": a reader who has asked the OS for less motion should get
+   * less of it here without having to say so twice, and a reader who wants the
+   * transitions back should be able to keep them even so.
+   */
+  reduceMotion: "system" | "on" | "off"
+  /**
+   * How a diff says which lines changed: by the ground under them, or by a
+   * sign at the head of each one.
+   *
+   * Ground alone fails a reader who cannot separate the two hues; signs alone
+   * survive a screenshot in greyscale. Neither is right for everyone, so it is
+   * asked rather than assumed.
+   */
+  diffMarks: "color" | "signs"
+
+  /**
+   * One-time migrations already applied to this document, by name.
+   *
+   * A migration that just overwrote the value every load would make the setting
+   * unchangeable; one with no record at all would run again on the next launch
+   * and undo a deliberate choice made in between. The name goes in here the
+   * first time it runs and the migration never looks at that field again.
+   */
+  migrations: string[]
 
   /**
    * The shell the terminal opens and the bash tool runs in.
@@ -769,20 +1768,29 @@ export interface AppConfig {
   shell: string
 }
 
-/** One hand-typed model on a custom provider: an id to send, a name to show. */
+/** One hand-typed model on a custom provider: an id to send, a name to show, and MiMo's 高级配置. */
 export interface CustomModel {
   id: string
   name: string
+  /** Whether it reads images; absent means the provider or catalog default decides. */
+  attachment?: boolean
+  /** Token limits: the input (context) window and the output cap. An output limit needs an input limit. */
+  limit?: { context?: number; output?: number }
+  /** MiMo's model fields a config file can set beyond the form: which other inputs it reads, and an hour-long prompt cache. */
+  inputs?: { pdf?: boolean; audio?: boolean; video?: boolean }
+  cacheTTL?: "5m" | "1h"
+  /** MiMo's `interleaved.field`: the message field an OpenAI-compatible model reads its own earlier reasoning back from. */
+  interleaved?: "reasoning" | "reasoning_content" | "reasoning_details"
 }
 
 export interface CustomProvider {
   /**
    * Chosen by the user, not derived from the name.
    *
-   * The reference asks for this outright and validates it against
-   * /^[a-z0-9][a-z0-9-_]*$/. It matters because `provider/model` refs, the
-   * enabled-model list and the stored credential are all keyed by it, so an id
-   * that moves when the display name is edited takes all three with it.
+   * Asked for outright and checked by MiMo 26.920's rule (`providerIdProblem`
+   * in @shared/provider-id: no `/`, not taken in any case). It matters because `provider/model` refs and the
+   * stored credential are both keyed by it, so an id that moves when the
+   * display name is edited takes both with it.
    */
   id: string
   name: string
@@ -813,6 +1821,13 @@ export interface CustomProvider {
    * and the value is read from the process at the moment it is needed.
    */
   environment?: string
+  /**
+   * Which API the gateway speaks. Absent is OpenAI-compatible, which every
+   * provider stored before this existed is; `anthropic` reaches a Claude-style
+   * gateway over the Messages API, as MiMo's `npm: @ai-sdk/anthropic` does, and
+   * `responses` OpenAI's Responses API, MiMo 26.920's `@ai-sdk/openai`.
+   */
+  protocol?: "openai" | "anthropic" | "responses"
 }
 
 /**
@@ -824,7 +1839,7 @@ export type AuthMethodKind = "api-key" | "oauth-browser" | "oauth-headless" | "l
 export interface ProviderStatus {
   id: string
   name: string
-  kind: "anthropic" | "openai-compatible" | "chatgpt"
+  kind: "anthropic" | "openai-compatible" | "chatgpt" | "openai-responses"
   /** i18n key, resolved in the renderer. */
   description: string
   recommended: boolean
@@ -907,7 +1922,28 @@ export interface ModelInfo {
 
 export type Request =
   | { type: "session.list" }
-  | { type: "session.create"; directory?: string; title?: string }
+  /*
+   * The files stored sessions have written, for the artifacts page and the
+   * search overlay, newest first. `query` narrows it to files whose name
+   * matches, as MiMo's artifact search does, and `category` to one tab. A page
+   * holds at most `limit` files (50, MiMo's size); the next one is asked for
+   * with the `nextCursor` the last answer gave.
+   */
+  | { type: "artifact.list"; query?: string; category?: "doc" | "app" | "other"; cursor?: string; limit?: number }
+  /*
+   * A conversation as a file, and back again - MiMo's `mimo export` / `mimo
+   * import` pair, over this app's own documents. The Markdown export is a
+   * transcript to read; this is a conversation to reopen.
+   */
+  | { type: "session.create"; directory?: string; title?: string; scratch?: boolean; sideOf?: string }
+  /* An empty folder for a new project, named by the user, under the default project location. */
+  | { type: "project.createBlank"; name: string }
+  /* A folder onto the project list, with no conversation; `used` also makes it the latest pick. */
+  | { type: "project.add"; directory: string; used?: boolean }
+  /* Folders off the project list; their conversations stay. */
+  | { type: "project.remove"; directories: string[] }
+  /* The conversations whose messages hold the query, one hit each, for the search overlay. */
+  | { type: "search.messages"; query: string; limit?: number }
   | { type: "session.get"; sessionID: string }
   /**
    * The instructions the model is given ahead of the conversation.
@@ -923,22 +1959,92 @@ export type Request =
    * `messageID` is the first message to roll back; leaving it out restores
    * everything that was rolled back. Both directions move the project's files
    * as well as the transcript, so this is one request rather than two.
+   *
+   * `files: false` is MiMo's edit and retry instead: the messages from
+   * `messageID` on are deleted and no file is touched.
    */
-  | { type: "session.revert"; sessionID: string; messageID?: string }
+  | { type: "session.revert"; sessionID: string; messageID?: string; files?: false }
   | { type: "session.delete"; sessionID: string }
   | { type: "session.compact"; sessionID: string }
   | { type: "session.undo"; sessionID: string }
   | { type: "session.redo"; sessionID: string }
+  /* One turn's file changes taken back out of the project; `messageIDs` are the turn's assistant messages. */
+  | { type: "session.revertTurn"; sessionID: string; messageIDs: string[] }
+  /**
+   * Which conversations this window is drawing (N11-4).
+   *
+   * The high-frequency events - a text delta, a running tool's output -
+   * are only sent to the windows that named the conversation they belong
+   * to. Everything structural is still sent to every window, because a
+   * window acts on a finished tool call wherever it happened.
+   */
+  | { type: "session.watch"; sessionIDs: string[] }
   | { type: "session.history"; sessionID: string }
   | { type: "session.agent"; sessionID: string; agent: AgentName }
+  /* 追求目标: the plus menu's switch for one conversation. */
+  | { type: "session.goalMode"; sessionID: string; on: boolean }
+  /*
+   * 追求目标: sets the goal, rewrites it, or - with null - takes it off the
+   * conversation, which is both "exit goal mode" while one is being pursued
+   * and "dismiss" once the judge has answered.
+   */
+  | { type: "session.goal"; sessionID: string; condition: string | null }
+  | { type: "session.access"; sessionID: string; access: "ask" | "auto" | "full" }
+  /*
+   * A review restricted this conversation, or lifted it. MiMo's own review
+   * reports it from the engine; here it is whatever stands in for that, and
+   * the conversation then refuses to be continued until it is lifted.
+   */
+  | { type: "session.reviewRestricted"; sessionID: string; restricted: boolean }
   | { type: "session.archive"; sessionID: string; archived: boolean }
   | { type: "session.rename"; sessionID: string; title: string }
-  | { type: "session.fork"; sessionID: string; messageID: string }
+  /* Which project the side column files a conversation under; the folder it works in is untouched. */
+  | { type: "session.move"; sessionID: string; directory: string }
+  /* Out of every project's group and into Recent; again, nothing on disk moves. */
+  | { type: "session.moveOut"; sessionID: string }
+  /* `titleSuffix` names the branch MiMo's way, 「{title} (分支)」, instead of copying the title. */
+  | { type: "session.fork"; sessionID: string; messageID: string; titleSuffix?: boolean }
   | { type: "session.model"; sessionID: string; model: ModelRef }
-  | { type: "session.effort"; sessionID: string; effort?: Effort }
-  | { type: "session.prompt"; sessionID: string; text: string; attachments?: Attachment[] }
+  /** Puts the conversation on Smart, to pick its model from the next first message. */
+  | { type: "session.smart"; sessionID: string }
+  /*
+   * `agent` and `model` are what a slash command named, and they hold for the
+   * turn this starts and no longer: MiMo runs a command's turn as the agent and
+   * model the command names and leaves the conversation's own settings alone.
+   */
+  | {
+      type: "session.prompt"
+      sessionID: string
+      text: string
+      attachments?: Attachment[]
+      annotations?: Annotation[]
+      fileNotices?: FileNotice[]
+      agent?: TurnAgent
+      model?: ModelRef
+      /* 追求目标: this message is the conversation's goal from now on, set before it is written. */
+      goal?: string
+    }
   | { type: "session.abort"; sessionID: string }
-  | { type: "permission.respond"; requestID: string; response: PermissionResponse }
+  /*
+   * subagents: a slash command marked `subtask`. `text` is the line as typed,
+   * kept as the user's message; `prompt` is its filled-in template, which a
+   * subagent works on before the conversation's own model reads the result.
+   */
+  | {
+      type: "session.subtask"
+      sessionID: string
+      text: string
+      description: string
+      prompt: string
+      subagentType?: SubagentType
+    }
+  | {
+      type: "permission.respond"
+      requestID: string
+      response: PermissionResponse
+      /** Why it was refused, passed on to the model with the refusal. */
+      reason?: string
+    }
   /**
    * The questions parked on an answer, across every session.
    *
@@ -958,11 +2064,6 @@ export type Request =
    */
   | { type: "question.reply"; requestID: string; answers: QuestionAnswer[] }
   /**
-   * Dismisses one without answering. The tool fails with "The user dismissed
-   * this question" rather than hanging - the reference's `RejectedError`.
-   */
-  | { type: "question.reject"; requestID: string }
-  /**
    * The commands a slash can reach in this project.
    *
    * Directory-scoped because that is what decides them: the project's own
@@ -971,7 +2072,28 @@ export type Request =
    * being one worktree.
    */
   | { type: "command.list"; directory: string }
+  /*
+   * A project or global command filled in for sending, as MiMo's session.command
+   * fills one: arguments substituted, its shell placeholders run in `directory`,
+   * and the files it names with `@` returned for the window to attach.
+   */
+  | { type: "command.expand"; directory: string; name: string; arguments: string }
+  /*
+   * A template the window filled in itself - an MCP server's prompt, or the
+   * line typed after a skill - with its ``!`cmd` `` placeholders run in
+   * `directory`, as MiMo runs a template's commands whatever its source (the
+   * user's 2026-09-16 decision).
+   */
+  | { type: "command.shell"; directory: string; text: string }
+  /** skills: every skill a folder can reach, switched off ones too, for the plugins page. */
+  | { type: "skill.list"; directory: string }
+  /** skills: a SKILL.md as the detail card shows it, whole, up to the body limit. */
+  | { type: "skill.content"; directory: string; name: string }
+  /** skills: MiMo's uninstall - the skill's folder moves to the app's skill trash. */
+  | { type: "skill.uninstall"; directory: string; name: string }
   | { type: "config.get" }
+  /** Stored documents found damaged or unreadable at start-up, each answered once per launch. */
+  | { type: "storage.problems" }
   | { type: "config.set"; patch: Partial<AppConfig> }
   | { type: "provider.list" }
   | { type: "provider.auth"; provider: string; apiKey: string }
@@ -993,32 +2115,124 @@ export type Request =
       apiKey: string
       headers?: Record<string, string>
       models: CustomModel[]
+      protocol?: CustomProvider["protocol"]
     }
   | { type: "provider.removeCustom"; provider: string }
+  /** MiMo 26.920's 删除自定义模型: one model leaves the saved provider at once, not on the next save. */
+  | { type: "provider.removeCustomModel"; provider: string; model: string }
+  | {
+      type: "provider.updateCustom"
+      id: string
+      name: string
+      baseURL: string
+      /** Blank keeps the key already held; `{env:VAR}` switches to a variable. */
+      apiKey: string
+      headers?: Record<string, string>
+      models: CustomModel[]
+      protocol?: CustomProvider["protocol"]
+    }
+  /**
+   * Copied in the backend so the stored key never travels to the window;
+   * `name` is the copy's, already worded, and `id` the one the user chose in
+   * the clone dialog (absent picks a free `<id>-copy`).
+   */
+  | { type: "provider.copyCustom"; provider: string; name: string; id?: string }
+  /**
+   * MiMo 26.920's 测试连接: asks `<baseURL>/models` with the key. A blank key
+   * with `provider` set uses the one held for that provider, which the window
+   * is never sent; a masked address or header left as shown is the stored one.
+   */
+  | {
+      type: "provider.probe"
+      baseURL: string
+      apiKey: string
+      provider?: string
+      headers?: Record<string, string>
+      protocol?: CustomProvider["protocol"]
+    }
   | { type: "auth.begin"; provider: string; method: AuthMethodKind }
   | { type: "auth.cancel"; provider: string }
   | { type: "auth.signOut"; provider: string }
   | { type: "workspace.info"; directory: string }
-  | { type: "app.reset" }
   /* "branch" widens the review past the working tree to the whole branch. */
-  | { type: "git.status"; directory: string; scope?: "worktree" | "branch" }
-  | { type: "git.init"; directory: string }
-  /*
-   * `context` is how many unchanged lines to keep either side of a change.
-   * A very large number is how "show the whole file" is asked for, which is
-   * the same request git already answers - there is no second endpoint.
-   */
+  | { type: "app.paths"; directory?: string }
+  | { type: "usage.summary"; days?: number }
+  | { type: "local.servers" }
   | {
-      type: "git.diff"
-      directory: string
-      file: string
-      context?: number
-      scope?: "worktree" | "branch"
+      type: "voice.transcribe"
+      /** The recording, base64. Kept small by the window: it stops at a minute. */
+      audio: string
+      mime: string
+      /** Overrides the configured mode for this one recording. */
+      mode?: VoiceMode
+      /** What the window is showing, so the considered mode can say it better. */
+      language?: string
+      /** The composer's text and selection; with it, 智能编辑 can carry out edit and caret instructions. */
+      draft?: VoiceDraft
+      /**
+       * The conversation the box belongs to, so 智能编辑's rewrite runs on that
+       * conversation's model. The voice model writes the speech down and
+       * nothing else - it is usually an ASR model, which has no chat endpoint.
+       */
+      sessionID?: string
     }
-  | { type: "git.revert"; directory: string; file: string }
+  /**
+   * Before the microphone opens: is voice input going to work at all.
+   *
+   * MiMo asks its server the same question at the same moment, and says what
+   * is wrong without recording a word. `mode` is the one about to be used,
+   * because 智能编辑 needs a chat model as well as a transcription one.
+   */
+  | { type: "voice.precheck"; mode?: VoiceMode; sessionID?: string }
+  | { type: "git.status"; directory: string }
+  /* The home screen's branch chip: the local branches, and switching or creating one. */
+  | { type: "git.branches"; directory: string }
+  | { type: "git.checkout"; directory: string; branch: string; force?: boolean; create?: boolean }
+  | { type: "git.diff"; directory: string; file: string }
+  /* The edited-files card: each of a turn's files diffed as it stands now, one patch per file. */
+  | { type: "git.diffFiles"; directory: string; files: string[] }
+  /* The info card's 环境信息 and its commit or push card. */
+  | { type: "git.summary"; directory: string }
+  | { type: "git.commitState"; directory: string }
+  | { type: "git.commit"; directory: string; message: string; includeUnstaged: boolean }
+  | { type: "git.push"; directory: string }
+  /* The current branch's pull request, asked of GitHub's public API; only for GitHub remotes. */
+  | { type: "git.pullRequest"; directory: string }
+  /* Which main repository each conversation folder belongs to, and which folders are gone: MiMo's repoRoots. */
+  | { type: "git.repoRoots"; directories: string[] }
+  /* A subject line for the pending changes, from the conversation's model; `update …` when it does not answer. */
+  | { type: "git.commitMessage"; directory: string; sessionID?: string; paths: string[] }
   | { type: "file.list"; directory: string; query?: string }
-  | { type: "file.read"; path: string }
-  | { type: "shell.open"; sessionID: string; cwd?: string; cols?: number; rows?: number }
+  /* One folder level of a project for the @ menu; `sub` is relative to `directory`, empty for its root. */
+  /* `all`: the files tab's tree, which shows dot entries and skips only MiMo's ignored folders. */
+  | { type: "file.listDir"; directory: string; sub?: string; all?: boolean }
+  /*
+   * Files under `sub` whose path holds the query, for the @ menu's search.
+   * `nameOnly`: the files tab's search - the same breadth-first walk over 4000
+   * entries to depth 16, scored on the whole relative path, best 50 returned.
+   */
+  | { type: "file.search"; directory: string; query: string; sub?: string; limit?: number; nameOnly?: boolean }
+  /* Where the files tab browses with no project: the default project location. */
+  | { type: "file.defaultDir" }
+  /* Carries on the conversation's interrupted last turn, with no new message from the user. */
+  | { type: "session.resume"; sessionID: string }
+  /*
+   * `preview`: the files tab's reading, as MiMo's readFileText has it - text over
+   * 512 KiB or holding a NUL byte is refused, a video is named as one, and media
+   * carries no bytes because the tab plays it from a local address.
+   */
+  | { type: "file.read"; root: string; rel: string; preview?: boolean }
+  /* A text file saved from the right panel's files tab: `rel` inside `root`, which has to be a folder the app works in. */
+  | { type: "file.write"; root: string; rel: string; content: string }
+  /*
+   * A conversation's shells work in its folder. The home screen's bottom panel
+   * has no conversation yet, so it names the project folder it has picked.
+   */
+  /**
+   * `surface`: which terminal asked - the bottom drawer or the right panel (N11-9).
+   * Each owns its own pty; a shell opened by one is never listed to the other.
+   */
+  | { type: "shell.open"; sessionID?: string; directory?: string; cwd?: string; cols?: number; rows?: number; surface?: ShellSurface }
   | { type: "shell.input"; shellID: string; data: string }
   | { type: "shell.resize"; shellID: string; cols: number; rows: number }
   | { type: "shell.close"; shellID: string }
@@ -1026,14 +2240,31 @@ export type Request =
    * The shells this session already has running, so the drawer can come back
    * to them instead of starting new ones.
    */
-  | { type: "shell.list"; sessionID: string }
+  | { type: "shell.list"; sessionID?: string; directory?: string; surface?: ShellSurface }
   /** Everything a shell has printed so far, to redraw a pane that went away. */
   | { type: "shell.attach"; shellID: string }
   | { type: "workspace.list"; directory: string }
-  | { type: "workspace.create"; directory: string; name: string }
-  | { type: "workspace.remove"; directory: string; target: string }
   | { type: "mcp.list" }
+  /** N11-27: apply a saved MCP change now rather than at the next conversation, when nothing is running. */
+  | { type: "mcp.applyNow" }
   | { type: "mcp.toggle"; name: string }
+  | { type: "mcp.tools"; name: string }
+  /* 授权: the browser sign-in for a remote server that answered 401; resolves when it has finished. */
+  | { type: "mcp.authenticate"; name: string }
+  /** An enabled server the status report does not know yet: connect it now, as MiMo's page registers one. */
+  | { type: "mcp.register"; name: string }
+  | { type: "mcp.importScan" }
+  | { type: "mcp.importApply"; items: { source: McpImportSource; name: string }[] }
+  /* 导入: what other AI apps on this machine hold, and taking the chosen ones in. Read-only towards them. */
+  /**
+   * Saves one MCP server from the settings form. Environment and header rows
+   * named in `keep` that come back blank keep the values already stored.
+   */
+  | { type: "mcp.save"; name: string; entry: McpServerConfig; keep?: { env?: string[]; headers?: string[] } }
+  | { type: "agents.state" }
+  | { type: "agents.ensure" }
+  | { type: "agents.setEnabled"; enabled: boolean }
+  | { type: "agents.delete" }
 
 export type RequestType = Request["type"]
 export type RequestOf<T extends RequestType> = Extract<Request, { type: T }>
@@ -1048,6 +2279,19 @@ export interface FileEntry {
   directory: boolean
 }
 
+/* One row of a folder the @ menu is browsing. */
+export interface DirEntry {
+  name: string
+  type: "dir" | "file"
+}
+
+/* A file the @ menu's search found: `rel` from the project root, `dir` the folder part of it. */
+export interface FileHit {
+  name: string
+  rel: string
+  dir: string
+}
+
 export interface ResponseMap {
   /**
    * `running` names the sessions mid-turn, which a reconnecting client cannot
@@ -1059,8 +2303,47 @@ export interface ResponseMap {
    * opens after the question was asked, has no other way to learn about it -
    * and until it is answered the turn cannot move.
    */
-  "session.list": { sessions: SessionInfo[]; running: string[]; permissions: PermissionRequest[] }
+  "session.list": {
+    sessions: SessionInfo[]
+    running: string[]
+    /** Sessions being summarised, so a window that reconnects mid-summary is right. */
+    compacting: string[]
+    permissions: PermissionRequest[]
+    /** session chat: the messages in flight, for a window that was not listening when they started. */
+    chatLinks: Record<string, ChatLink[]>
+    /** automation: the scheduled tasks, replayed for the same reason the two above are. */
+    automations: AutomationTask[]
+    /**
+     * The turns waiting between attempts, by conversation (N11-17).
+     *
+     * The retry lives only on the copy published with `message.updated`, so a
+     * window that reloaded - or a replacement window - read back a message with
+     * no parts, no finish, no error and no retry, and drew nothing at all for
+     * the whole turn while the sidebar span. This is the same replay the
+     * permissions get, for the same reason.
+     */
+    retries: Record<string, { messageID: string; attempt: number; message: string; next: number; kind?: string; max?: number }>
+  }
+  /**
+   * One page, grouped by conversation. `nextCursor` is absent on the last page;
+   * `facets` counts every file the search matches, whatever the tab; `building`
+   * says the store is still being filled, so the answer may be missing files.
+   */
+  "artifact.list": { artifacts: SessionArtifacts[]; nextCursor?: string; facets?: ArtifactFacets; building?: boolean }
+  /** The document and the name to suggest for it; the window puts up the save dialog. */
+  /**
+   * The conversation that was read back, or why the file was not one.
+   *
+   * A reason rather than a thrown error: every one of them is something the
+   * reader can act on - the wrong file was picked, it is damaged, or it was
+   * written by a newer build - and the window has its own sentence for each.
+   */
   "session.create": { session: SessionInfo }
+  "project.createBlank": { directory: string }
+  /* `existed` is true when the folder was already listed. */
+  "project.add": { config: AppConfig; existed: boolean }
+  "project.remove": { config: AppConfig }
+  "search.messages": { hits: MessageHit[] }
   "session.get": { session: SessionInfo; messages: Message[] }
   "session.systemPrompt": { prompt: string }
   /**
@@ -1070,30 +2353,66 @@ export interface ResponseMap {
    */
   "session.revert": { session: SessionInfo; files: number; history: HistoryDepth }
   "session.agent": { session: SessionInfo }
+  "session.goalMode": { session: SessionInfo }
+  "session.goal": { session: SessionInfo }
+  "session.access": { session: SessionInfo }
+  "session.reviewRestricted": { session: SessionInfo }
   "session.delete": Record<string, never>
   "session.compact": { session: SessionInfo }
   "session.undo": { files: number; history: HistoryDepth }
   "session.redo": { files: number; history: HistoryDepth }
+  "session.revertTurn": TurnRevertResult
+  "session.watch": Record<string, never>
   "session.history": { history: HistoryDepth }
   "session.archive": { session: SessionInfo }
   "session.rename": { session: SessionInfo }
+  "session.move": { session: SessionInfo }
+  "session.moveOut": { session: SessionInfo }
   "session.fork": { session: SessionInfo }
   "session.model": { session: SessionInfo }
-  "session.effort": { session: SessionInfo }
+  "session.smart": { session: SessionInfo }
   "session.prompt": { messageID: string }
   "session.abort": Record<string, never>
+  "session.subtask": { messageID: string }
   "permission.respond": Record<string, never>
   "question.list": { questions: QuestionRequest[] }
   "question.reply": Record<string, never>
-  "question.reject": Record<string, never>
   "command.list": { commands: CommandInfo[] }
-  "config.get": { config: AppConfig }
+  /* `files` are the existing files the prompt names with `@`: `name` as written, `path` absolute. */
+  "command.expand": { prompt: string; files: { name: string; path: string }[] }
+  "command.shell": { text: string }
+  "skill.list": { skills: SkillSummary[] }
+  "skill.content": { path: string; content: string; truncated: boolean }
+  "skill.uninstall": { ok: true }
+  /**
+   * `unreadable` when the stored config would not parse and the app opened on
+   * the defaults, with where the damaged file was kept; `fromNewerVersion`
+   * when it was written by a later build and this one will not write over it.
+   * `credentialsUnreadable` when credentials.json was there but could not be
+   * read (or decrypted) and the app started without the keys in it;
+   * `credentialsPlaintext` when keys are saved unencrypted because the system
+   * has no secure storage.
+   */
+  "config.get": {
+    config: AppConfig
+    unreadable?: { problem: string; evidence?: string }
+    fromNewerVersion?: boolean
+    credentialsUnreadable?: { problem: string; evidence?: string }
+    credentialsPlaintext?: boolean
+  }
+  /** Each problem is an i18n code and the values its sentence fills in, as a coded error carries them. */
+  "storage.problems": { problems: { code: string; params?: Record<string, string | number> }[] }
   "config.set": { config: AppConfig }
   "provider.list": { providers: ProviderStatus[] }
   "provider.auth": { providers: ProviderStatus[]; models: number }
   "provider.discover": { providers: ProviderStatus[]; count: number }
   "provider.addCustom": { providers: ProviderStatus[] }
   "provider.removeCustom": { providers: ProviderStatus[] }
+  "provider.removeCustomModel": { providers: ProviderStatus[] }
+  "provider.updateCustom": { providers: ProviderStatus[] }
+  /** The copy's id. */
+  "provider.copyCustom": { providers: ProviderStatus[]; id: string }
+  "provider.probe": { ok: boolean; models: string[]; reason?: "http" | "json" | "timeout" | "network"; status?: number; message?: string }
   /**
    * Where to send the user, plus the short code to type when the flow is the
    * device kind. Either way the outcome arrives later as an auth event.
@@ -1103,25 +2422,93 @@ export interface ResponseMap {
   "auth.signOut": { providers: ProviderStatus[] }
   /** Facts about a session's directory; absent fields are simply unknown. */
   "workspace.info": { exists: boolean; branch?: string; modified?: number }
-  /** Everything is gone; the renderer reloads into onboarding. */
-  "app.reset": { config: AppConfig; providers: ProviderStatus[] }
   "git.status": GitStatus
-  "git.init": GitStatus
+  "git.branches": BranchState
+  "git.checkout": CheckoutResult
   "git.diff": { patch: string }
-  "git.revert": GitStatus
+  /* `repo` false means the project is not in a repository and there is nothing to compare with. */
+  "git.diffFiles": { repo: boolean; files: { path: string; patch: string }[] }
+  "git.summary": GitSummary
+  "git.commitState": CommitState
+  "git.commit": CommitResult
+  "git.push": PushResult
+  "git.pullRequest": PullRequestState
+  "git.repoRoots": { roots: Record<string, string>; missing: string[] }
+  "git.commitMessage": { message: string; generated: boolean }
   "file.list": { files: FileEntry[] }
-  "file.read": { path: string; content: string; truncated: boolean }
-  "shell.open": { shellID: string }
+  /* Folders first, then files, each by name; dot entries and the ignored folders left out. */
+  "file.listDir": { entries: DirEntry[] }
+  /* `truncated` when more matched than `limit` allowed. */
+  "file.search": { entries: FileHit[]; truncated: boolean }
+  "file.defaultDir": { directory: string }
+  /* The user message whose turn is being carried on. */
+  "session.resume": { messageID: string }
+  /**
+   * One file, ready to show.
+   *
+   * `kind` decides which of the four the reader gets, the way opencode splits
+   * a preview: text carries `content`, an image or a sound carries `mime` and
+   * `data`, and a binary carries neither - there is nothing to show it as, and
+   * reading it would only spend the memory to say so.
+   *
+   * `data` is bare base64, not a data URL, because that is what an attachment
+   * already is on this side and the one place that renders one prefixes it
+   * itself.
+   */
+  "file.read": {
+    path: string
+    kind: "text" | "image" | "audio" | "pdf" | "binary"
+    content: string
+    truncated: boolean
+    mime?: string
+    data?: string
+    /* A preview read of text past 512 KiB: nothing is carried, MiMo's toobig. */
+    tooBig?: boolean
+    /* A preview read of a video, which the files tab plays from disk; its kind stays binary for everyone else. */
+    video?: boolean
+  }
+  "file.write": { path: string }
+  "shell.open": { shellID: string; cwd: string }
   "shell.input": Record<string, never>
   "shell.resize": Record<string, never>
   "shell.close": Record<string, never>
   "shell.list": { shells: ShellSummary[] }
-  "shell.attach": { data: string; alive: boolean }
+  "shell.attach": { data: string; alive: boolean; used: boolean }
+  "app.paths": { paths: AppPaths }
+  "usage.summary": { summary: UsageSummary }
+  "local.servers": { servers: LocalServer[] }
+  /* `edit` is 智能编辑's validated answer when a draft was sent; without it the window types `text` in. */
+  "voice.transcribe": {
+    text: string
+    heard: string
+    edit?: VoiceEdit
+    /**
+     * 智能编辑 was asked for and did not answer, so what came back is the plain
+     * transcript. The window says so once: the mode silently becoming 快速输入
+     * is the thing that used to leave a misconfigured setup looking fine.
+     */
+    editFailed?: VoiceEditFailure
+  }
+  "voice.precheck": { ok: true } | { ok: false; reason: VoicePrecheckFailure }
   "workspace.list": { worktrees: Worktree[] }
-  "workspace.create": { directory: string; branch: string }
-  "workspace.remove": Record<string, never>
-  "mcp.list": { servers: McpServerState[] }
+  /** `unapplied`: a saved change is still waiting for the next conversation (N11-27). */
+  "mcp.list": { servers: McpServerState[]; unapplied?: boolean }
+  "mcp.applyNow": { outcome: "done" | "busy" | "failed" | "nothing"; servers: McpServerState[] }
   "mcp.toggle": { servers: McpServerState[] }
+  /** A connected server's tools, or why there are none to list (a status name or the server's error). */
+  "mcp.tools": { tools?: McpToolInfo[]; error?: string }
+  "mcp.authenticate": { servers: McpServerState[] }
+  "mcp.register": { servers: McpServerState[] }
+  "mcp.importScan": { items: McpImportItem[] }
+  /** The names actually added. */
+  "mcp.importApply": { imported: string[] }
+  /** 导入: counts only - no title, no path, nothing that was written in another app. */
+  "mcp.save": { config: AppConfig }
+  "agents.state": { path: string; state: AgentsFileState }
+  /** Writes a starting file when there is none. */
+  "agents.ensure": { path: string; state: AgentsFileState }
+  "agents.setEnabled": { path: string; state: AgentsFileState }
+  "agents.delete": { path: string; state: AgentsFileState }
 }
 
 // ---------------------------------------------------------------------------
@@ -1132,7 +2519,28 @@ export type ServerEvent =
   | { type: "session.updated"; session: SessionInfo }
   | { type: "session.deleted"; sessionID: string }
   | { type: "session.idle"; sessionID: string }
-  | { type: "session.error"; sessionID: string; error: string }
+  /**
+   * A compaction is running for this session.
+   *
+   * Sent because an automatic one can take minutes on a long
+   * conversation - five, measured on a 230k transcript against a local
+   * model - and the last thing on screen before it starts is the
+   * provider's refusal, in red. Without this the app looks like it gave
+   * up, which is how the first working version of the rescue was read.
+   */
+  | { type: "session.compacting"; sessionID: string; active: boolean }
+  /** `errorCode`, when present, names the sentence the window shows instead of `error`. */
+  | { type: "session.error"; sessionID: string; error: string; errorCode?: string; errorParams?: Record<string, string | number> }
+  /**
+   * Something happened in a conversation that the reader is told about once,
+   * and that is not a failure of the turn: MiMo's `kind: "notice"` harness
+   * event, which its window shows and then forgets.
+   *
+   * `code` names the sentence in the window's own tables rather than carrying
+   * it, so the notice is in the reader's language and no model-facing wording
+   * reaches the screen.
+   */
+  | { type: "session.notice"; sessionID: string; code: string }
   | { type: "message.updated"; message: Message }
   /**
    * Messages have left the transcript for good.
@@ -1144,10 +2552,46 @@ export type ServerEvent =
    * transcript a window is holding is longer than the one on disk.
    */
   | { type: "session.reverted"; sessionID: string }
-  /** Incremental append to a part already announced via message.updated. */
-  | { type: "message.delta"; sessionID: string; messageID: string; partID: string; text: string }
+  /** automation: a scheduled task's run started in a conversation, or its turn ended and whether the user is told. */
+  | {
+      type: "automation.run"
+      sessionID: string
+      phase: "started" | "finished"
+      notify?: boolean
+      /** What became of the run, so the notification can say a failure is a failure (N11-3). */
+      outcome?: "succeeded" | "failed" | "skipped"
+    }
+  /** session chat: every conversation's messages in flight, whole, whenever one changes. */
+  | { type: "session.chatLinks"; links: Record<string, ChatLink[]> }
+  /** automation: the scheduled tasks as the side column's tooltips need them, whenever one of them changes. */
+  | { type: "automation.tasks"; tasks: AutomationTask[] }
+  /**
+   * Incremental append to a part already announced.
+   *
+   * `at` is how long the part was before this append (N11-32). A window
+   * that connected mid-step holds the copy from disk, which is up to 500ms
+   * behind, so appending blindly left a hole in the middle of a paragraph
+   * that could sit there for minutes. A length that does not line up means
+   * something was missed, and the transcript is read again instead.
+   */
+  | { type: "message.delta"; sessionID: string; messageID: string; partID: string; text: string; at: number }
+  /**
+   * One part of a reply, new or changed (N11-4).
+   *
+   * A tool call changes six or seven times between being announced and
+   * finishing, and a talkative bash command reports ten times a second.
+   * Each of those used to clone and broadcast the whole assistant message,
+   * so a turn with K tool calls cost O(K) broadcasts of O(K) bytes. The
+   * part alone is what changed, and it is what is sent.
+   *
+   * A window that does not have the message yet ignores this; the message
+   * itself is always announced with `message.updated` first.
+   */
+  | { type: "message.part.updated"; sessionID: string; messageID: string; part: AssistantPart }
+  /** A git write for this folder is queued behind another one on the same repository, or has stopped waiting (N11-14). */
+  | { type: "git.waiting"; directory: string; waiting: boolean }
   | { type: "permission.requested"; request: PermissionRequest }
-  | { type: "permission.resolved"; requestID: string }
+  | { type: "permission.resolved"; requestID: string; decided?: PermissionDecision; reason?: string }
   /**
    * A question tool call is waiting on the reader.
    *
@@ -1168,9 +2612,15 @@ export type ServerEvent =
   | { type: "shell.exit"; shellID: string; code: number | null }
   | { type: "config.updated"; config: AppConfig }
   | { type: "mcp.status"; servers: McpServerState[] }
+  /** skills: a SKILL.md whose frontmatter could not be read, reported once per file. */
+  | { type: "skill.problem"; path: string; message: string }
   /** A subscription login finished in the browser, minutes after it began. */
   | { type: "auth.completed"; provider: string; providers: ProviderStatus[] }
+  /** What the providers offer changed without anyone asking - a newer models.dev catalog arrived. */
+  | { type: "providers.updated"; providers: ProviderStatus[] }
   | { type: "auth.failed"; provider: string; message: string }
+  /** A subscription's sign-in was refused on renewal and has been cleared; the window asks for a new one. */
+  | { type: "auth.expired"; provider: string; name: string; providers: ProviderStatus[] }
 
 // ---------------------------------------------------------------------------
 // Envelopes
@@ -1184,7 +2634,16 @@ export interface RequestEnvelope {
 
 export type ResponseEnvelope =
   | { kind: "response"; id: string; ok: true; data: unknown }
-  | { kind: "response"; id: string; ok: false; error: string }
+  /**
+   * `errorCode` names a sentence in the window's own tables.
+   *
+   * A failure raised in the backend reaches the window as `error` alone, so a
+   * sentence written at the throw site is the sentence a reader of any
+   * language sees. MiMo answers these from a central table of codes instead;
+   * where this app can name one, the window phrases it and keeps `error` as
+   * the detail.
+   */
+  | { kind: "response"; id: string; ok: false; error: string; errorCode?: string; errorParams?: Record<string, string | number> }
 
 export interface EventEnvelope {
   kind: "event"

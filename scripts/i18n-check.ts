@@ -134,16 +134,19 @@ for (const family of FAMILIES) {
 /*
  * Permission row titles, and the two that must stay absent.
  *
- * Nine of the eleven buckets map onto a bucket the reference names, so those
- * nine rows carry its word instead of a lowercase identifier. `write` and `mcp`
- * have no counterpart at all - the reference judges every file change as one
- * `edit` and has no notion of an MCP server - so there is no string to adopt
- * for them, and inventing one would look harmless and be exactly the thing this
- * project does not do. Both halves are asserted: a missing title shows a raw id
- * where every other row shows a word, and a title appearing for `write` or
- * `mcp` is a hand-written string that came from nowhere.
+ * Eight of the nine buckets map onto a bucket the reference names, so those
+ * eight rows carry its word instead of a lowercase identifier. `mcp` has no
+ * counterpart at all - the reference has no notion of an MCP server - so there
+ * is no string to adopt for it, and inventing one would look harmless and be
+ * exactly the thing this project does not do. Both halves are asserted: a
+ * missing title shows a raw id where every other row shows a word, and a title
+ * appearing for `mcp` is a hand-written string that came from nowhere.
+ *
+ * `write` is checked alongside it, and for the same reason it always was: the
+ * reference judges every file change as one `edit`, and since R16-C6 so does
+ * this app, so no row is drawn for it and no title may appear.
  */
-const TITLED_BUCKETS = ["read", "edit", "glob", "grep", "list", "bash", "todowrite", "webfetch", "outside"]
+const TITLED_BUCKETS = ["read", "edit", "glob", "grep", "list", "bash", "webfetch", "outside"]
 const UNTITLED_BUCKETS = ["write", "mcp"]
 
 for (const bucket of TITLED_BUCKETS) {
@@ -279,6 +282,14 @@ for (const [name, entries] of Object.entries(tables)) {
   if (absent.length) problems.push(`${name}: ${absent.length} key(s) missing`)
 }
 
+// t() fills single-brace {name} only. A double-brace value copied from an
+// i18next table renders its braces, so "Retrying in {{time}}" shows as
+// "Retrying in {12s}".
+for (const [name, entries] of Object.entries(tables)) {
+  const doubled = Object.keys(entries).filter((key) => entries[key].includes("{{"))
+  if (doubled.length) problems.push(`${name}: ${doubled.length} value(s) use {{...}}, which t() never fills: ${doubled.slice(0, 6).join(", ")}`)
+}
+
 console.log(`keys used by the interface: ${used.size}`)
 console.log(`keys defined in English:    ${Object.keys(english).length}`)
 for (const name of names) {
@@ -296,6 +307,12 @@ for (const name of names) {
  * a replica - so a disagreement is a defect worth failing on. Placeholders are
  * normalised because the two apps spell them differently ({{x}} against {name})
  * while meaning the same thing.
+ *
+ * A key the 2.0 design deliberately rewrites is taken out of the fixture rather
+ * than excused in code here: 2.0 lays its interface out from Xiaomi MiMo, so
+ * for those strings OpenCode is no longer the authority. Everything still in
+ * the fixture is compared as strictly as before, and removing a key is a
+ * visible edit to a checked-in file rather than a condition in this script.
  */
 const fixture = path.join(root, "scripts/fixtures/reference-strings.json")
 if (fixture && fs.existsSync(fixture)) {
@@ -373,39 +390,34 @@ for (const file of sourceFiles(path.join(root, "src"))) {
  *
  * The default is deliberately empty so the window can ask the machine, and that
  * path runs exactly once per profile - on a machine which, here, answers
- * Chinese either way. So the mapping is exercised directly instead.
+ * Chinese either way. So the mapping is exercised directly instead, through
+ * the window's own entry point.
  */
-const CASES: [string[], string][] = [
-  [["de-AT", "en-US"], "de"],
-  [["fr-CA"], "fr"],
-  [["pt-PT"], "pt-BR"],
-  [["zh-TW", "zh-CN"], "zh-TW"],
-  [["zh-CN"], "zh-CN"],
-  [["ar-EG"], "ar"],
-  [["en-GB"], "en"],
-  [["ko"], "ko"],
-  [["is-IS"], "en"],
-  [["is-IS", "nb-NO"], "nb"],
-  [[], "en"],
+const CASES: [string, string][] = [
+  ["de-AT", "de"],
+  ["fr-CA", "fr"],
+  ["pt-PT", "pt-BR"],
+  ["zh-TW", "zh-TW"],
+  ["zh-HK", "zh-TW"],
+  ["zh-MO", "zh-TW"],
+  ["zh-Hant-SG", "zh-TW"],
+  ["zh_Hant", "zh-TW"],
+  ["zh-CN", "zh-CN"],
+  ["zh-SG", "zh-CN"],
+  ["ar-EG", "ar"],
+  ["en-GB", "en"],
+  ["ko", "ko"],
+  ["no", "nb"],
+  ["nn-NO", "nb"],
+  ["nb-NO", "nb"],
+  ["is-IS", "en"],
+  ["", "en"],
 ]
 
-const previousNavigator = (globalThis as Record<string, unknown>).navigator
-for (const [languages, expected] of CASES) {
-  Object.defineProperty(globalThis, "navigator", {
-    value: { languages, language: languages[0] ?? "" },
-    configurable: true,
-    writable: true,
-  })
-  const { detectLanguage } = await import("../src/renderer/src/lib/i18n")
-  const got = detectLanguage()
-  if (got !== expected) {
-    problems.push(`a machine set to [${languages.join(", ")}] would start in ${got}, not ${expected}`)
-  }
-}
-if (previousNavigator === undefined) {
-  delete (globalThis as Record<string, unknown>).navigator
-} else {
-  Object.defineProperty(globalThis, "navigator", { value: previousNavigator, configurable: true, writable: true })
+const { detectLanguage } = await import("../src/renderer/src/lib/i18n")
+for (const [tag, expected] of CASES) {
+  const got = detectLanguage(tag)
+  if (got !== expected) problems.push(`a machine set to "${tag}" would start in ${got}, not ${expected}`)
 }
 console.log(`first-run language cases: ${CASES.length}`)
 

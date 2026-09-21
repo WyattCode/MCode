@@ -1,5 +1,6 @@
 import fs from "node:fs/promises"
 import path from "node:path"
+import { CodedError, diskErrorCode } from "@shared/errors"
 
 /**
  * Flat JSON document store rooted at the app data directory.
@@ -12,27 +13,237 @@ import path from "node:path"
 let ticket = 0
 
 /**
+ * Where a path stops being safe to lengthen.
+ *
+ * Windows refuses a path over 260 characters unless the process opts in, and
+ * the temp file is necessarily longer than the document it stands in for. The
+ * reference meets the same wall and answers it by shortening the name
+ * (`truncate`, basename to 128) rather than by failing.
+ */
+const PATH_LIMIT = 240
+
+/**
+ * The temp file one write uses.
+ *
+ * Appending is the readable form and is used wherever it fits. Where it would
+ * not, the suffix replaces the tail of the name instead, so the temp path is
+ * never longer than the document's own - which is what made a save near
+ * MAX_PATH fail for a file that fitted perfectly well itself. The suffix
+ * carries the pid and a counter that only ever goes up, so no two writes in
+ * flight - in this process or beside it - can land on one name.
+ */
+export function tempNameFor(target: string): string {
+  const suffix = `.${process.pid}.${++ticket}.tmp`
+  if (target.length + suffix.length <= PATH_LIMIT) return target + suffix
+  const base = path.basename(target)
+  const room = Math.max(1, base.length - suffix.length)
+  return path.join(path.dirname(target), base.slice(0, room) + suffix)
+}
+
+/**
  * Writes a file by replacing it, never by truncating it.
  *
  * A direct write is not a small risk taken for simplicity: it is a window in
  * which the file on disk is neither the old contents nor the new ones, and a
  * crash inside that window loses both.
+ *
+ * The bytes are flushed before the rename, as the reference's full writer
+ * flushes them. Renaming is atomic in the ordering sense and not in the
+ * durable one: without this, power lost shortly after a save can leave some
+ * filesystems showing the new name over no contents at all, which turns "the
+ * old version survived" into "neither version did".
+ *
+ * `verify`, when given, reads the written temp file back before it replaces
+ * anything, and a throw from it leaves the target as it was - for a write
+ * that must be proved readable before the old version goes (L12-3). `data`
+ * may be bytes, for a file that is not text (R18-A1).
  */
-export async function writeAtomic(target: string, data: string, mode?: number): Promise<void> {
+export async function writeAtomic(target: string, data: string | Uint8Array, mode?: number, durable = true, verify?: (written: string) => Promise<void>): Promise<void> {
   await fs.mkdir(path.dirname(target), { recursive: true })
-  const temp = `${target}.${process.pid}.${++ticket}.tmp`
-  await fs.writeFile(temp, data, mode === undefined ? "utf8" : { encoding: "utf8", mode })
+  const temp = tempNameFor(target)
+  let written = false
   try {
-    await fs.rename(temp, target)
+    const handle = await fs.open(temp, "w", mode)
+    try {
+      await handle.writeFile(data, "utf8")
+      written = true
+      /*
+       * Skipped only for the half-second saves of a reply still streaming
+       * (N11-29): N turns in flight meant 2N fsyncs a second of documents up
+       * to a quarter of a megabyte, and each of them is overwritten half a
+       * second later. The rename is still atomic, so a crash can only cost the
+       * last half-second of a reply that was never finished anyway; the save
+       * at the end of the step is durable as ever.
+       */
+      if (durable) await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    if (verify) await verify(temp)
+    await renameOver(temp, target)
   } catch (err) {
-    // Leaving a stray temp behind would be worse than the failure itself.
-    await fs.rm(temp, { force: true }).catch(() => {})
+    /*
+     * Cleanup belongs here rather than on the rename alone.
+     *
+     * A full disk throws inside the write, which used to be outside the try -
+     * so the one failure that leaves temp files behind was the one whose
+     * cleanup never ran, and they piled up in the storage folder.
+     */
+    if (written || (err as NodeJS.ErrnoException)?.code !== "ENOENT") await fs.rm(temp, { force: true }).catch(() => {})
+    const code = diskErrorCode(err)
+    if (code) throw new CodedError(`${target} could not be written: ${(err as Error).message}`, code)
     throw err
   }
 }
 
+/** Lock errors Windows returns while another handle - a reader, a virus scanner - still has the target open. */
+const TRANSIENT_LOCK = new Set(["EPERM", "EACCES", "EBUSY"])
+
+/**
+ * A rename that waits out a moment of sharing.
+ *
+ * Windows refuses to replace a file some other handle has open, and says so
+ * with EPERM - even when that handle is this process reading the same session
+ * a moment earlier. A turn failed on exactly this when the conversation's
+ * record was saved while a list of sessions was being read. The lock lasts
+ * milliseconds, so the rename is tried again a few times over about a second;
+ * anything else, or a lock that outlasts that, still fails.
+ */
+async function renameOver(temp: string, target: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await fs.rename(temp, target)
+      return
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      if (process.platform !== "win32" || !code || !TRANSIENT_LOCK.has(code) || attempt >= 8) throw err
+      await new Promise((resolve) => setTimeout(resolve, 10 * 2 ** Math.min(attempt, 5)))
+    }
+  }
+}
+
+/**
+ * Moves a file that will not parse out of the way, keeping it as evidence.
+ *
+ * Nothing in this app may write over a document it could not read. The contents
+ * are the user's only copy of whatever was in it - scheduled tasks, settings, a
+ * conversation - and an empty document written on top makes a recoverable
+ * truncation into a permanent loss. The reference blocks the same way, holding
+ * the raw text aside rather than starting empty.
+ *
+ * @returns where the file went, or undefined if it could not be moved, in which
+ *   case the caller must refuse to write rather than carry on.
+ */
+export async function quarantine(target: string): Promise<string | undefined> {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-")
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const aside = attempt === 0 ? `${target}.corrupt-${stamp}` : `${target}.corrupt-${stamp}-${attempt}`
+    try {
+      // Refuses rather than replacing: a second damaged copy must not erase the first.
+      await fs.rename(target, aside)
+      return aside
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      if (code === "ENOENT") return undefined
+      if (code !== "EEXIST" && code !== "EPERM" && code !== "EACCES" && code !== "EBUSY") return undefined
+      const exists = await fs
+        .access(aside)
+        .then(() => true)
+        .catch(() => false)
+      if (!exists) return undefined
+    }
+  }
+  return undefined
+}
+
+/** How long a quarantined copy is kept once a newer one of the same document exists. */
+export const QUARANTINE_KEEP_DAYS = 30
+
+/**
+ * A copy `quarantine` (or the SQLite stores' own) made: the document's name,
+ * `.corrupt-`, the moment as an ISO time with `:` and `.` made `-`, a counter
+ * when that name was taken, and a journal's suffix for a database's.
+ */
+const QUARANTINED = /^(.+)\.corrupt-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)(-\d+)?(-wal|-shm|-journal)?$/
+
+/**
+ * Removes old quarantined copies from a folder, once at start-up (L12-15).
+ *
+ * Nothing ever deleted a `.corrupt-*` file, so a document that kept being
+ * damaged - or a store that kept being moved aside - piled copies up for the
+ * life of the profile. A copy goes once it is more than 30 days old, by the
+ * time in its own name; the newest copy of each document is always kept,
+ * however old, since it may be the only evidence left of what happened.
+ * Journal files go with the copy they belong to.
+ *
+ * @returns how many files were removed.
+ */
+export async function pruneQuarantined(directory: string, options: { recursive?: boolean; now?: number } = {}): Promise<number> {
+  const now = options.now ?? Date.now()
+  let removed = 0
+  const sweep = async (folder: string): Promise<void> => {
+    const entries = await fs.readdir(folder, { withFileTypes: true }).catch(() => [])
+    const copies = new Map<string, Map<string, { at: number; files: string[] }>>()
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (options.recursive) await sweep(path.join(folder, entry.name))
+        continue
+      }
+      const match = QUARANTINED.exec(entry.name)
+      if (!match) continue
+      const [, document, stamp, attempt = ""] = match
+      const at = Date.parse(stamp!.replace(/^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/, "$1:$2:$3.$4Z"))
+      if (!Number.isFinite(at)) continue
+      const byCopy = copies.get(document!) ?? new Map<string, { at: number; files: string[] }>()
+      copies.set(document!, byCopy)
+      const copy = byCopy.get(stamp + attempt) ?? { at, files: [] }
+      copy.files.push(entry.name)
+      byCopy.set(stamp + attempt, copy)
+    }
+    for (const byCopy of copies.values()) {
+      const newest = [...byCopy.entries()].sort((a, b) => b[1].at - a[1].at || b[0].localeCompare(a[0]))[0]?.[0]
+      for (const [id, copy] of byCopy) {
+        if (id === newest || now - copy.at <= QUARANTINE_KEEP_DAYS * 24 * 60 * 60 * 1000) continue
+        for (const name of copy.files) await fs.rm(path.join(folder, name), { force: true }).then(() => removed++, () => undefined)
+      }
+    }
+  }
+  await sweep(directory)
+  return removed
+}
+
+/** A temp file tempNameFor made: `.<pid>.<counter>.tmp` at the end of the name. */
+export const TEMP_NAME = /\.\d+\.\d+\.tmp$/
+
 export class Storage {
   constructor(private readonly root: string) {}
+
+  /**
+   * A document, or the reason it could not be read.
+   *
+   * `read` throws, which is right for a caller that cannot go on without the
+   * document. A caller that can - the settings, the list of conversations -
+   * needs to tell "there is no such file" from "there is one and it is damaged",
+   * because those call for opposite answers: the first is a fresh install, the
+   * second must never be written over.
+   */
+  async readOrCorrupt<T>(key: string): Promise<{ value?: T; corrupt?: string }> {
+    try {
+      return { value: await this.read<T>(key) }
+    } catch (err) {
+      return { corrupt: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  /** Where an unreadable document was moved to, so it is kept rather than replaced. */
+  quarantine(key: string): Promise<string | undefined> {
+    return quarantine(this.file(key))
+  }
+
+  /** Where everything this app stores actually sits, for the page that says so. */
+  get directory(): string {
+    return this.root
+  }
 
   /**
    * The last write queued for each key.
@@ -45,6 +256,11 @@ export class Storage {
 
   private file(key: string): string {
     return path.join(this.root, ...key.split("/")) + ".json"
+  }
+
+  /** Where a key's document sits on disk, for something that has to watch it. */
+  fileOf(key: string): string {
+    return this.file(key)
   }
 
   /**
@@ -80,10 +296,10 @@ export class Storage {
     }
   }
 
-  async write(key: string, value: unknown): Promise<void> {
+  async write(key: string, value: unknown, options: { durable?: boolean } = {}): Promise<void> {
     // Serialised per key, so a later save cannot be overtaken by an earlier one.
     const previous = this.queued.get(key) ?? Promise.resolve()
-    const next = previous.catch(() => {}).then(() => this.writeNow(key, value))
+    const next = previous.catch(() => {}).then(() => this.writeNow(key, value, options.durable ?? true))
     this.queued.set(key, next)
     try {
       await next
@@ -93,8 +309,85 @@ export class Storage {
     }
   }
 
-  private async writeNow(key: string, value: unknown): Promise<void> {
-    await writeAtomic(this.file(key), JSON.stringify(value, null, 2))
+  /**
+   * Settles every write queued so far, and any queued while waiting (L12-6).
+   *
+   * For quit: a write is atomic, so one cut off leaves the old version, but a
+   * setting or an approval made in the last moment before quit was lost with
+   * it. A failed write is not this caller's to report; its own caller was told.
+   */
+  async drain(): Promise<void> {
+    const awaited = new Set<Promise<void>>()
+    for (;;) {
+      const pending = [...this.queued.values()].filter((write) => !awaited.has(write))
+      if (!pending.length) return
+      for (const write of pending) awaited.add(write)
+      await Promise.allSettled(pending)
+    }
+  }
+
+  /** A document's text as it sits on disk, or undefined when there is none. */
+  async readText(key: string): Promise<string | undefined> {
+    try {
+      return await fs.readFile(this.file(key), "utf8")
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined
+      throw err
+    }
+  }
+
+  /**
+   * Writes whatever `render` makes of the file as it stands at the moment of
+   * writing, in this key's queue - for a document edited in place rather than
+   * replaced, whose current text has to be read after any earlier save landed.
+   */
+  async writeText(key: string, render: (current: string | undefined) => string): Promise<void> {
+    const previous = this.queued.get(key) ?? Promise.resolve()
+    const next = previous
+      .catch(() => {})
+      .then(async () => writeAtomic(this.file(key), render(await this.readText(key)), 0o600))
+    this.queued.set(key, next)
+    try {
+      await next
+    } finally {
+      if (this.queued.get(key) === next) this.queued.delete(key)
+    }
+  }
+
+  private async writeNow(key: string, value: unknown, durable: boolean): Promise<void> {
+    /*
+     * Owner-only, as the credential file is: config.json holds MCP bearer
+     * headers and gateway keys, mcp-auth.json the MCP sign-ins, and the rest
+     * is the user's conversations. (On Windows the mode only sets the
+     * read-only bit; there the profile folder's own ACL is what keeps others out.)
+     */
+    await writeAtomic(this.file(key), JSON.stringify(value, null, 2), 0o600, durable)
+  }
+
+  /**
+   * Temp files a previous run of the app left behind (N11-30).
+   *
+   * A write killed between creating its temp file and renaming it over the
+   * document leaves `<name>.<pid>.<n>.tmp` in place, and nothing ever looked
+   * for them: this run's own failed writes clean up after themselves, the
+   * previous process's cannot. Only names carrying another process's id are
+   * taken, so a write in flight right now is never touched.
+   */
+  async sweepTemps(): Promise<number> {
+    let removed = 0
+    const own = `.${process.pid}.`
+    const walk = async (directory: string): Promise<void> => {
+      const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => [])
+      for (const entry of entries) {
+        const full = path.join(directory, entry.name)
+        if (entry.isDirectory()) await walk(full)
+        else if (TEMP_NAME.test(entry.name) && !entry.name.includes(own)) {
+          await fs.rm(full, { force: true }).then(() => removed++, () => undefined)
+        }
+      }
+    }
+    await walk(this.root)
+    return removed
   }
 
   async remove(key: string): Promise<void> {

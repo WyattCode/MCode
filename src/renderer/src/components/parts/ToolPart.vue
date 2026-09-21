@@ -1,366 +1,265 @@
 <script setup lang="ts">
 import { computed, ref } from "vue"
-import type { QuestionPrompt, ToolPart } from "@shared/protocol"
+import type { ToolPart } from "@shared/protocol"
+import { parseUnifiedDiff } from "@shared/unified-diff"
+import { redactText, redactValue } from "@shared/display-redact"
 import DiffView from "./DiffView.vue"
-import TextShimmer from "./TextShimmer.vue"
-import QuestionForm from "./QuestionForm.vue"
+import StepShots from "./StepShots.vue"
+import StepIcon from "./StepIcon.vue"
+import StepCollapse from "./StepCollapse.vue"
+import SubagentActivity from "./SubagentActivity.vue"
+import SubagentAvatar from "./SubagentAvatar.vue"
+import "./steps.css"
 import { t } from "../../lib/i18n"
+import { childFor, isPill } from "../../lib/subagents"
 import { useApp } from "../../stores/app"
-import { useQuestions } from "../../stores/questions"
+import { openStepPath } from "../../lib/open-step-path"
+import { renderMarkdown } from "../../lib/markdown"
+import {
+  OUTPUT_CAP,
+  ROW_TITLE_MAX,
+  bashOf,
+  cleanOutput,
+  isUnifiedDiff,
+  noOutput,
+  opensPath,
+  reducedTitle,
+  stepImages,
+  stepState,
+  stepTitle,
+  stepVerb,
+  titleIsLossy,
+  toolIcon,
+} from "../../lib/tool-meta"
+import { actorAction, actorTarget, launches } from "@shared/subagent"
 
-const props = defineProps<{ part: ToolPart }>()
+/**
+ * One tool call as MiMo's step list draws it.
+ *
+ * An icon, a verb that says where the call is (正在读取 / 已读取 / 读取失败 /
+ * 已拒绝读取 / 未执行：读取), what it was about, and a chevron when there is
+ * something to open. Every row starts closed, failures included: MiMo never
+ * opens one by itself, and a row with nothing behind it cannot be opened.
+ */
+const props = withDefaults(
+  defineProps<{
+    part: ToolPart
+    /** Under a group's summary the row is indented past the summary's icon. */
+    indent?: boolean
+    /** A group of one: the row takes the summary line's spacing and hover. */
+    summary?: boolean
+    titleMax?: number
+  }>(),
+  { indent: false, summary: false, titleMax: ROW_TITLE_MAX },
+)
 
 const app = useApp()
-const questions = useQuestions()
 
-/** Failures and long-running work open themselves; successes stay collapsed. */
-const manual = ref<boolean>()
+/* Closed, as MiMo leaves every row. */
+const open = ref(false)
+/** Only a fold the reader asked for animates. */
+const animate = ref(false)
+
+/*
+ * The call as the row shows it: secrets and personal numbers in its title,
+ * input, output, error and diff masked (beyond MiMo, live as well as after a
+ * reload). Only what is drawn - opening a path uses the part as it is.
+ */
+const shown = computed<ToolPart>(() => {
+  const part = props.part
+  const diff = part.metadata?.diff
+  return {
+    ...part,
+    title: part.title === undefined ? undefined : redactText(part.title),
+    input: redactValue(part.input),
+    output: part.output === undefined ? undefined : redactText(part.output),
+    error: part.error === undefined ? undefined : redactText(part.error),
+    ...(typeof diff === "string" ? { metadata: { ...part.metadata, diff: redactText(diff) } } : {}),
+  }
+})
+
+const state = computed(() => stepState(props.part))
+const verb = computed(() => stepVerb(props.part, state.value))
+const icon = computed(() => toolIcon(props.part.name))
+const bash = computed(() => bashOf(shown.value))
+const title = computed(() => stepTitle(shown.value))
+
+/** A web lookup's row is its verb alone, and it has no output to open. */
+const webLike = computed(() => props.part.name === "webfetch" || props.part.name === "websearch")
+const runs = computed(() => props.part.name === "bash" || props.part.name === "exec_command")
+
+/** The row's own title: a JSON title reduced to its subject, a command to its first line. */
+const shortTitle = computed(() => {
+  const reduced = reducedTitle(title.value)
+  const line = runs.value ? (reduced.split("\n", 1)[0] ?? "") : reduced
+  return line.slice(0, props.titleMax)
+})
+const showTitle = computed(() => Boolean(title.value) && props.part.name !== "exec_command" && !webLike.value)
+
+/** The whole title in its own cell, when the row could not show all of it. */
+const fullTitle = computed(() => {
+  if (bash.value || webLike.value || !title.value) return ""
+  return runs.value || titleIsLossy(title.value, props.titleMax) ? title.value : ""
+})
 
 /** A tool that named its failure gets it said in the user's language. */
 const errorText = computed(() =>
-  props.part.errorCode ? t(props.part.errorCode, props.part.errorParams) : props.part.error,
+  props.part.errorCode ? redactText(t(props.part.errorCode, props.part.errorParams)) : (shown.value.error ?? ""),
 )
-/*
- * Two settings, because reading a shell command and reading an edit are
- * different habits: someone who wants every diff open does not necessarily
- * want every `ls` open beside it. A failure still opens itself either way,
- * and touching the row wins over both.
- */
-const preferOpen = computed(() => {
-  const config = app.config
-  if (props.part.name === "bash") return config?.expandShell === true
-  if (["edit", "write", "patch", "apply_patch"].includes(props.part.name)) return config?.expandEdits === true
-  /*
-   * A question opens itself, whether it is still waiting or already answered.
-   * Waiting, because the form is the whole point and nobody would think to
-   * expand a collapsed row to find it; answered, because that is what the
-   * reference does - its renderer passes `defaultOpen: completed()`.
-   */
-  if (props.part.name === "question") return pending.value !== undefined || answers.value !== undefined
-  return false
+
+const diff = computed(() => {
+  const value = shown.value.metadata?.diff
+  return typeof value === "string" && value ? value : undefined
 })
-
-/**
- * The live question raised by this call, if it is still waiting on an answer.
- *
- * Matched on the call id, which is what the request's `tool` field carries.
- * The reference draws this form above the composer instead; see QuestionForm
- * for why it is here and what it would take to move it.
- */
-const pending = computed(() => questions.forCall(props.part.callID))
-
-/** What the reader chose, once they have - read back from the stored part. */
-const answers = computed(() => {
-  if (props.part.name !== "question") return undefined
-  const stored = props.part.metadata?.answers
-  return Array.isArray(stored) ? (stored as string[][]) : undefined
-})
-
-/** The questions as the model wrote them, for redrawing an answered card. */
-const asked = computed(() => {
-  const raw = props.part.input?.questions
-  return Array.isArray(raw) ? (raw as QuestionPrompt[]) : []
-})
-
-const open = computed({
-  get: () => manual.value ?? (props.part.status === "error" || preferOpen.value),
-  set: (value: boolean) => (manual.value = value),
-})
-
-const diff = computed(() => (props.part.metadata?.diff as string) || undefined)
-const todos = computed(() => (props.part.metadata?.todos as { id: string; content: string; status: string }[]) || undefined)
 
 /*
- * A tool's own name when the app has nothing better to call it.
- *
- * Which is the right answer for an MCP tool: its name comes from whichever
- * server provides it, so no table here could ever hold them all. This used to
- * decide by a list of the nine built-in tools written out here, which is the
- * server's tool registry copied by hand - add a tool there and its card quietly
- * started showing the bare identifier. Asking the table instead cannot drift,
- * because a lookup that finds nothing returns the key it was given.
+ * MiMo's step output: the error for a call that did not succeed, else the
+ * diff, else what the tool printed - and a finished call's "(no output)" is no
+ * output at all, as MiMo's live steps take it.
  */
-const label = computed(() => {
-  const key = `tool.${props.part.name}`
-  const found = t(key)
-  return found === key ? props.part.name : found
+const output = computed(() => {
+  if (state.value === "error" || state.value === "skipped" || state.value === "rejected") return errorText.value
+  const said = diff.value ?? shown.value.output ?? ""
+  return state.value === "completed" && noOutput(said) ? "" : said
 })
+const cleaned = computed(() => cleanOutput(output.value))
+const diffText = computed(() => (isUnifiedDiff(cleaned.value) ? cleaned.value : undefined))
 
-const subject = computed(() => {
-  const part = props.part
-  /*
-   * A question says how many it is asking rather than repeating its own title.
-   * The reference's renderer builds the same line: `ui.question.subtitle.answered`
-   * once the reader has replied, and before that `${count} ${one|other}` from
-   * `ui.common.question.one` / `.other`. Those two keys have not landed in this
-   * app's tables, and inventing "question"/"questions" in eighteen languages is
-   * exactly what this project does not do, so the count stands alone until they
-   * do. See the report for their values, read out of the reference.
-   */
-  if (part.name === "question") {
-    const count = asked.value.length
-    if (!count) return ""
-    if (answers.value?.length) return t("ui.question.subtitle.answered", { count })
-    return String(count)
+/* The pictures the call handed back; a step with any can always be opened, a web lookup included. */
+const hasShots = computed(() => stepImages(props.part.attachments).length > 0)
+
+/* MiMo draws a skill's output as Markdown, in the output box's frame, rather than as monospaced text. */
+const skillHtml = computed(() =>
+  props.part.name === "skill" && output.value && state.value === "completed" && !diffText.value
+    ? renderMarkdown(cleaned.value.slice(0, OUTPUT_CAP))
+    : "",
+)
+
+const expandable = computed(
+  () => (Boolean(output.value) && !webLike.value) || Boolean(bash.value) || Boolean(fullTitle.value) || hasShots.value,
+)
+
+/* Lines the step's diff added and removed, counted inside its hunks as MiMo counts them. */
+const diffstat = computed(() => {
+  let add = 0
+  let del = 0
+  if (diff.value) {
+    for (const section of parseUnifiedDiff(diff.value)) {
+      for (const hunk of section.hunks) {
+        add += hunk.added
+        del += hunk.removed
+      }
+    }
   }
-  if (part.title) return part.title
-  const input = part.input
-  return String(input.path ?? input.pattern ?? input.command ?? input.url ?? "")
+  return { add, del }
 })
 
-const duration = computed(() => {
-  const { started, completed } = props.part.time
-  if (!started || !completed) return undefined
-  const ms = completed - started
-  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
+/* Ctrl/⌘+click on a path opens it; a plain click still folds the row. */
+const openable = computed(() => opensPath(props.part.name) && Boolean(title.value))
+const codeTip = computed(() => (openable.value ? `${title.value}\n${t("stepList.cmdClickOpen")}` : title.value))
+
+/* Ctrl or Cmd with a click on the path, or with Enter on the head from the keyboard (the path sits inside the head's button). */
+function onTitleClick(event: MouseEvent | KeyboardEvent) {
+  if (!openable.value || !(event.metaKey || event.ctrlKey)) return
+  event.preventDefault()
+  event.stopPropagation()
+  // The path as the call named it, not as it is drawn.
+  void openStepPath(stepTitle(props.part), app.current?.directory)
+}
+
+function toggle() {
+  if (!expandable.value) return
+  animate.value = true
+  open.value = !open.value
+}
+
+/*
+ * subagents: a run or spawn working or done is MiMo's pill; in any other state it is a row wearing the avatar.
+ * A status, wait, cancel or send row wears the avatar of the subagent it names; models wears none.
+ */
+const pill = computed(() => isPill(props.part))
+const avatarSeed = computed(() => {
+  if (props.part.name !== "actor") return undefined
+  const action = actorAction(props.part.input)
+  if (launches(action)) return childFor(props.part.callID, app.subagentSessions)?.subagent?.id ?? props.part.callID
+  return actorTarget(props.part.input) || undefined
 })
 </script>
 
 <template>
-  <div class="tool" :class="part.status">
-    <button class="head" @click="open = !open">
-      <span class="verb">
-        <TextShimmer :text="label" :active="part.status === 'running'" />
-      </span>
-      <span class="subject">{{ subject }}</span>
-      <span v-if="duration" class="dur">{{ duration }}</span>
-      <svg class="caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-        <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1" />
-      </svg>
-    </button>
+  <SubagentActivity v-if="pill" :parts="[part]" />
+  <div
+    v-else
+    class="hstep"
+    :class="{ indent, single: summary }"
+    :data-tool-part="part.id"
+    :data-tool="part.name"
+    :data-step-state="state"
+  >
+    <div class="hs-body">
+      <button
+        type="button"
+        class="hs-h"
+        :class="{ 'hs-summary': summary }"
+        :aria-disabled="expandable ? undefined : 'true'"
+        :aria-expanded="expandable ? open : undefined"
+        data-step-head
+        @click="toggle"
+        @keydown.enter="onTitleClick"
+      >
+        <span class="hs-ic" :class="{ 'hs-ic-avatar': avatarSeed }">
+          <SubagentAvatar v-if="avatarSeed" :seed="avatarSeed" compact />
+          <StepIcon v-else :name="icon" />
+        </span>
+        <span class="hs-text" :class="{ 'running-shimmer': state === 'running' }">
+          <span class="hs-verb" :class="{ 'hs-err': state === 'error', 'hs-struck': state === 'skipped' }" data-step-verb>{{ verb }}</span>
+          <span v-if="bash" class="hs-bash-desc" dir="auto" :class="{ 'hs-struck': state === 'skipped' }" data-step-title>{{ bash.desc || bash.cmd }}</span>
+          <span
+            v-else-if="showTitle"
+            class="hs-title"
+            :class="{ 'hs-err': state === 'error', 'hs-struck': state === 'skipped' }"
+            data-step-title
+          ><code :class="{ openable }" dir="auto" :title="codeTip" @click="onTitleClick">{{ shortTitle }}</code></span>
+          <!-- MiMo's hs-diffstat: what the step added and took away, zeroes left out. -->
+          <span v-if="diffstat.add || diffstat.del" class="hs-diffstat" data-diffstat>
+            <span v-if="diffstat.add" class="add">+{{ diffstat.add }}</span>
+            <template v-if="diffstat.add && diffstat.del">{{ " " }}</template>
+            <span v-if="diffstat.del" class="del">-{{ diffstat.del }}</span>
+          </span>
+          <!-- MiMo's trailing dots mark a running call inside a group; a row standing alone has none. -->
+          <span v-if="state === 'running' && !summary" class="hs-dim" aria-hidden="true">…</span>
+        </span>
+        <span v-if="expandable" class="hs-chev" :class="{ open }">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="m9 18 6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </span>
+      </button>
 
-    <div v-if="open" class="body">
-      <!--
-        The form comes first, before the error line: a question that was
-        dismissed and then asked again would otherwise be hidden behind the
-        refusal the previous one left on the part.
-      -->
-      <QuestionForm v-if="pending" :request="pending" />
-
-      <!--
-        An answered question redraws from the transcript - the questions off the
-        call's own input, the replies off its metadata. That pairing is the
-        reference's renderer exactly: `props.input.questions` beside
-        `props.metadata.answers`.
-      -->
-      <dl v-else-if="answers" class="answers">
-        <template v-for="(entry, index) in asked" :key="index">
-          <dt>{{ entry.question }}</dt>
-          <dd>{{ answers[index]?.join(", ") || t("ui.question.answer.none") }}</dd>
+      <StepCollapse :show="open && expandable" :animate="animate">
+        <!-- A command: what was run (with the model's description) over what it printed. -->
+        <div v-if="bash" class="hs-bash-expand" data-bash-expand>
+          <pre class="hs-cell top" data-bash-command><span v-if="bash.desc" class="hs-bash-desc-line">{{ `# ${bash.desc}\n` }}</span><span class="hs-bash-cmd-line">{{ bash.cmd }}</span></pre>
+          <template v-if="output">
+            <div class="hs-divider" />
+            <pre class="hs-cell bottom" data-step-output>{{ output.slice(0, OUTPUT_CAP) }}</pre>
+          </template>
+        </div>
+        <template v-else>
+          <pre v-if="fullTitle" class="hs-full-cmd" data-full-title>{{ fullTitle }}</pre>
+          <template v-if="output && !webLike">
+            <template v-if="state === 'skipped'">
+              <div class="hs-skip-hint" data-skip-hint>{{ t("stepList.skippedHint") }}</div>
+              <pre class="tc-out" data-step-output>{{ cleaned.slice(0, OUTPUT_CAP) }}</pre>
+            </template>
+            <div v-else-if="diffText" class="hs-diff"><DiffView :diff="diffText" :root="app.current?.directory" /></div>
+            <!-- Safe to bind: the Markdown renderer escapes every piece of source it places. -->
+            <div v-else-if="skillHtml" class="tc-out md text" data-step-output data-step-markdown v-html="skillHtml" />
+            <pre v-else class="tc-out" data-step-output>{{ cleaned.slice(0, OUTPUT_CAP) }}</pre>
+          </template>
         </template>
-      </dl>
-
-      <div v-else-if="part.error" class="error">{{ errorText }}</div>
-
-      <DiffView v-else-if="diff" :diff="diff" />
-
-      <ul v-else-if="todos" class="todos">
-        <li v-for="todo in todos" :key="todo.id" :class="todo.status">
-          <span class="box">{{ todo.status === "completed" ? "x" : todo.status === "in_progress" ? ">" : " " }}</span>
-          <span>{{ todo.content }}</span>
-        </li>
-      </ul>
-
-      <pre v-else-if="part.output" class="output">{{ part.output }}</pre>
-
-      <div v-else class="empty">{{ t("tool.noOutput") }}</div>
+        <StepShots v-if="hasShots" :attachments="part.attachments" />
+      </StepCollapse>
     </div>
-
-    <!-- A collapsed todowrite is still worth showing: it is the plan. -->
-    <ul v-else-if="todos" class="todos collapsed">
-      <li v-for="todo in todos" :key="todo.id" :class="todo.status">
-        <span class="box">{{ todo.status === "completed" ? "x" : todo.status === "in_progress" ? ">" : " " }}</span>
-        <span>{{ todo.content }}</span>
-      </li>
-    </ul>
   </div>
 </template>
-
-<style scoped>
-/*
- * A line of the transcript, not a card.
- *
- * Every call used to arrive in its own bordered box, so a turn that ran nine
- * commands read as nine panels stacked down the page. The new design gives a
- * call one row - what it was and what it was given - and keeps the borders for
- * whatever the row is opened to reveal.
- */
-.tool {
-  border-radius: var(--radius-sm);
-}
-
-.head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  height: 32px;
-  text-align: start;
-}
-
-.head:hover .caret {
-  color: var(--text-base);
-}
-
-
-.verb {
-  flex-shrink: 0;
-  color: var(--text-strong);
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 21px;
-}
-
-/* Dimmed while it runs, which is the only signal the row needs. */
-.running .verb,
-.running .subject {
-  color: var(--text-weak);
-}
-
-.error .verb {
-  color: var(--error);
-}
-
-.subject {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-base);
-  font-size: 14px;
-  font-weight: 400;
-  line-height: 21px;
-  /* Figures line up between rows, so a column of counts reads as a column. */
-  font-variant-numeric: tabular-nums;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dur {
-  flex-shrink: 0;
-  color: var(--text-weak);
-  font-family: var(--font-mono);
-  font-size: 10px;
-}
-
-.caret {
-  flex-shrink: 0;
-  width: 24px;
-  color: var(--text-weaker);
-  transition: transform 0.12s, color 0.12s;
-}
-
-/* Closed lies on its side; open faces the output it reveals. */
-.tool:not(:has(.body)) .caret {
-  transform: rotate(-90deg);
-}
-
-/*
- * A hairline frame over the page rather than a filled card: the transcript is
- * already a plane, and a second fill inside it made every opened call look
- * like a panel dropped on top of the conversation.
- */
-.body {
-  position: relative;
-  margin-bottom: 8px;
-  overflow: hidden;
-  border: 0.5px solid var(--border-weak);
-  border-radius: 6px;
-}
-
-.output {
-  /* Deep enough to read a stack trace, shallow enough not to bury the reply. */
-  max-height: 240px;
-  margin: 0;
-  padding: 12px;
-  overflow: hidden auto;
-  color: var(--text-base);
-  font-size: 13px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  /* The frame is 240px tall at most; a bar inside it would cost a line. */
-  scrollbar-width: none;
-}
-
-.output::-webkit-scrollbar {
-  display: none;
-}
-
-.error {
-  padding: 8px 10px;
-  color: var(--error);
-  font-size: 11.5px;
-  white-space: pre-wrap;
-}
-
-.empty {
-  padding: 8px 10px;
-  color: var(--text-weak);
-  font-size: 11px;
-}
-
-.answers {
-  margin: 0;
-  padding: 8px 10px;
-}
-
-.answers dt {
-  color: var(--text-weak);
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.answers dd {
-  margin: 0 0 6px;
-  color: var(--text-base);
-  font-size: 12.5px;
-  line-height: 1.5;
-}
-
-.answers dd:last-child {
-  margin-bottom: 0;
-}
-
-.todos {
-  margin: 0;
-  padding: 8px 10px;
-  list-style: none;
-}
-
-.todos.collapsed {
-  border-top: 1px solid var(--border-weak);
-}
-
-.todos li {
-  display: flex;
-  gap: 8px;
-  padding: 1px 0;
-  color: var(--text-base);
-  font-size: 11.5px;
-}
-
-.todos li.completed {
-  color: var(--text-weak);
-  text-decoration: line-through;
-}
-
-.todos li.in_progress {
-  color: var(--text-strong);
-}
-
-.todos li.cancelled {
-  color: var(--text-weak);
-  opacity: 0.6;
-}
-
-.box {
-  width: 12px;
-  flex-shrink: 0;
-  font-family: var(--font-mono);
-  text-align: center;
-}
-
-.todos li.in_progress .box {
-  color: var(--interactive);
-}
-</style>

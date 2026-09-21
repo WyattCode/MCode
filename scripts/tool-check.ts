@@ -7,17 +7,21 @@
  * Neither is visible from the interface and neither is a type error.
  */
 import fs from "node:fs/promises"
+import { createRequire } from "node:module"
+import { pathToFileURL } from "node:url"
 import path from "node:path"
 import os from "node:os"
-import { execSync } from "node:child_process"
+import { execSync, spawn } from "node:child_process"
 import { Storage } from "../src/server/storage"
 import { Bus } from "../src/server/bus"
 import { Config } from "../src/server/config"
 import { Permissions } from "../src/server/permission"
 import { findTool, TOOLS, toolsFor } from "../src/server/tool/registry"
 import { Questions } from "../src/server/tool/question"
+// plan: the rule the write tools enforce, which is where planning's read-only promise now lives.
+import { guardPlanWrite, planFolders, planWritable } from "../src/server/session/plan"
+import { ToolError } from "../src/server/tool/types"
 import type { ServerEvent } from "../src/shared/protocol"
-import { applyChunks } from "../src/server/tool/patch"
 import { Shells } from "../src/server/shell"
 
 const problems: string[] = []
@@ -53,6 +57,8 @@ async function main(): Promise<void> {
   const storage = new Storage(path.join(root, "storage"))
   const bus = new Bus()
   const config = new Config(storage, bus, path.join(root, "credentials.json"))
+  // A stored config, so the checks run at the default level rather than a first install's 帮我审批.
+  await storage.write("config", {})
   await config.load()
   await config.set({ autoApprove: ["bash", "edit", "write", "outside"], directory: project })
   const permissions = new Permissions(bus, config)
@@ -144,13 +150,13 @@ async function main(): Promise<void> {
 
     let refused = false
     await edit
-      .execute({ path: target, oldString: "alpha", newString: "gamma" }, context(controller.signal))
+      .execute({ file_path: target, old_string: "alpha", new_string: "gamma" }, context(controller.signal))
       .catch(() => (refused = true))
     check("an edit matching twice is refused rather than guessed at", refused)
     check("and the file is untouched", (await fs.readFile(target, "utf8")) === "alpha\nbeta\nalpha\n")
 
     await edit
-      .execute({ path: target, oldString: "beta", newString: "delta" }, context(controller.signal))
+      .execute({ file_path: target, old_string: "beta", new_string: "delta" }, context(controller.signal))
       .catch(() => undefined)
     check("an edit matching once lands", (await fs.readFile(target, "utf8")).includes("delta"))
   }
@@ -167,6 +173,79 @@ async function main(): Promise<void> {
    */
   console.log("asking the reader a question")
   {
+    /*
+     * A read of a path that is not there names its neighbours, the way the
+     * reference's ReadTool.miss does: up to three entries of the same directory
+     * whose name contains the requested one or is contained by it, without
+     * case. A model that asked for `net` beside `net.c` is told; one that asked
+     * for something unlike anything there gets the bare message, not a list of
+     * everything in the folder.
+     */
+    console.log("read tells a miss what is nearby")
+    {
+      const read = findTool("read")
+      if (!read) throw new Error("the registry is missing the read tool")
+      const nest = path.join(project, "near")
+      await fs.mkdir(nest, { recursive: true })
+      for (const name of ["net.c", "net.o", "NET.C.bak", "other.c"]) await fs.writeFile(path.join(nest, name), "x", "utf8")
+      const controller = new AbortController()
+      const miss = async (rel: string) => {
+        try {
+          await read.execute({ file_path: rel }, context(controller.signal))
+          return "(no error)"
+        } catch (failure) {
+          return (failure as Error).message
+        }
+      }
+      const near = await miss("near/net")
+      check("a near miss lists its neighbours", near.includes("Did you mean one of these?"), near)
+      const listed = near.split("Did you mean one of these?")[1]?.trim().split(/\r?\n/) ?? []
+    check(
+      "the list holds exactly the three that match, whatever order the directory hands them out in",
+      listed.length === 3 && ["near/net.c", "near/NET.C.bak", "near/net.o"].every((name) => listed.includes(name)),
+      near,
+    )
+      check("and the file that does not match is left out", !near.includes("other.c"), near)
+      const far = await miss("near/nothing-like-it.txt")
+      check("a miss with no neighbours is the bare message", far === "File not found: near/nothing-like-it.txt", far)
+    }
+
+    /*
+     * A command that starts another PowerShell must still finish. The tool
+     * hands its child no stdin, as the reference does (`stdin: "ignore"`),
+     * because a pipe left open is inherited by whatever the command starts, and
+     * PowerShell 5.1 with a redirected stdin reads it to EOF before it exits.
+     * Under Electron, whose main process has no console, that was a 120s
+     * timeout for a Get-Command. It cannot be seen from node.exe at all - a
+     * console-subsystem parent gives every child some console, and the nested
+     * shell returns in 300ms with or without the fix - so the case runs under
+     * Electron itself, in scripts/tool-check-nested-electron.cjs. Verified to
+     * report the full timeout with the fix reverted.
+     */
+    if (process.platform === "win32") {
+      console.log("a nested PowerShell exits when the tool's child has no stdin (under Electron)")
+      const bundle = path.resolve("out", "tool-check-nested.mjs")
+      const verdict = path.join(root, "nested-verdict.txt")
+      execSync(
+        `npx esbuild scripts/tool-check-nested.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --packages=external --outfile=${JSON.stringify(bundle)}`,
+        { stdio: "ignore" },
+      )
+      const electron = createRequire(import.meta.url)("electron") as unknown as string
+      const child = spawn(electron, [path.resolve("scripts", "tool-check-nested-electron.cjs"), bundle, verdict, project], {
+        // Electron gets an open pipe for stdin that this side never closes -
+        // the shape it has when launched from a terminal with `&`, which is how
+        // the hang was hit. With "ignore" here it cannot be reproduced at all.
+        stdio: ["pipe", "ignore", "ignore"],
+        windowsHide: true,
+      })
+      const code = await new Promise<number>((resolve) => child.on("close", (c) => resolve(c ?? 1)))
+      const said = await fs.readFile(verdict, "utf8").catch(() => "")
+      const elapsed = Number(/^(?:done|failed) (\d+)/.exec(said)?.[1] ?? -1)
+      check("the nested shell came back", said.startsWith("done"), said.trim().slice(0, 300))
+      check("and well inside its timeout", elapsed >= 0 && elapsed < 4000, `${elapsed}ms`)
+      check("electron exited cleanly", code === 0, String(code))
+    }
+
     const question = findTool("question")
     if (!question) throw new Error("the registry is missing the question tool")
 
@@ -284,157 +363,67 @@ async function main(): Promise<void> {
   }
 
   /*
-   * Which tools a model is given.
-   *
-   * The reference does not offer `apply_patch` alongside `edit` and `write` -
-   * it swaps them, for GPT-5 ids only. Getting the swap backwards would leave a
-   * model with no way to change a file at all, which no type and no other check
-   * would notice.
+   * Which tools a model is given. MiMo's desktop runs its engine with codex
+   * mode off, so every model - GPT included - edits with `edit` and `write`.
    */
-  console.log("the patch-language swap")
+  console.log("the tool surface")
   {
-    const names = (agent: string, model: string) => toolsFor(agent, model).map((tool) => tool.name)
+    const names = (agent: string) => toolsFor(agent).map((tool) => tool.name)
+    const build = names("build")
+    check("every model is given edit and write", build.includes("edit") && build.includes("write"), build.join(","))
+    check("and never apply_patch", !build.includes("apply_patch") && findTool("apply_patch") === undefined)
+    // R18-E2: the scheduling tools are MiMo 26.920's end-to-end-only kind, and this is not an end-to-end run.
+    check(
+      "the scheduling tools are withdrawn outside an end-to-end run",
+      process.env.MCODE_E2E !== "1" && !build.includes("cron") && !build.includes("automation_update") && findTool("cron") === undefined,
+      build.join(","),
+    )
 
-    const gpt5 = names("build", "gpt-5.5")
-    check("a gpt-5 id is given apply_patch", gpt5.includes("apply_patch"), gpt5.join(","))
-    check("and loses edit and write", !gpt5.includes("edit") && !gpt5.includes("write"))
-
-    const codex = names("build", "gpt-5.3-codex-spark")
-    check("so is a codex id", codex.includes("apply_patch") && !codex.includes("edit"))
-
-    const claude = names("build", "claude-opus-5")
-    check("an anthropic id keeps edit and write", claude.includes("edit") && claude.includes("write"))
-    check("and is never shown apply_patch", !claude.includes("apply_patch"))
-
-    const gpt4 = names("build", "gpt-4.1")
-    check("gpt-4 is carved back out", !gpt4.includes("apply_patch") && gpt4.includes("edit"))
-    const oss = names("build", "gpt-oss-120b")
-    check("so is gpt-oss", !oss.includes("apply_patch") && oss.includes("edit"))
-
-    const plan = names("plan", "gpt-5.5")
-    check("plan gets no way to write at all", !plan.includes("apply_patch") && !plan.includes("edit"))
+    /*
+     * plan: round six gave planning its tools back, so this checks the promise
+     * where it is now kept.
+     *
+     * What stood here - "plan gets no way to write at all" - described the old
+     * shape, a shorter tool list. MiMo's plan agent keeps every tool and is held
+     * to reading by one rule the write tools enforce (`guardPlanWrite`), which
+     * is what lets a planning turn run `git log` and write the plan down
+     * somewhere the user can keep. The promise is unchanged; taking the tools
+     * away was never what made it true, so asserting their absence was
+     * asserting the implementation rather than the behaviour.
+     */
+    const plan = names("plan")
+    check("plan keeps the write tools, as MiMo's plan agent does", plan.includes("edit") && plan.includes("write"), plan.join(","))
     check("but keeps the question tool", plan.includes("question"))
 
-    check("the model is never offered the invalid tool", !gpt5.includes("invalid") && !claude.includes("invalid"))
+    const planPath = path.join(project, ".mcode", "plans", "1-clear-beacon.md")
+    const planning = {
+      agent: "plan",
+      switched: false,
+      file: planPath,
+      writable: (target: string) => planWritable(target, planFolders({ directory: project, dataRoot: root, repo: true })),
+      approve: async () => undefined,
+    }
+    /** What the guard refuses a write with, or nothing when it lets it through. */
+    const guarded = (target: string, control: typeof planning): string | undefined => {
+      try {
+        guardPlanWrite({ directory: project, plan: control } as never, target, target)
+        return undefined
+      } catch (failure) {
+        return failure instanceof ToolError ? (failure.code ?? "no code") : "not a ToolError"
+      }
+    }
+    const elsewhere = path.join(project, "src", "app.ts")
+    check("...and the write tools refuse everything but the plan file", guarded(elsewhere, planning) === "tool.err.planOnly", guarded(elsewhere, planning))
+    check("the plan itself is written", guarded(planPath, planning) === undefined, guarded(planPath, planning))
+    check(
+      "a turn that began planning stays read-only after the plan is approved",
+      guarded(elsewhere, { ...planning, switched: true }) === "tool.err.planApproved",
+      guarded(elsewhere, { ...planning, switched: true }),
+    )
+    check("and a building conversation is not held to it", guarded(elsewhere, { ...planning, agent: "build" }) === undefined)
+
+    check("the model is never offered the invalid tool", !build.includes("invalid"))
     check("though a call can still be routed to it", findTool("invalid") !== undefined)
-  }
-
-  console.log("applying a patch")
-  {
-    const patch = findTool("apply_patch")
-    if (!patch) throw new Error("the registry is missing the apply_patch tool")
-    const controller = new AbortController()
-    const run = (patchText: string) =>
-      patch.execute({ patchText }, context(controller.signal, "call-p1")).then(
-        (result) => result.output,
-        (err: Error) => "ERROR " + err.message,
-      )
-
-    await fs.writeFile(path.join(project, "keep.txt"), "one\ntwo\nthree\n", "utf8")
-    await fs.writeFile(path.join(project, "gone.txt"), "bye\n", "utf8")
-
-    recorded.length = 0
-    const output = await run(
-      [
-        "*** Begin Patch",
-        "*** Add File: made.txt",
-        "+fresh",
-        "*** Update File: keep.txt",
-        "@@",
-        "-two",
-        "+TWO",
-        "*** Delete File: gone.txt",
-        "*** End Patch",
-      ].join("\n"),
-    )
-    check("one patch can add, update and delete at once", output.startsWith("Success. Updated the following files:"), output)
-    check("the new file is there", (await fs.readFile(path.join(project, "made.txt"), "utf8")) === "fresh\n")
-    check("the updated file changed", (await fs.readFile(path.join(project, "keep.txt"), "utf8")) === "one\nTWO\nthree\n")
-    check(
-      "the deleted file is gone",
-      !(await fs.stat(path.join(project, "gone.txt")).catch(() => undefined)),
-    )
-    check("and every file it touched was recorded first, so undo can reach them", recorded.length === 3, String(recorded.length))
-
-    const moved = await run(
-      ["*** Begin Patch", "*** Update File: made.txt", "*** Move to: moved.txt", "@@", "-fresh", "+moved", "*** End Patch"].join("\n"),
-    )
-    check("a rename writes the destination", (await fs.readFile(path.join(project, "moved.txt"), "utf8")) === "moved\n", moved)
-    check("and removes the source", !(await fs.stat(path.join(project, "made.txt")).catch(() => undefined)))
-
-    /*
-     * The property that matters most: a patch is computed against every file
-     * before any of them is written, so one bad chunk leaves the project
-     * exactly as it was rather than half-applied.
-     */
-    const before = await fs.readFile(path.join(project, "keep.txt"), "utf8")
-    const refused = await run(
-      [
-        "*** Begin Patch",
-        "*** Update File: keep.txt",
-        "@@",
-        "-one",
-        "+ONE",
-        "*** Update File: moved.txt",
-        "@@",
-        "-not in the file",
-        "+nope",
-        "*** End Patch",
-      ].join("\n"),
-    )
-    check("a chunk that does not match is refused", refused.startsWith("ERROR apply_patch verification failed"), refused)
-    check("and the file that would have applied is untouched", (await fs.readFile(path.join(project, "keep.txt"), "utf8")) === before)
-
-    const empty = await run("*** Begin Patch\n*** End Patch")
-    check("an empty patch is rejected in the reference's words", empty === "ERROR patch rejected: empty patch", empty)
-    const nonsense = await run("just some text")
-    check(
-      "so is text that is not a patch",
-      nonsense === "ERROR apply_patch verification failed: Invalid patch format: missing Begin/End markers",
-      nonsense,
-    )
-
-    /*
-     * A move whose destination is the project itself.
-     *
-     * The reference fixed exactly this in 1.18.26 - "apply_patch no longer
-     * produces empty move paths in permission metadata". `relative()` returns
-     * an empty string when the two paths are equal, and `moveDisplay ?? display`
-     * does not fall back for one, because `??` only catches null. So the
-     * approval names a file with no name, and the call goes on to treat the
-     * directory as the destination.
-     */
-    await fs.writeFile(path.join(project, "movable.txt"), "here\n", "utf8")
-    events.length = 0
-    const ontoDirectory = await run(
-      [
-        "*** Begin Patch",
-        "*** Update File: movable.txt",
-        "*** Move to: .",
-        "@@",
-        "-here",
-        "+there",
-        "*** End Patch",
-      ].join("\n"),
-    )
-    /*
-     * Driven through the output rather than through the permission event: this
-     * harness approves edits automatically, so no request is ever published and
-     * an assertion on that list can only ever pass.
-     */
-    check(
-      "a move onto the directory is refused in the tool's own words",
-      ontoDirectory.startsWith("ERROR patch rejected:"),
-      ontoDirectory,
-    )
-    check(
-      "and the file it would have moved is still there",
-      await fs
-        .readFile(path.join(project, "movable.txt"), "utf8")
-        .then(() => true)
-        .catch(() => false),
-      ontoDirectory,
-    )
   }
 
   console.log("a call that could not be dispatched")
@@ -488,31 +477,7 @@ async function main(): Promise<void> {
 
   {
     /*
-     * 2. Where a pure insertion lands.
-     *
-     * opencode's applier pops one trailing blank and then inserts at
-     * `lines.length` (`replacements.push([lines2.length, 0, chunk.newLines])`).
-     * This app stepped back one line further whenever the file ended in a
-     * blank, which put the new text ABOVE the final line instead of after it -
-     * measuring the same trailing newline twice.
-     */
-    const before = "alpha\nbeta\n"
-    const after = applyChunks("f.ts", [{ oldLines: [], newLines: ["gamma"] }], before)
-    check("an insertion goes after the last line", after === "alpha\nbeta\ngamma\n", JSON.stringify(after))
-
-    // The case that used to differ: a file whose text ends in a blank line.
-    const padded = "alpha\nbeta\n\n"
-    const paddedAfter = applyChunks("f.ts", [{ oldLines: [], newLines: ["gamma"] }], padded)
-    check(
-      "and still after it when the file ends in a blank line",
-      paddedAfter === "alpha\nbeta\n\ngamma\n",
-      JSON.stringify(paddedAfter),
-    )
-  }
-
-  {
-    /*
-     * 3. A shell that cannot start must still be able to say so.
+     * 2. A shell that cannot start must still be able to say so.
      *
      * The bus reaches the socket the moment it is published, and `open` is
      * called from inside the request that is about to answer with the id. So a
@@ -542,6 +507,32 @@ async function main(): Promise<void> {
     shells.close(id)
   }
 
+  /*
+   * R16-B11: which language the tool surface is written in.
+   *
+   * Round 16 moved MCode's guards into Chinese because MiMo's are. Its tool
+   * descriptions are NOT: every tool the desktop adds to its engine
+   * (present_files, get_desktop_settings, the session-chat tools) describes
+   * itself in English and only its run-time messages are Chinese. That is a
+   * deliberate line, so it is asserted from both sides rather than left to
+   * drift with whoever edits a tool next.
+   */
+  {
+    const han = /[\u4e00-\u9fff]/
+    const described = TOOLS.map((tool) => ({ name: tool.name, text: `${tool.description}${JSON.stringify(tool.parameters)}` }))
+    const chinese = described.filter((tool) => han.test(tool.text)).map((tool) => tool.name)
+    check("every tool describes itself and its arguments in English, as MiMo's do", chinese.length === 0, chinese.join(", "))
+    check("and there are tools to have checked", described.length > 10, String(described.length))
+    /*
+     * R18-E6: MiMo 26.920 rewrote every tool name its descriptions mention in
+     * lower case (notebook_edit's cell_id: "the Read tool's" became "the `read`
+     * tool's"), matching the prompt's rule that tool names are exact. MCode's
+     * descriptions already name tools that way; this keeps them there.
+     */
+    const capitalised = described.filter((tool) => /\b(Read|Write|Edit|Glob|Grep|Bash|Task|WebFetch|Question) tool\b/.test(tool.text)).map((tool) => tool.name)
+    check("no description names another tool with a capital, as the prompt says names are exact", capitalised.length === 0, capitalised.join(", "))
+  }
+
   console.log("")
   if (problems.length) {
     console.error(`FAILED with ${problems.length} problem(s):`)
@@ -550,7 +541,7 @@ async function main(): Promise<void> {
   }
   console.log(
     "A stopped command takes its children with it, an ambiguous edit is refused, " +
-      "a question survives a reload and a half-matching patch changes nothing.",
+      "and a question survives a reload.",
   )
   process.exit(0)
 }

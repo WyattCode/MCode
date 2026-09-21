@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, ref, watch } from "vue"
 import type { ProviderStatus } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
-import { groupConnected, groupProviders, waysFor, type Group, type Way } from "../lib/connect"
+import { composing } from "../lib/keys"
+import { notifyFailure } from "../lib/toast"
+import { useEscapeLayer } from "../lib/escape-layer"
+import { connectableProviders, groupConnected, groupProviders, waysFor, type Group, type Way } from "../lib/connect"
 import ProviderIcon from "./ProviderIcon.vue"
 import CustomProviderForm from "./CustomProviderForm.vue"
 
@@ -27,6 +30,8 @@ const app = useApp()
 const target = ref<Group | undefined>(props.group)
 const query = ref("")
 const key = ref("")
+/* MiMo's eye on the key field; hidden by default. */
+const keyShown = ref(false)
 /** The endpoint typed for a local runtime; unset means "wherever it lives now". */
 const endpoint = ref<string>()
 const busy = ref(false)
@@ -58,7 +63,8 @@ const customMatches = computed(() => {
   return !needle || customLabel.value.toLowerCase().includes(needle)
 })
 
-const groups = computed(() => groupProviders(app.providers))
+/* MiMo's quick-add vendors (and MCode's ChatGPT sign-in); anything else goes through the custom form. */
+const groups = computed(() => groupProviders(connectableProviders(app.providers)))
 
 const results = computed(() => {
   const needle = query.value.trim().toLowerCase()
@@ -220,7 +226,13 @@ function openVerification() {
 
 async function copyCode() {
   if (!auth.value?.userCode) return
-  await navigator.clipboard.writeText(auth.value.userCode)
+  // A refused clipboard is a notice, never the error page.
+  try {
+    await navigator.clipboard.writeText(auth.value.userCode)
+  } catch {
+    notifyFailure(t("code.copyFailed"))
+    return
+  }
   copied.value = true
   setTimeout(() => (copied.value = false), 1600)
 }
@@ -243,14 +255,7 @@ function dismiss() {
  * way to step back; a key that sometimes closes and sometimes retreats is a key
  * nobody presses with confidence.
  */
-function onKeydown(event: KeyboardEvent) {
-  if (event.key !== "Escape") return
-  event.preventDefault()
-  dismiss()
-}
-
-onMounted(() => window.addEventListener("keydown", onKeydown))
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
+useEscapeLayer(dismiss)
 </script>
 
 <template>
@@ -332,7 +337,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           <span class="row-mark big">+</span>
           <h2 class="title">{{ t("provider.custom.title") }}</h2>
         </div>
-        <CustomProviderForm @connected="emit('close')" />
+        <CustomProviderForm standalone autofocus @connected="emit('close')" />
       </template>
 
       <!-- 2. Which way in. -->
@@ -360,18 +365,38 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
         <template v-if="way?.method === 'api-key'">
           <p class="lead">{{ t("connect.keyLead", { name: provider?.name ?? "" }) }}</p>
-          <label class="label" for="connect-key">{{ t("connect.keyLabel", { name: provider?.name ?? "" }) }}</label>
-          <input
-            id="connect-key"
-            v-model="key"
-            class="field"
-            type="password"
-            :placeholder="t('auth.apiKey')"
-            spellcheck="false"
-            @keydown.enter="submitKey"
-          />
+          <!-- MiMo's key field: the literal label, a password box with a 28px eye at its end. -->
+          <label class="label" for="connect-key">API Key</label>
+          <div class="secret">
+            <input
+              id="connect-key"
+              v-model="key"
+              class="field"
+              :type="keyShown ? 'text' : 'password'"
+              :placeholder="t('model.apiKeyPlaceholder')"
+              spellcheck="false"
+              data-connect-key
+              @keydown.enter="!composing($event) && submitKey()"
+            />
+            <button
+              type="button"
+              class="eye"
+              :title="t(keyShown ? 'model.hideKey' : 'model.showKey')"
+              :aria-label="t(keyShown ? 'model.hideKey' : 'model.showKey')"
+              data-connect-key-toggle
+              @click="keyShown = !keyShown"
+            >
+              <svg v-if="keyShown" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M10.7 5.1A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13 13 0 0 1-1.7 2.7M6.6 6.6C3.5 8.7 2 12 2 12s3 7 10 7a9.7 9.7 0 0 0 5.4-1.6M2 2l20 20M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+              </svg>
+              <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            </button>
+          </div>
           <div class="actions">
-            <button class="go" :disabled="!key.trim() || busy" @click="submitKey">{{ t("connect.submit") }}</button>
+            <button class="go" :disabled="!key.trim() || busy" @click="submitKey">{{ t("common.save") }}</button>
             <button v-if="provider?.keyURL" class="link" @click="openKeyPage">
               {{ t("onboard.getKey") }}
             </button>
@@ -389,7 +414,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             spellcheck="false"
             autocomplete="off"
             @input="endpoint = ($event.target as HTMLInputElement).value"
-            @keydown.enter="connectLocal"
+            @keydown.enter="!composing($event) && connectLocal()"
           />
           <p class="lead soft">{{ t("onboard.endpointHint") }}</p>
           <div class="actions">
@@ -507,9 +532,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .title {
   margin: 0;
   color: var(--text-strong);
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 530;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   letter-spacing: -0.13px;
 }
 
@@ -517,9 +542,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .lead {
   margin: 4px 0 18px;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
-  line-height: 20px;
+  line-height: calc(20px * var(--ui-font-scale, 1));
   letter-spacing: -0.04px;
 }
 
@@ -527,13 +552,19 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .lead.soft {
   margin: 8px 0 0;
   color: var(--text-weaker);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.5;
 }
 
 /* --- browse ------------------------------------------------------------- */
 
 .search {
+  /*
+   * No border. opencode's shared `text-input-v2` is a 60% fill of bg-layer-02
+   * that goes solid on focus, at radius 6 - `--surface-layer` and
+   * `--radius-md` here. Focus used to move a border colour that no longer
+   * exists.
+   */
   display: flex;
   align-items: center;
   gap: 9px;
@@ -542,13 +573,13 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   height: 36px;
   flex-shrink: 0;
   color: var(--text-weaker);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
+  background: color-mix(in srgb, var(--surface-layer) 60%, transparent);
+  border: 0;
   border-radius: var(--radius-md);
 }
 
 .search:focus-within {
-  border-color: var(--border-strong);
+  background: var(--surface-layer);
 }
 
 .search-in {
@@ -556,7 +587,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   color: var(--text-strong);
   background: none;
   border: none;
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--ui-font-scale, 1));
   outline: none;
 }
 
@@ -568,7 +599,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .group-head {
   padding: 14px 6px 6px;
   color: var(--text-weaker);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .row {
@@ -601,7 +632,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .row-name {
   flex-shrink: 0;
   color: var(--text-strong);
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--ui-font-scale, 1));
 }
 
 /* Trails the name, and gives way first when the dialog is narrow. */
@@ -609,19 +640,19 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   flex: 1;
   overflow: hidden;
   color: var(--text-weaker);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .row-state {
   color: var(--text-weaker);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .row-add {
   color: var(--text-weaker);
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale, 1));
 }
 
 /* Stands where a vendor's logo would, so the pinned row lines up with the
@@ -630,19 +661,19 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: calc(22px * var(--ui-font-scale, 1));
+  height: calc(22px * var(--ui-font-scale, 1));
   flex-shrink: 0;
   color: var(--text-base);
   background: var(--surface-raised-hover);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .row-mark.big {
-  width: 34px;
-  height: 34px;
-  font-size: 17px;
+  width: calc(34px * var(--ui-font-scale, 1));
+  height: calc(34px * var(--ui-font-scale, 1));
+  font-size: calc(17px * var(--ui-font-scale, 1));
 }
 
 .row-tag {
@@ -650,13 +681,13 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   color: var(--text-weak);
   background: var(--surface-raised-hover);
   border-radius: 999px;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
 }
 
 .empty {
   padding: 24px 6px;
   color: var(--text-weaker);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   text-align: center;
 }
 
@@ -690,7 +721,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .way-name {
   flex: 1;
   color: var(--text-strong);
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--ui-font-scale, 1));
 }
 
 /* --- form --------------------------------------------------------------- */
@@ -699,24 +730,53 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   display: block;
   margin-bottom: 7px;
   color: var(--text-weak);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
 .field {
   width: 100%;
-  height: 38px;
+  height: calc(38px * var(--ui-font-scale, 1));
   padding: 0 12px;
   color: var(--text-strong);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
+  background: color-mix(in srgb, var(--surface-layer) 60%, transparent);
+  border: 0;
   border-radius: var(--radius-md);
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   outline: none;
 }
 
 .field:focus {
-  border-color: var(--border-strong);
+  background: var(--surface-layer);
+}
+
+/* MiMo's key field: 40 tall at 14px with room at the end for the eye. */
+.secret {
+  position: relative;
+}
+
+.secret .field {
+  height: calc(40px * var(--ui-font-scale, 1));
+  padding-inline-end: 36px;
+  font-family: var(--font-sans);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.eye {
+  position: absolute;
+  top: 50%;
+  inset-inline-end: 2px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: var(--text-weak);
+  border-radius: 6px;
+  transform: translateY(-50%);
+}
+
+.eye:hover {
+  color: var(--text-strong);
 }
 
 .actions {
@@ -727,12 +787,12 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 }
 
 .go {
-  height: 34px;
+  height: calc(34px * var(--ui-font-scale, 1));
   padding: 0 18px;
   color: var(--surface-base);
   background: var(--text-strong);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
 }
 
@@ -744,7 +804,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
 .link {
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .link:hover {
@@ -765,7 +825,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-md);
   font-family: var(--font-mono);
-  font-size: 19px;
+  font-size: calc(19px * var(--ui-font-scale, 1));
   letter-spacing: 0.18em;
 }
 
@@ -776,7 +836,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .code-hint {
   color: var(--text-weaker);
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   letter-spacing: 0;
 }
 
@@ -786,7 +846,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   gap: 10px;
   margin-top: 16px;
   color: var(--text-weak);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
 .spinner {
@@ -807,7 +867,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .error {
   margin-top: 16px;
   color: var(--text-critical);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }
 </style>
