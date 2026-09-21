@@ -105,4 +105,19 @@ export async function roundTwentyV2Checks(check: Check, section: (name: string) 
     const ctx = rules(".ctx").at(-1) ?? ""
     check("the button around it has no margin of its own", !/margin/.test(ctx), ctx)
   }
+
+  // ------------------------------------------------------------------ R20-V2-7
+  section("Round 20 (V2-7): the stop square is MiMo's 9px on a 1.5 corner; send and stop in MiMo's colours")
+  {
+    const stop = /<svg v-if="stopping"[^>]*>\s*<rect[^>]*\/>/.exec(composer)?.[0] ?? ""
+    check("a 9px square", /width="9" height="9" viewBox="0 0 9 9"/.test(stop) && /<rect width="9" height="9"/.test(stop), stop)
+    check("on a 1.5 corner", /rx="1\.5"/.test(stop), stop)
+    const send = rules(".send").filter((body) => /background/.test(body)).at(-1) ?? ""
+    check("light: white on #151c13", /color: #fff;/.test(send) && /background: #151c13;/.test(send), send)
+    check(
+      "dark: #0d0d0d on #ececec, leaving the empty and disabled look alone",
+      /:root\[data-theme="dark"\] \.send:not\(\.empty\):not\(:disabled\) \{\s*color: #0d0d0d;\s*background: #ececec;/.test(styles) &&
+        /:root:not\(\[data-theme="light"\]\) \.send:not\(\.empty\):not\(:disabled\) \{\s*color: #0d0d0d;\s*background: #ececec;/.test(styles),
+    )
+  }
 }

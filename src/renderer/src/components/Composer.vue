@@ -3797,8 +3797,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             v-tip="{ label: stopping ? t('composer.stop') : t('composer.send') }"
             @click="stopping ? app.abort(sessionID) : submit()"
           >
-            <svg v-if="stopping" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-              <rect width="12" height="12" rx="2" fill="currentColor" />
+            <svg v-if="stopping" width="9" height="9" viewBox="0 0 9 9" aria-hidden="true">
+              <rect width="9" height="9" rx="1.5" fill="currentColor" />
             </svg>
             <svg
               v-else-if="mode === 'shell'"
@@ -5602,11 +5602,26 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   color: #fb8147;
 }
 
+/* MiMo's send colours: #151c13 under white on light, #ececec under #0d0d0d on dark. */
 .send {
   flex: none;
   width: 30px;
   height: 30px;
+  color: #fff;
+  background: #151c13;
   border-radius: 50%;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .send:not(.empty):not(:disabled) {
+    color: #0d0d0d;
+    background: #ececec;
+  }
+}
+
+:root[data-theme="dark"] .send:not(.empty):not(:disabled) {
+  color: #0d0d0d;
+  background: #ececec;
 }
 
 /* High contrast drops the fill, so the send button keeps a system outline there; nothing changes outside that mode. */
