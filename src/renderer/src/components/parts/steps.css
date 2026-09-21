@@ -14,7 +14,7 @@
   align-items: flex-start;
   padding: 5px 0;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: calc(21px * var(--ui-font-scale, 1));
+  line-height: calc(22.4px * var(--ui-font-scale, 1));
 }
 
 .hstep.indent {
@@ -41,7 +41,7 @@
   font: inherit;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: calc(21px * var(--ui-font-scale, 1));
+  line-height: calc(22.4px * var(--ui-font-scale, 1));
   text-align: start;
   background: transparent;
   border: 0;
@@ -287,6 +287,11 @@ html[data-motion="on"] .running-shimmer {
   overflow: hidden;
 }
 
+/* MiMo's group body is the summary's sibling in the 2px column: its first row's line sits twelve under the summary's. */
+.hs-group > .hs-collapse {
+  margin-top: 2px;
+}
+
 html[data-motion="on"] .hs-collapse {
   transition: none;
 }
@@ -487,7 +492,7 @@ html[data-motion="on"] .hs-collapse {
   margin: 6px 0;
   padding: 10px 12px;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: calc(21px * var(--ui-font-scale, 1));
+  line-height: calc(22.4px * var(--ui-font-scale, 1));
   background: color-mix(in srgb, var(--surface-hover) 30%, transparent);
   border: 1px solid var(--border-weak);
   border-radius: 10px;

@@ -588,11 +588,6 @@ function shown(turn: Turn, at: number): Row[] {
   return foldAt > 0 && !opened.value.has(turn.id) ? all.slice(foldAt) : all
 }
 
-/** Rows that belong to MiMo's tight step column rather than the reply's paragraphs. */
-function isStep(row: Row): boolean {
-  // subagents: notices that reached a running turn are a step row of pills, spaced as steps are.
-  return row.kind === "group" || row.kind === "error" || row.kind === "retry" || row.kind === "question" || row.kind === "steer"
-}
 
 /** Whether this is the turn still being worked on. */
 function liveTurn(at: number): boolean {
@@ -1841,7 +1836,7 @@ defineExpose({ stepMessage, scroller })
             </span>
           </div>
 
-          <div v-for="row in shown(turn, at)" :key="row.id" class="part" :class="{ step: isStep(row) }">
+          <div v-for="row in shown(turn, at)" :key="row.id" class="part" :class="{ words: row.kind === 'part' && row.part.type === 'text' }">
             <!-- subagents: news of background subagents that reached the turn while it ran. -->
             <SubagentActivity v-if="row.kind === 'steer'" :notices="row.steer.notices" />
             <ToolGroup v-else-if="row.kind === 'group'" :items="row.items" :default-open="row.open" :actor="row.actor" />
@@ -2508,21 +2503,17 @@ defineExpose({ stepMessage, scroller })
   margin-bottom: 2px;
 }
 
-.part + .part {
-  margin-top: 24px;
-}
-
 /*
- * MiMo's steps sit in a column two apart, each row carrying its own 5px above
- * and below; a paragraph of the reply keeps a clearer break from them.
+ * MiMo's harness column: every row two apart, and each carries its own 5px
+ * above and below - a step row and a run of the reply's words alike - so any
+ * two neighbouring lines sit twelve apart.
  */
-.part + .part.step,
-.part.step + .part {
-  margin-top: 12px;
+.part + .part {
+  margin-top: 2px;
 }
 
-.part.step + .part.step {
-  margin-top: 2px;
+.part.words {
+  padding: 5px 0;
 }
 
 .err {
