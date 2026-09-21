@@ -120,4 +120,13 @@ export async function roundTwentyV2Checks(check: Check, section: (name: string) 
         /:root:not\(\[data-theme="light"\]\) \.send:not\(\.empty\):not\(:disabled\) \{\s*color: #0d0d0d;\s*background: #ececec;/.test(styles),
     )
   }
+
+  // ------------------------------------------------------------------ R20-V2-8
+  section("Round 20 (V2-8): the send arrow is MiMo's stroked shaft and chevron, 2.2 in a 24 square at 18px")
+  {
+    const arrow = /<svg v-else width="18" height="18" viewBox="0 0 24 24"[^>]*>\s*<path([^>]*)\/>/.exec(composer)?.[1] ?? ""
+    check("stroked, not filled", /stroke="currentColor"/.test(arrow) && /stroke-width="2\.2"/.test(arrow) && !/fill="currentColor"/.test(arrow), arrow)
+    const d = /d="([^"]+)"/.exec(arrow)?.[1] ?? ""
+    check("a shaft 14 units tall (10.5px at 18) under a chevron meeting at its top", d === "M12 19V5m-7 7 7-7 7 7", d)
+  }
 }
