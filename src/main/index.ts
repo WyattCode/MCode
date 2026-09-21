@@ -25,6 +25,7 @@ import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
 import { closeHidesToTray } from "@shared/protocol"
 import { label, setLabels } from "./labels"
 import { writeAtomicSync } from "./atomic-write"
+import { LOGIN_ITEM_FILE, loginItemSupported, parseLoginItem, readLaunchAtLogin, startsHidden, writeLaunchAtLogin, type LoginItemStore } from "./login-item"
 import { BROWSER_ACTS, EDIT_ACTIONS, VIEW_ACTIONS, WINDOW_ACTIONS, actionOf, clipboardText, directoryAsk, panelBounds, titlebarMode } from "./ipc-input"
 import { buildMenu } from "./menu"
 import { readMenuKeys } from "./menu-keys"
@@ -256,6 +257,33 @@ nativeTheme.themeSource = bootPrefs.theme
 
 /* MiMo's 硬件加速: Chromium only takes this before ready, so a change waits for the next launch. */
 if (!bootPrefs.hardwareAcceleration) app.disableHardwareAcceleration()
+
+/* 开机自启 without an OS entry to ask (a development build): the choice alone, in a file of its own. */
+const loginItemFile = path.join(app.getPath("userData"), LOGIN_ITEM_FILE)
+const loginItemStore: LoginItemStore = {
+  read: () => {
+    try {
+      return parseLoginItem(readFileSync(loginItemFile, "utf8"))
+    } catch {
+      return false
+    }
+  },
+  write: (enabled) => {
+    try {
+      writeAtomicSync(loginItemFile, JSON.stringify({ openAtLogin: enabled }))
+    } catch (err) {
+      console.warn("[login-item] the choice could not be saved:", err instanceof Error ? err.message : err)
+    }
+  },
+}
+
+/*
+ * Started by the login item on Windows: the window is made but not shown, as
+ * MiMo keeps it in the tray. The tray setting is only known once the window
+ * has read the settings, so should it be off the window is shown after all
+ * (see mcode:tray) - there would be no other way to reach it.
+ */
+let hiddenAtLogin = startsHidden(process.platform, process.argv)
 
 /* Written for the next launch; a failed write only means the next boot uses the old choice. */
 function saveBootPrefs(patch: Partial<BootPrefs>): void {
@@ -1603,6 +1631,21 @@ app.whenReady().then(async () => {
 
   ipcMain.on("mcode:tray", (_event, enabled: boolean) => {
     refreshTray(Boolean(enabled))
+    if (hiddenAtLogin && !enabled) {
+      hiddenAtLogin = false
+      const window = currentWindow()
+      if (window && !window.isDestroyed() && !window.isVisible()) window.show()
+    }
+  })
+
+  /* 开机自启: whether it is offered here, and whether it is on; a change answers with what the OS now says. */
+  ipcMain.handle("mcode:launch-at-login", () => {
+    const supported = loginItemSupported(process.platform)
+    return { supported, enabled: supported && readLaunchAtLogin(app, process.platform, loginItemStore) }
+  })
+  ipcMain.handle("mcode:set-launch-at-login", (_event, enabled: unknown) => {
+    if (!loginItemSupported(process.platform)) return { ok: false, enabled: false }
+    return { ok: true, enabled: writeLaunchAtLogin(app, process.platform, loginItemStore, enabled === true) }
   })
 
   /* The 配置切换 list, checked here because it arrives from a window. */
@@ -1734,7 +1777,8 @@ app.whenReady().then(async () => {
   })
 
   buildMenu()
-  createWindow()
+  createWindow(!hiddenAtLogin)
+  if (hiddenAtLogin) console.info("[login-item] started at login: the window stays in the tray")
   keepWindowsOnScreen()
   repaintAfterWake(leaving)
 

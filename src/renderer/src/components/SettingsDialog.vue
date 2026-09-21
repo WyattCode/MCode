@@ -186,6 +186,20 @@ function switchSkillPath(id: SkillPathSource) {
   void app.patchConfig({ skillPaths: { ...compat, [id]: !compat[id] } })
 }
 
+/* 开机自启: read from main, which asks the OS; a change shows what the OS then says. */
+const loginItem = ref({ supported: false, enabled: false })
+
+async function loadLoginItem() {
+  loginItem.value = await window.mcode.launchAtLogin().catch(() => ({ supported: false, enabled: false }))
+}
+
+async function switchLaunchAtLogin() {
+  const wanted = !loginItem.value.enabled
+  loginItem.value = { ...loginItem.value, enabled: wanted }
+  const result = await window.mcode.setLaunchAtLogin(wanted).catch(() => ({ ok: false, enabled: !wanted }))
+  loginItem.value = { ...loginItem.value, enabled: result.enabled }
+}
+
 async function loadAgents() {
   agents.value = await app.client?.request({ type: "agents.state" }).catch(() => undefined)
 }
@@ -718,6 +732,7 @@ watch(
   (next: Section) => {
     if (next === "files" || next === "models" || next === "mcp") void loadPaths()
     if (next === "files") void loadAgents()
+    if (next === "general") void loadLoginItem()
     if (next !== "mcp") mcpView.value = "list"
     else void refreshMcp()
     if (next === "environment") void loadTrees()
@@ -1907,6 +1922,25 @@ onBeforeUnmount(() => {
                 :aria-checked="app.config?.tray ?? true"
                 :aria-label="t(app.platform === 'darwin' ? 'set.trayMac' : 'set.tray')"
                 @click="app.patchConfig({ tray: !(app.config?.tray ?? true) })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
+            <!-- MiMo 26.920's 开机自启, after the tray row and only where the OS offers it (Windows and macOS). -->
+            <div v-if="loginItem.supported" class="line" data-launch-at-login-row>
+              <div class="line-text">
+                <div class="line-title">{{ t("set.launchAtLogin") }}</div>
+                <div class="line-sub">{{ t("set.launchAtLoginSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: loginItem.enabled }"
+                role="switch"
+                :aria-checked="loginItem.enabled"
+                :aria-label="t('set.launchAtLogin')"
+                data-launch-at-login
+                @click="switchLaunchAtLogin"
               >
                 <span class="knob" />
               </button>

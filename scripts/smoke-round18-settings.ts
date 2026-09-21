@@ -14,6 +14,32 @@ import type { Check } from "./smoke-round5"
 import { SESSION_CHAT_SKILL, discoverSkills, externalSkillDirs } from "../src/server/skill"
 import { sanitizeConfig } from "../src/server/config-sanitize"
 import type { AppConfig } from "../src/shared/protocol"
+import {
+  OPEN_HIDDEN_ARG,
+  loginItemSupported,
+  parseLoginItem,
+  readLaunchAtLogin,
+  startsHidden,
+  writeLaunchAtLogin,
+  type LoginItemHost,
+} from "../src/main/login-item"
+
+/** A login item that records what it was asked and answers as an OS would. */
+function stubHost(isPackaged: boolean) {
+  const asked: unknown[] = []
+  let registered = false
+  const host: LoginItemHost = {
+    isPackaged,
+    getLoginItemSettings: () => ({ openAtLogin: registered }),
+    setLoginItemSettings: (settings) => {
+      asked.push(settings)
+      registered = settings.openAtLogin
+    },
+  }
+  let stored = false
+  const store = { read: () => stored, write: (enabled: boolean) => void (stored = enabled) }
+  return { host, store, asked, stored: () => stored }
+}
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
 
@@ -83,6 +109,43 @@ export async function roundEighteenSettingsChecks(check: Check, section: (name: 
     const settings = await read("src/renderer/src/components/SettingsDialog.vue")
     check("R18-M1: the config page lists the four folders with a switch each", /data-skill-path-switch/.test(settings) && /\["agents", "claude", "codex", "opencode"\]/.test(settings))
     check("R18-M1: and the config file row can copy its path", /data-config-copy-path/.test(settings) && /navigator\.clipboard\.writeText\(target\)/.test(settings))
+  }
+
+  // ---------------------------------------------------------------- R18-M2
+  section("Round 18 (M2): 开机自启, asked of the OS through a stub")
+  {
+    check("R18-M2: offered on Windows and macOS", loginItemSupported("win32") && loginItemSupported("darwin"))
+    check("R18-M2: not on Linux, where MiMo has no autostart entry either", !loginItemSupported("linux"))
+
+    const win = stubHost(true)
+    check("R18-M2: off until turned on", readLaunchAtLogin(win.host, "win32", win.store) === false)
+    const on = writeLaunchAtLogin(win.host, "win32", win.store, true)
+    check("R18-M2: Windows registers the app to open hidden", JSON.stringify(win.asked[0]) === JSON.stringify({ openAtLogin: true, args: [OPEN_HIDDEN_ARG] }), win.asked)
+    check("R18-M2: and answers with what the OS then says", on === true)
+    writeLaunchAtLogin(win.host, "win32", win.store, false)
+    check("R18-M2: turning it off removes the same entry", JSON.stringify(win.asked[1]) === JSON.stringify({ openAtLogin: false, args: [OPEN_HIDDEN_ARG] }), win.asked)
+
+    const mac = stubHost(true)
+    writeLaunchAtLogin(mac.host, "darwin", mac.store, true)
+    check("R18-M2: macOS asks the OS to open it hidden", JSON.stringify(mac.asked[0]) === JSON.stringify({ openAtLogin: true, openAsHidden: true }), mac.asked)
+
+    const dev = stubHost(false)
+    const devOn = writeLaunchAtLogin(dev.host, "win32", dev.store, true)
+    check("R18-M2: a development build never registers the bare Electron binary", dev.asked.length === 0)
+    check("R18-M2: it keeps the choice instead", devOn === true && dev.stored() === true)
+
+    const linux = stubHost(true)
+    check("R18-M2: on Linux nothing is asked of anyone", writeLaunchAtLogin(linux.host, "linux", linux.store, true) === false && linux.asked.length === 0)
+
+    check("R18-M2: a login start on Windows stays hidden", startsHidden("win32", ["MCode.exe", OPEN_HIDDEN_ARG]))
+    check("R18-M2: an ordinary start does not", !startsHidden("win32", ["MCode.exe"]) && !startsHidden("darwin", ["MCode", OPEN_HIDDEN_ARG]))
+    check("R18-M2: an unreadable choice file is off", parseLoginItem("{") === false && parseLoginItem('{"openAtLogin":true}') === true)
+
+    const main = await read("src/main/index.ts")
+    check("R18-M2: the first window is made hidden after a login start", /createWindow\(!hiddenAtLogin\)/.test(main))
+    check("R18-M2: and shown after all when the tray turns out to be off", /if \(hiddenAtLogin && !enabled\) \{[\s\S]{0,200}window\.show\(\)/.test(main))
+    const settings = await read("src/renderer/src/components/SettingsDialog.vue")
+    check("R18-M2: the row sits under the tray row and only where it is offered", /data-tray-row[\s\S]*v-if="loginItem\.supported"[^>]*data-launch-at-login-row/.test(settings))
   }
 
   // Session chat's skill, which the lab switch takes away (R18-M3 checks the tools).
