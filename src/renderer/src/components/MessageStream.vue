@@ -43,6 +43,7 @@ import {
   nextFollowing,
   parkRoom,
   parkTarget,
+  parkTop,
   reattachWithin,
   scrolledUp,
   UP_SLACK,
@@ -672,6 +673,8 @@ function onScroll() {
   const element = scroller.value
   if (!element) return
   const now = geometry(element)
+  // The reader moving the view lets a tall question's top go.
+  if (!pinEcho(now.top)) tallRest = undefined
   const ratio = window.devicePixelRatio || 1
   const width = element.clientWidth
   // A zoom or a resize moves scrollTop on its own; counting starts again from here.
@@ -690,14 +693,25 @@ function onScroll() {
   seen = now
   measureJump()
   const distance = endDistance(now)
-  if (up || distance > JUMP_DISTANCE) releaseFloor()
+  /*
+   * Not while a park slides: its offset is overflow for 200ms, so the view reads
+   * as far from the end, and taking the floor away would not move it yet - only
+   * when the offset is gone, putting the question at the foot of the view.
+   */
+  if (!endSlide && (up || distance > JUMP_DISTANCE)) releaseFloor()
   following.value = nextFollowing(following.value, up, distance, reattachWithin(ratio), arrived)
 }
 
 function toBottom() {
   const element = scroller.value
+  if (element) settle(element.scrollHeight)
+}
+
+/* Puts the view at `top`, remembered so its own scroll event is not read as the reader's. */
+function settle(top: number) {
+  const element = scroller.value
   if (!element) return
-  element.scrollTop = element.scrollHeight
+  element.scrollTop = top
   lastPin = { at: Date.now(), to: element.scrollTop }
 }
 
@@ -829,6 +843,7 @@ onMounted(() => {
     // The floor was measured for this width; at another the question would not sit where it was put.
     if (inner.value && inner.value.clientWidth !== floorWidth) clearFloor()
     pin()
+    keepTall()
     measureJump()
   })
   sizer.observe(inner.value)
@@ -992,12 +1007,21 @@ const lastAsked = computed(() => {
 const lastTurnID = computed(() => turns.value.at(-1)?.id)
 
 /*
+ * A conversation's first question mounts this view along with it - the hero
+ * stands in while there is nothing to show - so neither the message count nor
+ * lastAsked is ever seen to change. The park the composer asked for says it
+ * was just sent: it enters, and parks (onMounted, below), as any other.
+ */
+const mountPark = !props.side && !props.latest && !props.subagent && shownID.value && lastAsked.value && consumePark(shownID.value) ? lastAsked.value : undefined
+const mountAt = mountPark ? shownMessages.value.findIndex((message) => message.id === mountPark) : -1
+
+/*
  * MiMo's msg-in: a question sent while the conversation is on screen fades in
  * and rises 8px over 200ms. Only messages added after it was opened count, so
  * a conversation opened or loaded all at once draws still (lib/scroll-follow
  * enterMark, over the message count as MiMo keeps it).
  */
-let entering: EnterMark | undefined
+let entering: EnterMark | undefined = mountAt >= 0 ? { id: shownID.value, length: mountAt, from: mountAt } : undefined
 const enterFrom = computed(() => {
   entering = enterMark(entering, shownID.value, shownMessages.value.length)
   return entering.from
@@ -1064,6 +1088,20 @@ const goalAchieved = computed(() => {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 })
 
+/*
+ * The note sits on the reply that met the goal, and only while that reply is
+ * the last: a turn asked for after the judge passed it is not it, and MiMo
+ * drops the note as soon as another turn runs (its goalDone goes on
+ * markRunning) rather than moving it down to later replies.
+ */
+const goalTurnID = computed(() => {
+  const at = shownSession.value?.goal?.done?.at
+  const last = turns.value.at(-1)
+  if (!goalAchieved.value || at === undefined || !last) return undefined
+  const began = last.asked ?? last.started
+  return began !== undefined && began <= at ? last.id : undefined
+})
+
 // The edit box holds the end while open and for 300ms after it closes, as MiMo's does.
 watch(editingAsked, (open, was) => {
   if (was && !open) editClosedAt = performance.now()
@@ -1101,6 +1139,27 @@ function clearFloor() {
   endSlide?.()
   if (floored) floored.style.minHeight = ""
   floored = undefined
+  tallRest = undefined
+}
+
+/*
+ * A tall question parked by its top is not at the end, so neither the pin nor
+ * the browser's anchoring (suppressed while its msg-in moves it) keeps it there
+ * when what is above settles - the turn before losing its footer moved it 14px
+ * up in the probe. It is held at its target until the reader scrolls.
+ */
+let tallRest: { row: HTMLElement; target: number } | undefined
+
+function keepTall() {
+  const view = scroller.value
+  if (!tallRest || !view || following.value) return
+  if (!tallRest.row.isConnected) {
+    tallRest = undefined
+    return
+  }
+  const lift = new DOMMatrixReadOnly(getComputedStyle(tallRest.row).transform).m42
+  const off = tallRest.row.getBoundingClientRect().top - lift - view.getBoundingClientRect().top - tallRest.target
+  if (Math.abs(off) >= 0.5) settle(view.scrollTop + off)
 }
 
 /* The floor goes as soon as taking it away would not move the view: once the reader has left it behind. */
@@ -1183,15 +1242,28 @@ function park(turnID: string) {
   // Where the row stands in the layout: its msg-in is still lifting it from 8px below.
   const lift = new DOMMatrixReadOnly(getComputedStyle(row).transform).m42
   const end = column.getBoundingClientRect().bottom - viewTop
-  const room = parkRoom(box.top - lift - viewTop, parkTarget(view.clientHeight, box.height), view.clientHeight, end)
+  const rowTop = box.top - lift - viewTop
+  const target = parkTarget(view.clientHeight, box.height)
+  const room = parkRoom(rowTop, target, view.clientHeight, end)
+  // A question taller than the view keeps its top in sight; the end would show only its last lines.
+  const rest = parkTop(rowTop, target, view.clientHeight, end)
   if (room > 0) {
     turn.style.minHeight = `${Math.ceil(turn.getBoundingClientRect().height + room)}px`
     floored = turn
   }
   floorWidth = column.clientWidth
-  // To the end as a turn start does, then no longer following: the reply is written below, out of the way.
-  following.value = true
-  pin()
+  /*
+   * To the end, then no longer following: the reply is written below, out of
+   * the way. Straight there rather than through pin(), which a hold (the edit
+   * box just closed by this very send, a selection, a wheel) would veto while
+   * following still went off and the floor was left for the next scroll event
+   * to take - the question stranded at the foot of the view.
+   */
+  if (rest === undefined) toBottom()
+  else {
+    settle(rest)
+    tallRest = { row, target }
+  }
   following.value = false
   parkedIn = shownID.value
   if (room > 0 && !reducedMotion()) slideIn(column, room)
@@ -1206,6 +1278,11 @@ watch(
   },
   { flush: "post" },
 )
+
+// After the mount's own toBottom, registered earlier.
+onMounted(() => {
+  if (mountPark) park(mountPark)
+})
 
 // A finished turn lets go of a floor the reader has already left.
 watch(shownBusy, async (busy) => {
@@ -1868,7 +1945,7 @@ defineExpose({ stepMessage, scroller })
               </svg>
             </button>
             <!-- 追求目标: the one word a met goal leaves in the transcript, on the reply that met it. -->
-            <span v-if="goalAchieved && turn.id === lastTurnID" class="goal-done" data-goal-achieved>
+            <span v-if="goalAchieved && turn.id === goalTurnID" class="goal-done" data-goal-achieved>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
                 <path d="M4 12.6 9 17.5 20 6.5" />
               </svg>

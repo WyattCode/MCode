@@ -116,6 +116,16 @@ export function parkRoom(rowTop: number, target: number, clientHeight: number, e
 }
 
 /*
+ * Where the view rests for a question too tall for the room below its target:
+ * pinned to the end, its top would go above the view, so its top rests at the
+ * target instead and the reply is written below. Undefined when the end is
+ * where it rests (the room, if any, being made up by the floor).
+ */
+export function parkTop(rowTop: number, target: number, clientHeight: number, end: number): number | undefined {
+  return end - clientHeight > rowTop - target ? Math.max(0, rowTop - target) : undefined
+}
+
+/*
  * A park is asked for by the composer just before it sends and used when the
  * question appears; one not used within 3s lapses, and a send that was refused
  * takes its own back.
