@@ -372,6 +372,12 @@ async function main(): Promise<void> {
     const build = names("build")
     check("every model is given edit and write", build.includes("edit") && build.includes("write"), build.join(","))
     check("and never apply_patch", !build.includes("apply_patch") && findTool("apply_patch") === undefined)
+    // R18-E2: the scheduling tools are MiMo 26.920's end-to-end-only kind, and this is not an end-to-end run.
+    check(
+      "the scheduling tools are withdrawn outside an end-to-end run",
+      process.env.MCODE_E2E !== "1" && !build.includes("cron") && !build.includes("automation_update") && findTool("cron") === undefined,
+      build.join(","),
+    )
 
     /*
      * plan: round six gave planning its tools back, so this checks the promise

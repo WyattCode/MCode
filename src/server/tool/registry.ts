@@ -68,9 +68,9 @@ export const TOOLS: ToolDefinition[] = [
   // history: appended after those for the same reason.
   HistoryTool,
   MemoryTool,
-  // cron: appended after those for the same reason.
+  // cron: appended after those for the same reason; offered only to end-to-end runs (`schedulingOffered`).
   CronTool,
-  // automation: MiMo desktop's scheduled tasks, appended after those for the same reason.
+  // automation: MiMo desktop's scheduled tasks, appended after those for the same reason; offered the same way.
   AutomationUpdateTool,
   // plan: appended after those for the same reason; offered in both modes, and effective only while planning.
   PlanExitTool,
@@ -86,6 +86,25 @@ export const TOOLS: ToolDefinition[] = [
   ListExternalSessionsTool,
   ReadExternalSessionTool,
 ]
+
+/**
+ * The scheduling tools, withdrawn from the model (the user's 2026-09-21
+ * decision): MiMo 26.920 hands its `automation_update` only to its own
+ * end-to-end runs (`MIMO_E2E=1`) and tells every other turn the feature is
+ * unavailable, and MCode does the same with both of its own, keyed on
+ * `MCODE_E2E=1`. They stay in `TOOLS`, where they were, so the order of the
+ * rest - and with it every cached prefix - does not move. Scheduled tasks
+ * already saved still run, and the side column still lists them; nothing but
+ * these two tools could make or change one.
+ */
+const SCHEDULING = new Set(["cron", "automation_update"])
+
+/** Whether this process offers the scheduling tools: only in an end-to-end run, as MiMo's. */
+export function schedulingOffered(): boolean {
+  return process.env.MCODE_E2E === "1"
+}
+
+const offered = (tool: ToolDefinition) => !SCHEDULING.has(tool.name) || schedulingOffered()
 
 /** MiMo's explore subagent: everything is denied but these, the shell among them. */
 const EXPLORE = new Set(["read", "glob", "grep", "bash", "webfetch"])
@@ -106,7 +125,7 @@ const EXPLORE = new Set(["read", "glob", "grep", "bash", "webfetch"])
 export function toolsFor(agent: string): ToolDefinition[] {
   if (agent === "explore") return TOOLS.filter((tool) => EXPLORE.has(tool.name))
   if (CONSOLIDATING.has(agent)) return TOOLS.filter((tool) => CONSOLIDATION_TOOLS.has(tool.name))
-  return TOOLS
+  return TOOLS.filter(offered)
 }
 
 /** MiMo's `/dream` and `/distill` agents: everything is denied but these. */
@@ -149,13 +168,14 @@ export function toolsForTurn(agent: string, options: { voiceFeedback: boolean; s
  */
 const DISPATCHABLE: ToolDefinition[] = [...TOOLS, InvalidTool]
 
+/** A withdrawn tool is not found either, so a call to one - from an old transcript, say - goes to `invalid`. */
 export function findTool(name: string): ToolDefinition | undefined {
-  return DISPATCHABLE.find((tool) => tool.name === name)
+  return DISPATCHABLE.find((tool) => tool.name === name && offered(tool))
 }
 
 /** The names a model's call can be repaired to: every tool it could have been offered, `invalid` never. */
 export function repairableNames(): string[] {
-  return TOOLS.map((tool) => tool.name)
+  return TOOLS.filter(offered).map((tool) => tool.name)
 }
 
 /*

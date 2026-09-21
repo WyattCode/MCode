@@ -9549,6 +9549,9 @@ async function historyMemoryCronChecks(root: string, project: string) {
   check("stopping releases the lock", !(await exists(lockFile)))
 
   // The runner over a fake provider: what subagents are offered, a scheduled prompt's turn, and history from the model.
+  // R18-E2: the scheduling tools are offered only to an end-to-end run, which is what this is.
+  const e2e = process.env.MCODE_E2E
+  process.env.MCODE_E2E = "1"
   const seenTools: Record<string, string[]> = {}
   let sawRunNote = false
   let callCount = 0
@@ -9721,6 +9724,8 @@ async function historyMemoryCronChecks(root: string, project: string) {
   await index.close()
   await database.close()
   bindHistory(undefined)
+  if (e2e === undefined) delete process.env.MCODE_E2E
+  else process.env.MCODE_E2E = e2e
   await new Promise<void>((resolve) => provider.close(() => resolve()))
 }
 

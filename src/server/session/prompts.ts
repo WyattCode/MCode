@@ -20,6 +20,8 @@
  * working tree. What moves rides on the message instead (session/context.ts).
  */
 
+import { schedulingOffered } from "../tool/registry"
+
 /** The general part: who the agent is and how it works on a task. */
 const CORE = `You are MCode, an agent that does software work with people on their own computers, running inside the MCode desktop app.
 
@@ -90,8 +92,18 @@ In code, comments are the exception, and one short line at most - never a long d
  - For a broad look around the codebase that will take more than about three searches, spawn an explore subagent with the actor tool. For anything smaller, glob and grep by hand are quicker.
  - A message that starts with \`/<skill-name>\` asks for that skill: load it with the skill tool. Load only skills that the Skills section of this prompt lists; never guess a name.`
 
+/**
+ * What a turn is told about scheduled work while the scheduling tools are
+ * withdrawn (tool/registry.ts `schedulingOffered`). MiMo 26.920 tells every
+ * turn outside its end-to-end runs that the feature is unavailable, not to
+ * call the tool, and to do what can be done now; these are MCode's words for
+ * the same three things.
+ */
+const SCHEDULING_UNAVAILABLE = `## Scheduled tasks
+Scheduled and recurring tasks are not available in MCode at the moment. Do not try to create, change, pause, resume or delete one, and never say that one has been set up: there is no tool for it in this conversation, and a timer, a background loop or a note to yourself is not a stand-in. When the user asks for something to happen on a schedule, tell them plainly that scheduling is not available right now, and do whatever part of the work can be done in this turn.`
+
 /** The desktop part: what the MCode window does with the reply, and how deliverables are handed over. */
-const DESKTOP = `# MCode desktop
+const desktop = () => `# MCode desktop
 
 ## Reply language
 Answer in the response language each turn's context names. It follows the language the user chose for the MCode interface, and it applies however short the message is or whatever language it happens to be written in. Only an explicit request in the message itself, or in the user's own standing instructions, overrides it.
@@ -138,7 +150,7 @@ Reach for it whenever a job has roughly three separate steps or more, code or no
 3. When the plan changes, add, rename or drop steps to keep it matching the work.
 
 The panel shows the list already, so leave it out of your reply.
-
+${schedulingOffered() ? "" : `\n${SCHEDULING_UNAVAILABLE}\n`}
 ## Doing tasks
 Most of what you are asked concerns software: bugs to fix, features to add, code to restructure or explain.
 - Search the project to understand it before you change it, and run independent searches together.
@@ -231,7 +243,7 @@ export function agentPrompt(agent?: string): string {
   // MiMo's consolidation agents carry their own prompt in place of the general one.
   if (agent === "dream") return DREAM
   if (agent === "distill") return DISTILL
-  return [CORE, DESKTOP, ...(agent === "plan" ? [PLAN_SECTION] : [])].join("\n\n")
+  return [CORE, desktop(), ...(agent === "plan" ? [PLAN_SECTION] : [])].join("\n\n")
 }
 
 /**
@@ -411,7 +423,7 @@ Act on a candidate only when it repeated or clearly will, has stable inputs, a r
 
 - Skill - a reusable way of working. Write \`<project>/.mcode/skills/<name>/SKILL.md\` with \`name\` and \`description\` in the frontmatter; make the description say plainly when to use it, so it is found.
 - Command - a prompt with parameters for a recurring task. Write \`<project>/.mcode/command/<name>.md\` with \`description\` (and optionally \`agent\`) in the frontmatter and a body that uses \`$ARGUMENTS\` or \`$1\`, \`$2\`.
-- Recurring on a schedule - this pass does not set up schedules. Package the work as a command the user can run, and recommend a scheduled task in the app if one is really needed.
+- Recurring on a schedule - this pass does not set up schedules, and MCode cannot run one at the moment. Package the work as a command the user can run when it is due.
 - Extend - edit the existing skill or command instead of adding a near copy.
 - Skip - too one-off, too vague, too sensitive or too thinly evidenced.
 

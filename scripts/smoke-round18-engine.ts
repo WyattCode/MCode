@@ -24,6 +24,8 @@ import { Permissions } from "../src/server/permission"
 import { SessionStore } from "../src/server/session/store"
 import { SessionRunner } from "../src/server/session/runner"
 import { JUDGE_SYSTEM } from "../src/server/session/goal"
+import { agentPrompt } from "../src/server/session/prompts"
+import { TOOLS, findTool, repairableNames, toolsForTurn } from "../src/server/tool/registry"
 
 type Section = (name: string) => void
 
@@ -33,6 +35,7 @@ export async function roundEighteenEngineChecks(check: Check, section: Section):
   process.env.MCODE_GENERATE_TITLES = "0"
   try {
     await denyChecks(check, section, path.join(root, "deny"))
+    await schedulingChecks(check, section, path.join(root, "scheduling"))
   } finally {
     if (titles === undefined) delete process.env.MCODE_GENERATE_TITLES
     else process.env.MCODE_GENERATE_TITLES = titles
@@ -293,5 +296,71 @@ async function denyChecks(check: Check, section: Section, root: string): Promise
     }
   } finally {
     await app.close()
+  }
+}
+
+/* ---------------------------------------------------------------- R18-E2: the scheduling tools are withdrawn */
+
+const SCHEDULING_TOOLS = ["cron", "automation_update"]
+
+/** Runs `body` with `MCODE_E2E` as given, putting it back afterwards. */
+async function withE2E<T>(value: string | undefined, body: () => Promise<T> | T): Promise<T> {
+  const before = process.env.MCODE_E2E
+  if (value === undefined) delete process.env.MCODE_E2E
+  else process.env.MCODE_E2E = value
+  try {
+    return await body()
+  } finally {
+    if (before === undefined) delete process.env.MCODE_E2E
+    else process.env.MCODE_E2E = before
+  }
+}
+
+async function schedulingChecks(check: Check, section: Section, root: string): Promise<void> {
+  section("Round 18 (R18-E2): the scheduling tools are withdrawn from the model")
+  await withE2E(undefined, async () => {
+    const offered = toolsForTurn("build", { voiceFeedback: true }).map((tool) => tool.name)
+    check("a conversation is offered neither cron nor automation_update", SCHEDULING_TOOLS.every((name) => !offered.includes(name)), offered)
+    check("and neither can be dispatched or repaired to", SCHEDULING_TOOLS.every((name) => !findTool(name) && !repairableNames().includes(name)))
+    check(
+      "the registry still holds them where they were, so the order of the rest does not move",
+      SCHEDULING_TOOLS.every((name) => TOOLS.some((tool) => tool.name === name)) && offered.join() === TOOLS.map((tool) => tool.name).filter((name) => !SCHEDULING_TOOLS.includes(name)).join(),
+    )
+    const prompt = agentPrompt("build")
+    const at = prompt.indexOf("## Scheduled tasks")
+    const part = at < 0 ? "" : prompt.slice(at, prompt.indexOf("\n## ", at + 4))
+    check("the prompt says scheduled tasks are not available", part.includes("not available"), part)
+    check("and tells the model not to set one up, not to claim one, and to do what it can now", ["Do not try to create", "never say that one has been set up", "in this turn"].every((phrase) => part.includes(phrase)), part)
+  })
+  await withE2E("1", () => {
+    const offered = toolsForTurn("build", { voiceFeedback: true }).map((tool) => tool.name)
+    check("an end-to-end run is offered both, as MiMo's own is", SCHEDULING_TOOLS.every((name) => offered.includes(name) && findTool(name) !== undefined), offered)
+    check("and its prompt carries no unavailability note", !agentPrompt("build").includes("## Scheduled tasks"))
+  })
+
+  section("Round 18 (R18-E2): a call to a withdrawn tool is answered as an unavailable one")
+  await withE2E(undefined, async () => {
+    const app = await harness(root)
+    try {
+      const session = await app.store.create({ directory: app.project, model: app.model })
+      app.script([{ calls: [{ name: "cron", input: { operation: { action: "schedule", cron: "0 9 * * *", prompt: "digest" } } }] }, { text: "told them" }])
+      await app.runner.prompt({ sessionID: session.id, text: "every morning at nine" })
+      await app.settled(session.id)
+      const sentTools = (app.turns.at(-2)?.body.tools ?? []).map((tool) => tool.function?.name ?? "")
+      check("the request offers neither tool", sentTools.length > 0 && SCHEDULING_TOOLS.every((name) => !sentTools.includes(name)), sentTools)
+      const called = (await app.toolParts(session.id))[0]
+      check("the call goes to invalid, naming the tools that are offered", called?.name === "invalid" && String(called.input?.error).includes("unavailable tool 'cron'"), called?.input)
+      check("and nothing was scheduled", !(await exists(path.join(app.project, ".mcode", "scheduled_tasks.json"))))
+    } finally {
+      await app.close()
+    }
+  })
+
+  section("Round 18 (R18-E2): what stays reachable")
+  {
+    const index = await fs.readFile(path.join(process.cwd(), "src/server/index.ts"), "utf8")
+    const handlers = await fs.readFile(path.join(process.cwd(), "src/server/handlers.ts"), "utf8")
+    check("saved tasks and scheduled prompts still run while the app is open", index.includes("startAutomations(") && index.includes("startScheduler("))
+    check("and the side column still lists the saved tasks", handlers.includes("automations: automationService()?.sidebar() ?? []"))
   }
 }
