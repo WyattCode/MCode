@@ -2,6 +2,7 @@
 import { computed, ref, watch } from "vue"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
+import { pickProjectFolder } from "../lib/native-pick"
 import { notify, notifyFailure } from "../lib/toast"
 import { reducedMotion } from "../lib/modal"
 import ProjectPicker from "./ProjectPicker.vue"
@@ -226,7 +227,7 @@ async function createBlank(title: string, source?: string) {
 }
 
 async function existing() {
-  const [directory] = await window.mcode.pickProjectFolder(t("dialog.pickProjectFolder"), false)
+  const [directory] = await pickProjectFolder(t("dialog.pickProjectFolder"), false)
   if (!directory) return
   // Onto the project list, or back onto it if it was removed, with no conversation made.
   await app.addProject(directory, { switched: true })

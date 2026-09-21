@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import ContextMenu from "../ContextMenu.vue"
 import type { MenuItem } from "../../lib/menu"
 import { t } from "../../lib/i18n"
+import { savePng, saveText } from "../../lib/native-pick"
 import { notifyFailure } from "../../lib/toast"
 import { openImagePreview } from "../../lib/image-preview"
 import { svgSize } from "../../lib/svg-safe"
@@ -184,13 +185,13 @@ async function pick(key: string) {
   if (key === "downloadSvg") {
     // Mermaid's picture as drawn; an SVG fence as the model wrote it, which is what MiMo saves.
     const text = props.mode === "mermaid" ? exported()?.xml : source.value
-    if (text) await window.mcode.saveText(downloadName.value, text)
+    if (text) await saveText(downloadName.value, text)
     return
   }
   if (key === "downloadImage") {
     try {
       const png = await picture()
-      await window.mcode.savePng(downloadName.value.replace(/\.svg$/i, ".png"), await blobToBase64(png))
+      await savePng(downloadName.value.replace(/\.svg$/i, ".png"), await blobToBase64(png))
     } catch {
       notifyFailure(t("mermaid.copyImageFailed"))
     }

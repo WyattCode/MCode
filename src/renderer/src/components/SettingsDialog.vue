@@ -4,6 +4,7 @@ import { useApp } from "../stores/app"
 import { useOpenWith } from "../lib/open-with"
 import ModelsPage from "./ModelsPage.vue"
 import { LANGUAGES, ago, compactTokens, dayLabel, language, sessionTitle, t, type Language } from "../lib/i18n"
+import { pickDirectory, pickProjectFolder } from "../lib/native-pick"
 import { wordMatch } from "../lib/word-match"
 import { revealScrollTop } from "../lib/scroll-reveal"
 import { folderName, projectName } from "../lib/project"
@@ -637,7 +638,7 @@ const envDirty = computed(
 )
 
 async function addProject() {
-  const [directory] = await window.mcode.pickProjectFolder(t("dialog.pickProjectFolder"), false)
+  const [directory] = await pickProjectFolder(t("dialog.pickProjectFolder"), false)
   if (!directory) return
   // MiMo's add with activate off: listed, nothing opened, no conversation made.
   await app.addProject(directory, { switched: false })
@@ -1424,7 +1425,7 @@ async function toggleFullAccess() {
 
 /** Where tasks with no project get their folders. Empty is the default under the home folder. */
 async function pickProjectRoot() {
-  const [directory] = await window.mcode.pickDirectory(t("set.pickDir"))
+  const [directory] = await pickDirectory(t("set.pickDir"))
   if (!directory) return
   await app.patchConfig({ projectRoot: directory })
   notify(t("set.projectRootSet"))

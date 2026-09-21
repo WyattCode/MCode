@@ -1,6 +1,7 @@
 import type { Message } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { sessionTitle, t } from "./i18n"
+import { openText, saveText } from "./native-pick"
 import { notify, notifyFailure } from "./toast"
 import { conversationMarkdown, exportFileName } from "./convo-markdown"
 
@@ -25,7 +26,7 @@ const reasonOf = (failure: unknown) =>
 /** Saves text through the save dialog; MiMo's single-line toasts, and silence when the dialog is dismissed. */
 export async function saveExport(suggested: string, text: string): Promise<void> {
   try {
-    const saved = await window.mcode.saveText(suggested, text)
+    const saved = await saveText(suggested, text)
     if (saved) notify(t("toast.exported", { path: saved }))
   } catch (failure) {
     notifyFailure(reasonOf(failure) || t("toast.exportFailed"))
@@ -63,7 +64,7 @@ const IMPORT_PROBLEMS = {
 
 export async function importConversationFile(open: (sessionID: string) => void): Promise<void> {
   const app = useApp()
-  const picked = await window.mcode.openText(t("cmd.importConvoFile")).catch(() => undefined)
+  const picked = await openText(t("cmd.importConvoFile")).catch(() => undefined)
   // Nothing picked is not a failure, and says nothing - as the save dialog does.
   if (!picked) return
   try {

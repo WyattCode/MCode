@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue"
 import { t } from "../lib/i18n"
+import { pickDirectory } from "../lib/native-pick"
 import { useEscapeLayer } from "../lib/escape-layer"
 
 /**
@@ -38,7 +39,7 @@ const location = ref("")
 const shownLocation = computed(() => location.value || props.defaultLocation || "")
 
 async function pickLocation() {
-  const [directory] = await window.mcode.pickDirectory(t("set.projectRoot"), false)
+  const [directory] = await pickDirectory(t("set.projectRoot"), false)
   if (directory) location.value = directory
 }
 
@@ -51,7 +52,7 @@ function typed(event: Event) {
 }
 
 async function pickSource() {
-  const [directory] = await window.mcode.pickDirectory(t("home.blankSource"), false)
+  const [directory] = await pickDirectory(t("home.blankSource"), false)
   if (!directory) return
   source.value = directory
   if (!touched.value) draft.value = clamp(directory.split(/[\\/]/).filter(Boolean).pop() || draft.value)

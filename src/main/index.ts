@@ -49,6 +49,7 @@ import { isKnownOpenWith } from "@shared/open-app"
 import { installedDocApps, installedOpenAppIcons, installedOpenApps, launchTarget } from "./installed-apps"
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { SOUNDFONT } from "@shared/soundfont"
+import { PICKER_BUSY } from "@shared/native-pick"
 import { readOnlyInstall, type InstallAnswer } from "@shared/update-reason"
 import { readSoundfont } from "./soundfont"
 import { applyZoom } from "./zoom"
@@ -989,10 +990,10 @@ app.whenReady().then(async () => {
   /* `project` is MiMo's 选择或新建项目文件夹: it opens at the default project location. */
   ipcMain.handle("mcode:pick-directory", async (event, rawTitle: unknown, rawMultiple?: unknown, rawProject?: unknown) => {
     const { title, multiple, project } = directoryAsk(rawTitle, rawMultiple, rawProject)
-    // MiMo lets one native dialog up at a time: a second ask while one is open gets nothing.
+    // MiMo lets one native dialog up at a time: a second ask while one is open is answered busy.
     const asking = BrowserWindow.fromWebContents(event.sender)
     const claim = claimDialog(process.platform, asking)
-    if (!claim) return []
+    if (!claim) return PICKER_BUSY
     try {
       const owner = dialogParent(process.platform, asking)
       const options: Electron.OpenDialogOptions = {
@@ -1439,7 +1440,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("mcode:open-text", async (event, title: string) => {
     const asking = BrowserWindow.fromWebContents(event.sender)
     const claim = claimDialog(process.platform, asking)
-    if (!claim) return undefined
+    if (!claim) return PICKER_BUSY
     const owner = dialogParent(process.platform, asking)
     const options: Electron.OpenDialogOptions = {
       title,
@@ -1462,7 +1463,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("mcode:save-text", async (event, suggested: string, text: string) => {
     const asking = BrowserWindow.fromWebContents(event.sender)
     const claim = claimDialog(process.platform, asking)
-    if (!claim) return undefined
+    if (!claim) return PICKER_BUSY
     const owner = dialogParent(process.platform, asking)
     const options = {
       defaultPath: suggested,

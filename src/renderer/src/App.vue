@@ -2,6 +2,7 @@
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { AGENT_NAMES } from "@shared/protocol"
 import { useApp } from "./stores/app"
+import { pickDirectory, pickProjectFolder, saveText } from "./lib/native-pick"
 import Sidebar from "./components/Sidebar.vue"
 import HomeHero from "./components/HomeHero.vue"
 import SessionHero from "./components/SessionHero.vue"
@@ -475,7 +476,7 @@ async function exportLog() {
     "",
   ]
   const body = logLines.length ? logLines : [t("log.empty")]
-  const saved = await window.mcode.saveText("mcode-log.txt", [...header, ...body].join("\n"))
+  const saved = await saveText("mcode-log.txt", [...header, ...body].join("\n"))
   if (saved) notify(t("log.saved"), { action: revealAction(saved) })
 }
 
@@ -1220,7 +1221,7 @@ async function newSessionIn(directory: string) {
  * one picked. No conversation is made.
  */
 async function browse() {
-  const directories = await window.mcode.pickProjectFolder(t("dialog.pickProjectFolder"), true)
+  const directories = await pickProjectFolder(t("dialog.pickProjectFolder"), true)
   if (!directories.length) return
   await addAndBrowse(directories)
 }
@@ -1739,7 +1740,7 @@ const PROJECT_ACTIONS: Record<string, (directory: string) => void | Promise<void
    * icon, colour and pin the project had come along with it.
    */
   relocate: async (directory) => {
-    const [next] = await window.mcode.pickDirectory(t("menu.relocateProject"), false)
+    const [next] = await pickDirectory(t("menu.relocateProject"), false)
     if (!next || next === directory) return
     // MiMo refuses a folder that is already another project's, rather than merging the two.
     if (app.projects.includes(next) || app.sessions.some((entry) => entry.directory === next && !entry.archived)) {
@@ -2088,7 +2089,7 @@ async function shareSession() {
   ].join("\n")
 
   try {
-    const saved = await window.mcode.saveText(`${name}.html`, page)
+    const saved = await saveText(`${name}.html`, page)
     // The page is meant to be looked at, so this one opens rather than reveals.
     if (saved) {
       notify(t("share.saved"), {

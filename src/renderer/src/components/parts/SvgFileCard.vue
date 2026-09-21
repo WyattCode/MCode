@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from "vue"
 import ContextMenu from "../ContextMenu.vue"
 import type { MenuItem } from "../../lib/menu"
 import { t } from "../../lib/i18n"
+import { savePng, saveText } from "../../lib/native-pick"
 import { notifyFailure } from "../../lib/toast"
 import { openImagePreview } from "../../lib/image-preview"
 import { copyImageFile, openNative } from "../../lib/path-open"
@@ -121,13 +122,13 @@ async function pick(key: string) {
     return
   }
   if (key === "downloadSvg") {
-    await window.mcode.saveText(props.name, props.text)
+    await saveText(props.name, props.text)
     return
   }
   if (key === "downloadImage") {
     try {
       const png = await picture()
-      await window.mcode.savePng(`${props.name.replace(/\.svg$/i, "")}.png`, await blobToBase64(png))
+      await savePng(`${props.name.replace(/\.svg$/i, "")}.png`, await blobToBase64(png))
     } catch {
       notifyFailure(t("mermaid.copyImageFailed"))
     }

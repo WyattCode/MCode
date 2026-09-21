@@ -53,4 +53,64 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
     check("the backend drops it from the stored provider, keeping the last one", /models\.length > 1/.test(handler) && /models\.filter\(\(model\) => model\.id !== request\.model\)/.test(handler))
     check("the title is in all 18 tables", (i18n.match(/^ {2}"set\.models\.deleteModelTitle": /gm) ?? []).length === 18)
   }
+
+  // ------------------------------------------------------------ R19-F3 / SH1
+  section("Round 19 (F3, SH1): a picker asked for while another is open warns, as MiMo's nativePick.busy")
+  {
+    const main = await read("src/main/index.ts")
+    const paths = await read("src/main/paths.ts")
+    const handler = (source: string, channel: string) => {
+      const at = source.indexOf(`ipcMain.handle("${channel}"`)
+      return at < 0 ? "" : source.slice(at, source.indexOf("\n  })", at))
+    }
+    for (const channel of ["mcode:pick-directory", "mcode:open-text", "mcode:save-text"]) {
+      check(`${channel} answers busy when the one dialog slot is taken`, /if \(!claim\) return PICKER_BUSY/.test(handler(main, channel)))
+    }
+    const png = handler(paths, "mcode:save-png")
+    check("mcode:save-png takes the same slot and answers busy too", /claimDialog\(process\.platform, owner\)/.test(png) && /if \(!claim\) return PICKER_BUSY/.test(png) && /releaseDialog\(claim\)/.test(png))
+
+    // Every caller in the window goes through the wrappers that turn busy into the warning.
+    const offenders: string[] = []
+    const walk = async (dir: string): Promise<void> => {
+      for (const entry of await fs.readdir(path.join(process.cwd(), dir), { withFileTypes: true })) {
+        const relative = path.join(dir, entry.name)
+        if (entry.isDirectory()) await walk(relative)
+        else if (/\.(ts|vue)$/.test(entry.name) && !relative.endsWith(path.join("lib", "native-pick.ts"))) {
+          if (/window\.mcode\.(pickDirectory|pickProjectFolder|saveText|openText|savePng)\(/.test(await read(relative))) offenders.push(relative)
+        }
+      }
+    }
+    await walk(path.join("src", "renderer", "src"))
+    check("no window code calls a native picker around the busy warning", offenders.length === 0, offenders)
+    const errorPage = await read("src/renderer/src/components/ErrorPage.vue")
+    check("the error page, which draws no notices, says it in its own line", /if \(isPickerBusy\(saved\)\) note\.value = \{ text: t\("toast\.pickerBusy"\), failed: true \}/.test(errorPage))
+
+    const { isPickerBusy, PICKER_BUSY } = await import("../src/shared/native-pick")
+    check("the marker is recognised, and a cancel's answers are not", isPickerBusy(PICKER_BUSY) && ![[], undefined, "", { busy: false }, null].some(isPickerBusy))
+    const { toasts } = await import("../src/renderer/src/lib/toast")
+    const { language } = await import("../src/renderer/src/lib/i18n")
+    const spoken = language.value
+    language.value = "zh-CN"
+    const picks = await import("../src/renderer/src/lib/native-pick")
+    const answers: Record<string, unknown> = { pickDirectory: PICKER_BUSY, pickProjectFolder: PICKER_BUSY, saveText: PICKER_BUSY, openText: PICKER_BUSY, savePng: PICKER_BUSY }
+    const stub = Object.fromEntries(Object.keys(answers).map((name) => [name, async () => answers[name]]))
+    const global = globalThis as { window?: unknown }
+    const before = global.window
+    global.window = { mcode: stub }
+    try {
+      toasts.value = []
+      const results = [await picks.pickDirectory("t"), await picks.pickProjectFolder("t"), await picks.saveText("a.txt", "x"), await picks.openText("t"), await picks.savePng("a.png", "")]
+      check("a busy answer reads as a cancel to the caller", JSON.stringify(results) === "[[],[],null,null,null]", results)
+      const warned = toasts.value.filter((entry) => entry.level === "warning" && entry.title === "已经打开了一个选择窗口，完成或取消它后再试（它可能被主窗口挡住了）")
+      check("and raises MiMo's warning (one notice, the same text each time)", warned.length === 1, toasts.value)
+      toasts.value = []
+      answers.pickDirectory = ["C:\\work"]
+      check("a real answer passes through with no notice", JSON.stringify(await picks.pickDirectory("t")) === JSON.stringify(["C:\\work"]) && toasts.value.length === 0)
+      toasts.value = []
+    } finally {
+      global.window = before
+      language.value = spoken
+    }
+    check("the sentence is in all 18 tables", (i18n.match(/^ {2}"toast\.pickerBusy": /gm) ?? []).length === 18)
+  }
 }
