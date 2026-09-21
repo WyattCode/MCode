@@ -11,7 +11,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
-import { LANGUAGES, language } from "../src/renderer/src/lib/i18n"
+import { LANGUAGES, language, t } from "../src/renderer/src/lib/i18n"
 import { toolVerb } from "../src/renderer/src/lib/tool-meta"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
@@ -93,5 +93,27 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
     check("R18-U11: and in English they read a web page", en.every((verb) => /web page/i.test(verb)) && !en.some((verb) => /search/i.test(verb)), en)
     check("R18-U11: no language still calls it a search", !zh.some((verb) => verb.includes("搜索")) && spread.every((set) => set.every((verb) => verb.length > 0 && !verb.startsWith("toolLabel."))), spread)
     check("R18-U11: every language has five distinct words for the five states", spread.every((set) => new Set(set).size === 5), spread)
+  }
+
+  section("Round 18 (lane U): R18-U9 the box says 发送中… and 压缩中… while it sends or compacts")
+  {
+    const composer = await read("src/renderer/src/components/Composer.vue")
+    const placeholder = /const placeholder = computed\(\(\) => \{([\s\S]*?)\n\}\)/.exec(composer)?.[1] ?? ""
+    const order = ["composer.shellPlaceholder", "composer.compacting", "composer.sending", "composer.reviewRestricted", "composer.placeholder\""].map((key) => placeholder.indexOf(key))
+    check("R18-U9: compacting, then sending, then the rest - MiMo's order", order.every((at, index) => at >= 0 && (index === 0 || at > order[index - 1])), order)
+    const submit = composer.slice(composer.indexOf("async function submit()"), composer.indexOf("/*\n * MiMo's /compact from the box"))
+    const on = submit.indexOf("sending.value = true")
+    const cleared = submit.indexOf('text.value = ""\n  attachments.value = []')
+    check("R18-U9: sending starts once the draft has left the box", on > cleared && cleared > 0)
+    check("R18-U9: and ends however the send ends", /\} finally \{\s*sending\.value = false\s*\}\s*\}$/.test(submit.trimEnd()), submit.slice(-160))
+    const before = language.value
+    language.value = "zh-CN"
+    const zh = [t("composer.sending"), t("composer.compacting")]
+    language.value = "en"
+    const en = [t("composer.sending"), t("composer.compacting")]
+    language.value = before
+    check("R18-U9: the words are 发送中… and 压缩中…", zh[0] === "发送中…" && zh[1] === "压缩中…", zh)
+    check("R18-U9: Sending… and Compacting… in English", en[0] === "Sending…" && en[1] === "Compacting…", en)
+    for (const key of ["composer.sending", "composer.compacting"]) check(`R18-U9: ${key} is in all 18 tables`, (await carrying(key)) === 18)
   }
 }

@@ -767,8 +767,9 @@ function addDroppedMentions(paths: { rel: string; file: boolean }[]) {
  */
 const placeholder = computed(() => {
   if (mode.value === "shell") return t("composer.shellPlaceholder")
-  // MiMo's order: a running compaction, then a restricted conversation, then the mode's own line, then the everyday one. Attachments do not blank it.
-  if (compactingHere.value) return t("composer.compact.starting")
+  // MiMo 26.920's order: compacting, then sending, then a restricted conversation, then the mode's own line, then the everyday one. Attachments do not blank it.
+  if (compactingHere.value) return t("composer.compacting")
+  if (sending.value) return t("composer.sending")
   if (restrictedHere.value) return t("composer.reviewRestricted")
   if (!props.side && agent.value === "plan") return t("composer.placeholderPlan")
   return t("composer.placeholder")
@@ -1197,6 +1198,9 @@ async function openSkillFrom(from: HTMLElement) {
 /* Set while attached audio is being read before a send, so a second Enter does not start another. */
 let probingAudio = false
 
+/* From the draft leaving the box until the message is taken or handed back: the new conversation, the mentioned files, the send itself. */
+const sending = ref(false)
+
 async function submit() {
   const value = text.value.trim()
   // MiMo's restricted conversation takes nothing at all: the review that took its turn said it may not be continued.
@@ -1284,73 +1288,79 @@ async function submit() {
   skills.value = []
   await nextTick(resize)
 
-  /*
-   * On the home screen there is nothing to send into yet. The session is made
-   * here, on the way out, rather than when the screen opened: one created just
-   * because somebody looked at the home screen is a row in the side column
-   * that nobody asked for. If it cannot be made, the draft comes back.
-   */
-  let target = props.side ? sessionID.value : undefined
-  if (!sessionID.value) {
-    try {
-      if (props.side) {
-        // MiMo makes a side conversation on its first message; its tab hands over how.
-        target = props.createSide ? await props.createSide() : undefined
-        if (!target) throw new Error("")
-      } else {
-        await app.create(props.startDirectory, { scratch: props.startScratch })
-        // MiMo's newChat says so whenever the first send makes a new task.
-        notify(t("toast.newConvoCreated"))
+  // MiMo's 发送中…: the box says so from here until the message is taken or handed back.
+  sending.value = true
+  try {
+    /*
+     * On the home screen there is nothing to send into yet. The session is made
+     * here, on the way out, rather than when the screen opened: one created just
+     * because somebody looked at the home screen is a row in the side column
+     * that nobody asked for. If it cannot be made, the draft comes back.
+     */
+    let target = props.side ? sessionID.value : undefined
+    if (!sessionID.value) {
+      try {
+        if (props.side) {
+          // MiMo makes a side conversation on its first message; its tab hands over how.
+          target = props.createSide ? await props.createSide() : undefined
+          if (!target) throw new Error("")
+        } else {
+          await app.create(props.startDirectory, { scratch: props.startScratch })
+          // MiMo's newChat says so whenever the first send makes a new task.
+          notify(t("toast.newConvoCreated"))
+        }
+      } catch (err) {
+        text.value = value
+        attachments.value = sent
+        mentioned.value = carried
+        skills.value = chips
+        if (scopeAtSend && pointed.length) annotations.put(scopeAtSend, pointed)
+        await nextTick(resize)
+        notifyFailure(t("home.startFailed"), (err instanceof Error ? err.message : String(err)) || undefined)
+        return
       }
-    } catch (err) {
+    }
+
+    /*
+     * 追求目标: with the switch on, what was typed becomes the goal the turn is
+     * judged against. The words as typed, not the body that is sent - a body
+     * standing in for attachments would make a goal nobody wrote.
+     */
+    const goalOnSend = !props.side && goalMode.value && value.trim() ? value.trim() : undefined
+
+    const named = await mentionAttachments(value, carried, target)
+    const filled = await fillCommand(value, target)
+    /*
+     * Files with nothing written beside them still make a message that reads as
+     * one: MiMo puts a fixed short phrase in the body, so the bubble in the
+     * transcript is not an empty square and the model is told plainly that the
+     * files are the message. A skill chip already stands in the body, so it is
+     * left to speak for itself.
+     */
+    const body = filled && !filled.text.trim() && sent.length && !chips.length ? t("composer.seeAttachments") : (filled?.text ?? "")
+    // A file the command names that was also mentioned goes once.
+    const commandFiles = filled ? filled.attachments.filter((file) => !named.some((entry) => entry.path === file.path)) : []
+
+    // subagents: a command marked subtask is handed to a subagent in this conversation instead of sent as a prompt.
+    const subtask = props.side || !filled ? undefined : subtaskOf(filled)
+    // A rejected message should not cost the user what they typed, or gathered.
+    const accepted = !filled
+      ? false
+      : subtask
+        ? await app.subtask(value, subtask)
+        : await app.send(withSkills(body, chips), [...sent, ...named, ...commandFiles], target, pointed, filled.command, goalOnSend)
+    if (!accepted) {
       text.value = value
       attachments.value = sent
       mentioned.value = carried
       skills.value = chips
-      if (scopeAtSend && pointed.length) annotations.put(scopeAtSend, pointed)
+      // Back into the conversation the message was meant for - on the home screen, the one just made.
+      const back = annotationScope.value
+      if (back && pointed.length) annotations.put(back, [...pointed, ...annotations.list(back)])
       await nextTick(resize)
-      notifyFailure(t("home.startFailed"), (err instanceof Error ? err.message : String(err)) || undefined)
-      return
     }
-  }
-
-  /*
-   * 追求目标: with the switch on, what was typed becomes the goal the turn is
-   * judged against. The words as typed, not the body that is sent - a body
-   * standing in for attachments would make a goal nobody wrote.
-   */
-  const goalOnSend = !props.side && goalMode.value && value.trim() ? value.trim() : undefined
-
-  const named = await mentionAttachments(value, carried, target)
-  const filled = await fillCommand(value, target)
-  /*
-   * Files with nothing written beside them still make a message that reads as
-   * one: MiMo puts a fixed short phrase in the body, so the bubble in the
-   * transcript is not an empty square and the model is told plainly that the
-   * files are the message. A skill chip already stands in the body, so it is
-   * left to speak for itself.
-   */
-  const body = filled && !filled.text.trim() && sent.length && !chips.length ? t("composer.seeAttachments") : (filled?.text ?? "")
-  // A file the command names that was also mentioned goes once.
-  const commandFiles = filled ? filled.attachments.filter((file) => !named.some((entry) => entry.path === file.path)) : []
-
-  // subagents: a command marked subtask is handed to a subagent in this conversation instead of sent as a prompt.
-  const subtask = props.side || !filled ? undefined : subtaskOf(filled)
-  // A rejected message should not cost the user what they typed, or gathered.
-  const accepted = !filled
-    ? false
-    : subtask
-      ? await app.subtask(value, subtask)
-      : await app.send(withSkills(body, chips), [...sent, ...named, ...commandFiles], target, pointed, filled.command, goalOnSend)
-  if (!accepted) {
-    text.value = value
-    attachments.value = sent
-    mentioned.value = carried
-    skills.value = chips
-    // Back into the conversation the message was meant for - on the home screen, the one just made.
-    const back = annotationScope.value
-    if (back && pointed.length) annotations.put(back, [...pointed, ...annotations.list(back)])
-    await nextTick(resize)
+  } finally {
+    sending.value = false
   }
 }
 
