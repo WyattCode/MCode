@@ -2150,7 +2150,6 @@ defineExpose({ stepMessage, scroller })
   align-self: flex-end;
   align-items: center;
   gap: 4px;
-  margin-bottom: 6px;
   padding: 1.5px 7px;
   color: var(--text-strong);
   background: var(--surface-layer);
@@ -2194,8 +2193,8 @@ defineExpose({ stepMessage, scroller })
 }
 
 /*
- * MiMo's user-meta under a question: the time, then copy and edit, 2px below
- * the bubble; all of it out of sight, and the buttons out of reach, until the
+ * MiMo's user-meta under a question: the time, then copy and edit, the row's
+ * 6px gap and 2px more below the bubble; all of it out of sight, and the buttons out of reach, until the
  * question is under the pointer or holds focus.
  */
 .user-meta {
@@ -2207,7 +2206,7 @@ defineExpose({ stepMessage, scroller })
 }
 
 .user-time {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   opacity: 0;
   transition: opacity 0.12s;
@@ -2320,6 +2319,7 @@ defineExpose({ stepMessage, scroller })
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  gap: 6px;
 }
 
 /* MiMo's msg-in, on a question sent while the conversation is open; the reduced-motion rule in base.css lands it at once. */
@@ -2350,7 +2350,7 @@ defineExpose({ stepMessage, scroller })
   box-sizing: border-box;
   width: 100%;
   padding: 9px 13px;
-  background: color-mix(in srgb, var(--text-strong) 9.5%, var(--surface-raised));
+  background: #f8f7f5;
   border-radius: 16px;
 }
 
@@ -2425,7 +2425,6 @@ defineExpose({ stepMessage, scroller })
   gap: 8px;
   width: fit-content;
   max-width: min(82%, 64ch);
-  margin-bottom: 8px;
   margin-inline-start: auto;
 }
 
@@ -2681,7 +2680,7 @@ defineExpose({ stepMessage, scroller })
   max-width: 78%;
   padding: 9px 13px;
   color: color-mix(in srgb, var(--text-strong) 95%, transparent);
-  background: color-mix(in srgb, var(--text-strong) 9.5%, var(--surface-raised));
+  background: #f8f7f5;
   border-radius: 16px;
   font-weight: 500;
   line-height: calc(20px * var(--ui-font-scale, 1));
@@ -2704,8 +2703,27 @@ defineExpose({ stepMessage, scroller })
   inset-inline: 0;
   bottom: 0;
   height: 56px;
-  background: linear-gradient(to top, color-mix(in srgb, var(--text-strong) 9.5%, var(--surface-raised)), transparent);
+  background: linear-gradient(to top, #f8f7f5, transparent);
   pointer-events: none;
+}
+
+/* MiMo's bubble colour: its settings-nav #f8f7f5 in light, its code-bg #2e2e2e in dark. */
+:root[data-theme="dark"] :is(.user-bubble, .asked-edit) {
+  background: #2e2e2e;
+}
+
+:root[data-theme="dark"] .asked-text.folded::after {
+  background: linear-gradient(to top, #2e2e2e, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) :is(.user-bubble, .asked-edit) {
+    background: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .asked-text.folded::after {
+    background: linear-gradient(to top, #2e2e2e, transparent);
+  }
 }
 
 /* MiMo's: 12px in the muted colour, 2 by 4 of padding on a 6px corner. */
@@ -2800,7 +2818,6 @@ defineExpose({ stepMessage, scroller })
 .asked-annotations {
   justify-content: flex-end;
   max-width: 78%;
-  padding-block: 6px 0;
 }
 
 /*
