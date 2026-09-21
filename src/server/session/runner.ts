@@ -57,7 +57,7 @@ import { pruneLevelFor, prunedHistory, type PruneLevel } from "./prune"
 import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, shrinkLargeToolResults, touchedFiles, type CompactionTrigger } from "./summary"
 import { memorySection, systemPrompt } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
-import { GOAL_GUARD, JUDGE_SYSTEM, MAX_GOAL_REACT, cleanGoal, goalReminder, judgeQuestion, parseVerdict, type GoalVerdict } from "./goal"
+import { GOAL_GUARD, JUDGE_SYSTEM, MAX_GOAL_REACT, cleanGoal, goalReminder, judgeQuestion, parseVerdict, sameGoal, type GoalVerdict } from "./goal"
 import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf, subagentAgent } from "./plan"
 import { status as gitStatus } from "../git"
 import { historyService, memoryFilesFor, memoryWritable } from "../history/service"
@@ -2097,21 +2097,28 @@ export class SessionRunner {
     const verdict = await this.judgeGoal(session, goal.condition, stopped)
     // Stop landed while the judge was reading: the goal stands, untouched, for the next turn.
     if (stopped.aborted) return false
+    /*
+     * The judge can take a minute and a half. The bar may have cleared the goal
+     * or set a new one meanwhile; the verdict is about the goal that was read
+     * above and is written to that goal only. Anything else lets the turn stop.
+     */
+    const now = (await this.store.get(sessionID))?.goal
+    if (!now || !sameGoal(now, goal)) return false
     if (!verdict) {
-      await this.endGoal(sessionID, { status: "blocked", reason: GOAL_JUDGE_FAILED, at: Date.now() })
+      await this.endGoal(sessionID, goal, { status: "blocked", reason: GOAL_JUDGE_FAILED, at: Date.now() })
       return false
     }
     if (verdict.ok || verdict.impossible) {
-      await this.endGoal(sessionID, { status: verdict.ok ? "complete" : "blocked", reason: verdict.reason, at: Date.now() })
+      await this.endGoal(sessionID, goal, { status: verdict.ok ? "complete" : "blocked", reason: verdict.reason, at: Date.now() })
       return false
     }
 
-    const attempts = goal.attempts + 1
+    const attempts = now.attempts + 1
     if (attempts > MAX_GOAL_REACT) {
-      await this.endGoal(sessionID, { status: "blocked", reason: verdict.reason, at: Date.now() })
+      await this.endGoal(sessionID, goal, { status: "blocked", reason: verdict.reason, at: Date.now() })
       return false
     }
-    await this.store.update(sessionID, { goal: { ...goal, attempts } })
+    await this.store.update(sessionID, { goal: { ...now, attempts } })
     const reminder: UserMessage = {
       id: Identifier.message(),
       sessionID,
@@ -2126,11 +2133,15 @@ export class SessionRunner {
     return true
   }
 
-  /** 追求目标: the goal stops driving turns but stays on the conversation, so the bar can say how it ended. */
-  private async endGoal(sessionID: string, done: NonNullable<SessionGoal["done"]>): Promise<void> {
-    const current = await this.store.get(sessionID)
-    if (!current?.goal || current.goal.done) return
-    await this.store.update(sessionID, { goal: { ...current.goal, done } })
+  /**
+   * 追求目标: the goal stops driving turns but stays on the conversation, so the
+   * bar can say how it ended. Only the goal that was judged: one set in its
+   * place meanwhile is a fresh goal the verdict says nothing about.
+   */
+  private async endGoal(sessionID: string, judged: SessionGoal, done: NonNullable<SessionGoal["done"]>): Promise<void> {
+    const current = (await this.store.get(sessionID))?.goal
+    if (!current || !sameGoal(current, judged)) return
+    await this.store.update(sessionID, { goal: { ...current, done } })
   }
 
   /**

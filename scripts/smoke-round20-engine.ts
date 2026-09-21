@@ -37,6 +37,7 @@ export async function roundTwentyEngineChecks(check: Check, section: Section): P
   try {
     await loopChecks(check, section, path.join(root, "loops"))
     await compactionChecks(check, section, root)
+    await goalChecks(check, section, path.join(root, "goal"))
   } finally {
     if (titles === undefined) delete process.env.MCODE_GENERATE_TITLES
     else process.env.MCODE_GENERATE_TITLES = titles
@@ -268,5 +269,65 @@ async function compactionChecks(check: Check, section: Section, root: string): P
     } finally {
       await app.close()
     }
+  }
+}
+
+/* ---------------------------------------------------------------- R20-A3: a verdict is about the goal it judged */
+
+async function goalChecks(check: Check, section: Section, root: string): Promise<void> {
+  const app = await harness(root)
+  try {
+    const pursue = async (condition: string) => {
+      const session = await app.store.create({ directory: app.project, model: app.model })
+      await app.store.update(session.id, { goal: { condition, startedAt: Date.now() - 1000, attempts: 0 } })
+      return session
+    }
+
+    section("Round 20 (R20-A3): a goal cleared while the judge reads stays cleared")
+    {
+      const session = await pursue("ship it")
+      app.script([{ text: "working on it" }])
+      app.scriptJudge([{ text: JSON.stringify({ ok: false, reason: "not shipped yet" }), delay: 800 }])
+      const judgedBefore = app.judged.length
+      const turnsBefore = app.turns.length
+      await app.runner.prompt({ sessionID: session.id, text: "go" })
+      await app.until(() => app.judged.length > judgedBefore)
+      await app.store.update(session.id, { goal: undefined })
+      await app.settled(session.id)
+      const after = await app.store.get(session.id)
+      const reminders = (await app.store.messages(session.id)).filter((message) => message.role === "user" && message.synthetic)
+      check("the verdict does not bring the goal back", after?.goal === undefined, after?.goal)
+      check("no reminder is written and the turn is not sent back", reminders.length === 0 && app.turns.length === turnsBefore + 1, [reminders.length, app.turns.length - turnsBefore])
+    }
+
+    section("Round 20 (R20-A3): a goal replaced while the judge reads is not marked by the old verdict")
+    {
+      const session = await pursue("ship it")
+      app.script([{ text: "shipped" }])
+      app.scriptJudge([{ text: JSON.stringify({ ok: true, reason: "it shipped" }), delay: 800 }])
+      const judgedBefore = app.judged.length
+      await app.runner.prompt({ sessionID: session.id, text: "go" })
+      await app.until(() => app.judged.length > judgedBefore)
+      const fresh = { condition: "write the release notes", startedAt: Date.now(), attempts: 0 }
+      await app.store.update(session.id, { goal: fresh })
+      await app.settled(session.id)
+      const after = await app.store.get(session.id)
+      check("the new goal is left open", after?.goal?.condition === fresh.condition && after.goal.done === undefined, after?.goal)
+    }
+
+    section("Round 20 (R20-A3): a goal left alone is still judged as before")
+    {
+      const session = await pursue("ship it")
+      app.script([{ text: "not yet" }, { text: "now shipped" }])
+      app.scriptJudge([{ text: JSON.stringify({ ok: false, reason: "not shipped yet" }) }, { text: JSON.stringify({ ok: true, reason: "it shipped" }) }])
+      const turnsBefore = app.turns.length
+      await app.runner.prompt({ sessionID: session.id, text: "go" })
+      await app.settled(session.id)
+      const after = await app.store.get(session.id)
+      check("a not-met verdict sends the turn back once", app.turns.length === turnsBefore + 2, app.turns.length - turnsBefore)
+      check("and the met one ends the goal with its count kept", after?.goal?.done?.status === "complete" && after.goal.attempts === 1, after?.goal)
+    }
+  } finally {
+    await app.close()
   }
 }

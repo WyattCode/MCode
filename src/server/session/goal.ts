@@ -1,3 +1,5 @@
+import type { SessionGoal } from "@shared/protocol"
+
 /**
  * 追求目标 (goal mode): a turn that is not allowed to stop until a judge says
  * the goal is met.
@@ -21,6 +23,16 @@
  * hundredth try either, and every re-entry is a full turn the user pays for.
  */
 export const MAX_GOAL_REACT = 12
+
+/**
+ * Whether the goal a conversation holds now is still the one that was read
+ * earlier, and still open: the same sentence, set at the same moment. A goal
+ * cleared and set again with the same words is a fresh one - its clock and
+ * its count started over - and so is not the same goal.
+ */
+export function sameGoal(now: SessionGoal, then: SessionGoal): boolean {
+  return !now.done && now.condition === then.condition && now.startedAt === then.startedAt
+}
 
 /** What a judge answered about one goal. */
 export interface GoalVerdict {
