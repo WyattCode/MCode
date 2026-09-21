@@ -711,7 +711,8 @@ export async function roundNineWindowsChecks(check: Check, section: (name: strin
         /report \? \{ \.\.\.state, interrupted: report \}/.test(main),
     )
     const app = await fs.readFile(path.join(root, "src/renderer/src/App.vue"), "utf8")
-    check("the window shows the interruption as a failure notice", /if \(state\.interrupted\) notifyFailure\(t\("update\.interrupted"/.test(app) && !/no-installer|update\.found/.test(app))
+    // Told by its reason since round 18 (R18-U8); markUpdateFailed raises the failure notice.
+    check("the window shows the interruption as a failure notice", /if \(state\.interrupted\) \{\s*const \{ reason, hint \} = interruptedReason\(state\.interrupted\.error\)\s*markUpdateFailed\(/.test(app) && !/no-installer|update\.found/.test(app))
     const updaterSource = await fs.readFile(path.join(root, "src/main/updater.ts"), "utf8")
     check("MCode's own feed code is gone: no JSON feed, no hand-rolled download or sha256", !/fetchFeed|parseFeed|sha256\(|createHash|fetch\(/.test(updaterSource + handler) && !/node:crypto/.test(updaterSource))
     const builder = await fs.readFile(path.join(root, "electron-builder.yml"), "utf8")

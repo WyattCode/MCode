@@ -109,8 +109,7 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
 
   section("round 8 access: names that are not drawn (A7, A8, A10)")
   {
-    const side = read("components/Sidebar.vue")
-    check("the folded rail names 产物中心 and 设置 itself, not through a tip bound before it folded", /:aria-label="collapsed \? t\('side\.railArtifacts'\) : undefined"/.test(side) && /:aria-label="collapsed \? t\('rail\.settings'\) : undefined"/.test(side))
+    // A7's folded rail went in round 18 (R18-U1): a folded column is not drawn, and its preview shows every row's own label.
     const unnamed: string[] = []
     for (const file of sources(path.join(RENDERER, "components"))) {
       if (!file.endsWith(".vue")) continue
@@ -158,7 +157,7 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
     check("each notice is an alert and a Tab stop, as MiMo's are (A14)", /class="notice"[^>]*role="alert"\s+tabindex="0"\s+@mousedown="keepFocus"/.test(toasts))
     check("the column of notices stays a polite status region (A14)", /class="toasts"\s+role="status"\s+aria-live="polite"/.test(toasts))
     check("high contrast outlines the open conversation and the send button, and rings in Highlight (A12)",
-      /@media \(forced-colors: active\) \{\s+\.row\.on,\s+\.quick-convo\.on \{\s+outline: 2px solid Highlight/.test(read("components/Sidebar.vue")) &&
+      /@media \(forced-colors: active\) \{\s+\.row\.on \{\s+outline: 2px solid Highlight/.test(read("components/Sidebar.vue")) &&
         /@media \(forced-colors: active\) \{\s+\.send \{\s+outline: 1px solid ButtonText/.test(read("components/Composer.vue")) &&
         /@media \(forced-colors: active\) \{\s+:focus-visible \{\s+outline-color: Highlight/.test(read("styles/base.css")))
     const browser = read("components/right/RpBrowser.vue")

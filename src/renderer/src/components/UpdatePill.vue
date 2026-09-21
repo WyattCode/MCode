@@ -1,5 +1,6 @@
 <script lang="ts">
 import { reactive } from "vue"
+import type { UpdateReason } from "@shared/update-reason"
 // Aliased: the setup block below imports `t` itself.
 import { t as translate } from "../lib/i18n"
 import { notifyFailure } from "../lib/toast"
@@ -25,13 +26,42 @@ export function markUpdateReady(version: string, notes: string): void {
 export const INSTALL_WATCHDOG = 8000
 let watchdog: ReturnType<typeof setTimeout> | undefined
 
+/* MiMo 26.920's nine reasons, each its own sentence. */
+export const UPDATE_REASON_KEYS: Record<UpdateReason, string> = {
+  "no-ready": "update.reason.noReady",
+  staging: "update.reason.staging",
+  "read-only-volume": "update.reason.readOnlyVolume",
+  "install-failed": "update.reason.installFailed",
+  "not-started": "update.reason.notStarted",
+  "version-mismatch": "update.reason.versionMismatch",
+  stale: "update.reason.stale",
+  disabled: "update.reason.disabled",
+  unknown: "update.reason.unknown",
+}
+
+/** The sentence for a reason, with the detail on a line of its own when there is one. */
+export function updateFailureText(reason: UpdateReason, hint = ""): string {
+  const said = translate(UPDATE_REASON_KEYS[reason] ?? UPDATE_REASON_KEYS.unknown)
+  return hint ? `${said}\n${hint}` : said
+}
+
+/*
+ * An electron IPC reply lost because the app is already going away - the
+ * install began and quit took the window with it. Not a failure to report.
+ */
+function goneAway(message: string): boolean {
+  const said = message.toLowerCase()
+  return said.includes("reply was never sent") || said.includes("render frame was disposed") || said.includes("object has been destroyed")
+}
+
 /* The capsule turns to 重试 with the reason, and MiMo's danger notice says it too. */
-function failInstall(error: string, reason?: string): void {
+export function markUpdateFailed(reason: UpdateReason, hint = "", version?: string): void {
   if (watchdog) clearTimeout(watchdog)
   watchdog = undefined
-  updateState.error = error
+  if (version) updateState.version = version
+  updateState.error = updateFailureText(reason, hint)
   updateState.phase = "failed"
-  notifyFailure(reason ? translate("update.failReason", { reason }) : translate("update.failGeneric"))
+  notifyFailure(translate(UPDATE_REASON_KEYS[reason] ?? UPDATE_REASON_KEYS.unknown), hint || undefined)
 }
 
 /** Runs the installer the main process fetched; a failure stays on the capsule as 重试. */
@@ -42,15 +72,16 @@ export async function installUpdate(): Promise<void> {
   if (watchdog) clearTimeout(watchdog)
   watchdog = setTimeout(() => {
     watchdog = undefined
-    if (updateState.phase === "installing") failInstall(translate("update.watchdogTimeout"))
+    if (updateState.phase === "installing") markUpdateFailed("not-started")
   }, INSTALL_WATCHDOG)
   try {
-    await window.mcode.installUpdate()
+    const answer = await window.mcode.installUpdate()
+    if (!answer.ok && updateState.phase === "installing") markUpdateFailed(answer.reason, answer.hint)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    // Electron prefixes the IPC plumbing; only the reason is worth showing.
-    const reason = message.replace(/^Error invoking remote method '[^']+': (Error: )?/, "").trim() || translate("update.restartFailed")
-    failInstall(reason, reason)
+    if (goneAway(message)) return
+    // Electron prefixes the IPC plumbing; only the error itself is worth showing.
+    markUpdateFailed("install-failed", message.replace(/^Error invoking remote method '[^']+': (Error: )?/, "").trim())
   }
 }
 </script>
@@ -83,11 +114,7 @@ const label = computed(() =>
       ? t("update.pillRetry")
       : t("update.pill"),
 )
-const tip = computed(() =>
-  updateState.phase === "failed"
-    ? t("update.failedTip", { error: updateState.error })
-    : t("update.readyTip", { version: updateState.version }),
-)
+const tip = computed(() => (updateState.phase === "failed" ? updateState.error : t("update.readyTip", { version: updateState.version })))
 /* One row per non-empty line of the notes, as MiMo lists them. */
 const notes = computed(() =>
   updateState.notes
@@ -372,8 +399,10 @@ onBeforeUnmount(() => {
   margin-inline-end: 6px;
 }
 
+/* The reason, then any detail on its own line. */
 .update-bubble .ub-error {
   margin: 0;
+  white-space: pre-line;
   color: #d93025;
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.6;

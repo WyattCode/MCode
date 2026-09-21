@@ -572,9 +572,9 @@ body.resizing .right-panel {
   border-end-start-radius: 20px;
 }
 
-/* With the side column folded, the rail's toggle, back and forward stand over the head: the tabs start clear of them. */
+/* With the side column folded, its toggle and 新建任务 stand over the head: the tabs start 8 clear of them (107 + 24 + 8), as MiMo 26.920's do. */
 .right-panel.fullscreen.side-collapsed .rp-head {
-  padding-inline-start: 131px;
+  padding-inline-start: 139px;
 }
 
 /* MiMo's drag edge: 7px across the start line, never a window drag region. */

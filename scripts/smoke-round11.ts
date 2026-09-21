@@ -673,8 +673,7 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     check("file.list stops after a budget of entries, and the search budget is MiMo's", /visits < LIST_VISITS/.test(handlers) && /const SEARCH_VISITS = 4000/.test(handlers))
     const store = await read("src/renderer/src/stores/app.ts")
     check("a deleted conversation's draft and annotations go with it", /for \(const key of \[`main:\$\{sessionID\}`, `side:\$\{sessionID\}`\]\)/.test(store) && /forgetDrafts\(sessionID\)/.test(store))
-    const sidebar = await read("src/renderer/src/components/Sidebar.vue")
-    check("the collapsed side column's list is paged like the column's own", /v-for="session in recent"\s/.test(sidebar) && /data-quick-more/.test(sidebar))
+    // N11-25's rail card went with the rail in round 18 (R18-U1); the folded column's preview is the column itself, paged as it is.
     check("the socket states its frame limit", MAX_FRAME_BYTES === 100 * 1024 * 1024 && /maxPayload: MAX_FRAME_BYTES/.test(await read("src/server/index.ts")))
     check("the search index gives space back after a full rebuild", /this\.db\.exec\("VACUUM"/.test(await read("src/server/history/index.ts")))
     const preload = await read("src/preload/index.ts")

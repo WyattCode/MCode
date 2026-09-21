@@ -30,7 +30,8 @@ import { deliveryShown, setDeliveryView } from "./lib/delivered"
 import { closeImagePreview, closeVideoPreview, imagePreview, videoPreview } from "./lib/image-preview"
 import VideoPreview from "./components/VideoPreview.vue"
 import RenameDialog from "./components/RenameDialog.vue"
-import { markUpdateReady, updateState } from "./components/UpdatePill.vue"
+import { markUpdateFailed, markUpdateReady, updateState } from "./components/UpdatePill.vue"
+import { interruptedReason } from "@shared/update-reason"
 import type TerminalDrawerComponent from "./components/TerminalDrawer.vue"
 import Toasts from "./components/Toasts.vue"
 import ConfirmDialog from "./components/ConfirmDialog.vue"
@@ -256,8 +257,11 @@ onMounted(() => {
     .updateStatus()
     .then((state) => {
       takeUpdateState(state)
-      /* MiMo's interrupted-update notice: the last install did not finish, said once. */
-      if (state.interrupted) notifyFailure(t("update.interrupted", { version: state.interrupted.targetVersion || "?" }), state.interrupted.error)
+      /* MiMo's interrupted-update notice: the last install did not finish, said once, by its reason; the capsule offers 重试. */
+      if (state.interrupted) {
+        const { reason, hint } = interruptedReason(state.interrupted.error)
+        markUpdateFailed(reason, hint, state.interrupted.targetVersion || undefined)
+      }
     })
     .catch(() => {})
   offUpdateState = window.mcode.onUpdateState((state) => {
@@ -799,35 +803,6 @@ watch(
   () => app.config?.tray ?? true,
   (enabled) => window.mcode.tray(enabled),
   { immediate: true },
-)
-
-/*
- * The tray's 配置切换: the models the picker offers, the one in use checked.
- * Main draws the menu; a model chosen there comes back here to be applied.
- */
-watch(
-  () => {
-    const current = app.config?.model
-    return app.providers
-      .filter((provider) => provider.configured)
-      .flatMap((provider) =>
-        provider.models
-          .map((model) => ({
-            key: `${provider.id}/${model.id}`,
-            label: `${provider.name} · ${model.name || model.id}`,
-            checked: current?.provider === provider.id && current.model === model.id,
-          })),
-      )
-      .slice(0, 40)
-  },
-  (profiles) => window.mcode.trayProfiles(profiles),
-  { immediate: true },
-)
-onBeforeUnmount(
-  window.mcode.onTrayProfile((key) => {
-    const cut = key.indexOf("/")
-    if (cut > 0) void app.patchConfig({ model: { provider: key.slice(0, cut), model: key.slice(cut + 1) } })
-  }),
 )
 
 /*
@@ -2241,6 +2216,12 @@ function goPlugins() {
 async function openFromSide(sessionID: string) {
   view.value = "session"
   if (app.currentID !== sessionID) await app.open(sessionID)
+}
+
+/* subagents: MiMo 26.920's chip on a side column row - the conversation, then its 子智能体 tab. */
+async function openSubagentsFromSide(sessionID: string) {
+  await openFromSide(sessionID)
+  rp.openSubagents()
 }
 
 /** A file's session, opened from the artifacts page. */
@@ -3958,6 +3939,7 @@ onBeforeUnmount(() => {
         @browse="browse"
         @dropFolders="addDroppedProjects"
         @open="openFromSide"
+        @openSubagents="openSubagentsFromSide"
         @rename="renameFromSide"
         @createIn="newSessionIn"
         @settings="openSettings"
@@ -4461,8 +4443,8 @@ onBeforeUnmount(() => {
 }
 
 /*
- * The folded column's controls row - toggle, back, forward, search - floats
- * over the start of the main column, and the main column's own top strip (the
+ * The folded column's controls - the toggle and 新建任务 - float over the
+ * start of the main column, and the main column's own top strip (the
  * home screen's, or the conversation header) is a window drag region. Electron
  * works drag regions out in document order, so that strip, coming later, took
  * the buttons back into the title bar and Windows swallowed every click on
@@ -4500,9 +4482,9 @@ onBeforeUnmount(() => {
 .rail-no-drag {
   position: fixed;
   top: 13px;
-  inset-inline-start: 65px;
+  inset-inline-start: 75px;
   z-index: 1;
-  width: 120px;
+  width: 56px;
   height: 24px;
   pointer-events: none;
   -webkit-app-region: no-drag;

@@ -767,8 +767,9 @@ function addDroppedMentions(paths: { rel: string; file: boolean }[]) {
  */
 const placeholder = computed(() => {
   if (mode.value === "shell") return t("composer.shellPlaceholder")
-  // MiMo's order: a running compaction, then a restricted conversation, then the mode's own line, then the everyday one. Attachments do not blank it.
-  if (compactingHere.value) return t("composer.compact.starting")
+  // MiMo 26.920's order: compacting, then sending, then a restricted conversation, then the mode's own line, then the everyday one. Attachments do not blank it.
+  if (compactingHere.value) return t("composer.compacting")
+  if (sending.value) return t("composer.sending")
   if (restrictedHere.value) return t("composer.reviewRestricted")
   if (!props.side && agent.value === "plan") return t("composer.placeholderPlan")
   return t("composer.placeholder")
@@ -1197,6 +1198,9 @@ async function openSkillFrom(from: HTMLElement) {
 /* Set while attached audio is being read before a send, so a second Enter does not start another. */
 let probingAudio = false
 
+/* From the draft leaving the box until the message is taken or handed back: the new conversation, the mentioned files, the send itself. */
+const sending = ref(false)
+
 async function submit() {
   const value = text.value.trim()
   // MiMo's restricted conversation takes nothing at all: the review that took its turn said it may not be continued.
@@ -1284,73 +1288,79 @@ async function submit() {
   skills.value = []
   await nextTick(resize)
 
-  /*
-   * On the home screen there is nothing to send into yet. The session is made
-   * here, on the way out, rather than when the screen opened: one created just
-   * because somebody looked at the home screen is a row in the side column
-   * that nobody asked for. If it cannot be made, the draft comes back.
-   */
-  let target = props.side ? sessionID.value : undefined
-  if (!sessionID.value) {
-    try {
-      if (props.side) {
-        // MiMo makes a side conversation on its first message; its tab hands over how.
-        target = props.createSide ? await props.createSide() : undefined
-        if (!target) throw new Error("")
-      } else {
-        await app.create(props.startDirectory, { scratch: props.startScratch })
-        // MiMo's newChat says so whenever the first send makes a new task.
-        notify(t("toast.newConvoCreated"))
+  // MiMo's 发送中…: the box says so from here until the message is taken or handed back.
+  sending.value = true
+  try {
+    /*
+     * On the home screen there is nothing to send into yet. The session is made
+     * here, on the way out, rather than when the screen opened: one created just
+     * because somebody looked at the home screen is a row in the side column
+     * that nobody asked for. If it cannot be made, the draft comes back.
+     */
+    let target = props.side ? sessionID.value : undefined
+    if (!sessionID.value) {
+      try {
+        if (props.side) {
+          // MiMo makes a side conversation on its first message; its tab hands over how.
+          target = props.createSide ? await props.createSide() : undefined
+          if (!target) throw new Error("")
+        } else {
+          await app.create(props.startDirectory, { scratch: props.startScratch })
+          // MiMo's newChat says so whenever the first send makes a new task.
+          notify(t("toast.newConvoCreated"))
+        }
+      } catch (err) {
+        text.value = value
+        attachments.value = sent
+        mentioned.value = carried
+        skills.value = chips
+        if (scopeAtSend && pointed.length) annotations.put(scopeAtSend, pointed)
+        await nextTick(resize)
+        notifyFailure(t("home.startFailed"), (err instanceof Error ? err.message : String(err)) || undefined)
+        return
       }
-    } catch (err) {
+    }
+
+    /*
+     * 追求目标: with the switch on, what was typed becomes the goal the turn is
+     * judged against. The words as typed, not the body that is sent - a body
+     * standing in for attachments would make a goal nobody wrote.
+     */
+    const goalOnSend = !props.side && goalMode.value && value.trim() ? value.trim() : undefined
+
+    const named = await mentionAttachments(value, carried, target)
+    const filled = await fillCommand(value, target)
+    /*
+     * Files with nothing written beside them still make a message that reads as
+     * one: MiMo puts a fixed short phrase in the body, so the bubble in the
+     * transcript is not an empty square and the model is told plainly that the
+     * files are the message. A skill chip already stands in the body, so it is
+     * left to speak for itself.
+     */
+    const body = filled && !filled.text.trim() && sent.length && !chips.length ? t("composer.seeAttachments") : (filled?.text ?? "")
+    // A file the command names that was also mentioned goes once.
+    const commandFiles = filled ? filled.attachments.filter((file) => !named.some((entry) => entry.path === file.path)) : []
+
+    // subagents: a command marked subtask is handed to a subagent in this conversation instead of sent as a prompt.
+    const subtask = props.side || !filled ? undefined : subtaskOf(filled)
+    // A rejected message should not cost the user what they typed, or gathered.
+    const accepted = !filled
+      ? false
+      : subtask
+        ? await app.subtask(value, subtask)
+        : await app.send(withSkills(body, chips), [...sent, ...named, ...commandFiles], target, pointed, filled.command, goalOnSend)
+    if (!accepted) {
       text.value = value
       attachments.value = sent
       mentioned.value = carried
       skills.value = chips
-      if (scopeAtSend && pointed.length) annotations.put(scopeAtSend, pointed)
+      // Back into the conversation the message was meant for - on the home screen, the one just made.
+      const back = annotationScope.value
+      if (back && pointed.length) annotations.put(back, [...pointed, ...annotations.list(back)])
       await nextTick(resize)
-      notifyFailure(t("home.startFailed"), (err instanceof Error ? err.message : String(err)) || undefined)
-      return
     }
-  }
-
-  /*
-   * 追求目标: with the switch on, what was typed becomes the goal the turn is
-   * judged against. The words as typed, not the body that is sent - a body
-   * standing in for attachments would make a goal nobody wrote.
-   */
-  const goalOnSend = !props.side && goalMode.value && value.trim() ? value.trim() : undefined
-
-  const named = await mentionAttachments(value, carried, target)
-  const filled = await fillCommand(value, target)
-  /*
-   * Files with nothing written beside them still make a message that reads as
-   * one: MiMo puts a fixed short phrase in the body, so the bubble in the
-   * transcript is not an empty square and the model is told plainly that the
-   * files are the message. A skill chip already stands in the body, so it is
-   * left to speak for itself.
-   */
-  const body = filled && !filled.text.trim() && sent.length && !chips.length ? t("composer.seeAttachments") : (filled?.text ?? "")
-  // A file the command names that was also mentioned goes once.
-  const commandFiles = filled ? filled.attachments.filter((file) => !named.some((entry) => entry.path === file.path)) : []
-
-  // subagents: a command marked subtask is handed to a subagent in this conversation instead of sent as a prompt.
-  const subtask = props.side || !filled ? undefined : subtaskOf(filled)
-  // A rejected message should not cost the user what they typed, or gathered.
-  const accepted = !filled
-    ? false
-    : subtask
-      ? await app.subtask(value, subtask)
-      : await app.send(withSkills(body, chips), [...sent, ...named, ...commandFiles], target, pointed, filled.command, goalOnSend)
-  if (!accepted) {
-    text.value = value
-    attachments.value = sent
-    mentioned.value = carried
-    skills.value = chips
-    // Back into the conversation the message was meant for - on the home screen, the one just made.
-    const back = annotationScope.value
-    if (back && pointed.length) annotations.put(back, [...pointed, ...annotations.list(back)])
-    await nextTick(resize)
+  } finally {
+    sending.value = false
   }
 }
 
@@ -2638,15 +2648,20 @@ const rowsOf = (group: { provider: { id: string }; models: ModelInfo[] }): Model
 
 /*
  * MiMo's split: its own models at the top level, everyone else's behind "more
- * models" in one flat list, and custom models in a group of their own below
- * that. Here the first connected built-in provider stands where MiMo's own
- * models do.
+ * models" in one flat list, and custom models below that - since 26.920 under
+ * a small heading per provider, its name, rather than in one run. Here the
+ * first connected built-in provider stands where MiMo's own models do.
  */
 const builtinGroups = computed(() => groups.value.filter((group) => !group.provider.custom))
 const primaryGroup = computed(() => builtinGroups.value[0])
 const primaryRows = computed(() => (primaryGroup.value ? rowsOf(primaryGroup.value) : []))
 const moreRows = computed(() => builtinGroups.value.slice(1).flatMap(rowsOf))
-const customRows = computed(() => groups.value.filter((group) => group.provider.custom).flatMap(rowsOf))
+const customGroups = computed(() =>
+  groups.value
+    .filter((group) => group.provider.custom)
+    .map((group) => ({ id: group.provider.id, name: group.provider.name || group.provider.id, rows: rowsOf(group) })),
+)
+const customRows = computed(() => customGroups.value.flatMap((group) => group.rows))
 
 function closeModelSubs() {
   modelSub.value = undefined
@@ -3618,26 +3633,29 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 </div>
               </div>
 
-              <!-- MiMo's custom models: their own group at the top level, after a rule, with no heading. -->
+              <!-- MiMo's custom models: after a rule, each provider's under its own name. The headings are not rows: the keys walk past them. -->
               <template v-if="customRows.length">
                 <div class="rule" />
-                <ModelMenuRow
-                  v-for="row in customRows"
-                  :key="row.key"
-                  data-custom-model
-                  :model="row.model"
-                  :row-key="row.key"
-                  :on="currentKey === row.key"
-                  :hot="activeKey === row.key"
-                  :efforts="effortsFor(row.model)"
-                  :effort="effortLevel"
-                  :sub-open="modelSub === row.key"
-                  :effort-hot="modelSub === row.key ? levelOf(subKey) : undefined"
-                  @enter="hoverRow(row.key)"
-                  @choose="chooseModel(row.provider, row.model.id)"
-                  @effort="chooseModelEffort(row.provider, row.model.id, $event)"
-                  @effort-hover="subKey = effortKey($event)"
-                />
+                <div v-for="group in customGroups" :key="group.id" class="provider-group" :data-model-provider="group.id">
+                  <div class="provider-head" :data-model-provider-head="group.id">{{ group.name }}</div>
+                  <ModelMenuRow
+                    v-for="row in group.rows"
+                    :key="row.key"
+                    data-custom-model
+                    :model="row.model"
+                    :row-key="row.key"
+                    :on="currentKey === row.key"
+                    :hot="activeKey === row.key"
+                    :efforts="effortsFor(row.model)"
+                    :effort="effortLevel"
+                    :sub-open="modelSub === row.key"
+                    :effort-hot="modelSub === row.key ? levelOf(subKey) : undefined"
+                    @enter="hoverRow(row.key)"
+                    @choose="chooseModel(row.provider, row.model.id)"
+                    @effort="chooseModelEffort(row.provider, row.model.id, $event)"
+                    @effort-hover="subKey = effortKey($event)"
+                  />
+                </div>
               </template>
 
               <div class="rule" />
@@ -5094,6 +5112,18 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 .model-menu .rule {
   margin: 4px 6px;
   background: var(--border-weak);
+}
+
+/* MiMo's provider heading over its custom models: 12px in the muted colour, 6 by 10 of padding. */
+.model-menu .provider-head {
+  padding: 6px 10px;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--text-strong) 60%, transparent);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: calc(18px * var(--ui-font-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: none;
 }
 
 .model-menu .model-item {

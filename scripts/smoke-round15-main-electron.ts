@@ -198,38 +198,5 @@ app.whenReady().then(async () => {
     await wait(300)
   }
 
-  // ------------------------------------------------------------------- M15-5
-  {
-    /*
-     * Why the tray's switch may not be sent at the window it has just made:
-     * a page that is not there yet hears nothing, and Electron queues no
-     * message for it. The same send from did-finish-load arrives.
-     */
-    const straight = new BrowserWindow({ show: false, width: 400, height: 300, webPreferences: { preload: path.join(work, "preload.js"), contextIsolation: false, sandbox: false } })
-    void straight.loadURL(host)
-    straight.webContents.send("mcode:file-changed", "sent-at-once")
-    await new Promise<void>((resolve) => {
-      straight.webContents.once("did-finish-load", () => resolve())
-      setTimeout(resolve, 15_000)
-    })
-    await wait(300)
-    const lost = (await straight.webContents.executeJavaScript("window.hits")) as string[]
-
-    const queued = new BrowserWindow({ show: false, width: 400, height: 300, webPreferences: { preload: path.join(work, "preload.js"), contextIsolation: false, sandbox: false } })
-    void queued.loadURL(host)
-    queued.webContents.once("did-finish-load", () => queued.webContents.send("mcode:file-changed", "sent-when-loaded"))
-    await new Promise<void>((resolve) => {
-      queued.webContents.once("did-finish-load", () => resolve())
-      setTimeout(resolve, 15_000)
-    })
-    await wait(300)
-    result.tray = {
-      lost,
-      arrived: (await queued.webContents.executeJavaScript("window.hits")) as string[],
-    }
-    straight.destroy()
-    queued.destroy()
-  }
-
   finish()
 })

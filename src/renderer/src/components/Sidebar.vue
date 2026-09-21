@@ -5,8 +5,10 @@ import RowTitle from "./RowTitle.vue"
 import ChatLinkMark from "./ChatLinkMark.vue"
 import { convoCard } from "../lib/convo-card"
 import { projectOf } from "../lib/session-project"
+import { subagentsAtWork } from "../lib/subagent-chip"
+import { sidePreview } from "../lib/side-preview"
 import { useApp } from "../stores/app"
-import { dateIn, language, sessionTitle, t } from "../lib/i18n"
+import { dateIn, language, sessionTitle, t, tn } from "../lib/i18n"
 import { notify } from "../lib/toast"
 import { RAIL_WIDTH } from "../lib/right-tools"
 import { shownChord } from "../lib/keys"
@@ -31,7 +33,7 @@ import UpdatePill from "./UpdatePill.vue"
 const props = defineProps<{
   /** Which page the pane is showing, so the row that opened it stays lit. */
   page?: string
-  /** Folded to MiMo's 62px rail of icons, rather than taken off the screen. */
+  /** Folded away altogether, as MiMo 26.920 folds it: its toggle stays, and resting there previews the column. */
   collapsed?: boolean
   /** The conversations ticked in selection mode; absent when not in it. */
   selecting?: string[]
@@ -72,6 +74,8 @@ const emit = defineEmits<{
   toggle: []
   browse: []
   open: [sessionID: string]
+  /* subagents: the conversation, with its 子智能体 tab open beside it. */
+  openSubagents: [sessionID: string]
   rename: [sessionID: string]
   createIn: [directory: string]
   settings: []
@@ -663,6 +667,22 @@ function dayLabel(at: number): string {
   return dateIn(at, { weekday: "long" })
 }
 
+/* subagents: the subagents still working for each conversation whose own turn has ended, for MiMo 26.920's chip. */
+const workingFor = computed(() => subagentsAtWork(app.subagentSessions, app.running, app.rootOf))
+
+/* Their names, as a list is written in the reader's language. */
+function subagentNames(sessions: SessionInfo[]): string {
+  const names = sessions.map((session) => session.title?.trim() || t("subagentActivity.fallbackName"))
+  try {
+    return new Intl.ListFormat(language.value, { type: "conjunction" }).format(names)
+  } catch {
+    return names.join(", ")
+  }
+}
+
+/* A conversation at work, or one whose subagents still are. */
+const working = (sessionID: string) => app.running.has(sessionID) || workingFor.value.has(sessionID)
+
 /* What a conversation is waiting on, most urgent first. */
 type Attention = "waiting" | "unread" | "active"
 const RANK: Record<Attention, number> = { waiting: 0, unread: 1, active: 2 }
@@ -670,7 +690,7 @@ const RANK: Record<Attention, number> = { waiting: 0, unread: 1, active: 2 }
 function attentionOf(sessionID: string): Attention | undefined {
   if (app.pendingPermissions.has(sessionID)) return "waiting"
   if (app.unseen.has(sessionID) || app.failed(sessionID)) return "unread"
-  if (app.running.has(sessionID)) return "active"
+  if (working(sessionID)) return "active"
   return undefined
 }
 
@@ -686,7 +706,7 @@ const STATUS_RANK: Record<RowStatus, number> = { waiting: 0, running: 1, unread:
 
 function statusOf(sessionID: string): RowStatus | undefined {
   if (app.pendingPermissions.has(sessionID) && app.currentID !== sessionID) return "waiting"
-  if (app.running.has(sessionID)) return "running"
+  if (working(sessionID)) return "running"
   if (app.unseen.has(sessionID) || app.failed(sessionID)) return "unread"
   return undefined
 }
@@ -797,9 +817,10 @@ function pickPriorityMenu(key: string) {
 }
 
 /*
- * The footer's menu, where MiMo keeps its account menu: settings, then quitting
- * the app below a rule. MCode has no account, so the profile, usage and sign-out
- * rows have nothing to stand for.
+ * The footer's menu, where MiMo keeps its account menu: settings. MiMo 26.920
+ * dropped the quit row that stood below it (the menu bar and the tray still
+ * quit), and MCode has no account, so the profile, usage and sign-out rows
+ * have nothing to stand for.
  */
 const footMenu = ref<{ x: number; y: number }>()
 
@@ -810,7 +831,6 @@ const footMenuItems = computed<MenuItem[]>(() => [
     hint: "Ctrl+,",
     icon: "M8 6a2 2 0 1 1 0 4a2 2 0 1 1 0-4M8 2.5v1.5M8 12v1.5M2.5 8H4M12 8h1.5M4.1 4.1l1.1 1.1M10.8 10.8l1.1 1.1M4.1 11.9l1.1-1.1M10.8 5.2l1.1-1.1",
   },
-  { key: "quit", label: t("side.quitApp"), divided: true, icon: "M8 2.5v5M4.8 4.6a4.8 4.8 0 1 0 6.4 0" },
 ])
 
 /** Opens above the row, since the row sits at the bottom of the window: y is the menu's bottom edge. */
@@ -822,7 +842,6 @@ function openFootMenu(event: MouseEvent) {
 function pickFootMenu(key: string) {
   footMenu.value = undefined
   if (key === "settings") emit("settings")
-  else if (key === "quit") window.mcode.quitApp()
 }
 
 /*
@@ -975,99 +994,122 @@ function beginResize(event: MouseEvent) {
 }
 
 /*
- * MiMo's rail card: on the folded column, resting on 新建任务 opens a card after
- * 200ms - a new task row, then the recent conversations - which closes 150ms
- * after the pointer has left both. It stands where the rail's tooltip would.
+ * MiMo 26.920's folded column: taken off the screen altogether rather than
+ * left as a 62px rail, and shown whole on demand. Resting on the toggle for
+ * 150ms floats a preview of the column over the window, 8 in from its corner;
+ * the pointer can move into it, and 200ms after it has left both the preview
+ * goes. Escape, a press anywhere else, the toggle itself, or a move to another
+ * screen or conversation put it away at once. The controls row beside the
+ * toggle only holds an open preview - resting on 新建任务 opens none.
  */
-const QUICK_OPEN = 200
-const QUICK_CLOSE = 150
-const QUICK_WIDTH = 260
-const quick = ref<{ left: number; top: number; maxHeight: number }>()
-let quickTimer: ReturnType<typeof setTimeout> | undefined
+const preview = ref(false)
+const shellEl = ref<HTMLElement>()
+const toggleEl = ref<HTMLElement>()
+const previewer = sidePreview(() => Boolean(props.collapsed), preview)
+const schedulePreview = previewer.schedule
+const holdPreview = previewer.hold
+const closePreview = previewer.close
 
-function quickEnter(event: PointerEvent) {
-  clearTimeout(quickTimer)
-  if (!props.collapsed || quick.value) return
-  const anchor = event.currentTarget as HTMLElement
-  quickTimer = setTimeout(() => {
-    const rect = anchor.getBoundingClientRect()
-    const rtl = getComputedStyle(anchor).direction === "rtl"
-    // Beside the rail 8px out, top edges lined up, kept 8px inside the window.
-    const top = Math.max(8, Math.round(rect.top))
-    const left = rtl ? Math.round(rect.left - 8 - QUICK_WIDTH) : Math.round(rect.right + 8)
-    quick.value = { left, top, maxHeight: Math.max(0, Math.min(320, window.innerHeight - top - 8)) }
-  }, QUICK_OPEN)
+function toggleColumn() {
+  closePreview()
+  emit("toggle")
 }
 
-function quickLeave() {
-  clearTimeout(quickTimer)
-  if (quick.value) quickTimer = setTimeout(() => (quick.value = undefined), QUICK_CLOSE)
+function onPreviewKey(event: KeyboardEvent) {
+  if (event.key === "Escape") closePreview()
 }
 
-const quickStay = () => clearTimeout(quickTimer)
-
-function quickPick(sessionID?: string) {
-  clearTimeout(quickTimer)
-  quick.value = undefined
-  if (sessionID) emit("open", sessionID)
-  else emit("newTask")
+function onPreviewPress(event: PointerEvent) {
+  const target = event.target as Node | null
+  if (target && (shellEl.value?.contains(target) || toggleEl.value?.contains(target))) return
+  closePreview()
 }
 
+watch(preview, (open) => {
+  if (open) {
+    document.addEventListener("keydown", onPreviewKey)
+    document.addEventListener("pointerdown", onPreviewPress, true)
+  } else {
+    document.removeEventListener("keydown", onPreviewKey)
+    document.removeEventListener("pointerdown", onPreviewPress, true)
+  }
+})
 watch(
   () => props.collapsed,
   (folded) => {
-    if (folded) return
-    clearTimeout(quickTimer)
-    quick.value = undefined
+    if (!folded) closePreview()
   },
 )
-onBeforeUnmount(() => clearTimeout(quickTimer))
+watch(() => [props.page, app.currentID], closePreview)
+onBeforeUnmount(() => {
+  closePreview()
+  document.removeEventListener("keydown", onPreviewKey)
+  document.removeEventListener("pointerdown", onPreviewPress, true)
+})
 </script>
 
 <template>
-  <aside class="side" :class="{ rail: collapsed, dragging }" :style="collapsed ? undefined : { width: `${RAIL_WIDTH + width}px` }" :aria-label="t('a11y.sidebar')">
+  <aside class="side" :class="{ folded: collapsed, dragging }" :style="{ width: collapsed ? '0px' : `${RAIL_WIDTH + width}px` }" :aria-label="t('a11y.sidebar')">
     <div v-if="!collapsed" class="resizer" data-side-resizer @mousedown.prevent="beginResize" />
     <!--
-      Folded, MiMo keeps the column's controls just past the rail: the toggle
-      three in from its edge, then back, forward and search.
+      Folded, MiMo 26.920 keeps two controls in the title bar, past where its
+      rail used to end: the toggle - which previews the column under the
+      pointer, so it carries no tip of its own - and 新建任务. Back and forward
+      go with the column.
     -->
-    <div v-if="collapsed" class="rail-tools">
-      <button class="ico" :aria-label="t('side.toggle')" v-tip="{ label: t('side.toggle'), hint: 'Ctrl+B' }" @click="emit('toggle')">
+    <div v-if="collapsed" class="rail-tools" data-collapsed-tools @pointerenter="holdPreview(true)" @pointerleave="holdPreview(false)">
+      <button
+        ref="toggleEl"
+        class="ico"
+        data-toggle-side
+        :aria-label="t('side.toggle')"
+        :aria-expanded="preview"
+        @pointerenter="schedulePreview(true)"
+        @pointerleave="schedulePreview(false)"
+        @click="toggleColumn"
+      >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect x="2.5" y="2.5" width="19" height="19" rx="4" />
           <path d="M9 2.5v19" />
         </svg>
       </button>
-      <button class="ico" :disabled="!canBack" :aria-label="t('side.back')" v-tip="{ label: t('side.back'), hint: 'Ctrl+[' }" @click="emit('back')">
-        <svg class="way" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M19.5 12h-15M11 5.5 4.5 12l6.5 6.5" />
-        </svg>
-      </button>
-      <button class="ico" :disabled="!canForward" :aria-label="t('title.forward')" v-tip="{ label: t('title.forward'), hint: 'Ctrl+]' }" @click="emit('forward')">
-        <svg class="way" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M4.5 12h15M13 5.5l6.5 6.5-6.5 6.5" />
-        </svg>
-      </button>
-      <button class="ico" :aria-label="t('side.search')" v-tip="{ label: t('side.search'), hint: 'Ctrl+K' }" @click="emit('search')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="10.5" cy="10.5" r="6.9" />
-          <path d="m15.6 15.6 4.8 4.8" />
+      <button class="ico" data-collapsed-new-task :aria-label="t('side.newTask')" v-tip="{ label: t('side.newTask'), hint: 'Ctrl+N' }" @click="closePreview(), emit('newTask')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M11 4.5H6.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V13" />
+          <path d="M17.8 3.7a1.7 1.7 0 0 1 2.5 2.5L12.5 14l-3.3.8.8-3.3z" />
         </svg>
       </button>
     </div>
+    <!--
+      The column itself, at its own width whatever the container shows of it:
+      the whole of it while open, none of it while folded, and all of it again
+      as a floating card while previewed.
+    -->
+    <div
+      ref="shellEl"
+      class="side-shell"
+      :class="{ preview: collapsed && preview }"
+      :style="{ width: `${RAIL_WIDTH + width}px` }"
+      data-side-shell
+      :data-side-preview="collapsed && preview ? '' : undefined"
+      :inert="collapsed && !preview ? true : undefined"
+      :aria-hidden="collapsed && !preview ? 'true' : undefined"
+      @pointerenter="holdPreview(true)"
+      @pointerleave="holdPreview(false)"
+    >
     <div class="top" :class="{ mac: app.platform === 'darwin' }">
-      <button class="ico" :aria-label="t('side.toggle')" v-tip="{ label: t('side.toggle'), hint: 'Ctrl+B' }" @click="emit('toggle')">
+      <button class="ico side-toggle" :aria-label="t('side.toggle')" v-tip="{ label: t('side.toggle'), hint: 'Ctrl+B' }" @click="toggleColumn">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect x="2.5" y="2.5" width="19" height="19" rx="4" />
           <path d="M9 2.5v19" />
         </svg>
       </button>
-      <button class="ico" :disabled="!canBack" :aria-label="t('side.back')" v-tip="{ label: t('side.back'), hint: 'Ctrl+[' }" @click="emit('back')">
+      <button class="ico side-way" :disabled="!canBack" :aria-label="t('side.back')" v-tip="{ label: t('side.back'), hint: 'Ctrl+[' }" @click="emit('back')">
         <svg class="way" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M19.5 12h-15M11 5.5 4.5 12l6.5 6.5" />
         </svg>
       </button>
-      <button class="ico" :disabled="!canForward" :aria-label="t('title.forward')" v-tip="{ label: t('title.forward'), hint: 'Ctrl+]' }" @click="emit('forward')">
+      <button class="ico side-way" :disabled="!canForward" :aria-label="t('title.forward')" v-tip="{ label: t('title.forward'), hint: 'Ctrl+]' }" @click="emit('forward')">
         <svg class="way" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M4.5 12h15M13 5.5l6.5 6.5-6.5 6.5" />
         </svg>
@@ -1103,14 +1145,7 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
     </div>
 
     <nav class="nav" :aria-label="t('key.groupNavigation')">
-      <button
-        class="row"
-        data-new-task
-        :aria-label="collapsed ? t('side.newTask') : undefined"
-        @click="emit('newTask')"
-        @pointerenter="quickEnter"
-        @pointerleave="quickLeave"
-      >
+      <button class="row" data-new-task @click="emit('newTask')">
         <svg class="row-ico" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <circle cx="10" cy="10" r="7" stroke="currentColor" />
           <path d="M10 6.5V13.5M6.5 10H13.5" stroke="currentColor" stroke-linecap="square" />
@@ -1121,8 +1156,6 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
       <button
         class="row"
         :class="{ on: page === 'artifacts' }"
-        :aria-label="collapsed ? t('side.railArtifacts') : undefined"
-        v-tip="collapsed ? { label: t('side.railArtifacts'), placement: 'right' } : ''"
         @click="emit('artifacts')"
       >
         <svg class="row-ico" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -1136,47 +1169,6 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
         <span class="row-label">{{ t("side.artifacts") }}</span>
       </button>
     </nav>
-
-    <Teleport to="body">
-      <div
-        v-if="quick"
-        class="rail-quick"
-        data-rail-quick-popup
-        :style="{ left: `${quick.left}px`, top: `${quick.top}px`, maxHeight: `${quick.maxHeight}px` }"
-        @pointerenter="quickStay"
-        @pointerleave="quickLeave"
-      >
-        <button type="button" class="quick-new" data-quick-new-task @click="quickPick()">
-          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <circle cx="10" cy="10" r="7" stroke="currentColor" />
-            <path d="M10 6.5V13.5M6.5 10H13.5" stroke="currentColor" stroke-linecap="square" />
-          </svg>
-          <span class="quick-label">{{ t("side.newTask") }}</span>
-        </button>
-        <div class="quick-rule" />
-        <div class="quick-scroll" data-quick-recent-scroll>
-          <!-- A page at a time, as the side column's own list is (N11-25): every conversation at once built thousands of rows. -->
-          <template v-if="recentAll.length">
-            <button
-              v-for="session in recent"
-              :key="session.id"
-              type="button"
-              class="quick-convo"
-              :class="{ on: session.id === app.currentID }"
-              :data-quick-convo="session.id"
-              :aria-current="session.id === app.currentID ? 'page' : undefined"
-              @click="quickPick(session.id)"
-            >
-              <span class="quick-label">{{ title(session.title) }}</span>
-            </button>
-            <button v-if="recentLeft > 0" type="button" class="quick-convo" data-quick-more @click="recentShown += RECENT_PAGE">
-              <span class="quick-label">{{ t("side.showMore", { count: recentLeft }) }}</span>
-            </button>
-          </template>
-          <div v-else class="quick-empty" data-quick-empty>{{ t("side.noTasks") }}</div>
-        </div>
-      </div>
-    </Teleport>
 
     <div ref="listsEl" class="lists" @dragover="folderOver" @dragleave="folderLeave" @drop="folderDrop">
       <div
@@ -1240,6 +1232,18 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
               <span v-else-if="statusOf(block.session.id) === 'unread'" class="status-dot" aria-hidden="true" />
               <span v-else class="status-pill" :aria-label="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
             </span>
+          </button>
+          <!-- subagents: MiMo 26.920's chip - how many subagents still work for this conversation, named under the pointer. -->
+          <button
+            v-if="workingFor.get(block.session.id)"
+            type="button"
+            class="subagent-chip"
+            :data-conv-subagent-chip="block.session.id"
+            :aria-label="tn('side.subagentChip', workingFor.get(block.session.id)!.length)"
+            v-tip="{ label: subagentNames(workingFor.get(block.session.id)!), placement: 'top' }"
+            @click.stop="emit('openSubagents', block.session.id)"
+          >
+            {{ tn("side.subagentChip", workingFor.get(block.session.id)!.length) }}
           </button>
           <span class="row-actions">
             <button
@@ -1440,6 +1444,18 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
                   <span v-else class="status-pill" :aria-label="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
                 </span>
               </button>
+              <!-- subagents: MiMo 26.920's chip - how many subagents still work for this conversation, named under the pointer. -->
+              <button
+                v-if="workingFor.get(session.id)"
+                type="button"
+                class="subagent-chip"
+                :data-conv-subagent-chip="session.id"
+                :aria-label="tn('side.subagentChip', workingFor.get(session.id)!.length)"
+                v-tip="{ label: subagentNames(workingFor.get(session.id)!), placement: 'top' }"
+                @click.stop="emit('openSubagents', session.id)"
+              >
+                {{ tn("side.subagentChip", workingFor.get(session.id)!.length) }}
+              </button>
               <span class="row-actions">
                 <button
                   class="row-menu"
@@ -1576,6 +1592,18 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
               <span v-else class="status-pill" :aria-label="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
             </span>
           </button>
+          <!-- subagents: MiMo 26.920's chip - how many subagents still work for this conversation, named under the pointer. -->
+          <button
+            v-if="workingFor.get(entry.session.id)"
+            type="button"
+            class="subagent-chip"
+            :data-conv-subagent-chip="entry.session.id"
+            :aria-label="tn('side.subagentChip', workingFor.get(entry.session.id)!.length)"
+            v-tip="{ label: subagentNames(workingFor.get(entry.session.id)!), placement: 'top' }"
+            @click.stop="emit('openSubagents', entry.session.id)"
+          >
+            {{ tn("side.subagentChip", workingFor.get(entry.session.id)!.length) }}
+          </button>
           <span class="row-actions">
             <button
               class="row-menu"
@@ -1702,8 +1730,6 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
         class="row foot-menu"
         :aria-expanded="Boolean(footMenu)"
         aria-haspopup="menu"
-        :aria-label="collapsed ? t('rail.settings') : undefined"
-        v-tip="collapsed ? { label: t('rail.settings'), placement: 'right' } : ''"
         @click="openFootMenu"
       >
         <span class="avatar" aria-hidden="true">
@@ -1714,8 +1740,9 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
         </span>
         <span class="row-label plain">{{ t("rail.settings") }}</span>
       </button>
-      <!-- MiMo's update capsule, after the footer menu and only while the column is open. -->
-      <UpdatePill v-if="!collapsed" />
+      <!-- MiMo's update capsule, after the footer menu. -->
+      <UpdatePill />
+    </div>
     </div>
     <ContextMenu
       v-if="footMenu"
@@ -1761,11 +1788,15 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
 </template>
 
 <style scoped>
-/* Numbers from Xiaomi MiMo's side column, measured in CSS pixels. */
+/*
+ * Numbers from Xiaomi MiMo's side column, measured in CSS pixels.
+ *
+ * The aside is only what the column takes of the window - MiMo's reveal width,
+ * eased over its 200ms when it folds or opens, none at all while folded - and
+ * the column inside it keeps its own width throughout.
+ */
 .side {
   position: relative;
-  display: flex;
-  flex-direction: column;
   flex-shrink: 0;
   width: 256px;
   height: 100%;
@@ -1773,6 +1804,72 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
   color: var(--text-strong);
   font-size: calc(14px * var(--ui-font-scale, 1));
   user-select: none;
+  transition: width 0.2s cubic-bezier(0.7, 0.1, 0.5, 0.9);
+}
+
+.side.folded {
+  overflow: hidden;
+}
+
+.side.dragging {
+  transition: none;
+}
+
+.side-shell {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: 100%;
+  background: var(--surface-base);
+  visibility: visible;
+}
+
+/* Folded, the column is hidden once the container has closed over it. */
+.side.folded .side-shell:not(.preview) {
+  visibility: hidden;
+  transition: visibility 0s 0.2s;
+}
+
+/*
+ * MiMo 26.920's preview: the whole column as a card 8 in from the window's
+ * corner and 16 short of its height, 16 round on a hairline under the menus'
+ * shadow, above the conversation (190) and below the toggle that opened it.
+ */
+.side-shell.preview {
+  position: fixed;
+  inset-block-start: 8px;
+  inset-inline-start: 8px;
+  z-index: 190;
+  height: calc(100% - 16px);
+  overflow: hidden;
+  border: 1px solid var(--border-weak);
+  border-radius: 16px;
+  box-shadow: 0 8px 30px #0000002e, 0 1px 3px #0000001a;
+}
+
+:root[data-theme="dark"] .side-shell.preview {
+  box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .side-shell.preview {
+    box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
+  }
+}
+
+/* In the preview the title bar's own toggle stands where this row's did: the row keeps search and the bell, at its end. */
+.side-shell.preview .top {
+  justify-content: flex-end;
+  -webkit-app-region: no-drag;
+}
+
+.side-shell.preview .side-toggle,
+.side-shell.preview .side-way {
+  display: none;
+}
+
+.side-shell.preview * {
+  -webkit-app-region: no-drag;
 }
 
 /* MiMo's .resizer.r-side: 7 wide, 3 of it past the column's end, drawing nothing. */
@@ -1784,108 +1881,6 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
   width: 7px;
   cursor: col-resize;
   -webkit-app-region: no-drag;
-}
-
-/* MiMo's rail card: 260 wide, 20 round on a hairline, 8 of padding, easing in from the rail. */
-.rail-quick {
-  position: fixed;
-  z-index: 1000;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
-  width: 260px;
-  padding: 8px;
-  overflow: hidden;
-  color: var(--text-strong);
-  background: var(--surface-raised);
-  border: 0.5px solid var(--border-weak);
-  border-radius: 20px;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
-  transform-origin: left top;
-  animation: rail-quick-in 0.15s ease-out;
-}
-
-@keyframes rail-quick-in {
-  from {
-    opacity: 0;
-    transform: translateX(-8px) scale(0.95);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .rail-quick {
-    animation: none;
-  }
-}
-
-.quick-new,
-.quick-convo {
-  display: flex;
-  flex: none;
-  align-items: center;
-  width: 100%;
-  border-radius: 7px;
-  text-align: start;
-}
-
-.quick-new {
-  gap: 9px;
-  padding: 8px 9px;
-  color: var(--text-strong);
-  font-size: calc(14px * var(--ui-font-scale, 1));
-}
-
-.quick-rule {
-  flex: none;
-  height: 1px;
-  margin: 4px 5px;
-  background: var(--border-weaker);
-}
-
-.quick-scroll {
-  min-height: 0;
-  padding-block: 1px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.quick-convo {
-  margin-block: 1px;
-  padding: 7px 9px;
-  color: var(--text-base);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-}
-
-.quick-convo.on {
-  color: var(--text-strong);
-  background: var(--surface-selected);
-  font-weight: 500;
-}
-
-.quick-new:hover,
-.quick-new:focus-visible,
-.quick-convo:not(.on):hover,
-.quick-convo:not(.on):focus-visible {
-  background: var(--surface-hover);
-  outline: none;
-}
-
-.quick-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.quick-new svg {
-  flex: none;
-}
-
-.quick-empty {
-  padding: 10px 9px;
-  color: var(--text-weak);
-  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 /* The window-control row: 44 tall, buttons 24x24 at 32px pitch. It drags the
@@ -1957,6 +1952,12 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
 .app[data-platform="win32"] .rail-tools .ico svg {
   width: 12px;
   height: 12px;
+}
+
+/* MiMo draws the folded 新建任务 an eighth larger than the row's other glyphs. */
+.app[data-platform="win32"] .rail-tools [data-collapsed-new-task] svg {
+  width: calc(12px * 8 / 7);
+  height: calc(12px * 8 / 7);
 }
 
 /* Right to left, back points the way the line came from - rightward - and forward the other way. */
@@ -2040,8 +2041,7 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
  * there it keeps a system-highlight outline. Nothing changes outside that mode.
  */
 @media (forced-colors: active) {
-  .row.on,
-  .quick-convo.on {
+  .row.on {
     outline: 2px solid Highlight;
     outline-offset: -2px;
   }
@@ -2391,54 +2391,15 @@ button.section-head:focus-visible {
 }
 
 /*
- * MiMo's folded column: a 62px rail holding only the destinations and the
- * foot, icons centred, with the controls row floated just past its edge.
+ * MiMo 26.920's folded controls on Windows: the toggle at 62 + 13 = 75, where
+ * its rail used to end, and 新建任务 8 past it, over the conversation's top
+ * strip - and over the preview (201 to its 190) once that is open.
  */
-.side.rail {
-  position: relative;
-  width: 62px;
-}
-
-.side.rail .top > *,
-.side.rail .brand,
-.side.rail .select-bar,
-.side.rail .lists {
-  display: none;
-}
-
-.side.rail .foot {
-  margin-top: auto;
-}
-
-.side.rail .nav,
-.side.rail .foot {
-  align-items: center;
-}
-
-.side.rail .nav {
-  margin-top: 36px;
-}
-
-.side.rail .row {
-  justify-content: center;
-  width: 46px;
-  padding: 0;
-  gap: 0;
-}
-
-.side.rail .row-label {
-  display: none;
-}
-
-.side.rail .avatar {
-  margin-inline-start: 0;
-}
-
 .rail-tools {
-  position: absolute;
+  position: fixed;
   top: 13px;
-  inset-inline-start: 65px;
-  z-index: 30;
+  inset-inline-start: 75px;
+  z-index: 201;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2724,6 +2685,41 @@ button.section-head:focus-visible {
 
 .row:hover .row-status {
   opacity: 0;
+}
+
+/*
+ * subagents: MiMo 26.920's chip - a 10px pill on the hover colour, 6 after the
+ * spinner (the row's 14 less 8), stepping 54px aside for the row's pin and
+ * menu when the row is under the pointer, and over their scrim.
+ */
+.subagent-chip {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  align-self: center;
+  margin-inline-start: -8px;
+  padding: 1px 6px;
+  color: var(--text-weak);
+  background: var(--surface-hover);
+  border-radius: 999px;
+  font-size: calc(10px * var(--ui-font-scale, 1));
+  line-height: calc(14px * var(--ui-font-scale, 1));
+  white-space: nowrap;
+  transition: transform var(--motion-fast, 0.12s);
+}
+
+.subagent-chip:hover {
+  color: var(--text-strong);
+}
+
+.row:hover .subagent-chip,
+.row:focus-within .subagent-chip {
+  transform: translateX(-54px);
+}
+
+.row:hover .subagent-chip:dir(rtl),
+.row:focus-within .subagent-chip:dir(rtl) {
+  transform: translateX(54px);
 }
 
 .status-spin {

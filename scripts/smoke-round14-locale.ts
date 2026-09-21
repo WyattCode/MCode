@@ -131,8 +131,9 @@ export async function roundFourteenLocaleChecks(check: Check, section: (name: st
     const [sidebar, spine] = await Promise.all([read("src/renderer/src/components/Sidebar.vue"), read("src/renderer/src/components/SessionSpine.vue")])
     const arrows = [...sidebar.matchAll(/<button[^>]*@click="emit\('(back|forward)'\)"[^>]*>\s*<svg([^>]*)>/g)]
     check(
-      "L14-6: both back / forward pairs (open and folded column) draw arrows that can turn",
-      arrows.length === 4 && arrows.every((match) => /class="way"/.test(match[2])),
+      // The folded column's pair went in round 18 (R18-U1): folded, MiMo 26.920 keeps no back or forward.
+      "L14-6: the column's back / forward pair draws arrows that can turn",
+      arrows.length === 2 && arrows.every((match) => /class="way"/.test(match[2])),
       arrows.map((match) => match[1] + (/class="way"/.test(match[2]) ? "+" : "-")),
     )
     check("L14-6: and turn under dir=rtl", /\.way:dir\(rtl\) \{\s*transform: scaleX\(-1\);/.test(sidebar))

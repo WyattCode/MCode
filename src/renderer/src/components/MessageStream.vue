@@ -938,7 +938,7 @@ function failureText(turn: Turn): { text: string; clamped: boolean } {
 }
 
 /*
- * MiMo's retry on a turn that failed, was stopped or came back empty: the
+ * MiMo's retry on a turn that was stopped or came back empty: the
  * question that started it goes out again, as it was, in place of the turn.
  * The question and everything after it are deleted - no file moves, as with
  * editing - and the question is sent once more. While a turn is still
@@ -1327,9 +1327,10 @@ defineExpose({ stepMessage, scroller })
           <MediaStrip v-if="!(at === turns.length - 1 && shownBusy)" :text="replyText(turn)" />
 
           <!--
-            A failure as MiMo shows one: a card with the reason and a retry at its
-            end. A stop that got nothing out, or an empty reply, gets its line and
-            a quiet retry under it; a stop after output ends on its action row.
+            A failure as MiMo 26.920 shows one: a card with the reason and no
+            retry - it took that off the card. A stop that got nothing out, or an
+            empty reply, gets its line and a quiet retry under it; a stop after
+            output ends on its action row.
           -->
           <div v-if="failed(turn)" class="err-card" :class="{ detailed: Boolean(failureDetail(turn)) }" data-turn-error>
             <svg class="err-icon" width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -1346,13 +1347,6 @@ defineExpose({ stepMessage, scroller })
               detail the runner had already stored was drawn nowhere.
             -->
             <span v-if="failureDetail(turn)" class="err-detail" data-err-detail>{{ t("error.detail", { detail: failureDetail(turn) }) }}</span>
-            <button v-if="!bare" class="retry-pill" data-retry @click="retry(turn)">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5" stroke="currentColor" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" />
-                <path d="M3.5 3.5v5h5" stroke="currentColor" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-              {{ t("stream.retry") }}
-            </button>
           </div>
           <template v-else-if="!bare && (stoppedEmpty(turn) || emptyReply(turn) || interrupted(turn, at))">
             <div class="note finished" :class="{ empty: emptyReply(turn) }" data-turn-finished>
@@ -2285,9 +2279,8 @@ defineExpose({ stepMessage, scroller })
 }
 /*
  * A failed, stopped or empty turn, as MiMo draws one. The failure is a card on a
- * 16px corner - the reason clamped to about six lines, a framed retry pill at
- * its end. A stopped or empty turn keeps its short line with a 26px retry
- * button under it.
+ * 16px corner with the reason clamped to about six lines. A stopped or empty
+ * turn keeps its short line with a 26px retry button under it.
  */
 /* With a detail line the card wraps to two rows, so the icon sits with the sentence rather than centred over both. */
 .err-card.detailed {
@@ -2346,27 +2339,6 @@ defineExpose({ stepMessage, scroller })
 .err-text.clamped {
   max-height: 143px;
   overflow: hidden;
-}
-
-/* MiMo's framed retry: 8px corners, 6 between the arrow and the word. */
-.retry-pill {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 13px;
-  color: var(--text-base);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
-  border-radius: 8px;
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  font-weight: 500;
-  line-height: 1.7;
-}
-
-.retry-pill:hover {
-  color: var(--text-strong);
-  background: var(--surface-hover);
 }
 
 .note.finished {

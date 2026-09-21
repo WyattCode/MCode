@@ -37,7 +37,7 @@ export interface Transaction {
 
 export interface Interrupted {
   targetVersion: string
-  /** The reason as recorded: "stale", "version-mismatch", "invalid", or the installer's error. */
+  /** The reason as recorded: "stale", "version-mismatch", "no-ready", "invalid", or the installer's error. */
   error: string
 }
 

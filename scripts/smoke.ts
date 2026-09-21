@@ -63,7 +63,6 @@ import { readBootPrefs, windowBackground, writeBootPrefs } from "../src/main/boo
 import { deliveryOf, waitForDelivery } from "../src/main/install-notice"
 import { boundsOnShow, clampToWorkAreas, closeBounds } from "../src/main/work-area"
 import { DailyLog, dayOfLogFile, expiredLogFiles, logFileName, logLine, redactSecrets } from "../src/main/log-file"
-import { builtinSuggestions } from "../src/renderer/src/lib/home-suggestions"
 import { applyVoiceResult, splitSendWord } from "../src/renderer/src/lib/voice"
 import { chordOf, formatChord, isBindable } from "../src/renderer/src/lib/keys"
 import { RETIRED_DEFAULTS, normalizeChord, retireKeybinds } from "../src/shared/chord"
@@ -368,6 +367,8 @@ import { roundSeventeenWorkflowChecks } from "./smoke-round17-workflow"
 import { roundSeventeenDiagramChecks } from "./smoke-round17-diagram"
 // Round 18, lane M: the settings MiMo 26.920 added or redid (R18-M1 onwards).
 import { roundEighteenSettingsChecks } from "./smoke-round18-settings"
+// Round 18, lane U: the window shell and the smaller interface changes of MiMo 26.920 (R18-U1 onwards).
+import { roundEighteenShellChecks } from "./smoke-round18-shell"
 // Round 18, lane A: the AI-generated label written into delivered files (R18-A1 onwards).
 import { roundEighteenLabelChecks } from "./smoke-round18-labels"
 // Round 18, lane D: the diff as MiMo 26.920 draws it (R18-D1 onwards).
@@ -4185,14 +4186,6 @@ async function main() {
     check("the walk wraps at both ends", rovingStep(rows, "c", "ArrowDown") === "a" && rovingStep(rows, "a", "ArrowUp") === "c")
     check("Home and End jump to the ends", rovingStep(rows, "b", "Home") === "a" && rovingStep(rows, "b", "End") === "c")
     check("an empty list has nowhere to go", rovingStep([], undefined, "ArrowDown") === undefined)
-    const starters = builtinSuggestions((key) => `[${key}]`)
-    check(
-      "three built-in starters, each with its own words and mark",
-      starters.length === 3 &&
-        starters.every((row) => row.title.endsWith(".title]") && row.query.endsWith(".query]")) &&
-        new Set(starters.map((row) => row.icon)).size === 3,
-      starters,
-    )
   }
 
   section("Voice cues")
@@ -7004,6 +6997,7 @@ async function main() {
   await roundSeventeenWorkflowChecks(check, section)
   await roundSeventeenDiagramChecks(check, section)
   await roundEighteenSettingsChecks(check, section)
+  await roundEighteenShellChecks(check, section)
   await roundEighteenLabelChecks(check, section)
   await roundEighteenDiffChecks(check, section)
   await roundEighteenEngineChecks(check, section)

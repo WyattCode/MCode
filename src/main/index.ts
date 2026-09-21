@@ -49,6 +49,7 @@ import { isKnownOpenWith } from "@shared/open-app"
 import { installedDocApps, installedOpenAppIcons, installedOpenApps, launchTarget } from "./installed-apps"
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { SOUNDFONT } from "@shared/soundfont"
+import { readOnlyInstall, type InstallAnswer } from "@shared/update-reason"
 import { readSoundfont } from "./soundfont"
 import { applyZoom } from "./zoom"
 import { APP_NAME, WINDOW_MIN, badgeCount, noticeTitle, pinnedProfile, readTaskNotice, relaunchArgs, textMenuItems, wantsNotice } from "./desktop-rules"
@@ -513,36 +514,6 @@ const syncLinuxIcon = linuxIconSync({
   },
 })
 
-/*
- * What the tray's 配置切换 offers: the models the window's picker offers, with
- * the one in use checked. The window holds the config, so it sends the list.
- */
-interface TrayProfile {
-  key: string
-  label: string
-  checked: boolean
-}
-let trayProfiles: TrayProfile[] = []
-
-/**
- * A profile the tray picked, delivered to a window that can hear it.
- *
- * A window made for the occasion has no page yet, and Electron does not queue
- * a message for one, so sending straight at it drops the switch on the floor
- * (R15-M5). The key waits for the page instead, as a session link does.
- */
-function deliverTrayProfile(key: string) {
-  const ready = readyWindow()
-  if (ready) {
-    ready.webContents.send("mcode:tray-profile", key)
-    return
-  }
-  const window = currentWindow() ?? createWindow()
-  window.webContents.once("did-finish-load", () => {
-    if (!window.isDestroyed()) window.webContents.send("mcode:tray-profile", key)
-  })
-}
-
 /**
  * Builds or rebuilds the tray.
  *
@@ -589,37 +560,11 @@ function refreshTray(enabled: boolean): void {
     tray.on("double-click", open)
   } else tray.setImage(image)
 
-  /*
-   * MiMo's 配置切换 presentation: entries grouped (MiMo by app, here by the
-   * provider each key starts with) with a rule between groups.
-   */
-  const grouped = new Map<string, TrayProfile[]>()
-  for (const entry of trayProfiles) {
-    const provider = entry.key.slice(0, Math.max(0, entry.key.indexOf("/")))
-    grouped.set(provider, [...(grouped.get(provider) ?? []), entry])
-  }
-  const profiles: Electron.MenuItemConstructorOptions[] = trayProfiles.length
-    ? [...grouped.values()].flatMap((group, index): Electron.MenuItemConstructorOptions[] => [
-        ...(index > 0 ? [{ type: "separator" as const }] : []),
-        ...group.map((entry) => ({
-          label: entry.label,
-          type: "radio" as const,
-          checked: entry.checked,
-          click: () => {
-            if (closing) return
-            deliverTrayProfile(entry.key)
-          },
-        })),
-      ])
-    : [{ label: label("tray.profilesEmpty", "(None)"), enabled: false }]
-
   tray.setToolTip(APP_NAME)
   tray.setContextMenu(
     Menu.buildFromTemplate([
+      // MiMo 26.920's tray: open, a rule, quit - its 配置切换 is gone.
       { label: label("tray.open", "Open MCode"), click: open },
-      // MiMo puts a rule before 配置切换 as well as before quit.
-      { type: "separator" },
-      { label: label("tray.profiles", "Switch Profile"), submenu: profiles },
       { type: "separator" },
       {
         // A real quit, past the close-to-tray rule below.
@@ -1321,11 +1266,18 @@ app.whenReady().then(async () => {
    * path below calls runPendingInstall): a silent installer run with --updated
    * ends a running MCode after a second, which could cut the backend off while
    * it writes.
+   *
+   * What cannot install says why, as one of MiMo 26.920's reasons, rather than
+   * throwing: a copy that cannot replace itself, a build with updates off, an
+   * update still downloading, or none at all.
    */
-  ipcMain.handle("mcode:install-update", async () => {
+  ipcMain.handle("mcode:install-update", async (): Promise<InstallAnswer> => {
+    if (readOnlyInstall(process.execPath, process.platform)) return { ok: false, reason: "read-only-volume" }
+    if (!autoUpdates) return { ok: false, reason: "disabled" }
     const updater = await updaterReady
-    const target = updater?.readyVersion()
-    if (!updater || !target) throw new Error("no update has been downloaded")
+    if (!updater) return { ok: false, reason: "unknown", hint: "electron-updater did not load" }
+    const target = updater.readyVersion()
+    if (!target) return { ok: false, reason: updater.state().phase === "downloading" ? "staging" : "no-ready" }
     updateTransactions.begin(pkg.version, target)
     /*
      * MiMo's installing notice: shown before the app goes, and given up to 1.5 s
@@ -1358,7 +1310,7 @@ app.whenReady().then(async () => {
       }
       try {
         if (updater.install(process.execPath)) updateTransactions.markInstallerStarted()
-        else updateTransactions.markFailed("no update was ready to install")
+        else updateTransactions.markFailed("no-ready")
       } catch (error) {
         updateTransactions.markFailed(error)
         console.warn("[update] the installer did not start", error)
@@ -1367,7 +1319,7 @@ app.whenReady().then(async () => {
     beginIntentionalQuit()
     // With no backend to wait for, the quit path goes straight to the installer.
     app.quit()
-    return true
+    return { ok: true }
   })
 
   /*
@@ -1646,22 +1598,6 @@ app.whenReady().then(async () => {
   ipcMain.handle("mcode:set-launch-at-login", (_event, enabled: unknown) => {
     if (!loginItemSupported(process.platform)) return { ok: false, enabled: false }
     return { ok: true, enabled: writeLaunchAtLogin(app, process.platform, loginItemStore, enabled === true) }
-  })
-
-  /* The 配置切换 list, checked here because it arrives from a window. */
-  ipcMain.on("mcode:tray-profiles", (_event, list: unknown) => {
-    if (!Array.isArray(list)) return
-    trayProfiles = list
-      .filter(
-        (entry): entry is TrayProfile =>
-          Boolean(entry) &&
-          typeof entry.key === "string" &&
-          typeof entry.label === "string" &&
-          typeof entry.checked === "boolean",
-      )
-      .slice(0, 40)
-      .map((entry) => ({ key: entry.key, label: entry.label.slice(0, 120), checked: entry.checked }))
-    if (tray) refreshTray(true)
   })
 
   /* Answers whether the icon took, so Settings can say so or keep the old one (MiMo's setAppIcon). */

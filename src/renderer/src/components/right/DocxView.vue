@@ -29,6 +29,7 @@ import CellAffordance from "../CellAffordance.vue"
 import AnnotationFx from "../AnnotationFx.vue"
 import AnnotationMarkLayer, { type MarkItem } from "../AnnotationMarkLayer.vue"
 import LucideIcon from "../LucideIcon.vue"
+import ViewerAiNote from "./ViewerAiNote.vue"
 
 /**
  * MiMo's Word view: docx-preview draws the pages (tracked changes on, comments
@@ -1086,6 +1087,8 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
       @focus="(focused: boolean) => focused && (editing = true)"
     />
 
+    <!-- MiMo 26.920's footer line under every document view. -->
+    <ViewerAiNote viewer="docx" />
     <div v-if="(loading && !restoring) || error" class="docx-note" :data-docx-failed="error ? '' : undefined">{{ error || t("rp.pdf.loading") }}</div>
 
     <div v-if="insTip" class="ins-tip" :style="{ left: `${insTip.left}px`, top: `${insTip.top}px` }">
@@ -1107,7 +1110,9 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
 .docx-view {
   position: relative;
   isolation: isolate;
+  display: flex;
   flex: 1;
+  flex-direction: column;
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -1118,10 +1123,11 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
   position: relative;
   isolation: isolate;
   display: flex;
+  flex: 1 1 0;
   flex-direction: row;
   align-items: stretch;
   width: 100%;
-  height: 100%;
+  min-height: 0;
   overflow: auto;
   font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   user-select: text;
