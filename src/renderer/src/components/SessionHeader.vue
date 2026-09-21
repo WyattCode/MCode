@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue"
+import { computed, nextTick, onMounted, ref, watch } from "vue"
 import { useApp } from "../stores/app"
 import { useRightPanel } from "../stores/right-panel"
 import ContextMenu from "./ContextMenu.vue"
@@ -27,10 +27,102 @@ const app = useApp()
 /* `menuOpen`: this conversation's menu is up, which keeps its "more" tip shut as MiMo's is. */
 defineProps<{ infoOpen?: boolean; bottomOpen?: boolean; sideCollapsed?: boolean; hasContent?: boolean; panelBeside?: boolean; menuOpen?: boolean }>()
 
-/* `rename` asks the app for MiMo's rename dialog; the header no longer edits in place. */
-const emit = defineEmits<{ rename: []; menu: [x: number, y: number]; info: []; bottom: [] }>()
+const emit = defineEmits<{ menu: [x: number, y: number]; info: []; bottom: [] }>()
 
 const title = computed(() => (app.current ? sessionTitle(app.current.title) : ""))
+
+/*
+ * MiMo 26.920's rename: one click on the title makes the title itself editable,
+ * with everything in it selected. Enter or leaving the field saves, Escape puts
+ * the old name back. The element's text is written by hand rather than by the
+ * template, so what is being typed is never overwritten under the caret.
+ */
+const titleEl = ref<HTMLElement>()
+const editing = ref(false)
+/* MiMo's cap on a conversation name, counted in code points so a pair is never split. */
+const TITLE_MAX = 80
+
+function clampTitle(text: string) {
+  const points = Array.from(text)
+  return points.length > TITLE_MAX ? points.slice(0, TITLE_MAX).join("") : text
+}
+
+function showTitle() {
+  const el = titleEl.value
+  if (el && !editing.value && el.textContent !== title.value) el.textContent = title.value
+}
+
+onMounted(showTitle)
+watch(title, () => void nextTick(showTitle))
+
+function beginEdit() {
+  const el = titleEl.value
+  if (!el || !app.current || editing.value) return
+  editing.value = true
+  el.contentEditable = "true"
+  el.textContent = title.value
+  requestAnimationFrame(() => {
+    if (el.contentEditable !== "true") return
+    el.focus()
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    const selection = getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+  })
+}
+
+function finishEdit() {
+  const el = titleEl.value
+  if (!el || !editing.value) return
+  el.contentEditable = "false"
+  editing.value = false
+  const next = clampTitle(el.textContent?.trim() || t("session.untitled"))
+  el.textContent = next
+  el.scrollLeft = 0
+  const session = app.current
+  if (session && next !== title.value) void app.rename(session.id, next)
+}
+
+function cancelEdit() {
+  const el = titleEl.value
+  if (!el || !editing.value) return
+  editing.value = false
+  el.textContent = title.value
+  el.contentEditable = "false"
+  el.scrollLeft = 0
+}
+
+/* Past the cap, what was typed is cut back and the caret goes to the end. */
+function clampInput() {
+  const el = titleEl.value
+  if (!el || !editing.value) return
+  const text = el.textContent ?? ""
+  const clamped = clampTitle(text)
+  if (clamped === text) return
+  el.textContent = clamped
+  const range = document.createRange()
+  range.selectNodeContents(el)
+  range.collapse(false)
+  const selection = getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+}
+
+/* Enter saves unless an IME is still composing; Escape cancels. */
+function onTitleKey(event: KeyboardEvent) {
+  if (!editing.value) return
+  if (event.key === "Enter" && !(event.isComposing || event.keyCode === 229)) {
+    event.preventDefault()
+    finishEdit()
+  } else if (event.key === "Escape") {
+    event.preventDefault()
+    event.stopPropagation()
+    cancelEdit()
+  }
+}
+
+defineExpose({ beginEdit })
 
 /* MiMo's card over the title: the project, the folder and when it last changed. */
 const card = computed(() => (app.current ? convoCard(app.current, app.config?.projectNames, [], undefined, app.groupContext, app.automationTasks) : undefined))
@@ -46,7 +138,17 @@ const OWN_LOCATION = ["office", "browser", "html"]
 const directory = computed(() =>
   rp.open && OWN_LOCATION.includes(rp.activeTab?.type ?? "") ? undefined : app.current?.directory,
 )
-const { label: openLabel, items: openItems, open: openIn, pick: pickOpen } = useOpenWith(() => app.platform)
+const { label: openLabel, items: openItems, open: openIn, pick: pickOpen, choice: openChoice, options: openOptions } = useOpenWith(
+  () => app.platform,
+)
+/*
+ * MiMo draws the control only when its app scan finds something, and that scan
+ * looks for macOS application bundles alone - Finder among them - so on
+ * Windows and Linux the control never appears, and on macOS it always does.
+ */
+const openShown = computed(() => Boolean(directory.value) && app.platform === "darwin")
+/* The face carries the chosen app's own 14px icon, as MiMo's does; the folder mark stands in until it is known. */
+const openIcon = computed(() => openOptions.value.find((entry) => entry.value === openChoice.value)?.icon || "")
 const appMenu = ref<{ x: number; y: number }>()
 
 function openAppMenu(event: MouseEvent) {
@@ -79,8 +181,19 @@ function openMenu(event: MouseEvent) {
           <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
         </svg>
       </span>
-      <!-- A plain label; a double-click opens MiMo's rename dialog. -->
-      <h1 class="title" v-tip="card ? { card, placement: 'bottom' } : ''" @dblclick="emit('rename')">{{ title }}</h1>
+      <!-- One click edits the name in place, as MiMo's does; its card stays shut while it is being edited. -->
+      <h1
+        ref="titleEl"
+        class="title"
+        :class="{ editing }"
+        data-header-title
+        spellcheck="false"
+        v-tip="card && !editing ? { card, placement: 'bottom' } : ''"
+        @click="beginEdit"
+        @keydown="onTitleKey"
+        @blur="finishEdit"
+        @input="clampInput"
+      />
 
       <!--
         Beside the name rather than at the far end of the bar: it is this
@@ -100,16 +213,18 @@ function openMenu(event: MouseEvent) {
     <div class="right">
       <!--
         MiMo's first tool: the face opens the project folder in the app last
-        chosen, the caret chooses another. Only while there is a folder.
+        chosen, the caret chooses another. Only while there is a folder, and
+        only on macOS (openShown).
       -->
-      <div v-if="directory" class="open-with">
+      <div v-if="openShown && directory" class="open-with">
         <button
           class="open-face"
           :aria-label="t('header.openDirTip', { name: openLabel })"
           v-tip="t('header.openDirTip', { name: openLabel })"
           @click="openIn(directory)"
         >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <img v-if="openIcon" class="open-icon" :src="openIcon" width="14" height="14" alt="" aria-hidden="true" />
+          <svg v-else width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path
               d="M2 4.5C2 3.67 2.67 3 3.5 3H6l1.5 1.75h5c.83 0 1.5.67 1.5 1.5v5.25c0 .83-.67 1.5-1.5 1.5h-9c-.83 0-1.5-.67-1.5-1.5v-7Z"
               stroke="currentColor"
@@ -175,9 +290,8 @@ function openMenu(event: MouseEvent) {
   gap: 8px;
   height: 48px;
   padding-block: 0;
-  /* The narrower inset goes where the title starts and the wider where the row
-     of icons runs out, so the pair follows the reading rather than the window. */
-  padding-inline: 10px 20px;
+  /* MiMo's 18px before the title; the end is set below, clear of the caption buttons. */
+  padding-inline: 18px 20px;
 }
 
 .left {
@@ -199,10 +313,7 @@ function openMenu(event: MouseEvent) {
   color: var(--text-weak);
 }
 
-/*
- * Padded and rounded rather than plain text: it is the rename control, and the
- * hover background is the only thing that says so.
- */
+/* The rename control itself: MiMo gives it the text cursor and nothing else until it is clicked. */
 .title {
   overflow: hidden;
   width: fit-content;
@@ -217,8 +328,8 @@ function openMenu(event: MouseEvent) {
   letter-spacing: -0.04px;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: pointer;
-  transition: background 0.12s;
+  cursor: text;
+  outline: none;
 }
 
 
@@ -284,6 +395,24 @@ function openMenu(event: MouseEvent) {
 }
 
 /*
+ * MiMo's title while it is being renamed: a field at least 100 wide on the side
+ * column's ground, a 1px edge of that ground with a tenth of the strongest text
+ * in it, 8 in on each side and a 7px corner; the text is cut, not ellipsed.
+ */
+.title.editing {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  min-width: 100px;
+  padding: 0 8px;
+  background: var(--surface-base);
+  border: 1px solid color-mix(in srgb, var(--surface-base), var(--text-strong) 10%);
+  border-radius: 7px;
+  line-height: normal;
+  text-overflow: clip;
+}
+
+/*
  * MiMo's title-bar buttons: 24 square, 7 round, in its title-bar icon colour -
  * near the strongest text on a dark ground, that text at 60% on a light one.
  */
@@ -304,9 +433,23 @@ function openMenu(event: MouseEvent) {
   color: var(--text-strong);
 }
 
-/* MiMo on Windows: the panel toggles' glyphs 12px, in one solid colour on light and dark alike. */
+/*
+ * MiMo on Windows: the panel toggles' glyphs 12px in its Windows title-bar
+ * colour, #2b2b2b on light and #ececec on dark, which hovering and pressing
+ * keep rather than brighten.
+ */
 .app[data-platform="win32"] .ico:not(.options) {
-  color: var(--text-strong);
+  color: #2b2b2b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .app[data-platform="win32"] .ico:not(.options) {
+    color: #ececec;
+  }
+}
+
+:root[data-theme="dark"] .app[data-platform="win32"] .ico:not(.options) {
+  color: #ececec;
 }
 
 .app[data-platform="win32"] .ico:not(.options) svg {
@@ -314,12 +457,12 @@ function openMenu(event: MouseEvent) {
   height: 12px;
 }
 
-/* Against the title, and never squeezed by a long one: MiMo's 26px menu in the muted colour. */
+/* Against the title, and never squeezed by a long one: MiMo's 26px menu in its muted (mut) colour. */
 .ico.options {
   flex-shrink: 0;
   width: 26px;
   height: 26px;
-  color: var(--text-weak);
+  color: var(--text-base);
 }
 
 /*
@@ -348,6 +491,11 @@ function openMenu(event: MouseEvent) {
   font-weight: 500;
   line-height: 1;
   white-space: nowrap;
+}
+
+.open-icon {
+  flex: none;
+  object-fit: contain;
 }
 
 .open-caret {

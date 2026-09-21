@@ -381,9 +381,13 @@ const settingsOpen = ref(false)
 /** Non-default landing page for the settings dialog, when opened from a shortcut. */
 const settingsSection = ref<"general" | "keys" | "models" | "mcp" | "archive">()
 /*
- * The header, so the rename command can start the title's own editor. Renaming
- * is inline now - there is no dialog left for a flag to open.
+ * The header, so the rename command, its chord and the header menu's 重命名 can
+ * start the title's own in-place editor, as MiMo's requestRename does.
  */
+const sessionHeader = ref<InstanceType<typeof SessionHeader>>()
+function renameInHeader() {
+  sessionHeader.value?.beginEdit()
+}
 
 /*
  * The model menu's "configure custom models" lands on the models page, as MiMo's
@@ -397,11 +401,11 @@ function openSettings(section?: unknown) {
 /** Directory whose presentation is being edited, if any. */
 const editingProject = ref<string>()
 
-/* MiMo's single rename dialog, for a conversation or for a project. */
+/* MiMo's rename dialog, for a side-column row or for a project; the open conversation's header edits in place. */
 const renamingSession = ref<{ id: string; title: string }>()
 const renamingProject = ref<string>()
 
-function beginRename(sessionID = app.currentID) {
+function beginRename(sessionID: string) {
   const session = app.sessions.find((entry) => entry.id === sessionID)
   if (session) renamingSession.value = { id: session.id, title: sessionTitle(session.title) }
 }
@@ -1887,6 +1891,11 @@ async function runSessionMenu(key: string) {
     deletingSession.value = target
     return
   }
+  // A row's 重命名 is MiMo's dialog, over whatever is open; the header's edits the title in place.
+  if (key === "session.rename" && !header) {
+    beginRename(target)
+    return
+  }
   if (app.currentID !== target) {
     view.value = "session"
     await app.open(target)
@@ -2506,7 +2515,7 @@ const bindableCommands = computed((): AppCommand[] => {
       title: t("cmd.rename"),
       hint: "Ctrl+Alt+R",
       enabled: hasSession,
-      run: () => beginRename(),
+      run: () => renameInHeader(),
     },
     {
       id: "session.undo",
@@ -3190,7 +3199,7 @@ function onKeydown(event: KeyboardEvent) {
   if (mod && event.altKey && letter === "r") {
     if (conversationCovered() || !app.currentID || isHome.value) return
     event.preventDefault()
-    beginRename()
+    renameInHeader()
     return
   }
 
@@ -3985,6 +3994,7 @@ onBeforeUnmount(() => {
             before the first message used to vanish silently.
           -->
           <SessionHeader
+            ref="sessionHeader"
             :info-open="infoShowing"
             :bottom-open="terminalUp"
             :side-collapsed="!leftPanel"
@@ -3992,7 +4002,6 @@ onBeforeUnmount(() => {
             :has-content="!empty"
             :menu-open="Boolean(sessionMenu?.header)"
             @info="toggleInfo"
-            @rename="beginRename()"
             @menu="(x, y) => (sessionMenu = { x, y, header: true })"
             @bottom="terminalOpen = !terminalOpen"
           />
@@ -4626,10 +4635,25 @@ onBeforeUnmount(() => {
   color: var(--text-strong);
 }
 
-/* MiMo on Windows: every title-bar glyph 12px, in one solid colour on light and dark alike. */
+/*
+ * MiMo on Windows: every title-bar glyph 12px in its Windows title-bar colour,
+ * #2b2b2b on light and #ececec on dark, kept on hover and while pressed.
+ */
 .app[data-platform="win32"] .side-panel-toggle,
 .app[data-platform="win32"] .home-bottom:not(:disabled) {
-  color: var(--text-strong);
+  color: #2b2b2b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .app[data-platform="win32"] .side-panel-toggle,
+  :root:not([data-theme="light"]) .app[data-platform="win32"] .home-bottom:not(:disabled) {
+    color: #ececec;
+  }
+}
+
+:root[data-theme="dark"] .app[data-platform="win32"] .side-panel-toggle,
+:root[data-theme="dark"] .app[data-platform="win32"] .home-bottom:not(:disabled) {
+  color: #ececec;
 }
 
 .app[data-platform="win32"] .side-panel-toggle svg,
