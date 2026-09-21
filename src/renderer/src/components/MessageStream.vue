@@ -43,6 +43,7 @@ import {
   nextFollowing,
   parkRoom,
   parkTarget,
+  parkTop,
   reattachWithin,
   scrolledUp,
   UP_SLACK,
@@ -701,8 +702,14 @@ function onScroll() {
 
 function toBottom() {
   const element = scroller.value
+  if (element) settle(element.scrollHeight)
+}
+
+/* Puts the view at `top`, remembered so its own scroll event is not read as the reader's. */
+function settle(top: number) {
+  const element = scroller.value
   if (!element) return
-  element.scrollTop = element.scrollHeight
+  element.scrollTop = top
   lastPin = { at: Date.now(), to: element.scrollTop }
 }
 
@@ -1188,7 +1195,11 @@ function park(turnID: string) {
   // Where the row stands in the layout: its msg-in is still lifting it from 8px below.
   const lift = new DOMMatrixReadOnly(getComputedStyle(row).transform).m42
   const end = column.getBoundingClientRect().bottom - viewTop
-  const room = parkRoom(box.top - lift - viewTop, parkTarget(view.clientHeight, box.height), view.clientHeight, end)
+  const rowTop = box.top - lift - viewTop
+  const target = parkTarget(view.clientHeight, box.height)
+  const room = parkRoom(rowTop, target, view.clientHeight, end)
+  // A question taller than the view keeps its top in sight; the end would show only its last lines.
+  const rest = parkTop(rowTop, target, view.clientHeight, end)
   if (room > 0) {
     turn.style.minHeight = `${Math.ceil(turn.getBoundingClientRect().height + room)}px`
     floored = turn
@@ -1201,7 +1212,8 @@ function park(turnID: string) {
    * following still went off and the floor was left for the next scroll event
    * to take - the question stranded at the foot of the view.
    */
-  toBottom()
+  if (rest === undefined) toBottom()
+  else settle(rest)
   following.value = false
   parkedIn = shownID.value
   if (room > 0 && !reducedMotion()) slideIn(column, room)
