@@ -390,8 +390,8 @@ async function settingsChecks(check: Check, section: (name: string) => void): Pr
     const rowPadding = /padding:\s*([^;]+);/.exec(dialog.slice(rows, dialog.indexOf("}", rows)))?.[1]?.trim()
     const cards = dialog.lastIndexOf("\n.card {")
     const cardPadding = /padding:\s*([^;]+);/.exec(dialog.slice(cards, dialog.indexOf("}", cards)))?.[1]?.trim()
-    check("the empty card is written against .card, so the row cards' padding cannot flatten it", padding(".card.empty-card") !== undefined && padding(".empty-card") === undefined, { plain: padding(".empty-card"), both: padding(".card.empty-card") })
-    check("and it holds the sentence at the rows' 16 above and below, 17 aside", vertical(padding(".card.empty-card")) === vertical(rowPadding) && horizontal(padding(".card.empty-card")) === horizontal(cardPadding), { empty: padding(".card.empty-card"), row: rowPadding, card: cardPadding })
+    // R18-M5: the models page no longer has an empty card - 26.920 opens it on the add tab - so the rule went with it.
+    check("the models page's empty card is gone with the page's redesign", padding(".card.empty-card") === undefined && vertical(rowPadding) !== undefined && horizontal(cardPadding) !== undefined)
   }
 
 }

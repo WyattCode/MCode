@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue"
 import { t } from "../lib/i18n"
 import { useEscapeLayer } from "../lib/escape-layer"
+import { composing } from "../lib/keys"
 
 /**
  * MiMo 26.920's 克隆供应商: the copy's provider id, asked for in the shared
@@ -29,6 +30,13 @@ function confirm() {
   emit("confirm", id.value.trim())
 }
 
+/* Enter clones, unless it is finishing an input method's composition. */
+function onEnter(event: KeyboardEvent) {
+  if (composing(event)) return
+  event.preventDefault()
+  confirm()
+}
+
 useEscapeLayer(() => emit("close"))
 
 onMounted(() => {
@@ -52,7 +60,7 @@ onMounted(() => {
         data-clone-provider-id
         spellcheck="false"
         autocomplete="off"
-        @keydown.enter.prevent="confirm"
+        @keydown.enter="onEnter"
       />
       <div v-if="error" class="error" data-clone-provider-error>{{ error }}</div>
       <footer>

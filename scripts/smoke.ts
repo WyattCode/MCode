@@ -7114,7 +7114,7 @@ async function roundSevenTimingChecks() {
     "the backend is warmed without being waited for, and bootstrap is the one channel that waits for it",
     /ipcMain\.handle\("mcode:bootstrap"[\s\S]{0,240}await starting/.test(main) && /starting\.catch\(/.test(main),
   )
-  check("the window is still created inside whenReady", /app\.whenReady\(\)[\s\S]*\n  createWindow\(\)/.test(main))
+  check("the window is still created inside whenReady", /app\.whenReady\(\)[\s\S]*\n  createWindow\((!hiddenAtLogin)?\)/.test(main))
   check(
     "a wedged first load shows a window after three seconds rather than after the 30s startup timeout",
     SHOW_FALLBACK_MS === 3_000 && SHOW_FALLBACK_MS < STARTUP_TIMEOUT,
@@ -7505,7 +7505,7 @@ async function skillChecks(root: string) {
   await write(path.join(nested, ".agents", "skills", "agents-one", "SKILL.md"), skill("agents-one", "from agents"))
   await write(path.join(outer, ".mcode", "skills", "above", "SKILL.md"), skill("above", "above the repository"))
 
-  const found = await discoverSkills({ directory: nested, storageDirectory: storage, builtinRoot: builtin })
+  const found = await discoverSkills({ directory: nested, storageDirectory: storage, builtinRoot: builtin, home: path.join(base, "home") })
   const named = (name: string) => found.skills.find((entry) => entry.name === name)
   check("shipped, global and project skills are all found", Boolean(named("shipped") && named("beta") && named("gamma")), found.skills.map((entry) => entry.name))
   check("a user skill replaces a shipped one of the same name", named("alpha")?.description === "user alpha" && named("alpha")?.builtin === false, named("alpha"))
@@ -7513,7 +7513,8 @@ async function skillChecks(root: string) {
   check("the nearer project folder wins a name", named("gamma")?.description === "nested gamma", named("gamma"))
   check("aliases are read as a list", JSON.stringify(named("beta")?.aliases) === '["bee"]', named("beta"))
   check("disable-model-invocation is read", named("hidden")?.disableModelInvocation === true)
-  check(".claude and .agents folders are not read, as MiMo's desktop turns them off", !named("claude-one") && !named("agents-one"))
+  // R18-M1: MiMo 26.920 reads .agents by default and leaves .claude off until it is switched on.
+  check(".claude folders are not read by default, .agents folders are, as MiMo 26.920 reads them", !named("claude-one") && Boolean(named("agents-one")))
   check("the walk stops at the repository root", !named("above"))
   check("a skill with no description is skipped and reported", !named("nodesc") && found.problems.some((problem) => problem.path.includes("nodesc") && /description/.test(problem.message)), found.problems)
   check("a name that does not match its folder is reported but still loads", Boolean(named("renamed")) && found.problems.some((problem) => problem.path.includes("folder-x")), found.problems)

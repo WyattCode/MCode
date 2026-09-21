@@ -17,7 +17,8 @@ export function adapterFor(kind: ProviderKind): ProviderAdapter {
       return ChatGPTSubscription
     case "openai-responses":
       return OpenAIResponses
-    case "openai-compatible":
+    // Chat completions is also the answer for a kind nothing names, as the ternaries this replaced fell through to it.
+    default:
       return OpenAICompatible
   }
 }
