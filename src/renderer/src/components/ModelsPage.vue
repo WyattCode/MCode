@@ -345,17 +345,22 @@ async function confirmClone(id: string) {
 </template>
 
 <style scoped>
-/* The settings page's own title and intro, as the other pages draw them. */
+/*
+ * The settings page's own title, as the other pages draw theirs (MiMo's
+ * sc-h1: 24px, regular weight), then MiMo's intro 2 under the title's gap
+ * and the tabs 16 under the intro. The page's 12px flex gap is counted in:
+ * 15 + 12 is the other pages' 27, 4 + 12 is 16.
+ */
 h2 {
-  margin: 0 0 32px;
+  margin: 0 0 15px;
   color: var(--text-strong);
-  font-size: calc(15px * var(--ui-font-scale, 1));
-  font-weight: 640;
-  line-height: 1;
+  font-size: calc(24px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  line-height: calc(38.4px * var(--ui-font-scale, 1));
 }
 
 .note {
-  margin: -20px 0 16px;
+  margin: 2px 0 4px;
   color: var(--text-weak);
   font-size: calc(12.5px * var(--ui-font-scale, 1));
   line-height: 1.6;

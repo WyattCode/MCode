@@ -114,4 +114,17 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
     check("D-3: where the pointer is decides the hold, across the whole document", /addEventListener\("pointerover", onPreviewOver, true\)/.test(side) && /addEventListener\("pointerout", onPreviewOut, true\)/.test(side))
     check("D-3: the shell's own leave no longer lets the preview go under an open menu", !/@pointerleave="holdPreview\(false\)"/.test(side))
   }
+
+  section("Round 20: D-7 the models page's title is the settings title")
+  {
+    const page = await read("src/renderer/src/components/ModelsPage.vue")
+    const title = /\nh2 \{([^}]*)\}/.exec(page)?.[1] ?? ""
+    check(
+      "D-7: 24px, regular weight, 38.4 high, as every other settings page's title",
+      /font-size:\s*calc\(24px \* var\(--ui-font-scale, 1\)\)/.test(title) && /font-weight:\s*400/.test(title) && /line-height:\s*calc\(38\.4px \* var\(--ui-font-scale, 1\)\)/.test(title),
+      title,
+    )
+    const note = /\n\.note \{([^}]*)\}/.exec(page)?.[1] ?? ""
+    check("D-7: the intro no longer pulls itself up under a 32px margin", !/margin:\s*-/.test(note) && /margin:\s*2px 0 4px/.test(note), note)
+  }
 }
