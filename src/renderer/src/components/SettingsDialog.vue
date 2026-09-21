@@ -2,11 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useApp } from "../stores/app"
 import { useOpenWith } from "../lib/open-with"
-import ConnectDialog from "./ConnectDialog.vue"
-import CustomModelDialog from "./CustomModelDialog.vue"
-import ProviderIcon from "./ProviderIcon.vue"
-import { providerLabel, quickAddGroups, waysFor, type Group } from "../lib/connect"
-import type { ProviderStatus } from "@shared/protocol"
+import ModelsPage from "./ModelsPage.vue"
 import { LANGUAGES, ago, compactTokens, dayLabel, language, sessionTitle, t, type Language } from "../lib/i18n"
 import { wordMatch } from "../lib/word-match"
 import { folderName, projectName } from "../lib/project"
@@ -731,7 +727,7 @@ async function refreshTrees() {
 watch(
   section,
   (next: Section) => {
-    if (next === "files" || next === "models" || next === "mcp") void loadPaths()
+    if (next === "files" || next === "mcp") void loadPaths()
     if (next === "files") void loadAgents()
     if (next === "general") void loadLoginItem()
     if (next !== "mcp") mcpView.value = "list"
@@ -1383,19 +1379,6 @@ const shortcutRows = computed(() => {
 })
 
 
-/**
- * Both credentials, because a provider can hold either.
- *
- * Clearing the API key was the whole of this, so disconnecting a subscription
- * removed a key it never had and left its tokens in place - the row stayed
- * connected and the button looked broken.
- */
-async function disconnect(provider: string) {
-  const entry = app.providers.find((item) => item.id === provider)
-  if (entry?.authenticated) await app.signOut(provider)
-  await app.setApiKey(provider, "")
-}
-
 /* MiMo's switch: turned off while at full access, the level drops to the default and says so. */
 async function toggleFullAccess() {
   const config = app.config
@@ -1451,140 +1434,6 @@ function chooseChime(value: string) {
 
 
 
-/** Which provider row has its key field open. Only one at a time. */
-/**
- * The vendor whose connect dialog is open.
- *
- * `undefined` with `connectOpen` set browses every provider, which is how the
- * quick connect button enters; a group jumps straight to that vendor's ways in.
- */
-const connectTarget = ref<Group>()
-const connectOpen = ref(false)
-
-function openConnect(group?: Group) {
-  connectTarget.value = group
-  connectOpen.value = true
-}
-
-function closeConnect() {
-  connectOpen.value = false
-  connectTarget.value = undefined
-}
-
-/**
- * What a vendor row says about getting in.
- *
- * Naming the subscription is the useful part - "connect with an API key" on a
- * row that also takes a Pro account tells the wrong half of the story.
- */
-function groupDescription(group: Group): string {
-  const ways = waysFor(group.entries)
-  const account = ways.find((entry) => entry.method === "oauth-browser" || entry.method === "oauth-headless")
-  const keyed = ways.some((entry) => entry.method === "api-key")
-  if (account && keyed) return t("connect.descBoth", { name: account.provider.name })
-  if (account) return t("connect.descAccount", { name: account.provider.name })
-  if (ways.every((entry) => entry.method === "local")) return t("auth.local")
-  return t(group.entries[0].description)
-}
-
-/*
- * MiMo's seven presets, listed whether or not one is added, since several
- * models per vendor can be; a connected vendor's chip opens its connect screen
- * on 已连接. Everything else is added through 自定义.
- */
-const presetGroups = computed(() => quickAddGroups(app.providers))
-const busy = ref<string>()
-/**
- * The last thing that went wrong, and which row it belongs to.
- *
- * Section-wide messages leave `id` unset and show at the top; anything raised
- * by acting on one provider is shown against that provider instead.
- */
-const notice = ref<{ id?: string; text: string }>()
-
-function say(text: string, id?: string) {
-  notice.value = { id, text }
-}
-
-function noticeFor(id: string): string | undefined {
-  return notice.value?.id === id ? notice.value.text : undefined
-}
-/** Per-provider endpoint overrides being edited, keyed by provider id. */
-const endpoints = ref<Record<string, string>>({})
-
-/**
- * A published base URL can move, and a wrong one turns into an opaque connection
- * failure. Letting it be corrected in place beats telling people to re-add the
- * provider as a custom one.
- */
-/**
- * What the field shows: what has been typed, else the endpoint in force.
- *
- * Filling it in is the point - a local runtime's address is a port number, and
- * an empty box asks the user to remember it rather than telling them.
- */
-function endpointValue(provider: { id: string; baseURL?: string }): string {
-  return endpoints.value[provider.id] ?? provider.baseURL ?? ""
-}
-
-/** Nothing to save while the field still matches what is in force. */
-function endpointChanged(provider: { id: string; baseURL?: string }): boolean {
-  const typed = endpoints.value[provider.id]
-  if (typed === undefined) return false
-  const trimmed = typed.trim()
-  return trimmed.length > 0 && trimmed !== (provider.baseURL ?? "")
-}
-
-async function saveEndpoint(provider: string) {
-  const value = endpoints.value[provider]?.trim()
-  if (!value) return
-  await app.patchConfig({
-    providerEndpoints: { ...(app.config?.providerEndpoints ?? {}), [provider]: value },
-  })
-  delete endpoints.value[provider]
-  say(t("set.saved"), provider)
-  setTimeout(() => (notice.value = undefined), 2000)
-}
-
-/*
- * The rows the providers page draws, which is not the same set as the ones that
- * can answer a prompt.
- *
- * A custom provider is created from a display name and a base URL; the key
- * field beside them may be left blank. Such a provider counts as unconfigured,
- * so a list of configured providers left it out, and the vendor list underneath
- * is built from the known catalogue and has no row for it either. It was still
- * sitting in the config file, which made re-adding it under the same name fail
- * as a duplicate, and the only way to be rid of it was to edit that file by
- * hand. The reference has the same shape - its connected list carries providers
- * that came from config whether or not they have credentials, tagged "Custom" -
- * so a custom provider is listed here on the strength of existing, and its
- * Remove button is the way back out.
- */
-const listedProviders = computed(() =>
-  app.providers.filter((provider) => provider.configured || provider.custom),
-)
-
-/**
- * Whether a variable in the user's shell is the only thing connecting this
- * provider.
- *
- * There is then nothing here to disconnect - the app holds no key of its own,
- * and it cannot reach into the shell to unset one. The server refuses the
- * request for exactly this case, so a Disconnect button offered here could only
- * ever fail: the click went to a promise nothing caught, which Vue logged to a
- * console the user is not reading, leaving a button that looked live and did
- * nothing. The reference shows the sentence in place of the button instead, and
- * tags the row Environment.
- *
- * `authenticated` is the exception the server also makes: a subscription signed
- * in through OAuth is the app's to remove whatever the environment says.
- */
-function fromEnvironment(provider: ProviderStatus): boolean {
-  return Boolean(provider.environment) && !provider.authenticated
-}
-
-
 /* Clearing what the in-app browser has stored, after a confirmation, as MiMo asks for one. */
 const confirmingClear = ref(false)
 
@@ -1593,96 +1442,6 @@ async function clearBrowsing() {
   const reason = await window.mcode.browserClearData()
   if (reason) notifyFailure(t("set.browsingDataFailed", { error: reason }))
   else notify(t("set.browsingDataCleared"))
-}
-
-/**
- * A better answer than the network's own for a runtime on this machine.
- *
- * The transport can only report that nothing answered; what the user needs to
- * know is that the application being open is not the same as its API server
- * running.
- */
-function localFailure(id: string): string | undefined {
-  const entry = app.providers.find((item) => item.id === id)
-  if (!entry?.authMethods?.includes("local")) return undefined
-  return t("auth.localDown", { name: entry.name, url: entry.baseURL ?? "" })
-}
-
-async function refresh(provider: string) {
-  busy.value = provider
-  notice.value = undefined
-  try {
-    const result = await app.discoverModels(provider)
-    say(t("provider.refreshed", { n: result }), provider)
-  } catch (err) {
-    say(localFailure(provider) ?? (err instanceof Error ? err.message : String(err)), provider)
-  } finally {
-    busy.value = undefined
-    setTimeout(() => (notice.value = undefined), 4000)
-  }
-}
-
-
-/*
- * MiMo's add / edit model dialog, opened by the 自定义 chip and by 编辑; here the
- * custom provider that holds the models is what is added or edited.
- */
-const modelDialog = ref<{ mode: "add" } | { mode: "edit"; id: string }>()
-
-function customEntry(id: string) {
-  return app.config?.customProviders?.find((entry) => entry.id === id)
-}
-
-function editCustom(id: string) {
-  if (!customEntry(id)) {
-    notifyFailure(t("set.models.editFailed"))
-    return
-  }
-  modelDialog.value = { mode: "edit", id }
-}
-
-/* As MiMo's copy does, the copy becomes the model in use, then says so. */
-async function copyCustom(provider: { id: string; name: string }) {
-  try {
-    const id = await app.copyCustomProvider(provider.id, t("set.models.copyName", { name: provider.name }))
-    const first = app.providers.find((entry) => entry.id === id)?.models[0]
-    if (first) {
-      const model = { provider: id, model: first.id }
-      if (app.currentID) await app.setModel(model)
-      else await app.patchConfig({ model, smart: false })
-    }
-    notify(t("set.models.copied"), { level: "success" })
-  } catch {
-    notifyFailure(t("set.models.copyFailed"))
-  }
-}
-
-/*
- * MiMo asks before deleting a custom model, and toasts the result; a built-in
- * provider's disconnect asks the same way. If the model in use goes, the store
- * falls back to another usable one.
- */
-const removing = ref<{ id: string; name: string; custom: boolean }>()
-
-async function confirmRemoveProvider() {
-  const target = removing.value
-  removing.value = undefined
-  if (!target) return
-  busy.value = target.id
-  try {
-    if (target.custom) {
-      await app.removeCustomProvider(target.id)
-      notify(t("set.models.removed", { name: target.name }), { level: "success" })
-    } else {
-      await disconnect(target.id)
-      notify(t("set.models.disconnected", { name: target.name }), { level: "success" })
-    }
-    await app.ensureUsableModel()
-  } catch {
-    notifyFailure(t(target.custom ? "set.models.removeFailed" : "set.models.disconnectFailed"))
-  } finally {
-    busy.value = undefined
-  }
 }
 
 /*
@@ -3287,161 +3046,11 @@ onBeforeUnmount(() => {
           </Teleport>
         </template>
 
-        <!-- Providers -->
-        <!--
-          Models, laid out exactly as MiMo's page: title and intro, quick add,
-          what has been added, and the file it is kept in. MCode's Smart block
-          and per-model switches are gone, as the user chose (MO5); Smart stays
-          in the composer's model menu.
-        -->
-        <template v-else>
-          <h2>{{ t("set.models") }}</h2>
-          <p class="note">{{ t("set.models.intro") }}</p>
-          <div v-if="notice && !notice.id" class="notice">{{ notice.text }}</div>
-
-          <h3>{{ t("set.models.quickAdd") }}</h3>
-          <!-- Every vendor stays listed, as MiMo lists every preset: a connected one opens on its 已连接 screen and takes another key. -->
-          <div class="presets">
-            <button
-              v-for="group in presetGroups"
-              :key="group.id"
-              class="preset"
-              :data-preset="group.id"
-              @click="openConnect(group)"
-            >
-              <ProviderIcon :id="group.entries[0].id" :name="group.name" class="preset-mark" />
-              <span>{{ group.name }}</span>
-            </button>
-            <!-- MiMo's literal label, the same in every language. -->
-            <button class="preset" data-preset="custom" @click="modelDialog = { mode: 'add' }">
-              <svg class="preset-plus" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M8 3v10M3 8h10" />
-              </svg>
-              <span>自定义 / Custom</span>
-            </button>
-          </div>
-
-          <h3>{{ t("set.models.added") }}</h3>
-          <div v-if="!listedProviders.length" class="card empty-card">
-            <div class="empty-title">{{ t("set.models.emptyTitle") }}</div>
-            <div class="empty-desc">{{ t("set.models.emptyDesc") }}</div>
-          </div>
-          <div v-else class="card">
-            <template v-for="provider in listedProviders" :key="provider.id">
-            <div class="prow">
-              <ProviderIcon :id="provider.id" :name="provider.name" />
-              <div class="ptext">
-                <div class="pname">
-                  {{ providerLabel(provider) }}
-                  <span v-if="provider.custom" class="tag">{{ t("settings.providers.tag.custom") }}</span>
-                  <span v-else-if="fromEnvironment(provider)" class="tag">
-                    {{ t("provider.environment") }}
-                  </span>
-                </div>
-                <div class="pdesc">
-                  {{ provider.models.length ? t("provider.modelCount", { n: provider.models.length }) : t("provider.noModels") }}
-                </div>
-              </div>
-              <!--
-                Never on a custom provider. Its models are the ones that were
-                typed in, so there is nothing to refresh from - and asking
-                /models anyway is how a working provider ends up with an
-                empty picker. The row is left with Remove, which is the one
-                thing that can be done about it.
-              -->
-              <span class="ctl-pair">
-                <button
-                  v-if="provider.kind === 'openai-compatible' && provider.configured && !provider.custom"
-                  class="ctl-btn"
-                  :data-provider-refresh="provider.id"
-                  :disabled="busy === provider.id"
-                  @click="refresh(provider.id)"
-                >
-                  {{ t("provider.refresh") }}
-                </button>
-                <!--
-                  Where the disconnect button would be, on a row the app cannot
-                  disconnect: the variable is the user's to unset, and saying so
-                  is the only useful thing this corner of the row can do.
-                -->
-                <span v-if="!provider.custom && fromEnvironment(provider)" class="penv">
-                  {{ t("provider.fromEnvironment") }}
-                </span>
-                <template v-else>
-                  <!-- MiMo's three secondary sm buttons on a saved custom model: 编辑, 复制, 删除 with a danger hover. -->
-                  <template v-if="provider.custom">
-                    <button class="ctl-btn" :data-provider-edit="provider.id" @click="editCustom(provider.id)">
-                      {{ t("set.models.edit") }}
-                    </button>
-                    <button class="ctl-btn" :data-provider-copy="provider.id" @click="copyCustom(provider)">
-                      {{ t("set.models.copy") }}
-                    </button>
-                  </template>
-                  <button
-                    class="ctl-btn danger-hover"
-                    :data-provider-remove="provider.id"
-                    @click="removing = { id: provider.id, name: providerLabel(provider), custom: Boolean(provider.custom) }"
-                  >
-                    {{ provider.custom ? t("set.models.remove") : t("set.disconnect") }}
-                  </button>
-                </template>
-              </span>
-            </div>
-
-            <div v-if="provider.kind === 'openai-compatible' && !provider.custom" class="pform">
-              <input
-                :value="endpointValue(provider)"
-                class="key-in"
-                :placeholder="t('set.baseURL')"
-                spellcheck="false"
-                @input="endpoints[provider.id] = ($event.target as HTMLInputElement).value"
-                @keydown.enter="!composing($event) && saveEndpoint(provider.id)"
-              />
-              <button
-                class="ctl-btn"
-                :disabled="!endpointChanged(provider)"
-                @click="saveEndpoint(provider.id)"
-              >
-                {{ t("set.save") }}
-              </button>
-            </div>
-            <div v-if="noticeFor(provider.id)" class="pnotice standalone">{{ noticeFor(provider.id) }}</div>
-            </template>
-          </div>
-
-          <!-- MiMo's config row: no buttons, the path on one line, a sentence while it is still unknown. -->
-          <h3>{{ t("set.models.configFile") }}</h3>
-          <div class="card">
-            <div class="line config-file" data-models-config>
-              <div class="line-text">
-                <div class="line-title">{{ t("set.models.configFileTitle") }}</div>
-                <div class="line-sub config-path" :title="configFile?.path">{{ configFile?.path ?? t("set.models.configFileDesc") }}</div>
-              </div>
-            </div>
-          </div>
-
-          <Teleport to="body">
-            <ConfirmDialog
-              v-if="removing"
-              :title="t(removing.custom ? 'set.models.deleteTitle' : 'set.models.disconnectTitle')"
-              :body="t(removing.custom ? 'set.models.deleteBody' : 'set.models.disconnectBody', { name: removing.name })"
-              :confirm-label="removing.custom ? t('set.models.remove') : t('set.disconnect')"
-              @confirm="confirmRemoveProvider"
-              @close="removing = undefined"
-            />
-          </Teleport>
-          <Teleport to="body">
-            <CustomModelDialog
-              v-if="modelDialog"
-              :editing="modelDialog.mode === 'edit' ? customEntry(modelDialog.id) : undefined"
-              @close="modelDialog = undefined"
-            />
-          </Teleport>
-        </template>
+        <!-- Models: MiMo 26.920's provider tabs and forms, a page of its own. -->
+        <ModelsPage v-else />
             </div>
     </div>
   </div>
-  <ConnectDialog v-if="connectOpen" :group="connectTarget" @close="closeConnect" />
 
 </template>
 
@@ -4531,23 +4140,6 @@ h3 {
   gap: 8px;
 }
 
-.key-in {
-  flex: 1;
-  height: calc(30px * var(--ui-font-scale, 1));
-  padding: 0 10px;
-  color: var(--text-strong);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
-  border-radius: var(--radius-md);
-  font-family: var(--font-mono);
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
-  outline: none;
-}
-
-.key-in:focus {
-  border-color: var(--border-strong);
-}
-
 .confirm {
   display: flex;
   flex-shrink: 0;
@@ -4863,104 +4455,9 @@ h3 {
   justify-content: space-between;
 }
 
-/*
- * opencode's `tag`, measured: `31x16` for 推荐 and `42x16` for 自定义 -
- * `padding: 0 4px`, radius 2, on bg-layer-02 (`--surface-layer`) with a
- * half-pixel ring, `11px/530/11px` at `0.05px` in text-base, 8 after the name
- * it follows. This was a 999px pill at `1px 7px` in text-weak on the hover
- * fill, with the accent variant drawn in blue text on a blue tint.
- */
-.tag {
-  display: inline-flex;
-  align-items: center;
-  height: calc(16px * var(--ui-font-scale, 1));
-  margin-inline-start: 8px;
-  padding: 0 4px;
-  color: var(--text-base);
-  background: var(--surface-layer);
-  border-radius: 2px;
-  box-shadow: inset 0 0 0 0.5px var(--border-weak);
-  font-size: calc(11px * var(--ui-font-scale, 1));
-  font-weight: 530;
-  line-height: calc(11px * var(--ui-font-scale, 1));
-  letter-spacing: 0.05px;
-  vertical-align: middle;
-}
-
-/*
- * The accented tag is the one opencode's general page wears for 新: solid
- * `--primary` under white text, no ring - `19x16`, `0 4px`, radius 2.
- */
-.tag.accent {
-  color: #ffffff;
-  background: var(--primary);
-  box-shadow: none;
-}
-
-.notice {
-  margin-bottom: 12px;
-  padding: 8px 12px;
-  color: var(--text-base);
-  background: var(--surface-raised-hover);
-  border-radius: var(--radius-md);
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
-}
-
-/* Provider rows read as a scannable list: identity on the left, one action on
-   the right. The key field is disclosed per row rather than always present -
-   eleven permanent input boxes was a wall, not a list. */
-.prow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-  padding: 17px 0;
-  border-bottom: 0.5px solid var(--border-weaker);
-}
-
-.prow:last-child {
-  border-bottom: none;
-}
-
 .pmark.on {
   color: var(--surface-base);
   background: var(--text-strong);
-}
-
-/* The same ask as `.line-text`, for the same reason: a provider's name before its buttons. */
-.ptext {
-  flex: 1;
-  min-width: min(180px, 100%);
-}
-
-/*
- * A provider name and its tag are two flex items that will not shrink below
- * their own words, so without somewhere to go they are drawn straight over the
- * buttons. `wrap` puts the tag under the name, and `anywhere` lets a name with
- * no spaces in it break, which is also what makes the text column shrinkable.
- */
-.pname {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  overflow-wrap: anywhere;
-  color: var(--text-strong);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 530;
-  line-height: 1;
-  letter-spacing: -0.04px;
-}
-
-.pdesc {
-  margin-top: 1px;
-  overflow: hidden;
-  color: var(--text-base);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 440;
-  line-height: calc(20px * var(--ui-font-scale, 1));
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /*
@@ -4969,40 +4466,6 @@ h3 {
  * `13px/530/20px` at `-0.04px` in text-base. This was `0 12px` on a 6% fill
  * in text-strong at 440 - a filled pill where the reference draws a ghost.
  */
-/* Standing where the link stands, and quieter than it: this is a statement
-   about the row, not something to press. */
-.penv {
-  flex-shrink: 0;
-  max-width: 260px;
-  color: var(--text-weak);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  text-align: end;
-}
-
-.pform {
-  display: flex;
-  gap: 8px;
-  padding: 0 16px 14px;
-  border-bottom: 1px solid var(--border-weaker);
-}
-
-.pnotice {
-  max-width: 520px;
-  color: var(--text-critical);
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
-  line-height: 1.6;
-}
-
-/* Outside the connect panel it has to bring its own inset and rule. */
-.pnotice.standalone {
-  padding: 0 16px 12px;
-  border-bottom: 1px solid var(--border-weaker);
-}
-
-.pform.stack {
-  flex-direction: column;
-  padding-top: 4px;
-}
 
 /* Sits inside .pform.stack, so it must not re-apply the horizontal padding -
    otherwise the key row is inset from the fields above it. */
@@ -5013,112 +4476,6 @@ h3 {
 
 /* The custom-provider form sits inside the provider card, so it brings the
    card's own inset and closing rule with it rather than knowing about them. */
-/* MiMo's quick-add chips: 34 tall on a hairline, a small mark and the vendor's name. */
-.presets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-
-.preset {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: calc(34px * var(--ui-font-scale, 1));
-  padding: 0 10px;
-  color: var(--text-strong);
-  background: transparent;
-  border: 1px solid var(--border-weak);
-  border-radius: 8px;
-  font-size: calc(13px * var(--ui-font-scale, 1));
-}
-
-.preset:hover,
-.preset.on {
-  background: var(--surface-hover);
-}
-
-.preset-mark {
-  width: calc(18px * var(--ui-font-scale, 1));
-  height: calc(18px * var(--ui-font-scale, 1));
-  border-radius: 5px;
-  font-size: calc(10px * var(--ui-font-scale, 1));
-}
-
-.preset-mark :deep(.glyph) {
-  width: 14px;
-  height: 14px;
-}
-
-.preset-plus {
-  width: 16px;
-  height: 16px;
-  color: var(--text-weak);
-}
-
-.preset-plus path {
-  stroke: currentColor;
-  stroke-width: 1.4;
-  stroke-linecap: round;
-}
-
-/* MiMo's danger hover on 删除: red text on the light red wash. */
-.ctl-btn.danger-hover:hover:not(:disabled) {
-  color: #d93025;
-  background: #fdecea;
-}
-
-:root[data-theme="dark"] .ctl-btn.danger-hover:hover:not(:disabled) {
-  color: #ff9b7f;
-  background: #3a2320;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .ctl-btn.danger-hover:hover:not(:disabled) {
-    color: #ff9b7f;
-    background: #3a2320;
-  }
-}
-
-/*
- * MiMo draws the config path as a single line that ends in an ellipsis.
- * Written against `.line-sub` as well, the way `.line-sub.path` is: the element
- * wears both classes, and the `.line-sub` rule further down reads later at the
- * same weight, so a bare `.config-path` loses its 11.5px to that rule's 12.
- */
-.line-sub.config-path {
-  overflow: hidden;
-  font-family: var(--font-mono);
-  font-size: calc(11.5px * var(--ui-font-scale, 1));
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/*
- * A card holding a sentence instead of rows still sits on the rows' rhythm:
- * 16 above and below, 17 aside, as `.line` inside `.card` gives every other
- * card on this page. Written against `.card` as well, because the `.card`
- * rules further down set `padding: 0 17px` for the row cards and, reading
- * later, used to flatten this one's padding to nothing - the sentence then
- * touched the card's top and bottom edges.
- */
-.card.empty-card {
-  padding: 16px 17px;
-}
-
-.empty-title {
-  color: var(--text-strong);
-  font-size: calc(14px * var(--ui-font-scale, 1));
-  font-weight: 500;
-}
-
-.empty-desc {
-  margin-top: 4px;
-  color: var(--text-weak);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 1.6;
-}
 
 /*
  * 2.0: Xiaomi MiMo's settings dialog, measured with it open.

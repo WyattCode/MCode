@@ -84,7 +84,7 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
       "K13-7: the helper listens on the document's capture phase, after the window's lists and before every bubble listener",
       /document\.addEventListener\("keydown", onKeydown, true\)/.test(helper) && !/window\.addEventListener/.test(helper),
     )
-    const users = ["ContextMenu", "AppMenu", "ConfirmDialog", "RenameDialog", "NewProjectDialog", "ProjectDialog", "SkillDetailDialog", "FullAccessDialog", "ThirdPartyDialog", "VoiceUsageDialog", "CustomModelDialog", "ConnectDialog"]
+    const users = ["ContextMenu", "AppMenu", "ConfirmDialog", "RenameDialog", "NewProjectDialog", "ProjectDialog", "SkillDetailDialog", "FullAccessDialog", "ThirdPartyDialog", "VoiceUsageDialog", "ProviderCloneDialog", "ConnectDialog"]
     const own: string[] = []
     for (const name of users) {
       const source = await component(name)

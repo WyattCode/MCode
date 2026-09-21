@@ -286,7 +286,7 @@ export async function roundNineProviderChecks(check: Check, section: (name: stri
       const offered = connectableProviders(providers).map((entry) => entry.id)
       check("the connect dialog offers the same seven and the ChatGPT sign-in, nothing else", offered.sort().join() === "chatgpt,dashscope,deepseek,minimax,moonshot,xiaomi,xiaomi-plan,zhipu", offered)
       check("MiniMax is reached at its current domain", providers.find((entry) => entry.id === "minimax")?.baseURL === "https://api.minimaxi.com/v1")
-      const settings = readFileSync("src/renderer/src/components/SettingsDialog.vue", "utf8")
+      const settings = readFileSync("src/renderer/src/components/ModelsPage.vue", "utf8")
       const connect = readFileSync("src/renderer/src/components/ConnectDialog.vue", "utf8")
       check("the settings page draws its chips from that list", /const presetGroups = computed\(\(\) => quickAddGroups\(app\.providers\)\)/.test(settings))
       check("and the connect dialog lists only what it offers", /groupProviders\(connectableProviders\(app\.providers\)\)/.test(connect))

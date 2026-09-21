@@ -32,7 +32,7 @@ import { IGNORED, insideReal, resolveInsideReal } from "./tool/fs-util"
 import { protectedFilter } from "./protected-paths"
 import { readableFile, workingRoots, writableFile } from "./file-access"
 import { restoreHeaders, restoreMasked, restoreServer, restoreUrl } from "./config-view"
-import { discoverModels } from "./provider/discover"
+import { discoverModels, probeModels } from "./provider/discover"
 import { blankProjectDirectory, scratchDirectory, scratchRoot } from "./scratch"
 import { searchMessages } from "./search"
 import { historyService } from "./history/service"
@@ -1261,8 +1261,14 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       if (!source) throw new CodedError(`No custom provider with the id ${request.provider}`, "provider.notFound")
       const taken = (id: string) =>
         Boolean(runtime.config.definition(id)) || config.customProviders.some((entry) => entry.id === id)
-      let id = `${source.id}-copy`
-      for (let n = 2; taken(id); n++) id = `${source.id}-copy-${n}`
+      // The id chosen in the clone dialog, checked as a new provider's is; otherwise the first free `-copy`.
+      const chosen = request.id?.trim()
+      if (chosen !== undefined && !/^[a-z0-9][a-z0-9-_]*$/.test(chosen)) {
+        throw new CodedError(`"${chosen}" is not a valid provider id`, "provider.custom.error.providerID.format")
+      }
+      if (chosen && taken(chosen)) throw new CodedError(`A provider with the id ${chosen} already exists`, "provider.custom.error.providerID.exists")
+      let id = chosen || `${source.id}-copy`
+      for (let n = 2; !chosen && taken(id); n++) id = `${source.id}-copy-${n}`
       await runtime.config.set({
         customProviders: [...config.customProviders, { ...source, id, name: request.name.trim() || source.name }],
       })
@@ -1271,6 +1277,22 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         if (stored) await runtime.config.setApiKey(id, stored)
       }
       return { providers: runtime.config.providers(), id } satisfies Handled<"provider.copyCustom">
+    }
+
+    /*
+     * MiMo 26.920's 测试连接. The key the window leaves blank is the stored
+     * one, and an address or header still masked as the window was shown it is
+     * put back, so a saved provider can be tested without its secrets ever
+     * reaching the window.
+     */
+    case "provider.probe": {
+      const existing = request.provider ? runtime.config.get().customProviders.find((entry) => entry.id === request.provider) : undefined
+      const typed = request.apiKey.trim()
+      const apiKey = typed || (request.provider ? (runtime.config.apiKey(request.provider) ?? "") : "")
+      const baseURL = normalizeBaseURL(existing ? restoreUrl(request.baseURL.trim(), existing.baseURL) : request.baseURL.trim())
+      const headers = existing ? restoreHeaders(request.headers ?? {}, existing.headers) : request.headers
+      const result = await probeModels({ baseURL, apiKey, headers, protocol: request.protocol })
+      return (result.ok ? { ok: true, models: result.models } : { ...result, models: [] }) satisfies Handled<"provider.probe">
     }
 
     case "provider.removeCustom": {

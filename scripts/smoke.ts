@@ -68,7 +68,7 @@ import { applyVoiceResult, splitSendWord } from "../src/renderer/src/lib/voice"
 import { chordOf, formatChord, isBindable } from "../src/renderer/src/lib/keys"
 import { RETIRED_DEFAULTS, normalizeChord, retireKeybinds } from "../src/shared/chord"
 import { PAGE_ROWS, pageRows } from "../src/renderer/src/lib/shortcut-page"
-import { LIMIT_PRESETS, limitOf, validEndpoint } from "../src/renderer/src/lib/custom-model"
+import { LIMIT_PRESETS, limitLabel, limitOf, validEndpoint } from "../src/renderer/src/lib/custom-model"
 import { mergeMcpSecrets } from "../src/server/mcp-save"
 // round 5: MCP names, folder, server messages, results, transports and sampling.
 import { McpRequestError, McpServers, mcpToolOutput, mcpToolSchema } from "../src/server/mcp"
@@ -6196,7 +6196,7 @@ async function main() {
   const droppedMcp = mergeMcpSecrets(storedMcp, { type: "remote", url: "https://x", headers: { B: "" } }, { headers: ["B"] })
   check("a kept header with nothing stored is dropped", droppedMcp.headers === undefined, droppedMcp)
   check("limits take digits only", limitOf("32768").value === 32768 && !limitOf("32K").ok && limitOf("").ok)
-  check("the 128K pill writes 131072 tokens", LIMIT_PRESETS.context.find((entry) => entry.label === "128K")?.value === 131072)
+  check("the 128K output size is 128000 tokens, as MiMo 26.920 writes it", LIMIT_PRESETS.output.includes(128_000) && limitLabel(128_000) === "128K")
   check("an endpoint needs http(s) and a host", validEndpoint("https://api.example.com/v1") && !validEndpoint("ftp://x") && !validEndpoint("http://"))
 
   // ---------------------------------------------------------------- image preview

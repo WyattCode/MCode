@@ -2181,8 +2181,25 @@ export type Request =
       models: CustomModel[]
       protocol?: CustomProvider["protocol"]
     }
-  /** Copied in the backend so the stored key never travels to the window; `name` is the copy's, already worded. */
-  | { type: "provider.copyCustom"; provider: string; name: string }
+  /**
+   * Copied in the backend so the stored key never travels to the window;
+   * `name` is the copy's, already worded, and `id` the one the user chose in
+   * the clone dialog (absent picks a free `<id>-copy`).
+   */
+  | { type: "provider.copyCustom"; provider: string; name: string; id?: string }
+  /**
+   * MiMo 26.920's 测试连接: asks `<baseURL>/models` with the key. A blank key
+   * with `provider` set uses the one held for that provider, which the window
+   * is never sent; a masked address or header left as shown is the stored one.
+   */
+  | {
+      type: "provider.probe"
+      baseURL: string
+      apiKey: string
+      provider?: string
+      headers?: Record<string, string>
+      protocol?: CustomProvider["protocol"]
+    }
   | { type: "auth.begin"; provider: string; method: AuthMethodKind }
   | { type: "auth.cancel"; provider: string }
   | { type: "auth.signOut"; provider: string }
@@ -2448,6 +2465,7 @@ export interface ResponseMap {
   "provider.updateCustom": { providers: ProviderStatus[] }
   /** The copy's id. */
   "provider.copyCustom": { providers: ProviderStatus[]; id: string }
+  "provider.probe": { ok: boolean; models: string[]; reason?: "http" | "json" | "timeout" | "network"; status?: number; message?: string }
   /**
    * Where to send the user, plus the short code to type when the flow is the
    * device kind. Either way the outcome arrives later as an auth event.

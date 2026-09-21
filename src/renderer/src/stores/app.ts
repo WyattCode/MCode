@@ -2136,11 +2136,22 @@ export const useApp = defineStore("app", () => {
     await ensureUsableModel()
   }
 
-  /** Copies a custom provider under a free id, and answers that id. */
-  async function copyCustomProvider(provider: string, name: string): Promise<string> {
-    const result = await api().request({ type: "provider.copyCustom", provider, name })
+  /** Copies a custom provider under the id chosen (or a free one), and answers that id. */
+  async function copyCustomProvider(provider: string, name: string, id?: string): Promise<string> {
+    const result = await api().request({ type: "provider.copyCustom", provider, name, ...(id ? { id } : {}) })
     providers.value = result.providers
     return result.id
+  }
+
+  /** MiMo 26.920's 测试连接: what `<baseURL>/models` lists with this key (blank uses the one held for `provider`). */
+  async function probeProvider(entry: {
+    baseURL: string
+    apiKey: string
+    provider?: string
+    headers?: Record<string, string>
+    protocol?: CustomProvider["protocol"]
+  }) {
+    return api().request({ type: "provider.probe", ...entry })
   }
 
   /** The turn currently streaming, if any - used to anchor the scroll. */
@@ -2398,5 +2409,6 @@ export const useApp = defineStore("app", () => {
     removeCustomProvider,
     updateCustomProvider,
     copyCustomProvider,
+    probeProvider,
   }
 })

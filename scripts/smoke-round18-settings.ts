@@ -21,6 +21,8 @@ import { AnthropicAdapter } from "../src/server/provider/anthropic"
 import { ChatGPTSubscription, OpenAIResponses } from "../src/server/provider/chatgpt"
 import { OpenAICompatible } from "../src/server/provider/openai"
 import { modelVariants } from "../src/server/provider/variants"
+import { probeModels } from "../src/server/provider/discover"
+import { LIMIT_PRESETS, cloneId, limitLabel, modalitySummary } from "../src/renderer/src/lib/custom-model"
 import type { AppConfig } from "../src/shared/protocol"
 import {
   OPEN_HIDDEN_ARG,
@@ -242,6 +244,53 @@ export async function roundEighteenSettingsChecks(check: Check, section: (name: 
     check("R18-M4: adding and editing keep the choice", (handlers.match(/request\.protocol === "anthropic" \|\| request\.protocol === "responses"/g) ?? []).length === 2)
     const runner = await read("src/server/session/runner.ts")
     check("R18-M4: no caller picks an adapter by hand any more", !/\? ChatGPTSubscription/.test(runner + handlers))
+  }
+
+  // ---------------------------------------------------------------- R18-M5
+  section("Round 18 (M5): the models page as MiMo 26.920 redid it")
+  {
+    const answer = (status: number, body: string) => (async () => new Response(body, { status })) as unknown as typeof fetch
+    let asked: { url?: string; headers?: Record<string, string> } = {}
+    const recording = (body: string) =>
+      (async (url: string, init: { headers: Record<string, string> }) => {
+        asked = { url, headers: init.headers }
+        return new Response(body, { status: 200 })
+      }) as unknown as typeof fetch
+    const ok = await probeModels({ baseURL: "https://gw.example/v1/", apiKey: " sk-1 ", fetcher: recording(JSON.stringify({ data: [{ id: "a" }, "b", { model: "c" }, { id: "a" }] })) })
+    check("R18-M5: 测试连接 asks <base>/models with the key", asked.url === "https://gw.example/v1/models" && asked.headers?.authorization === "Bearer sk-1", asked)
+    check("R18-M5: and reads ids as MiMo does - strings, `id` or `model` rows, once each", ok.ok && ok.models.join() === "a,b,c", ok)
+    const listed = await probeModels({ baseURL: "https://gw.example/v1", apiKey: "k", fetcher: answer(200, JSON.stringify({ models: [{ id: "x" }] })) })
+    check("R18-M5: under `models` as well as `data`", listed.ok && listed.models.join() === "x")
+    await probeModels({ baseURL: "https://gw.example/v1", apiKey: "k", protocol: "anthropic", fetcher: recording("{}") })
+    check("R18-M5: an Anthropic gateway also gets its own key header", asked.headers?.["x-api-key"] === "k" && Boolean(asked.headers?.["anthropic-version"]))
+    const denied = await probeModels({ baseURL: "https://gw.example/v1", apiKey: "k", fetcher: answer(401, "{}") })
+    check("R18-M5: a refusal reports its status", !denied.ok && denied.reason === "http" && denied.status === 401)
+    const page = await probeModels({ baseURL: "https://gw.example/v1", apiKey: "k", fetcher: answer(200, "<html>") })
+    check("R18-M5: a page that is not JSON says so", !page.ok && page.reason === "json")
+    const slow = await probeModels({ baseURL: "http://10.255.255.1/v1", apiKey: "k", timeout: 1, fetcher: ((_u: string, init: { signal: AbortSignal }) => new Promise((_r, reject) => { const hold = setTimeout(() => undefined, 2000); init.signal.addEventListener("abort", () => (clearTimeout(hold), reject(init.signal.reason))) })) as unknown as typeof fetch })
+    check("R18-M5: and one that never answers times out", !slow.ok && slow.reason === "timeout", slow)
+
+    check("R18-M5: MiMo 26.920's limit sizes", LIMIT_PRESETS.context.join() === "256000,512000,1000000" && LIMIT_PRESETS.output.join() === "32000,64000,128000")
+    check("R18-M5: written as it writes them", limitLabel(256_000) === "256K" && limitLabel(1_000_000) === "1M" && limitLabel(1_500_000) === "1.5M" && limitLabel(12_345) === "12345" && limitLabel(undefined) === "—")
+    const label = (key: string) => key
+    check("R18-M5: pictures, sound and video read together are 全模态", modalitySummary({ image: true, audio: true, video: true, pdf: false }, label) === "omni")
+    check("R18-M5: PDF follows after a dot, and none is a dash", modalitySummary({ image: true, audio: false, video: false, pdf: true }, label) === "image·pdf" && modalitySummary({ image: false, audio: false, video: false, pdf: false }, label) === "—")
+    check("R18-M5: a clone's id starts on the first free -copy", cloneId("gw", new Set(["gw", "gw-copy"])) === "gw-copy-2" && cloneId("gw", new Set(["gw"])) === "gw-copy")
+
+    const models = await read("src/renderer/src/components/ModelsPage.vue")
+    const form = await read("src/renderer/src/components/CustomProviderForm.vue")
+    const settings = await read("src/renderer/src/components/SettingsDialog.vue")
+    check("R18-M5: a row of tabs - refresh, add, then one per provider", /data-provider-tabs[\s\S]*data-provider-refresh-all[\s\S]*data-provider-add[\s\S]*v-for="provider in listed"/.test(models))
+    check("R18-M5: a custom provider's tab carries delete, clone and save", /data-provider-remove[\s\S]*data-provider-clone[\s\S]*data-provider-save/.test(models))
+    check("R18-M5: the form offers the three protocols", ["openai", "anthropic", "responses"].every((value) => form.includes(`<option value="${value}">`)))
+    check("R18-M5: a connection test, a model picker and the four inputs", /data-provider-probe/.test(form) && /data-model-combo/.test(form) && /v-for="key in MODALITIES"/.test(form))
+    check("R18-M5: a blank key on an edit tests with the one held, never sent to the window", /\.\.\.\(editing \? \{ provider: editing\.id \} : \{\}\)/.test(form))
+    check("R18-M5: the old add-model dialog is gone", !(await fs.stat(path.join(process.cwd(), "src/renderer/src/components/CustomModelDialog.vue")).catch(() => undefined)) && !/CustomModelDialog/.test(settings + models))
+    check("R18-M5: the settings dialog draws the page from its own component", /<ModelsPage v-else \/>/.test(settings))
+    check("R18-M5: kept as decided in round nine - a vendor chip opens the connect dialog", /@click="openConnect\(group\)"/.test(models))
+    check("R18-M5: and a connected vendor keeps its endpoint and its models", /data-provider-endpoint/.test(models) && /app\.discoverModels\(provider\.id\)/.test(models))
+    const handlers = await read("src/server/handlers.ts")
+    check("R18-M5: a clone takes the id chosen, checked as a new provider's", /const chosen = request\.id\?\.trim\(\)/.test(handlers) && /chosen && taken\(chosen\)/.test(handlers))
   }
 
   // Session chat's skill, which the lab switch takes away with the tools.

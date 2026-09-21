@@ -337,7 +337,7 @@ useEscapeLayer(dismiss)
           <span class="row-mark big">+</span>
           <h2 class="title">{{ t("provider.custom.title") }}</h2>
         </div>
-        <CustomProviderForm @connected="emit('close')" />
+        <CustomProviderForm standalone autofocus @connected="emit('close')" />
       </template>
 
       <!-- 2. Which way in. -->
