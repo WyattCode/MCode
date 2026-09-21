@@ -375,6 +375,8 @@ import { roundEighteenLabelChecks } from "./smoke-round18-labels"
 import { roundEighteenDiffChecks } from "./smoke-round18-diff"
 // Round 18, lane E: the engine and the model-facing text, moved to MiMo 26.920 (R18-E1 onwards).
 import { roundEighteenEngineChecks } from "./smoke-round18-engine"
+// Round 18: the settings navigation's list scrolls, as MiMo's sn-scroll (round 15 U3's open item).
+import { roundEighteenSettingsNavChecks } from "./smoke-round18-settings-nav"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7001,6 +7003,7 @@ async function main() {
   await roundEighteenLabelChecks(check, section)
   await roundEighteenDiffChecks(check, section)
   await roundEighteenEngineChecks(check, section)
+  await roundEighteenSettingsNavChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
