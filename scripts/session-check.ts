@@ -13,6 +13,8 @@
  * adapters, the runner, the store, the request handlers and the bus are all the
  * real ones.
  */
+// First, so every server the checks start avoids the ports fetch refuses.
+import "./safe-listen"
 import http from "node:http"
 import { execFileSync } from "node:child_process"
 import fs from "node:fs/promises"

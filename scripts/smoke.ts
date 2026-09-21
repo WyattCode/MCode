@@ -6,6 +6,8 @@
  * round-trip, and the diff renderer. No API key is required - the agent loop
  * itself is the one piece this cannot reach without one.
  */
+// First, so every server the checks start avoids the ports fetch refuses.
+import "./safe-listen"
 import { nameFromId } from "../src/server/provider/model-name"
 import { commandRisk } from "../src/server/command-risk"
 import { Permissions } from "../src/server/permission"
@@ -396,6 +398,8 @@ import { loadMath } from "../src/renderer/src/lib/markdown"
 import { roundNineteenLaneAChecks } from "./smoke-round19-a"
 // Round 19, lane C: following the stream, parking a sent question, and the sent message against MiMo 26.920.
 import { roundNineteenLaneCChecks } from "./smoke-round19-c"
+// No window is ever told to connect to a port the browser refuses.
+import { blockedPortChecks } from "./smoke-blocked-ports"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7031,6 +7035,7 @@ async function main() {
   await perfEntryChecks(check, section)
   await roundNineteenLaneAChecks(check, section)
   await roundNineteenLaneCChecks(check, section)
+  await blockedPortChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
