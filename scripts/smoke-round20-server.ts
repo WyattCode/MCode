@@ -11,6 +11,17 @@ import JSZip from "jszip"
 import type { Check } from "./smoke-round5"
 import { labelDelivered, labelHtml, officeAigc } from "../src/server/tool/aigc-label"
 import { listExternalSessions, readExternalSession } from "../src/server/external-sessions"
+import type { Message, SessionInfo } from "../src/shared/protocol"
+import { Bus } from "../src/server/bus"
+import { Storage } from "../src/server/storage"
+import { SessionStore } from "../src/server/session/store"
+import { startHistory, stopHistory } from "../src/server/history/service"
+
+const MODEL = { provider: "anthropic", model: "claude-opus-5" } as const
+
+function asked(sessionID: string, id: string, text: string, at: number): Message {
+  return { id, sessionID, role: "user", text, attachments: [], time: { created: at } } as Message
+}
 
 async function zipOf(parts: Record<string, string>): Promise<Buffer> {
   const zip = new JSZip()
@@ -116,6 +127,47 @@ export async function roundTwentyServerChecks(check: Check, section: (name: stri
       } finally {
         if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
         else process.env.CLAUDE_CONFIG_DIR = previous
+      }
+    }
+
+    // ---------------------------------------------------------------- R20-B4
+    section("Round 20 (B4): a long pasted query narrows the search instead of failing it")
+    {
+      const dataDirectory = path.join(root, "history", "data")
+      const project = path.join(root, "history", "project")
+      await fs.mkdir(project, { recursive: true })
+      const storage = new Storage(path.join(dataDirectory, "storage"))
+      const bus = new Bus()
+      const sessions = new SessionStore(storage, bus)
+      const now = Date.now()
+      // Six hundred distinct words: more than SQLite lets one compound SELECT join.
+      const words = Array.from({ length: 600 }, (_, i) => `word${i.toString(36).padStart(3, "0")}`)
+      const holder = await sessions.create({ directory: project, model: MODEL, title: "Pasted" })
+      const lacking = await sessions.create({ directory: project, model: MODEL, title: "Short" })
+      const longest = "averyveryverylongpiece"
+      await sessions.saveMessage(asked(holder.id, "msg_r20_1", `${words.join(" ")} ${longest}`, now), true)
+      await sessions.saveMessage(asked(lacking.id, "msg_r20_2", words.join(" "), now), true)
+      const history = await startHistory(dataDirectory, sessions, storage, bus)
+      check("R20-B4 the index opened", history !== undefined)
+      if (history) {
+        try {
+          const end = Date.now() + 20_000
+          while (history.index.building && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 10))
+          await history.index.ready
+          await history.index.flush()
+          const listed: SessionInfo[] = await sessions.list()
+          // Every word twice, in two cases, as a paste of a long log might repeat them.
+          const query = [...words, ...words.map((word) => word.toUpperCase()), longest].join(" ")
+          const named = await history.index.candidates(query, listed).then(
+            (ids) => ids,
+            (error: unknown) => (error instanceof Error ? error.message : String(error)),
+          )
+          check("R20-B4 a query of 1201 pieces is answered, not an SQL error", Array.isArray(named), named)
+          check("R20-B4 and it still names the conversation holding them all", Array.isArray(named) && named.includes(holder.id), named)
+          check("R20-B4 while the one lacking its longest piece is left out", Array.isArray(named) && !named.includes(lacking.id), named)
+        } finally {
+          await stopHistory(history)
+        }
       }
     }
   } finally {
