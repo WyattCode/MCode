@@ -154,4 +154,16 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
     const app = await read("src/renderer/src/App.vue")
     check("R18-U8: an interrupted install is told by its reason and leaves 重试 on the capsule", /const \{ reason, hint \} = interruptedReason\(state\.interrupted\.error\)\s*markUpdateFailed\(reason, hint, /.test(app))
   }
+
+  section("Round 18 (lane U): R18-U10 custom models sit under their provider's name in the model menu")
+  {
+    const composer = await read("src/renderer/src/components/Composer.vue")
+    const block = composer.slice(composer.indexOf('<template v-if="customRows.length">'), composer.indexOf('<div class="rule" />\n              <button', composer.indexOf('<template v-if="customRows.length">')))
+    check("R18-U10: one group per custom provider, keyed by its id", /v-for="group in customGroups" :key="group\.id"[^>]*:data-model-provider="group\.id"/.test(block), block.slice(0, 300))
+    check("R18-U10: each headed by the provider's name", /<div class="provider-head" :data-model-provider-head="group\.id">\{\{ group\.name \}\}<\/div>/.test(block))
+    check("R18-U10: and its rows under it, not one flat run", /v-for="row in group\.rows"/.test(block) && !/v-for="row in customRows"/.test(block))
+    check("R18-U10: the groups come from the configured custom providers, named by display name", /const customGroups = computed\(\(\) =>\s*groups\.value\s*\.filter\(\(group\) => group\.provider\.custom\)\s*\.map\(\(group\) => \(\{ id: group\.provider\.id, name: group\.provider\.name \|\| group\.provider\.id, rows: rowsOf\(group\) \}\)\)/.test(composer))
+    check("R18-U10: the keys still walk every custom row in drawn order", /const customRows = computed\(\(\) => customGroups\.value\.flatMap\(\(group\) => group\.rows\)\)/.test(composer) && /\.\.\.customRows\.value\.map\(\(row\) => row\.key\)/.test(composer))
+    check("R18-U10: the heading is 12px in the muted colour with 6 by 10 of padding", /\.model-menu \.provider-head \{[^}]*padding: 6px 10px;[^}]*font-size: calc\(12px \* var\(--ui-font-scale, 1\)\)/.test(composer))
+  }
 }

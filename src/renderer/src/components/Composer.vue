@@ -2648,15 +2648,20 @@ const rowsOf = (group: { provider: { id: string }; models: ModelInfo[] }): Model
 
 /*
  * MiMo's split: its own models at the top level, everyone else's behind "more
- * models" in one flat list, and custom models in a group of their own below
- * that. Here the first connected built-in provider stands where MiMo's own
- * models do.
+ * models" in one flat list, and custom models below that - since 26.920 under
+ * a small heading per provider, its name, rather than in one run. Here the
+ * first connected built-in provider stands where MiMo's own models do.
  */
 const builtinGroups = computed(() => groups.value.filter((group) => !group.provider.custom))
 const primaryGroup = computed(() => builtinGroups.value[0])
 const primaryRows = computed(() => (primaryGroup.value ? rowsOf(primaryGroup.value) : []))
 const moreRows = computed(() => builtinGroups.value.slice(1).flatMap(rowsOf))
-const customRows = computed(() => groups.value.filter((group) => group.provider.custom).flatMap(rowsOf))
+const customGroups = computed(() =>
+  groups.value
+    .filter((group) => group.provider.custom)
+    .map((group) => ({ id: group.provider.id, name: group.provider.name || group.provider.id, rows: rowsOf(group) })),
+)
+const customRows = computed(() => customGroups.value.flatMap((group) => group.rows))
 
 function closeModelSubs() {
   modelSub.value = undefined
@@ -3628,26 +3633,29 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 </div>
               </div>
 
-              <!-- MiMo's custom models: their own group at the top level, after a rule, with no heading. -->
+              <!-- MiMo's custom models: after a rule, each provider's under its own name. The headings are not rows: the keys walk past them. -->
               <template v-if="customRows.length">
                 <div class="rule" />
-                <ModelMenuRow
-                  v-for="row in customRows"
-                  :key="row.key"
-                  data-custom-model
-                  :model="row.model"
-                  :row-key="row.key"
-                  :on="currentKey === row.key"
-                  :hot="activeKey === row.key"
-                  :efforts="effortsFor(row.model)"
-                  :effort="effortLevel"
-                  :sub-open="modelSub === row.key"
-                  :effort-hot="modelSub === row.key ? levelOf(subKey) : undefined"
-                  @enter="hoverRow(row.key)"
-                  @choose="chooseModel(row.provider, row.model.id)"
-                  @effort="chooseModelEffort(row.provider, row.model.id, $event)"
-                  @effort-hover="subKey = effortKey($event)"
-                />
+                <div v-for="group in customGroups" :key="group.id" class="provider-group" :data-model-provider="group.id">
+                  <div class="provider-head" :data-model-provider-head="group.id">{{ group.name }}</div>
+                  <ModelMenuRow
+                    v-for="row in group.rows"
+                    :key="row.key"
+                    data-custom-model
+                    :model="row.model"
+                    :row-key="row.key"
+                    :on="currentKey === row.key"
+                    :hot="activeKey === row.key"
+                    :efforts="effortsFor(row.model)"
+                    :effort="effortLevel"
+                    :sub-open="modelSub === row.key"
+                    :effort-hot="modelSub === row.key ? levelOf(subKey) : undefined"
+                    @enter="hoverRow(row.key)"
+                    @choose="chooseModel(row.provider, row.model.id)"
+                    @effort="chooseModelEffort(row.provider, row.model.id, $event)"
+                    @effort-hover="subKey = effortKey($event)"
+                  />
+                </div>
               </template>
 
               <div class="rule" />
@@ -5104,6 +5112,18 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 .model-menu .rule {
   margin: 4px 6px;
   background: var(--border-weak);
+}
+
+/* MiMo's provider heading over its custom models: 12px in the muted colour, 6 by 10 of padding. */
+.model-menu .provider-head {
+  padding: 6px 10px;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--text-strong) 60%, transparent);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: calc(18px * var(--ui-font-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: none;
 }
 
 .model-menu .model-item {
