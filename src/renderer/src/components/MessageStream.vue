@@ -30,7 +30,8 @@ import AnnotationChips from "./AnnotationChips.vue"
 import { openDocument } from "../lib/office-open"
 import { occurrences, registerFoldedCounter } from "../lib/find-folded"
 import { useRestoreDraft } from "../lib/draft"
-import { cardCut, interruptedEnd, stepPart, stickState, stoppedEmpty } from "./parts/turn-end"
+import { cardCut, interruptedEnd, stepPart, stoppedEmpty } from "./parts/turn-end"
+import { endDistance, growthEcho, jumpShown, nextFollowing, reattachWithin, scrolledUp, UP_SLACK, upwardRun, type Geometry } from "../lib/scroll-follow"
 
 /**
  * WHY EVERY MESSAGE IS DRAWN, where opencode virtualises.
@@ -614,31 +615,82 @@ function stoppedAfter(turn: Turn): string {
   return formatDuration(turn.started && turn.completed ? turn.completed - turn.started : 0)
 }
 
-/** Auto-follow is on until the user scrolls up, and resumes when they return. */
+/*
+ * Following the end of the reply, by MiMo's rules (lib/scroll-follow): any
+ * upward move of more than 8px stops it, even a few pixels from the end, and
+ * only the end itself - within a device pixel or so - starts it again. The 64px
+ * distance belongs to the jump button alone.
+ */
 const following = ref(true)
-/** MiMo's jump button, shown only once the reader is further than the stick distance from the end. */
+/** MiMo's jump button, shown only once the reader is further than 64px from the end. */
 const showJump = ref(false)
+
+function geometry(element: HTMLElement): Geometry {
+  return { top: element.scrollTop, height: element.scrollHeight, client: element.clientHeight }
+}
 
 /* Asked again whenever the content changes, not only on scroll, as MiMo does. */
 function measureJump() {
   const element = scroller.value
   if (!element) return
-  showJump.value = stickState(element.scrollHeight, element.scrollTop, element.clientHeight).jump
+  showJump.value = jumpShown(geometry(element))
+}
+
+/* The scroller as the last scroll event left it, and the upward steps added up since. */
+let seen: Geometry | undefined
+let upRun = 0
+let seenRatio = 0
+let seenWidth = 0
+/* The last pin, so its own scroll event is not counted against an upward run. */
+let lastPin: { at: number; to: number } | undefined
+
+function pinEcho(top: number): boolean {
+  return Boolean(lastPin && Date.now() - lastPin.at <= 80 && Math.abs(top - lastPin.to) <= 1)
 }
 
 function onScroll() {
   const element = scroller.value
   if (!element) return
-  const state = stickState(element.scrollHeight, element.scrollTop, element.clientHeight)
-  following.value = state.atEnd
-  showJump.value = state.jump
+  const now = geometry(element)
+  const ratio = window.devicePixelRatio || 1
+  const width = element.clientWidth
+  // A zoom or a resize moves scrollTop on its own; counting starts again from here.
+  if (!seen || ratio !== seenRatio || width !== seenWidth) {
+    seen = now
+    seenRatio = ratio
+    seenWidth = width
+    upRun = 0
+    showJump.value = jumpShown(now)
+    return
+  }
+  upRun = now.top > seen.top && pinEcho(now.top) ? upRun : upwardRun(upRun, seen, now)
+  const up = scrolledUp(seen, now) || upRun > UP_SLACK
+  if (up) upRun = 0
+  const echo = growthEcho(seen, now)
+  seen = now
+  showJump.value = jumpShown(now)
+  following.value = nextFollowing(following.value, up, endDistance(now), reattachWithin(ratio), echo)
 }
 
 function toBottom() {
   const element = scroller.value
   if (!element) return
   element.scrollTop = element.scrollHeight
+  lastPin = { at: Date.now(), to: element.scrollTop }
 }
+
+/*
+ * MiMo turns the browser's scroll anchoring off while following - the pin is
+ * the anchor then, and the browser's own would fight it - and on while reading
+ * further up, so text growing above the reader leaves them where they are.
+ */
+watch(
+  [following, scroller],
+  ([on, element]) => {
+    if (element) element.style.overflowAnchor = on ? "none" : "auto"
+  },
+  { immediate: true },
+)
 
 /* MiMo's jump: straight to the end with no smooth scroll, following again, and the button gone in the same tick. */
 function jump() {

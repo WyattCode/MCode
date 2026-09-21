@@ -61,14 +61,6 @@ export function cardCut(said: string): { text: string; clamped: boolean } | unde
   return { text, clamped: false }
 }
 
-/* MiMo's stick distance: within 64px of the end counts as at the end, and only past it is the jump button offered. */
-export const STICK = 64
-
-export function stickState(scrollHeight: number, scrollTop: number, clientHeight: number): { atEnd: boolean; jump: boolean } {
-  const distance = scrollHeight - scrollTop - clientHeight
-  return { atEnd: distance <= STICK, jump: scrollHeight > clientHeight && distance > STICK }
-}
-
 /*
  * The latest turn's parts: everything after the message that opened it. A steer
  * the model has taken opens a turn (MiMo 26.914); one still waiting does not.
