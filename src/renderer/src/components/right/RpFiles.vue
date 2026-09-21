@@ -62,6 +62,9 @@ function absolute(rel: string) {
   return `${(root.value ?? "").replace(/[\\/]+$/, "")}/${rel}`
 }
 
+/* The folder of the file on view: a markdown file's relative pictures and paths are its own, not the conversation's. */
+const viewFolder = computed(() => (props.viewFile ? absolute(props.viewFile).replace(/[\\/][^\\/]*$/, "") : undefined))
+
 function baseName(rel: string) {
   return rel.split("/").pop() ?? rel
 }
@@ -807,7 +810,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
             <div v-else-if="opened.kind === 'binary'" class="fv-empty"><div class="fv-empty-desc">{{ t("rp.files.errBinary") }}</div></div>
             <div v-else-if="isAbc" class="fv-doc text" data-ft-abc><AbcBlock :code="opened.content" /></div>
             <!-- The reply's own markdown component, as MiMo hangs it here: links, pictures, coloured fences, copy buttons, diagrams, scores, maths. -->
-            <div v-else-if="isMarkdown" class="fv-doc" data-ft-markdown><MarkdownBody :text="opened.content" /></div>
+            <div v-else-if="isMarkdown" class="fv-doc" data-ft-markdown><MarkdownBody :text="opened.content" :base-dir="viewFolder" /></div>
             <div
               v-else
               class="fv-code"

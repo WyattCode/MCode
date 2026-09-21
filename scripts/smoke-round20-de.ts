@@ -169,4 +169,14 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
     check("E-5: the cut is a clip", /overflow:\s*hidden/.test(rule) && /pointer-events:\s*none/.test(rule), rule)
     check("E-5: sized to the scroll area without its scrollbars", /markerSize\.value = \{ w: scroller\.value\.clientWidth, h: scroller\.value\.clientHeight \}/.test(view) && /:style="\{ width: `\$\{markerSize\.w\}px`, height: `\$\{markerSize\.h\}px` \}"/.test(view))
   }
+
+  section("Round 20: E-2 a markdown file's relative pictures and paths are read from its own folder")
+  {
+    const body = await read("src/renderer/src/components/parts/MarkdownBody.vue")
+    check("E-2: the markdown body takes the folder it reads from", /baseDir\?: string/.test(body) && /const baseDir = computed\(\(\) => props\.baseDir \?\? app\.current\?\.directory\)/.test(body))
+    const uses = body.match(/app\.current\?\.directory/g)?.length ?? 0
+    check("E-2: every path it resolves goes through it", uses === 1 && (body.match(/baseDir\.value/g)?.length ?? 0) >= 5, uses)
+    const files = await read("src/renderer/src/components/right/RpFiles.vue")
+    check("E-2: the files view hands over the file's own folder", /<MarkdownBody :text="opened\.content" :base-dir="viewFolder" \/>/.test(files) && /const viewFolder = computed\(/.test(files))
+  }
 }
