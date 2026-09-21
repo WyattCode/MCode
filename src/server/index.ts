@@ -5,6 +5,7 @@ import { narrowcastSession } from "@shared/protocol"
 import { codeOf, paramsOf } from "@shared/errors"
 import { Storage, pruneQuarantined } from "./storage"
 import { Bus } from "./bus"
+import { windowSafePort } from "./free-port"
 import { Config } from "./config"
 import type { SecretBox } from "./credential-file"
 import { AuthManager } from "./auth/manager"
@@ -68,8 +69,8 @@ export interface BackendOptions {
 /**
  * Boots the backend and binds it to a loopback WebSocket.
  *
- * Port 0 lets the OS pick a free port, which is then handed to the renderer
- * through the preload bridge - nothing is hardcoded, so several instances can
+ * The OS picks a free port (one a browser does not refuse, free-port.ts), which
+ * is then handed to the renderer through the preload bridge - nothing is hardcoded, so several instances can
  * run side by side. The socket is bound to 127.0.0.1 only: this speaks for the
  * user's filesystem and must never be reachable from the network.
  */
@@ -269,7 +270,8 @@ export async function startBackend(dataDirectory: string, options: BackendOption
   let port = 0
   const server = new WebSocketServer({
     host: "127.0.0.1",
-    port: 0,
+    // Never one of the ports the window's own WebSocket would be refused on (blocked-ports.ts).
+    port: await windowSafePort("127.0.0.1"),
     verifyClient: ({ req }, done) => {
       const origin = req.headers.origin
       const protocols = req.headers["sec-websocket-protocol"]

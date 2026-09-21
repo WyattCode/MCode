@@ -3,6 +3,7 @@ import { createReadStream, statSync } from "node:fs"
 import fs from "node:fs/promises"
 import http from "node:http"
 import path from "node:path"
+import { isBlockedPort } from "@shared/blocked-ports"
 import { WIDGET_CSP, WIDGET_SOURCE_LIMIT, widgetDocument } from "@shared/widget"
 
 /*
@@ -380,6 +381,11 @@ async function bind(): Promise<number> {
       at = await listen(v4, 0, "127.0.0.1")
     } catch {
       return 0
+    }
+    // A port the page would be refused on is given back and another taken (blocked-ports.ts).
+    if (isBlockedPort(at)) {
+      await closed(v4)
+      continue
     }
     const v6 = http.createServer(serve)
     try {
