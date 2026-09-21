@@ -2522,6 +2522,11 @@ onBeforeUnmount(() => {
                   {{ configFile ? homePath(configFile.path, paths?.home) : t("set.mcp.configResolving") }}
                 </div>
               </div>
+              <!-- MiMo 26.920 puts the config page's 复制路径 and 打开 on this row too. -->
+              <div class="mcp-ctrl">
+                <button class="ctl-btn" data-config-copy-path :disabled="!configFile" @click="copyConfigPath">{{ t("set.config.copyPath") }}</button>
+                <button class="ctl-btn" data-mcp-config-open :disabled="!configFile" @click="openConfigFile">{{ t("files.open") }}</button>
+              </div>
             </div>
           </div>
           <p class="page-sub mcp-example-label">{{ t("set.mcp.exampleLabel") }}</p>

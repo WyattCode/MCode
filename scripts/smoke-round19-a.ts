@@ -227,4 +227,14 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
     const flash = settings.slice(settings.indexOf("async function flashMatch("), settings.indexOf("\n}\n", settings.indexOf("async function flashMatch(")))
     check("the highlight reads a whole row (title, description, control), not the title alone", /querySelectorAll<HTMLElement>\("\.line, \.choice-btn, h3"\)/.test(flash) && !flash.includes(".line-title"))
   }
+
+  // ----------------------------------------------------------------- R19-F11
+  section("Round 19 (F11): the MCP page's config-file row has 复制路径 and 打开, as MiMo 26.920's")
+  {
+    const settings = await read("src/renderer/src/components/SettingsDialog.vue")
+    const at = settings.indexOf('t("set.mcp.configFile")')
+    const row = at < 0 ? "" : settings.slice(at, settings.indexOf("</div>\n          </div>", at))
+    check("the row copies the path", /data-config-copy-path[^>]*@click="copyConfigPath"/.test(row))
+    check("and opens the file", /data-mcp-config-open[^>]*@click="openConfigFile"/.test(row))
+  }
 }
