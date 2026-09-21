@@ -10,7 +10,7 @@
 
 import type { Effort, ModelModalities } from "@shared/protocol"
 
-export type ProviderKind = "anthropic" | "openai-compatible" | "chatgpt"
+export type ProviderKind = "anthropic" | "openai-compatible" | "chatgpt" | "openai-responses"
 
 /**
  * How a provider can be connected. Subscriptions authorise over OAuth; the

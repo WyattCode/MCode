@@ -1116,6 +1116,25 @@ export const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "ma
 export type Effort = (typeof EFFORTS)[number]
 
 /**
+ * The other coding tools whose skill folders can be read too, in the order
+ * MiMo's engine lists them: `~/.<tool>/skills` and each project's
+ * `.<tool>/skills`. `agents` is the open standard.
+ */
+export const SKILL_PATH_SOURCES = ["claude", "codex", "opencode", "agents"] as const
+
+export type SkillPathSource = (typeof SKILL_PATH_SOURCES)[number]
+
+/** MiMo 26.920's defaults: `.agents` read, the three brand folders not. */
+export const SKILL_PATH_DEFAULTS: Record<SkillPathSource, boolean> = { claude: false, codex: false, opencode: false, agents: true }
+
+/** Which tools' folders are read, each unset one at MiMo's default. */
+export function skillPathCompat(stored: Partial<Record<SkillPathSource, boolean>> | undefined): Record<SkillPathSource, boolean> {
+  const out = { ...SKILL_PATH_DEFAULTS }
+  for (const source of SKILL_PATH_SOURCES) if (typeof stored?.[source] === "boolean") out[source] = stored[source]
+  return out
+}
+
+/**
  * Every bucket a tool call is judged against.
  *
  * The order is the order the settings screen draws, and it follows the
@@ -1648,6 +1667,18 @@ export interface AppConfig {
    * denies them.
    */
   disabledSkills?: string[]
+  /**
+   * skills: which other coding tools' skill folders are read as well, MiMo's
+   * 技能兼容路径. Absent keys take `SKILL_PATH_DEFAULTS`: the open `.agents`
+   * folders on, the three brand folders off.
+   */
+  skillPaths?: Partial<Record<SkillPathSource, boolean>>
+  /**
+   * The lab's session chat: whether the model is offered the tools and the
+   * skill that reach other conversations and local agents. Absent is on, as
+   * MiMo ships it.
+   */
+  sessionChat?: boolean
   /** OpenAI-compatible providers the user added by base URL. */
   customProviders: CustomProvider[]
   /**
@@ -1841,9 +1872,10 @@ export interface CustomProvider {
   /**
    * Which API the gateway speaks. Absent is OpenAI-compatible, which every
    * provider stored before this existed is; `anthropic` reaches a Claude-style
-   * gateway over the Messages API, as MiMo's `npm: @ai-sdk/anthropic` does.
+   * gateway over the Messages API, as MiMo's `npm: @ai-sdk/anthropic` does, and
+   * `responses` OpenAI's Responses API, MiMo 26.920's `@ai-sdk/openai`.
    */
-  protocol?: "openai" | "anthropic"
+  protocol?: "openai" | "anthropic" | "responses"
 }
 
 /**
@@ -1855,7 +1887,7 @@ export type AuthMethodKind = "api-key" | "oauth-browser" | "oauth-headless" | "l
 export interface ProviderStatus {
   id: string
   name: string
-  kind: "anthropic" | "openai-compatible" | "chatgpt"
+  kind: "anthropic" | "openai-compatible" | "chatgpt" | "openai-responses"
   /** i18n key, resolved in the renderer. */
   description: string
   recommended: boolean
@@ -2147,8 +2179,25 @@ export type Request =
       models: CustomModel[]
       protocol?: CustomProvider["protocol"]
     }
-  /** Copied in the backend so the stored key never travels to the window; `name` is the copy's, already worded. */
-  | { type: "provider.copyCustom"; provider: string; name: string }
+  /**
+   * Copied in the backend so the stored key never travels to the window;
+   * `name` is the copy's, already worded, and `id` the one the user chose in
+   * the clone dialog (absent picks a free `<id>-copy`).
+   */
+  | { type: "provider.copyCustom"; provider: string; name: string; id?: string }
+  /**
+   * MiMo 26.920's 测试连接: asks `<baseURL>/models` with the key. A blank key
+   * with `provider` set uses the one held for that provider, which the window
+   * is never sent; a masked address or header left as shown is the stored one.
+   */
+  | {
+      type: "provider.probe"
+      baseURL: string
+      apiKey: string
+      provider?: string
+      headers?: Record<string, string>
+      protocol?: CustomProvider["protocol"]
+    }
   | { type: "auth.begin"; provider: string; method: AuthMethodKind }
   | { type: "auth.cancel"; provider: string }
   | { type: "auth.signOut"; provider: string }
@@ -2414,6 +2463,7 @@ export interface ResponseMap {
   "provider.updateCustom": { providers: ProviderStatus[] }
   /** The copy's id. */
   "provider.copyCustom": { providers: ProviderStatus[]; id: string }
+  "provider.probe": { ok: boolean; models: string[]; reason?: "http" | "json" | "timeout" | "network"; status?: number; message?: string }
   /**
    * Where to send the user, plus the short code to type when the flow is the
    * device kind. Either way the outcome arrives later as an auth event.

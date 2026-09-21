@@ -29,7 +29,7 @@ import { PermissionDenied, REVIEW_TIMEOUT_MS, VERDICT_TOOL_NAME, looksSecret, ve
 import type { Storage } from "../storage"
 import { globalAgentsPath } from "../global-agents"
 import { discoverSkills, enabledSkills, skillReminders, withSkillReminders, type SkillInfo } from "../skill"
-import { findTool, hasOwnToolsOnly, reachOf, repairableNames, toolsForTurn } from "../tool/registry"
+import { findTool, hasOwnToolsOnly, reachOf, repairableNames, toolsForTurn, withheldByLab } from "../tool/registry"
 import { normalizeToolInput, resolveToolName } from "../tool/repair"
 import { Questions } from "../tool/question"
 import type { PlanControl, SubagentControl, SubagentSpec, ToolContext, ToolDefinition, ToolResult } from "../tool/types"
@@ -41,9 +41,8 @@ import { ToolOutputs } from "../tool/truncate"
 import { cooldownLeft, noteRateLimit, retryDecision, waitFor, withRequestRetry } from "./retry"
 import { Semaphore, STEP_TOOL_LIMIT, SUBAGENT_LIMIT } from "./semaphore"
 import { CodedError, codeOf, paramsOf } from "@shared/errors"
-import { AnthropicAdapter, describeAnthropicError } from "../provider/anthropic"
-import { OpenAICompatible } from "../provider/openai"
-import { ChatGPTSubscription } from "../provider/chatgpt"
+import { describeAnthropicError } from "../provider/anthropic"
+import { adapterFor } from "../provider/adapter"
 import type { AuthManager } from "../auth/manager"
 import type { ProviderAdapter, TurnEvent, TurnOutcome } from "../provider/types"
 import { failureCode, failureDetail } from "./error-map"
@@ -493,12 +492,7 @@ export class SessionRunner {
     if (!session) return false
     const definition = this.config.definition(session.model.provider)
     if (!definition) return false
-    const adapter: ProviderAdapter =
-      definition.kind === "anthropic"
-        ? AnthropicAdapter
-        : definition.kind === "chatgpt"
-          ? ChatGPTSubscription
-          : OpenAICompatible
+    const adapter: ProviderAdapter = adapterFor(definition.kind)
     const apiKey = this.config.apiKey(definition.id) ?? ""
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
     const stored = await this.store.messages(session.id)
@@ -576,7 +570,9 @@ export class SessionRunner {
   private tools(agent: string, directory: string): ToolDefinition[] {
     // speak rides on the voice feedback setting; the rule itself lives with the registry.
     // bash's description is written for the shell the settings name (R16-C2).
-    const own = toolsForTurn(agent, { voiceFeedback: this.config.get().voiceFeedback !== false, shell: this.config.get().shell })
+    // session chat: the lab's switch takes its tools away from the next turn.
+    const settings = this.config.get()
+    const own = toolsForTurn(agent, { voiceFeedback: settings.voiceFeedback !== false, shell: settings.shell, sessionChat: settings.sessionChat })
     if (hasOwnToolsOnly(agent)) return own
     return [...own, ...(this.mcp?.tools(directory) ?? [])]
   }
@@ -1408,12 +1404,7 @@ export class SessionRunner {
 
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new CodedError(`No provider called ${session.model.provider} is set up`, "error.noModel")
-    const adapter: ProviderAdapter =
-      definition.kind === "anthropic"
-        ? AnthropicAdapter
-        : definition.kind === "chatgpt"
-          ? ChatGPTSubscription
-          : OpenAICompatible
+    const adapter: ProviderAdapter = adapterFor(definition.kind)
     const apiKey = this.config.apiKey(definition.id) ?? ""
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
     const entry = this.config.modelEntry(session.model)
@@ -1683,7 +1674,8 @@ export class SessionRunner {
 
   /** skills: every switched-on skill a conversation in this directory can reach, with the user's global ones from the app's data folder. */
   private async skillsFor(directory: string): Promise<SkillInfo[]> {
-    return enabledSkills((await discoverSkills({ directory, storageDirectory: path.dirname(this.globalAgents) })).skills, this.config.get().disabledSkills)
+    const settings = this.config.get()
+    return enabledSkills((await discoverSkills({ directory, storageDirectory: path.dirname(this.globalAgents), settings })).skills, settings.disabledSkills)
   }
 
   /** skills: what a user message carries for the model beyond its words - skills it names, and the hint its office documents bring. */
@@ -1758,12 +1750,7 @@ export class SessionRunner {
     let reading: TaskReading | undefined
     const definition = this.config.definition(main.provider)
     if (definition && this.config.usable(main.provider)) {
-      const adapter: ProviderAdapter =
-        definition.kind === "anthropic"
-          ? AnthropicAdapter
-          : definition.kind === "chatgpt"
-            ? ChatGPTSubscription
-            : OpenAICompatible
+      const adapter: ProviderAdapter = adapterFor(definition.kind)
       const apiKey = this.config.apiKey(definition.id) ?? ""
       const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
       const controller = new AbortController()
@@ -2021,8 +2008,7 @@ export class SessionRunner {
   private async titleFrom(session: SessionInfo, model: ModelRef, text: string, stopped: AbortSignal): Promise<string | undefined> {
     const definition = this.config.definition(model.provider)
     if (!definition || !this.config.usable(model.provider) || stopped.aborted) return undefined
-    const adapter: ProviderAdapter =
-      definition.kind === "anthropic" ? AnthropicAdapter : definition.kind === "chatgpt" ? ChatGPTSubscription : OpenAICompatible
+    const adapter: ProviderAdapter = adapterFor(definition.kind)
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
     const entry = this.config.modelEntry(model)
     // Each try has its own time limit, and Stop ends either.
@@ -2161,8 +2147,7 @@ export class SessionRunner {
     const model = session.model
     const definition = this.config.definition(model.provider)
     if (!definition || !this.config.usable(model.provider) || stopped.aborted) return undefined
-    const adapter: ProviderAdapter =
-      definition.kind === "anthropic" ? AnthropicAdapter : definition.kind === "chatgpt" ? ChatGPTSubscription : OpenAICompatible
+    const adapter: ProviderAdapter = adapterFor(definition.kind)
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
     const entry = this.config.modelEntry(model)
     const controller = new AbortController()
@@ -2370,12 +2355,7 @@ export class SessionRunner {
     await this.mcp?.ready(session.directory)
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new CodedError(`No provider called ${session.model.provider} is set up`, "error.noModel")
-    const adapter: ProviderAdapter =
-      definition.kind === "anthropic"
-        ? AnthropicAdapter
-        : definition.kind === "chatgpt"
-          ? ChatGPTSubscription
-          : OpenAICompatible
+    const adapter: ProviderAdapter = adapterFor(definition.kind)
     // A subscription carries no API key; the bearer is a refreshed access token.
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
     if (definition.kind === "chatgpt" && !tokens) throw new CodedError(`The ${definition.name} sign-in has expired`, "auth.expired", { name: definition.name })
@@ -3260,8 +3240,12 @@ export class SessionRunner {
      */
     // subagents: a subagent asked for structured output has one more tool, made from its schema.
     const schema = part.name === STRUCTURED_OUTPUT ? (await this.store.get(input.session.id))?.subagent?.outputSchema : undefined
+    // A tool the lab has switched off is not there to be called, as it is not there in MiMo.
+    const labOff = (name: string) => withheldByLab(name, this.config.get())
     const lookup = (name: string) =>
-      findTool(name) ?? (schema && name === STRUCTURED_OUTPUT ? structuredOutputTool(schema) : undefined) ?? this.mcp?.tools(input.session.directory).find((entry) => entry.name === name)
+      (labOff(name) ? undefined : findTool(name)) ??
+      (schema && name === STRUCTURED_OUTPUT ? structuredOutputTool(schema) : undefined) ??
+      this.mcp?.tools(input.session.directory).find((entry) => entry.name === name)
     let tool = lookup(part.name)
     if (!tool) {
       // MiMo's repair: the name without case, then with dashes, underscores and spaces ignored.

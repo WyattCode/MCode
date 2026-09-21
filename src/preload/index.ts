@@ -379,6 +379,10 @@ const api = {
   /** Whether to keep an icon in the system tray. */
   tray: (enabled: boolean): void => ipcRenderer.send("mcode:tray", enabled),
 
+  /** 开机自启: offered on Windows and macOS; the answer to a change is what the OS now says. */
+  launchAtLogin: (): Promise<{ supported: boolean; enabled: boolean }> => ipcRenderer.invoke("mcode:launch-at-login"),
+  setLaunchAtLogin: (enabled: boolean): Promise<{ ok: boolean; enabled: boolean }> => ipcRenderer.invoke("mcode:set-launch-at-login", enabled),
+
   /** The tray's 配置切换 list: the models the picker offers, the one in use checked. */
   trayProfiles: (profiles: { key: string; label: string; checked: boolean }[]): void =>
     ipcRenderer.send("mcode:tray-profiles", profiles),

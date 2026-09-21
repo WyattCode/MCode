@@ -32,7 +32,7 @@ import { IGNORED, insideReal, resolveInsideReal } from "./tool/fs-util"
 import { protectedFilter } from "./protected-paths"
 import { readableFile, workingRoots, writableFile } from "./file-access"
 import { restoreHeaders, restoreMasked, restoreServer, restoreUrl } from "./config-view"
-import { discoverModels } from "./provider/discover"
+import { discoverModels, probeModels } from "./provider/discover"
 import { blankProjectDirectory, scratchDirectory, scratchRoot } from "./scratch"
 import { searchMessages } from "./search"
 import { historyService } from "./history/service"
@@ -40,9 +40,7 @@ import { workspaceInfo } from "./workspace"
 import { systemPrompt } from "./session/prompt"
 import * as git from "./git"
 import { pullRequestState } from "./pull-request"
-import { AnthropicAdapter } from "./provider/anthropic"
-import { OpenAICompatible } from "./provider/openai"
-import { ChatGPTSubscription } from "./provider/chatgpt"
+import { adapterFor } from "./provider/adapter"
 import type { ProviderAdapter } from "./provider/types"
 import { expandCommand, listCommands, runShellPlaceholders } from "./command"
 import { discoverSkills, enabledSkills, readSkillFile, removableSkill, uninstallSkill } from "./skill"
@@ -537,7 +535,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
           agent: session.agent,
           globalAgentsFile: globalAgentsPath(runtime.storage.directory),
           skills: enabledSkills(
-            (await discoverSkills({ directory: session.directory, storageDirectory: runtime.storage.directory })).skills,
+            (await discoverSkills({ directory: session.directory, storageDirectory: runtime.storage.directory, settings: runtime.config.get() })).skills,
             runtime.config.get().disabledSkills,
           ),
         }),
@@ -782,7 +780,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
      * detail card reads the file and can uninstall one of the user's own.
      */
     case "skill.list": {
-      const { skills } = await discoverSkills({ directory: request.directory, storageDirectory: runtime.storage.directory })
+      const { skills } = await discoverSkills({ directory: request.directory, storageDirectory: runtime.storage.directory, settings: runtime.config.get() })
       const off = new Set(runtime.config.get().disabledSkills ?? [])
       return {
         skills: skills.map((skill) => ({
@@ -799,7 +797,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     }
 
     case "skill.content": {
-      const { skills } = await discoverSkills({ directory: request.directory, storageDirectory: runtime.storage.directory })
+      const { skills } = await discoverSkills({ directory: request.directory, storageDirectory: runtime.storage.directory, settings: runtime.config.get() })
       const skill = skills.find((entry) => entry.name === request.name)
       const read = skill ? await readSkillFile(skill.location) : undefined
       if (!read) throw new Error(`There is no skill ${request.name} to read`)
@@ -807,7 +805,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     }
 
     case "skill.uninstall": {
-      const { skills } = await discoverSkills({ directory: request.directory, storageDirectory: runtime.storage.directory })
+      const { skills } = await discoverSkills({ directory: request.directory, storageDirectory: runtime.storage.directory, settings: runtime.config.get() })
       const skill = skills.find((entry) => entry.name === request.name)
       if (!skill) throw new Error(`There is no skill ${request.name}`)
       await uninstallSkill(skill, runtime.storage.directory)
@@ -1200,8 +1198,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
             ...(Object.keys(headers).length ? { headers } : {}),
             models,
             ...(environment ? { environment } : {}),
-            // A Claude-style gateway speaks the Messages API; absent stays OpenAI-compatible.
-            ...(request.protocol === "anthropic" ? { protocol: "anthropic" as const } : {}),
+            // A Claude-style gateway speaks the Messages API, and `responses` the Responses API; absent stays OpenAI-compatible.
+            ...(request.protocol === "anthropic" || request.protocol === "responses" ? { protocol: request.protocol } : {}),
           },
         ],
       })
@@ -1243,7 +1241,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
                 ...(Object.keys(keptHeaders).length ? { headers: keptHeaders } : {}),
                 models,
                 ...(keptEnvironment ? { environment: keptEnvironment } : {}),
-                ...(request.protocol === "anthropic" ? { protocol: "anthropic" as const } : {}),
+                ...(request.protocol === "anthropic" || request.protocol === "responses" ? { protocol: request.protocol } : {}),
               }
             : entry,
         ),
@@ -1263,8 +1261,14 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       if (!source) throw new CodedError(`No custom provider with the id ${request.provider}`, "provider.notFound")
       const taken = (id: string) =>
         Boolean(runtime.config.definition(id)) || config.customProviders.some((entry) => entry.id === id)
-      let id = `${source.id}-copy`
-      for (let n = 2; taken(id); n++) id = `${source.id}-copy-${n}`
+      // The id chosen in the clone dialog, checked as a new provider's is; otherwise the first free `-copy`.
+      const chosen = request.id?.trim()
+      if (chosen !== undefined && !/^[a-z0-9][a-z0-9-_]*$/.test(chosen)) {
+        throw new CodedError(`"${chosen}" is not a valid provider id`, "provider.custom.error.providerID.format")
+      }
+      if (chosen && taken(chosen)) throw new CodedError(`A provider with the id ${chosen} already exists`, "provider.custom.error.providerID.exists")
+      let id = chosen || `${source.id}-copy`
+      for (let n = 2; !chosen && taken(id); n++) id = `${source.id}-copy-${n}`
       await runtime.config.set({
         customProviders: [...config.customProviders, { ...source, id, name: request.name.trim() || source.name }],
       })
@@ -1273,6 +1277,22 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         if (stored) await runtime.config.setApiKey(id, stored)
       }
       return { providers: runtime.config.providers(), id } satisfies Handled<"provider.copyCustom">
+    }
+
+    /*
+     * MiMo 26.920's 测试连接. The key the window leaves blank is the stored
+     * one, and an address or header still masked as the window was shown it is
+     * put back, so a saved provider can be tested without its secrets ever
+     * reaching the window.
+     */
+    case "provider.probe": {
+      const existing = request.provider ? runtime.config.get().customProviders.find((entry) => entry.id === request.provider) : undefined
+      const typed = request.apiKey.trim()
+      const apiKey = typed || (request.provider ? (runtime.config.apiKey(request.provider) ?? "") : "")
+      const baseURL = normalizeBaseURL(existing ? restoreUrl(request.baseURL.trim(), existing.baseURL) : request.baseURL.trim())
+      const headers = existing ? restoreHeaders(request.headers ?? {}, existing.headers) : request.headers
+      const result = await probeModels({ baseURL, apiKey, headers, protocol: request.protocol })
+      return (result.ok ? { ok: true, models: result.models } : { ...result, models: [] }) satisfies Handled<"provider.probe">
     }
 
     case "provider.removeCustom": {
@@ -1399,12 +1419,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * tools, and whatever does not come back in time is simply not used - the
        * card commits under its own `update …` wording instead.
        */
-      const adapter: ProviderAdapter =
-        definition.kind === "anthropic"
-          ? AnthropicAdapter
-          : definition.kind === "chatgpt"
-            ? ChatGPTSubscription
-            : OpenAICompatible
+      const adapter: ProviderAdapter = adapterFor(definition.kind)
       const apiKey = runtime.config.apiKey(definition.id) ?? ""
       const tokens =
         definition.kind === "chatgpt" ? await runtime.auth.accessToken(definition.id).catch(() => undefined) : undefined

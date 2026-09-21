@@ -3,9 +3,7 @@ import type { Config } from "./config"
 import type { AuthManager } from "./auth/manager"
 import type { Permissions } from "./permission"
 import { McpRequestError, type McpSampler } from "./mcp"
-import { AnthropicAdapter } from "./provider/anthropic"
-import { OpenAICompatible } from "./provider/openai"
-import { ChatGPTSubscription } from "./provider/chatgpt"
+import { adapterFor } from "./provider/adapter"
 import type { ProviderAdapter } from "./provider/types"
 
 /**
@@ -121,8 +119,7 @@ export function createSampler(deps: { config: Config; auth: AuthManager; permiss
       }
     }
 
-    const adapter: ProviderAdapter =
-      definition.kind === "anthropic" ? AnthropicAdapter : definition.kind === "chatgpt" ? ChatGPTSubscription : OpenAICompatible
+    const adapter: ProviderAdapter = adapterFor(definition.kind)
     const apiKey = deps.config.apiKey(definition.id) ?? ""
     const tokens = definition.kind === "chatgpt" ? await deps.auth.accessToken(definition.id).catch(() => undefined) : undefined
     let text = ""

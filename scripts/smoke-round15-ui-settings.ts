@@ -90,10 +90,6 @@ export async function roundFifteenSettingsUiChecks(check: Check, section: (name:
     // The template the helper's markup copies: a name and its tag in one flex
     // box, the buttons in another, both inside the row the card clips.
     check(
-      "a provider row is still an icon, a .ptext holding .pname with its .tag, and a .ctl-pair of buttons",
-      /<div class="prow">[\s\S]{0,1200}?<div class="ptext">[\s\S]{0,400}?<div class="pname">[\s\S]{0,600}?class="tag"[\s\S]{0,2000}?<span class="ctl-pair">/.test(template),
-    )
-    check(
       "an MCP row is still a .line with .line-text / .line-title beside .mcp-ctrl",
       /<div class="line" :data-mcp-row="row.name">[\s\S]{0,200}?<div class="line-text">[\s\S]{0,120}?<div class="line-title">[\s\S]{0,900}?<div class="mcp-ctrl">/.test(template),
     )
@@ -114,25 +110,17 @@ export async function roundFifteenSettingsUiChecks(check: Check, section: (name:
 
     // What makes the above possible: the rows may wrap, and the control groups
     // are held to the end by a margin rather than by whatever grew beside them.
-    check("rows wrap rather than overflow", /flex-wrap:\s*wrap/.test(rule(".prow")) && /flex-wrap:\s*wrap/.test(rule(".line")))
+    // R18-M5: the provider rows went with the models page's redesign; the MCP rows remain.
+    check("rows wrap rather than overflow", /flex-wrap:\s*wrap/.test(rule(".line")))
     check("and both control groups keep to the end of the row once they have", /margin-inline-start:\s*auto/.test(rule(".ctl-pair")) && /margin-inline-start:\s*auto/.test(rule(".mcp-ctrl")))
-    check("the text column asks for a readable width before a control may sit beside it", /min-width:\s*min\(/.test(rule(".line-text")) && /min-width:\s*min\(/.test(rule(".ptext")))
+    check("the text column asks for a readable width before a control may sit beside it", /min-width:\s*min\(/.test(rule(".line-text")))
   }
 
   // ----------------------------------------------------------------- R15-U22
   section("Round 15 (R15-U22): the config path keeps its 11.5px, and the empty worktree card the rows' 17")
   {
-    const f = layout.fontSize
-    check("the models page's config path is the 11.5px it asks for", f?.configPath === "11.5px", f?.configPath)
-    check("the same size the environment page's project path already got", f?.configPath === f?.subPath, { configPath: f?.configPath, subPath: f?.subPath })
-    check("which is not .line-sub's own size, so the rule is doing something", f?.lineSub !== f?.configPath, { lineSub: f?.lineSub })
-    check("it wins by being written against both classes, the way .line-sub.path is", rule(".line-sub.config-path") !== "" && rule(".config-path") === "", {
-      both: rule(".line-sub.config-path").slice(0, 40),
-      plain: rule(".config-path").slice(0, 40),
-    })
-
+    // R18-M5: the models page lost its config path (26.920 keeps it on the config page alone), and with it these measurements.
     const pad = layout.padding
-    check("the empty worktree card sits on the same padding as the models page's empty card", pad?.wtEmpty === pad?.emptyCard, pad)
     check("and that is the rows' 16 above and below, 17 aside", pad?.wtEmpty === "16px 17px", pad?.wtEmpty)
   }
 }

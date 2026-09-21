@@ -28,7 +28,7 @@ import { hushSpeech } from "../lib/voice"
 import { knownFolder, listedProjects, projectsByRecency } from "@shared/projects"
 import type { GroupContext } from "@shared/session-group"
 import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fallback"
-import type { AutomationTask, ChatLink } from "@shared/protocol"
+import type { AutomationTask, ChatLink, CustomProvider } from "@shared/protocol"
 import { notice, notify, notifyFailure } from "../lib/toast"
 import { findModel, withoutLatest } from "../lib/model"
 import { forgetRunEnded, noteRunEnded, noteToolWrites } from "../lib/ai-touch"
@@ -2112,7 +2112,7 @@ export const useApp = defineStore("app", () => {
     apiKey: string
     headers?: Record<string, string>
     models: CustomModel[]
-    protocol?: "openai" | "anthropic"
+    protocol?: CustomProvider["protocol"]
   }) {
     providers.value = (await api().request({ type: "provider.addCustom", ...entry })).providers
     await ensureUsableModel()
@@ -2130,17 +2130,28 @@ export const useApp = defineStore("app", () => {
     apiKey: string
     headers?: Record<string, string>
     models: CustomModel[]
-    protocol?: "openai" | "anthropic"
+    protocol?: CustomProvider["protocol"]
   }) {
     providers.value = (await api().request({ type: "provider.updateCustom", ...entry })).providers
     await ensureUsableModel()
   }
 
-  /** Copies a custom provider under a free id, and answers that id. */
-  async function copyCustomProvider(provider: string, name: string): Promise<string> {
-    const result = await api().request({ type: "provider.copyCustom", provider, name })
+  /** Copies a custom provider under the id chosen (or a free one), and answers that id. */
+  async function copyCustomProvider(provider: string, name: string, id?: string): Promise<string> {
+    const result = await api().request({ type: "provider.copyCustom", provider, name, ...(id ? { id } : {}) })
     providers.value = result.providers
     return result.id
+  }
+
+  /** MiMo 26.920's 测试连接: what `<baseURL>/models` lists with this key (blank uses the one held for `provider`). */
+  async function probeProvider(entry: {
+    baseURL: string
+    apiKey: string
+    provider?: string
+    headers?: Record<string, string>
+    protocol?: CustomProvider["protocol"]
+  }) {
+    return api().request({ type: "provider.probe", ...entry })
   }
 
   /** The turn currently streaming, if any - used to anchor the scroll. */
@@ -2398,5 +2409,6 @@ export const useApp = defineStore("app", () => {
     removeCustomProvider,
     updateCustomProvider,
     copyCustomProvider,
+    probeProvider,
   }
 })

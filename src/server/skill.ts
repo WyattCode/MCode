@@ -1,7 +1,9 @@
 import fs from "node:fs/promises"
 import { existsSync } from "node:fs"
 import path from "node:path"
+import os from "node:os"
 import { fileURLToPath } from "node:url"
+import { SKILL_PATH_SOURCES, skillPathCompat, type AppConfig } from "@shared/protocol"
 import { parseFrontmatter } from "./frontmatter"
 
 /**
@@ -16,9 +18,14 @@ import { parseFrontmatter } from "./frontmatter"
  *      conversation's directory, the same pattern - nearer wins.
  *
  * A shipped skill never displaces one the user wrote, whichever order they are
- * met in, and a user skill replaces a shipped one of the same name. MiMo's
- * engine can also read `.claude`, `.agents`, `.codex` and `.opencode` folders,
- * but its desktop app switches all four off, so they are not read here.
+ * met in, and a user skill replaces a shipped one of the same name.
+ *
+ * MiMo 26.920 also reads other tools' folders (its 技能兼容路径): the open
+ * `.agents` standard by default, and `.claude`, `.codex` and `.opencode` when
+ * switched on. Each is `~/.<tool>/skills/**\/SKILL.md`, read after the shipped
+ * skills, and `.<tool>/skills` in every folder from the repository root down
+ * to the conversation's, read before the app's own global folder - the order
+ * MiMo's engine reads them in.
  */
 
 export interface SkillInfo {
@@ -104,9 +111,27 @@ export function isSkillPath(target: string): boolean {
   })
 }
 
-export async function discoverSkills(input: { directory: string; storageDirectory?: string; builtinRoot?: string | null }): Promise<SkillScan> {
+/** The shipped skill the lab's session chat switch takes away with its tools. */
+export const SESSION_CHAT_SKILL = "session-chat"
+
+/** The folder names read, in MiMo's order: `.claude`, `.codex`, `.opencode`, `.agents`. */
+export function externalSkillDirs(stored: AppConfig["skillPaths"]): string[] {
+  const compat = skillPathCompat(stored)
+  return SKILL_PATH_SOURCES.filter((source) => compat[source]).map((source) => `.${source}`)
+}
+
+export async function discoverSkills(input: {
+  directory: string
+  storageDirectory?: string
+  builtinRoot?: string | null
+  /** The settings that decide what else is read: the compatibility folders and the lab's session chat. */
+  settings?: Pick<AppConfig, "skillPaths" | "sessionChat">
+  /** Where `~` is; the checks point it at a folder of their own. */
+  home?: string
+}): Promise<SkillScan> {
   const byName = new Map<string, SkillInfo>()
   const problems: SkillProblem[] = []
+  const external = externalSkillDirs(input.settings?.skillPaths)
 
   const builtin = input.builtinRoot === null ? undefined : (input.builtinRoot ?? builtinSkillsRoot())
   if (builtin) {
@@ -116,6 +141,16 @@ export async function discoverSkills(input: { directory: string; storageDirector
       if (!entry.isDirectory()) continue
       const file = path.join(builtin, entry.name, "SKILL.md")
       if (existsSync(file)) await add(byName, problems, file, true)
+    }
+  }
+  // Switched off in the lab, session chat's skill goes with its tools.
+  if (input.settings?.sessionChat === false && byName.get(SESSION_CHAT_SKILL)?.builtin) byName.delete(SESSION_CHAT_SKILL)
+
+  const home = input.home ?? os.homedir()
+  const externalRoots = [...external.map((folder) => path.join(home, folder)), ...(await projectConfigDirs(input.directory, external))]
+  for (const root of externalRoots) {
+    for (const file of await scan(path.join(root, "skills"), MAX_DEPTH, (name) => name === "SKILL.md")) {
+      await add(byName, problems, file, false)
     }
   }
 
@@ -450,16 +485,19 @@ async function localizationsOf(directory: string): Promise<SkillInfo["localizati
 }
 
 /**
- * The `.mcode` folders between the repository root and a directory, outermost
- * first, so the one nearest the conversation is read last and wins. Outside a
- * repository the walk goes on to the top of the drive, as MiMo's does.
+ * The `.mcode` folders (or the named ones) between the repository root and a
+ * directory, outermost first, so the one nearest the conversation is read last
+ * and wins; within one folder, in the order named. Outside a repository the
+ * walk goes on to the top of the drive, as MiMo's does.
  */
-export async function projectConfigDirs(directory: string): Promise<string[]> {
+export async function projectConfigDirs(directory: string, names: readonly string[] = [PROJECT_CONFIG_DIR]): Promise<string[]> {
   const found: string[] = []
   let at = path.resolve(directory)
   for (;;) {
-    const config = path.join(at, PROJECT_CONFIG_DIR)
-    if (existsSync(config)) found.push(config)
+    for (const name of [...names].reverse()) {
+      const config = path.join(at, name)
+      if (existsSync(config)) found.push(config)
+    }
     if (existsSync(path.join(at, ".git"))) break
     const parent = path.dirname(at)
     if (parent === at) break

@@ -180,7 +180,6 @@ export async function roundFifteenFontScaleChecks(check: Check, section: (name: 
       ["SettingsDialog.vue", ".line-sub", "line-height"],
       ["SettingsDialog.vue", ".ctl-btn", "height"],
       ["SettingsDialog.vue", ".nav-item", "line-height"],
-      ["SettingsDialog.vue", ".tag", "line-height"],
       ["Sidebar.vue", ".row-label", "line-height"],
       ["Sidebar.vue", ".task-label", "line-height"],
       ["HomeHero.vue", ".sug", "line-height"],
