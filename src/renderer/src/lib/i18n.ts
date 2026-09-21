@@ -302,7 +302,6 @@ const zhCN: Table = {
 
   // Rail
   "rail.settings": "设置",
-  "side.quitApp": "退出应用",
   "rail.help": "帮助",
 
   // Home
@@ -2629,7 +2628,6 @@ const zhTW: Table = {
   "srv.save": "儲存",
 
   "rail.settings": "設定",
-  "side.quitApp": "結束應用程式",
   "rail.help": "說明",
 
 
@@ -4937,7 +4935,6 @@ const en: Table = {
   "srv.save": "Save",
 
   "rail.settings": "Settings",
-  "side.quitApp": "Quit app",
   "rail.help": "Help",
 
 
@@ -7246,7 +7243,6 @@ const ar: Table = {
   "srv.defaultSet": "تعيين الخادم الحالي كافتراضي",
   "srv.save": "حفظ",
   "rail.settings": "الإعدادات",
-  "side.quitApp": "إنهاء التطبيق",
   "rail.help": "مساعدة",
   "hero.title": "ابنِ أي شيء",
   "hero.missing": "لم يعد هذا المجلد موجودًا",
@@ -9516,7 +9512,6 @@ const bs: Table = {
   "srv.defaultSet": "Postavi trenutni server kao podrazumijevani",
   "srv.save": "Sačuvaj",
   "rail.settings": "Postavke",
-  "side.quitApp": "Zatvori aplikaciju",
   "rail.help": "Pomoć",
   "hero.title": "Napravi bilo šta",
   "hero.missing": "Ovaj direktorij više ne postoji",
@@ -11786,7 +11781,6 @@ const da: Table = {
   "srv.defaultSet": "Sæt nuværende server som standard",
   "srv.save": "Gem",
   "rail.settings": "Indstillinger",
-  "side.quitApp": "Afslut appen",
   "rail.help": "Hjælp",
   "hero.title": "Byg hvad som helst",
   "hero.missing": "Denne mappe findes ikke længere",
@@ -14056,7 +14050,6 @@ const de: Table = {
   "srv.defaultSet": "Aktuellen Server als Standard setzen",
   "srv.save": "Speichern",
   "rail.settings": "Einstellungen",
-  "side.quitApp": "App beenden",
   "rail.help": "Hilfe",
   "hero.title": "Alles entwickeln",
   "hero.missing": "Dieses Verzeichnis existiert nicht mehr",
@@ -16326,7 +16319,6 @@ const es: Table = {
   "srv.defaultSet": "Establecer servidor actual como predeterminado",
   "srv.save": "Guardar",
   "rail.settings": "Ajustes",
-  "side.quitApp": "Salir de la app",
   "rail.help": "Ayuda",
   "hero.title": "Construye lo que quieras",
   "hero.missing": "Esta carpeta ya no existe",
@@ -18596,7 +18588,6 @@ const fr: Table = {
   "srv.defaultSet": "Définir le serveur actuel comme défaut",
   "srv.save": "Enregistrer",
   "rail.settings": "Paramètres",
-  "side.quitApp": "Quitter l'app",
   "rail.help": "Aide",
   "hero.title": "Créez ce que vous voulez",
   "hero.missing": "Ce dossier n'existe plus",
@@ -20866,7 +20857,6 @@ const ja: Table = {
   "srv.defaultSet": "現在のサーバーをデフォルトに設定",
   "srv.save": "保存",
   "rail.settings": "設定",
-  "side.quitApp": "アプリを終了",
   "rail.help": "ヘルプ",
   "hero.title": "何でも作る",
   "hero.missing": "このディレクトリはもう存在しません",
@@ -23136,7 +23126,6 @@ const ko: Table = {
   "srv.defaultSet": "현재 서버를 기본값으로 설정",
   "srv.save": "저장",
   "rail.settings": "설정",
-  "side.quitApp": "앱 종료",
   "rail.help": "도움말",
   "hero.title": "무엇이든 만들기",
   "hero.missing": "이 디렉터리는 더 이상 존재하지 않습니다",
@@ -25406,7 +25395,6 @@ const nb: Table = {
   "srv.defaultSet": "Sett gjeldende server som standard",
   "srv.save": "Lagre",
   "rail.settings": "Innstillinger",
-  "side.quitApp": "Avslutt appen",
   "rail.help": "Hjelp",
   "hero.title": "Bygg hva som helst",
   "hero.missing": "Denne mappen finnes ikke lenger",
@@ -27676,7 +27664,6 @@ const pl: Table = {
   "srv.defaultSet": "Ustaw bieżący serwer jako domyślny",
   "srv.save": "Zapisz",
   "rail.settings": "Ustawienia",
-  "side.quitApp": "Zamknij aplikację",
   "rail.help": "Pomoc",
   "hero.title": "Zbuduj cokolwiek",
   "hero.missing": "Ten katalog już nie istnieje",
@@ -29946,7 +29933,6 @@ const ptBR: Table = {
   "srv.defaultSet": "Definir servidor atual como padrão",
   "srv.save": "Salvar",
   "rail.settings": "Configurações",
-  "side.quitApp": "Sair do app",
   "rail.help": "Ajuda",
   "hero.title": "Crie qualquer coisa",
   "hero.missing": "Esta pasta não existe mais",
@@ -32216,7 +32202,6 @@ const ru: Table = {
   "srv.defaultSet": "Установить текущий сервер по умолчанию",
   "srv.save": "Сохранить",
   "rail.settings": "Настройки",
-  "side.quitApp": "Выйти из приложения",
   "rail.help": "Справка",
   "hero.title": "Создавайте что угодно",
   "hero.missing": "Этой папки больше нет",
@@ -34486,7 +34471,6 @@ const th: Table = {
   "srv.defaultSet": "ตั้งเซิร์ฟเวอร์ปัจจุบันเป็นค่าเริ่มต้น",
   "srv.save": "บันทึก",
   "rail.settings": "การตั้งค่า",
-  "side.quitApp": "ออกจากแอป",
   "rail.help": "วิธีใช้",
   "hero.title": "สร้างอะไรก็ได้",
   "hero.missing": "ไม่มีไดเรกทอรีนี้แล้ว",
@@ -36756,7 +36740,6 @@ const tr: Table = {
   "srv.defaultSet": "Mevcut sunucuyu varsayılan olarak ayarla",
   "srv.save": "Kaydet",
   "rail.settings": "Ayarlar",
-  "side.quitApp": "Uygulamadan çık",
   "rail.help": "Yardım",
   "hero.title": "Her şeyi geliştirin",
   "hero.missing": "Bu dizin artık yok",
@@ -39026,7 +39009,6 @@ const uk: Table = {
   "srv.defaultSet": "Встановити поточний сервер як сервер за замовчуванням",
   "srv.save": "Зберегти",
   "rail.settings": "Налаштування",
-  "side.quitApp": "Вийти з програми",
   "rail.help": "Довідка",
   "hero.title": "Створити що завгодно",
   "hero.missing": "Цієї теки більше немає",

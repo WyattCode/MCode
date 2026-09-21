@@ -797,9 +797,10 @@ function pickPriorityMenu(key: string) {
 }
 
 /*
- * The footer's menu, where MiMo keeps its account menu: settings, then quitting
- * the app below a rule. MCode has no account, so the profile, usage and sign-out
- * rows have nothing to stand for.
+ * The footer's menu, where MiMo keeps its account menu: settings. MiMo 26.920
+ * dropped the quit row that stood below it (the menu bar and the tray still
+ * quit), and MCode has no account, so the profile, usage and sign-out rows
+ * have nothing to stand for.
  */
 const footMenu = ref<{ x: number; y: number }>()
 
@@ -810,7 +811,6 @@ const footMenuItems = computed<MenuItem[]>(() => [
     hint: "Ctrl+,",
     icon: "M8 6a2 2 0 1 1 0 4a2 2 0 1 1 0-4M8 2.5v1.5M8 12v1.5M2.5 8H4M12 8h1.5M4.1 4.1l1.1 1.1M10.8 10.8l1.1 1.1M4.1 11.9l1.1-1.1M10.8 5.2l1.1-1.1",
   },
-  { key: "quit", label: t("side.quitApp"), divided: true, icon: "M8 2.5v5M4.8 4.6a4.8 4.8 0 1 0 6.4 0" },
 ])
 
 /** Opens above the row, since the row sits at the bottom of the window: y is the menu's bottom edge. */
@@ -822,7 +822,6 @@ function openFootMenu(event: MouseEvent) {
 function pickFootMenu(key: string) {
   footMenu.value = undefined
   if (key === "settings") emit("settings")
-  else if (key === "quit") window.mcode.quitApp()
 }
 
 /*

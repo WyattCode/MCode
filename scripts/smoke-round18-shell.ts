@@ -61,4 +61,15 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
     check("R18-U4: the reply's action row has no retry either", actions.length > 0 && !/retry/i.test(actions))
     check("R18-U4: the pill's style went with it", !stream.includes(".retry-pill"))
   }
+
+  section("Round 18 (lane U): R18-U5 the footer's menu has no quit row")
+  {
+    const side = await read("src/renderer/src/components/Sidebar.vue")
+    const items = /const footMenuItems = computed<MenuItem\[\]>\(\(\) => \[([\s\S]*?)\n\]\)/.exec(side)?.[1] ?? ""
+    check("R18-U5: the footer's menu is settings alone", /key: "settings"/.test(items) && (items.match(/key: "/g) ?? []).length === 1, items)
+    check("R18-U5: the side column no longer quits the app", !side.includes("quitApp"))
+    check("R18-U5: side.quitApp has left all 18 tables", (await carrying("side.quitApp")) === 0)
+    const preload = await read("src/preload/index.ts")
+    check("R18-U5: quitting stays in the menu bar and the tray", preload.includes('quitApp: (): void => ipcRenderer.send("mcode:quit")') && (await read("src/main/menu.ts")).includes('L("menu.quitApp"'))
+  }
 }
