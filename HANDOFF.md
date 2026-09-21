@@ -509,7 +509,7 @@
 - V5 盘符根目录的文件打不开（`fileRoot` 成了 `C:`）；另把「项目内的绝对路径保持项目根」写进 `office-open.ts` 并注明日期（`53f10ae`）
 - V6 步骤行的路径按 MiMo 的四种写法解析（`6e51a23`）；V7 表格滚动不再被拽回（`d7919bc`）；V8 空 `<w:t/>` 不再吞标签、批注 id 转义（`c42750d`）；V9 Office 标签里的 PDF 标 `data-selectable="content"`，Ctrl+A 不再全选整窗（`3eb2d62`）；V10 PDF 批注引文折空白并补省略号（`19074c8`）；V11 重载取消上一次的滚动恢复（`f9f1406`）
 - **V13（不在清单里、自查发现）**：abcjs 的 `responsive:"resize"` 会给 SVG 绝对定位并期待独占容器，而消毒后只剩五线谱——乐谱因此画在最近定位祖先上，在回复里藏在消息列表后面、在文件页里正好压住文档首个标题。已放回文档流（`45ed8c7`）
-- 未做并说明：PDF 完整批注层（需要 pdf.js 的批注层样式表、图标与 `IPDFLinkService`，只做一半会比现在更难看，建议单列一项）；结构化回退（没有 Office 文本抽取就无内容可画，会多出四条 18 语言的死文案）
+- ~~PDF 完整批注层~~ **已做（`aa3d041`）**：MiMo 26.920 用 react-pdf `<Page>` 默认值——pdf.js `AnnotationLayer` 开、`renderForms` 关（表单画在画布上）、外链在捕获阶段按 http/https/mailto/tel 交给 `openExternalUrl`；**它的捕获处理器连 `#` 内链一起吞掉，所以 MiMo 的文内跳转是死的**，MCode 这里让内链滚到目标页与点（与 MiMo 的差异，用户可决定是否回退）。MCode 现每页建 `lib.AnnotationLayer`（`dontFlip` 视口、`lib/pdf-links.ts` 的精简 `IPDFLinkService`），便签带 pdf.js 自带图标（构建复制到 `pdfjs/images/`，MiMo 的 `imageResourcesPath` 为空所以它的图标是裂图）与弹窗，高亮弹窗、附件、链接齐全；样式用 pdfjs-dist 5.4.296 自己的批注层规则（MiMo 带的是 react-pdf 旧版 CSS，类名 `popupWrapper` 已对不上 5.4 的 DOM）。实测 100%/130% 两档各批注框与 PDF 矩形×缩放误差 ≤0.09px，内链点击后目标点距视图顶 0.14/0.02px，外链只经 IPC 到 shell（桩），选字、V10 批注、重载滚动恢复照常。未做的原清单另一项：结构化回退（没有 Office 文本抽取就无内容可画，会多出四条 18 语言的死文案）
 
 **语音与媒体（R17-M）**
 - M1 「智能编辑」静默失败：它那次改写请求也发给了转写模型。**用户决定**：改写用当前对话模型（首页退回默认对话模型），语音模型设置只管转写，18 张表的说明同步改写；改写没成会明说（`editFailed: noModel|refused|unreadable`），不再静默退化成听写。顺带修掉写死的 `speech.webm` 分段名（`aa9cb04`）
