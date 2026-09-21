@@ -166,12 +166,44 @@ export const GROUP_E: Row[] = [
   ["side.chat", "侧边聊天", "Side chat"],
 ]
 
+/** Group F: voice and connecting a provider; 供应商 and API Key throughout. */
+export const GROUP_F: Row[] = [
+  ["voice.failed", "语音输入失败", "Voice input failed"],
+  ["voice.notConfigured", "未设置语音模型，语音输入暂不可用"],
+  ["voice.noRecorder", "未检测到可用的录音设备"],
+  ["voice.noEndpoint", "该供应商未提供语音接口地址"],
+  ["voice.asrUnavailable", "未找到可用的语音转写模型，请在设置中选择"],
+  ["voice.loginRequired", "语音服务拒绝了该 API Key，请在设置中重新连接"],
+  ["voice.controlUnavailable", "当前对话没有可用模型，试试快速输入"],
+  ["voice.smartEdit.noModel", "智能编辑需要对话模型，请先在设置中选择"],
+  ["voice.smartEdit.refused", "智能编辑未被模型接受，本段已按快速输入写入"],
+  ["voice.smartEdit.unreadable", "智能编辑结果无法解析，本段已按快速输入写入"],
+  ["connect.keyLead", "输入 {name} 的 API Key，即可在 MCode 中使用其模型"],
+  ["auth.localDown", "{name} 没有响应（{url}）。请在该应用中启动本地 API 服务：LM Studio 在「开发者」页点 Start Server，Ollama 运行 ollama serve。"],
+  ["auth.waitingDevice", "等待授权…", "Waiting for authorization…"],
+  ["toast.connectedEmpty", "已连接，但未发现可用模型，可在设置中刷新模型列表"],
+  ["provider.notFound", "找不到该供应商，可能已被删除"],
+  ["auth.apiKey", "API Key", "API Key"],
+  ["mode.api", "API Key", "API Key"],
+  ["connect.title", "连接供应商"],
+  ["connect.keyLabel", "{name} API Key"],
+  ["provider.custom.title", "自定义供应商"],
+]
+
+/** zh-CN values that still use a word MiMo does not: 服务商 / 提供商 for 供应商, API 密钥 for API Key. Search keywords keep old words on purpose. */
+export function vocabularyLeftovers(tables: Record<string, Record<string, string>>): string[] {
+  return Object.entries(tables.zhCN ?? {})
+    .filter(([key, value]) => !key.startsWith("set.keywords.") && /服务商|提供商|API 密钥/.test(value))
+    .map(([key, value]) => `${key}: ${value}`)
+}
+
 export const GROUPS: [name: string, rows: Row[]][] = [
   ["A: the goal switch and bar", GROUP_A],
   ["B: conversation errors, permissions and attachments", GROUP_B],
   ["C: the settings pages", GROUP_C],
   ["D: updates and toasts", GROUP_D],
   ["E: shortcuts, menus and project removal", GROUP_E],
+  ["F: voice and connecting a provider", GROUP_F],
 ]
 
 /** The in-window menu's rows that MiMo's native menu words differently: what AppMenu.vue calls, and what it should. */
@@ -238,5 +270,10 @@ export function roundTwentyCopyChecks(check: Check, section: (name: string) => v
     check("打开文件夹 / 开发者工具 / 进入全屏幕 come from the keys the native menu uses", menu.length === 0, menu)
     const gone = ["menu.openProject", "menu.devTools", "menu.fullscreen", "stream.copy"].filter((key) => Object.values(tables).some((table) => key in table))
     check("and the retired keys are gone from every table", gone.length === 0, gone)
+  }
+  section("Round 20 (V3-F): 供应商 and API Key, as MiMo says them")
+  {
+    const loose = vocabularyLeftovers(tables)
+    check("no zh-CN string says 服务商, 提供商 or API 密钥", loose.length === 0, loose.slice(0, 8))
   }
 }
