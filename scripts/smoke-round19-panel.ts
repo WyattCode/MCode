@@ -16,6 +16,8 @@ import { LANGUAGES, language, t } from "../src/renderer/src/lib/i18n"
 import { createPinia, setActivePinia } from "pinia"
 import { PANEL_MIN_WIDTH, useRightPanel } from "../src/renderer/src/stores/right-panel"
 import { panelWidthShown } from "../src/renderer/src/lib/right-tools"
+import { subagentItems } from "../src/renderer/src/lib/subagents"
+import type { Message, SessionInfo, ToolPart } from "../src/shared/protocol"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
 
@@ -105,5 +107,41 @@ export async function roundNineteenPanelChecks(check: Check, section: (name: str
     const panel = await read("src/renderer/src/components/RightPanel.vue")
     const watcher = /watch\(\s*\(\) => \[props\.sessionID, props\.directory\] as const,([\s\S]*?)\n\)/.exec(panel)?.[1] ?? ""
     check("RP-4: the panel resets it when the directory changes under the same conversation or home screen", /session === sessionBefore && directory !== directoryBefore\) rp\.reroot\(\)/.test(watcher), watcher)
+  }
+
+  section("Round 19 (lane B): RP-2 the subagent's transcript head names the model it ran on")
+  {
+    const call: ToolPart = {
+      type: "tool",
+      id: "p1",
+      callID: "call_1",
+      name: "actor",
+      status: "running",
+      input: { action: "spawn", description: "Look around", prompt: "x", subagent_type: "explore" },
+      time: { created: 1000, started: 1000 },
+    } as ToolPart
+    const early = { ...call, id: "p2", callID: "call_2" } as ToolPart
+    const reply = { id: "a1", sessionID: "s", role: "assistant", model: { provider: "p", model: "parent-model" }, agent: "build", parts: [call, early], time: { created: 1 } } as Message
+    const child = {
+      id: "c1",
+      title: "Look around",
+      directory: "x",
+      model: { provider: "p", model: "mimo-v2-flash" },
+      agent: "plan",
+      parentID: "s",
+      parentCallID: "call_1",
+      subagent: { type: "explore", id: "explore-1", background: true, status: "running" },
+      created: 1,
+      updated: 1,
+      usage: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+    } as SessionInfo
+    const items = subagentItems([reply], [child]) as Array<{ key: string; model?: { model: string } }>
+    check("RP-2: a subagent with its own conversation carries that conversation's model", items.find((item) => item.key === "call_1")?.model?.model === "mimo-v2-flash", items)
+    check("RP-2: one still starting carries none, so no pill is drawn", items.find((item) => item.key === "call_2")?.model === undefined)
+    const view = await read("src/renderer/src/components/right/RpSubagents.vue")
+    const subtitle = /<span class="rp-subagent-detail-subtitle">([\s\S]*?)\n {10}<\/span>/.exec(view)?.[1] ?? ""
+    check("RP-2: 执行记录 sits in its own label, then MiMo's pill", /rp-subagent-detail-subtitle-label">\{\{ t\("subagents\.transcript"\) \}\}/.test(subtitle) && /v-if="detail\.model" class="rp-subagent-model" :data-subagent-model="detail\.model\.model" :title="detail\.model\.model">\{\{ modelName\(detail\) \}\}/.test(subtitle), subtitle)
+    const pill = /\.rp-subagent-model \{([^}]*)\}/.exec(view)?.[1] ?? ""
+    check("RP-2: the pill is MiMo's: 120 at most, cut, 1px 6px, round, 6% of the text colour, line-height 1.35", /max-width: 120px/.test(pill) && /text-overflow: ellipsis/.test(pill) && /padding: 1px 6px/.test(pill) && /border-radius: 999px/.test(pill) && /color-mix\(in srgb, var\(--text-strong\) 6%, transparent\)/.test(pill) && /line-height: 1\.35/.test(pill), pill)
   }
 }

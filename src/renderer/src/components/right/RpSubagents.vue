@@ -5,6 +5,7 @@ import SubagentAvatar from "../parts/SubagentAvatar.vue"
 import { useApp } from "../../stores/app"
 import { useRightPanel, type RightTab } from "../../stores/right-panel"
 import { t, tn } from "../../lib/i18n"
+import { findModel, withoutLatest } from "../../lib/model"
 import { COMPLETED_CAP, subagentItems, subagentTime, type SubagentItem } from "../../lib/subagents"
 
 /**
@@ -44,6 +45,12 @@ const nameOf = (item: SubagentItem) => item.name || t("subagentActivity.fallback
 const statusOf = (item: SubagentItem) => t(`subagents.status.${item.status}`)
 /* MiMo leaves the summary out when it only repeats the name or the status. */
 const summaryOf = (item: SubagentItem) => (item.summary && item.summary !== nameOf(item) && item.summary !== statusOf(item) ? item.summary : "")
+/* MiMo's model pill: the model's display name, its id when the list has no record of it. */
+function modelName(item: SubagentItem): string {
+  if (!item.model) return ""
+  const name = findModel(app.providers, item.model)?.name
+  return name ? withoutLatest(name) : item.model.model
+}
 function timeOf(item: SubagentItem): string {
   const { key, n, counted } = subagentTime(item, now.value)
   // The relative times are counted keys, one per plural form (tn).
@@ -111,7 +118,10 @@ onBeforeUnmount(() => {
         <SubagentAvatar :seed="detail.seed" :status="detail.status" show-status />
         <span class="rp-subagent-detail-copy">
           <span class="rp-subagent-detail-name" data-subagent-detail-name>{{ nameOf(detail) }}</span>
-          <span class="rp-subagent-detail-subtitle">{{ t("subagents.transcript") }}</span>
+          <span class="rp-subagent-detail-subtitle">
+            <span class="rp-subagent-detail-subtitle-label">{{ t("subagents.transcript") }}</span>
+            <span v-if="detail.model" class="rp-subagent-model" :data-subagent-model="detail.model.model" :title="detail.model.model">{{ modelName(detail) }}</span>
+          </span>
         </span>
         <span class="rp-subagent-detail-status" :class="detail.status" data-subagent-detail-status>
           <span class="rp-subagent-dot" />{{ statusOf(detail) }}
@@ -373,8 +383,7 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.rp-subagent-detail-name,
-.rp-subagent-detail-subtitle {
+.rp-subagent-detail-name {
   display: block;
   min-width: 0;
   overflow: hidden;
@@ -388,10 +397,37 @@ onBeforeUnmount(() => {
   font-weight: 550;
 }
 
+/* 执行记录, then MiMo's model pill: 6 apart, the label whole and the pill cut at 120. */
 .rp-subagent-detail-subtitle {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
   margin-top: 1px;
+  overflow: hidden;
   color: color-mix(in srgb, var(--text-strong) 40%, transparent);
   font-size: calc(11px * var(--ui-font-scale, 1));
+}
+
+.rp-subagent-detail-subtitle-label {
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rp-subagent-model {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 120px;
+  padding: 1px 6px;
+  overflow: hidden;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--text-strong) 6%, transparent);
+  border-radius: 999px;
 }
 
 /* The status chip: 12px muted on side-active, 4 by 7 inside, a 6px dot. */

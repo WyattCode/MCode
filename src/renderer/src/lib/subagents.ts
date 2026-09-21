@@ -1,4 +1,4 @@
-import type { Message, SessionInfo, SubagentNotice, SubagentNoticeStatus, ToolPart } from "@shared/protocol"
+import type { Message, ModelRef, SessionInfo, SubagentNotice, SubagentNoticeStatus, ToolPart } from "@shared/protocol"
 import { actorAction, actorTarget, answerSummary, launches, operationInput, subagentAnswer, type SubagentAction } from "@shared/subagent"
 import { stepState } from "./tool-meta"
 
@@ -54,6 +54,8 @@ export interface SubagentItem {
   status: SubagentStatus
   startedAt?: number
   endedAt?: number
+  /** The model its own conversation runs on, once there is one: MiMo's actorModel, shown in the transcript's head. */
+  model?: ModelRef
 }
 
 /* A call cut off by Stop reads as cancelled, as MiMo's cancelled outcome does. */
@@ -123,6 +125,7 @@ export function subagentItems(messages: readonly Message[], children: readonly S
         status,
         startedAt: part.time.started ?? part.time.created,
         endedAt: status === "running" ? undefined : part.time.completed,
+        ...(child?.model?.model ? { model: child.model } : {}),
       }
       out.push(item)
       if (child) bySession.set(child.id, item)
