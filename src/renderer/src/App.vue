@@ -4300,7 +4300,7 @@ onBeforeUnmount(() => {
   <Toasts />
 
   <!-- Last in the document on purpose: see .rail-no-drag. -->
-  <div v-if="!leftPanel" class="rail-no-drag" aria-hidden="true" />
+  <div v-if="!leftPanel" class="rail-no-drag" :data-platform="app.platform || undefined" aria-hidden="true" />
   <!-- MiMo's exit-full-screen button: Windows only, where full screen hides the overlay caption buttons. -->
   <button
     v-if="app.platform === 'win32' && fullScreen"
@@ -4477,6 +4477,11 @@ onBeforeUnmount(() => {
 .exit-fs:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
+}
+
+/* It lies outside .app, last in the document, so it carries the platform itself. */
+.rail-no-drag:not([data-platform="darwin"]) {
+  inset-inline-start: 18px;
 }
 
 .rail-no-drag {

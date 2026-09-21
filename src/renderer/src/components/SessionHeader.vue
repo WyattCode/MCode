@@ -379,4 +379,9 @@ function openMenu(event: MouseEvent) {
 .head.after-rail {
   padding-inline-start: 129px;
 }
+
+/* Left-aligned folded controls (the user's choice, off macOS): 新建任务 ends at 18 + 24 + 8 + 24 = 74, less the same 2. */
+.app:not([data-platform="darwin"]) .head.after-rail {
+  padding-inline-start: 72px;
+}
 </style>

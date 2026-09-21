@@ -329,5 +329,8 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
     check("R18-U1: the header starts at 129, past 新建任务, as MiMo's does", /\.head\.after-rail \{\s*padding-inline-start: 129px;/.test(header))
     check("R18-U1: a full-screen panel's tabs start at 139", /\.right-panel\.fullscreen\.side-collapsed \.rp-head \{\s*padding-inline-start: 139px;/.test(panel))
     check("R18-U1: the no-drag patch covers the two controls where they now stand", /\.rail-no-drag \{[^}]*inset-inline-start: 75px;[^}]*width: 56px;/.test(app))
+    // The user's 2026-09-21 choice: off macOS the folded controls keep the side column's own start, 18, as the unfolded row does.
+    check("R18-U1: off macOS the folded toggle is left-aligned at 18, like the unfolded top row", /\.app:not\(\[data-platform="darwin"\]\) \.rail-tools \{\s*inset-inline-start: 18px;/.test(side) && /\.top \{[^}]*padding-inline: 18px 8px;/.test(side), side.length)
+    check("R18-U1: and the header, the full-screen tabs and the no-drag patch move with it (72, 82, 18)", /\.app:not\(\[data-platform="darwin"\]\) \.head\.after-rail \{\s*padding-inline-start: 72px;/.test(header) && /\.app:not\(\[data-platform="darwin"\]\) \.right-panel\.fullscreen\.side-collapsed \.rp-head \{\s*padding-inline-start: 82px;/.test(panel) && /\.rail-no-drag:not\(\[data-platform="darwin"\]\) \{\s*inset-inline-start: 18px;/.test(app) && /class="rail-no-drag" :data-platform="app\.platform \|\| undefined"/.test(app))
   }
 }

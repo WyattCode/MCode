@@ -577,6 +577,11 @@ body.resizing .right-panel {
   padding-inline-start: 139px;
 }
 
+/* Left-aligned folded controls (the user's choice, off macOS): 8 clear of 新建任务's end at 74. */
+.app:not([data-platform="darwin"]) .right-panel.fullscreen.side-collapsed .rp-head {
+  padding-inline-start: 82px;
+}
+
 /* MiMo's drag edge: 7px across the start line, never a window drag region. */
 .resizer {
   position: absolute;

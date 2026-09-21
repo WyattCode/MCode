@@ -2406,6 +2406,16 @@ button.section-head:focus-visible {
   -webkit-app-region: no-drag;
 }
 
+/*
+ * Folded, the controls keep the side column's own start, as the unfolded row
+ * does (`.top`, 18): the user's 2026-09-21 choice extends the left-aligned top
+ * row to the folded state. Only macOS keeps MiMo's 75, clear of the traffic
+ * lights.
+ */
+.app:not([data-platform="darwin"]) .rail-tools {
+  inset-inline-start: 18px;
+}
+
 .avatar {
   display: grid;
   flex-shrink: 0;
