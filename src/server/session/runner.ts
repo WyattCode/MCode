@@ -2497,6 +2497,14 @@ export class SessionRunner {
       const stored = await this.store.messages(sessionID)
       const delivered = this.markDelivered(sessionID, stored)
       if (delivered.length) await this.openSteeredTurn(sessionID, session.directory, delivered, stored)
+      /*
+       * A cut reply is carried on only while it is still the last thing in the
+       * conversation. Once the user's words have come in after it, the rest is
+       * an answer to them as well, and belongs below them: welded into the cut
+       * message it would show above the question it answers, and the undo turn
+       * the steered message opened would take in a reply from the one before.
+       */
+      if (continuing && (delivered.length || stored.at(-1)?.id !== continuing.id)) continuing = undefined
       // session chat: a message from another conversation says so, in the request only; automation: a scheduled task's run says so too.
       // MiMo's pruning comes first, so the older tool output is already trimmed before anything is framed around it.
       // MiMo's recall hint: a conversation with memory or tasks is told, each step, where to look before asking.

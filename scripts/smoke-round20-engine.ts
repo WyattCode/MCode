@@ -39,6 +39,7 @@ export async function roundTwentyEngineChecks(check: Check, section: Section): P
     await compactionChecks(check, section, root)
     await goalChecks(check, section, path.join(root, "goal"))
     await lengthNoteChecks(check, section, path.join(root, "notes"))
+    await steeredChecks(check, section, path.join(root, "steered"))
   } finally {
     if (titles === undefined) delete process.env.MCODE_GENERATE_TITLES
     else process.env.MCODE_GENERATE_TITLES = titles
@@ -367,6 +368,32 @@ async function lengthNoteChecks(check: Check, section: Section, root: string): P
       const replies = await app.assistants(session.id)
       check("all three parts are one reply", replies.length === 1 && textOf(replies[0]) === "part one part two part three", replies.map(textOf))
       check("the third request carries the note exactly once", noteCount(seen[2], LENGTH_NOTE) === 1, noteCount(seen[2], LENGTH_NOTE))
+    }
+  } finally {
+    await app.close()
+  }
+}
+
+/* ---------------------------------------------------------------- R20-A5: a steered message ends a continuation */
+
+async function steeredChecks(check: Check, section: Section, root: string): Promise<void> {
+  const app = await harness(root)
+  try {
+    section("Round 20 (R20-A5): a message typed while a reply was cut is answered below it")
+    {
+      const session = await app.store.create({ directory: app.project, model: app.model })
+      app.script([{ text: "part one ", finish: "length", delay: 800 }, { text: "the rest, and your point" }])
+      const before = app.turns.length
+      await app.runner.prompt({ sessionID: session.id, text: "write it" })
+      await app.until(() => app.turns.length > before)
+      const steered = await app.runner.prompt({ sessionID: session.id, text: "and mention the edge case" })
+      await app.settled(session.id)
+      const replies = await app.assistants(session.id)
+      const first = replies.find((message) => textOf(message).includes("part one"))
+      const rest = replies.find((message) => textOf(message).includes("the rest"))
+      check("the cut reply keeps only what it wrote before the message came in", textOf(first) === "part one ", textOf(first))
+      check("the next step is a message of its own, after the steered one", rest !== undefined && rest.id !== first?.id && rest.id > steered, [rest?.id, steered])
+      check("and the model was sent the steered message", app.turns.at(-1)?.text.includes("and mention the edge case") === true)
     }
   } finally {
     await app.close()
