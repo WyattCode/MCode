@@ -64,7 +64,7 @@ export async function roundTwentyVisualOneChecks(check: Check, section: (name: s
     check("V1-6: the bubble and its time row are 6 + 2 apart", /gap: 6px;/.test(rule(stream, ".msg.user")) && /margin-top: 2px;/.test(rule(stream, ".user-meta")))
     check("V1-7: the question's time is MiMo's muted colour", /color: var\(--text-base\);/.test(rule(stream, ".user-time")))
     check("V1-8: the bubble is MiMo's #f8f7f5 in light", /background: #f8f7f5;/.test(stream.slice(stream.lastIndexOf("\n.user-bubble {"))))
-    check("V1-8: and #2e2e2e in dark", /:root\[data-theme="dark"\] :is\(\.user-bubble, \.asked-edit\) \{\s*background: #2e2e2e;/.test(stream))
+    check("V1-8: and #2e2e2e in dark", /:root\[data-theme="dark"\] \.user-bubble,\s*:root\[data-theme="dark"\] \.asked-edit \{\s*background: #2e2e2e;/.test(stream))
   }
 
   section("Round 20 V1: step greys and the group head")

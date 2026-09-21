@@ -2731,7 +2731,8 @@ defineExpose({ stepMessage, scroller })
 }
 
 /* MiMo's bubble colour: its settings-nav #f8f7f5 in light, its code-bg #2e2e2e in dark. */
-:root[data-theme="dark"] :is(.user-bubble, .asked-edit) {
+:root[data-theme="dark"] .user-bubble,
+:root[data-theme="dark"] .asked-edit {
   background: #2e2e2e;
 }
 
@@ -2740,7 +2741,8 @@ defineExpose({ stepMessage, scroller })
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) :is(.user-bubble, .asked-edit) {
+  :root:not([data-theme="light"]) .user-bubble,
+  :root:not([data-theme="light"]) .asked-edit {
     background: #2e2e2e;
   }
 
