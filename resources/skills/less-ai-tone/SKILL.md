@@ -34,9 +34,9 @@ but is not the tell.
 ### 1. Stock openers and closers
 
 Look for: a first sentence that restates the question or announces the topic
-("在当今快速发展的时代", "随着……的不断发展", "In today's fast-paced world",
+("在当今快速发展的时代", "In today's fast-paced world",
 "Let's dive in"), and a last paragraph that begins with a summing-up phrase
-("总而言之", "综上所述", "总的来说", "In conclusion", "Overall") and says again what
+("总而言之", "综上所述", "In conclusion", "Overall") and says again what
 was already said.
 
 Do: start with the first sentence that carries information; end on the last
@@ -48,7 +48,7 @@ conclusion section of a paper).
 
 ### 2. Signposting that announces instead of saying
 
-Look for: "值得注意的是", "需要指出的是", "不难发现", "可以看出", "重要的是",
+Look for: "值得注意的是", "不难发现",
 "It's worth noting that", "It is important to note", "Notably,".
 
 Do: drop the phrase and state the point. If the point then feels unimportant,
@@ -88,8 +88,8 @@ lists (steps, requirements, an inventory) and the formatting the genre expects
 
 ### 6. Inflated words
 
-Look for, in Chinese: 赋能, 助力, 深耕, 抓手, 打造, 全方位, 多维度, 深度, 极致,
-至关重要, 不可或缺, 无缝, 彰显, 深刻, 璀璨, 画卷, 旅程, 蓬勃发展. In English: delve,
+Look for, in Chinese: 赋能, 助力, 打造, 全方位, 至关重要, 不可或缺, 无缝, 画卷,
+and words of the same kind. In English: delve,
 tapestry, landscape (for a field), leverage, robust, seamless, pivotal,
 crucial, vibrant, testament, realm, navigate (for anything but travel),
 unlock, elevate, embark.
@@ -99,9 +99,9 @@ stands without it. Keep a term that is the precise technical word in its field.
 
 ### 7. Translationese (Chinese)
 
-Look for: "进行" before a verb ("进行分析" -> "分析"); "对……进行……"; "作为一个……";
+Look for: "进行" before a verb ("进行分析" -> "分析"); "对……进行……";
 unnecessary "被" passives; long chains of "的"; "一个" before every noun;
-"通过……来……" where the means is obvious; "在……方面"; sentences built on English
+"通过……来……" where the means is obvious; sentences built on English
 word order with the verb at the end of a long modifier.
 
 Do: rewrite in natural Chinese word order with the same meaning. For literary
@@ -109,7 +109,7 @@ writing, judge against the piece's own style rather than against plain prose.
 
 ### 8. Claims without support
 
-Look for: "研究表明", "数据显示", "专家指出", "众所周知", "Studies show",
+Look for: "研究表明", "众所周知", "Studies show",
 "Experts agree", "Many people believe" with no study, data or expert named.
 
 Do: if the text gives the source or figure elsewhere, attach it here. If it
@@ -119,7 +119,7 @@ the source. Never invent a source, a number or a name.
 ### 9. Hedging and empty intensifiers
 
 Look for: stacks of qualifiers ("在一定程度上可能会", "may potentially",
-"somewhat arguably"); intensifiers that add nothing ("非常", "极其", "真正",
+"somewhat arguably"); intensifiers that add nothing ("非常",
 "truly", "incredibly", "extremely") on sentence after sentence.
 
 Do: keep one qualifier where the uncertainty is real, drop the rest. Keep
@@ -127,7 +127,7 @@ intensifiers only where the emphasis is the point.
 
 ### 10. Chatbot framing
 
-Look for: "希望以上内容对您有所帮助", "如果您还有其他问题", "当然！", "好的，以下是",
+Look for: "希望以上内容对您有所帮助", "当然！", "好的，以下是",
 "I hope this helps", "Feel free to ask", "Great question", any sentence
 addressed to the person who asked for the text rather than to its reader.
 
