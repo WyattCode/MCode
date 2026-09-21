@@ -118,11 +118,56 @@ export const GROUP_C: Row[] = [
   ["set.updateFeedSub", "填写存放 latest.yml 和安装包的 https 地址，用于检查更新"],
 ]
 
+/** Group D: updates and toasts. */
+export const GROUP_D: Row[] = [
+  ["update.failed", "更新失败", "Update failed"],
+  ["update.reason.noReady", "暂无已下载完成的更新，请稍后再试。"],
+  ["update.reason.staging", "更新仍在下载，请稍后再点「重启更新」。"],
+  ["update.reason.installFailed", "安装更新失败，请重试或手动下载安装。"],
+  ["update.reason.notStarted", "安装程序未能启动（可能上次退出未完成），请重启 MCode 后重试。"],
+  ["update.reason.versionMismatch", "上次更新没有生效，请重试或手动下载安装。"],
+  ["update.reason.stale", "上次更新超时未完成，请重试或手动下载安装。"],
+  ["update.reason.disabled", "此版本未开启自动更新。"],
+  ["update.reason.unknown", "更新失败（原因未知），请重试或手动下载安装。"],
+  ["update.reason.readOnlyVolume", "无法更新：MCode 正在只读位置运行。请先将它移到「应用程序」文件夹，重新打开后再更新。"],
+  ["update.installingBody", "MCode 将关闭并完成安装，结束后自动重新打开，可能需要几分钟"],
+  ["toast.compacted", "上下文压缩完成", "Context compacted"],
+  ["toast.compactFailed", "上下文压缩失败，请稍后重试"],
+  ["cmd.compact", "压缩上下文", "Compact context"],
+  ["toast.undone", "已撤销 {n} 个文件的改动"],
+  ["toast.redone", "已重做 {n} 个文件的改动"],
+  ["toast.pickerBusy", "已有一个选择窗口打开，请先完成或取消（它可能被主窗口遮挡）"],
+]
+
 export const GROUPS: [name: string, rows: Row[]][] = [
   ["A: the goal switch and bar", GROUP_A],
   ["B: conversation errors, permissions and attachments", GROUP_B],
   ["C: the settings pages", GROUP_C],
+  ["D: updates and toasts", GROUP_D],
 ]
+
+const read = (relative: string) => fs.readFileSync(path.join(process.cwd(), relative), "utf8")
+
+/** The two wiring bugs of D: each returns what is wrong, so a check can also run against old source. */
+export function deviceCodeHint(connectDialog: string, tables: Record<string, Record<string, string>>): string[] {
+  const hint = /<span class="code-hint">\{\{ copied \? t\("([^"]+)"\) : t\("([^"]+)"\) \}\}<\/span>/.exec(connectDialog)
+  if (!hint) return ["the device-code button's hint was not found"]
+  const [, done, idle] = hint
+  const out: string[] = []
+  if (tables.zhCN?.[idle] !== "复制") out.push(`the idle hint reads ${JSON.stringify(tables.zhCN?.[idle])} (${idle})`)
+  if (tables.zhCN?.[done] !== "已复制") out.push(`the copied hint reads ${JSON.stringify(tables.zhCN?.[done])} (${done})`)
+  return out
+}
+
+export function downloadFailureTitle(app: string, tables: Record<string, Record<string, string>>): string[] {
+  const call = /t\(result\.during === "download" \? "([^"]+)" : "([^"]+)"\)/.exec(app)
+  if (!call) return ["the update check's failure branch was not found"]
+  const [, download, check] = call
+  const out: string[] = []
+  if (tables.zhCN?.[download] !== "更新失败") out.push(`a download failure reads ${JSON.stringify(tables.zhCN?.[download])}`)
+  if (tables.zhCN?.[check] === tables.zhCN?.[download]) out.push("a download failure and a check failure read the same")
+  return out
+}
 
 /** Rows whose zh-CN or English value is not the pinned one. */
 export function copyDrift(tables: Record<string, Record<string, string>>, rows: Row[]): string[] {
@@ -140,5 +185,12 @@ export function roundTwentyCopyChecks(check: Check, section: (name: string) => v
     section(`Round 20 (V3-${name})`)
     const drift = copyDrift(tables, rows)
     check(`${rows.length} rows read as MiMo 26.920 words them`, drift.length === 0, drift.slice(0, 8))
+  }
+  section("Round 20 (V3-D): the two wiring bugs")
+  {
+    const hint = deviceCodeHint(read("src/renderer/src/components/ConnectDialog.vue"), tables)
+    check("the device-code button says 复制 / 已复制, not 复制回复 / 已保存", hint.length === 0, hint)
+    const title = downloadFailureTitle(read("src/renderer/src/App.vue"), tables)
+    check("a failed download says 更新失败, not the check's failure", title.length === 0, title)
   }
 }

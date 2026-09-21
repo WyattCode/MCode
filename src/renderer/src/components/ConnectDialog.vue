@@ -459,7 +459,7 @@ useEscapeLayer(dismiss)
             <label class="label">{{ t("auth.code") }}</label>
             <button class="code" @click="copyCode">
               <span>{{ auth.userCode }}</span>
-              <span class="code-hint">{{ copied ? t("set.saved") : t("stream.copy") }}</span>
+              <span class="code-hint">{{ copied ? t("code.copied") : t("edit.copy") }}</span>
             </button>
           </template>
 
