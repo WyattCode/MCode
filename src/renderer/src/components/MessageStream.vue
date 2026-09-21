@@ -1088,6 +1088,20 @@ const goalAchieved = computed(() => {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 })
 
+/*
+ * The note sits on the reply that met the goal, and only while that reply is
+ * the last: a turn asked for after the judge passed it is not it, and MiMo
+ * drops the note as soon as another turn runs (its goalDone goes on
+ * markRunning) rather than moving it down to later replies.
+ */
+const goalTurnID = computed(() => {
+  const at = shownSession.value?.goal?.done?.at
+  const last = turns.value.at(-1)
+  if (!goalAchieved.value || at === undefined || !last) return undefined
+  const began = last.asked ?? last.started
+  return began !== undefined && began <= at ? last.id : undefined
+})
+
 // The edit box holds the end while open and for 300ms after it closes, as MiMo's does.
 watch(editingAsked, (open, was) => {
   if (was && !open) editClosedAt = performance.now()
@@ -1931,7 +1945,7 @@ defineExpose({ stepMessage, scroller })
               </svg>
             </button>
             <!-- 追求目标: the one word a met goal leaves in the transcript, on the reply that met it. -->
-            <span v-if="goalAchieved && turn.id === lastTurnID" class="goal-done" data-goal-achieved>
+            <span v-if="goalAchieved && turn.id === goalTurnID" class="goal-done" data-goal-achieved>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
                 <path d="M4 12.6 9 17.5 20 6.5" />
               </svg>

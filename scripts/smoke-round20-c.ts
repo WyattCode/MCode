@@ -78,6 +78,16 @@ export async function roundTwentyLaneCChecks(check: Check, section: (name: strin
     check("a mark seeded at the first message animates it", mark.from === 0 && follow.enterMark(undefined, "s", 1).from === Number.MAX_SAFE_INTEGER)
   }
 
+  // ------------------------------------------------------------------ R20-C-5
+  section("Round 20 (C-5): the goal-reached note does not move down to a later reply")
+  {
+    const template = stream.slice(stream.indexOf("<template>"))
+    const note = template.match(/<span v-if="([^"]*)"[^>]*data-goal-achieved/)?.[1] ?? ""
+    check("the note is not simply on the latest turn", !/lastTurnID/.test(note) && /goalTurnID/.test(note), note)
+    const which = code(body(script, "const goalTurnID = computed("))
+    check("it is the last turn only when that turn began before the goal was met", /goal\?\.done\?\.at/.test(which) && /began <= at/.test(which) && /turns\.value\.at\(-1\)/.test(which), which)
+  }
+
   const store = await read("src/renderer/src/stores/app.ts")
 
   // ------------------------------------------------------------------ R20-C-2
