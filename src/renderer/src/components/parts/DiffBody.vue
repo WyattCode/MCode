@@ -158,12 +158,11 @@ defineExpose({ reveal })
           <div class="db-table">
             <template v-for="(hunk, h) in file.rows" :key="h">
               <div class="db-row info">
-                <span class="db-ln" /><span class="db-ln" />
+                <span class="db-ln" />
                 <span class="db-code">{{ hunk.header }}</span>
               </div>
               <div v-for="(line, l) in hunk.lines" :key="`${h}:${l}`" class="db-row" :class="[line.kind, { marked: Boolean(line.marks) }]">
-                <span class="db-ln">{{ line.old ?? "" }}</span>
-                <span class="db-ln">{{ line.new ?? "" }}</span>
+                <span class="db-ln"><span class="db-num">{{ line.old ?? "" }}</span><span class="db-num">{{ line.new ?? "" }}</span></span>
                 <span class="db-code"><span class="db-prefix">{{ line.kind === "add" ? "+" : line.kind === "del" ? "-" : " " }}</span><template v-if="line.marks"><span v-for="(mark, m) in line.marks" :key="m" :class="{ 'db-mark': mark.changed }">{{ mark.text }}</span></template><template v-else>{{ line.text }}</template></span>
               </div>
             </template>
@@ -459,43 +458,70 @@ defineExpose({ reveal })
   border-inline-start: 1px solid var(--d2h-line-border);
 }
 
+/*
+ * diff2html's gutter as MiMo lays it out: a table cell that scrolls with the
+ * code. Its 7.5em is a preferred width, so once the longest line needs the room
+ * the cell gives way down to its least - one number's 3.5em and its borders -
+ * and the two numbers, floated to either side of it, drop one under the other.
+ * A grid whose columns every row shares keeps that, where a flex row would
+ * squeeze each line on its own.
+ */
 .db-table {
-  min-width: max-content;
+  display: grid;
+  grid-template-columns: minmax(min-content, 7.5em) minmax(max-content, 1fr);
   font-family: var(--font-mono);
   font-size: calc(13px * var(--code-font-scale, 1));
   line-height: 1.5;
 }
 
+.db-side .db-table {
+  grid-template-columns: 4em minmax(max-content, 1fr);
+}
+
 .db-row {
-  display: flex;
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
 }
 
 .db-ln {
-  position: sticky;
-  inset-inline-start: 0;
   box-sizing: border-box;
-  flex: none;
-  width: 3.5em;
-  padding: 0 0.5em;
   overflow: hidden;
   color: var(--d2h-dim);
   text-align: end;
-  text-overflow: ellipsis;
   background: var(--d2h-bg);
-  border-inline-end: 1px solid var(--d2h-line-border);
+  border: solid var(--d2h-line-border);
+  border-width: 0 1px;
   user-select: none;
 }
 
-.db-ln + .db-ln {
-  inset-inline-start: 3.5em;
+/* diff2html's zero-width space, so a cell with no number still holds a line. */
+.db-ln::after {
+  content: "\200b";
 }
 
 .db-side .db-ln {
-  width: 4em;
+  padding: 0 0.5em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+.db-num {
+  float: inline-start;
+  box-sizing: border-box;
+  width: 3.5em;
+  padding: 0 0.5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.db-num + .db-num {
+  float: inline-end;
+}
+
+/* A line beside a gutter that stacked its two numbers sits between them, as in a table cell. */
 .db-code {
-  flex: 1;
+  align-self: center;
   padding: 0 0.5em;
   white-space: pre;
 }
