@@ -32,7 +32,23 @@ import { openDocument } from "../lib/office-open"
 import { occurrences, registerFoldedCounter } from "../lib/find-folded"
 import { useRestoreDraft } from "../lib/draft"
 import { cardCut, interruptedEnd, stepPart, stoppedEmpty } from "./parts/turn-end"
-import { endDistance, growthEcho, heldBy, jumpShown, nextFollowing, reattachWithin, scrolledUp, UP_SLACK, upwardRun, type Geometry } from "../lib/scroll-follow"
+import {
+  consumePark,
+  endDistance,
+  heldBy,
+  JUMP_DISTANCE,
+  jumpShown,
+  movedDown,
+  nextFollowing,
+  parkRoom,
+  parkTarget,
+  reattachWithin,
+  scrolledUp,
+  UP_SLACK,
+  upwardRun,
+  type Geometry,
+} from "../lib/scroll-follow"
+import { reducedMotion } from "../lib/modal"
 
 /**
  * WHY EVERY MESSAGE IS DRAWN, where opencode virtualises.
@@ -633,7 +649,8 @@ function geometry(element: HTMLElement): Geometry {
 /* Asked again whenever the content changes, not only on scroll, as MiMo does. */
 function measureJump() {
   const element = scroller.value
-  if (!element) return
+  // A park's slide lends the column its offset as overflow for 200ms; that is not distance to the end.
+  if (!element || endSlide) return
   showJump.value = jumpShown(geometry(element))
 }
 
@@ -661,16 +678,18 @@ function onScroll() {
     seenRatio = ratio
     seenWidth = width
     upRun = 0
-    showJump.value = jumpShown(now)
+    measureJump()
     return
   }
   upRun = now.top > seen.top && pinEcho(now.top) ? upRun : upwardRun(upRun, seen, now)
   const up = scrolledUp(seen, now) || upRun > UP_SLACK
   if (up) upRun = 0
-  const echo = growthEcho(seen, now)
+  const arrived = movedDown(seen, now)
   seen = now
-  showJump.value = jumpShown(now)
-  following.value = nextFollowing(following.value, up, endDistance(now), reattachWithin(ratio), echo)
+  measureJump()
+  const distance = endDistance(now)
+  if (up || distance > JUMP_DISTANCE) releaseFloor()
+  following.value = nextFollowing(following.value, up, distance, reattachWithin(ratio), arrived)
 }
 
 function toBottom() {
@@ -752,6 +771,9 @@ watch(
   () => shownID.value,
   async () => {
     following.value = true
+    // A parked question's floor is this conversation's alone.
+    clearFloor()
+    parkedIn = undefined
     await nextTick()
     toBottom()
     measureJump()
@@ -802,6 +824,8 @@ onMounted(() => {
   toBottom()
   if (typeof ResizeObserver === "undefined" || !inner.value) return
   sizer = new ResizeObserver(() => {
+    // The floor was measured for this width; at another the question would not sit where it was put.
+    if (inner.value && inner.value.clientWidth !== floorWidth) clearFloor()
     pin()
     measureJump()
   })
@@ -870,7 +894,8 @@ const waitingCard = computed(() => {
 })
 
 watch(waitingCard, async (card, was) => {
-  if (!card || card === was) return
+  // A question parked by its send stays where it was put.
+  if (!card || card === was || parked()) return
   following.value = true
   await nextTick()
   pin()
@@ -980,6 +1005,151 @@ const goalAchieved = computed(() => {
 watch(editingAsked, (open, was) => {
   if (was && !open) editClosedAt = performance.now()
 })
+
+/*
+ * MiMo's parking. A question sent from the composer does not scroll away as
+ * its reply streams: it comes to rest near the top of the view - a sixth of the
+ * way down, or lower for a short one (lib/scroll-follow parkTarget) - and the
+ * reply is written below it without the view following. Where the
+ * conversation is too short to scroll that far, a floor (a min-height) makes
+ * the room, and the column slides up into place over 200ms.
+ *
+ * MiMo puts its floor on the whole thread. Here it goes on the question's own
+ * turn - the last, always drawn in full - so a turn above that changes size
+ * afterwards (one losing the last turn's footer, or a 240px content-visibility
+ * placeholder drawn at its real size) shortens or lengthens the conversation
+ * by as much, and the question stays where it was put rather than drifting by
+ * that amount. The room is reckoned to the column's end rather than to
+ * scrollHeight, which is the view's own height while the conversation is
+ * shorter than the view, and would put the question that much low.
+ */
+/* The conversation a question was parked in, until another is opened. */
+let parkedIn: string | undefined
+let floorWidth = 0
+/* What holds the floor: the parked turn, or the column once another turn follows it. */
+let floored: HTMLElement | undefined
+let endSlide: (() => void) | undefined
+
+function parked(): boolean {
+  return !following.value && parkedIn !== undefined && parkedIn === shownID.value
+}
+
+function clearFloor() {
+  endSlide?.()
+  if (floored) floored.style.minHeight = ""
+  floored = undefined
+}
+
+/* The floor goes as soon as taking it away would not move the view: once the reader has left it behind. */
+function releaseFloor() {
+  const view = scroller.value
+  const holder = floored
+  if (!holder || !view) return
+  const floor = holder.style.minHeight
+  const top = view.scrollTop
+  holder.style.minHeight = ""
+  if (view.scrollTop < top) {
+    holder.style.minHeight = floor
+    view.scrollTop = top
+  } else floored = undefined
+}
+
+/*
+ * A floor on a turn that is no longer the last would leave a gap in the middle
+ * of the conversation. The column takes it over, ending where the turn's floor
+ * ended, so the turn that follows fills the room instead of adding to it.
+ */
+watch(
+  lastTurnID,
+  () => {
+    const column = inner.value
+    const holder = floored
+    if (!holder || !column || holder === column || holder.hasAttribute("data-turn-last")) return
+    // A turn taken away altogether (a rollback) takes its floor with it.
+    if (!holder.isConnected) {
+      floored = undefined
+      return
+    }
+    const end = holder.getBoundingClientRect().bottom - column.getBoundingClientRect().top + (parseFloat(getComputedStyle(column).paddingBottom) || 0)
+    holder.style.minHeight = ""
+    column.style.minHeight = `${Math.ceil(end)}px`
+    floored = column
+  },
+  { flush: "post" },
+)
+
+function slideIn(column: HTMLElement, by: number) {
+  let done = false
+  let frame = 0
+  const finish = () => {
+    if (done) return
+    done = true
+    cancelAnimationFrame(frame)
+    clearTimeout(fallback)
+    column.removeEventListener("transitionend", onEnd)
+    column.style.transition = ""
+    column.style.transform = ""
+    endSlide = undefined
+    measureJump()
+  }
+  const onEnd = (event: TransitionEvent) => {
+    if (event.target === column && event.propertyName === "transform") finish()
+  }
+  column.style.transition = "none"
+  column.style.transform = `translateY(${by}px)`
+  void column.offsetHeight
+  column.addEventListener("transitionend", onEnd)
+  frame = requestAnimationFrame(() => {
+    column.style.transition = "transform 0.2s cubic-bezier(0.2, 0.7, 0.2, 1)"
+    frame = requestAnimationFrame(() => (column.style.transform = "translateY(0)"))
+  })
+  // A transition that never ends (the window hidden mid-way) must not leave the column shifted.
+  const fallback = setTimeout(finish, 600)
+  endSlide = finish
+}
+
+function park(turnID: string) {
+  const view = scroller.value
+  const column = inner.value
+  const turn = column?.querySelector<HTMLElement>(`[data-turn="${CSS.escape(turnID)}"]`)
+  const row = turn?.querySelector<HTMLElement>(":scope > .msg.user")
+  if (!view || !column || !turn || !row) return
+  clearFloor()
+  const viewTop = view.getBoundingClientRect().top - view.scrollTop
+  const box = row.getBoundingClientRect()
+  const end = column.getBoundingClientRect().bottom - viewTop
+  const room = parkRoom(box.top - viewTop, parkTarget(view.clientHeight, box.height), view.clientHeight, end)
+  if (room > 0) {
+    turn.style.minHeight = `${Math.ceil(turn.getBoundingClientRect().height + room)}px`
+    floored = turn
+  }
+  floorWidth = column.clientWidth
+  // To the end as a turn start does, then no longer following: the reply is written below, out of the way.
+  following.value = true
+  pin()
+  following.value = false
+  parkedIn = shownID.value
+  if (room > 0 && !reducedMotion()) slideIn(column, room)
+}
+
+watch(
+  lastAsked,
+  (id, was) => {
+    const here = shownID.value
+    if (!id || id === was || !here || props.side || props.latest || props.subagent) return
+    if (consumePark(here)) park(id)
+  },
+  { flush: "post" },
+)
+
+// A finished turn lets go of a floor the reader has already left.
+watch(shownBusy, async (busy) => {
+  if (busy) return
+  await nextTick()
+  releaseFloor()
+})
+
+onBeforeUnmount(() => endSlide?.())
 
 // A question that stops being the last one (another was sent) is no longer editable.
 watch(lastAsked, (id) => {
@@ -2207,6 +2377,13 @@ defineExpose({ stepMessage, scroller })
   position: sticky;
   bottom: 14px;
   z-index: 10;
+  /*
+   * Taking no room in the flow, as MiMo's (outside its scroller) takes none: a
+   * button that added its height to the conversation as it came and went moved
+   * the end with it, so a reader 5px short of the end was pulled onto it and
+   * followed again the moment the button went.
+   */
+  margin-top: -34px;
   margin-inline: auto;
   display: flex;
   align-items: center;

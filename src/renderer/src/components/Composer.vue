@@ -9,6 +9,7 @@ import { commandTitle } from "../lib/skill-display"
 import { normalizeChord } from "@shared/chord"
 import { chordOf, composing } from "../lib/keys"
 import { detectCodeLanguage, insertFence } from "../lib/paste-code"
+import { clearPark, requestPark } from "../lib/scroll-follow"
 import { appendMentions, mentionBackspace, projectRelative, promptHistory, slashAt } from "../lib/composer-text"
 import { matchingNames, wordMatch } from "../lib/word-match"
 import { draftTouched, drafts, homeFilled, scheduleDraftSave } from "../lib/composer-drafts"
@@ -1343,12 +1344,21 @@ async function submit() {
 
     // subagents: a command marked subtask is handed to a subagent in this conversation instead of sent as a prompt.
     const subtask = props.side || !filled ? undefined : subtaskOf(filled)
+    /*
+     * MiMo parks the question a send starts a turn with (see MessageStream):
+     * asked for here, just before sending, and taken back if the send is
+     * refused. Not for the side chat, and not for a message joining a turn
+     * already running, which starts none.
+     */
+    const parkIn = !props.side && filled && !subtask && app.currentID && !app.busy ? app.currentID : undefined
+    if (parkIn) requestPark(parkIn)
     // A rejected message should not cost the user what they typed, or gathered.
     const accepted = !filled
       ? false
       : subtask
         ? await app.subtask(value, subtask)
         : await app.send(withSkills(body, chips), [...sent, ...named, ...commandFiles], target, pointed, filled.command, goalOnSend)
+    if (!accepted && parkIn) clearPark(parkIn)
     if (!accepted) {
       text.value = value
       attachments.value = sent

@@ -54,10 +54,21 @@ export function growthEcho(before: Geometry, after: Geometry): boolean {
   return after.top > before.top && after.height > before.height && Math.abs(after.top - before.top - (after.height - before.height)) <= 1
 }
 
+/*
+ * Whether the reader moved the view down onto where it is. A scroll event
+ * that did not move it down - the browser pulling scrollTop back as a parked
+ * question's floor shrinks under a view standing at the end, or firing again
+ * with nothing changed - lands on the end without the reader taking it there;
+ * nor does a move that only matches the content's growth.
+ */
+export function movedDown(before: Geometry, after: Geometry): boolean {
+  return after.top > before.top && !growthEcho(before, after)
+}
+
 /* Leaving always wins; coming back needs the end itself, reached by the reader. */
-export function nextFollowing(following: boolean, up: boolean, distance: number, within: number, echo: boolean): boolean {
+export function nextFollowing(following: boolean, up: boolean, distance: number, within: number, arrived: boolean): boolean {
   if (up) return false
-  if (distance <= within && !echo) return true
+  if (distance <= within && arrived) return true
   return following
 }
 
@@ -90,3 +101,39 @@ export function heldBy(holds: Holds): "media" | "edit" | "wheel" | "select" | un
   return undefined
 }
 
+/*
+ * Parking a question just sent: its top comes to rest a sixth of the way down
+ * the view; a tall question rests higher, so that it ends by two thirds of the
+ * way down and the reply starts in sight, but never nearer the top than 12px.
+ */
+export function parkTarget(clientHeight: number, rowHeight: number): number {
+  return Math.min(clientHeight / 6, Math.max(12, (clientHeight * 2) / 3 - rowHeight))
+}
+
+/* The room the conversation lacks below the question, which ends at `end`, for it to scroll that far. */
+export function parkRoom(rowTop: number, target: number, clientHeight: number, end: number): number {
+  return Math.max(0, Math.ceil(rowTop - target + clientHeight - end))
+}
+
+/*
+ * A park is asked for by the composer just before it sends and used when the
+ * question appears; one not used within 3s lapses, and a send that was refused
+ * takes its own back.
+ */
+export const PARK_TTL = 3000
+const parks = new Map<string, number>()
+
+export function requestPark(sessionID: string, now = Date.now()): void {
+  parks.set(sessionID, now)
+}
+
+export function clearPark(sessionID: string): void {
+  parks.delete(sessionID)
+}
+
+export function consumePark(sessionID: string, now = Date.now()): boolean {
+  const asked = parks.get(sessionID)
+  if (asked === undefined) return false
+  parks.delete(sessionID)
+  return now - asked <= PARK_TTL
+}
