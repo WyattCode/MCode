@@ -172,6 +172,9 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       if (pruned) console.info(`[storage] removed ${pruned} quarantined file(s) older than 30 days`)
       // Brings the store up to date with the transcripts and re-checks what is still on disk.
       await artifacts?.reconcile(await sessions.list(), (id) => sessions.messages(id), { recheck: true })
+      // What conversations gone without a word left in the artifact list goes too, as a delete takes it (the unreadable keep theirs).
+      const forgotten = await artifacts?.forgetMissing(new Set([...(await sessions.list()).map((session) => session.id), ...(await sessions.unreadable())]))
+      if (forgotten) console.info(`[artifacts] forgot what ${forgotten} deleted conversation(s) left in the list`)
     } catch {
       // Housekeeping must never be the reason the app fails to open.
     }

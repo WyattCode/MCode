@@ -395,49 +395,6 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     )
 
     /*
-     * Deleting a conversation removes its link and nothing else. The file the
-     * other conversation also wrote stays under that one; the files only the
-     * deleted one wrote are still held, under the title it had.
-     */
-    const twoMessages = await store.messages(two.id)
-    const beforeDelete = await store.list()
-    await artifacts?.detach(two.id)
-    await store.delete(two.id)
-    const afterTwo = (await artifacts?.sourcesOf(reportAt)) ?? []
-    check(
-      "round 9: deleting one writer unlinks only its source, keeping the other and the gone one's title",
-      (await artifacts?.count()) === 3 &&
-        afterTwo.length === 2 &&
-        afterTwo.some((source) => source.sessionID === one.id) &&
-        afterTwo.some((source) => source.sessionID === "" && source.title === "Second conversation"),
-      afterTwo,
-    )
-    check(
-      "round 9: and the file is shown under the writer that still exists",
-      ((await artifacts?.list())?.artifacts ?? []).find((group) => group.files.some((file) => file.path === "report.md"))?.sessionID === one.id,
-    )
-    // A pass that started before the deletion still has the conversation and its messages in hand.
-    await artifacts?.reconcile(beforeDelete, (id) => (id === two.id ? Promise.resolve(twoMessages) : store.messages(id)))
-    check("round 9: a deleted conversation is not linked back by a later pass", ((await artifacts?.sourcesOf(reportAt)) ?? []).every((source) => source.sessionID !== two.id))
-
-    await artifacts?.detach(one.id)
-    await store.delete(one.id)
-    const after = (await artifacts?.list())?.artifacts ?? []
-    const survived = after.flatMap((group) => group.files).find((file) => file.path === "helper.ts")
-    check("a deleted conversation's files are still held", (await artifacts?.count()) === 3 && Boolean(survived), await artifacts?.count())
-    check("under the title that conversation had", after.some((group) => group.title === "First conversation" && group.sessionID === ""), after.map((group) => [group.title, group.sessionID]))
-
-    /* A message edited away takes that conversation's claim with it; a file no one claims goes, as in MiMo. */
-    const three = await store.create({ directory, model: MODEL, title: "Third conversation" })
-    await fs.writeFile(path.join(directory, "draft.md"), "# draft", "utf8")
-    await wrote(three.id, "msg_w5", "draft.md", 14)
-    await artifacts?.reconcile(await store.list(), (id) => store.messages(id))
-    const withDraft = await artifacts?.count()
-    await store.deleteMessage(three.id, "msg_w5")
-    await artifacts?.reconcile(await store.list(), (id) => store.messages(id))
-    check("round 9: a claim edited out of its conversation is dropped at the next pass", withDraft === 4 && (await artifacts?.count()) === 3, [withDraft, await artifacts?.count()])
-
-    /*
      * Search, as MiMo's: the file's name only, through the trigram index for
      * three characters or more, a substring test below that; NFC and case do
      * not matter.
@@ -451,13 +408,53 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     check("round 9: a shorter one is a substring test", short[0]!.join() === "helper.ts" && short[1]!.length === 3, short)
     check("round 9: a conversation's title is not searched, as MiMo searches the name only", (await names("First")).length === 0, await names("First"))
     check("round 9: a quote in the search is taken literally", (await names('re"port')).length === 0)
+    /*
+     * Deleting a conversation forgets what it wrote, as MiMo's delete does (the
+     * user's 2026-09-22 call). The file the other conversation also wrote stays
+     * under that one; the files on disk are never touched.
+     */
+    const twoMessages = await store.messages(two.id)
+    const beforeDelete = await store.list()
+    const heldBefore = await artifacts?.count()
+    await artifacts?.detach(two.id)
+    await store.delete(two.id)
+    const afterTwo = (await artifacts?.sourcesOf(reportAt)) ?? []
+    check(
+      "round 9: deleting one writer drops its source and keeps the other's, with nothing left unlinked",
+      (await artifacts?.count()) === heldBefore && afterTwo.length === 1 && afterTwo[0]!.sessionID === one.id,
+      afterTwo,
+    )
+    check(
+      "round 9: and the file is shown under the writer that still exists",
+      ((await artifacts?.list())?.artifacts ?? []).find((group) => group.files.some((file) => file.path === "report.md"))?.sessionID === one.id,
+    )
+    // A pass that started before the deletion still has the conversation and its messages in hand.
+    await artifacts?.reconcile(beforeDelete, (id) => (id === two.id ? Promise.resolve(twoMessages) : store.messages(id)))
+    check("round 9: a deleted conversation is not linked back by a later pass", ((await artifacts?.sourcesOf(reportAt)) ?? []).every((source) => source.sessionID !== two.id))
+
+    await artifacts?.detach(one.id)
+    await store.delete(one.id)
+    const after = (await artifacts?.list())?.artifacts ?? []
+    check("a deleted conversation's files leave the artifact list, as MiMo's delete takes them", (await artifacts?.count()) === 0 && after.length === 0, [await artifacts?.count(), after.map((group) => [group.title, group.sessionID])])
+    check("and the files themselves stay on disk", await fs.stat(path.join(directory, "helper.ts")).then(() => true, () => false))
+
+    /* A message edited away takes that conversation's claim with it; a file no one claims goes, as in MiMo. */
+    const three = await store.create({ directory, model: MODEL, title: "Third conversation" })
+    await fs.writeFile(path.join(directory, "draft.md"), "# draft", "utf8")
+    await wrote(three.id, "msg_w5", "draft.md", 14)
+    await artifacts?.reconcile(await store.list(), (id) => store.messages(id))
+    const withDraft = await artifacts?.count()
+    await store.deleteMessage(three.id, "msg_w5")
+    await artifacts?.reconcile(await store.list(), (id) => store.messages(id))
+    check("round 9: a claim edited out of its conversation is dropped at the next pass", withDraft === 1 && (await artifacts?.count()) === 0, [withDraft, await artifacts?.count()])
+
     unwatch()
     await artifacts?.close()
 
     /*
-     * A version-1 store is carried to version 2 without losing a row: the
-     * conversation it named becomes its source (a row whose conversation was
-     * already gone keeps that title), and its name is searchable at once.
+     * A version-1 store is carried forward: the conversation each row named
+     * becomes its source and its name is searchable at once; a row whose
+     * conversation was already gone leaves, as a delete now takes it (v3).
      */
     const oldFile = path.join(root, "art", "artifacts-v1.db")
     {
@@ -483,21 +480,18 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     }
     const migrated = await ArtifactStore.open(oldFile)
     const oldNames = async (query: string) => ((await migrated?.list({ query }))?.artifacts ?? []).flatMap((group) => group.files.map((file) => file.path))
-    check("round 9: a version-1 store opens writable and keeps every row", migrated?.writable === true && (await migrated?.count()) === 2, await migrated?.count())
+    check("round 9: a version-1 store opens writable and keeps every row a conversation still names", migrated?.writable === true && (await migrated?.count()) === 1, await migrated?.count())
     const keptSources = (await migrated?.sourcesOf(path.join(root, "old-project", "kept.md"))) ?? []
     const orphanSources = (await migrated?.sourcesOf(path.join(root, "old-project", "orphan.pptx"))) ?? []
     check(
-      "round 9: each old row's conversation becomes its source, a gone one keeping its title",
-      keptSources[0]?.sessionID === "ses_live" && orphanSources[0]?.title === "Gone one",
+      "round 9: each old row's conversation becomes its source, and a gone one's row is dropped",
+      keptSources[0]?.sessionID === "ses_live" && orphanSources.length === 0,
     )
-    check("round 9: and the old rows are searchable through the new index", (await oldNames("orphan")).join() === "orphan.pptx" && (await oldNames("kept")).join() === "kept.md")
-    check(
-      "round 9: the old rows are still grouped as before",
-      ((await migrated?.list())?.artifacts ?? []).some((group) => group.sessionID === "" && group.title === "Gone one"),
-    )
+    check("round 9: and the old rows are searchable through the new index", (await oldNames("orphan")).length === 0 && (await oldNames("kept")).join() === "kept.md")
+    check("round 9: nothing is grouped under a conversation that is gone", !((await migrated?.list())?.artifacts ?? []).some((group) => group.sessionID === ""))
     await migrated?.close()
     const reopened = await ArtifactStore.open(oldFile)
-    check("round 9: opening a migrated store again changes nothing", reopened?.writable === true && (await reopened?.count()) === 2)
+    check("round 9: opening a migrated store again changes nothing", reopened?.writable === true && (await reopened?.count()) === 1)
     await reopened?.close()
 
     /*

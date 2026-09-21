@@ -400,6 +400,8 @@ import { roundNineteenLaneAChecks } from "./smoke-round19-a"
 import { roundNineteenLaneCChecks } from "./smoke-round19-c"
 // No window is ever told to connect to a port the browser refuses.
 import { blockedPortChecks } from "./smoke-blocked-ports"
+// A deleted conversation's artifacts leave the list, as MiMo's delete takes them.
+import { artifactForgetChecks } from "./smoke-artifact-forget"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7036,6 +7038,7 @@ async function main() {
   await roundNineteenLaneAChecks(check, section)
   await roundNineteenLaneCChecks(check, section)
   await blockedPortChecks(check, section)
+  await artifactForgetChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
