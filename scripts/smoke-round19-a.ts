@@ -135,7 +135,7 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
       ["provider saved", /if \(editing\) notice\.success\(t\("model\.changesSaved"\)\)/.test(form)],
       ["project added", success(store, 'else notify(t("side.projectAdded", { name })')],
       ["projects removed", success(store, 'notify(directories.length > 1 ? t("side.projectsRemoved", { count: directories.length }) : t("side.projectRemoved")')],
-      ["update ready", success(app, 'notify(t("update.readyToast")')],
+      ["update ready", /notify\(t\("update\.readyToast"\), \{ (id: checking, )?level: "success" \}\)/.test(app)],
     ]
     for (const [name, ok] of sites) check(`success: ${name}`, ok)
     check("a batch of one is counted too, as MiMo's unarchiveMany", !/ids\.length === 1\) notify\(t\("toast\.convoRestored"\)/.test(settings))
@@ -247,5 +247,24 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
     check("the copy still takes the real path", /const target = configFile\.value\?\.path\n\s+if \(!target\) return\n\s+try \{\n\s+await navigator\.clipboard\.writeText\(target\)/.test(settings))
     const { homePath } = await import("../src/renderer/src/lib/home-path")
     check("which reads as ~ under the home folder", homePath("C:\\Users\\me\\AppData\\Roaming\\MCode\\config.json", "C:\\Users\\me") === "~\\AppData\\Roaming\\MCode\\config.json")
+  }
+
+  // ----------------------------------------------------------------- R19-F12
+  section("Round 19 (F12): 正在检查更新… has no ✕, and the answer replaces it in place")
+  {
+    const app = await read("src/renderer/src/App.vue")
+    const body = app.slice(app.indexOf("async function checkForUpdates("), app.indexOf("\n}\n", app.indexOf("async function checkForUpdates(")))
+    check("the checking notice is not closable", /notify\(t\("update\.checking"\), \{ id: UPDATE_CHECK_TOAST, duration: 0, closable: false \}\)/.test(body))
+    check("nor is the downloading one that can replace it", /notify\(t\("update\.downloading"\), \{ id: UPDATE_CHECK_TOAST, duration: 0, closable: false \}\)/.test(app))
+    const answers = ["update.current", "update.readyToast", "update.noFeed", "update.checkFailed"]
+    check("every answer is raised under the checking notice's id", answers.every((key) => new RegExp(`t\\("${key.replace(".", "\\.")}"\\), \\{ id: checking`).test(body)))
+    check("the checking notice is no longer dismissed ahead of its answer", !/dismiss\(checking\)\n\s+takeUpdateState/.test(body) && !/finally \{\n\s+dismiss\(checking\)/.test(body))
+    const { notify, toasts, dismiss } = await import("../src/renderer/src/lib/toast")
+    toasts.value = []
+    const id = notify("checking", { id: "update-check", duration: 0, closable: false })
+    check("a sticky notice drawn without a close button", toasts.value.length === 1 && toasts.value[0]?.closable === false)
+    notify("up to date", { id, level: "success" })
+    check("the answer takes its place: one notice, its level and text, closable again", toasts.value.length === 1 && toasts.value[0]?.title === "up to date" && toasts.value[0]?.level === "success" && toasts.value[0]?.closable === true, toasts.value)
+    dismiss(id)
   }
 }

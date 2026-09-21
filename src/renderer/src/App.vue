@@ -240,6 +240,8 @@ onBeforeUnmount(() => mainObserver?.disconnect())
 const downloadedUpdate = ref<string>()
 /** A check in flight, so the update page can say 检查中… and not start another. */
 const updateChecking = ref(false)
+/** The one notice a check asked for by hand lives under, from 正在检查更新… to its answer. */
+const UPDATE_CHECK_TOAST = "update-check"
 
 type UpdateStatus = Awaited<ReturnType<typeof window.mcode.updateStatus>>
 
@@ -267,7 +269,7 @@ onMounted(() => {
   offUpdateState = window.mcode.onUpdateState((state) => {
     takeUpdateState(state)
     /* A check asked for by hand says when it has moved on to downloading, as MiMo's toasts do. */
-    if (updateChecking.value && state.phase === "downloading") notify(t("update.downloading"), { id: "update-check", duration: 0 })
+    if (updateChecking.value && state.phase === "downloading") notify(t("update.downloading"), { id: UPDATE_CHECK_TOAST, duration: 0, closable: false })
   })
 })
 onBeforeUnmount(() => offUpdateState?.())
@@ -493,21 +495,25 @@ async function exportLog() {
 async function checkForUpdates() {
   if (updateChecking.value) return
   updateChecking.value = true
-  /* MiMo's sticky 正在检查更新…, up for as long as the check (and a download) runs. */
-  const checking = notify(t("update.checking"), { id: "update-check", duration: 0 })
+  /*
+   * MiMo's sticky 正在检查更新…, up for as long as the check (and a download)
+   * runs, with no ✕; the result then takes its place under the same id, so the
+   * one notice turns into the answer rather than a second one appearing.
+   */
+  const checking = notify(t("update.checking"), { id: UPDATE_CHECK_TOAST, duration: 0, closable: false })
   try {
     const result = await window.mcode.updateCheckNow()
-    dismiss(checking)
     takeUpdateState(result)
-    if (result.outcome === "current") notify(t("update.current"))
-    else if (result.outcome === "ready") notify(t("update.readyToast"), { level: "success" })
-    else if (result.outcome === "no-feed") notifyFailure(t("update.noFeed"))
-    else if (result.outcome === "failed") notifyFailure(t(result.during === "download" ? "update.failed" : "update.checkFailed"), result.error ?? "")
+    if (result.outcome === "current") notify(t("update.current"), { id: checking })
+    else if (result.outcome === "ready") notify(t("update.readyToast"), { id: checking, level: "success" })
+    else if (result.outcome === "no-feed") notifyFailure(t("update.noFeed"), { id: checking })
+    else if (result.outcome === "failed") {
+      notifyFailure(t(result.during === "download" ? "update.failed" : "update.checkFailed"), { id: checking, body: result.error ?? "" })
+    } else dismiss(checking)
   } catch (err) {
     // Electron prefixes the IPC plumbing; only the reason is worth showing.
-    notifyFailure(t("update.checkFailed"), reasonOf(err))
+    notifyFailure(t("update.checkFailed"), { id: checking, body: reasonOf(err) })
   } finally {
-    dismiss(checking)
     updateChecking.value = false
   }
 }
