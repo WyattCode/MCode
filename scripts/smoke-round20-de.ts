@@ -136,4 +136,19 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
     check("autofocus: the list's search is focused whenever the list is shown", /if \(now === "browse"\) void nextTick\(\(\) => searchEl\.value\?\.focus\(\)\)/.test(dialog) && /<input ref="searchEl"/.test(dialog))
     check("autofocus: the custom form focuses its id field itself when asked", /if \(props\.autofocus\) providerIdEl\.value\?\.focus\(\)/.test(form) && /ref="providerIdEl"/.test(form))
   }
+
+  section("Round 20: E-1 a page with /Rotate has its text and links turned onto it")
+  {
+    const view = await read("src/renderer/src/components/right/PdfView.vue")
+    // pdf.js 5.4.296's own rules (web/pdf_viewer.css), which react-pdf ships and MiMo's pdfEngine.css carries.
+    const turns: [string, string][] = [
+      ["90", "rotate(90deg) translateY(-100%)"],
+      ["180", "rotate(180deg) translate(-100%, -100%)"],
+      ["270", "rotate(270deg) translateX(-100%)"],
+    ]
+    for (const [angle, transform] of turns) {
+      const rule = new RegExp(`\\n\\.pdf-view \\[data-main-rotation="${angle}"\\] \\{\\s*transform: ([^;]*);`).exec(view)?.[1]
+      check(`E-1: a layer marked ${angle} is turned by ${transform}`, rule === transform, rule)
+    }
+  }
 }

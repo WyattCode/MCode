@@ -1339,6 +1339,23 @@ const noteInside = (target: Node) => Boolean(rootEl.value?.contains(target))
   color-scheme: only light;
 }
 
+/*
+ * pdf.js lays the text and annotation layers out as the page is stored and
+ * marks them with its /Rotate; as its own viewer and react-pdf (MiMo's) do,
+ * each is turned about its corner onto the page the canvas drew rotated.
+ */
+.pdf-view [data-main-rotation="90"] {
+  transform: rotate(90deg) translateY(-100%);
+}
+
+.pdf-view [data-main-rotation="180"] {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+
+.pdf-view [data-main-rotation="270"] {
+  transform: rotate(270deg) translateX(-100%);
+}
+
 .pdf-view .annotationLayer[data-main-rotation="90"] .norotate {
   transform: rotate(270deg) translateX(-100%);
 }
