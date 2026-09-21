@@ -41717,7 +41717,16 @@ const uk: Table = {
 }
 // --- end generated language tables ---
 
-const TABLES: Record<Language, Table> = {
+/*
+ * Every table, by language. In a build, `languageChunks` in
+ * electron.vite.config.ts moves each one but zh-CN (the default) and en (the
+ * fallback) into a chunk of its own - sixteen tables were 1.9MB of a 5.9MB
+ * entry chunk, parsed before the window could draw - and fills LOADERS with
+ * how to fetch it, so `loadLanguage` has to have run before `language` is set
+ * to one of them. MiMo loads its language tables the same way. Unbuilt - the
+ * checks import this file under node - every table is here from the start.
+ */
+const TABLES: Partial<Record<Language, Table>> = {
   "zh-CN": zhCN,
   "zh-TW": zhTW,
   en,
@@ -41736,6 +41745,48 @@ const TABLES: Record<Language, Table> = {
   "th": th,
   "tr": tr,
   "uk": uk,
+}
+const LOADERS: Partial<Record<Language, () => Promise<Table>>> = {}
+
+/** Whether a language's table is in hand, so switching to it draws its words at once. */
+export function languageReady(id: Language): boolean {
+  return Boolean(TABLES[id])
+}
+
+/** Fetches a language's table if the build left it out of the entry; a failed fetch leaves English showing through. */
+export async function loadLanguage(id: Language): Promise<void> {
+  if (TABLES[id]) return
+  const load = LOADERS[id]
+  if (!load) return
+  try {
+    TABLES[id] = await load()
+  } catch {
+    // A table that cannot be read falls back key by key to English, as a missing string always has.
+  }
+}
+
+/*
+ * The language last drawn in, kept in this window's own storage: the settings
+ * only arrive once the backend answers, and by then a table that is its own
+ * chunk should already be in hand. Only a hint - the settings still decide.
+ */
+const REMEMBERED = "mcode.language"
+
+export function rememberLanguage(id: Language): void {
+  try {
+    localStorage.setItem(REMEMBERED, id)
+  } catch {
+    // No storage (a private or broken profile): the table is fetched when asked for instead.
+  }
+}
+
+export function rememberedLanguage(): Language | undefined {
+  try {
+    const id = localStorage.getItem(REMEMBERED)
+    return LANGUAGES.find((entry) => entry.id === id)?.id
+  } catch {
+    return undefined
+  }
 }
 
 export function t(key: string, params?: Record<string, string | number>): string {
@@ -41833,6 +41884,23 @@ export function compactTokens(count: number): string {
   return String(count)
 }
 
+/*
+ * Building an Intl.DateTimeFormat costs far more than using one: a transcript
+ * stamps every question and answer, and making a fresh formatter for each was
+ * 23ms of a switch to a 160-turn conversation. Kept per language and options.
+ */
+const formatters = new Map<string, Intl.DateTimeFormat>()
+
+function formatterFor(tag: string, options?: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  const key = `${tag}\n${options ? JSON.stringify(options) : ""}`
+  let formatter = formatters.get(key)
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(tag, options)
+    formatters.set(key, formatter)
+  }
+  return formatter
+}
+
 /**
  * The one date formatter: a moment in the interface language and that
  * language's own default calendar - MiMo's Intl.DateTimeFormat(language) for
@@ -41842,7 +41910,7 @@ export function compactTokens(count: number): string {
 export function dateIn(value: number | Date, options?: Intl.DateTimeFormatOptions): string {
   const date = typeof value === "number" ? new Date(value) : value
   try {
-    return new Intl.DateTimeFormat(language.value, options).format(date)
+    return formatterFor(language.value, options).format(date)
   } catch {
     return date.toLocaleDateString(undefined, options)
   }

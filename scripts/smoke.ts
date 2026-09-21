@@ -387,6 +387,11 @@ import { substringSearchChecks } from "./smoke-substring-search"
 import { roundEighteenPdfAnnotationChecks } from "./smoke-round18-pdf-annotations"
 // Round 19, lane B: the right panel and two side-column details, moved to MiMo 26.920 (RP-1 onwards, R19-SH2, R19-SH3).
 import { roundNineteenPanelChecks } from "./smoke-round19-panel"
+// T3: switching back to a long conversation (round 7's open item).
+import { perfThreadChecks } from "./smoke-perf-thread"
+// The entry chunk: what the first paint does not need is fetched on first use.
+import { perfEntryChecks } from "./smoke-perf-entry"
+import { loadMath } from "../src/renderer/src/lib/markdown"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -413,6 +418,8 @@ function section(name: string) {
 }
 
 async function main() {
+  // KaTeX is fetched on first use in the app; every check that draws a formula wants it drawn.
+  await loadMath()
   // round 5: the earlier sections script their providers reply by reply, and a background title request would take one.
   process.env.MCODE_GENERATE_TITLES = "0"
   // round 9: every backend a check starts stays off the network; the models.dev checks use a local server.
@@ -7019,6 +7026,8 @@ async function main() {
   await substringSearchChecks(check, section)
   await roundEighteenPdfAnnotationChecks(check, section)
   await roundNineteenPanelChecks(check, section)
+  await perfThreadChecks(check, section)
+  await perfEntryChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { DirEntry, FileHit, ResponseMap } from "@shared/protocol"
 import type { MenuItem } from "../../lib/menu"
 import ContextMenu from "../ContextMenu.vue"
-import PdfView from "./PdfView.vue"
+// pdf.js and its viewer: fetched when a PDF is opened, not with the files tab.
+const PdfView = defineAsyncComponent(() => import("./PdfView.vue"))
 import AbcBlock from "../parts/AbcBlock.vue"
 import MarkdownBody from "../parts/MarkdownBody.vue"
 import { isAbcFile } from "../../lib/abc-play"

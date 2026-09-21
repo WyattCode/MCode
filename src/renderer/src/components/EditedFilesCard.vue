@@ -299,7 +299,10 @@ async function pickMenu(key: string) {
         <button type="button" class="fc-confirm-btn" data-fc-confirm-no @click="confirming = false">{{ t("common.cancel") }}</button>
       </div>
     </div>
-    <ContextMenu v-if="menu" :x="menu.x" :y="menu.y" :items="menuItems" @pick="pickMenu" @close="menu = undefined" />
+    <!-- On the body: a turn is contained (MessageStream's long-thread rule), which would place a fixed menu inside it. -->
+    <Teleport to="body">
+      <ContextMenu v-if="menu" :x="menu.x" :y="menu.y" :items="menuItems" @pick="pickMenu" @close="menu = undefined" />
+    </Teleport>
   </template>
 </template>
 
