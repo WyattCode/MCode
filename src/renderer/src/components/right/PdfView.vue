@@ -375,6 +375,8 @@ async function draw(index: number) {
   end.className = "endOfContent"
   text.append(end)
   layer.style.setProperty("--scale-factor", String(scale))
+  // A page with a /UserUnit is that many times larger than its points say; the layers size themselves by both, as react-pdf's page sets them.
+  layer.style.setProperty("--user-unit", String(viewport.userUnit))
   layer.replaceChildren(canvas, text, notes)
   refreshMarks()
 }
@@ -1141,9 +1143,8 @@ const noteInside = (target: Node) => Boolean(rootEl.value?.contains(target))
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
 }
 
-/* pdf.js's layers take their size through --total-scale-factor. */
+/* pdf.js's layers take their size through --total-scale-factor; the drawing sets the page's scale and user unit. */
 .pdf-layers {
-  --user-unit: 1;
   --total-scale-factor: calc(var(--scale-factor) * var(--user-unit));
   --scale-round-x: 1px;
   --scale-round-y: 1px;

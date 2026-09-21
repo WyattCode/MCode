@@ -151,4 +151,12 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
       check(`E-1: a layer marked ${angle} is turned by ${transform}`, rule === transform, rule)
     }
   }
+
+  section("Round 20: E-6 a page's /UserUnit reaches the layers' scale")
+  {
+    const view = await read("src/renderer/src/components/right/PdfView.vue")
+    check("E-6: the drawing sets the page's user unit beside its scale", /layer\.style\.setProperty\("--user-unit", String\(viewport\.userUnit\)\)/.test(view))
+    const layers = /\n\.pdf-layers \{([^}]*)\}/.exec(view)?.[1] ?? ""
+    check("E-6: no fixed 1 left behind in the stylesheet", !/--user-unit:\s*1/.test(layers), layers)
+  }
 }
