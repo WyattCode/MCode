@@ -7,7 +7,6 @@ import ToolGroup from "./parts/ToolGroup.vue"
 import QuestionCard from "./parts/QuestionCard.vue"
 import ErrorStep from "./parts/ErrorStep.vue"
 import RetryRow from "./parts/RetryRow.vue"
-import TextShimmer from "./parts/TextShimmer.vue"
 import MessageSourceRow from "./parts/MessageSource.vue"
 import type { MessageSource } from "@shared/protocol"
 import SubagentActivity from "./parts/SubagentActivity.vue"
@@ -601,12 +600,15 @@ function liveTurn(at: number): boolean {
 }
 
 /*
- * MiMo's head time: whole seconds as "12s", past a minute "1m 5s" - not
- * worded per language. It counts up once a second while the turn runs.
+ * MiMo's head time: whole seconds as "12s", past a minute "1m 5s", past an
+ * hour "1h 2m 3s" - not worded per language. It counts up once a second while
+ * the turn runs.
  */
 function formatDuration(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000))
-  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m ${seconds % 60}s`
 }
 
 const now = ref(Date.now())
@@ -1822,16 +1824,21 @@ defineExpose({ stepMessage, scroller })
             :aria-label="t('turn.steps')"
             @click="foldRun(turn.id)"
           >
-            <span class="run-label">{{ t("turn.processed") }}</span>
-            <span v-if="headTime(turn, at)" class="run-time" data-turn-time>{{ headTime(turn, at) }}</span>
+            <span class="run-body">
+              <span class="run-label">{{ t("turn.processed") }}</span>
+              <span v-if="headTime(turn, at)" class="run-time" data-turn-time>{{ headTime(turn, at) }}</span>
+            </span>
             <svg class="run-chev" :class="{ open: opened.has(turn.id) }" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="m9 18 6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </button>
           <!-- P5-5: MiMo draws no head over a finished turn with neither steps nor words, so a failure card sits flush at the top. -->
           <div v-else-if="turn.started && (liveTurn(at) || answered(turn))" class="run" data-turn-head :data-live="liveTurn(at) ? 'true' : undefined">
-            <span class="run-label"><TextShimmer :text="t(subagent && liveTurn(at) ? 'subagentDetail.liveHead' : 'turn.processed')" :active="liveTurn(at)" /></span>
-            <span v-if="headTime(turn, at)" class="run-time" data-turn-time>{{ headTime(turn, at) }}</span>
+            <!-- MiMo sweeps the running head's words and its time together. -->
+            <span class="run-body" :class="{ 'running-shimmer': liveTurn(at) }">
+              <span class="run-label">{{ t(subagent && liveTurn(at) ? "subagentDetail.liveHead" : "turn.processed") }}</span>
+              <span v-if="headTime(turn, at)" class="run-time" data-turn-time>{{ headTime(turn, at) }}</span>
+            </span>
           </div>
 
           <div v-for="row in shown(turn, at)" :key="row.id" class="part" :class="{ step: isStep(row) }">
@@ -2835,29 +2842,37 @@ defineExpose({ stepMessage, scroller })
 }
 
 /*
- * 2.0: MiMo's line above an answer - 14/500 in the base colour, the time a
- * size down and fainter beside it, and twelve clear of the first line so the
- * two sit thirty apart as they do there.
+ * 2.0: MiMo's harness head - 14/500 in the muted colour on its 1.6 line with
+ * 2px above and below, running or done, the time a size down and dimmer beside
+ * it. Five below it and the first row's own 5px put the first line ten clear.
  */
 .run {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 5px;
+  padding: 2px 0;
   color: var(--text-base);
+}
+
+.run-body {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .run-label {
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: calc(18px * var(--ui-font-scale, 1));
+  line-height: calc(22.4px * var(--ui-font-scale, 1));
 }
 
 .run-time {
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: calc(16px * var(--ui-font-scale, 1));
+  line-height: calc(19.2px * var(--ui-font-scale, 1));
 }
 
 .run-time {
@@ -2867,7 +2882,6 @@ defineExpose({ stepMessage, scroller })
 /* The finished head that folds: the whole line is the button. */
 .run.foldable {
   width: fit-content;
-  padding: 2px 0;
   font: inherit;
   text-align: start;
   background: transparent;
