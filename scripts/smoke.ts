@@ -402,6 +402,8 @@ import { roundNineteenLaneCChecks } from "./smoke-round19-c"
 import { blockedPortChecks } from "./smoke-blocked-ports"
 // A deleted conversation's artifacts leave the list, as MiMo's delete takes them.
 import { artifactForgetChecks } from "./smoke-artifact-forget"
+// Round 20, section B: the backend's findings from the round's review.
+import { roundTwentyServerChecks } from "./smoke-round20-server"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7039,6 +7041,7 @@ async function main() {
   await roundNineteenLaneCChecks(check, section)
   await blockedPortChecks(check, section)
   await artifactForgetChecks(check, section)
+  await roundTwentyServerChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

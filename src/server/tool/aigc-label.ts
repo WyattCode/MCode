@@ -307,9 +307,9 @@ async function setOfficeAigc(zip: JSZip, fields: AigcFields): Promise<string[]> 
     const pid = existing ? /\bpid="(\d+)"/.exec(existing[0])?.[1] ?? String(Math.max(1, ...pids) + 1) : String(Math.max(1, ...pids) + 1)
     const property = `<property fmtid="${USER_PROPERTY_FMTID}" pid="${pid}" name="AIGC"><vt:lpwstr>${value}</vt:lpwstr></property>`
     let next: string
-    if (existing) next = custom.replace(existing[0], property)
-    else if (/<Properties\b[^>]*\/>/.test(custom)) next = custom.replace(/<Properties\b([^>]*)\/>/, `<Properties$1>${property}</Properties>`)
-    else if (custom.includes("</Properties>")) next = custom.replace("</Properties>", `${property}</Properties>`)
+    if (existing) next = custom.replace(existing[0], () => property)
+    else if (/<Properties\b[^>]*\/>/.test(custom)) next = custom.replace(/<Properties\b([^>]*)\/>/, (_, attributes: string) => `<Properties${attributes}>${property}</Properties>`)
+    else if (custom.includes("</Properties>")) next = custom.replace("</Properties>", () => `${property}</Properties>`)
     else throw new Error("docProps/custom.xml has no Properties element")
     if (!/xmlns:vt=/.test(next)) throw new Error("docProps/custom.xml does not declare the vt prefix")
     zip.file(CUSTOM_PART, next)
@@ -454,12 +454,12 @@ async function xlsxExplicit(zip: JSZip): Promise<{ part: string; xml: string } |
       text = ""
     }
     if (text.includes(AIGC_TEXT)) return undefined
-    next = sheet.replace(cell[0], inline(text ? text + A1_SUFFIX : AIGC_TEXT, styleAttr))
+    next = sheet.replace(cell[0], () => inline(text ? text + A1_SUFFIX : AIGC_TEXT, styleAttr))
   } else {
     const row = /<row\b(?=[^>]*\br="1")[^>]*?(\/?)>/.exec(sheet)
     if (row) {
       const opened = row[0].replace(/\s+spans="[^"]*"/, "").replace(/\/>$/, ">")
-      next = sheet.replace(row[0], opened + inline(AIGC_TEXT, "") + (row[1] ? "</row>" : ""))
+      next = sheet.replace(row[0], () => opened + inline(AIGC_TEXT, "") + (row[1] ? "</row>" : ""))
     } else if (/<sheetData\s*\/>/.test(sheet)) {
       next = sheet.replace(/<sheetData\s*\/>/, `<sheetData><row r="1">${inline(AIGC_TEXT, "")}</row></sheetData>`)
     } else if (/<sheetData\b[^>]*>/.test(sheet)) {
@@ -855,7 +855,7 @@ export function xmpAigc(xmp: string): AigcFields | undefined {
 function xmpWith(xmp: string, fields: AigcFields): string | undefined {
   const value = escapeXml(aigcJson(fields))
   const match = /<([\w.-]+):AIGC\b[^>]*>[\s\S]*?<\/\1:AIGC>/.exec(xmp)
-  if (match) return xmp.replace(match[0], `<${match[1]}:AIGC>${value}</${match[1]}:AIGC>`)
+  if (match) return xmp.replace(match[0], () => `<${match[1]}:AIGC>${value}</${match[1]}:AIGC>`)
   const close = xmp.lastIndexOf("</rdf:RDF>")
   if (close < 0) return undefined
   return `${xmp.slice(0, close)}<rdf:Description rdf:about="" xmlns:AIGC="${AIGC_XMP_NS}"><AIGC:AIGC>${value}</AIGC:AIGC></rdf:Description>${xmp.slice(close)}`
