@@ -11,6 +11,8 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
+import { LANGUAGES, language } from "../src/renderer/src/lib/i18n"
+import { toolVerb } from "../src/renderer/src/lib/tool-meta"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
 
@@ -71,5 +73,25 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
     check("R18-U5: side.quitApp has left all 18 tables", (await carrying("side.quitApp")) === 0)
     const preload = await read("src/preload/index.ts")
     check("R18-U5: quitting stays in the menu bar and the tray", preload.includes('quitApp: (): void => ipcRenderer.send("mcode:quit")') && (await read("src/main/menu.ts")).includes('L("menu.quitApp"'))
+  }
+
+  section("Round 18 (lane U): R18-U11 a webfetch step reads a web page, it does not search")
+  {
+    const before = language.value
+    const states = ["completed", "running", "error", "rejected", "skipped"] as const
+    language.value = "zh-CN"
+    const zh = states.map((state) => toolVerb("webfetch", state))
+    language.value = "en"
+    const en = states.map((state) => toolVerb("webfetch", state))
+    const others = LANGUAGES.map((entry) => entry.id).filter((id) => id !== "zh-CN" && id !== "en")
+    const spread = others.map((id) => {
+      language.value = id
+      return states.map((state) => toolVerb("webfetch", state))
+    })
+    language.value = before
+    check("R18-U11: the five states in Chinese are 读取网页's", JSON.stringify(zh) === JSON.stringify(["已读取网页", "正在读取网页", "读取网页失败", "已拒绝读取网页", "未执行：读取网页"]), zh)
+    check("R18-U11: and in English they read a web page", en.every((verb) => /web page/i.test(verb)) && !en.some((verb) => /search/i.test(verb)), en)
+    check("R18-U11: no language still calls it a search", !zh.some((verb) => verb.includes("搜索")) && spread.every((set) => set.every((verb) => verb.length > 0 && !verb.startsWith("toolLabel."))), spread)
+    check("R18-U11: every language has five distinct words for the five states", spread.every((set) => new Set(set).size === 5), spread)
   }
 }
