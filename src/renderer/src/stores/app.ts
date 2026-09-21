@@ -32,7 +32,7 @@ import type { AutomationTask, ChatLink, CustomProvider } from "@shared/protocol"
 import { notice, notify, notifyFailure } from "../lib/toast"
 import { findModel } from "../lib/model"
 import { forgetRunEnded, noteRunEnded, noteToolWrites } from "../lib/ai-touch"
-import { endOfficeWatches } from "../lib/annotation-fx"
+import { endOfficeWatches, watchAnnotatedSend } from "../lib/annotation-fx"
 import { noteDeliveryTurnEnded, noteDeliveryUpdate } from "../lib/delivered"
 import { readLegacyMessage } from "@shared/subagent"
 import { isScheduledPrompt } from "@shared/scheduled"
@@ -1657,6 +1657,8 @@ export const useApp = defineStore("app", () => {
         ...(command?.model ? { model: command.model } : {}),
         ...(goal ? { goal } : {}),
       })
+      // MiMo's officeWatch: the documents its annotations sit on glow while the run works, a steer joining the glow.
+      if (annotations.length) watchAnnotatedSend(target, annotations, text)
       return true
     } catch (err) {
       returnFileNotices(target, fileNotices)

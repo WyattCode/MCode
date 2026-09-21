@@ -1,11 +1,15 @@
 import { onBeforeUnmount, ref, watch } from "vue"
+import type { Annotation } from "@shared/protocol"
 import { useApp } from "../stores/app"
 
 /*
- * MiMo's working light for a document's sent annotations. Sending from a
- * document registers a watch on the conversation it went to; a viewer showing
- * that file arms: "ignite" for 550ms, then "work" while the conversation runs;
- * when the run ends, "finish" for 850ms, "out" for 500ms, then nothing.
+ * MiMo's working light for a document's sent annotations. Sending one - from
+ * the document's own "send now", or from the composer, into a new turn or one
+ * already running - registers a watch on the conversation it went to; a viewer
+ * showing that file arms: "ignite" for 550ms, then "work" while the
+ * conversation runs; when the run ends, "finish" for 850ms, "out" for 500ms,
+ * then nothing. Annotations sent into the run while it glows join the glow
+ * (MiMo 26.920's noteBatch).
  */
 
 export type FxPhase = "ignite" | "work" | "finish" | "out"
@@ -26,14 +30,48 @@ interface Watch {
   /** What was asked, as MiMo keeps it for the version history ("【PDF 第2页】…"). */
   prompt: string
   seq: number
+  /** The run it watched has ended; a later send starts a watch of its own rather than joining this one. */
+  ended?: boolean
 }
 
 const watches = ref<Watch[]>([])
 let seq = 0
 
-/** Recorded when a document sends an annotation into a conversation. */
+/**
+ * Recorded when an annotation on a document goes into a conversation. A send
+ * into a run that already watches this file joins its watch, as MiMo's steer
+ * merges into the running officeWatch, keeping the prompt it was started with.
+ */
 export function watchOfficeSend(convoId: string, file: string, annotatedIds: string[], prompt: string) {
-  watches.value = [...watches.value, { convoId, file, annotatedIds, prompt, seq: ++seq }]
+  const live = watches.value.find((entry) => entry.convoId === convoId && entry.file === file && !entry.ended)
+  if (!live) {
+    watches.value = [...watches.value, { convoId, file, annotatedIds, prompt, seq: ++seq }]
+    return
+  }
+  const merged = { ...live, annotatedIds: [...new Set([...live.annotatedIds, ...annotatedIds])], prompt: live.prompt || prompt }
+  watches.value = watches.value.map((entry) => (entry === live ? merged : entry))
+}
+
+/* MiMo's documents: the ones its viewers light up (MB's filter). */
+const OFFICE_FILE = /\.(xlsx|xlsm|xls|docx|doc|pptx|ppt|pdf)$/i
+
+/**
+ * MiMo's VD / KD over a message's annotations: those with a note of their own
+ * (HD - one only pointed at does not count), grouped by the document they sit
+ * on, so each document's viewer is told which of its annotations went.
+ */
+export function annotatedDocuments(annotations: readonly Annotation[]): Map<string, string[]> {
+  const out = new Map<string, string[]>()
+  for (const note of annotations) {
+    if (!note.path || !note.text.trim() || !OFFICE_FILE.test(note.path)) continue
+    out.set(note.path, [...(out.get(note.path) ?? []), note.id])
+  }
+  return out
+}
+
+/** A message with annotations on documents went into a conversation: each document it names lights up for the run. */
+export function watchAnnotatedSend(convoId: string, annotations: readonly Annotation[], prompt: string) {
+  for (const [file, ids] of annotatedDocuments(annotations)) watchOfficeSend(convoId, file, ids, prompt)
 }
 
 /** The documents a conversation's run was sent from, so their views look again when it ends. */
@@ -57,6 +95,7 @@ export function endOfficeWatches(convoId: string) {
   if (!ending.length) return
   endedPrompts.set(convoId, ending[ending.length - 1].prompt)
   const upTo = Math.max(...ending.map((entry) => entry.seq))
+  watches.value = watches.value.map((entry) => (entry.convoId === convoId ? { ...entry, ended: true } : entry))
   setTimeout(() => {
     // Only what was there at the end: a send made into the same conversation meanwhile keeps its watch.
     watches.value = watches.value.filter((entry) => entry.convoId !== convoId || entry.seq > upTo)
@@ -112,7 +151,16 @@ export function useAnnotationFx(file: () => string) {
         if (next) arm(next)
         return
       }
-      if ((phase.value === "ignite" || phase.value === "work") && !app.running.has(convoId)) finish()
+      if (phase.value !== "ignite" && phase.value !== "work") return
+      if (!app.running.has(convoId)) {
+        finish()
+        return
+      }
+      // noteBatch: annotations sent into the run while it glows join it.
+      const armed = convoId
+      const sent = watches.value.filter((entry) => entry.convoId === armed && entry.file === file()).flatMap((entry) => entry.annotatedIds)
+      const fresh = sent.filter((id) => !annotatedIds.value.includes(id))
+      if (fresh.length) annotatedIds.value = [...annotatedIds.value, ...new Set(fresh)]
     },
     { deep: true },
   )

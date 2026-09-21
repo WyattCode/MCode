@@ -18,7 +18,9 @@ import { PANEL_MIN_WIDTH, useRightPanel } from "../src/renderer/src/stores/right
 import { panelWidthShown } from "../src/renderer/src/lib/right-tools"
 import { subagentItems } from "../src/renderer/src/lib/subagents"
 import { convoCard } from "../src/renderer/src/lib/convo-card"
-import type { Message, SessionInfo, ToolPart } from "../src/shared/protocol"
+import type { Annotation, Message, SessionInfo, ToolPart } from "../src/shared/protocol"
+import { effectScope, nextTick } from "vue"
+import { useApp } from "../src/renderer/src/stores/app"
 
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
 
@@ -164,6 +166,53 @@ export async function roundNineteenPanelChecks(check: Check, section: (name: str
     const side = await read("src/renderer/src/components/Sidebar.vue")
     const calls = side.match(/app\.automationTasks, runningNames\((?:block\.session|session|entry\.session)\.id\)\)/g) ?? []
     check("R19-SH2: every conversation row's card is handed its working subagents' names", calls.length === 3 && (side.match(/convoCard\(/g) ?? []).length === 3, calls.length)
+  }
+
+  section("Round 19 (lane B): RP-1 annotations sent from the composer, or into a running turn, light their document")
+  {
+    const fx = (await import("../src/renderer/src/lib/annotation-fx")) as Record<string, unknown> & typeof import("../src/renderer/src/lib/annotation-fx")
+    const documents = fx.annotatedDocuments as ((notes: Annotation[]) => Map<string, string[]>) | undefined
+    const note = (id: string, path: string, text: string): Annotation => ({ id, kind: "pdf", path, text })
+    const grouped = documents?.([note("a", "/p/report.pdf", "fix this"), note("b", "/p/report.pdf", "  "), note("c", "/p/sheet.xlsx", "sum"), note("d", "/p/notes.md", "why"), note("e", "/p/report.pdf", "and this")])
+    check("RP-1: only annotations with a note count, grouped by the document they sit on (MiMo's VD, KD and HD)", JSON.stringify(grouped ? [...grouped] : null) === JSON.stringify([["/p/report.pdf", ["a", "e"]], ["/p/sheet.xlsx", ["c"]]]), grouped && [...grouped])
+
+    const app = await read("src/renderer/src/stores/app.ts")
+    const send = app.slice(app.indexOf("  async function send("), app.indexOf("  const ABORT_TRIES"))
+    check("RP-1: every accepted send registers its documents - a new turn and a steer alike", /await api\(\)\.request\(\{\s*type: "session\.prompt"[\s\S]*?\}\)\s*\n\s*\/\/[^\n]*\n\s*if \(annotations\.length\) watchAnnotatedSend\(target, annotations, text\)\s*\n\s*return true/.test(send), send.slice(send.indexOf("session.prompt"), send.indexOf("session.prompt") + 700))
+
+    // A steer into the same run joins its watch rather than starting another; the prompt stays the first one.
+    fx.watchOfficeSend("ses_rp1", "/p/deck.pptx", ["n1"], "first ask")
+    if (typeof fx.watchAnnotatedSend === "function") (fx.watchAnnotatedSend as (id: string, notes: Annotation[], prompt: string) => void)("ses_rp1", [note("n2", "/p/deck.pptx", "and this one")], "later ask")
+    else fx.watchOfficeSend("ses_rp1", "/p/deck.pptx", ["n2"], "later ask")
+    check("RP-1: the run keeps one watch on the document", fx.watchedFilesOf("ses_rp1").length === 1, fx.watchedFilesOf("ses_rp1"))
+    check("RP-1: and the prompt it was started with", fx.promptOf("ses_rp1") === "first ask", fx.promptOf("ses_rp1"))
+
+    // The viewer's side: armed on the first note, then MiMo's noteBatch adds the second while it glows.
+    setActivePinia(createPinia())
+    const store = useApp()
+    store.running.add("ses_rp2")
+    const scope = effectScope()
+    // Outside a component its onBeforeUnmount has nothing to attach to, which Vue says aloud; the scope stops it instead.
+    const warn = console.warn
+    console.warn = () => undefined
+    const light = scope.run(() => fx.useAnnotationFx(() => "/p/memo.docx"))!
+    console.warn = warn
+    fx.watchOfficeSend("ses_rp2", "/p/memo.docx", ["m1"], "ask")
+    await nextTick()
+    const armed = light.phase.value === "ignite" && light.annotatedIds.value.join() === "m1"
+    fx.watchOfficeSend("ses_rp2", "/p/memo.docx", ["m2"], "steer")
+    await nextTick()
+    check("RP-1: the viewer arms on the first note", armed, { phase: light.phase.value, ids: light.annotatedIds.value })
+    check("RP-1: a note steered into the running turn joins the glow (noteBatch)", light.annotatedIds.value.join() === "m1,m2" && light.phase.value === "ignite", light.annotatedIds.value)
+    store.running.delete("ses_rp2")
+    await nextTick()
+    check("RP-1: the run ending still finishes the glow", light.phase.value === "finish", light.phase.value)
+    fx.endOfficeWatches("ses_rp2")
+    fx.watchOfficeSend("ses_rp2", "/p/memo.docx", ["m3"], "next run")
+    check("RP-1: a send after the run ended starts a watch of its own", fx.promptOf("ses_rp2") === "next run")
+    scope.stop()
+    fx.endOfficeWatches("ses_rp1")
+    fx.endOfficeWatches("ses_rp2")
   }
 
   section("Round 19 (lane B): R19-SH3 the row menu exports Markdown alone, as MiMo's; the conversation file is gone")
