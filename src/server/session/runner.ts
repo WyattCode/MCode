@@ -57,7 +57,7 @@ import { pruneLevelFor, prunedHistory, type PruneLevel } from "./prune"
 import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, shrinkLargeToolResults, touchedFiles, type CompactionTrigger } from "./summary"
 import { memorySection, systemPrompt } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
-import { GOAL_GUARD, JUDGE_SYSTEM, MAX_GOAL_REACT, cleanGoal, goalReminder, judgeQuestion, parseVerdict, sameGoal, type GoalVerdict } from "./goal"
+import { GOAL_GUARD, JUDGE_SYSTEM, MAX_GOAL_REACT, cleanGoal, goalReminder, judgeQuestion, judgeTranscript, parseVerdict, sameGoal, type GoalVerdict } from "./goal"
 import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf, subagentAgent } from "./plan"
 import { status as gitStatus } from "../git"
 import { historyService, memoryFilesFor, memoryWritable } from "../history/service"
@@ -2170,7 +2170,8 @@ export class SessionRunner {
     let answer = ""
     try {
       const stored = await this.store.messages(sessionID)
-      const transcript = forWire(this.contextFor(session, stored), model)
+      // Calls as text: the judge has no tools, and a tool block with none defined is refused.
+      const transcript = judgeTranscript(this.contextFor(session, stored))
       const outcome = await adapter.stream(
         {
           apiKey: tokens?.access ?? this.config.apiKey(definition.id) ?? "",

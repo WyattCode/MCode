@@ -17,14 +17,15 @@ import os from "node:os"
 import path from "node:path"
 import { createServer } from "node:http"
 import type { Check } from "./smoke-round5"
-import type { AssistantMessage, ServerEvent, ToolPart } from "../src/shared/protocol"
+import type { AssistantMessage, Message, ServerEvent, ToolPart } from "../src/shared/protocol"
 import { Storage } from "../src/server/storage"
 import { Config } from "../src/server/config"
 import { Bus } from "../src/server/bus"
 import { Permissions } from "../src/server/permission"
 import { SessionStore } from "../src/server/session/store"
 import { SessionRunner } from "../src/server/session/runner"
-import { JUDGE_SYSTEM } from "../src/server/session/goal"
+import { JUDGE_SYSTEM, judgeTranscript } from "../src/server/session/goal"
+import { toProviderMessages } from "../src/server/provider/anthropic"
 import { SUMMARY_INSTRUCTION } from "../src/server/session/summary"
 import { LENGTH_NOTE, LOOP_ANSWERS } from "../src/server/session/reminders"
 
@@ -40,6 +41,7 @@ export async function roundTwentyEngineChecks(check: Check, section: Section): P
     await goalChecks(check, section, path.join(root, "goal"))
     await lengthNoteChecks(check, section, path.join(root, "notes"))
     await steeredChecks(check, section, path.join(root, "steered"))
+    await judgeChecks(check, section, path.join(root, "judge"))
   } finally {
     if (titles === undefined) delete process.env.MCODE_GENERATE_TITLES
     else process.env.MCODE_GENERATE_TITLES = titles
@@ -394,6 +396,62 @@ async function steeredChecks(check: Check, section: Section, root: string): Prom
       check("the cut reply keeps only what it wrote before the message came in", textOf(first) === "part one ", textOf(first))
       check("the next step is a message of its own, after the steered one", rest !== undefined && rest.id !== first?.id && rest.id > steered, [rest?.id, steered])
       check("and the model was sent the steered message", app.turns.at(-1)?.text.includes("and mention the edge case") === true)
+    }
+  } finally {
+    await app.close()
+  }
+}
+
+/* ---------------------------------------------------------------- R20: the judge is sent no tool blocks */
+
+async function judgeChecks(check: Check, section: Section, root: string): Promise<void> {
+  const app = await harness(root)
+  try {
+    section("Round 20 (R20-A judge): the goal judge reads the calls as text, with no tool blocks and no tools")
+    {
+      const file = path.join(app.project, "evidence.txt")
+      await fs.writeFile(file, "judge evidence line")
+      const session = await app.store.create({ directory: app.project, model: app.model })
+      await app.store.update(session.id, { goal: { condition: "read the evidence", startedAt: Date.now(), attempts: 0 } })
+      app.script([{ calls: [read(file)] }, { text: "read it" }])
+      app.scriptJudge([{ text: JSON.stringify({ ok: true, reason: "it was read" }) }])
+      const before = app.judged.length
+      await app.runner.prompt({ sessionID: session.id, text: "read the evidence" })
+      await app.settled(session.id)
+      const seen = app.judged[before]
+      const messages = seen?.body.messages ?? []
+      check("the judge was asked", seen !== undefined)
+      check("its request carries no tool calls and no tool results", !messages.some((message) => message.role === "tool" || (message.tool_calls?.length ?? 0) > 0), messages.map((message) => message.role))
+      check("the call and what it returned are there as text", seen?.text.includes("[Tool call: read]") === true && seen.text.includes("judge evidence line"), seen?.text.slice(0, 400))
+      check("and the verdict still lands", (await app.store.get(session.id))?.goal?.done?.status === "complete")
+    }
+
+    section("Round 20 (R20-A judge): on an Anthropic model the judge's messages hold no tool_use or tool_result")
+    {
+      const model = { provider: "anthropic", model: "claude-sonnet-4-5" }
+      const call: ToolPart = {
+        type: "tool",
+        id: "prt_1",
+        callID: "toolu_1",
+        name: "bash",
+        status: "completed",
+        input: { command: "npm test" },
+        output: "all 12 tests passed",
+        time: { created: 1, started: 1, completed: 2 },
+      }
+      const failed: ToolPart = { ...call, id: "prt_2", callID: "toolu_2", status: "error", output: undefined, error: "exit 1" }
+      const history: Message[] = [
+        { id: "msg_1", sessionID: "s", role: "user", text: "run the tests", attachments: [], time: { created: 1 } },
+        { id: "msg_2", sessionID: "s", role: "assistant", model, agent: "build", parts: [{ type: "text", id: "prt_0", text: "Running them." }, call, failed], time: { created: 2 }, finish: "tool_use" },
+        { id: "msg_3", sessionID: "s", role: "assistant", model, agent: "build", parts: [{ type: "text", id: "prt_3", text: "They pass." }], time: { created: 3 }, finish: "end_turn" },
+      ]
+      const blocks = (messages: ReturnType<typeof toProviderMessages>) =>
+        messages.flatMap((message) => (typeof message.content === "string" ? [] : message.content.map((block) => block.type)))
+      check("as the turn sends them, the calls are tool blocks", blocks(toProviderMessages(history, undefined, model)).includes("tool_use"))
+      const judged = blocks(toProviderMessages(judgeTranscript(history), undefined, model))
+      check("as the judge sends them, there are none", !judged.includes("tool_use") && !judged.includes("tool_result"), judged)
+      const text = JSON.stringify(toProviderMessages(judgeTranscript(history), undefined, model))
+      check("the result and the failure are both still readable", text.includes("all 12 tests passed") && text.includes("Error: exit 1") && text.includes("npm test"), text.slice(0, 400))
     }
   } finally {
     await app.close()
