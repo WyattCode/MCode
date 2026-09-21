@@ -694,7 +694,8 @@ function refreshMarks() {
   }
   marks.value = nextMarks
   fxBoxes.value = boxes
-  if (rootEl.value) markerSize.value = { w: rootEl.value.clientWidth, h: rootEl.value.clientHeight }
+  // The scroll area without its scrollbars: the frames are cut there and the badges kept inside it.
+  if (scroller.value) markerSize.value = { w: scroller.value.clientWidth, h: scroller.value.clientHeight }
   if (pending && !retryTimer) {
     retryTimer = setTimeout(() => {
       retryTimer = undefined
@@ -1039,37 +1040,43 @@ const noteInside = (target: Node) => Boolean(rootEl.value?.contains(target))
       </div>
     </div>
 
-    <div
-      v-for="(rect, at) in locateRects"
-      :key="`locate-${at}`"
-      class="pdf-locate"
-      data-locate-rect
-      :style="{ left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.w}px`, height: `${rect.h}px` }"
-    />
+    <!--
+      The frames over the pages, cut at the scroll area's edges: a passage
+      scrolled past the foot never paints over the footer line under it.
+    -->
+    <div class="pdf-overlay" data-pdf-overlay :style="{ width: `${markerSize.w}px`, height: `${markerSize.h}px` }">
+      <div
+        v-for="(rect, at) in locateRects"
+        :key="`locate-${at}`"
+        class="pdf-locate"
+        data-locate-rect
+        :style="{ left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.w}px`, height: `${rect.h}px` }"
+      />
 
-    <div class="pdf-marks">
-      <template v-for="mark in shownMarks" :key="mark.id">
-        <div
-          v-for="(rect, at) in mark.rects"
-          :key="`${mark.id}-${at}`"
-          class="pdf-mark"
-          :class="{ flash: mark.id === flashId }"
-          :data-ann-marker="mark.num"
-          :style="{ left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.w}px`, height: `${rect.h}px` }"
-        />
-      </template>
-      <template v-if="markerSize.w > 0">
-        <template v-for="mark in shownMarks" :key="`${mark.id}-badge`">
-          <span v-if="mark.rects[0] && mark.num > 0" class="pdf-badge" :class="{ flash: mark.id === flashId }" :data-ann-marker-badge="mark.num" :style="badgeAt(mark.rects[0])">
-            {{ mark.num }}
-          </span>
+      <div class="pdf-marks">
+        <template v-for="mark in shownMarks" :key="mark.id">
+          <div
+            v-for="(rect, at) in mark.rects"
+            :key="`${mark.id}-${at}`"
+            class="pdf-mark"
+            :class="{ flash: mark.id === flashId }"
+            :data-ann-marker="mark.num"
+            :style="{ left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.w}px`, height: `${rect.h}px` }"
+          />
         </template>
+        <template v-if="markerSize.w > 0">
+          <template v-for="mark in shownMarks" :key="`${mark.id}-badge`">
+            <span v-if="mark.rects[0] && mark.num > 0" class="pdf-badge" :class="{ flash: mark.id === flashId }" :data-ann-marker-badge="mark.num" :style="badgeAt(mark.rects[0])">
+              {{ mark.num }}
+            </span>
+          </template>
+        </template>
+      </div>
+
+      <template v-if="fx.phase.value">
+        <AnnotationFx v-for="box in fxBoxes" :key="box.key" :box="box" :phase="fx.phase.value" absolute />
       </template>
     </div>
-
-    <template v-if="fx.phase.value">
-      <AnnotationFx v-for="box in fxBoxes" :key="box.key" :box="box" :phase="fx.phase.value" absolute />
-    </template>
 
     <div v-if="!loading && !failure && count > 0" class="pdf-toolbar" data-pdf-toolbar>
       <button type="button" class="pdf-tool" data-pdf-zoom-out :title="t('rp.pdf.zoomOut')" @click="setZoom(zoom - 0.1)">
@@ -1150,6 +1157,16 @@ const noteInside = (target: Node) => Boolean(rootEl.value?.contains(target))
   --scale-round-y: 1px;
   position: absolute;
   inset: 0;
+}
+
+/* Over the scroll area only, physical like the frames' own coordinates, and under the zoom pill. */
+.pdf-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 5;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 /* A sent message's passage, found again: MiMo's amber. */

@@ -159,4 +159,14 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
     const layers = /\n\.pdf-layers \{([^}]*)\}/.exec(view)?.[1] ?? ""
     check("E-6: no fixed 1 left behind in the stylesheet", !/--user-unit:\s*1/.test(layers), layers)
   }
+
+  section("Round 20: E-5 the PDF view's frames stop at the scroll area")
+  {
+    const view = await read("src/renderer/src/components/right/PdfView.vue")
+    const overlay = /<div class="pdf-overlay"[\s\S]*?\n {4}<\/div>\n/.exec(view)?.[0] ?? ""
+    check("E-5: the found passage, the waiting frames and the working light are all inside the cut", /data-locate-rect/.test(overlay) && /class="pdf-marks"/.test(overlay) && /<AnnotationFx/.test(overlay), overlay.slice(0, 200))
+    const rule = /\n\.pdf-overlay \{([^}]*)\}/.exec(view)?.[1] ?? ""
+    check("E-5: the cut is a clip", /overflow:\s*hidden/.test(rule) && /pointer-events:\s*none/.test(rule), rule)
+    check("E-5: sized to the scroll area without its scrollbars", /markerSize\.value = \{ w: scroller\.value\.clientWidth, h: scroller\.value\.clientHeight \}/.test(view) && /:style="\{ width: `\$\{markerSize\.w\}px`, height: `\$\{markerSize\.h\}px` \}"/.test(view))
+  }
 }
