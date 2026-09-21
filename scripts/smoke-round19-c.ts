@@ -82,7 +82,8 @@ export async function roundNineteenLaneCChecks(check: Check, section: (name: str
     const park = body(script, "function park(")
     check(
       "the park measures the new question's row against the view, to the column's end",
-      /parkTarget\(view\.clientHeight, box\.height\)/.test(park) && /const end = column\.getBoundingClientRect\(\)\.bottom - viewTop/.test(park) && /parkRoom\(box\.top - viewTop, [^\n]*, view\.clientHeight, end\)/.test(park),
+      /parkTarget\(view\.clientHeight, box\.height\)/.test(park) && /const end = column\.getBoundingClientRect\(\)\.bottom - viewTop/.test(park) && /parkRoom\(box\.top - lift - viewTop, [^\n]*, view\.clientHeight, end\)/.test(park) &&
+        /const lift = new DOMMatrixReadOnly\(getComputedStyle\(row\)\.transform\)\.m42/.test(park),
       park.slice(0, 200),
     )
     check("puts the missing room on the question's own turn as a min-height floor", /turn\.style\.minHeight = `\$\{Math\.ceil\(turn\.getBoundingClientRect\(\)\.height \+ room\)\}px`\s+floored = turn/.test(park))
@@ -98,6 +99,24 @@ export async function roundNineteenLaneCChecks(check: Check, section: (name: str
     check("and once the reader has left it behind: scrolling up, or the turn ending", /if \(up \|\| distance > JUMP_DISTANCE\) releaseFloor\(\)/.test(script) && /if \(busy\) return\s+await nextTick\(\)\s+releaseFloor\(\)/.test(script))
     check("a release never moves the view", /if \(view\.scrollTop < top\) \{\s+holder\.style\.minHeight = floor/.test(body(script, "function releaseFloor(")))
     check("a waiting card does not pull a parked question away", /if \(!card \|\| card === was \|\| parked\(\)\) return/.test(script))
+  }
+
+  // ------------------------------------------------------------------ R19-CV-4
+  section("Round 19 (CV-4): a question sent while the conversation is open enters with MiMo's msg-in")
+  {
+    const opened = follow.enterMark(undefined, "ses_a", 6)
+    check("a conversation just opened animates nothing it already had", opened.from === Number.MAX_SAFE_INTEGER)
+    const sent = follow.enterMark(opened, "ses_a", 7)
+    check("a message added while it is open does, from its index on", sent.from === 6)
+    check("a conversation that loads in one go (0 -> many) animates nothing", follow.enterMark(follow.enterMark(undefined, "ses_b", 0), "ses_b", 12).from === Number.MAX_SAFE_INTEGER)
+    check("the first message of a new conversation does", follow.enterMark(follow.enterMark(undefined, "ses_c", 0), "ses_c", 1).from === 0)
+    check("switching conversation starts again", follow.enterMark(sent, "ses_b", 8).from === Number.MAX_SAFE_INTEGER)
+    check("the question row carries msg-in when it entered", /:class="\{ editing: editingAsked === turn\.id, 'msg-in': enters\(turn\) \}"/.test(stream))
+    const style = stream.slice(stream.indexOf("<style"))
+    check(
+      "msg-in fades in and rises 8px over 0.2s cubic-bezier(.2,.7,.2,1)",
+      /\.msg\.user\.msg-in \{\s+animation: msg-in 0\.2s cubic-bezier\(0\.2, 0\.7, 0\.2, 1\);/.test(style) && /@keyframes msg-in \{\s+0% \{\s+opacity: 0;\s+transform: translateY\(8px\);/.test(style),
+    )
   }
 
   // ------------------------------------------------------------------ R19-CV-3

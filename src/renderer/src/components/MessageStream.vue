@@ -34,6 +34,7 @@ import { useRestoreDraft } from "../lib/draft"
 import { cardCut, interruptedEnd, stepPart, stoppedEmpty } from "./parts/turn-end"
 import {
   consumePark,
+  enterMark,
   endDistance,
   heldBy,
   JUMP_DISTANCE,
@@ -46,6 +47,7 @@ import {
   scrolledUp,
   UP_SLACK,
   upwardRun,
+  type EnterMark,
   type Geometry,
 } from "../lib/scroll-follow"
 import { reducedMotion } from "../lib/modal"
@@ -990,6 +992,24 @@ const lastAsked = computed(() => {
 const lastTurnID = computed(() => turns.value.at(-1)?.id)
 
 /*
+ * MiMo's msg-in: a question sent while the conversation is on screen fades in
+ * and rises 8px over 200ms. Only messages added after it was opened count, so
+ * a conversation opened or loaded all at once draws still (lib/scroll-follow
+ * enterMark, over the message count as MiMo keeps it).
+ */
+let entering: EnterMark | undefined
+const enterFrom = computed(() => {
+  entering = enterMark(entering, shownID.value, shownMessages.value.length)
+  return entering.from
+})
+const messageAt = computed(() => new Map(shownMessages.value.map((message, at) => [message.id, at])))
+
+function enters(turn: Turn): boolean {
+  return (messageAt.value.get(turn.id) ?? -1) >= enterFrom.value
+}
+
+
+/*
  * 追求目标: how long a met goal took, which the last reply says. Only a goal
  * the judge passed leaves this note - one given up on, or out of tries, says
  * so in the bar above the box instead.
@@ -1117,8 +1137,10 @@ function park(turnID: string) {
   clearFloor()
   const viewTop = view.getBoundingClientRect().top - view.scrollTop
   const box = row.getBoundingClientRect()
+  // Where the row stands in the layout: its msg-in is still lifting it from 8px below.
+  const lift = new DOMMatrixReadOnly(getComputedStyle(row).transform).m42
   const end = column.getBoundingClientRect().bottom - viewTop
-  const room = parkRoom(box.top - viewTop, parkTarget(view.clientHeight, box.height), view.clientHeight, end)
+  const room = parkRoom(box.top - lift - viewTop, parkTarget(view.clientHeight, box.height), view.clientHeight, end)
   if (room > 0) {
     turn.style.minHeight = `${Math.ceil(turn.getBoundingClientRect().height + room)}px`
     floored = turn
@@ -1442,7 +1464,7 @@ defineExpose({ stepMessage, scroller })
         <div
           v-if="!latest && (turn.text !== undefined || turn.attachments?.length)"
           class="msg user"
-          :class="{ editing: editingAsked === turn.id }"
+          :class="{ editing: editingAsked === turn.id, 'msg-in': enters(turn) }"
           :data-message-id="turn.id"
         >
           <div v-if="turn.attachments?.length" class="sent">
@@ -2118,6 +2140,18 @@ defineExpose({ stepMessage, scroller })
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+}
+
+/* MiMo's msg-in, on a question sent while the conversation is open; the reduced-motion rule in base.css lands it at once. */
+.msg.user.msg-in {
+  animation: msg-in 0.2s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+@keyframes msg-in {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
 }
 
 /*

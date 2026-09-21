@@ -137,3 +137,23 @@ export function consumePark(sessionID: string, now = Date.now()): boolean {
   parks.delete(sessionID)
   return now - asked <= PARK_TTL
 }
+
+/*
+ * Which questions enter with MiMo's msg-in: only those added while the
+ * conversation is on screen. `from` is the first message index that animates;
+ * a conversation just opened, or loaded in one go, animates nothing.
+ */
+export interface EnterMark {
+  id: string | undefined
+  length: number
+  from: number
+}
+
+export function enterMark(mark: EnterMark | undefined, id: string | undefined, length: number): EnterMark {
+  if (!mark || mark.id !== id) return { id, length, from: Number.MAX_SAFE_INTEGER }
+  if (length > mark.length) {
+    const loaded = mark.length === 0 && length - mark.length > 1
+    return { id, length, from: loaded ? mark.from : Math.min(mark.from, mark.length) }
+  }
+  return length < mark.length ? { id, length, from: Math.min(mark.from, length) } : mark
+}
