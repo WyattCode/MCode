@@ -364,6 +364,8 @@ import { roundSeventeenMediaChecks } from "./smoke-round17-media"
 import { roundSeventeenViewerChecks } from "./smoke-round17-viewers"
 // Round 17, lane W: version control, review, worktrees, subagents and scheduled tasks (R17-W1 onwards).
 import { roundSeventeenWorkflowChecks } from "./smoke-round17-workflow"
+// Round 17, lane X: the mermaid diagram block and the motion rule that flattened it (R17-X1 onwards).
+import { roundSeventeenDiagramChecks } from "./smoke-round17-diagram"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7015,6 +7017,7 @@ async function main() {
   await roundSeventeenMediaChecks(check, section)
   await roundSeventeenViewerChecks(check, section)
   await roundSeventeenWorkflowChecks(check, section)
+  await roundSeventeenDiagramChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

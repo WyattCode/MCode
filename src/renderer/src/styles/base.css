@@ -916,6 +916,26 @@ html[data-motion="on"] *::after {
 }
 
 /*
+ * A drawing is measured while it is being drawn: mermaid gives a label's
+ * foreignObject a scratch size, reads back the size the text took and lays the
+ * graph out from that. A transition on every property, however short, hands
+ * that read the scratch size instead - every node comes back two thousand
+ * wide, and the diagram lands in a viewport of almost nothing. So inside a
+ * drawing a size change arrives at once; its animations still run their course.
+ */
+html[data-motion="on"] svg,
+html[data-motion="on"] svg * {
+  transition-duration: 0s !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-motion="system"] svg,
+  html[data-motion="system"] svg * {
+    transition-duration: 0s !important;
+  }
+}
+
+/*
  * Syntax colours carry GitHub's light and dark in each token (shiki's dual
  * themes). The light is the token's own colour; under a dark theme - chosen, or
  * followed from the system - the dark one takes over, as MiMo's stylesheet does.
