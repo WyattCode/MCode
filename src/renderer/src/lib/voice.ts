@@ -576,7 +576,7 @@ export function applyVoiceResult(
  * line. Anything already being spoken is cut off - two overlapping progress
  * lines are worse than the newer one alone.
  */
-export function speak(text: string, language: string): boolean {
+export function speak(text: string, language: string, sessionID?: string): boolean {
   const line = text.trim()
   if (!line || typeof window.speechSynthesis === "undefined") return false
   try {
@@ -584,6 +584,7 @@ export function speak(text: string, language: string): boolean {
     const utterance = new SpeechSynthesisUtterance(line.slice(0, 240))
     utterance.lang = language
     window.speechSynthesis.speak(utterance)
+    speaking = sessionID
     return true
   } catch {
     return false
@@ -600,11 +601,23 @@ export function speak(text: string, language: string): boolean {
  * pressing stop left the machine still narrating a turn that had ended.
  */
 export function hushSpeech(): void {
+  speaking = undefined
   try {
     window.speechSynthesis?.cancel()
   } catch {
     // No engine, or one that refused: nothing was being said.
   }
+}
+
+/* The conversation whose line is being read out, if one was named. */
+let speaking: string | undefined
+
+/**
+ * Stops the line being read out only if it is this conversation's: 停止 on a
+ * side chat must not cut off the main conversation's narration.
+ */
+export function hushSpeechOf(sessionID: string): void {
+  if (speaking === sessionID) hushSpeech()
 }
 
 /**

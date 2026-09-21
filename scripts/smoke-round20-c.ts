@@ -92,4 +92,16 @@ export async function roundTwentyLaneCChecks(check: Check, section: (name: strin
     const composer = await read("src/renderer/src/components/Composer.vue")
     check("the home composer's session is none", /const sessionID = computed\(\(\) => \(props\.fresh \? undefined/.test(composer) && /app\.setGoalMode\(!goalMode\.value, sessionID\.value\)/.test(composer))
   }
+
+  // ------------------------------------------------------------------ R20-C-7
+  section("Round 20 (C-7): stopping one conversation hushes only its own narration")
+  {
+    const abort = code(body(store, "  async function abort("))
+    const abortBody = abort.slice(0, abort.indexOf("\n  }\n"))
+    check("abort hushes the stopped conversation's line, not every line", /hushSpeechOf\(target\)/.test(abortBody) && !/hushSpeech\(\)/.test(abortBody), abortBody.slice(0, 300))
+    const voice = code(await read("src/renderer/src/lib/voice.ts"))
+    const of = body(voice, "export function hushSpeechOf(")
+    check("the voice knows whose line it is reading", /speaking = sessionID/.test(body(voice, "export function speak(")) && /if \(speaking === sessionID\) hushSpeech\(\)/.test(of), of)
+    check("and the spoken part names its conversation", /speak\(line, language\.value, source\.session\(\)\)/.test(await read("src/renderer/src/lib/speak-part.ts")))
+  }
 }
