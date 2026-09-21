@@ -13,22 +13,24 @@ import SessionSpine from "./components/SessionSpine.vue"
 import Composer from "./components/Composer.vue"
 import InfoPanel from "./components/InfoPanel.vue"
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
-import ArtifactsView from "./components/ArtifactsView.vue"
-import PluginsView from "./components/PluginsView.vue"
+// Pages, dialogs and previews that are not drawn at start: each its own chunk (see the note at TerminalDrawer).
+const ArtifactsView = defineAsyncComponent(() => import("./components/ArtifactsView.vue"))
+const PluginsView = defineAsyncComponent(() => import("./components/PluginsView.vue"))
 import RightPanel from "./components/RightPanel.vue"
 import CommandPalette, { type PaletteMode } from "./components/CommandPalette.vue"
 import QuestionDock from "./components/QuestionDock.vue"
 import { useQuestions } from "./stores/questions"
-import SettingsDialog from "./components/SettingsDialog.vue"
+import type SettingsDialogComponent from "./components/SettingsDialog.vue"
+const SettingsDialog = defineAsyncComponent(() => import("./components/SettingsDialog.vue"))
 import ProjectDialog from "./components/ProjectDialog.vue"
-import ImagePreview from "./components/ImagePreview.vue"
+const ImagePreview = defineAsyncComponent(() => import("./components/ImagePreview.vue"))
 import LiveEditPill from "./components/LiveEditPill.vue"
 import { acceptsDrop, outsideWindow } from "./lib/attach"
 import { fileRequest, reviewRequest } from "./lib/review-request"
 import { foldedMatches } from "./lib/find-folded"
 import { deliveryShown, setDeliveryView } from "./lib/delivered"
 import { closeImagePreview, closeVideoPreview, imagePreview, videoPreview } from "./lib/image-preview"
-import VideoPreview from "./components/VideoPreview.vue"
+const VideoPreview = defineAsyncComponent(() => import("./components/VideoPreview.vue"))
 import RenameDialog from "./components/RenameDialog.vue"
 import { markUpdateFailed, markUpdateReady, updateState } from "./components/UpdatePill.vue"
 import { interruptedReason } from "@shared/update-reason"
@@ -37,11 +39,11 @@ import Toasts from "./components/Toasts.vue"
 import ConfirmDialog from "./components/ConfirmDialog.vue"
 import NewProjectDialog from "./components/NewProjectDialog.vue"
 import type { MenuItem } from "./lib/menu"
-import ConnectDialog from "./components/ConnectDialog.vue"
+const ConnectDialog = defineAsyncComponent(() => import("./components/ConnectDialog.vue"))
 import { connectableProviders, groupProviders, type Group } from "./lib/connect"
 import SearchOverlay from "./components/SearchOverlay.vue"
 import ErrorBoundary from "./components/ErrorBoundary.vue"
-import ImportDialog from "./components/ImportDialog.vue"
+const ImportDialog = defineAsyncComponent(() => import("./components/ImportDialog.vue"))
 import {
   LANGUAGES,
   RTL_LANGUAGES,
@@ -51,6 +53,9 @@ import {
   sessionTitle,
   t,
   detectLanguage,
+  languageReady,
+  loadLanguage,
+  rememberLanguage,
 } from "./lib/i18n"
 import { toggleSteps } from "./lib/steps"
 import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
@@ -853,17 +858,27 @@ watch(
 
 // The i18n table reads a module-level ref, so mirror config into it whenever
 // the setting changes - every t() call re-renders off that ref.
+let languageAsked = 0
 watch(
   () => app.config?.language,
-  (next) => {
+  async (next) => {
     /*
      * Absent means nobody has chosen, so the machine's own preference decides.
      * An unknown code falls back to English rather than leaving the window
      * half-translated in whatever was showing before.
      */
-    if (!next) language.value = detectLanguage()
-    else if (LANGUAGES.some((entry) => entry.id === next)) language.value = next as Language
-    else language.value = "en"
+    const chosen: Language = !next ? detectLanguage() : LANGUAGES.some((entry) => entry.id === next) ? (next as Language) : "en"
+    /*
+     * Most tables are a chunk of their own (lib/i18n.ts): the words showing
+     * stay until the table asked for is in hand, so nothing is ever drawn
+     * half in one language. A later change of mind wins over a slower fetch.
+     */
+    const asked = ++languageAsked
+    if (!languageReady(chosen)) await loadLanguage(chosen)
+    if (asked !== languageAsked) return
+    language.value = chosen
+    // Remembered only once the settings have spoken, never the guess made before they arrive.
+    if (app.config) rememberLanguage(chosen)
     // Arabic reads the other way, and the layout has to turn with it.
     document.documentElement.dir = RTL_LANGUAGES.includes(language.value) ? "rtl" : "ltr"
     /*
@@ -1242,7 +1257,7 @@ function newSession() {
   if (!alreadyNewTask(app.current?.directory)) startIn(app.current?.directory)
 }
 
-const settingsDialog = ref<InstanceType<typeof SettingsDialog>>()
+const settingsDialog = ref<InstanceType<typeof SettingsDialogComponent>>()
 
 /**
  * MiMo's new task clears the screen before it runs: every menu, the search,

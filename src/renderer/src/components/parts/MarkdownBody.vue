@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import "katex/dist/katex.min.css"
 import { computed, getCurrentInstance, h, nextTick, onBeforeUnmount, onMounted, ref, render, watch } from "vue"
-import { renderReply, type ReplyBlock } from "../../lib/markdown"
+import { mathReady, renderReply, type ReplyBlock } from "../../lib/markdown"
 import { cachedHighlight, highlight, languageOf } from "../../lib/highlight"
 import { openImagePreview, openVideoPreview } from "../../lib/image-preview"
 import { useApp } from "../../stores/app"
@@ -80,6 +80,8 @@ function colourCode(html: string, liveBlock: boolean): string {
 // Safe to bind as HTML: renderReply escapes every piece of source it places, and hands diagrams over as source.
 const rendered = computed<ReplyBlock[]>(() => {
   void colourRound.value
+  // A formula drawn before KaTeX arrived showed its source; drawn again once it has.
+  void mathReady.value
   const isLive = props.live === true
   const list = renderReply(props.text, {
     codeActions: { copy: t("code.copy"), copied: t("code.copied"), label: t("code.copyLabel") },

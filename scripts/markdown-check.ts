@@ -20,7 +20,7 @@
  */
 import fs from "node:fs"
 import path from "node:path"
-import { detectPath, renderMarkdown, renderReply, type MarkdownOptions } from "../src/renderer/src/lib/markdown"
+import { detectPath, loadMath, renderMarkdown, renderReply, type MarkdownOptions } from "../src/renderer/src/lib/markdown"
 import { ABC_SOURCE_LIMIT } from "../src/renderer/src/lib/abc-play"
 import { WIDGET_SOURCE_LIMIT } from "../src/shared/widget"
 import {
@@ -34,6 +34,9 @@ import {
   readMediaMeta,
 } from "../src/shared/media-platform"
 import { isSvgFile, stripSvgHazards, svgSize } from "../src/renderer/src/lib/svg-safe"
+
+// KaTeX is fetched on first use in the app; the checks want formulas drawn from the first one.
+await loadMath()
 
 /* A reply while it is still arriving, with everything a finished reply gets. */
 const LIVE: MarkdownOptions = {

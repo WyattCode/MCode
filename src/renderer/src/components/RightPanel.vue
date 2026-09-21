@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { MenuItem } from "../lib/menu"
 import ContextMenu from "./ContextMenu.vue"
 import ConfirmDialog from "./ConfirmDialog.vue"
@@ -7,11 +7,13 @@ import PanelExpand from "./PanelExpand.vue"
 import RpReview from "./right/RpReview.vue"
 import RpFiles from "./right/RpFiles.vue"
 import RpChat from "./right/RpChat.vue"
-import RpBrowser from "./right/RpBrowser.vue"
+// Tabs that are opened rather than shown at start: each its own chunk, the Office viewers and pdf.js with theirs.
+const RpBrowser = defineAsyncComponent(() => import("./right/RpBrowser.vue"))
+import type RpBrowserComponent from "./right/RpBrowser.vue"
 import RpTerminal from "./right/RpTerminal.vue"
 import RpDiffTab from "./right/RpDiffTab.vue"
-import OfficeTab from "./right/OfficeTab.vue"
-import HtmlTab from "./right/HtmlTab.vue"
+const OfficeTab = defineAsyncComponent(() => import("./right/OfficeTab.vue"))
+const HtmlTab = defineAsyncComponent(() => import("./right/HtmlTab.vue"))
 import RpSubagents from "./right/RpSubagents.vue"
 import FloatingChat from "./right/FloatingChat.vue"
 import PaneBoundary from "./right/PaneBoundary.vue"
@@ -330,9 +332,9 @@ watch(browserShowing, (showing) => {
   if (!showing) window.mcode.browserBounds({ x: 0, y: 0, width: 0, height: 0 })
 })
 
-const browserPanes = ref<Record<string, InstanceType<typeof RpBrowser>>>({})
+const browserPanes = ref<Record<string, InstanceType<typeof RpBrowserComponent>>>({})
 function setBrowserPane(id: string, instance: unknown) {
-  if (instance) browserPanes.value[id] = instance as InstanceType<typeof RpBrowser>
+  if (instance) browserPanes.value[id] = instance as InstanceType<typeof RpBrowserComponent>
   else delete browserPanes.value[id]
 }
 

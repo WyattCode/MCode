@@ -80,6 +80,70 @@ function fluidsynthVendor(): Plugin {
   }
 }
 
+/*
+ * The language tables, one chunk per language. lib/i18n.ts keeps all eighteen
+ * in one file - the checks read and import it whole - and this takes every one
+ * but the default (zh-CN) and the fallback (en) out of the entry chunk as the
+ * file is compiled, leaving a loader for each in its LOADERS. Anything it does
+ * not find exactly as expected stops the build rather than shipping the tables
+ * in the entry again without a word.
+ */
+const I18N_FILE = resolve("src/renderer/src/lib/i18n.ts")
+const LANGUAGE_PREFIX = "\0mcode-language:"
+export const EAGER_LANGUAGES = ["zh-CN", "en"]
+
+export function splitLanguageTables(code: string): { code: string; tables: Map<string, string> } {
+  const tables = new Map<string, string>()
+  const block = /\nconst TABLES: Partial<Record<Language, Table>> = \{\n([\s\S]*?)\n\}\n/.exec(code)
+  const loaders = "\nconst LOADERS: Partial<Record<Language, () => Promise<Table>>> = {}\n"
+  if (!block || !code.includes(loaders)) throw new Error("languageChunks: TABLES or LOADERS is not where it was")
+  const kept: string[] = []
+  const load: string[] = []
+  let out = code
+  for (const line of block[1].split("\n")) {
+    const entry = /^ {2}(?:"([^"]+)": ([A-Za-z]+)|([A-Za-z]+)),$/.exec(line)
+    if (!entry) throw new Error(`languageChunks: unexpected TABLES line ${JSON.stringify(line)}`)
+    const id = entry[1] ?? entry[3]
+    const name = entry[2] ?? entry[3]
+    if (EAGER_LANGUAGES.includes(id)) {
+      kept.push(line)
+      continue
+    }
+    const start = out.indexOf(`\nconst ${name}: Table = {\n`)
+    const end = start === -1 ? -1 : out.indexOf("\n}\n", start)
+    if (end === -1) throw new Error(`languageChunks: no table ${name}`)
+    tables.set(id, out.slice(out.indexOf("{", start), end + 2))
+    out = out.slice(0, start) + out.slice(end + 2)
+    load.push(`  ${JSON.stringify(id)}: () => import(${JSON.stringify(LANGUAGE_PREFIX + id)}).then((table) => table.default),`)
+  }
+  out = out.replace(block[0], `\nconst TABLES: Partial<Record<Language, Table>> = {\n${kept.join("\n")}\n}\n`)
+  out = out.replace(loaders, `\nconst LOADERS: Partial<Record<Language, () => Promise<Table>>> = {\n${load.join("\n")}\n}\n`)
+  return { code: out, tables }
+}
+
+function languageChunks(): Plugin {
+  let tables = new Map<string, string>()
+  return {
+    name: "mcode-language-chunks",
+    enforce: "pre",
+    transform(code, id) {
+      if (resolve(id.split("?")[0]) !== I18N_FILE) return null
+      const split = splitLanguageTables(code)
+      tables = split.tables
+      return { code: split.code, map: null }
+    },
+    resolveId(id) {
+      return id.startsWith(LANGUAGE_PREFIX) ? id : null
+    },
+    load(id) {
+      if (!id.startsWith(LANGUAGE_PREFIX)) return null
+      const table = tables.get(id.slice(LANGUAGE_PREFIX.length))
+      if (!table) throw new Error(`languageChunks: ${id} asked for before lib/i18n.ts was compiled`)
+      return `export default ${table}`
+    },
+  }
+}
+
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
@@ -108,7 +172,7 @@ export default defineConfig({
   },
   renderer: {
     root: resolve("src/renderer"),
-    plugins: [vue(), pdfjsAssets(), fluidsynthVendor()],
+    plugins: [languageChunks(), vue(), pdfjsAssets(), fluidsynthVendor()],
     resolve: {
       alias: {
         "@": resolve("src/renderer/src"),

@@ -1,4 +1,5 @@
-import katex from "katex"
+import type Katex from "katex"
+import { ref } from "vue"
 import { ABC_SOURCE_LIMIT } from "./abc-play"
 import { WIDGET_FENCE, WIDGET_SOURCE_LIMIT } from "@shared/widget"
 
@@ -166,11 +167,40 @@ function pathHtml(hit: PathHit, paths: NonNullable<MarkdownOptions["paths"]>): s
 const TEX_CACHE = new Map<string, string>()
 const TEX_CACHE_SIZE = 500
 
+/*
+ * KaTeX is a chunk of its own, fetched the first time a formula is drawn (and
+ * at rest after start, see main.ts), as MiMo loads it: 600KB the window no
+ * longer parses before it can draw. A formula met before it has arrived shows
+ * its source for that moment; `mathReady` turning true redraws it, which is
+ * why a body that renders math reads it.
+ */
+let katex: typeof Katex | undefined
+let katexLoading: Promise<void> | undefined
+export const mathReady = ref(false)
+
+export function loadMath(): Promise<void> {
+  katexLoading ??= import("katex").then(
+    (module) => {
+      katex = module.default
+      mathReady.value = true
+    },
+    () => {
+      // Asked again the next time a formula is drawn.
+      katexLoading = undefined
+    },
+  )
+  return katexLoading
+}
+
 /* KaTeX's own markup. trust:false refuses \href, \url, \includegraphics and \htmlClass-type commands. */
 function renderTex(source: string, display: boolean): string {
   const key = `${display ? "D" : "I"}${source}`
   const known = TEX_CACHE.get(key)
   if (known !== undefined) return known
+  if (!katex) {
+    void loadMath()
+    return `<span class="md-math-pending">${escapeHtml(source)}</span>`
+  }
   let html: string
   try {
     html = katex.renderToString(source, {
