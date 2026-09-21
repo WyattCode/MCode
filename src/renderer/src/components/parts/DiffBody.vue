@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue"
-import { capDiff, displayName, markWords, parseDiffFiles, splitPath, splitRows, type DiffLayout } from "../../lib/diff-view"
+import { absoluteName, capDiff, displayName, markWords, parseDiffFiles, splitPath, splitRows, type DiffLayout } from "../../lib/diff-view"
 import { t } from "../../lib/i18n"
 
 /**
@@ -23,13 +23,17 @@ const props = defineProps<{
   layout?: DiffLayout
   /** Fills its parent (the tab); otherwise it takes MiMo's height for a step. */
   fill?: boolean
+  /** The project a step's patch was made in: its headers then name each file in full. */
+  root?: string
 }>()
 
 const capped = computed(() => capDiff(props.diff))
 const files = computed(() =>
   parseDiffFiles(capped.value.text).map((file) => ({
     ...file,
-    path: splitPath(displayName(file)),
+    path: splitPath(
+      displayName(props.root === undefined ? file : { name: absoluteName(file.name, props.root), oldName: file.oldName && absoluteName(file.oldName, props.root) }),
+    ),
     rows: file.hunks.map((hunk) => {
       const lines = markWords(hunk.lines)
       return { header: hunk.header, lines, split: splitRows(lines) }
@@ -47,32 +51,18 @@ const STATUS_ICON: Record<string, string[]> = {
   changed: [SHEET, CORNER, "M6 8.6h4M6 11h2.6"],
 }
 
-/* Folded files, by name, so a new patch for the same tab keeps what was folded. */
-const collapsed = ref(new Set<string>())
-
 /*
- * The files ticked off as read.
- *
- * MiMo's tick is diff2html's own checkbox and nothing more: it is not written
- * down anywhere, it does not fold the file, and the whole diff is drawn again
- * whenever the patch or the layout changes, which clears every tick. So it is
- * held here for this drawing of this patch alone.
+ * The square in front of a name in the file list, marked for what the patch
+ * does to the file; a changed file's square holds a dot, drawn in the markup.
  */
-const viewed = ref(new Set<string>())
-
-function markViewed(name: string, on: boolean) {
-  const next = new Set(viewed.value)
-  if (on) next.add(name)
-  else next.delete(name)
-  viewed.value = next
+const LIST_MARK: Record<string, string | undefined> = {
+  added: "M7 5.4v5.2M4.4 8h5.2",
+  deleted: "M4.4 8h5.2",
+  renamed: "M4.4 8h4.8M7.4 5.8 9.6 8l-2.2 2.2",
 }
 
-watch(
-  () => `${props.layout ?? ""}:${capped.value.text}`,
-  () => {
-    viewed.value = new Set()
-  },
-)
+/* Folded files, by name, so a new patch for the same tab keeps what was folded. */
+const collapsed = ref(new Set<string>())
 
 function toggle(name: string) {
   const next = new Set(collapsed.value)
@@ -132,6 +122,7 @@ defineExpose({ reveal })
     <pre v-if="!files.length" class="db-raw">{{ capped.text }}</pre>
     <template v-else>
       <!-- MiMo draws the list only where the diff fills the panel; a step's diff and a permission card's go without it. -->
+      <div v-if="fill" class="db-list-title" data-diff-files-heading>{{ t("rp.diff.filesChanged", { n: files.length }) }}</div>
       <ol v-if="fill" class="db-list" data-diff-file-list>
         <li
           v-for="(file, index) in files"
@@ -142,6 +133,11 @@ defineExpose({ reveal })
           @click="reveal(index)"
           @keydown.enter.space.self.prevent="reveal(index, true)"
         >
+          <svg class="db-list-icon" :class="file.status" viewBox="0 0 14 16" width="14" height="16" :data-diff-list-icon="file.status" aria-hidden="true">
+            <rect x="1.6" y="2.6" width="10.8" height="10.8" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.2" />
+            <path v-if="LIST_MARK[file.status]" :d="LIST_MARK[file.status]" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
+            <circle v-else cx="7" cy="8" r="2" fill="currentColor" />
+          </svg>
           <span class="db-name" :title="`${file.path.dir}${file.path.base}`">
             <span v-if="file.path.dir" class="db-dir">{{ file.path.dir }}</span><span class="db-base">{{ file.path.base }}</span>
           </span>
@@ -176,22 +172,17 @@ defineExpose({ reveal })
             </span>
             <span class="db-tag" :class="file.status" data-diff-tag>{{ t(`rp.diff.tag.${file.status}`) }}</span>
           </span>
-          <label class="db-viewed" data-diff-viewed @click.stop @keydown.stop>
-            <input type="checkbox" :checked="viewed.has(file.name)" @change="markViewed(file.name, ($event.target as HTMLInputElement).checked)" />
-            {{ t("rp.diff.viewed") }}
-          </label>
         </div>
 
         <div v-if="!collapsed.has(file.name) && layout !== 'split'" class="db-body" :data-diff-scroll="`${file.name}\u0000u`">
           <div class="db-table">
             <template v-for="(hunk, h) in file.rows" :key="h">
               <div class="db-row info">
-                <span class="db-ln" /><span class="db-ln" />
+                <span class="db-ln" />
                 <span class="db-code">{{ hunk.header }}</span>
               </div>
-              <div v-for="(line, l) in hunk.lines" :key="`${h}:${l}`" class="db-row" :class="[line.kind, { marked: Boolean(line.marks) }]">
-                <span class="db-ln">{{ line.old ?? "" }}</span>
-                <span class="db-ln">{{ line.new ?? "" }}</span>
+              <div v-for="(line, l) in hunk.lines" :key="`${h}:${l}`" class="db-row" :class="[line.kind, { paired: line.paired }]">
+                <span class="db-ln"><span class="db-num">{{ line.old ?? "" }}</span><span class="db-num">{{ line.new ?? "" }}</span></span>
                 <span class="db-code"><span class="db-prefix">{{ line.kind === "add" ? "+" : line.kind === "del" ? "-" : " " }}</span><template v-if="line.marks"><span v-for="(mark, m) in line.marks" :key="m" :class="{ 'db-mark': mark.changed }">{{ mark.text }}</span></template><template v-else>{{ line.text }}</template></span>
               </div>
             </template>
@@ -210,7 +201,7 @@ defineExpose({ reveal })
                   v-for="(pair, p) in hunk.split"
                   :key="`${h}:${p}`"
                   class="db-row"
-                  :class="[pair[side] ? pair[side]!.kind : 'empty', { marked: Boolean(pair[side]?.marks) }]"
+                  :class="[pair[side] ? pair[side]!.kind : 'empty', { paired: pair[side]?.paired }]"
                 >
                   <span class="db-ln">{{ pair[side] ? (side === "left" ? pair[side]!.old : pair[side]!.new) : "" }}</span>
                   <span class="db-code"><span class="db-prefix">{{ pair[side]?.kind === "add" ? "+" : pair[side]?.kind === "del" ? "-" : " " }}</span><template v-if="pair[side]?.marks"><span v-for="(mark, m) in pair[side]!.marks" :key="m" :class="{ 'db-mark': mark.changed }">{{ mark.text }}</span></template><template v-else>{{ pair[side]?.text ?? "" }}</template>&#8203;</span>
@@ -228,7 +219,14 @@ defineExpose({ reveal })
 <style scoped>
 /*
  * The diff colours are diff2html's, which MiMo keeps in its light theme, and
- * MiMo's GitHub-dark set under the dark theme.
+ * MiMo's GitHub-dark set under the dark theme, laid over the panel's own
+ * surface - so a dark diff's lines sit on the panel and only the gutter is
+ * GitHub's near-black, as measured on MiMo 26.920.
+ *
+ * diff2html has four colours this component has no names for: a pair's two
+ * sides, and the words inside them. They are the same roles one level down,
+ * so the line colours are named again inside a pair and again inside a marked
+ * word, rather than given names of their own.
  */
 .db-scroll {
   --d2h-bg: #fff;
@@ -252,9 +250,19 @@ defineExpose({ reveal })
   max-height: 480px;
   overflow: auto;
   color: var(--d2h-color);
-  background: var(--d2h-bg);
+  background: var(--surface-raised);
   border: 1px solid var(--d2h-border);
   border-radius: 8px;
+}
+
+.db-scroll .paired {
+  --d2h-del-bg: #fdf2d0;
+  --d2h-ins-bg: #ded;
+}
+
+.db-scroll .db-mark {
+  --d2h-del-bg: #ffb6ba;
+  --d2h-ins-bg: #97f295;
 }
 
 .db-scroll.fill {
@@ -264,9 +272,19 @@ defineExpose({ reveal })
   border: 0;
 }
 
+:root[data-theme="dark"] .db-scroll .paired {
+  --d2h-del-bg: #d2992233;
+  --d2h-ins-bg: #2ea04340;
+}
+
+:root[data-theme="dark"] .db-scroll .db-mark {
+  --d2h-del-bg: #f8514966;
+  --d2h-ins-bg: #2ea04366;
+}
+
 :root[data-theme="dark"] .db-scroll {
   --d2h-bg: #0d1117;
-  --d2h-color: #e6edf3;
+  --d2h-color: #f4f4f5;
   --d2h-dim: #6e7681;
   --d2h-border: #30363d;
   --d2h-line-border: #21262d;
@@ -284,9 +302,19 @@ defineExpose({ reveal })
 }
 
 @media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .db-scroll .paired {
+    --d2h-del-bg: #d2992233;
+    --d2h-ins-bg: #2ea04340;
+  }
+
+  :root:not([data-theme="light"]) .db-scroll .db-mark {
+    --d2h-del-bg: #f8514966;
+    --d2h-ins-bg: #2ea04366;
+  }
+
   :root:not([data-theme="light"]) .db-scroll {
     --d2h-bg: #0d1117;
-    --d2h-color: #e6edf3;
+    --d2h-color: #f4f4f5;
     --d2h-dim: #6e7681;
     --d2h-border: #30363d;
     --d2h-line-border: #21262d;
@@ -312,7 +340,13 @@ defineExpose({ reveal })
   white-space: pre-wrap;
 }
 
-/* The file list: a line per file, a rule between. */
+/* The file list under diff2html's bold count, a line per file, a rule between. */
+.db-list-title {
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-weight: 700;
+  line-height: 1.5;
+}
+
 .db-list {
   margin: 0 0 10px;
   padding: 0;
@@ -332,6 +366,13 @@ defineExpose({ reveal })
 
 .db-list-line:last-child {
   border-bottom: 0;
+}
+
+/* A name in the list is diff2html's link blue in either theme, its folders dimmed. */
+.db-list .db-name {
+  --d2h-color: #3572b0;
+
+  color: var(--d2h-color);
 }
 
 .db-name {
@@ -447,44 +488,46 @@ defineExpose({ reveal })
   color: var(--d2h-del-label);
 }
 
-/* The word for what the patch did, beside the name. */
+/*
+ * The word for what the patch did, beside the name, and the square before it
+ * in the list: diff2html's status colours - green, red, yellow for a change and
+ * blue for a move. The last two have no name here, so the foreground is named
+ * again on the element that wears them; MiMo's dark set does not restate them,
+ * so they are the light values in either theme, as measured on 26.920.
+ */
 .db-tag {
   flex: none;
   margin-inline-start: 8px;
   padding: 1px 6px;
+  color: var(--d2h-color);
   border: 1px solid currentcolor;
   border-radius: 6px;
   font-size: calc(11px * var(--ui-font-scale, 1));
   line-height: 1.5;
   text-transform: uppercase;
   white-space: nowrap;
-  opacity: 0.85;
 }
 
-.db-tag.added {
+.db-list-icon {
+  flex: none;
+  margin-inline-end: 2px;
+  color: var(--d2h-color);
+}
+
+.db-scroll :is(.db-tag, .db-list-icon).changed {
+  --d2h-color: #d0b44c;
+}
+
+.db-scroll :is(.db-tag, .db-list-icon).renamed {
+  --d2h-color: #3572b0;
+}
+
+:is(.db-tag, .db-list-icon).added {
   color: var(--d2h-ins-label);
 }
 
-.db-tag.deleted {
+:is(.db-tag, .db-list-icon).deleted {
   color: var(--d2h-del-label);
-}
-
-/* Ticked off as read: MiMo's own box, which does nothing but stay ticked. */
-.db-viewed {
-  display: flex;
-  flex: none;
-  gap: 5px;
-  align-items: center;
-  margin-inline-start: auto;
-  color: var(--d2h-dim);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  cursor: pointer;
-  user-select: none;
-}
-
-.db-viewed input {
-  margin: 0;
-  cursor: pointer;
 }
 
 .db-body,
@@ -505,43 +548,70 @@ defineExpose({ reveal })
   border-inline-start: 1px solid var(--d2h-line-border);
 }
 
+/*
+ * diff2html's gutter as MiMo lays it out: a table cell that scrolls with the
+ * code. Its 7.5em is a preferred width, so once the longest line needs the room
+ * the cell gives way down to its least - one number's 3.5em and its borders -
+ * and the two numbers, floated to either side of it, drop one under the other.
+ * A grid whose columns every row shares keeps that, where a flex row would
+ * squeeze each line on its own.
+ */
 .db-table {
-  min-width: max-content;
+  display: grid;
+  grid-template-columns: minmax(min-content, 7.5em) minmax(max-content, 1fr);
   font-family: var(--font-mono);
   font-size: calc(13px * var(--code-font-scale, 1));
   line-height: 1.5;
 }
 
+.db-side .db-table {
+  grid-template-columns: 4em minmax(max-content, 1fr);
+}
+
 .db-row {
-  display: flex;
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
 }
 
 .db-ln {
-  position: sticky;
-  inset-inline-start: 0;
   box-sizing: border-box;
-  flex: none;
-  width: 3.5em;
-  padding: 0 0.5em;
   overflow: hidden;
   color: var(--d2h-dim);
   text-align: end;
-  text-overflow: ellipsis;
   background: var(--d2h-bg);
-  border-inline-end: 1px solid var(--d2h-line-border);
+  border: solid var(--d2h-line-border);
+  border-width: 0 1px;
   user-select: none;
 }
 
-.db-ln + .db-ln {
-  inset-inline-start: 3.5em;
+/* diff2html's zero-width space, so a cell with no number still holds a line. */
+.db-ln::after {
+  content: "\200b";
 }
 
 .db-side .db-ln {
-  width: 4em;
+  padding: 0 0.5em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+.db-num {
+  float: inline-start;
+  box-sizing: border-box;
+  width: 3.5em;
+  padding: 0 0.5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.db-num + .db-num {
+  float: inline-end;
+}
+
+/* A line beside a gutter that stacked its two numbers sits between them, as in a table cell. */
 .db-code {
-  flex: 1;
+  align-self: center;
   padding: 0 0.5em;
   white-space: pre;
 }
@@ -552,53 +622,53 @@ defineExpose({ reveal })
   user-select: none;
 }
 
-.db-row.add,
-.db-row.add .db-ln {
+/*
+ * A coloured line is coloured once, gutter and code alike, over the panel: the
+ * gutter lets the row's colour through rather than laying its own on top, as
+ * diff2html colours each cell once. A pair - diff2html's "change" - takes its
+ * own colours, and a word only one side of it has takes the brighter pair.
+ */
+.db-row.add {
   background: var(--d2h-ins-bg);
+}
+
+.db-row.del {
+  background: var(--d2h-del-bg);
+}
+
+.db-row.info {
+  color: var(--d2h-dim);
+  background: var(--d2h-info-bg);
+}
+
+.db-row.empty {
+  background: var(--d2h-empty-bg);
+}
+
+.db-row:is(.add, .del, .info, .empty) .db-ln {
+  background: transparent;
+}
+
+.db-row.add .db-ln {
   border-color: var(--d2h-ins-border);
 }
 
-.db-row.del,
 .db-row.del .db-ln {
-  background: var(--d2h-del-bg);
   border-color: var(--d2h-del-border);
 }
 
-/*
- * A pair that was marked word by word: the line itself steps back so the words
- * only one side has are what the eye lands on, MiMo's own emphasis drawn in
- * this app's diff colours.
- */
-.db-row.add.marked,
-.db-row.add.marked .db-ln {
-  background: color-mix(in srgb, var(--d2h-ins-bg) 55%, var(--d2h-bg));
-}
-
-.db-row.del.marked,
-.db-row.del.marked .db-ln {
-  background: color-mix(in srgb, var(--d2h-del-bg) 55%, var(--d2h-bg));
+.db-row.info .db-ln {
+  border-color: var(--d2h-info-border);
 }
 
 .db-row.add .db-mark {
-  background: color-mix(in srgb, var(--d2h-ins-label) 32%, transparent);
+  background: var(--d2h-ins-bg);
   border-radius: 0.2em;
 }
 
 .db-row.del .db-mark {
-  background: color-mix(in srgb, var(--d2h-del-label) 32%, transparent);
+  background: var(--d2h-del-bg);
   border-radius: 0.2em;
-}
-
-.db-row.info,
-.db-row.info .db-ln {
-  color: var(--d2h-dim);
-  background: var(--d2h-info-bg);
-  border-color: var(--d2h-info-border);
-}
-
-.db-row.empty,
-.db-row.empty .db-ln {
-  background: var(--d2h-empty-bg);
 }
 
 /* The diff-marks setting, as MiMo reads it: colour alone keeps the prefix's room but blanks it. */
@@ -606,11 +676,19 @@ html[data-diff-marks="color"] .db-prefix {
   visibility: hidden;
 }
 
+/* Signs alone: the lines go plain and only the gutter keeps the colour. */
 html[data-diff-marks="signs"] .db-row.add,
 html[data-diff-marks="signs"] .db-row.del,
-html[data-diff-marks="signs"] .db-row.marked,
 html[data-diff-marks="signs"] .db-mark {
   background: transparent;
+}
+
+html[data-diff-marks="signs"] .db-row.add .db-ln {
+  background: var(--d2h-ins-bg);
+}
+
+html[data-diff-marks="signs"] .db-row.del .db-ln {
+  background: var(--d2h-del-bg);
 }
 
 /* MiMo's cap note: 12px muted, under the diff. */
