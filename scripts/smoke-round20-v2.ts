@@ -62,4 +62,23 @@ export async function roundTwentyV2Checks(check: Check, section: (name: string) 
         /:root:not\(\[data-theme="light"\]\) \.app\[data-platform="win32"\] \.side-panel-toggle,[^{]*\{\s*color: #ececec;/.test(shell),
     )
   }
+
+  const composer = code(await read("src/renderer/src/components/Composer.vue"))
+  const styles = composer.slice(composer.indexOf("<style"))
+  /** Every rule written for exactly this selector, in order - the last one is what wins. */
+  const rules = (selector: string) => {
+    const found: string[] = []
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    for (const match of styles.matchAll(new RegExp(`(?:^|\\n)\\s*${escaped} \\{([^}]*)\\}`, "g"))) found.push(match[1])
+    return found
+  }
+
+  // ------------------------------------------------------------------ R20-V2-4
+  section("Round 20 (V2-4): the plus and the microphone have no edge and no fill, as MiMo's #plus-btn and #mic-btn")
+  {
+    const round = /\.attach,\s*\.mic \{([^}]*)\}/.exec(styles)?.[1] ?? ""
+    check("no border", /border: 0;/.test(round) && !/border: 1px/.test(round), round)
+    check("no fill", /background: transparent;/.test(round), round)
+    check("the hover fill is kept", /\.attach:hover,\s*\.attach\.open,\s*\.mic:not\(\.on\):hover \{[^}]*background: var\(--surface-hover\)/.test(styles))
+  }
 }

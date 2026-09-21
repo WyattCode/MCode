@@ -5545,7 +5545,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   color: color-mix(in srgb, var(--text-base) 87%, transparent);
 }
 
-/* MiMo's round buttons, the plus and the microphone: 30px circles on a hairline over the page colour. */
+/* MiMo's round buttons in the composer, the plus and the microphone: 30px circles with no edge and no fill until hovered. */
 .attach,
 .mic {
   display: inline-flex;
@@ -5556,8 +5556,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   height: 30px;
   padding: 0;
   color: color-mix(in srgb, var(--text-base) 87%, transparent);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
+  background: transparent;
+  border: 0;
   border-radius: 50%;
 }
 
