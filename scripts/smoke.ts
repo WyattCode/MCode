@@ -381,6 +381,8 @@ import { atomicLeftoverChecks } from "./smoke-atomic-leftovers"
 import { roundEighteenSettingsNavChecks } from "./smoke-round18-settings-nav"
 // Round 18, lane U: the small （AI生成） marker beside a score and an inline sound (R18-U14).
 import { roundEighteenAigcMarkChecks } from "./smoke-round18-aigc-marks"
+// The search overlay finds text inside a word again, through a trigram index (R15-S3's open item).
+import { substringSearchChecks } from "./smoke-substring-search"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7010,6 +7012,7 @@ async function main() {
   await atomicLeftoverChecks(check, section)
   await roundEighteenSettingsNavChecks(check, section)
   await roundEighteenAigcMarkChecks(check, section)
+  await substringSearchChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

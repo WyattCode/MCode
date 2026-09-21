@@ -18,8 +18,10 @@ import { SqlDatabase, STORE_PRAGMAS, quarantineSqlite, removeSqlite, sqliteDamag
  * into characters (history/text.ts) - rather than the body itself. They read
  * it through a view that falls back to `body`, so a row the cutting did not
  * change stores an empty column instead of a second copy of itself.
+ * 3: `history_part_trigram`, a trigram index of what the search overlay reads
+ * (text and tool rows), so a query can be found inside a word again.
  */
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -53,6 +55,37 @@ END;
 CREATE TRIGGER IF NOT EXISTS history_part_au AFTER UPDATE ON history_part BEGIN
   INSERT INTO history_part_fts(history_part_fts, rowid, search_body) VALUES ('delete', old.id, CASE WHEN old.search_body = '' THEN old.body ELSE old.search_body END);
   INSERT INTO history_part_fts(rowid, search_body) VALUES (new.id, CASE WHEN new.search_body = '' THEN new.body ELSE new.search_body END);
+END;
+/*
+ * The search overlay's index (R15-S3): every run of three characters in the
+ * rows it reads - what was asked, what was answered and each tool's output -
+ * so a query is found wherever it sits, \`figur\` inside \`configuration\` as
+ * much as 配置文件 inside a sentence. MiMo's overlay matches anywhere in the
+ * text too; the word index above cannot, since it only knows whole words and
+ * their beginnings.
+ *
+ * Only the first 20,000 characters of a row, which is as much of a message
+ * as the overlay reads (MESSAGE_SEARCH_CHARS, MiMo's cap): a long tool output
+ * past that could only name a conversation the overlay then does not match.
+ *
+ * Contentless (\`content=''\`): only positions are kept, never a third copy of
+ * the text, and \`contentless_delete\` lets a row go by its id alone. Moving a
+ * conversation to another project rewrites its rows' \`project\`, which is why
+ * the update trigger only listens to the columns that change what is indexed.
+ */
+CREATE INDEX IF NOT EXISTS history_part_time ON history_part (time_created);
+CREATE VIRTUAL TABLE IF NOT EXISTS history_part_trigram USING fts5(
+  body, content='', contentless_delete=1, tokenize='trigram'
+);
+CREATE TRIGGER IF NOT EXISTS history_part_trigram_ai AFTER INSERT ON history_part WHEN new.kind IN ('text', 'tool') BEGIN
+  INSERT INTO history_part_trigram(rowid, body) VALUES (new.id, substr(new.body, 1, 20000));
+END;
+CREATE TRIGGER IF NOT EXISTS history_part_trigram_ad AFTER DELETE ON history_part WHEN old.kind IN ('text', 'tool') BEGIN
+  DELETE FROM history_part_trigram WHERE rowid = old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS history_part_trigram_au AFTER UPDATE OF body, kind ON history_part BEGIN
+  DELETE FROM history_part_trigram WHERE rowid = old.id;
+  INSERT INTO history_part_trigram(rowid, body) SELECT new.id, substr(new.body, 1, 20000) WHERE new.kind IN ('text', 'tool');
 END;
 CREATE TABLE IF NOT EXISTS history_session (
   session_id TEXT PRIMARY KEY,

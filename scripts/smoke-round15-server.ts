@@ -20,7 +20,7 @@ import { Storage } from "../src/server/storage"
 import { SessionStore } from "../src/server/session/store"
 import { Snapshots } from "../src/server/session/snapshot"
 import { ArtifactStore } from "../src/server/artifact/store"
-import { IndexDatabase } from "../src/server/history/database"
+import { IndexDatabase, SCHEMA_VERSION } from "../src/server/history/database"
 import { startHistory, stopHistory } from "../src/server/history/service"
 import { ftsQuery, plainSnippet, searchColumn, searchText } from "../src/server/history/text"
 import { searchMessages } from "../src/server/search"
@@ -263,7 +263,7 @@ export async function roundFifteenServerChecks(check: Check, section: (name: str
     const second = await IndexDatabase.open(file)
     check("R15-S3: one written by the older schema is made again on its own", second.openedAs === "recreated", second.openedAs)
     const version = Number((await second.db.get<{ user_version: number }>("PRAGMA user_version"))?.user_version ?? 0)
-    check("R15-S3: at the schema this build reads", version === 2, version)
+    check("R15-S3: at the schema this build reads", version === SCHEMA_VERSION && version >= 2, version)
     await second.close()
   }
 

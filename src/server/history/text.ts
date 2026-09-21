@@ -87,6 +87,31 @@ export function ftsQuery(raw: string, joiner: "AND" | "OR", prefixLast = false):
     .join(` ${joiner} `)
 }
 
+/** How long a piece of a query must be, in characters, for the trigram index to look it up. */
+export const TRIGRAM_CHARS = 3
+
+/**
+ * The pieces of a query the search overlay looks for inside the text, as
+ * written: split at white space, and at the two characters a tool row's JSON
+ * escapes (`"` and `\`), since the row holds `\"` where the output had `"`.
+ *
+ * The overlay's own matcher (shared/search-score.ts) reads the whole query as
+ * one string; each piece of it is a substring of any text that matches it
+ * exactly, so asking for every piece names a superset that the matcher then
+ * narrows down.
+ */
+export function substringPieces(raw: string): string[] {
+  return raw.split(/[\s"\\]+/u).filter(Boolean)
+}
+
+/**
+ * A piece as a trigram phrase, which FTS5 matches anywhere inside a row,
+ * ignoring case; or nothing when it is too short to have a trigram.
+ */
+export function trigramPhrase(piece: string): string | undefined {
+  return [...piece].length >= TRIGRAM_CHARS ? `"${piece.replaceAll('"', "")}"` : undefined
+}
+
 /**
  * Inline base64 media replaced by a short marker naming its type.
  *

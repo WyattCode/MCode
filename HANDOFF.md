@@ -591,7 +591,7 @@
 **后端核心（R15-S）**
 - S1 重做必定失败：`runner.ts` 两处 `moveSnapshot` 只搬 `files`，丢了 `directory` / `messages`，正文搬进 per-project store 后就再也读不回来，条目还卡在 redo 栈。smoke 原来的 Undo 段用的是旧的内联形态所以看不见，已改成今天的 blob 形态（`e54bf19`）
 - S2 收尾照片失败（目录被删/改名、git 超时、磁盘满）后 Recording 永远留在 `live`：之后该会话每回合都被记成不可撤销、理由是假的「另一个对话改了 X」，store 永不回收。清理移进 `finally`，开头照片的镜像洞也补上（`6a89a77`、`cc59258`）
-- S3 中文搜不到（第十一轮改索引搜索引入）：`unicode61` 不切分连续汉字。改为另存一列 `search_body`（相邻 CJK 之间插空格）供 FTS 索引，查询同样切分后按短语匹配，浮层最后一个词当前缀；只有被切过的正文才存第二份——纯英文档案索引 +0%、全中文 +67%。`SCHEMA_VERSION` 2，旧索引启动自动重建。4000 条 parts 下英文 0.13→0.12ms，`配置` 0→1000 条命中。仍未恢复的是英文词中子串（`figur` 搜不到 `configuration`）（`94b723c`、`a858ca1`）
+- S3 中文搜不到（第十一轮改索引搜索引入）：`unicode61` 不切分连续汉字。改为另存一列 `search_body`（相邻 CJK 之间插空格）供 FTS 索引，查询同样切分后按短语匹配，浮层最后一个词当前缀；只有被切过的正文才存第二份——纯英文档案索引 +0%、全中文 +67%。`SCHEMA_VERSION` 2，旧索引启动自动重建。4000 条 parts 下英文 0.13→0.12ms，`配置` 0→1000 条命中。（`94b723c`、`a858ca1`）。**[已完成] 英文词中子串**（`figur` → `configuration`）：MiMo 26.920 浮层不走索引，对已载入对话逐条消息先找原样子串（1000 分 + 靠前加分 + 词边界加分）、找不到再按字符顺序散配，最多 50 条、同分按更新时间；其引擎 `history` 工具用 `unicode61 remove_diacritics 1`（只认整词）。于是模型的 `history` 工具不动；浮层的候选改由新表 `history_part_trigram`（FTS5 trigram、contentless + contentless_delete，只收浮层会读的 text / tool 行、每行前 20000 字 = MiMo 每条消息读取上限）给出：查询按空白与 `"` `\` 切块，≥3 字的块全部须在同一条消息里（INTERSECT），更短的块交给前端打分；全是 1–2 字的查询则并用旧的词索引（全量历史，词首 / 中文任意长度）与最新 3000 行 `instr` 扫描。候选取命中对话里最新的 50 个（排除归档 / 侧聊 / 子智能体）。`SCHEMA_VERSION` 3，旧索引启动自动重建。合成 4020 条 parts（4.07MB 文本）：索引 8.83→19.23MB（trigram 10.1MB）、首次建索引 1.7→2.9s；候选查询 `configuration` 1.23→0.77ms、`figur` 0→50 个对话 0.39ms、`the` 1.34→0.38ms、`配置` 0.19→8.5ms、`co` 6.2→13ms（多了扫描）；`history` 工具不变（0.47–0.55ms）。仍不同：散配（如 `cfg` → `config`）只在候选对话内生效，候选本身不按散配找
 - S4 删会话后残留的 `ArtifactStore.dirty` / `repeatsAllowed` / `worktreeHits`（`24d270c`）；S5 用量「脏」标记确认自愈，改为用检查钉住（`ff33463`）
 
 **工具 / MCP / 定时（R15-T）**
@@ -1064,5 +1064,5 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
 0. **第十六轮已完成**（编码能力照 MiMo 重做，见上一节）。剩下的尾巴：MiMo 的「已查看」勾选框是否可见、深色差异配色与每文件边框，这三条要真截一次 MiMo 才能定；`notebook_edit` 的改动进不了撤销（`EDITING` 里没有它）。设置导航列溢出已修（`753c0a7`，见第十五轮 R15-U3 一节）。
 1. 用真实模型实际使用已装好的版本，按看到的问题逐条修。
 2. [已完成] 设置导航列在默认字号下超出自身盒子——照 MiMo 的 `.sn-scroll` 让列表在列内滚动（`753c0a7`），各行位置与高度不变、宽 +2.5px。
-3. 其他小尾巴（可选）：`update-transaction.json` 与 `composer-input.ts` 走 `writeAtomicSync`；清理崩溃留下的 `*.tmp`；英文词中子串搜索（`figur` → `configuration`）仍未恢复；偶发失败的两处 smoke 检查（见「约定与坑」）。
+3. 其他小尾巴（可选）：`update-transaction.json` 与 `composer-input.ts` 走 `writeAtomicSync`；清理崩溃留下的 `*.tmp`；[已完成] 英文词中子串搜索（`figur` → `configuration`，trigram 索引，见 R15-S3）；偶发失败的两处 smoke 检查（见「约定与坑」）。
 4. 新页面（钩子、CLI 插件、SSH 连接）用户已决定不做。
