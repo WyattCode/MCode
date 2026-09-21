@@ -85,4 +85,20 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
     check("D-8: the list's inset is on the logical start", /padding-inline:\s*11px 0;/.test(rule) && /padding-block:\s*0 12px;/.test(rule), rule)
     check("D-8: no physical left inset is left behind", !/padding(-left)?:[^;]*11px/.test(rule.replace(/padding-inline:[^;]*;/, "")), rule)
   }
+
+  section("Round 20: D-9 the edited-files card reviews a notebook edit's recorded diff")
+  {
+    const lib = (await import("../src/renderer/src/lib/edited-files")) as Record<string, unknown>
+    const recorded = lib.recordedPatch as ((parts: readonly unknown[]) => string) | undefined
+    check("D-9: the card's fallback patch is a function smoke can hold", typeof recorded === "function")
+    if (recorded) {
+      const diff = (file: string) => `--- a/${file}\n+++ b/${file}\n@@ -1 +1 @@\n-a\n+b\n`
+      const tool = (name: string, file: string, status = "completed") => ({ type: "tool", name, status, id: file, metadata: { diff: diff(file) } })
+      const patch = recorded([tool("edit", "a.ts"), tool("notebook_edit", "n.ipynb"), tool("write", "w.ts"), tool("bash", "x.sh"), tool("notebook_edit", "bad.ipynb", "error")])
+      check("D-9: a notebook edit's diff is reviewed with the edits and writes", patch.includes("n.ipynb") && patch.includes("a.ts") && patch.includes("w.ts"), patch)
+      check("D-9: a shell call or a failed call adds nothing", !patch.includes("x.sh") && !patch.includes("bad.ipynb"), patch)
+    }
+    const card = await read("src/renderer/src/components/EditedFilesCard.vue")
+    check("D-9: the card uses it, with no list of its own", /patch = recordedPatch\(props\.parts\)/.test(card) && !/\["edit", "write"\]/.test(card))
+  }
 }
