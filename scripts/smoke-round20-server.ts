@@ -10,6 +10,7 @@ import path from "node:path"
 import JSZip from "jszip"
 import type { Check } from "./smoke-round5"
 import { labelDelivered, labelHtml, officeAigc } from "../src/server/tool/aigc-label"
+import { listExternalSessions, readExternalSession } from "../src/server/external-sessions"
 
 async function zipOf(parts: Record<string, string>): Promise<Buffer> {
   const zip = new JSZip()
@@ -87,6 +88,35 @@ export async function roundTwentyServerChecks(check: Check, section: (name: stri
       const headless = `<html><head><script>let s = "</head>"</script></head><p>x</p></html>`
       const headOut = labelHtml(headless) ?? ""
       check("R20-B5 html: and with no body, a </head> inside a script is passed over too", headOut.includes(`<script>let s = "</head>"</script>`) && headOut.indexOf("data-mcode-aigc=") > headOut.indexOf("</script></head>"), headOut)
+    }
+
+    // ---------------------------------------------------------------- R20-B3
+    section("Round 20 (B3): another tool's conversations are this project's whatever case its path is written in")
+    if (process.platform === "win32" || process.platform === "darwin") {
+      const project = path.join(root, "Case Project")
+      await fs.mkdir(project, { recursive: true })
+      const config = path.join(root, "claude-home")
+      const folder = path.join(config, "projects", path.resolve(project).replace(/[^A-Za-z0-9-]/g, "-"))
+      await fs.mkdir(folder, { recursive: true })
+      const row = { type: "user", cwd: project, timestamp: "2026-09-20T10:00:00Z", message: { content: [{ type: "text", text: "case check" }] } }
+      await fs.writeFile(path.join(folder, "sess-case.jsonl"), `${JSON.stringify(row)}\n`, "utf8")
+      // The same folder as a window may name it: every letter of the path in the other case.
+      const swapped = project.replace(/[A-Za-z]/g, (letter) => (letter === letter.toUpperCase() ? letter.toLowerCase() : letter.toUpperCase()))
+      const previous = process.env.CLAUDE_CONFIG_DIR
+      process.env.CLAUDE_CONFIG_DIR = config
+      try {
+        const listed = listExternalSessions({ project: swapped })
+        check("R20-B3 the list finds the conversation when the project's path differs only in case", listed.sessions.some((session) => session.sessionID === "sess-case"), listed)
+        const read = readExternalSession({ sessionID: "sess-case", project: swapped })
+        check("R20-B3 and reading it is allowed from that project", read?.summary.sessionID === "sess-case", read?.summary)
+        const elsewhere = path.join(root, "elsewhere")
+        await fs.mkdir(elsewhere, { recursive: true })
+        const other = listExternalSessions({ project: elsewhere })
+        check("R20-B3 while another project still does not see it", !other.sessions.some((session) => session.sessionID === "sess-case"), other)
+      } finally {
+        if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
+        else process.env.CLAUDE_CONFIG_DIR = previous
+      }
     }
   } finally {
     await fs.rm(root, { recursive: true, force: true }).catch(() => {})
