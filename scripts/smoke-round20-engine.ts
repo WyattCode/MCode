@@ -26,7 +26,7 @@ import { SessionStore } from "../src/server/session/store"
 import { SessionRunner } from "../src/server/session/runner"
 import { JUDGE_SYSTEM } from "../src/server/session/goal"
 import { SUMMARY_INSTRUCTION } from "../src/server/session/summary"
-import { LOOP_ANSWERS } from "../src/server/session/reminders"
+import { LENGTH_NOTE, LOOP_ANSWERS } from "../src/server/session/reminders"
 
 type Section = (name: string) => void
 
@@ -38,6 +38,7 @@ export async function roundTwentyEngineChecks(check: Check, section: Section): P
     await loopChecks(check, section, path.join(root, "loops"))
     await compactionChecks(check, section, root)
     await goalChecks(check, section, path.join(root, "goal"))
+    await lengthNoteChecks(check, section, path.join(root, "notes"))
   } finally {
     if (titles === undefined) delete process.env.MCODE_GENERATE_TITLES
     else process.env.MCODE_GENERATE_TITLES = titles
@@ -326,6 +327,46 @@ async function goalChecks(check: Check, section: Section, root: string): Promise
       const after = await app.store.get(session.id)
       check("a not-met verdict sends the turn back once", app.turns.length === turnsBefore + 2, app.turns.length - turnsBefore)
       check("and the met one ends the goal with its count kept", after?.goal?.done?.status === "complete" && after.goal.attempts === 1, after?.goal)
+    }
+  } finally {
+    await app.close()
+  }
+}
+
+/* ---------------------------------------------------------------- R20-A4: the length note leaves once the reply goes on */
+
+/** How many copies of a note one request carried. */
+const noteCount = (seen: Seen | undefined, note: string) => (seen?.body.messages ?? []).filter((message) => JSON.stringify(message.content ?? "").includes(note.slice(0, 40))).length
+
+async function lengthNoteChecks(check: Check, section: Section, root: string): Promise<void> {
+  const app = await harness(root)
+  try {
+    section("Round 20 (R20-A4): once a cut reply has gone on, later steps are not told it was cut")
+    {
+      const file = path.join(app.project, "notes.txt")
+      await fs.writeFile(file, "the notes")
+      const session = await app.store.create({ directory: app.project, model: app.model })
+      app.script([{ text: "part one ", finish: "length" }, { calls: [read(file)] }, { text: "fin" }])
+      const before = app.turns.length
+      await app.runner.prompt({ sessionID: session.id, text: "write and read" })
+      await app.settled(session.id)
+      const seen = app.turns.slice(before)
+      check("three requests were made", seen.length === 3, seen.length)
+      check("the one asking for the rest carries the note", noteCount(seen[1], LENGTH_NOTE) === 1, noteCount(seen[1], LENGTH_NOTE))
+      check("the step after the reply went on does not", noteCount(seen[2], LENGTH_NOTE) === 0, noteCount(seen[2], LENGTH_NOTE))
+    }
+
+    section("Round 20 (R20-A4): a reply cut again is told so again, once")
+    {
+      const session = await app.store.create({ directory: app.project, model: app.model })
+      app.script([{ text: "part one ", finish: "length" }, { text: "part two ", finish: "length" }, { text: "part three" }])
+      const before = app.turns.length
+      await app.runner.prompt({ sessionID: session.id, text: "write a lot" })
+      await app.settled(session.id)
+      const seen = app.turns.slice(before)
+      const replies = await app.assistants(session.id)
+      check("all three parts are one reply", replies.length === 1 && textOf(replies[0]) === "part one part two part three", replies.map(textOf))
+      check("the third request carries the note exactly once", noteCount(seen[2], LENGTH_NOTE) === 1, noteCount(seen[2], LENGTH_NOTE))
     }
   } finally {
     await app.close()

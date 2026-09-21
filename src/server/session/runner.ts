@@ -2548,6 +2548,15 @@ export class SessionRunner {
       if (carried) {
         assistant.finish = undefined
         assistant.time.completed = undefined
+        /*
+         * The note asking for the rest has been sent with this step's request,
+         * and after it the reply is no longer a cut one. Left on, every later
+         * step of the turn told the model a finished reply had been cut off;
+         * it goes back on below only if this step is cut again.
+         */
+        const kept = (notes.get(assistant.id) ?? []).filter((note) => note !== LENGTH_NOTE)
+        if (kept.length) notes.set(assistant.id, kept)
+        else notes.delete(assistant.id)
       }
       /* What the reply already says, so this step's own words can be told apart from it below. */
       const said = carried ? textOf(assistant) : ""
