@@ -4,7 +4,6 @@ import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 import { notify, notifyFailure } from "../lib/toast"
 import { reducedMotion } from "../lib/modal"
-import { SUGGESTION_ICON_PATHS, builtinSuggestions, type HomeSuggestion } from "../lib/home-suggestions"
 import ProjectPicker from "./ProjectPicker.vue"
 import type { PickerProject } from "./ProjectPicker.vue"
 import NewProjectDialog from "./NewProjectDialog.vue"
@@ -241,21 +240,6 @@ const box = ref<InstanceType<typeof Composer>>()
 watch(chosen, (next) => next && next !== NO_PROJECT && void app.refreshCommands(next), { immediate: true })
 
 /*
- * MiMo's example tasks under the tray: its own built-in cases, shown only once
- * a project is chosen, and nothing is asked of a model or sent anywhere to show
- * them. A click puts the task's request into the box without sending it.
- */
-const hasProject = computed(() => Boolean(chosen.value) && chosen.value !== NO_PROJECT)
-// `t` reads the current language, so the rows are reworded when it changes.
-const suggestions = computed<HomeSuggestion[]>(() => (hasProject.value ? builtinSuggestions((key) => t(key)) : []))
-
-function start(suggestion: HomeSuggestion) {
-  // A task's request names no files, so it carries no chips and no mentions.
-  box.value?.set({ text: suggestion.query, attachments: [], mentioned: new Set() })
-  box.value?.focus()
-}
-
-/*
  * The wordmark answers a press with a small hop - a lift, a drop past rest and a
  * settle - and nothing more. A press while it is still in the air is ignored,
  * and with reduced motion it stays put.
@@ -334,31 +318,15 @@ defineExpose({ focus: () => box.value?.focus() })
       <NewProjectDialog v-if="naming" :value="t('home.blankDefault')" @close="naming = false" @submit="createBlank" />
     </div>
 
-    <!-- The row under the tray, which is the order MiMo reads in: the box, what it points at, and what you might start with. -->
-    <div v-if="hasProject && suggestions.length" id="home-suggest" class="home-suggest" :aria-label="t('home.starters')">
-      <button
-        v-for="item in suggestions"
-        :key="item.title"
-        class="sug"
-        type="button"
-        :data-sug="item.title"
-        @click="start(item)"
-      >
-        <svg class="sug-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path v-for="d in SUGGESTION_ICON_PATHS[item.icon]" :key="d" :d="d" />
-        </svg>
-        <span class="sug-t">{{ item.title }}</span>
-      </button>
-    </div>
   </div>
 </template>
 
 <style scoped>
 /*
  * MiMo's home layout: a scroll area whose content is a three-row grid, the
- * hero and tray centred in the middle row and the suggestions hanging from the
- * top of the last one, both lifted 64px. The two outer rows share what is left,
- * so the tray sits where it sits however many suggestions there are.
+ * hero and tray centred in the middle row and lifted 64px. The two outer rows
+ * share what is left. MiMo 26.920 dropped the example tasks that used to hang
+ * from the last row; the grid, and so the tray's place, stayed as it was.
  */
 .home-hero {
   position: relative;
@@ -444,86 +412,9 @@ defineExpose({ focus: () => box.value?.focus() })
   padding-inline: 6px 10px;
 }
 
-/* MiMo's suggestion list: 8 under the tray, at the top of the last row, lifted with it. */
-.home-suggest {
-  position: relative;
-  top: -64px;
-  display: flex;
-  flex-direction: column;
-  grid-row: 3;
-  align-self: start;
-  width: min(712px, 100%);
-  margin-top: 8px;
-}
-
-/* A row: 34 in at the start, icon and title 11 apart, 13/20 in the muted text colour. */
-.sug {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  width: 100%;
-  padding-block: 10px;
-  padding-inline: 34px 8px;
-  color: var(--text-base);
-  background: none;
-  border: 0;
-  font-family: inherit;
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  line-height: calc(20px * var(--ui-font-scale, 1));
-  text-align: start;
-  cursor: pointer;
-}
-
-/* A dotted hairline, 2 on and 2 off, across the top of every row but the first, held to the column. */
-.sug::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  inset-inline: 0;
-  height: 1px;
-  background: var(--border-weak);
-  -webkit-mask: repeating-linear-gradient(90deg, #000 0 2px, transparent 2px 4px);
-  mask: repeating-linear-gradient(90deg, #000 0 2px, transparent 2px 4px);
-  pointer-events: none;
-}
-
-.sug:first-child::before {
-  display: none;
-}
-
-.sug:hover {
-  color: var(--text-strong);
-}
-
-.sug:hover .sug-t {
-  text-decoration: underline;
-}
-
-.sug-icon {
-  flex: none;
-  color: var(--text-weak);
-  opacity: 0.7;
-}
-
-.sug-icon path {
-  stroke: currentColor;
-  stroke-width: 1.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.sug-t {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* MiMo's wide window: the tray grows to 944 and the suggestions with it. */
+/* MiMo's wide window: the tray grows to 944. */
 @media (min-width: 2000px) {
-  .core,
-  .home-suggest {
+  .core {
     width: min(944px, 100%);
   }
 }

@@ -63,7 +63,6 @@ import { readBootPrefs, windowBackground, writeBootPrefs } from "../src/main/boo
 import { deliveryOf, waitForDelivery } from "../src/main/install-notice"
 import { boundsOnShow, clampToWorkAreas, closeBounds } from "../src/main/work-area"
 import { DailyLog, dayOfLogFile, expiredLogFiles, logFileName, logLine, redactSecrets } from "../src/main/log-file"
-import { builtinSuggestions } from "../src/renderer/src/lib/home-suggestions"
 import { applyVoiceResult, splitSendWord } from "../src/renderer/src/lib/voice"
 import { chordOf, formatChord, isBindable } from "../src/renderer/src/lib/keys"
 import { RETIRED_DEFAULTS, normalizeChord, retireKeybinds } from "../src/shared/chord"
@@ -4202,14 +4201,6 @@ async function main() {
     check("the walk wraps at both ends", rovingStep(rows, "c", "ArrowDown") === "a" && rovingStep(rows, "a", "ArrowUp") === "c")
     check("Home and End jump to the ends", rovingStep(rows, "b", "Home") === "a" && rovingStep(rows, "b", "End") === "c")
     check("an empty list has nowhere to go", rovingStep([], undefined, "ArrowDown") === undefined)
-    const starters = builtinSuggestions((key) => `[${key}]`)
-    check(
-      "three built-in starters, each with its own words and mark",
-      starters.length === 3 &&
-        starters.every((row) => row.title.endsWith(".title]") && row.query.endsWith(".query]")) &&
-        new Set(starters.map((row) => row.icon)).size === 3,
-      starters,
-    )
   }
 
   section("Voice cues")

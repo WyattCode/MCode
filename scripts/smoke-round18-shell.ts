@@ -35,4 +35,17 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
       check(`R18-U2: ${key} has left all 18 tables`, count === 0, count)
     }
   }
+
+  section("Round 18 (lane U): R18-U3 the home screen has no example tasks")
+  {
+    const hero = await read("src/renderer/src/components/HomeHero.vue")
+    const gone = await fs.stat(path.join(process.cwd(), "src/renderer/src/lib/home-suggestions.ts")).then(() => false, () => true)
+    check("R18-U3: the hero draws no suggestion list", !/home-suggest|class="sug"|builtinSuggestions/.test(hero))
+    check("R18-U3: and the module that listed them is gone", gone)
+    check("R18-U3: the tray keeps its place in the three-row grid", /grid-template-rows: minmax\(0, 1fr\) auto minmax\(0, 1fr\)/.test(hero))
+    for (const key of ["home.starters", "home.starter.layout.title", "home.starter.bugs.query", "home.starter.tests.title"]) {
+      const count = await carrying(key)
+      check(`R18-U3: ${key} has left all 18 tables`, count === 0, count)
+    }
+  }
 }
