@@ -176,6 +176,6 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
         /ipcMain\.handle\("mcode:screen-reader", \(\) => app\.accessibilitySupportEnabled\)/.test(mainIndex) &&
         /app\.on\("accessibility-support-changed"[\s\S]{0,200}webContents\.send\("mcode:screen-reader", enabled\)/.test(mainIndex),
     )
-    check("the file viewer's picture opens its preview from the keyboard", operable(tagWith(read("components/right/RpFiles.vue"), 'class="fv-img"'), /@keydown\.enter\.space\.prevent="openImagePreview/))
+    check("the file viewer's picture opens its preview from the keyboard", operable(tagWith(read("components/right/RpFiles.vue"), 'class="fv-img"'), /@keydown\.enter\.space\.prevent="previewImage\(\$event\)"/))
   }
 }

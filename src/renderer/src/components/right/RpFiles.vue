@@ -170,6 +170,14 @@ const draft = ref("")
 const saving = ref(false)
 let readSeq = 0
 
+/* The picture opens in the preview out of where it sits, and closes back into it, as MiMo's does. */
+function previewImage(event: Event) {
+  const file = props.viewFile
+  if (!mediaUrl.value || !file) return
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  openImagePreview(mediaUrl.value, { name: baseName(file), path: absolute(file), rect })
+}
+
 async function mediaAddress(file: Read, directory: string, rel: string): Promise<string | undefined> {
   const served = await window.mcode.officeServe(file.path).catch(() => undefined)
   if (served?.ok) return served.url
@@ -784,8 +792,8 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
                 role="button"
                 tabindex="0"
                 @error="mediaFailed = true"
-                @click="openImagePreview(mediaUrl, { name: baseName(viewFile), path: absolute(viewFile) })"
-                @keydown.enter.space.prevent="openImagePreview(mediaUrl, { name: baseName(viewFile), path: absolute(viewFile) })"
+                @click="previewImage($event)"
+                @keydown.enter.space.prevent="previewImage($event)"
               />
             </div>
             <div v-else-if="opened.video && mediaUrl" class="fv-media">

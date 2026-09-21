@@ -71,4 +71,13 @@ export async function roundNineteenPanelChecks(check: Check, section: (name: str
     check("RP-3: the panel's rail follows the fold", /const rail = computed\(\(\) => \(props\.sideCollapsed \? 0 : RAIL_WIDTH\)\)/.test(panel))
     check("RP-3: the drag's max and the shown width both use it", /const maxWidth = computed\(\(\) => Math\.max\(PANEL_MIN_WIDTH, viewport\.value - rail\.value -/.test(panel) && /panelWidthShown\([^)]*rail\.value\)/.test(panel))
   }
+
+  section("Round 19 (lane B): RP-5 a picture in the files tab zooms into the preview out of itself")
+  {
+    const files = await read("src/renderer/src/components/right/RpFiles.vue")
+    const img = /<img\s[^>]*class="fv-img"[^>]*>/.exec(files)?.[0] ?? ""
+    const handler = /function previewImage\(event: Event\) \{([\s\S]*?)\n\}/.exec(files)?.[1] ?? ""
+    check("RP-5: a click and Enter or Space both open it through the one handler", /@click="previewImage\(\$event\)"/.test(img) && /@keydown\.enter\.space\.prevent="previewImage\(\$event\)"/.test(img), img)
+    check("RP-5: and the handler hands the preview the picture's rect", /rect = \(event\.currentTarget as HTMLElement\)\.getBoundingClientRect\(\)/.test(handler) && /openImagePreview\(mediaUrl\.value, \{[^}]*\brect \}\)/.test(handler), handler)
+  }
 }
