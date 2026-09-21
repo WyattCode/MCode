@@ -673,6 +673,8 @@ function onScroll() {
   const element = scroller.value
   if (!element) return
   const now = geometry(element)
+  // The reader moving the view lets a tall question's top go.
+  if (!pinEcho(now.top)) tallRest = undefined
   const ratio = window.devicePixelRatio || 1
   const width = element.clientWidth
   // A zoom or a resize moves scrollTop on its own; counting starts again from here.
@@ -841,6 +843,7 @@ onMounted(() => {
     // The floor was measured for this width; at another the question would not sit where it was put.
     if (inner.value && inner.value.clientWidth !== floorWidth) clearFloor()
     pin()
+    keepTall()
     measureJump()
   })
   sizer.observe(inner.value)
@@ -1122,6 +1125,27 @@ function clearFloor() {
   endSlide?.()
   if (floored) floored.style.minHeight = ""
   floored = undefined
+  tallRest = undefined
+}
+
+/*
+ * A tall question parked by its top is not at the end, so neither the pin nor
+ * the browser's anchoring (suppressed while its msg-in moves it) keeps it there
+ * when what is above settles - the turn before losing its footer moved it 14px
+ * up in the probe. It is held at its target until the reader scrolls.
+ */
+let tallRest: { row: HTMLElement; target: number } | undefined
+
+function keepTall() {
+  const view = scroller.value
+  if (!tallRest || !view || following.value) return
+  if (!tallRest.row.isConnected) {
+    tallRest = undefined
+    return
+  }
+  const lift = new DOMMatrixReadOnly(getComputedStyle(tallRest.row).transform).m42
+  const off = tallRest.row.getBoundingClientRect().top - lift - view.getBoundingClientRect().top - tallRest.target
+  if (Math.abs(off) >= 0.5) settle(view.scrollTop + off)
 }
 
 /* The floor goes as soon as taking it away would not move the view: once the reader has left it behind. */
@@ -1222,7 +1246,10 @@ function park(turnID: string) {
    * to take - the question stranded at the foot of the view.
    */
   if (rest === undefined) toBottom()
-  else settle(rest)
+  else {
+    settle(rest)
+    tallRest = { row, target }
+  }
   following.value = false
   parkedIn = shownID.value
   if (room > 0 && !reducedMotion()) slideIn(column, room)
