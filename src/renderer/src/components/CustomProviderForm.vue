@@ -118,9 +118,13 @@ const form = ref({
     ? Object.entries(editing?.headers ?? {}).map(([key, value]) => ({ ...headerRow(), key, value }))
     : [headerRow()],
 })
-/* The form as it was first drawn, so an edit knows whether anything changed. */
-const pristine = JSON.stringify(form.value)
-const dirty = computed(() => JSON.stringify(form.value) !== pristine)
+/*
+ * The form as it was last saved (first, as it was drawn), so an edit knows
+ * whether anything changed since: MiMo's save clears its dirty flag, and so
+ * does a model removed, which is saved at once.
+ */
+const pristine = ref(JSON.stringify(form.value))
+const dirty = computed(() => JSON.stringify(form.value) !== pristine.value)
 
 const busy = ref(false)
 const tried = ref(false)
@@ -282,8 +286,14 @@ async function confirmRemoveModel() {
   const row = removingModel.value
   removingModel.value = undefined
   if (!row) return
-  if (editing) await app.removeCustomModel(editing.id, row.id).catch(() => undefined)
+  const removed = editing ? await app.removeCustomModel(editing.id, row.id).then(() => true, () => false) : false
   form.value.models = form.value.models.filter((entry) => entry.key !== row.key)
+  if (removed) {
+    // Saved already: the model leaves the saved form too, and every other unsaved change stays unsaved.
+    const saved = JSON.parse(pristine.value) as typeof form.value
+    saved.models = saved.models.filter((entry) => entry.key !== row.key)
+    pristine.value = JSON.stringify(saved)
+  }
 }
 
 /* ------------------------------------------------------------ limits and inputs */
@@ -390,6 +400,7 @@ async function submit(): Promise<boolean> {
   try {
     if (editing) await app.updateCustomProvider(entry)
     else await app.addCustomProvider(entry)
+    pristine.value = JSON.stringify(form.value)
     if (props.standalone) {
       const model = { provider: id, model: entry.models[0].id }
       if (app.currentID) await app.setModel(model)

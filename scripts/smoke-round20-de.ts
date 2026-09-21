@@ -55,4 +55,19 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
     check("D-4: the field shows the limit itself, a preset included", /:value="row\[field\] !== undefined \? String\(row\[field\]\) : ''"/.test(field), field)
     check("D-4: no preset test blanks it while typing", !/LIMIT_PRESETS/.test(field), field)
   }
+
+  section("Round 20: D-6 a saved provider form is clean again")
+  {
+    const form = await read("src/renderer/src/components/CustomProviderForm.vue")
+    const submit = /async function submit\(\)[^{]*\{([\s\S]*?)\n\}/.exec(form)?.[1] ?? ""
+    const remove = /async function confirmRemoveModel\(\) \{([\s\S]*?)\n\}/.exec(form)?.[1] ?? ""
+    check("D-6: the saved state can move", /const pristine = ref\(JSON\.stringify\(form\.value\)\)/.test(form) && /!== pristine\.value\)/.test(form))
+    check(
+      "D-6: a save makes the form as saved the clean one",
+      /await app\.addCustomProvider\(entry\)\n\s*pristine\.value = JSON\.stringify\(form\.value\)/.test(submit),
+      submit,
+    )
+    check("D-6: a removed model, saved at once, leaves the saved form too", /saved\.models = saved\.models\.filter\(\(entry\) => entry\.key !== row\.key\)/.test(remove) && /pristine\.value = JSON\.stringify\(saved\)/.test(remove), remove)
+    check("D-6: only when the removal was saved", /if \(removed\) \{/.test(remove) && /\.then\(\(\) => true, \(\) => false\)/.test(remove), remove)
+  }
 }
