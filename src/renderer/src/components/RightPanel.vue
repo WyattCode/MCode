@@ -291,9 +291,15 @@ function onTabKey(event: KeyboardEvent, id: string) {
   tabEls.get(ids[next]!)?.focus()
 }
 
-function onTabMouseDown(event: MouseEvent, id: string) {
+/* MiMo's middle click: the press only keeps the page from autoscrolling; the tab closes on release, over the same tab. */
+function onTabMouseDown(event: MouseEvent) {
+  if (event.button === 1) event.preventDefault()
+}
+
+function onTabAuxClick(event: MouseEvent, id: string) {
   if (event.button !== 1) return
   event.preventDefault()
+  event.stopPropagation()
   requestClose([id])
 }
 
@@ -376,7 +382,8 @@ defineExpose({
           :ref="(el) => (el ? tabEls.set(tab.id, el as HTMLElement) : tabEls.delete(tab.id))"
           @click="rp.activate(tab.id)"
           @keydown="onTabKey($event, tab.id)"
-          @mousedown="onTabMouseDown($event, tab.id)"
+          @mousedown="onTabMouseDown"
+          @auxclick="onTabAuxClick($event, tab.id)"
           @contextmenu.prevent="openTabMenu($event, tab.id)"
         >
           <img

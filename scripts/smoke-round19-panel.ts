@@ -51,4 +51,14 @@ export async function roundNineteenPanelChecks(check: Check, section: (name: str
     check("RP-7: the other tables carry short lines of their own", own.length === 0, own)
     language.value = before
   }
+
+  section("Round 19 (lane B): RP-8 a middle click closes a tab on release, as MiMo's auxclick does")
+  {
+    const panel = await read("src/renderer/src/components/RightPanel.vue")
+    const down = /function onTabMouseDown\([^)]*\) \{([\s\S]*?)\n\}/.exec(panel)?.[1] ?? ""
+    const aux = /function onTabAuxClick\([^)]*\) \{([\s\S]*?)\n\}/.exec(panel)?.[1] ?? ""
+    check("RP-8: the press only keeps the page from autoscrolling", down.includes("preventDefault") && !down.includes("requestClose"), down)
+    check("RP-8: the release closes the tab, middle button only", /event\.button !== 1/.test(aux) && aux.includes("requestClose([id])"), aux)
+    check("RP-8: each tab listens for the release", /@auxclick="onTabAuxClick\(\$event, tab\.id\)"/.test(panel))
+  }
 }
