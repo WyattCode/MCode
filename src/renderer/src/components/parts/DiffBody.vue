@@ -488,7 +488,8 @@ defineExpose({ reveal })
  * The word for what the patch did, beside the name, and the square before it
  * in the list: diff2html's status colours - green, red, yellow for a change and
  * blue for a move. The last two have no name here, so the foreground is named
- * again on the element that wears them.
+ * again on the element that wears them; MiMo's dark set does not restate them,
+ * so they are the light values in either theme, as measured on 26.920.
  */
 .db-tag {
   flex: none;
@@ -515,16 +516,6 @@ defineExpose({ reveal })
 
 .db-scroll :is(.db-tag, .db-list-icon).renamed {
   --d2h-color: #3572b0;
-}
-
-:root[data-theme="dark"] .db-scroll :is(.db-tag, .db-list-icon).changed {
-  --d2h-color: #d29922;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .db-scroll :is(.db-tag, .db-list-icon).changed {
-    --d2h-color: #d29922;
-  }
 }
 
 :is(.db-tag, .db-list-icon).added {

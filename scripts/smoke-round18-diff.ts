@@ -158,11 +158,12 @@ export async function roundEighteenDiffChecks(check: Check, section: (name: stri
     check("a changed file's square holds a dot, the others a plus, a minus or an arrow", /<circle v-else cx="7" cy="8" r="2" fill="currentColor" \/>/.test(body) && /const LIST_MARK[^}]*added:[^}]*deleted:[^}]*renamed:/.test(body) && !/changed:/.test(body.slice(body.indexOf("const LIST_MARK"), body.indexOf("}", body.indexOf("const LIST_MARK")))))
     check("a name in the list is diff2html's link blue, in both themes", /--d2h-color: #3572b0;[\s\S]*color: var\(--d2h-color\)/.test(rule(".db-list .db-name")) && !/:root\[data-theme="dark"\] \.db-list \.db-name/.test(style))
     check("with its folders dimmed, as before", /opacity: 0\.6/.test(rule(".db-dir")))
-    check("a change is diff2html's yellow, #d0b44c in light", /--d2h-color: #d0b44c;/.test(rule(".db-scroll :is(.db-tag, .db-list-icon).changed")))
-    check("and #d29922 in the dark, both ways the dark is chosen", /--d2h-color: #d29922;/.test(rule(':root[data-theme="dark"] .db-scroll :is(.db-tag, .db-list-icon).changed')) && /--d2h-color: #d29922;/.test(rule('  :root:not([data-theme="light"]) .db-scroll :is(.db-tag, .db-list-icon).changed')))
+    check("a change is diff2html's yellow, #d0b44c", /--d2h-color: #d0b44c;/.test(rule(".db-scroll :is(.db-tag, .db-list-icon).changed")))
+    check("in the dark too, which MiMo's dark set leaves as it is (measured #d0b44c on 26.920)", !/#d29922/.test(style) && !/data-theme[^{]*\.changed/.test(style))
     check("a move is diff2html's blue", /--d2h-color: #3572b0;/.test(rule(".db-scroll :is(.db-tag, .db-list-icon).renamed")))
     check("an addition green and a removal red, from the labels already named", /color: var\(--d2h-ins-label\)/.test(rule(":is(.db-tag, .db-list-icon).added")) && /color: var\(--d2h-del-label\)/.test(rule(":is(.db-tag, .db-list-icon).deleted")))
     check("the tag and the square draw in the colour named on them", /color: var\(--d2h-color\)/.test(rule("\n.db-tag")) && /color: var\(--d2h-color\)/.test(rule("\n.db-list-icon")))
     check("and the tag is not dimmed, so its colour is the one measured", !/opacity/.test(rule("\n.db-tag")))
   }
+
 }
