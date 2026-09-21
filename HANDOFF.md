@@ -479,7 +479,7 @@
 
 **对照基准从 26.914 改为 26.920**（用户 2026-09-21 决定让 MiMo 自动更新；更新已由用户退出 MiMo 时自动完成）。26.920 的 out/ 已只读解到 scratchpad `r18-mimo920/out/`；26.914 的旧副本（`sf-main.mjs`、`r12-node.mjs`、`r12c-mimo/`、`r16-prompts/`）保留作对比，但 26.914 的 CSS、图片、`index.html` 没有存。从待装安装包取程序包的办法：NSIS 外壳里偏移 198712 处是一段原样 7z 流，电子打包缓存里的 `7za.exe` 能解。
 
-**截图实测（第一次运行 MiMo）**：先按记忆里的保险用一次性配置启动 MiMo，结果停在小米账号登录页（不登录什么都看不到），且任务把用户随后打开的**用户自己的 MiMo 误判为自己的实例强制结束了**——教训记在记忆 `mimo-running-lessons`（只结束当场记下的进程号；MiMo 还会读写 `~/.local/share/mimocode` 等 XDG 目录、启动时重写开始菜单快捷方式）。之后改为用户授权下用 computer use 操作**用户已登录的 MiMo**，在临时项目 `C:SERSWYATTXIAOMIMIMOPROJECTSMIMO-DIFF-DEMO` 里做了两次小改动，用 DPI 感知的原生截屏取色（`r18-mimo-*.png`）。**遗留在用户 MiMo 里**：该项目与一条对话「修改 src/greet.js 的问候语与变量名」，删除属永久删除、须用户自己做。实测结论见 `round18-visual-measured.md`：MiMo **没有**「已查看」勾选框；差异配色是 diff2html 的，且**成对改动与纯删除/纯新增颜色不同**（浅色 #fdf2d0/#ddeedd 对 #fee8e9/#ddffdd，深色 #3d321a/#1e3a23 对 #2f1e1d/#1b2c1e，词 #ffb6ba/#97f295、#883e2d/#246330）。
+**截图实测（第一次运行 MiMo）**：先按记忆里的保险用一次性配置启动 MiMo，结果停在小米账号登录页（不登录什么都看不到），且任务把用户随后打开的**用户自己的 MiMo 误判为自己的实例强制结束了**——教训记在记忆 `mimo-running-lessons`（只结束当场记下的进程号；MiMo 还会读写 `~/.local/share/mimocode` 等 XDG 目录、启动时重写开始菜单快捷方式）。之后改为用户授权下用 computer use 操作**用户已登录的 MiMo**，在临时项目 `C:\Users\Wyatt\XiaomiMiMoProjects\mimo-diff-demo` 里做了两次小改动，用 DPI 感知的原生截屏取色（`r18-mimo-*.png`）。**遗留在用户 MiMo 里**：该项目与一条对话「修改 src/greet.js 的问候语与变量名」，删除属永久删除、须用户自己做。实测结论见 `round18-visual-measured.md`：MiMo **没有**「已查看」勾选框；差异配色是 diff2html 的，且**成对改动与纯删除/纯新增颜色不同**（浅色 #fdf2d0/#ddeedd 对 #fee8e9/#ddffdd，深色 #3d321a/#1e3a23 对 #2f1e1d/#1b2c1e，词 #ffb6ba/#97f295、#883e2d/#246330）。
 
 **用户决定（2026-09-21）**：拒绝后回合继续（撤销第五轮「两种拒绝都停」）；托盘删掉配置切换（撤销那条故意不同）；交付文件照 26.920 写入 AI 标识；定时任务工具不再给模型；模型层语言跟 26.920 的新分法。用户还要求「抄 MiMo 的代码和文字」——答复为不能（受版权保护的内容不能原样搬），数值、规格、行为、短标签照搬，代码与成段文字自己写，用户回复 OK。
 
