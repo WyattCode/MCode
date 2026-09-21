@@ -368,6 +368,10 @@ import { roundSeventeenWorkflowChecks } from "./smoke-round17-workflow"
 import { roundSeventeenDiagramChecks } from "./smoke-round17-diagram"
 // Round 18, lane M: the settings MiMo 26.920 added or redid (R18-M1 onwards).
 import { roundEighteenSettingsChecks } from "./smoke-round18-settings"
+// Round 18, lane A: the AI-generated label written into delivered files (R18-A1 onwards).
+import { roundEighteenLabelChecks } from "./smoke-round18-labels"
+// Round 18, lane D: the diff as MiMo 26.920 draws it (R18-D1 onwards).
+import { roundEighteenDiffChecks } from "./smoke-round18-diff"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7021,6 +7025,8 @@ async function main() {
   await roundSeventeenWorkflowChecks(check, section)
   await roundSeventeenDiagramChecks(check, section)
   await roundEighteenSettingsChecks(check, section)
+  await roundEighteenLabelChecks(check, section)
+  await roundEighteenDiffChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

@@ -30,6 +30,12 @@ export interface DiffLine {
   text: string
   /** What the line shares with the one it is paired with, and what only it has. */
   marks?: readonly LineMark[]
+  /**
+   * A removal with an addition against it, or that addition: diff2html's
+   * "change", which MiMo colours apart from a line only one side has. Set for
+   * every pair, including one too long to mark word by word.
+   */
+  paired?: boolean
 }
 
 export interface DiffHunkView {
@@ -174,7 +180,8 @@ export function reviewRows(diff: string): ReviewRow[] {
  * MiMo pairs a run of removals with the run of additions after it, row for row,
  * and marks a pair that has both sides; a removal with no addition against it,
  * and an addition that follows no removal, stay plain. The pairing is the one
- * `splitRows` draws with, so the same words light up in either layout.
+ * `splitRows` draws with, so the same words light up in either layout. Both
+ * sides of a pair are flagged `paired`, whether or not they could be marked.
  */
 export function markWords(lines: readonly DiffLine[]): DiffLine[] {
   const marked = lines.map((line) => ({ ...line }))
@@ -189,6 +196,8 @@ export function markWords(lines: readonly DiffLine[]): DiffLine[] {
     while (index < marked.length && marked[index]!.kind === "del") removed.push(marked[index++]!)
     while (index < marked.length && marked[index]!.kind === "add") added.push(marked[index++]!)
     for (let row = 0; row < Math.min(removed.length, added.length); row++) {
+      removed[row]!.paired = true
+      added[row]!.paired = true
       const pair = markPair(removed[row]!.text, added[row]!.text)
       if (!pair) continue
       removed[row]!.marks = pair.old
@@ -252,6 +261,26 @@ export function splitRows(lines: readonly DiffLine[]): SplitRow[] {
     for (let row = 0; row < Math.max(removed.length, added.length); row++) rows.push({ left: removed[row], right: added[row] })
   }
   return rows
+}
+
+/*
+ * A patch's file name as a step's diff header writes it: the full path, with
+ * forward slashes, as MiMo's step shows `C:/Users/.../src/greet.js` where its
+ * review tab keeps the project's own `src/greet.js`. A name that is already
+ * absolute - `/dev/null` among them - is only given forward slashes, and a
+ * name that climbs out of the project is walked up the folder it climbs from.
+ */
+export function absoluteName(name: string, root?: string): string {
+  const slashed = name.replace(/\\/g, "/")
+  if (!root || slashed.startsWith("/") || /^[a-zA-Z]:\//.test(slashed)) return slashed
+  const joined = `${root.replace(/\\/g, "/").replace(/\/+$/, "")}/${slashed}`
+  const kept: string[] = []
+  for (const part of joined.split("/")) {
+    if (part === ".") continue
+    if (part === ".." && kept.length > 1 && kept[kept.length - 1] !== "") kept.pop()
+    else if (part !== "..") kept.push(part)
+  }
+  return kept.join("/")
 }
 
 /* A file's name as its folder part and its own name, MiMo's dim directory before the base. */
