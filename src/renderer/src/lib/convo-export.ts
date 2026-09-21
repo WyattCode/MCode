@@ -36,51 +36,6 @@ export async function exportConversationMarkdown(title: string, messages: readon
   await saveExport(exportFileName(title), transcriptOf(title, messages))
 }
 
-/**
- * MiMo's `mimo export` / `mimo import` pair, over this app's own documents.
- *
- * The Markdown export above is a transcript to read and a dead end; this is the
- * conversation itself, written so that another MCode profile - or this one
- * after a reinstall - can open it again.
- */
-export async function exportConversationFile(sessionID: string): Promise<void> {
-  const app = useApp()
-  try {
-    const answer = await app.client?.request({ type: "session.exportFile", sessionID })
-    if (answer) await saveExport(answer.name, answer.text)
-  } catch (failure) {
-    notifyFailure(reasonOf(failure) || t("toast.exportFailed"))
-  }
-}
-
-/** Why a file could not be read back, in the reader's own language. */
-const IMPORT_PROBLEMS = {
-  notJson: "toast.importNotJson",
-  notMCode: "toast.importNotMCode",
-  fromNewer: "toast.importFromNewer",
-  noMessages: "toast.importNoMessages",
-} as const
-
-export async function importConversationFile(open: (sessionID: string) => void): Promise<void> {
-  const app = useApp()
-  const picked = await window.mcode.openText(t("cmd.importConvoFile")).catch(() => undefined)
-  // Nothing picked is not a failure, and says nothing - as the save dialog does.
-  if (!picked) return
-  try {
-    const answer = await app.client?.request({ type: "session.importFile", text: picked.text })
-    if (!answer) return
-    if (answer.problem) {
-      notifyFailure(t(IMPORT_PROBLEMS[answer.problem]))
-      return
-    }
-    if (!answer.session) return
-    notify(t("toast.importedConvo", { title: sessionTitle(answer.session.title) }))
-    open(answer.session.id)
-  } catch (failure) {
-    notifyFailure(reasonOf(failure) || t("toast.importFailed"))
-  }
-}
-
 /** The row menu's export: the named conversation's messages, read without navigating when it is not the one on show. */
 export async function exportConversationById(sessionID: string): Promise<void> {
   const app = useApp()

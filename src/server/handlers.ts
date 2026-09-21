@@ -14,14 +14,12 @@ import type {
 } from "@shared/protocol"
 import { sessionFiles } from "@shared/session-files"
 import { artifactCategory } from "@shared/artifact-category"
-import { Identifier } from "@shared/id"
 import { normalizeBaseURL } from "@shared/custom-endpoint"
 import { CodedError } from "@shared/errors"
 import { cleanGoal } from "./session/goal"
 import { summarizeUsage } from "./usage-summary"
 import { imageInputOf, type Catalog } from "@shared/models-dev"
 // A conversation as a file this app can read back, both halves of the pair.
-import { conversationDocument, conversationFileName, parseConversationDocument } from "@shared/convo-file"
 import { addedProject, removedProjects } from "@shared/projects"
 import { localServerOf } from "@shared/browser-page"
 import type { VoiceDraft, VoiceEdit } from "@shared/protocol"
@@ -30,7 +28,7 @@ import { customModelOf } from "./config"
 import { automationService } from "./automation/service"
 import { IGNORED, insideReal, resolveInsideReal } from "./tool/fs-util"
 import { protectedFilter } from "./protected-paths"
-import { readableFile, workingRoots, writableFile } from "./file-access"
+import { readableFile, writableFile } from "./file-access"
 import { restoreHeaders, restoreMasked, restoreServer, restoreUrl } from "./config-view"
 import { discoverModels, probeModels } from "./provider/discover"
 import { blankProjectDirectory, scratchDirectory, scratchRoot } from "./scratch"
@@ -335,52 +333,6 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
      *
      * Sessions with no writes are left out entirely rather than listed empty.
      */
-    case "session.exportFile": {
-      const session = await runtime.sessions.require(request.sessionID)
-      const messages = await runtime.sessions.messages(request.sessionID)
-      return {
-        name: conversationFileName(session.title, "conversation"),
-        text: JSON.stringify(conversationDocument(session, messages), null, 2),
-      } satisfies Handled<"session.exportFile">
-    }
-
-    case "session.importFile": {
-      const read = parseConversationDocument(request.text)
-      if (!read.file) return { problem: read.problem } satisfies Handled<"session.importFile">
-      const document = read.file
-      const config = runtime.config.get()
-      /*
-       * The folder it worked in, when that is a folder this profile already
-       * works in; otherwise this profile's own. The file is not the authority
-       * on where a conversation's tools may reach: a crafted one could name any
-       * folder on the disk and make it the conversation's project.
-       */
-      const spelling = (folder: string) => (process.platform === "linux" ? path.resolve(folder) : path.resolve(folder).toLowerCase())
-      const named = document.session.directory ? spelling(document.session.directory) : ""
-      const known = named ? (await workingRoots(runtime)).some((root) => spelling(root) === named) : false
-      const session = await runtime.sessions.create({
-        directory: known ? document.session.directory : config.directory,
-        model: document.session.model ?? config.model,
-        agent: document.session.agent,
-        title: document.session.title || undefined,
-        // Its title came out of the profile that wrote it, so nothing here may replace it.
-        titleSource: document.session.titleSource ?? "user",
-        created: document.session.created,
-        updated: document.session.updated,
-        ...(document.session.group !== undefined ? { group: document.session.group } : {}),
-      })
-      for (const message of document.messages) {
-        /*
-         * Fresh ids. The conversation being written is a new one in this
-         * profile, and the ids in the file belong to the profile it came from -
-         * keeping them would collide with a conversation already here, or
-         * quietly write over one.
-         */
-        await runtime.sessions.saveMessage({ ...message, id: Identifier.message(), sessionID: session.id }, true)
-      }
-      return { session } satisfies Handled<"session.importFile">
-    }
-
     case "artifact.list": {
       /*
        * Answered from the store when there is one: it is de-duplicated by

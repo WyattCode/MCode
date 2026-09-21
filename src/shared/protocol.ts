@@ -1983,8 +1983,6 @@ export type Request =
    * import` pair, over this app's own documents. The Markdown export is a
    * transcript to read; this is a conversation to reopen.
    */
-  | { type: "session.exportFile"; sessionID: string }
-  | { type: "session.importFile"; text: string }
   | { type: "session.create"; directory?: string; title?: string; scratch?: boolean; sideOf?: string }
   /* An empty folder for a new project, named by the user. `location` is where it goes, as MiMo's dialog lets it be changed; without one it is the default project location. */
   | { type: "project.createBlank"; name: string; location?: string }
@@ -2381,7 +2379,6 @@ export interface ResponseMap {
    */
   "artifact.list": { artifacts: SessionArtifacts[]; nextCursor?: string; facets?: ArtifactFacets; building?: boolean }
   /** The document and the name to suggest for it; the window puts up the save dialog. */
-  "session.exportFile": { name: string; text: string }
   /**
    * The conversation that was read back, or why the file was not one.
    *
@@ -2389,7 +2386,6 @@ export interface ResponseMap {
    * reader can act on - the wrong file was picked, it is damaged, or it was
    * written by a newer build - and the window has its own sentence for each.
    */
-  "session.importFile": { session?: SessionInfo; problem?: "notJson" | "notMCode" | "fromNewer" | "noMessages" }
   "session.create": { session: SessionInfo }
   "project.createBlank": { directory: string }
   /* `existed` is true when the folder was already listed. */

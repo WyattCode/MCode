@@ -1435,30 +1435,6 @@ app.whenReady().then(async () => {
    * The renderer has no filesystem, and a transcript that can only be read
    * inside the app is not much of an export.
    */
-  /* The import half of the conversation-file pair: one file, read as text. */
-  ipcMain.handle("mcode:open-text", async (event, title: string) => {
-    const asking = BrowserWindow.fromWebContents(event.sender)
-    const claim = claimDialog(process.platform, asking)
-    if (!claim) return undefined
-    const owner = dialogParent(process.platform, asking)
-    const options: Electron.OpenDialogOptions = {
-      title,
-      properties: ["openFile"],
-      filters: [{ name: "JSON", extensions: ["json"] }],
-    }
-    const result = await (owner ? dialog.showOpenDialog(owner, options) : dialog.showOpenDialog(options)).finally(() => releaseDialog(claim))
-    const target = result.canceled ? undefined : result.filePaths[0]
-    if (!target) return undefined
-    /*
-     * Capped before it is read. A conversation document is text, and something
-     * enormous picked by mistake must not be pulled into memory whole.
-     */
-    const stats = await fs.stat(target).catch(() => undefined)
-    if (!stats?.isFile() || stats.size > 64 * 1024 * 1024) return undefined
-    const text = await fs.readFile(target, "utf8").catch(() => undefined)
-    return text === undefined ? undefined : { name: path.basename(target), text }
-  })
-
   ipcMain.handle("mcode:save-text", async (event, suggested: string, text: string) => {
     const asking = BrowserWindow.fromWebContents(event.sender)
     const claim = claimDialog(process.platform, asking)

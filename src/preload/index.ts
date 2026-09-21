@@ -52,9 +52,6 @@ const api = {
     ipcRenderer.invoke("mcode:pick-directory", title, multiple, true),
   saveText: (suggested: string, text: string): Promise<string | undefined> =>
     ipcRenderer.invoke("mcode:save-text", suggested, text),
-  /** The other half of the export: picks a conversation file and hands back its text. */
-  openText: (title: string): Promise<{ name: string; text: string } | undefined> =>
-    ipcRenderer.invoke("mcode:open-text", title),
 
   /** Whether the clipboard holds a picture at all - a yes or a no, never its contents. */
   clipboardHasImage: (): Promise<boolean> => ipcRenderer.invoke("mcode:clipboard-has-image"),

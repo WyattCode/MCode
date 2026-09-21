@@ -57,7 +57,7 @@ import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
 import { cycleVariant, findModel } from "./lib/model"
 import { PANEL_MIN_WIDTH, useRightPanel } from "./stores/right-panel"
 import { arbitratePanel, boundChord, clampSideWidth, panelWidthShown, sideFits, toolHints } from "./lib/right-tools"
-import { exportConversationById, exportConversationFile, exportConversationMarkdown, importConversationFile, transcriptOf } from "./lib/convo-export"
+import { exportConversationById, exportConversationMarkdown, transcriptOf } from "./lib/convo-export"
 import { ZOOM_TOAST, dismiss, notify, notifyFailure, zoomNotice } from "./lib/toast"
 import { openDocument } from "./lib/office-open"
 import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
@@ -1438,8 +1438,6 @@ const SESSION_MENU: MenuRow[] = [
   },
   { id: "row.copyDirectory", label: "menu.copyDirectory", icon: COPY_ICON },
   { id: "session.export", label: "menu.export", icon: "M8 2.6v7.2M5.2 7.2 8 10l2.8-2.8M2.8 12.2h10.4" },
-  /* The same conversation as a file this app can read back, rather than as a transcript. */
-  { id: "session.exportFile", label: "menu.exportFile", icon: "M3 2.8h6.4L13 6.4v6.8H3zM9.2 2.8v3.6h3.6" },
   {
     id: "session.delete",
     label: "menu.delete",
@@ -1561,7 +1559,6 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
   },
   /* Round 3 AR15 (artifacts agent): MiMo's 导出对话记录 saves the named conversation as Markdown without opening it. */
   "session.export": (sessionID) => exportConversationById(sessionID),
-  "session.exportFile": (sessionID) => exportConversationFile(sessionID),
   /* MiMo's copy notices are the title alone; what was copied is already on the clipboard. */
   "row.copyDirectory": (sessionID, header) => {
     const target = app.sessions.find((entry) => entry.id === sessionID)
@@ -2534,13 +2531,6 @@ const bindableCommands = computed((): AppCommand[] => {
       title: t("cmd.exportMarkdown"),
       enabled: hasSession && app.messages.length > 0,
       run: exportSession,
-    },
-    {
-      /* The other half of the pair: a conversation file written by this app, opened again. */
-      id: "session.importFile",
-      group: "key.groupConversation",
-      title: t("cmd.importConvoFile"),
-      run: () => void importConversationFile((sessionID) => void app.open(sessionID)),
     },
     {
       id: "app.update",

@@ -372,7 +372,7 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
     const third = claimDialog("win32")
     check("M10-25: the dialog closing frees the next", Boolean(third))
     releaseDialog(third)
-    for (const channel of ["mcode:pick-directory", "mcode:open-text", "mcode:save-text"]) {
+    for (const channel of ["mcode:pick-directory", "mcode:save-text"]) {
       const at = main.indexOf(`ipcMain.handle("${channel}"`)
       const body = main.slice(at, at + 1400)
       check(`M10-25: ${channel} takes the one-dialog claim and the platform's parent`, at > 0 && /claimDialog\(process\.platform, asking\)/.test(body) && /dialogParent\(process\.platform, asking\)/.test(body) && /releaseDialog\(claim\)/.test(body))

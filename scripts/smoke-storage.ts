@@ -19,7 +19,6 @@ import { Config } from "../src/server/config"
 import { Storage } from "../src/server/storage"
 import { SessionStore } from "../src/server/session/store"
 import { Permissions, RULES_KEY } from "../src/server/permission"
-import { CONVO_FILE_FORMAT, conversationDocument, conversationFileName, parseConversationDocument } from "../src/shared/convo-file"
 import { ARTIFACT_SCHEMA_VERSION, ArtifactStore } from "../src/server/artifact/store"
 import { STORAGE_LAYOUT_VERSION, readStorageLayout } from "../src/server/storage-layout"
 import { IMPORT_SCHEMA_VERSION, runImport } from "../src/server/import"
@@ -295,66 +294,6 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     check("an unreadable rules document is kept aside rather than replaced", aside.length === 1, aside)
     const unruled = await settle(damaged, ask(damaged, "ses_g", "c8", "npm run build", directory), "reject")
     check("and the app carries on with no rules in force", unruled.asked, unruled)
-  }
-
-  // ------------------------------------------------------------------- S4
-  section("Round 7 (S4): a conversation can be written to a file and read back")
-  {
-    const storage = new Storage(path.join(root, "trip", "storage"))
-    const bus = new Bus()
-    const store = new SessionStore(storage, bus)
-    const directory = path.join(root, "trip-project")
-    const session = await store.create({ directory, model: MODEL, title: "A conversation worth keeping" })
-    await store.saveMessage(
-      { id: "msg_u1", sessionID: session.id, role: "user", text: "what did we decide", attachments: [], time: { created: 1 } },
-      true,
-    )
-    await store.saveMessage(
-      {
-        id: "msg_a1",
-        sessionID: session.id,
-        role: "assistant",
-        model: MODEL,
-        agent: "build",
-        parts: [{ type: "text", id: "prt_1", text: "we decided to keep it" }],
-        finish: "end_turn",
-        time: { created: 2, completed: 3 },
-      },
-      true,
-    )
-
-    const messages = await store.messages(session.id)
-    const text = JSON.stringify(conversationDocument(session, messages), null, 2)
-    const back = parseConversationDocument(text)
-    check("the document reads back as a conversation", Boolean(back.file) && back.problem === undefined, back.problem)
-    check("with the title and the folder it worked in", back.file?.session.title === "A conversation worth keeping" && back.file?.session.directory === directory, back.file?.session)
-    /*
-     * Compared against the store's own list rather than against an order this
-     * check assumes: messages are listed by key, so "msg_a1" comes before
-     * "msg_u1" and the reply is first.
-     */
-    check(
-      "and every message exactly as it was stored, in the same order",
-      back.file?.messages.length === 2 && JSON.stringify(back.file?.messages) === JSON.stringify(messages),
-      back.file?.messages.map((message) => message.id),
-    )
-    check("the conversation's own clock travels with it", back.file?.session.created === session.created && back.file?.session.updated === session.updated, back.file?.session)
-
-    /* Every refusal is a reason the reader can act on, not a thrown error. */
-    check("a file that is not JSON at all is refused", parseConversationDocument("not json{").problem === "notJson")
-    check("another app's JSON is refused", parseConversationDocument(JSON.stringify({ app: "SomethingElse", format: 1 })).problem === "notMCode")
-    check(
-      "a document written by a newer build is refused rather than half read",
-      parseConversationDocument(JSON.stringify({ app: "MCode", format: CONVO_FILE_FORMAT + 1, session: {}, messages: [{ id: "m", role: "user" }] })).problem === "fromNewer",
-    )
-    check(
-      "and one with nothing in it that reads as a message",
-      parseConversationDocument(JSON.stringify({ app: "MCode", format: CONVO_FILE_FORMAT, session: {}, messages: [{ nonsense: true }] })).problem === "noMessages",
-    )
-
-    const name = conversationFileName('a/title\\with:illegal*characters?', "conversation")
-    check("the suggested file name carries nothing a file system refuses", !/[\\/:*?"<>|]/.test(name) && name.endsWith(".mcode.json"), name)
-    check("and an untitled conversation still gets a name", conversationFileName("", "conversation") === "conversation.mcode.json", conversationFileName("", "conversation"))
   }
 
   // ------------------------------------------------------------------- S5

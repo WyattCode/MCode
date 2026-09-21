@@ -165,4 +165,23 @@ export async function roundNineteenPanelChecks(check: Check, section: (name: str
     const calls = side.match(/app\.automationTasks, runningNames\((?:block\.session|session|entry\.session)\.id\)\)/g) ?? []
     check("R19-SH2: every conversation row's card is handed its working subagents' names", calls.length === 3 && (side.match(/convoCard\(/g) ?? []).length === 3, calls.length)
   }
+
+  section("Round 19 (lane B): R19-SH3 the row menu exports Markdown alone, as MiMo's; the conversation file is gone")
+  {
+    const app = await read("src/renderer/src/App.vue")
+    const menu = /const SESSION_MENU[^=]*= \[([\s\S]*?)\n\]/.exec(app)?.[1] ?? ""
+    const ids = [...menu.matchAll(/id: "([^"]+)"/g)].map((found) => found[1]!)
+    check("R19-SH3: 导出对话记录 is the row menu's one export, and 删除 follows it", ids.filter((id) => /export/i.test(id)).join() === "session.export" && ids[ids.indexOf("session.export") + 1] === "session.delete", ids)
+    check("R19-SH3: nothing in the window exports or imports a conversation file", !/session\.(exportFile|importFile)|exportConversationFile|importConversationFile/.test(app + (await read("src/renderer/src/lib/convo-export.ts"))))
+    const gone = await fs.stat(path.join(process.cwd(), "src/shared/convo-file.ts")).then(() => false, () => true)
+    check("R19-SH3: the conversation-file module is gone", gone)
+    const [protocol, handlers, main, preload] = await Promise.all(["src/shared/protocol.ts", "src/server/handlers.ts", "src/main/index.ts", "src/preload/index.ts"].map(read))
+    check("R19-SH3: the server no longer answers for it", !/session\.(exportFile|importFile)/.test(protocol + handlers))
+    check("R19-SH3: nor does the main process open a file for it", !main.includes("mcode:open-text") && !/openText/.test(preload))
+    check("R19-SH3: the Markdown export and its save dialog stay", app.includes('"session.export": (sessionID) => exportConversationById(sessionID)') && main.includes('ipcMain.handle("mcode:save-text"'))
+    const i18n = await read("src/renderer/src/lib/i18n.ts")
+    const left = ["menu.exportFile", "cmd.importConvoFile", "toast.importNotJson", "toast.importNotMCode", "toast.importFromNewer", "toast.importNoMessages", "toast.importedConvo", "toast.importFailed"].filter((key) => i18n.includes(`"${key}":`))
+    check("R19-SH3: its eight strings have left all 18 tables", left.length === 0, left)
+    check("R19-SH3: 导出对话记录 stays in all 18", (i18n.match(/^ {2}"menu\.export": /gm) ?? []).length === 18)
+  }
 }

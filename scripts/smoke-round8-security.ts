@@ -45,7 +45,6 @@ import { AutomationUpdateTool } from "../src/server/tool/automation"
 import { CronScheduler, bindScheduler } from "../src/server/cron/scheduler"
 import { AutomationService, bindAutomations } from "../src/server/automation/service"
 import { ensureCallbackServer, stopCallbackServer, trustedDiscoveryUrl } from "../src/server/mcp-oauth"
-import { conversationDocument } from "../src/shared/convo-file"
 import { pageMayNavigate } from "../src/shared/web-address"
 import { createServer as createNetServer } from "node:net"
 import { UnsafeAddressError, checkTarget, oauthFetch, publicAddress } from "../src/server/oauth-fetch"
@@ -1057,31 +1056,9 @@ async function remainingChecks(check: Check, section: Section, root: string): Pr
     check("round 9: every request sign-in makes goes through the checked fetch", !/[^.\w]fetch\(/.test(oauthSource) && (oauthSource.match(/oauthFetch\(serverUrl,/g) ?? []).length === 3, (oauthSource.match(/oauthFetch\(serverUrl,/g) ?? []).length)
   }
 
-  section("Round 8 (X17): an imported conversation does not choose its own project")
-  const data = path.join(root, "x17-data")
+  // X17's import of a conversation file went with the file itself (R19-SH3); X19 below still needs a project.
   const project = path.join(root, "x17-project")
-  await fs.mkdir(path.join(data, "storage"), { recursive: true })
   await fs.mkdir(project, { recursive: true })
-  await fs.writeFile(path.join(data, "storage", "config.json"), "{}")
-  const backend = await startBackend(data)
-  try {
-    const runtime = backend.runtime
-    await handle(runtime, { type: "project.add", directory: project } as unknown as Request)
-    const fallback = runtime.config.get().directory
-    const documentFor = (directory: string) =>
-      JSON.stringify(
-        conversationDocument(
-          { id: "ses_x", title: "Imported", directory, created: 1, updated: 2, model: { provider: "anthropic", model: "claude-opus-5" } } as never,
-          [{ id: "msg_1", sessionID: "ses_x", role: "user", text: "hi", attachments: [], time: { created: 1 } } as never],
-        ),
-      )
-    const planted = (await handle(runtime, { type: "session.importFile", text: documentFor(os.homedir()) } as unknown as Request)) as { session?: { directory: string } }
-    check("a file naming a folder this profile does not work in is opened in the profile's own", planted.session?.directory === fallback, planted.session?.directory)
-    const kept = (await handle(runtime, { type: "session.importFile", text: documentFor(project) } as unknown as Request)) as { session?: { directory: string } }
-    check("one naming a listed project keeps it", kept.session?.directory === project, kept.session?.directory)
-  } finally {
-    await backend.close()
-  }
 
   section("Round 8 (X19): no tool writes an alternate data stream")
   if (process.platform === "win32") {
