@@ -1761,9 +1761,10 @@ defineExpose({ stepMessage, scroller })
                 v-tip="{ label: t('stream.copyAsked'), placement: 'top' }"
                 @click="copyAsked(turn)"
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <rect x="8" y="8" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2.2" />
-                  <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" stroke="currentColor" stroke-width="2.2" />
+                <!-- MiMo's copy at its 17 by 20 measure: a tall rounded sheet with the corner of the one behind it. -->
+                <svg width="12" height="12" viewBox="0 0 17 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M1 11V5a4 4 0 0 1 4-4h6" />
+                  <rect x="4.75" y="4.75" width="11.25" height="14.25" rx="2.25" />
                 </svg>
               </button>
               <button
@@ -1945,9 +1946,9 @@ defineExpose({ stepMessage, scroller })
               v-tip="{ label: t('stream.replyCopy'), placement: 'top' }"
               @click="copyReply(turn)"
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <rect x="8" y="8" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2.2" />
-                <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" stroke="currentColor" stroke-width="2.2" />
+              <svg width="12" height="12" viewBox="0 0 17 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M1 11V5a4 4 0 0 1 4-4h6" />
+                <rect x="4.75" y="4.75" width="11.25" height="14.25" rx="2.25" />
               </svg>
             </button>
             <button
@@ -1959,11 +1960,11 @@ defineExpose({ stepMessage, scroller })
               v-tip="{ label: t('stream.replyFork'), placement: 'top' }"
               @click="branchReply(turn)"
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <circle cx="6" cy="5" r="2.2" stroke="currentColor" stroke-width="2.2" />
-                <circle cx="6" cy="19" r="2.2" stroke="currentColor" stroke-width="2.2" />
-                <circle cx="18" cy="8" r="2.2" stroke="currentColor" stroke-width="2.2" />
-                <path d="M6 7.2v9.6M18 10.2c0 4-3.4 5.2-8.3 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+              <!-- MiMo's branch at its 17 by 20 measure: a stem with a branch halfway and a foot that turns right, each ending at a ring. -->
+              <svg width="12" height="12" viewBox="0 0 17 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M2 1.5v11.25a3.5 3.5 0 0 0 3.5 3.5h4.75M2 6.75h8.25" />
+                <circle cx="12.5" cy="6.75" r="2.25" />
+                <circle cx="12.5" cy="16.25" r="2.25" />
               </svg>
             </button>
             <!-- 追求目标: the one word a met goal leaves in the transcript, on the reply that met it. -->
@@ -2075,17 +2076,18 @@ defineExpose({ stepMessage, scroller })
 }
 
 /* Under a card - the edited files, or the artifacts - it keeps its distance. */
-.msg-actions:is(.file-card + .msg-actions, [data-fc-reverted] + .msg-actions, .fc-confirm + .msg-actions, .err-card + .msg-actions) {
+.msg-actions:is(.file-card + .msg-actions, [data-fc-reverted] + .msg-actions, .fc-confirm + .msg-actions, .err-card + .msg-actions, .media-strip ~ .msg-actions) {
   margin-top: 10px;
 }
 
+/* MiMo's icon-btn xs: muted, and on hover its side-hover fill under its txt colour (#151c13cc light, #f4f4f5 dark). */
 .msg-act {
   display: grid;
   place-items: center;
   width: 26px;
   height: 26px;
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 7px;
@@ -2093,8 +2095,18 @@ defineExpose({ stepMessage, scroller })
 }
 
 .msg-act:hover {
-  color: var(--text-base);
+  color: #151c13cc;
   background: var(--surface-hover);
+}
+
+:root[data-theme="dark"] .msg-act:hover {
+  color: #f4f4f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .msg-act:hover {
+    color: #f4f4f5;
+  }
 }
 
 .msg-act:active {
@@ -2107,17 +2119,27 @@ defineExpose({ stepMessage, scroller })
   align-items: center;
   gap: 8px;
   margin-inline-start: 6px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   opacity: 0;
-  transition: opacity 0.12s;
 }
 
+/* MiMo's line: #f0ebe5 in light, #2e2e2e in dark. */
 .msg-time::before {
   width: 1px;
   height: 12px;
   content: "";
-  background: var(--border-weak);
+  background: #f0ebe5;
+}
+
+:root[data-theme="dark"] .msg-time::before {
+  background: #2e2e2e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .msg-time::before {
+    background: #2e2e2e;
+  }
 }
 
 .msg.assistant:hover .msg-time,
@@ -2132,7 +2154,7 @@ defineExpose({ stepMessage, scroller })
   gap: 5px;
   margin-inline-start: 6px;
   padding-inline-start: 9px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-inline-start: 1px solid var(--border-weak);
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
