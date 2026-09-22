@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue"
+import { computed, onMounted, ref, watch } from "vue"
 import type { ProviderStatus } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
@@ -45,6 +45,17 @@ const presetGroups = computed(() => quickAddGroups(app.providers))
 
 const form = ref<InstanceType<typeof CustomProviderForm>>()
 const saving = computed(() => Boolean(form.value?.busy))
+
+/*
+ * The shell the action bar is portalled into, as MiMo portals its own into
+ * .settings-full: the bar is then positioned against the dialog rather than
+ * carried by the page, so it stays put while the page scrolls under it. Found
+ * after mounting, because the shell is this page's own ancestor.
+ */
+const dockHost = ref<HTMLElement>()
+onMounted(() => {
+  dockHost.value = document.querySelector<HTMLElement>("[data-settings-overlay] .dialog") ?? undefined
+})
 
 /* ------------------------------------------------------------ connect dialog */
 
@@ -245,35 +256,11 @@ async function confirmClone(id: string) {
         </span>
       </div>
       <CustomProviderForm key="add" ref="form" @saved="saved" />
-      <div class="dock" data-provider-actions>
-        <span />
-        <button type="button" class="primary" data-provider-save :disabled="saving || !form?.canSave" @click="save">
-          {{ saving ? t("common.saving") : t("set.models.confirmAdd") }}
-        </button>
-      </div>
     </template>
 
     <!-- A custom provider: its own form, with delete and clone beside save. -->
     <template v-else-if="current?.custom && customEntry">
       <CustomProviderForm :key="current.id" ref="form" :editing="customEntry" @saved="saved" />
-      <div class="dock" data-provider-actions>
-        <span class="dock-start">
-          <button
-            type="button"
-            class="dock-btn danger"
-            :data-provider-remove="current.id"
-            @click="removing = { id: current.id, name: providerLabel(current), custom: true }"
-          >
-            {{ t("set.models.removeProvider") }}
-          </button>
-          <button type="button" class="dock-btn" :data-provider-clone="current.id" @click="startClone(current)">
-            {{ t("set.models.cloneProvider") }}
-          </button>
-        </span>
-        <button type="button" class="primary" data-provider-save :disabled="saving || !form?.canSave || !form?.dirty" @click="save">
-          {{ saving ? t("common.saving") : t("common.save") }}
-        </button>
-      </div>
     </template>
 
     <!-- A connected vendor: where it is reached, what it serves, and the way out. -->
@@ -312,22 +299,80 @@ async function confirmClone(id: string) {
           <span class="model-id">{{ model.id }}</span>
         </div>
       </div>
+    </template>
+
+    <!--
+      MiMo ends the page with an aria-hidden block the height of the bar that
+      floats over it, so the last card can still be scrolled clear of it.
+    -->
+    <div v-if="dockHost" class="dock-floor" aria-hidden="true" />
+
+    <!--
+      MiMo's action bar is portalled out of the page and into the dialog shell,
+      where it is positioned against the shell rather than carried along by the
+      page: it stays above the last row however far the page has scrolled.
+    -->
+    <Teleport v-if="dockHost" :to="dockHost">
       <div class="dock" data-provider-actions>
         <span class="dock-start">
-          <span v-if="fromEnvironment(current)" class="env-note">{{ t("provider.fromEnvironment") }}</span>
-          <button
-            v-else
-            type="button"
-            class="dock-btn danger"
-            :data-provider-remove="current.id"
-            @click="removing = { id: current.id, name: providerLabel(current), custom: false }"
-          >
-            {{ t("set.disconnect") }}
-          </button>
+          <template v-if="current?.custom && customEntry">
+            <button
+              type="button"
+              class="dock-btn danger"
+              :data-provider-remove="current.id"
+              @click="removing = { id: current.id, name: providerLabel(current), custom: true }"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 6.5h16M9.5 6.5V4.5h5v2M6.5 6.5l.8 13a1.7 1.7 0 0 0 1.7 1.5h6a1.7 1.7 0 0 0 1.7-1.5l.8-13" />
+              </svg>
+              {{ t("set.models.removeProvider") }}
+            </button>
+            <button type="button" class="dock-btn" :data-provider-clone="current.id" @click="startClone(current)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="9" y="9" width="11" height="11" rx="2" />
+                <path d="M15 5.5A1.5 1.5 0 0 0 13.5 4H5.5A1.5 1.5 0 0 0 4 5.5v8A1.5 1.5 0 0 0 5.5 15" />
+              </svg>
+              {{ t("set.models.cloneProvider") }}
+            </button>
+          </template>
+          <template v-else-if="current && !current.custom">
+            <span v-if="fromEnvironment(current)" class="env-note">{{ t("provider.fromEnvironment") }}</span>
+            <button
+              v-else
+              type="button"
+              class="dock-btn danger"
+              :data-provider-remove="current.id"
+              @click="removing = { id: current.id, name: providerLabel(current), custom: false }"
+            >
+              {{ t("set.disconnect") }}
+            </button>
+          </template>
         </span>
-        <button type="button" class="primary" :data-provider-manage="current.id" @click="manage(current)">{{ t("set.models.manage") }}</button>
+        <button
+          v-if="selected === ADD"
+          type="button"
+          class="primary"
+          data-provider-save
+          :disabled="saving || !form?.canSave"
+          @click="save"
+        >
+          {{ saving ? t("common.saving") : t("set.models.confirmAdd") }}
+        </button>
+        <button
+          v-else-if="current?.custom && customEntry"
+          type="button"
+          class="primary"
+          data-provider-save
+          :disabled="saving || !form?.canSave || !form?.dirty"
+          @click="save"
+        >
+          {{ saving ? t("common.saving") : t("common.save") }}
+        </button>
+        <button v-else-if="current" type="button" class="primary" :data-provider-manage="current.id" @click="manage(current)">
+          {{ t("set.models.manage") }}
+        </button>
       </div>
-    </template>
+    </Teleport>
 
     <Teleport to="body">
       <ConfirmDialog
@@ -369,7 +414,8 @@ h2 {
 .models-page {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  /* MiMo's models-page-body: 16 between the blocks of the page. */
+  gap: 16px;
 }
 
 /* MiMo 26.920's tabs: 36 high, an 8px corner, a line; the shown one has a strong line and a soft fill. */
@@ -387,9 +433,9 @@ h2 {
   gap: 8px;
   height: calc(36px * var(--ui-font-scale, 1));
   padding: 0 12px;
-  color: var(--text-base);
+  color: #151c13cc;
   background: transparent;
-  border: 1px solid var(--border-weak);
+  border: 1px solid #f0ebe5;
   border-radius: 8px;
   font-size: calc(13px * var(--ui-font-scale, 1));
   white-space: nowrap;
@@ -403,12 +449,16 @@ h2 {
 }
 
 .tab:hover:not(.on) {
-  background: var(--surface-hover);
+  background: #f1f0ec;
 }
 
+/*
+ * MiMo marks the chosen tab with its rule and the strong ink alone: the fill it
+ * asks for is `bg-soft`, which ships as no rule at all (2026-09-23 decision -
+ * take MiMo's drawn result, not the class name's intent).
+ */
 .tab.on {
   color: var(--text-strong);
-  background: var(--surface-hover);
   border-color: var(--text-strong);
   font-weight: 500;
 }
@@ -447,23 +497,57 @@ h2 {
   gap: 7px;
   height: calc(32px * var(--ui-font-scale, 1));
   padding: 0 10px;
-  color: var(--text-base);
+  color: #151c13cc;
   background: transparent;
-  border: 1px solid var(--border-weak);
+  border: 1px solid #f0ebe5;
   border-radius: 8px;
   font-size: calc(13px * var(--ui-font-scale, 1));
   cursor: pointer;
 }
 
 .preset:hover:not(.on) {
-  background: var(--surface-hover);
+  background: #f1f0ec;
 }
 
+/* The chosen chip, like the chosen tab, is a rule and an ink and no fill. */
 .preset.on {
   color: var(--text-strong);
-  background: var(--surface-hover);
   border-color: var(--text-strong);
   cursor: default;
+}
+
+:root[data-theme="dark"] .tab,
+:root[data-theme="dark"] .preset {
+  color: #f4f4f5;
+  border-color: #2e2e2e;
+}
+
+:root[data-theme="dark"] .tab:hover:not(.on),
+:root[data-theme="dark"] .preset:hover:not(.on) {
+  background: #ffffff0f;
+}
+
+:root[data-theme="dark"] .tab.on,
+:root[data-theme="dark"] .preset.on {
+  border-color: var(--text-strong);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .tab,
+  :root:not([data-theme="light"]) .preset {
+    color: #f4f4f5;
+    border-color: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .tab:hover:not(.on),
+  :root:not([data-theme="light"]) .preset:hover:not(.on) {
+    background: #ffffff0f;
+  }
+
+  :root:not([data-theme="light"]) .tab.on,
+  :root:not([data-theme="light"]) .preset.on {
+    border-color: var(--text-strong);
+  }
 }
 
 .preset-mark {
@@ -479,11 +563,12 @@ h2 {
   stroke-linecap: round;
 }
 
+/* MiMo's set-card and its sr rows, the same ones the rest of the dialog uses. */
 .card {
   padding: 0 16px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weak);
-  border-radius: 12px;
+  background: #ffffff;
+  border: 1px solid #f3efeb;
+  border-radius: 16px;
 }
 
 .line {
@@ -492,18 +577,38 @@ h2 {
   align-items: center;
   justify-content: space-between;
   gap: 8px 16px;
-  padding: 12px 0;
-  border-bottom: 0.5px solid var(--border-weak);
+  padding: 16px 0;
+  border-bottom: 1px solid #f3efeb;
 }
 
 .line:last-child {
   border-bottom: none;
 }
 
+:root[data-theme="dark"] .card {
+  background: #282828;
+  border-color: #3d3d3d;
+}
+
+:root[data-theme="dark"] .line {
+  border-color: #3d3d3d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .card {
+    background: #282828;
+    border-color: #3d3d3d;
+  }
+
+  :root:not([data-theme="light"]) .line {
+    border-color: #3d3d3d;
+  }
+}
+
 .line-title {
   color: var(--text-strong);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 530;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
 }
 
 .line-value {
@@ -554,7 +659,7 @@ h2 {
   margin-top: 10px;
   color: var(--text-strong);
   font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 530;
+  font-weight: 500;
 }
 
 .count {
@@ -592,19 +697,47 @@ h2 {
   font-size: calc(11.5px * var(--code-font-scale, 1));
 }
 
-/* MiMo 26.920's action bar under the page: a rounded pill, delete and clone at its start, save at its end. */
+/*
+ * MiMo's models-actions-dock: a glass pill held against the dialog shell - 8 up
+ * from its foot, clear of the 240 navigation column by the page's own inset,
+ * and the same again at the other end - rather than a bar the page carries
+ * along as it scrolls. The floor below the page is what keeps the last card
+ * reachable underneath it.
+ */
 .dock {
+  position: absolute;
+  bottom: 8px;
+  inset-inline-start: 320px;
+  inset-inline-end: 80px;
+  z-index: 8;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   min-height: 48px;
-  margin-top: 8px;
   padding: 6px 10px 6px 8px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weak);
+  background: color-mix(in srgb, #fffefd 42%, transparent);
+  border: 1px solid color-mix(in srgb, #f0ebe5 70%, transparent);
   border-radius: 999px;
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 8px 28px #00000024, inset 0 1px #ffffff47;
+  backdrop-filter: blur(22px) saturate(165%);
+}
+
+:root[data-theme="dark"] .dock {
+  background: color-mix(in srgb, #282828 42%, transparent);
+  border-color: color-mix(in srgb, #2e2e2e 70%, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .dock {
+    background: color-mix(in srgb, #282828 42%, transparent);
+    border-color: color-mix(in srgb, #2e2e2e 70%, transparent);
+  }
+}
+
+.dock-floor {
+  flex: none;
+  height: 130px;
 }
 
 .dock-start {
@@ -617,6 +750,7 @@ h2 {
 .dock-btn {
   display: flex;
   align-items: center;
+  gap: 6px;
   height: calc(34px * var(--ui-font-scale, 1));
   padding: 0 10px;
   color: var(--text-base);
@@ -628,14 +762,35 @@ h2 {
   cursor: pointer;
 }
 
-.dock-btn:hover:not(:disabled) {
-  color: var(--text-strong);
-  background: var(--surface-hover);
-  border-color: var(--border-weak);
+.dock-btn svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
 }
 
-.dock-btn.danger:hover {
+.dock-btn:hover:not(:disabled) {
+  color: var(--text-strong);
+  background: #f1f0ec;
+  border-color: #f0ebe5;
+}
+
+:root[data-theme="dark"] .dock-btn:hover:not(:disabled) {
+  background: #ffffff0f;
+  border-color: #2e2e2e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .dock-btn:hover:not(:disabled) {
+    background: #ffffff0f;
+    border-color: #2e2e2e;
+  }
+}
+
+/* Deleting a provider is the one red hover: red-500 on its own 10% wash inside red-300. */
+.dock-btn.danger:hover:not(:disabled) {
   color: #fb2c36;
+  background: color-mix(in srgb, #fb2c36 10%, transparent);
+  border-color: #ffa2a2;
 }
 
 .dock-btn:disabled {
@@ -649,16 +804,30 @@ h2 {
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
+/* MiMo's Button size sm, default variant: 26 tall, 8 round, 12 in, 14/500. */
 .primary {
-  height: calc(32px * var(--ui-font-scale, 1));
-  padding: 0 16px;
-  color: var(--button-primary-text);
-  background: var(--button-primary);
-  border: 1px solid var(--button-primary);
-  border-radius: 999px;
-  font-size: calc(13px * var(--ui-font-scale, 1));
+  height: calc(26px * var(--ui-font-scale, 1));
+  padding: 0 12px;
+  color: #ffffff;
+  background: #151c13;
+  border: 0;
+  border-radius: 8px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
+}
+
+:root[data-theme="dark"] .primary {
+  color: #0d0d0d;
+  background: #ececec;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .primary {
+    color: #0d0d0d;
+    background: #ececec;
+  }
 }
 
 .primary:hover:not(:disabled) {

@@ -56,6 +56,7 @@ onMounted(() => {
         v-model="id"
         class="field-in"
         :class="{ bad: error }"
+        placeholder="my-provider-copy"
         data-clone-provider-id
         spellcheck="false"
         autocomplete="off"
@@ -115,16 +116,32 @@ h2 {
   margin-top: 16px;
   padding: 0 12px;
   color: var(--text-strong);
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weak);
-  border-radius: 8px;
-  font-family: var(--font-mono);
+  background: transparent;
+  border: 1px solid #e3e3e0;
+  border-radius: 6px;
+  box-shadow: 0 1px 2px #0000000d;
   font-size: calc(13px * var(--ui-font-scale, 1));
   outline: none;
 }
 
+.field-in::placeholder {
+  color: var(--text-base);
+}
+
 .field-in:focus {
-  border-color: var(--border-strong);
+  border-color: var(--text-weak);
+}
+
+:root[data-theme="dark"] .field-in {
+  background: rgb(58 58 58 / 0.3);
+  border-color: #3a3a3a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .field-in {
+    background: rgb(58 58 58 / 0.3);
+    border-color: #3a3a3a;
+  }
 }
 
 /* MiMo rings a bad id in red-400 and says why in red-500. Both are written out

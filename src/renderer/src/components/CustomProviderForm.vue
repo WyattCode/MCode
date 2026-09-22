@@ -242,10 +242,25 @@ const openMenu = ref<string>()
 /* The suggestion moved to; none until the arrows or the pointer pick one. */
 const highlight = ref(-1)
 
+/**
+ * What the picker offers, as MiMo fills its own: everything the connection test
+ * found, then every model this app already knows - so a provider whose endpoint
+ * has no /models still has a list to pick from - each with the display name to
+ * show beside its id. Ids already added drop out, and the typed text narrows on
+ * either part.
+ */
 const choices = computed(() => {
+  const merged = new Map<string, string>()
+  for (const id of probe.value.models) merged.set(id, known(id)?.name ?? "")
+  for (const provider of app.providers) {
+    if (provider.id === props.editing?.id) continue
+    for (const model of provider.models) if (!merged.has(model.id)) merged.set(model.id, model.name)
+  }
   const needle = query.value.trim().toLowerCase()
   const added = new Set(form.value.models.map((row) => row.id))
-  return probe.value.models.filter((id) => !added.has(id) && (!needle || id.toLowerCase().includes(needle)))
+  return [...merged]
+    .filter(([id, name]) => !added.has(id) && (!needle || id.toLowerCase().includes(needle) || name.toLowerCase().includes(needle)))
+    .map(([id, name]) => ({ id, name: name === id ? "" : name }))
 })
 
 /* Synchronous, so an ArrowDown that opens the list lands on its first row rather than being reset after. */
@@ -282,7 +297,7 @@ function comboKey(event: KeyboardEvent) {
     revealHighlight()
   } else if (event.key === "Enter") {
     event.preventDefault()
-    addModel(comboEnterValue(openMenu.value === "combo" ? highlight.value : -1, choices.value, query.value))
+    addModel(comboEnterValue(openMenu.value === "combo" ? highlight.value : -1, choices.value.map((choice) => choice.id), query.value))
   }
 }
 
@@ -442,7 +457,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
           <input
             id="cp-provider-id"
             v-model="form.providerID"
-            class="cp-in mono"
+            class="cp-in"
             :class="{ bad: idError }"
             ref="providerIdEl"
             :readonly="Boolean(editing)"
@@ -485,7 +500,6 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
             @blur="form.baseURL = normalizeBaseURL(form.baseURL)"
           />
           <div v-if="endpointBad" class="cp-error" data-endpoint-invalid>{{ t("model.endpointInvalid") }}</div>
-          <div v-else class="cp-help" data-endpoint-hint>{{ t("model.endpointHint") }}</div>
         </div>
       </div>
 
@@ -532,7 +546,6 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
               </svg>
             </button>
           </div>
-          <div class="cp-help">{{ t("provider.custom.field.apiKey.description") }}</div>
         </div>
       </div>
 
@@ -554,7 +567,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
     <div class="cp-combo" data-menu-anchor="combo">
       <input
         v-model="query"
-        class="cp-in mono"
+        class="cp-in"
         role="combobox"
         :aria-expanded="openMenu === 'combo'"
         aria-autocomplete="list"
@@ -570,18 +583,19 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
       <div v-if="openMenu === 'combo'" ref="comboMenuEl" class="cp-menu combo" role="listbox" data-model-combo-menu>
         <div v-if="!choices.length" class="cp-menu-empty" data-model-combo-empty>{{ t("set.models.comboEmpty") }}</div>
         <button
-          v-for="(id, at) in choices"
-          :key="id"
+          v-for="(choice, at) in choices"
+          :key="choice.id"
           type="button"
           role="option"
           class="cp-option"
           :class="{ on: at === highlight }"
           :aria-selected="at === highlight"
-          :data-model-combo-option="id"
+          :data-model-combo-option="choice.id"
           @mouseenter="highlight = at"
-          @click="addModel(id)"
+          @click="addModel(choice.id)"
         >
-          {{ id }}
+          <span class="cp-option-id">{{ choice.id }}</span>
+          <span v-if="choice.name" class="cp-option-name" data-model-combo-name>{{ choice.name }}</span>
         </button>
       </div>
     </div>
@@ -601,7 +615,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
         </svg>
       </button>
       <div class="cp-model-names">
-        <input class="cp-in mono small" :value="row.id" readonly :aria-label="t('provider.custom.models.id.label')" :data-model-id="row.id" />
+        <input class="cp-in small" :value="row.id" readonly :aria-label="t('provider.custom.models.id.label')" :data-model-id="row.id" />
         <input
           v-model="row.name"
           class="cp-in small"
@@ -615,7 +629,12 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
         <div v-for="field in (['context', 'output'] as const)" :key="field" class="cp-pick" :data-menu-anchor="`${field}:${row.key}`">
           <button type="button" class="cp-pick-btn" :data-model-limit="field" @click="toggleMenu(`${field}:${row.key}`)">
             <span class="cp-pick-label">{{ t(field === "context" ? "set.models.limitContext" : "set.models.limitOutput") }}</span>
-            <span class="cp-pick-value">{{ limitLabel(row[field]) }}</span>
+            <span class="cp-pick-value">
+              {{ limitLabel(row[field]) }}
+              <svg class="cp-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m6 9.5 6 6 6-6" />
+              </svg>
+            </span>
           </button>
           <div v-if="openMenu === `${field}:${row.key}`" class="cp-menu" role="menu" :data-model-limit-menu="field">
             <button
@@ -632,20 +651,27 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
               <span v-if="row[field] === value" class="cp-check">✓</span>
             </button>
             <!-- The number itself, preset or not, as MiMo's field shows it: typing 128000 never blanks it. -->
-            <input
-              class="cp-in small"
-              inputmode="numeric"
-              :value="row[field] !== undefined ? String(row[field]) : ''"
-              :placeholder="t('set.models.limitCustom')"
-              :data-model-limit-custom="field"
-              @input="typeLimit(row, field, $event)"
-            />
+            <div class="cp-menu-custom">
+              <input
+                class="cp-in tiny"
+                inputmode="numeric"
+                :value="row[field] !== undefined ? String(row[field]) : ''"
+                :placeholder="t('set.models.limitCustom')"
+                :data-model-limit-custom="field"
+                @input="typeLimit(row, field, $event)"
+              />
+            </div>
           </div>
         </div>
         <div class="cp-pick" :data-menu-anchor="`mods:${row.key}`">
           <button type="button" class="cp-pick-btn wide" data-model-modality-menu @click="toggleMenu(`mods:${row.key}`)">
             <span class="cp-pick-label">{{ t("set.models.modalities") }}</span>
-            <span class="cp-pick-value" data-model-modality-summary>{{ modalitySummary(row.mods, modLabel) }}</span>
+            <span class="cp-pick-value">
+              <span data-model-modality-summary>{{ modalitySummary(row.mods, modLabel) }}</span>
+              <svg class="cp-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m6 9.5 6 6 6-6" />
+              </svg>
+            </span>
           </button>
           <div v-if="openMenu === `mods:${row.key}`" class="cp-menu" role="menu" data-model-modality-panel>
             <label v-for="key in MODALITIES" :key="key" class="cp-option">
@@ -663,7 +689,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
       <div class="cp-cell">
         <input
           v-model="row.key"
-          class="cp-in mono small"
+          class="cp-in small"
           :aria-label="t('provider.custom.headers.key.label')"
           :placeholder="t('provider.custom.headers.key.placeholder')"
           spellcheck="false"
@@ -674,7 +700,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
       <div class="cp-cell">
         <input
           v-model="row.value"
-          class="cp-in mono small"
+          class="cp-in small"
           :aria-label="t('provider.custom.headers.value.label')"
           :placeholder="t('provider.custom.headers.value.placeholder')"
           spellcheck="false"
@@ -715,28 +741,38 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 </template>
 
 <style scoped>
+/* MiMo's page body: 16 between the blocks, 8 between one model card and the next. */
 .cp {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
-/* The provider's fields in one card, a row each: the label, then a 420px control. */
+.cp-model + .cp-model {
+  margin-top: -8px;
+}
+
+/*
+ * The provider's fields are MiMo's set-card of sr rows: a 16px corner on the
+ * settings card colour, rows 16 deep divided by the card's own rule, and titles
+ * at 14/500. Every row here is a title and a control with nothing under it, so
+ * they are centred the way MiMo centres its sr-single.
+ */
 .cp-card {
   padding: 0 16px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weak);
-  border-radius: 12px;
+  background: #ffffff;
+  border: 1px solid #f3efeb;
+  border-radius: 16px;
 }
 
 .cp-row {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 8px 16px;
-  padding: 12px 0;
-  border-bottom: 0.5px solid var(--border-weak);
+  padding: 16px 0;
+  border-bottom: 1px solid #f3efeb;
 }
 
 .cp-row:last-child {
@@ -744,10 +780,29 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 }
 
 .cp-label {
-  padding-top: 9px;
   color: var(--text-strong);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 530;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
+}
+
+:root[data-theme="dark"] .cp-card {
+  background: #282828;
+  border-color: #3d3d3d;
+}
+
+:root[data-theme="dark"] .cp-row {
+  border-color: #3d3d3d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp-card {
+    background: #282828;
+    border-color: #3d3d3d;
+  }
+
+  :root:not([data-theme="light"]) .cp-row {
+    border-color: #3d3d3d;
+  }
 }
 
 .cp-control {
@@ -758,36 +813,56 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   max-width: 100%;
 }
 
+/*
+ * MiMo's shared input, which every field on this page uses: a 6px corner over
+ * nothing at all, 12 in, the button rule around it and an input's small lip
+ * under it, focusing on dim. Every field takes the interface font - an id is
+ * not set in monospace here - and a read-only field is not greyed, because the
+ * provider id on an edit is a fact rather than a disabled control.
+ */
 .cp-in {
   box-sizing: border-box;
   width: 100%;
   height: calc(36px * var(--ui-font-scale, 1));
-  padding: 0 10px;
+  padding: 0 12px;
   color: var(--text-strong);
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weak);
-  border-radius: 8px;
+  background: transparent;
+  border: 1px solid #e3e3e0;
+  border-radius: 6px;
+  box-shadow: 0 1px 2px #0000000d;
   font-family: var(--font-sans);
   font-size: calc(13px * var(--ui-font-scale, 1));
   outline: none;
+}
+
+.cp-in::placeholder {
+  color: var(--text-base);
 }
 
 .cp-in.small {
   height: calc(32px * var(--ui-font-scale, 1));
 }
 
-/* Ids and header cells stay monospace: they are identifiers, not prose. */
-.cp-in.mono {
-  font-family: var(--font-mono);
-  font-size: calc(12.5px * var(--code-font-scale, 1));
+/* MiMo's custom-limit field is the shortest of the three. */
+.cp-in.tiny {
+  height: calc(28px * var(--ui-font-scale, 1));
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .cp-in:focus {
-  border-color: var(--border-strong);
+  border-color: var(--text-weak);
 }
 
-.cp-in[readonly] {
-  color: var(--text-weak);
+:root[data-theme="dark"] .cp-in {
+  background: rgb(58 58 58 / 0.3);
+  border-color: #3a3a3a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp-in {
+    background: rgb(58 58 58 / 0.3);
+    border-color: #3a3a3a;
+  }
 }
 
 /*
@@ -877,21 +952,51 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   background: #fb2c36;
 }
 
+/*
+ * MiMo's secondary Button at size sm: 26 tall, 8 round, 12 in, 14/500 on the
+ * secondary fill with no rule at all, hovering to side-active. In a settings
+ * row it is the 28 every control in a row takes.
+ */
 .cp-btn {
   flex: none;
-  height: calc(30px * var(--ui-font-scale, 1));
-  padding: 0 10px;
-  color: var(--text-strong);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
+  height: calc(26px * var(--ui-font-scale, 1));
+  padding: 0 12px;
+  color: #151c13;
+  background: #f1f1f1;
+  border: 0;
   border-radius: 8px;
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
 }
 
+.cp-probe .cp-btn {
+  height: calc(28px * var(--ui-font-scale, 1));
+}
+
 .cp-btn:hover:not(:disabled) {
-  background: var(--surface-hover);
+  background: #f1f0ec;
+}
+
+:root[data-theme="dark"] .cp-btn {
+  color: var(--text-strong);
+  background: #2e2e2e;
+}
+
+:root[data-theme="dark"] .cp-btn:hover:not(:disabled) {
+  background: #ffffff1a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp-btn {
+    color: var(--text-strong);
+    background: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .cp-btn:hover:not(:disabled) {
+    background: #ffffff1a;
+  }
 }
 
 .cp-btn:disabled {
@@ -903,7 +1008,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   margin-top: 10px;
   color: var(--text-strong);
   font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 530;
+  font-weight: 500;
 }
 
 .cp-combo {
@@ -928,14 +1033,45 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   max-height: 240px;
   padding: 6px;
   overflow-y: auto;
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weak);
+  background: #fffefd;
+  border: 1px solid #f0ebe5;
   border-radius: 10px;
-  box-shadow: var(--shadow-overlay);
+  box-shadow: 0 12px 40px #00000024;
 }
 
+/* MiMo's picker list is the tighter of the two: 4 of padding, and full width. */
 .cp-menu.combo {
   inset-inline-end: 0;
+  padding: 4px;
+}
+
+:root[data-theme="dark"] .cp-menu {
+  background: #282828;
+  border-color: #2e2e2e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp-menu {
+    background: #282828;
+    border-color: #2e2e2e;
+  }
+}
+
+/* MiMo rules the number off from the presets above it. */
+.cp-menu-custom {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid #f0ebe5;
+}
+
+:root[data-theme="dark"] .cp-menu-custom {
+  border-color: #2e2e2e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp-menu-custom {
+    border-color: #2e2e2e;
+  }
 }
 
 .cp-menu-empty {
@@ -949,6 +1085,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
   padding: 6px 8px;
   color: var(--text-base);
   background: transparent;
@@ -957,6 +1094,27 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   font-size: calc(12px * var(--ui-font-scale, 1));
   text-align: start;
   cursor: pointer;
+}
+
+/* A row in the picker: the id, medium and truncated, then its name at the end. */
+.cp-menu.combo .cp-option {
+  padding: 7px 8px;
+}
+
+.cp-option-id {
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-option-name {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  color: var(--text-base);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 label.cp-option {
@@ -973,20 +1131,30 @@ label.cp-option {
   color: var(--text-weak);
 }
 
-.cp-menu .cp-in {
-  margin-top: 4px;
-}
+
 
 /* One card per model: the id and its display name, then the three menus; the bin in the corner. */
 .cp-model {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   padding: 12px 48px 12px 14px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weak);
+  background: #fffefd;
+  border: 1px solid #f0ebe5;
   border-radius: 12px;
+}
+
+:root[data-theme="dark"] .cp-model {
+  background: #282828;
+  border-color: #2e2e2e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp-model {
+    background: #282828;
+    border-color: #2e2e2e;
+  }
 }
 
 .cp-model-remove {
@@ -1020,6 +1188,14 @@ label.cp-option {
   max-width: 100%;
 }
 
+/* MiMo's chevron after a picker's value: 14 square in the muted colour. */
+.cp-caret {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--text-base);
+}
+
 .cp-pick {
   position: relative;
 }
@@ -1032,19 +1208,32 @@ label.cp-option {
   min-width: 148px;
   height: calc(32px * var(--ui-font-scale, 1));
   padding: 0 10px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weak);
+  background: #fffefd;
+  border: 1px solid #f0ebe5;
   border-radius: 8px;
   font-size: calc(12px * var(--ui-font-scale, 1));
   cursor: pointer;
+}
+
+:root[data-theme="dark"] .cp-pick-btn {
+  background: #282828;
+  border-color: #2e2e2e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp-pick-btn {
+    background: #282828;
+    border-color: #2e2e2e;
+  }
 }
 
 .cp-pick-btn.wide {
   min-width: 180px;
 }
 
-.cp-pick-btn:hover {
-  border-color: var(--border-strong);
+.cp-pick-btn:hover,
+:root[data-theme="dark"] .cp-pick-btn:hover {
+  border-color: var(--text-weak);
 }
 
 .cp-pick-label {
@@ -1052,6 +1241,9 @@ label.cp-option {
 }
 
 .cp-pick-value {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   color: var(--text-strong);
   font-weight: 500;
 }
@@ -1077,11 +1269,21 @@ label.cp-option {
   justify-content: center;
   width: 32px;
   height: 32px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: none;
-  border: 1px solid var(--border-weak);
-  border-radius: 8px;
+  border: 1px solid #e3e3e0;
+  border-radius: 6px;
   cursor: pointer;
+}
+
+:root[data-theme="dark"] .cp-drop {
+  border-color: #3a3a3a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp-drop {
+    border-color: #3a3a3a;
+  }
 }
 
 .cp-drop:hover:not(:disabled) {
@@ -1109,13 +1311,27 @@ label.cp-option {
 
 .cp-submit {
   align-self: flex-end;
-  padding: 8px 18px;
-  color: var(--button-primary-text);
-  background: var(--button-primary);
-  border: 1px solid var(--button-primary);
+  height: calc(26px * var(--ui-font-scale, 1));
+  padding: 0 12px;
+  color: #ffffff;
+  background: #151c13;
+  border: 0;
   border-radius: 8px;
   font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
   cursor: pointer;
+}
+
+:root[data-theme="dark"] .cp-submit {
+  color: #0d0d0d;
+  background: #ececec;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp-submit {
+    color: #0d0d0d;
+    background: #ececec;
+  }
 }
 
 .cp-submit:disabled {
