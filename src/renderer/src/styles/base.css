@@ -792,7 +792,7 @@ button.app-tip-link:hover {
 /* MiMo's shared dialog: the card fades in from .95 over its motion-slow .2s; closing is lib/modal.ts. */
 .scrim [role="dialog"],
 .overlay [role="dialog"] {
-  animation: dialog-content-in 0.2s ease;
+  animation: dialog-content-in var(--motion-slow) ease;
 }
 
 @keyframes dialog-overlay-in {

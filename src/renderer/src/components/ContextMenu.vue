@@ -414,7 +414,7 @@ onBeforeUnmount(() => {
   border-radius: 12px;
   box-shadow: var(--shadow-menu);
   transform-origin: 0 100%;
-  animation: menu-pop 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: menu-pop var(--motion-base) cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes menu-pop {
