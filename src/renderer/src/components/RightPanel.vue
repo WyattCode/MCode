@@ -326,9 +326,9 @@ const addMenu = ref<{ x: number; y: number }>()
 const addItems = computed<MenuItem[]>(() =>
   ADD_MENU_ORDER.filter((tool) => tool !== "browser" || props.browserAllowed).map((tool) => ({
     key: tool,
-    label: t(TOOL_INFO[tool].label),
-    icon: TOOL_INFO[tool].icon.join(" "),
-    hint: props.hints[tool],
+    label: t(tool === "subagents" ? "launch.subagents" : TOOL_INFO[tool].label),
+    icon: iconOf(tool).join(" "),
+    hint: tool === "subagents" ? undefined : props.hints[tool],
   })),
 )
 
@@ -339,7 +339,8 @@ function openAddMenu(event: MouseEvent) {
 
 function pickAdd(key: string) {
   addMenu.value = undefined
-  rp.openTool(key as RightTool)
+  if (key === "subagents") rp.openSubagents()
+  else rp.openTool(key as RightTool)
 }
 
 /* What each tab was holding goes with it. */
@@ -454,7 +455,6 @@ defineExpose({
           <path v-for="d in TOOL_INFO[tool].icon" :key="d" :d="d" />
         </svg>
         <span class="lc-name">{{ t(TOOL_INFO[tool].label) }}</span>
-        <span class="lc-desc" data-launch-desc>{{ t(`launch.${tool}Desc`) }}</span>
         <kbd v-if="LAUNCH_HINTED.includes(tool) && hints[tool]" class="lc-kbd">{{ shownChord(hints[tool]!) }}</kbd>
       </button>
     </div>
@@ -597,9 +597,15 @@ body.resizing .right-panel {
   border-end-start-radius: 20px;
 }
 
-/* With the side column folded, its toggle and 新建任务 stand over the head: the tabs start 8 clear of them (107 + 24 + 8), as MiMo 26.920's do. */
+/*
+ * With the side column folded, its toggle and 新建任务 stand over the head: the
+ * tabs start 8 clear of them, as MiMo 26.920's do. On macOS that is
+ * 62 + 34 + 32 + 24 + 8 = 160 (rail, its darwin group inset, the nav pair, the
+ * folded cluster); off it the user's left-aligned 82 wins below. The macOS
+ * arithmetic is MiMo's own and is unverified here - there is no Mac to look at.
+ */
 .right-panel.fullscreen.side-collapsed .rp-head {
-  padding-inline-start: 139px;
+  padding-inline-start: 160px;
 }
 
 /* Left-aligned folded controls (the user's choice, off macOS): 8 clear of 新建任务's end at 74. */
@@ -636,6 +642,15 @@ body.resizing .right-panel {
   -webkit-app-region: drag;
 }
 
+/*
+ * macOS, from MiMo: the row is centred on the traffic lights, at
+ * 2 x --topbar-center-y - 46 = 2 x (22 + 6) - 46 = 10 down and nothing under.
+ * Unverified - there is no Mac here to look at.
+ */
+.app[data-platform="darwin"] .rp-head {
+  padding-block: 10px 0;
+}
+
 .rp-tabs {
   display: flex;
   flex: 0 1 auto;
@@ -662,8 +677,9 @@ body.resizing .right-panel {
   min-width: min(160px, 100%);
   max-width: min(160px, 100%);
   padding: 4px 5px 4px 7px;
-  color: var(--text-weak);
-  background: color-mix(in srgb, var(--text-strong) 6%, transparent);
+  color: var(--text-base);
+  /* MiMo --color-side-active (#f1f0ec / #ffffff1a, the dark half below). */
+  background: #f1f0ec;
   border: 1px solid transparent;
   border-radius: 999px;
   font-size: calc(12px * var(--ui-font-scale, 1));
@@ -700,11 +716,11 @@ body.resizing .right-panel {
   border-color: var(--border-weak);
 }
 
+/* MiMo gives the tab glyph no colour of its own: it follows the label, muted until the tab is the active one. */
 .rpt-ic {
   flex: none;
   width: 14px;
   height: 14px;
-  color: var(--text-strong);
 }
 
 /* MiMo's favicon in the glyph's place: the whole image in the 14px box, 2 round. */
@@ -728,7 +744,7 @@ body.resizing .right-panel {
   text-overflow: ellipsis;
 }
 
-/* MiMo's rpt-close glyph in --color-txt: 80% ink on light. */
+/* MiMo's rpt-close glyph in --color-txt. */
 .rpt-close {
   display: grid;
   flex: none;
@@ -736,7 +752,8 @@ body.resizing .right-panel {
   width: 18px;
   height: 18px;
   padding: 0;
-  color: color-mix(in srgb, var(--text-strong) 80%, transparent);
+  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
+  color: #151c13cc;
   background: transparent;
   border: 0;
   border-radius: 5px;
@@ -762,7 +779,8 @@ body.resizing .right-panel {
 }
 
 .rp-add:hover {
-  color: color-mix(in srgb, var(--text-strong) 80%, transparent);
+  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
+  color: #151c13cc;
   background: var(--surface-hover);
 }
 
@@ -808,25 +826,15 @@ body.resizing .right-panel {
   width: 16px;
   height: 16px;
   margin: 0 2px;
-  color: var(--text-strong);
+  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
+  color: #151c13cc;
 }
 
-/* The name in --color-txt: 80% ink on light. */
+/* The name in --color-txt. */
 .lc-name {
-  color: color-mix(in srgb, var(--text-strong) 80%, transparent);
+  color: #151c13cc;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 400;
-  white-space: nowrap;
-}
-
-/* What the tool is for, after its name: dimmer, and cut rather than pushing the key cap out of a narrow panel. */
-.lc-desc {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: color-mix(in srgb, var(--text-strong) 45%, transparent);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -843,7 +851,7 @@ body.resizing .right-panel {
   line-height: normal;
 }
 
-/* Dark: MiMo's side-active tint and near-white glyphs, #b8b8b8 plus, and #2a2a2a key caps in #777. */
+/* Dark: MiMo's side-active tint and its #f4f4f5 ink, #b8b8b8 plus, and #2a2a2a key caps in #777. */
 :root[data-theme="dark"] .rp-tab {
   background: var(--surface-selected);
 }
@@ -854,8 +862,9 @@ body.resizing .right-panel {
 
 :root[data-theme="dark"] .rpt-close,
 :root[data-theme="dark"] .rp-add:hover,
+:root[data-theme="dark"] .lc-icon,
 :root[data-theme="dark"] .lc-name {
-  color: var(--text-strong);
+  color: #f4f4f5;
 }
 
 :root[data-theme="dark"] .rp-add {
@@ -878,8 +887,9 @@ body.resizing .right-panel {
 
   :root:not([data-theme="light"]) .rpt-close,
   :root:not([data-theme="light"]) .rp-add:hover,
+  :root:not([data-theme="light"]) .lc-icon,
   :root:not([data-theme="light"]) .lc-name {
-    color: var(--text-strong);
+    color: #f4f4f5;
   }
 
   :root:not([data-theme="light"]) .rp-add {
