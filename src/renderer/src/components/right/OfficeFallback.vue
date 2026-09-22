@@ -37,7 +37,7 @@ defineProps<{ type?: string }>()
 .of-note {
   flex-shrink: 0;
   padding: 7px 12px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: var(--surface-base);
   border-bottom: 1px solid var(--border-weak);
   font-size: 12px;
@@ -51,7 +51,7 @@ defineProps<{ type?: string }>()
   justify-content: center;
   width: 100%;
   padding: 20px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: 13px;
   text-align: center;
 }

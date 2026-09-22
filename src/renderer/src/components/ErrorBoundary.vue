@@ -100,6 +100,10 @@ watch(
   color: #f87171;
 }
 
+:root[data-theme="dark"] .detail {
+  color: rgb(248 113 113 / 0.5);
+}
+
 :root[data-theme="dark"] .retry {
   color: #f87171;
   background: rgb(127 29 29 / 0.3);
@@ -118,6 +122,10 @@ watch(
 
   :root:not([data-theme="light"]) .label {
     color: #f87171;
+  }
+
+  :root:not([data-theme="light"]) .detail {
+    color: rgb(248 113 113 / 0.5);
   }
 
   :root:not([data-theme="light"]) .retry {

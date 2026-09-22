@@ -158,22 +158,20 @@ export async function roundSixteenDiffChecks(check: Check, section: (name: strin
   }
 
   // ----------------------------------------------------------------- R16-D5
-  section("Round 16 (R16-D5): the launcher's cards say what each tool is for")
+  /*
+   * R21-F3-3 superseded this: MiMo renders .lc-desc and its only rule is
+   * `display: none`, so the card is an icon, a name and a key cap. The user
+   * chose parity, and the five description strings went with the element.
+   */
+  section("Round 16 (R16-D5, as R21-F3-3 settled it): the launcher's cards are a name and a key cap")
   {
     const panel = await read("src/renderer/src/components/RightPanel.vue")
-    check("the description sits between the name and the key cap, where MiMo's does", /lc-name[\s\S]{0,120}<span class="lc-desc" data-launch-desc>\{\{ t\(`launch\.\$\{tool\}Desc`\) \}\}<\/span>[\s\S]{0,120}lc-kbd/.test(panel))
-    check("and it is cut rather than pushing the key cap out of a narrow panel", /\.lc-desc \{[^}]*text-overflow: ellipsis/.test(panel))
+    check("no description stands between the name and the key cap, as MiMo draws none", !/lc-desc/.test(panel))
 
     const strings = await tables()
     const names = Object.keys(strings)
-    for (const tool of ["review", "files", "chat", "browser", "terminal"]) {
-      const key = `launch.${tool}Desc`
-      const absent = names.filter((name) => !strings[name]![key])
-      check(`${key} is written in every language`, absent.length === 0, absent)
-    }
-    const tools = await read("src/renderer/src/lib/right-tools.ts")
-    const listed = [...tools.matchAll(/^ {2}(\w+): \{$/gm)].map((found) => found[1]!)
-    check("every tool the launcher can draw has a description", listed.every((tool) => strings.en![`launch.${tool}Desc`]), listed)
+    const stale = names.filter((name) => Object.keys(strings[name]!).some((key) => /^launch\.\w+Desc$/.test(key)))
+    check("and no table still carries a launch description", stale.length === 0, stale)
   }
 
   // ----------------------------------------------------------------- R16-D6

@@ -75,13 +75,14 @@ function setLayout(next: DiffLayout) {
   align-items: center;
   gap: 2px;
   padding: 2px;
-  background: var(--surface-sunken);
+  /* MiMo's bg-code-bg, which lifts in dark (#2e2e2e) rather than sinking. */
+  background: var(--surface-layer);
   border-radius: 7px;
 }
 
 .dt-seg-btn {
   padding: 2px 8px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 5px;

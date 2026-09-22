@@ -294,8 +294,15 @@ export function browserTabFace(page: { url?: string; title?: string; favicon?: s
 
 /* --------------------------------------------------------------- the bar */
 
-/** MiMo's three bar widths: under 300 mini, under 380 compact, else full. */
+/**
+ * MiMo's three bar widths: under 300 mini, under 380 compact, else full.
+ *
+ * A width that is not a positive number is the full bar, as MiMo's own guard
+ * has it: a tab measured before it is shown reports 0, and without this the
+ * bar would flash its mini form for a frame on every reveal.
+ */
 export function barMode(width: number): "mini" | "compact" | "full" {
+  if (!Number.isFinite(width) || width <= 0) return "full"
   if (width < 300) return "mini"
   if (width < 380) return "compact"
   return "full"

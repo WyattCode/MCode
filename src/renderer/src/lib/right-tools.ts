@@ -81,7 +81,13 @@ export function iconOf(type: RightTabType): string[] {
 
 /* MiMo's launcher order, and its plus menu's (which lists the terminal second). */
 export const LAUNCH_ORDER: RightTool[] = ["review", "files", "chat", "browser", "terminal"]
-export const ADD_MENU_ORDER: RightTool[] = ["review", "terminal", "browser", "files", "chat"]
+
+/*
+ * MiMo's plus menu (dNe) names one more than the launcher does: 子智能体, which
+ * opens the single subagents tab rather than another tool tab.
+ */
+export type AddMenuTool = RightTool | "subagents"
+export const ADD_MENU_ORDER: AddMenuTool[] = ["review", "terminal", "browser", "files", "chat", "subagents"]
 
 /* The command whose shortcut opens each tool, as App.vue's command table names it. */
 export const TOOL_COMMANDS: Partial<Record<RightTool, string>> = {

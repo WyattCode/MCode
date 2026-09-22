@@ -210,10 +210,11 @@ const TONE: Record<string, string> = { M: "modified", A: "added", D: "deleted", 
   padding: 2px 2px 10px;
 }
 
+/* MiMo's rv-unstaged: 12px muted on the code fill, which lifts in dark rather than sinking. */
 .rv-pill {
   padding: 3px 10px;
-  color: var(--text-weak);
-  background: var(--surface-sunken);
+  color: var(--text-base);
+  background: var(--surface-layer);
   border-radius: 7px;
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
@@ -226,7 +227,7 @@ const TONE: Record<string, string> = { M: "modified", A: "added", D: "deleted", 
   width: 26px;
   height: 26px;
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 7px;
@@ -259,7 +260,8 @@ const TONE: Record<string, string> = { M: "modified", A: "added", D: "deleted", 
   gap: 9px;
   margin-bottom: 2px;
   padding: 5px 9px;
-  color: var(--text-strong);
+  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
+  color: #151c13cc;
   text-align: start;
   background: transparent;
   border: 0;
@@ -311,7 +313,7 @@ const TONE: Record<string, string> = { M: "modified", A: "added", D: "deleted", 
 /* MiMo's rv-diff-empty: 13px muted, 18 in. */
 .rv-diff-note {
   padding: 18px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
@@ -333,8 +335,19 @@ const TONE: Record<string, string> = { M: "modified", A: "added", D: "deleted", 
 }
 
 .rv-empty-desc {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   overflow-wrap: anywhere;
+}
+
+/* MiMo's --color-txt is #f4f4f5 in dark, not a translucent white. */
+:root[data-theme="dark"] .rv-row {
+  color: #f4f4f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .rv-row {
+    color: #f4f4f5;
+  }
 }
 </style>

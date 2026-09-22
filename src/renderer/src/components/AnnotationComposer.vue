@@ -432,7 +432,8 @@ watch(
   margin: 0;
   padding: 0;
   overflow-y: auto;
-  color: var(--text-strong);
+  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
+  color: #151c13cc;
   background: transparent;
   border: none;
   outline: none;
@@ -486,5 +487,16 @@ watch(
 ::highlight(mcode-annotation-flash) {
   background-color: rgba(50, 149, 251, 0.6);
   border-radius: 3px;
+}
+
+/* MiMo's --color-txt is #f4f4f5 in dark, not a translucent white. */
+:root[data-theme="dark"] .ann-composer textarea {
+  color: #f4f4f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ann-composer textarea {
+    color: #f4f4f5;
+  }
 }
 </style>

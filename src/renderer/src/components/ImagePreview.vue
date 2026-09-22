@@ -530,8 +530,8 @@ onBeforeUnmount(() => {
         <div class="ip-tool">
           <button type="button" :aria-label="t('imagePreview.zoomOut')" data-preview-tool="zoom-out" @click="zoom(0.83)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-              <circle cx="10.5" cy="10.5" r="6.5" />
-              <path d="M15.5 15.5 20 20M7.5 10.5h6" />
+              <circle cx="11" cy="11" r="7" />
+              <path d="m21 21-4.3-4.3M8 11h6" />
             </svg>
           </button>
           <span class="ip-tip">{{ t("imagePreview.zoomOut") }}<kbd>−</kbd></span>
@@ -540,8 +540,8 @@ onBeforeUnmount(() => {
         <div class="ip-tool">
           <button type="button" :aria-label="t('imagePreview.zoomIn')" data-preview-tool="zoom-in" @click="zoom(1.2)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-              <circle cx="10.5" cy="10.5" r="6.5" />
-              <path d="M15.5 15.5 20 20M10.5 7.5v6M7.5 10.5h6" />
+              <circle cx="11" cy="11" r="7" />
+              <path d="m21 21-4.3-4.3M11 8v6M8 11h6" />
             </svg>
           </button>
           <span class="ip-tip">{{ t("imagePreview.zoomIn") }}<kbd>+</kbd></span>
@@ -549,8 +549,8 @@ onBeforeUnmount(() => {
         <div class="ip-tool">
           <button type="button" :aria-label="t('imagePreview.rotate')" data-preview-tool="rotate" @click="rotate">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M19.5 12.5A7.5 7.5 0 1 1 17 7" />
-              <path d="M19 3.5V8h-4.5" />
+              <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
+              <path d="M21 3v5h-5" />
             </svg>
           </button>
           <span class="ip-tip">{{ t("imagePreview.rotate") }}<kbd>R</kbd></span>
@@ -558,7 +558,7 @@ onBeforeUnmount(() => {
         <div class="ip-tool">
           <button type="button" :aria-label="t('imagePreview.reset')" data-preview-tool="reset" @click="reset">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M4 8.5V4h4.5M15.5 4H20v4.5M20 15.5V20h-4.5M8.5 20H4v-4.5" />
+              <path d="M4 9V6a2 2 0 0 1 2-2h3M15 4h3a2 2 0 0 1 2 2v3M20 15v3a2 2 0 0 1-2 2h-3M9 20H6a2 2 0 0 1-2-2v-3" />
             </svg>
           </button>
           <span class="ip-tip">{{ t("imagePreview.reset") }}<kbd>0</kbd></span>
@@ -585,7 +585,7 @@ onBeforeUnmount(() => {
         <div class="ip-tool">
           <button type="button" :aria-label="t('imagePreview.download')" data-preview-tool="download" @click="download">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 20h14" />
+              <path d="M12 3v12M7 10l5 5 5-5M5 21h14" />
             </svg>
           </button>
           <span class="ip-tip">{{ t("imagePreview.download") }}<kbd>D</kbd></span>
@@ -663,7 +663,7 @@ onBeforeUnmount(() => {
   color: #fff;
   background: rgb(255 255 255 / 0.1);
   border-radius: 50%;
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(8px);
   transition: background-color 0.15s;
 }
 
@@ -712,7 +712,8 @@ onBeforeUnmount(() => {
   max-height: calc(100vh - 80px);
   object-fit: contain;
   border-radius: 8px;
-  box-shadow: var(--shadow-lg);
+  /* MiMo's shadow-pop, which its utility writes as this one literal in both schemes. */
+  box-shadow: 0 12px 40px #00000024;
   user-select: none;
 }
 

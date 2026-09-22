@@ -185,7 +185,8 @@ async function sourceChecks(check: Check, section: Section): Promise<void> {
     check("the card lists the files a run reached outside the project, which its undo reports on", /editedFiles\(props\.parts, props\.directory, \{ outside: true \}\)/.test(editedCard))
     const panel = await read("src/renderer/src/components/right/RpSubagents.vue")
     const box = panel.slice(panel.indexOf(".rp-subagent-transcript {"), panel.indexOf(".rp-subagent-transcript {") + 400)
-    check("a subagent's transcript is a boxed panel of its own, scrolling inside 320", /max-height: 320px/.test(box) && /border: 1px solid/.test(box) && /overflow: auto/.test(box), box)
+    // R21-F3-2 superseded the box: MiMo renders hs-subagent and then takes its border, ceiling, margin and padding away again inside the tab.
+    check("a subagent's transcript is the tab's own scroller, as MiMo leaves it", /padding: 14px 16px 28px/.test(box) && !/max-height: 320px/.test(box) && /overflow: auto/.test(box), box)
     const app = await read("src/renderer/src/App.vue")
     check(
       "a scheduled run's notice is silent when the chime already played for it",
