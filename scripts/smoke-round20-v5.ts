@@ -88,4 +88,14 @@ export async function roundTwentyVisualFiveChecks(check: Check, section: (name: 
     const i18n = await read("src/renderer/src/lib/i18n.ts")
     check("side.thisDevice is in all 18 tables, 本机 in zh-CN", i18n.split("\n").filter((line) => line.startsWith('  "side.thisDevice": ')).length === 18 && i18n.includes('"side.thisDevice": "本机"'))
   }
+
+  // ------------------------------------------------------------------ R20-V5-3
+  section("Round 20 (V5-3): the brand row starts 52 down, MiMo 26.920's --sidebar-brand-top")
+  {
+    const top = rule(style, ".top")
+    const brand = rule(style, ".brand")
+    check("the controls row is 52 tall, its buttons still 13 down and 18 in (65 on macOS)", /height: 52px;/.test(top) && /padding-block: 13px 0;/.test(top) && /padding-inline: 18px 8px;/.test(top) && /\.top\.mac \{\s*padding-inline-start: 65px;/.test(style), top)
+    check("the brand row follows it with no gap of its own", /margin: 0 8px;/.test(brand) && /height: 28px;/.test(brand) && /padding-inline-start: 14px;/.test(brand), brand)
+    check("in the preview the row is 43, MiMo's inside the card", /\.side-shell\.preview \.top \{\s*height: 43px;/.test(style))
+  }
 }

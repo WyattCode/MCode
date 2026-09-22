@@ -1848,6 +1848,14 @@ onBeforeUnmount(() => {
   }
 }
 
+/*
+ * MiMo's --sidebar-brand-top is 43 inside the preview card, whose top and
+ * hairline stand 9 below the window's: the brand row stays at 52 on screen.
+ */
+.side-shell.preview .top {
+  height: 43px;
+}
+
 /* In the preview the title bar's own toggle stands where this row's did, and back and forward stay folded away. */
 .side-shell.preview .side-toggle,
 .side-shell.preview .side-way {
@@ -1870,7 +1878,8 @@ onBeforeUnmount(() => {
 }
 
 /* The window-control row: the toggle, back and forward, 24x24 at 32px pitch.
-   It drags the window; the buttons opt out.
+   It drags the window; the buttons opt out. 52 tall - MiMo 26.920's
+   --sidebar-brand-top - so the brand row starts 52 down.
    MiMo starts the row at x=65; MCode keeps it to the left on purpose, the 17px
    glyphs lining up with the brand and the destination icons at x=22. Only on
    macOS does it start at 65, clear of the traffic lights. */
@@ -1879,7 +1888,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   align-items: flex-start;
   gap: 8px;
-  height: 44px;
+  height: 52px;
   padding-block: 13px 0;
   padding-inline: 18px 8px;
   -webkit-app-region: drag;
@@ -1965,15 +1974,14 @@ onBeforeUnmount(() => {
   opacity: 0.35;
 }
 
-/* The name row: 28 tall, 14 in from the 8px inset. */
+/* The name row: 28 tall, 14 in from the 8px inset, straight under the 52px controls row. */
 .brand {
   display: flex;
   flex-shrink: 0;
   align-items: center;
   gap: 8px;
   height: 28px;
-  /* 4px below the controls row: everything under it moves down with it. */
-  margin: 4px 8px 0;
+  margin: 0 8px;
   padding-inline-start: 14px;
 }
 
