@@ -282,7 +282,7 @@ onBeforeUnmount(() => {
           <path :d="item.icon" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
         <span v-if="!item.checkEnd" class="tick" aria-hidden="true">
-          <svg v-if="item.checked" width="12" height="12" viewBox="0 0 20 20" fill="none">
+          <svg v-if="item.checked" width="16" height="16" viewBox="0 0 20 20" fill="none">
             <path d="M4.5 10.5L8 14L15.5 6.5" stroke="currentColor" stroke-linecap="square" />
           </svg>
         </span>
@@ -291,7 +291,7 @@ onBeforeUnmount(() => {
         <svg v-if="item.children" class="chev" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M6 3.8 10.2 8 6 12.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
-        <svg v-else-if="item.checkEnd" class="tick-end" :class="{ on: item.checked }" width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+        <svg v-else-if="item.checkEnd" class="tick-end" :class="{ on: item.checked }" width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <path d="M4.5 10.5L8 14L15.5 6.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </button>
@@ -350,13 +350,13 @@ onBeforeUnmount(() => {
           <path :d="child.icon" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
         <span v-if="!child.checkEnd" class="tick" aria-hidden="true">
-          <svg v-if="child.checked" width="12" height="12" viewBox="0 0 20 20" fill="none">
+          <svg v-if="child.checked" width="16" height="16" viewBox="0 0 20 20" fill="none">
             <path d="M4.5 10.5L8 14L15.5 6.5" stroke="currentColor" stroke-linecap="square" />
           </svg>
         </span>
         <span class="label">{{ child.label }}</span>
         <span v-if="child.hint" class="hint">{{ shownChord(child.hint) }}</span>
-        <svg v-if="child.checkEnd" class="tick-end" :class="{ on: child.checked }" width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+        <svg v-if="child.checkEnd" class="tick-end" :class="{ on: child.checked }" width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <path d="M4.5 10.5L8 14L15.5 6.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </button>
@@ -405,27 +405,16 @@ onBeforeUnmount(() => {
   z-index: 321;
   min-width: 200px;
   padding: var(--pad);
-  background: var(--surface-menu);
+  /*
+   * --color-bg, which is what MiMo fills every floating layer with.
+   * --surface-menu is a step this window has and MiMo does not.
+   */
+  background: var(--surface-page);
   border: 1px solid var(--border-weak);
   border-radius: 12px;
-  /*
-   * MiMo's --shadow-menu written out: one wide soft throw over one tight drop,
-   * and no ring - the border above is the edge. Written literally rather than
-   * as --shadow-lg, whose third layer is a 0.5px ring that framed it twice.
-   */
-  box-shadow: 0 8px 30px #0000002e, 0 1px 3px #0000001a;
+  box-shadow: var(--shadow-menu);
   transform-origin: 0 100%;
-  animation: menu-pop 0.18s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-:root[data-theme="dark"] .menu {
-  box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .menu {
-    box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
-  }
+  animation: menu-pop var(--motion-base) cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes menu-pop {
@@ -483,13 +472,13 @@ onBeforeUnmount(() => {
   width: 0;
   margin-inline-end: 0;
   overflow: hidden;
-  color: var(--text-strong);
+  color: var(--button-primary);
   transition: none;
 }
 
 .item.ticked .tick,
 .menu:has(.ticked) .tick {
-  width: 14px;
+  width: 16px;
   margin-inline-end: 4px;
 }
 
@@ -500,7 +489,7 @@ onBeforeUnmount(() => {
   gap: 9px;
   width: 100%;
   padding: 6px 10px;
-  color: var(--text-strong);
+  color: var(--text-body);
   text-align: start;
   border-radius: 8px;
   font-size: calc(14px * var(--ui-font-scale, 1));
@@ -531,7 +520,7 @@ onBeforeUnmount(() => {
 }
 
 .item:focus-visible {
-  outline: 2px solid var(--interactive);
+  outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
 
@@ -542,43 +531,53 @@ onBeforeUnmount(() => {
   background: var(--border-weak);
 }
 
-/* A shortcut beside its row, pushed to the far edge so a column of them lines up. */
+/*
+ * A shortcut beside its row, pushed to the far edge so a column of them lines
+ * up. MiMo draws it as a key cap: its base kbd is 1px solid var(--color-line)
+ * on a 5px corner, 1px 5px of padding at 11px, and .menu-item kbd overrides
+ * only the colour, to --color-mut.
+ */
 .hint {
   margin-inline-start: auto;
-  padding-inline-start: 20px;
-  color: var(--text-weak);
+  padding: 1px 5px;
+  color: var(--text-base);
+  border: 1px solid var(--border-weak);
+  border-radius: 5px;
   font-size: calc(11px * var(--ui-font-scale, 1));
   font-variant-numeric: tabular-nums;
+  line-height: normal;
   white-space: nowrap;
 }
 
 /* A glyph against every row, as MiMo draws its conversation menu: 17px. */
+/* MiMo's `.menu-item .i`: 17px in --color-icon, which it never brightens. */
 .glyph {
   flex-shrink: 0;
   width: 17px;
   height: 17px;
-  color: var(--text-base);
+  color: var(--icon-base);
 }
 
-.item:hover:not(:disabled) .glyph {
-  color: var(--text-strong);
-}
-
-/* An app's own icon, or its first letter on a small square, sized as the settings picker draws them. */
+/*
+ * MiMo's `.mi-ic-logo img` and `.mi-ic`: a 20px tile on a 6px corner, and
+ * where there is no icon the name's first letter on --color-side-hover, 11px
+ * at 500 in --color-txt.
+ */
 .app-icon,
 .app-letter {
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
 }
 
 .app-letter {
   display: grid;
   place-items: center;
-  color: var(--text-weak);
+  color: var(--text-body);
   background: var(--surface-hover);
-  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-weight: 500;
   line-height: 1;
 }
 
@@ -598,9 +597,10 @@ onBeforeUnmount(() => {
   padding-inline-end: 12px;
 }
 
-/* A choice's tick at the far end, drawn only on the one in force. */
+/* MiMo's `.mi-check`: 16px in --color-send at the far end, on the row in force. */
 .tick-end {
   flex-shrink: 0;
+  color: var(--button-primary);
   margin-inline-start: auto;
   opacity: 0;
 }
@@ -613,15 +613,14 @@ onBeforeUnmount(() => {
   padding-inline-end: 16px;
 }
 
-/* The row that destroys something says so before it is pressed. */
+/*
+ * The row that destroys something says so before it is pressed: MiMo's
+ * `.auto-delete-menu-item { color: var(--color-del) !important }`, one red in
+ * both schemes. Its hover is the menu's own - MiMo lays no red wash under it.
+ */
 .item.danger,
-.item.danger .glyph,
-.item.danger:hover:not(:disabled) .glyph {
-  color: var(--error);
-}
-
-.item.danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--error) 12%, transparent);
+.item.danger .glyph {
+  color: var(--text-destructive);
 }
 
 /*
@@ -638,7 +637,7 @@ onBeforeUnmount(() => {
   margin: calc(-1 * var(--pad)) calc(-1 * var(--pad)) 4px;
   padding: 11px 15px 6px;
   color: var(--text-weak);
-  background: var(--surface-menu);
+  background: var(--surface-glass);
   -webkit-backdrop-filter: blur(18px) saturate(150%);
   backdrop-filter: blur(18px) saturate(150%);
 }
@@ -702,7 +701,12 @@ onBeforeUnmount(() => {
  * rows at .4, and each shortcut an 11px key cap in muted ink.
  */
 .menu.tool {
+  background: var(--surface-glass);
+  border: 0.5px solid var(--border-input);
   border-radius: 16px;
+  box-shadow: var(--shadow-composer);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: blur(18px) saturate(150%);
 }
 
 .menu.tool .item {
@@ -713,21 +717,4 @@ onBeforeUnmount(() => {
   opacity: 0.4;
 }
 
-.menu.tool .hint {
-  padding: 1px 5px;
-  color: color-mix(in srgb, var(--text-strong) 60%, transparent);
-  border: 1px solid var(--border-weak);
-  border-radius: 5px;
-  line-height: normal;
-}
-
-:root[data-theme="dark"] .menu.tool .hint {
-  color: #b8b8b8;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .menu.tool .hint {
-    color: #b8b8b8;
-  }
-}
 </style>

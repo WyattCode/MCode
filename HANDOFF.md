@@ -15,6 +15,17 @@
 - 第十八轮（2026-09-21）：**对照基准改为 MiMo 26.920**（用户让 MiMo 自动更新）；截图实测差异配色 + 26.914→26.920 版本差异，五路完成并合并入 `v2.0`，见下方「第十八轮」一节。报告 scratchpad `round18-mimo920.md` / `round18-visual-measured.md`
 - 第十九轮（2026-09-21/22）：逐页重新对照 26.920（四块只读审计 + 逐条复核，确认 28 条），A 设置与弹窗 14、B 右侧面板与侧栏 10、C 对话滚动（发送后停靠、跟随规则、暂停与重钉、入场动画、定时任务两行截断）5；另做性能：切回长对话 438→124–188ms、入口 5.90MB→2.14MB。用户定：删首启导入弹窗、新建项目位置行、「导出为对话文件」。`provider.custom.field.providerID.label` / `…providerID.exists` 的简繁中文经用户 2026-09-22 同意连同 `reference-strings.json` 一起改成 MiMo 的「供应商 ID」「该 ID 已被占用」。另修：本机动态端口从 1024 起，端口 0 可能落在浏览器拒绝的端口（5060、6000 等），后端 socket（`server/free-port.ts`）与预览服务改为避开这些端口，检查脚本的服务器由 `scripts/safe-listen.ts` 挪开（原「bad port」偶发失败）。合并后 smoke 6134 全过；合并版真窗口复测停靠 135.1（目标 136.8）。见各「第十九轮」小节。
 
+## 第二十一轮 · F1：颜色 token 与共用控件（2026-09-23）
+
+用户本轮解除了「不许新增 CSS token 名」的禁令（仅限这项工作）。MiMo 值全部重新从 `renderer/assets/index-BcVtFvOi.css` 与同目录 JS chunk 里核过。
+
+- **生成层（`theme-palettes.ts` → `theme-engine.ts` → `tokens.css`，`themecheck` 仍绿）**：悬停 / 选中改 `#f1f0ec` / `#eeedec`（原来是自动化页的中性 `#f1f1f2`）；线 `#f1f1f1` / `#2e2e2e`，软线 `#0000000d` / `#ffffff12`；`--surface-sunken` 由「黑 35% 压 bg-deep」改成实测 `#f8f7f5` / `#2e2e2e`（原深色 `#0d0d0d` 差了好几档）；`--icon-base` = `--color-icon` `#5c5c57` / `#d0d0d0`；`--text-weaker` 不再指向背景档 `bg-layer-04`（浅色 `#dbdbdb`，白底上等于看不见），改成 `--color-send-empty` `#bbbbb6` / `#5a5a5a`；链接蓝两套都为 `#3295fb`（MiMo 从不翻 `--color-link`）；scrim `#00000061`。
+- **新 token（MiMo 有、MCode 缺）**：`--surface-page`（`--color-bg`，所有浮层的底）、`--surface-glass`、`--text-body`（`--color-txt`）、`--text-critical`（`--color-err`，此前被 20 条规则引用却无定义）、`--text-destructive`（`--color-del`）、`--border-input`、`--border-button`、`--ring`、`--shadow-menu/pop/tip/composer`、`--shadow-xs`、`--motion-fast/base/slow`、`--overlay-hover`。删掉 15 个无人使用的死 token。
+- **`themecheck` 新规则**：任何 `var(--…)` 在全仓找不到定义就失败（这正是 `--text-critical`、`--overlay-hover`、`--motion-fast` 长期没被发现的原因）。定义从全仓收集（含 `:style="{ '--rw': … }"` 与 `setProperty`），使用只看样式块，两边都先去注释。
+- **共用控件照 MiMo 重画**：焦点环换成 `--color-ring`（墨色 / 白）；`kbd` 换成 MiMo 的 11px 边框小帽（原来是 mono 填充键帽）；`.icon-btn` 30/7；`.btn` 8 圆角 / 500 / 真边框 / shadow-xs / 按下 .97 / 填充态 hover 用 `bg-primary/90`；`.field` 用 `--color-btn-border` 真边框、无填充、聚焦只压深边框；`.dialog` 16 圆角 + 1px 线 + `--shadow-pop`；`.dialog-close` = `.u-modal-close`（28/8/16px 字形/按下 .96）；工具菜单换成 MiMo 自己的配方（glass + 0.5px input-border + shadow-composer）；SelectMenu 保持 MiMo 设置页那一版（menu 壳 + glass + shadow-menu）。
+- **真窗口探针**（`scratchpad/r21f1-probe.cjs` / `r21f1-probe2.cjs`，win32、浅深两套、一次性配置目录、`win.isVisible() === true`）：30 个 token 全部按 MiMo 值解析；菜单 `#fffefd`/`#f1f1f1`/12 圆角/shadow-menu、行 `#151c13cc`、字形 `#5c5c57`；快捷键帽 11px/mut/5 圆角/1px 5px；tooltip 与 MiMo 的 `rounded-[8px] border-line bg-bg px-8 py-5 text-12 shadow-tip` 完全一致；`.btn` 28/8/500/13、主按钮 `#151c13`+白字（深色 `#ececec`+`#0d0d0d`）；`.field` 28/6/`#e3e3e0`（深 `#3a3a3a`）；焦点环浅色 `rgb(21,28,19)`、深色 `#fff`，按钮自绘 3px 半透明光晕。
+- **留给其他路**：见报告里的清单（composer 需要 `--surface-composer`、7 个对话框仍写 `--surface-raised` + `--shadow-overlay`、19 处 `--shadow-lg` 与 12 处 `--shadow-overlay`、dim/mut 反用的清扫、0.5px 边线换 `--border-input`、`App.vue` 里已冗余的两行 win32 覆盖、`TerminalDrawer` 的 `--overlay-hover`）。
+
 ## 第二十轮（2026-09-22/23）：二次复核代码 + 对话页照 MiMo 校准
 
 用户要求「二次复核代码」，随后发来 MCode 与 MiMo 26.920 同一对话页的截图，要求界面、写代码 Agent 的逻辑、文案思路与表达全部统一向 MiMo 学习；并说明**顶部蓝色光条保留**（记为有意差异）。另注意：用户截图里的 MCode 处于 120% 页面缩放（Ctrl+0 复原），比较以 CSS 数值为准。
@@ -468,6 +479,14 @@
 | 设置页：钩子、自定义插件（CLI）、连接（SSH） | 清单之外的新功能，用户选择改为打磨现有功能 |
 
 ## 与 MiMo 故意不同的地方（用户定的，不要改回去）
+
+- 第二十一轮 F1 新增（MiMo 自己那一处 CSS 是坏的，MCode 保留能用的行为）：
+  - `--overlay-hover` 深色用 `#ffffff14`。MiMo 的 `.bp-tab-x:hover{background:#00000014}` 没有深色覆盖，深色下那层黑几乎看不见。
+  - **SelectMenu 的高亮行保持 side-hover，不采用品牌橙。** MiMo 裸 shadcn 的 `SelectItem` 是 `focus:bg-accent focus:text-accent-foreground`，而 `--color-accent` 是 `#ff6a2b`、前景是白字；但 MiMo 自己的设置页把它覆盖成了 `rounded-[8px] focus:bg-side-hover focus:text-txt`（`SettingsOverlay-*.js`，内容壳是 `Z0`+`menu-glass`+`p-[5px]`）。MCode 的 SelectMenu 复刻的正是设置页那一个，所以橙色高亮不进来。
+  - MiMo `[data-theme=dark]` 里 `--color-set-line` 仍是 `#f1f1f1c7`（深色下画浅色边）；MCode 不复制这条。
+  - shadcn `ghost` 变体的 hover 是 `bg-accent`（同样是橙）；MCode 的 ghost 不用它。
+  - MiMo 几乎不画焦点环，MCode 保留自己给键盘用户加的 `:focus-visible` 环（可达性），只把颜色从蓝色换成 MiMo 的 `--color-ring`（浅色 `#151c13`、深色 `#fff`）。
+  - 共用 `.btn` / `.field` 高度保持 28px：MiMo 自己的按钮尺寸是 26 / 30 / 36，但它的设置页用 `--settings-control-height: 28px` 压到 28，对话框里的控件行没有第四种尺寸。
 
 - 第十七轮新增：项目**内**的绝对路径打开时文件树停在项目根（项目外则与 MiMo 一样跳到文件所在文件夹，用户 2026-09-21）；审阅页只列项目子树，MiMo 列整个仓库再错解路径——MCode 这边是对的。
 

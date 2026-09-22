@@ -422,6 +422,8 @@ import { roundTwentyCopyChecks } from "./smoke-round20-copy"
 import { roundTwentyVisualOneChecks } from "./smoke-round20-v1"
 // Round 20, visual lane 5: the side column against MiMo 26.920 (search and bell, brand row, account row, glyphs, list edges).
 import { roundTwentyVisualFiveChecks } from "./smoke-round20-v5"
+// Round 21, lane F1: the colour tokens and the shared controls against MiMo 26.920.
+import { roundTwentyOneLaneF1Checks } from "./smoke-round21-f1"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7069,6 +7071,7 @@ async function main() {
   roundTwentyCopyChecks(check, section)
   await roundTwentyVisualOneChecks(check, section)
   await roundTwentyVisualFiveChecks(check, section)
+  await roundTwentyOneLaneF1Checks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
@@ -7304,9 +7307,10 @@ async function roundSixVisualChecks() {
     panel.includes("border-radius: 12px") && panel.includes("border: 1px solid var(--border-weak)") && panel.includes("min-width: 200px") && panel.includes("--pad: 5px"),
     panel,
   )
+  // R21-F1: .18s is MiMo's --motion-base, which this window now has a name for.
   check(
     "the menu pops open over .18s",
-    panel.includes("animation: menu-pop 0.18s cubic-bezier(0.16, 1, 0.3, 1)") && menu.includes("@keyframes menu-pop"),
+    panel.includes("animation: menu-pop var(--motion-base) cubic-bezier(0.16, 1, 0.3, 1)") && menu.includes("@keyframes menu-pop"),
     "",
   )
   const row = rule(menu, ".item")

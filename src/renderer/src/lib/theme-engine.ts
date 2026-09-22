@@ -282,14 +282,12 @@ const ALPHA: Record<string, string> = {
   "alpha-dark-8": "#00000014",
   "alpha-dark-10": "#0000001a",
   "alpha-dark-20": "#00000033",
-  "alpha-dark-25": "#00000040",
   "alpha-dark-40": "#00000066",
   "alpha-dark-60": "#00000099",
   "alpha-light-6": "#ffffff0f",
   "alpha-light-8": "#ffffff14",
   "alpha-light-10": "#ffffff1a",
   "alpha-light-20": "#ffffff33",
-  "alpha-light-25": "#ffffff40",
 }
 
 const ref = (name: string) => `var(--v2-${name})`
@@ -317,7 +315,6 @@ function semantics(isDark: boolean): Record<string, string> {
         "text-text-accent": hue("blue", 400),
         "background-bg-accent": hue("blue", 600),
         "border-border-focus": hue("blue", 500),
-        "border-border-selected": ref("alpha-light-25"),
         "border-border-muted": ref("alpha-light-8"),
         "border-border-base": ref("alpha-light-10"),
         "border-border-strong": ref("alpha-light-20"),
@@ -344,7 +341,6 @@ function semantics(isDark: boolean): Record<string, string> {
         "text-text-accent": hue("blue", 600),
         "background-bg-accent": hue("blue", 600),
         "border-border-focus": hue("blue", 500),
-        "border-border-selected": ref("alpha-dark-25"),
         "border-border-muted": ref("alpha-dark-8"),
         "border-border-base": ref("alpha-dark-10"),
         "border-border-strong": ref("alpha-dark-20"),
@@ -494,6 +490,13 @@ function v2Tokens(theme: Theme, isDark: boolean): Record<string, string> {
 const TOKEN_MAP: Record<string, string> = {
   "--surface-raised": "background-bg-base",
   "--surface-base": "background-bg-deep",
+  /*
+   * The fill below bg-deep, which MiMo calls --color-sunken. It used to be
+   * derived - black at 35% over bg-deep in dark - and that put it at #0d0d0d
+   * where MiMo's is #2e2e2e, several steps the wrong way. It is a measured
+   * colour like the rest of them now, not a formula.
+   */
+  "--surface-sunken": "background-bg-sunken",
   "--surface-raised-hover": "background-bg-layer-01",
   "--surface-menu": "background-bg-layer-01",
   "--surface-layer": "background-bg-layer-02",
@@ -508,12 +511,16 @@ const TOKEN_MAP: Record<string, string> = {
   "--border-muted": "border-border-muted",
   "--border-weak": "border-border-base",
   "--border-strong": "border-border-strong",
-  "--border-selected": "border-border-selected",
 
   "--text-strong": "text-text-base",
   "--text-base": "text-text-muted",
   "--text-weak": "text-text-faint",
-  "--text-weaker": "background-bg-layer-04",
+  /*
+   * The step past faint, which forty rules use as text. It read
+   * background-bg-layer-04 - a *background* step, #dbdbdb in light, which is
+   * invisible on white - so it is its own colour now: MiMo's --color-send-empty.
+   */
+  "--text-weaker": "text-text-disabled",
   "--text-accent": "text-text-accent",
   "--text-interactive": "text-text-accent",
 
@@ -523,15 +530,11 @@ const TOKEN_MAP: Record<string, string> = {
   "--primary": "background-bg-accent",
   "--interactive": "border-border-focus",
   "--accent": "purple-400",
-  "--success": "state-fg-success",
-  "--warning": "state-fg-warning",
   "--error": "state-fg-danger",
-  "--info": "state-fg-info",
   "--text-success": "state-fg-success",
   "--text-warning": "state-fg-warning",
   "--text-error": "state-fg-danger",
   "--surface-success": "state-bg-success",
-  "--surface-critical": "state-bg-danger",
 }
 
 export function themeTokens(theme: Theme, isDark: boolean): Record<string, string> {
@@ -543,15 +546,7 @@ export function themeTokens(theme: Theme, isDark: boolean): Record<string, strin
   }
 
   /*
-   * The deepest fill, which the reference has no name for: its own window stops
-   * at bg-deep, and this one puts a sunken surface below that.
-   */
-  out["--surface-sunken"] = isDark
-    ? blend("#000000", tokens["background-bg-deep"], 0.35)
-    : tokens["grey-200"]
-
-  /*
-   * Diff fills come from the theme's own diff seeds rather than from success
+   * Diff colours come from the theme's own diff seeds rather than from success
    * and error: several themes name one green for "passing" and another for an
    * added line, and mixing the two makes a review read like a test report.
    */
@@ -561,10 +556,6 @@ export function themeTokens(theme: Theme, isDark: boolean): Record<string, strin
   const remove = hueScale(colors.diffDelete, isDark)
   out["--diff-add"] = add[STEPS.indexOf(isDark ? 500 : 700)]
   out["--diff-delete"] = remove[STEPS.indexOf(isDark ? 500 : 700)]
-  const wash = isDark ? 0.18 : 0.14
-  const behind = tokens["background-bg-base"]
-  out["--surface-diff-add"] = blend(out["--diff-add"], behind, wash)
-  out["--surface-diff-delete"] = blend(out["--diff-delete"], behind, wash)
   return out
 }
 

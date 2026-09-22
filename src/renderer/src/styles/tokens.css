@@ -21,19 +21,28 @@
 }
 
 /*
- * Design tokens, following opencode's own design system.
+ * Design tokens, MiMo's colour system under this app's own names.
  *
- * The vocabulary is opencode's: surfaces step base -> raised -> raised-hover,
- * text steps strong -> base -> weak -> weaker (note that *base*, not strong, is
- * the default body colour - strong is reserved for emphasis), and borders come
- * in weaker/weak/strong.
+ * The vocabulary is opencode's - surfaces step base -> raised -> raised-hover,
+ * text steps strong -> base -> weak -> weaker, borders weaker/weak/strong - but
+ * every value in it is now one MiMo draws with, measured off its stylesheet:
  *
- * Two accents with distinct jobs, which is the part worth getting right:
- *   --interactive (blue) owns selection, focus, and input state.
- *   --primary (apricot) is the brand mark, used sparingly - the streaming
- *     indicator and little else. It is not a button fill.
- * Primary buttons are a light neutral on dark, which is what gives opencode its
- * characteristic look rather than a saturated call-to-action colour.
+ *   --surface-page   MiMo's --color-bg, what every floating layer is filled
+ *                    with (menu, select, dialog, tooltip). Not --surface-menu,
+ *                    which is a step MiMo has no equivalent for.
+ *   --text-body      --color-txt, the colour a row of a menu is written in;
+ *                    --text-strong is --color-txt-strong, for emphasis only.
+ *   --icon-base      --color-icon, which is warmer and quieter than the grey
+ *                    step it used to read.
+ *   --ring           --color-ring: MiMo's focus ring is the ink itself (white
+ *                    in dark), not the interactive blue.
+ *   --text-critical  --color-err, one value in both schemes, as all of MiMo's
+ *                    state colours are.
+ *
+ * Two accents with distinct jobs:
+ *   --interactive (blue) owns selection and input state.
+ *   --primary is the brand mark, used sparingly. It is not a button fill;
+ *     --button-primary is MiMo's --color-send pair.
  *
  * Light is defined on bare :root so it is the fallback everywhere; dark layers
  * on top for both the explicit choice and the system preference.
@@ -41,7 +50,7 @@
  * The colours the theme engine makes are MCode 2.0's, written here rather than
  * painted at runtime: like MiMo, the only colour choice is the scheme. `npm run
  * themecheck` regenerates them from lib/theme-palettes.ts and fails on any that
- * differ, in all three blocks.
+ * differ, in all three blocks - and on any var(--...) this file never defines.
  */
 
 :root {
@@ -49,7 +58,8 @@
   --surface-base: #fffefd;
   --surface-raised: #ffffff;
   --surface-raised-hover: #fafafa;
-  --surface-sunken: #f2f2f2;
+  /* MiMo's --color-sunken, a measured colour rather than a derived one. */
+  --surface-sunken: #f8f7f5;
   /* The lifted surface a selected tab sits on, and the avatar behind an initial. */
   --surface-layer: #f2f2f2;
   /* background/bg-layer-01: what a floating menu is drawn on. */
@@ -58,38 +68,32 @@
   --surface-key: #eeeeee;
   /* background/bg-layer-02: the fill behind a badge inside a menu. */
   --surface-layer-02: #f2f2f2;
-  /* overlay/simple-overlay-* */
-  --surface-hover: #f1f1f2;
-  --surface-selected: #f1f1f2;
+  /* overlay/simple-overlay-* - MiMo's --color-menu-hover and --color-side-sel. */
+  --surface-hover: #f1f0ec;
+  --surface-selected: #eeedec;
   --surface-success: #e7f9ea;
-  --surface-critical: #fceceb;
 
-  /* border/border-*, which are alphas so they hold over any layer. */
-  --border-weaker: #00000014;
-  --border-weak: #ececed;
-  --border-muted: #00000014;
+  /* border/border-*, where weak is MiMo's --color-line and weaker its --color-line-soft. */
+  --border-weaker: #0000000d;
+  --border-weak: #f1f1f1;
+  --border-muted: #0000000d;
   --border-strong: #00000033;
-  --border-selected: #00000040;
 
   --text-strong: #151c13;
   --text-base: #151c1399;
   --text-weak: #151c1366;
-  --text-weaker: #dbdbdb;
+  --text-weaker: #bbbbb6;
   --text-accent: #3295fb;
   --text-interactive: #3295fb;
-  --text-on-primary: #111111;
 
-  --icon-base: #3a3a3a;
+  --icon-base: #5c5c57;
   /* icon/icon-muted, which is the same grey in both themes. */
   --icon-weak: #808080;
 
   --primary: #2f6fed;
   --accent: #9e99f7;
   --interactive: #2f6fed;
-  --success: #198b43;
-  --warning: #cb9f34;
   --error: #b82d35;
-  --info: #2c47c8;
 
   --text-success: #198b43;
   --text-warning: #cb9f34;
@@ -97,28 +101,42 @@
 
   --diff-add: #20a923;
   --diff-delete: #e5351c;
-  /*
-   * The fill behind a changed line, which is a surface rather than a tint of
-   * the foreground: a translucent green laid over syntax colours muddies the
-   * code it is meant to be showing.
-   */
-  --surface-diff-add: #e0f3e0;
-  --surface-diff-delete: #fbe3df;
 
-  --button-primary: #111111;
+  /* ---- Not generated: MiMo's own names, measured off its stylesheet ---- */
+
+  /*
+   * --color-bg: the fill under every floating layer. One step off
+   * --surface-raised in light and off --surface-base in dark, which is why
+   * neither of those could stand in for it.
+   */
+  --surface-page: #fffefd;
+  /* --color-menu-glass, always with blur(18px) saturate(150%) over it. */
+  --surface-glass: #ffffffc7;
+
+  /* --color-txt: body ink, a step below --text-strong. */
+  --text-body: #151c13cc;
+  /* --color-err, the same red in both schemes, as every MiMo state colour is. */
+  --text-critical: #d23f3f;
+  /* --color-del: the red of a row that destroys something. */
+  --text-destructive: #e5484d;
+
+  /* MiMo's bare hover wash, for a control that sits on an unknown fill. */
+  --overlay-hover: #00000014;
+
+  /* --color-input-border: the half-pixel edge every MiMo card and field takes. */
+  --border-input: #151c130f;
+  /* --color-btn-border (--color-input): a button's and a select trigger's edge. */
+  --border-button: #e3e3e0;
+
+  /* --color-ring: the ink, not the blue. */
+  --ring: #151c13;
+
+  /* --color-send / --color-send-fg. */
+  --button-primary: #151c13;
   --button-primary-text: #ffffff;
-  /*
-   * What a neutral button is filled with, which is deliberately not the page
-   * colour: a control drawn in --surface-base on a base-coloured pane has
-   * nothing but its ring left to say it is a control. In light the step is
-   * white; in dark it is a wash of light rather than a fixed grey, so the same
-   * button lifts correctly off the window fill and off a raised panel alike.
-   * Its edge is --shadow-input, the same elevation an input rests on.
-   */
-  --button-neutral: #ffffff;
 
-  /* elevation/button-neutral: an input's resting edge. */
-  --shadow-input: 0 1px 1.5px 0 #0000001a, 0 0 0 0.5px #00000024;
+  /* tailwind shadow-xs, what MiMo hangs on a button, a field and a select trigger. */
+  --shadow-xs: 0 1px 2px 0 #0000000d;
   /*
    * The edge a dock surface carries: a full-pixel ring with three very small
    * drops hung off it, which reads as a card lying on the page rather than as
@@ -133,8 +151,18 @@
     0 8px 16px 0 #0000000a, 0 4px 8px 0 #00000014, 0 0 0 0.5px #0000001f;
   --shadow-overlay:
     0 16px 32px 0 #0000000a, 0 8px 16px 0 #00000014, 0 0 0 0.5px #0000001f;
-  /* overlay/simple-overlay-scrim: alpha-dark-40 */
-  --scrim: #00000066;
+  /* MiMo's four lifts: a menu, a popover or dialog, a tip, a dock card. */
+  --shadow-menu: 0 8px 30px #0000002e, 0 1px 3px #0000001a;
+  --shadow-pop: 0 12px 40px #00000024;
+  --shadow-tip: 0 2px 8px #0000000d, 0 1px 2px #0000000a;
+  --shadow-composer: 0 1px 2px #0000000d, 0 6px 18px #0000001b;
+  /* overlay/simple-overlay-scrim: MiMo's --color-scrim. */
+  --scrim: #00000061;
+
+  /* MiMo's three durations, which do not turn over with the scheme. */
+  --motion-fast: 0.12s;
+  --motion-base: 0.18s;
+  --motion-slow: 0.2s;
 
   /*
    * How the transcript's small motions move: counts rolling, a label's suffix
@@ -142,7 +170,6 @@
    */
   --tool-motion-spring-ms: 0.56s;
   --tool-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --tool-motion-mask: 18%;
   --tool-motion-fade-ms: 0.24s;
   --tool-motion-blur: 2px;
 
@@ -151,13 +178,6 @@
   --radius-md: 0.375rem;
   --radius-lg: 0.5rem;
   --radius-xl: 0.625rem;
-  /*
-   * A step past the end of opencode's own named scale, which stops at xl. Its
-   * prompt dock writes twelve as a literal on both the shell and the tray that
-   * slides out from under it, and the two have to round together or the seam
-   * between them shows, so the number is worth a name of its own.
-   */
-  --radius-2xl: 0.75rem;
 
   /*
    * Named separately from --font-sans so a chosen face can sit in front of the
@@ -182,19 +202,6 @@
   --font-terminal: "SF Mono", ui-monospace, Menlo, "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", "Symbols Nerd Font Mono", "Symbols Nerd Font", "MesloLGS NF", "Hack Nerd Font", "JetBrainsMono Nerd Font", "JetBrainsMono Nerd Font Mono", monospace;
 
   /*
-   * Thirteen on twenty-four, measured off opencode's own body rule. This app
-   * was a point larger on a tighter leading, which is why the same paragraph
-   * filled a different number of lines than the reference did.
-   */
-  --font-size-small: 13px;
-  --font-size-base: 13px;
-  --font-size-large: 16px;
-  --line-height-normal: 130%;
-  --line-height-large: 24px;
-
-  --titlebar-height: 36px;
-
-  /*
    * The wordmark ships in two colourways rather than being tinted, because the
    * mark is a shaded 3D render - a filter would flatten the highlights that
    * give it its form. Both files share one canvas, so swapping causes no reflow.
@@ -209,7 +216,7 @@
     --surface-base: #141414;
     --surface-raised: #181818;
     --surface-raised-hover: #1f1f1f;
-    --surface-sunken: #0d0d0d;
+    --surface-sunken: #2e2e2e;
     --surface-layer: #2e2e2e;
     /* background/bg-layer-01 */
     --surface-menu: #1f1f1f;
@@ -221,35 +228,29 @@
     --surface-hover: #ffffff0f;
     --surface-selected: #ffffff1a;
     --surface-success: #14361d;
-    --surface-critical: #461516;
 
     /* border/border-* */
-    --border-weaker: #ffffff14;
-    --border-weak: #ffffff1a;
-    --border-muted: #ffffff14;
+    --border-weaker: #ffffff12;
+    --border-weak: #2e2e2e;
+    --border-muted: #ffffff12;
     --border-strong: #ffffff33;
-    --border-selected: #ffffff40;
 
     /* text/text-* */
     --text-strong: #ffffff;
     --text-base: #b8b8b8;
     --text-weak: #777777;
-    --text-weaker: #5c5c5c;
-    --text-accent: #5a9cff;
-    --text-interactive: #5a9cff;
-    --text-on-primary: #161616;
+    --text-weaker: #5a5a5a;
+    --text-accent: #3295fb;
+    --text-interactive: #3295fb;
 
     /* icon/icon-* */
-    --icon-base: #dbdbdb;
+    --icon-base: #d0d0d0;
     --icon-weak: #808080;
 
     --primary: #5a9cff;
     --accent: #9e99f7;
     --interactive: #5a9cff;
-    --success: #6bd586;
-    --warning: #f2cf76;
     --error: #f17471;
-    --info: #7698fd;
 
     /* state/fg-* */
     --text-success: #6bd586;
@@ -258,17 +259,21 @@
 
     --diff-add: #a3da9f;
     --diff-delete: #ffb3a4;
-    /* surface/diff-add-base and surface/diff-delete-base */
-    --surface-diff-add: #313b30;
-    --surface-diff-delete: #423431;
 
-    --button-primary: #fafafa;
-    --button-primary-text: #161616;
-    /* A wash of light, not a grey, so it lifts whatever surface it lands on. */
-    --button-neutral: #ffffff0f;
+    /* ---- Not generated ---- */
+    --surface-page: #181818;
+    --surface-glass: #161616b8;
+    --text-body: #f4f4f5;
+    --text-critical: #d23f3f;
+    /* --color-del: the red of a row that destroys something. */
+    --text-destructive: #e5484d;
+    --overlay-hover: #ffffff14;
+    --border-input: #2e2e2e;
+    --border-button: #3a3a3a;
+    --ring: #ffffff;
+    --button-primary: #ececec;
+    --button-primary-text: #0d0d0d;
 
-    /* elevation/button-neutral: an input's resting edge. */
-    --shadow-input: 0 1px 2px 0 #0006, 0 0 0 0.5px #ffffff33, 0 -0.5px 0 0 #ffffff1a;
     /* A dock surface's edge, whose ring is the one layer that turns over. */
     --shadow-xs-border:
       0 0 0 1px #ffffff32, 0 1px 2px -1px #1310100a, 0 1px 2px 0 #1310100f, 0 1px 3px 0 #13101014;
@@ -279,7 +284,11 @@
       0 8px 16px 0 #0000004d, 0 4px 8px 0 #0000004d, 0 0 0 0.5px #ffffff29, 0 -0.5px 0 0 #ffffff0f;
     --shadow-overlay:
       0 16px 32px 0 #0000004d, 0 8px 16px 0 #0000004d, 0 0 0 0.5px #ffffff29, 0 -0.5px 0 0 #ffffff0f;
-    /* overlay/simple-overlay-scrim: alpha-dark-60 */
+    --shadow-menu: 0 8px 30px #0009, 0 1px 3px #0006;
+    --shadow-pop: 0 12px 40px #00000080;
+    --shadow-tip: 0 2px 8px #0000004d, 0 1px 2px #00000040;
+    --shadow-composer: 0 1px 3px #0006;
+    /* overlay/simple-overlay-scrim */
     --scrim: #00000099;
   }
 }
@@ -290,7 +299,7 @@
   --surface-base: #141414;
   --surface-raised: #181818;
   --surface-raised-hover: #1f1f1f;
-  --surface-sunken: #0d0d0d;
+  --surface-sunken: #2e2e2e;
   --surface-layer: #2e2e2e;
   /* background/bg-layer-01 */
   --surface-menu: #1f1f1f;
@@ -302,35 +311,29 @@
   --surface-hover: #ffffff0f;
   --surface-selected: #ffffff1a;
   --surface-success: #14361d;
-  --surface-critical: #461516;
 
   /* border/border-* */
-  --border-weaker: #ffffff14;
-  --border-weak: #ffffff1a;
-  --border-muted: #ffffff14;
+  --border-weaker: #ffffff12;
+  --border-weak: #2e2e2e;
+  --border-muted: #ffffff12;
   --border-strong: #ffffff33;
-  --border-selected: #ffffff40;
 
   /* text/text-* */
   --text-strong: #ffffff;
   --text-base: #b8b8b8;
   --text-weak: #777777;
-  --text-weaker: #5c5c5c;
-  --text-accent: #5a9cff;
-  --text-interactive: #5a9cff;
-  --text-on-primary: #161616;
+  --text-weaker: #5a5a5a;
+  --text-accent: #3295fb;
+  --text-interactive: #3295fb;
 
   /* icon/icon-* */
-  --icon-base: #dbdbdb;
+  --icon-base: #d0d0d0;
   --icon-weak: #808080;
 
   --primary: #5a9cff;
   --accent: #9e99f7;
   --interactive: #5a9cff;
-  --success: #6bd586;
-  --warning: #f2cf76;
   --error: #f17471;
-  --info: #7698fd;
 
   /* state/fg-* */
   --text-success: #6bd586;
@@ -339,17 +342,21 @@
 
   --diff-add: #a3da9f;
   --diff-delete: #ffb3a4;
-  /* surface/diff-add-base and surface/diff-delete-base */
-  --surface-diff-add: #313b30;
-  --surface-diff-delete: #423431;
 
-  --button-primary: #fafafa;
-  --button-primary-text: #161616;
-  /* A wash of light, not a grey, so it lifts whatever surface it lands on. */
-  --button-neutral: #ffffff0f;
+  /* ---- Not generated ---- */
+  --surface-page: #181818;
+  --surface-glass: #161616b8;
+  --text-body: #f4f4f5;
+  --text-critical: #d23f3f;
+  /* --color-del: the red of a row that destroys something. */
+  --text-destructive: #e5484d;
+  --overlay-hover: #ffffff14;
+  --border-input: #2e2e2e;
+  --border-button: #3a3a3a;
+  --ring: #ffffff;
+  --button-primary: #ececec;
+  --button-primary-text: #0d0d0d;
 
-  /* elevation/button-neutral: an input's resting edge. */
-  --shadow-input: 0 1px 2px 0 #0006, 0 0 0 0.5px #ffffff33, 0 -0.5px 0 0 #ffffff1a;
   /* A dock surface's edge, whose ring is the one layer that turns over. */
   --shadow-xs-border:
     0 0 0 1px #ffffff32, 0 1px 2px -1px #1310100a, 0 1px 2px 0 #1310100f, 0 1px 3px 0 #13101014;
@@ -360,6 +367,10 @@
     0 8px 16px 0 #0000004d, 0 4px 8px 0 #0000004d, 0 0 0 0.5px #ffffff29, 0 -0.5px 0 0 #ffffff0f;
   --shadow-overlay:
     0 16px 32px 0 #0000004d, 0 8px 16px 0 #0000004d, 0 0 0 0.5px #ffffff29, 0 -0.5px 0 0 #ffffff0f;
-  /* overlay/simple-overlay-scrim: alpha-dark-60 */
+  --shadow-menu: 0 8px 30px #0009, 0 1px 3px #0006;
+  --shadow-pop: 0 12px 40px #00000080;
+  --shadow-tip: 0 2px 8px #0000004d, 0 1px 2px #00000040;
+  --shadow-composer: 0 1px 3px #0006;
+  /* overlay/simple-overlay-scrim */
   --scrim: #00000099;
 }
