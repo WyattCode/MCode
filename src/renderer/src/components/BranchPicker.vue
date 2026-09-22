@@ -191,7 +191,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div v-if="visible" ref="root" class="branch-picker" data-branch-picker @focusout="onFocusOut">
-    <button class="chip" :class="{ open }" data-branch-chip aria-haspopup="menu" :aria-expanded="open" @click="open = !open">
+    <button class="chip" data-branch-chip aria-haspopup="menu" :aria-expanded="open" @click="open = !open">
       <svg class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <circle cx="4.5" cy="3.5" r="1.6" />
         <circle cx="4.5" cy="12.5" r="1.6" />
@@ -318,7 +318,7 @@ svg circle {
   min-width: 0;
   max-width: 100%;
   padding: 4px 12px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -327,9 +327,9 @@ svg circle {
   line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
-.chip:hover,
-.chip.open {
-  color: var(--text-strong);
+/* Hover only, as MiMo's is: it has no rule holding the chip lit while its menu is open. */
+.chip:hover {
+  color: #151c13cc;
   background: var(--surface-hover);
 }
 
@@ -346,14 +346,12 @@ svg circle {
   white-space: nowrap;
 }
 
+/* MiMo's caret: the chip's 15px icon size, held back to 55%. */
 .caret {
   flex: none;
-  width: 16px;
-  height: 16px;
-}
-
-.caret path {
-  stroke-width: 1;
+  width: 15px;
+  height: 15px;
+  opacity: 0.55;
 }
 
 /* MiMo's branch menu: narrower than the project menu, 240 to 320 wide. */
@@ -370,6 +368,22 @@ svg circle {
   border-radius: 16px;
   box-shadow: var(--shadow-lg);
   backdrop-filter: blur(18px) saturate(150%);
+  transform-origin: top;
+  animation: menu-in 0.15s ease-out;
+}
+
+/* MiMo animates every popover in: a fade, a 95% zoom and an 8px slide from its trigger. */
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.95);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu {
+    animation: none;
+  }
 }
 
 .search {
@@ -391,7 +405,7 @@ svg circle {
 .search input {
   flex: 1;
   min-width: 0;
-  color: var(--text-strong);
+  color: #151c13cc;
   background: transparent;
   border: 0;
   outline: none;
@@ -419,9 +433,9 @@ svg circle {
   width: 100%;
   min-width: 0;
   padding: 6px 10px;
-  color: var(--text-strong);
+  color: #151c13cc;
   background: transparent;
-  border-radius: 8px;
+  border-radius: 11px;
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: calc(20px * var(--ui-font-scale, 1));
@@ -435,11 +449,12 @@ svg circle {
   outline: none;
 }
 
+/* MiMo's --color-icon: #5c5c57 on light, #d0d0d0 on dark (below). */
 .row .i {
   flex: none;
   width: 17px;
   height: 17px;
-  color: color-mix(in srgb, var(--text-base) 87%, transparent);
+  color: #5c5c57;
 }
 
 .name {
@@ -449,12 +464,13 @@ svg circle {
   white-space: nowrap;
 }
 
+/* MiMo's tick is its --color-send: #151c13 on light, #ececec on dark (below). */
 .check {
   flex: none;
   width: 16px;
   height: 16px;
   margin-inline-start: auto;
-  color: var(--text-strong);
+  color: #151c13;
 }
 
 .muted,
@@ -589,8 +605,23 @@ svg circle {
   border-color: #fadbd8;
 }
 
-:root[data-theme="dark"] .dialog-desc {
+/*
+ * MiMo's --color-txt, --color-icon and --color-send on the dark scheme. Lane F1
+ * is adding tokens for the first two; until they land the pair is written out.
+ */
+:root[data-theme="dark"] .dialog-desc,
+:root[data-theme="dark"] .chip:hover,
+:root[data-theme="dark"] .row,
+:root[data-theme="dark"] .search input {
   color: #f4f4f5;
+}
+
+:root[data-theme="dark"] .row .i {
+  color: #d0d0d0;
+}
+
+:root[data-theme="dark"] .check {
+  color: #ececec;
 }
 
 :root[data-theme="dark"] .dialog-btn {
@@ -613,8 +644,19 @@ svg circle {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .dialog-desc {
+  :root:not([data-theme="light"]) .dialog-desc,
+  :root:not([data-theme="light"]) .chip:hover,
+  :root:not([data-theme="light"]) .row,
+  :root:not([data-theme="light"]) .search input {
     color: #f4f4f5;
+  }
+
+  :root:not([data-theme="light"]) .row .i {
+    color: #d0d0d0;
+  }
+
+  :root:not([data-theme="light"]) .check {
+    color: #ececec;
   }
 
   :root:not([data-theme="light"]) .dialog-btn {

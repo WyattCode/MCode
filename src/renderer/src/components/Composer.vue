@@ -4882,18 +4882,22 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   animation-name: menu-in-up;
 }
 
-/* MiMo's entrance: a fade, a 95% zoom and a 2px slide from the chip. No fill mode, so no transform outlasts it. */
+/*
+ * MiMo's entrance: a fade, a 95% zoom and an 8px slide from the chip -
+ * `slide-in-from-top-2`, which is two of its 4px spacing steps, not two pixels.
+ * No fill mode, so no transform outlasts it.
+ */
 @keyframes menu-in {
   from {
     opacity: 0;
-    transform: translateY(-2px) scale(0.95);
+    transform: translateY(-8px) scale(0.95);
   }
 }
 
 @keyframes menu-in-up {
   from {
     opacity: 0;
-    transform: translateY(2px) scale(0.95);
+    transform: translateY(8px) scale(0.95);
   }
 }
 
@@ -5436,25 +5440,46 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
  * MiMo's card: no ring when it takes focus. Its edge is #151c130f on light and
  * #2e2e2e on dark; its shadow a soft two-step lift on light and one darker
  * drop on dark.
+ *
+ * The fill is MiMo's --color-composer-surface, white on light and #1f1f1f on
+ * dark (below) - not the menu surface, which is a step greyer on light. The
+ * conversation's dock is the same card and takes the same white, as MiMo's does.
  */
 .box {
   padding: 8px;
-  background: var(--surface-menu);
+  background: #ffffff;
   border: 0.5px solid #151c130f;
   border-radius: 20px;
   box-shadow: 0 1px 2px #0000000d, 0 6px 18px #0000001b;
 }
 
 @media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .box {
+    background: #1f1f1f;
+  }
+
   :root:not([data-theme="light"]) .box:not(.dropping) {
     border-color: #2e2e2e;
     box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
   }
+
+  /* MiMo's --shadow-composer-home, which differs from the normal one on dark only. */
+  :root:not([data-theme="light"]) .home-hero .box:not(.dropping) {
+    box-shadow: 0 2px 10px #00000080;
+  }
+}
+
+:root[data-theme="dark"] .box {
+  background: #1f1f1f;
 }
 
 :root[data-theme="dark"] .box:not(.dropping) {
   border-color: #2e2e2e;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+}
+
+:root[data-theme="dark"] .home-hero .box:not(.dropping) {
+  box-shadow: 0 2px 10px #00000080;
 }
 
 /* The keyboard's ring (base.css) goes round the card rather than the bare writing area inside it. */
