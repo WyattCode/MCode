@@ -430,7 +430,8 @@ onBeforeUnmount(() => {
   gap: 12px;
   width: 100%;
   padding: 10px 14px;
-  color: var(--text-strong);
+  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
+  color: #151c13cc;
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 12px;
@@ -444,7 +445,7 @@ onBeforeUnmount(() => {
   width: 30px;
   height: 30px;
   padding: 0;
-  color: var(--text-strong);
+  color: #151c13cc;
   background: transparent;
   border: none;
   border-radius: 7px;
@@ -456,7 +457,7 @@ onBeforeUnmount(() => {
 
 .vp-time {
   flex-shrink: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -475,7 +476,20 @@ onBeforeUnmount(() => {
 
 /* The shadows stay the light ones in dark too: MiMo's utilities compile with fixed colours. */
 .vp-hint {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: 12px;
+}
+
+/* MiMo's --color-txt is #f4f4f5 in dark, not a translucent white. */
+:root[data-theme="dark"] .vp-bar,
+:root[data-theme="dark"] .vp-toggle {
+  color: #f4f4f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .vp-bar,
+  :root:not([data-theme="light"]) .vp-toggle {
+    color: #f4f4f5;
+  }
 }
 </style>

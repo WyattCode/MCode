@@ -1171,7 +1171,7 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
   width: 22px;
   height: 22px;
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: none;
   border-radius: 4px;
@@ -1224,7 +1224,7 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
 .card-author {
   flex: 1;
   overflow: hidden;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1232,12 +1232,12 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
 
 .card-chevron {
   flex-shrink: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
 }
 
 .card-date {
   margin-bottom: 4px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: 10px;
 }
 
@@ -1342,7 +1342,7 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
   align-items: center;
   justify-content: center;
   padding: 20px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: var(--surface-raised);
   font-size: 13px;
   text-align: center;
@@ -1373,7 +1373,7 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
 
 .ins-tip-date {
   margin-left: 8px;
-  color: var(--text-weak);
+  color: var(--text-base);
 }
 
 .ins-tip-kind {

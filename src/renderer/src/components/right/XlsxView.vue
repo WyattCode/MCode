@@ -960,7 +960,7 @@ const keepOpen = () => true
   bottom: 8px;
   z-index: 2;
   padding: 2px 8px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: var(--surface-raised);
   border-radius: 6px;
   /* Fixed as in MiMo, which does not scale the status with the interface font. */
@@ -998,7 +998,7 @@ const keepOpen = () => true
   align-items: center;
   justify-content: center;
   padding: 20px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: var(--surface-raised);
   font-size: 13px;
   text-align: center;

@@ -47,7 +47,7 @@ function noteOf(source: string, raw: string) {
 function iconOf(source: string) {
   if (source === "ai" || source === "ai_local") return { name: "bot", color: "#7c4dff" }
   if (source === "user") return { name: "pencil", color: "#2b6cb0" }
-  return { name: "file-clock", color: source === "external" ? "#c43e1c" : "var(--text-weak)" }
+  return { name: "file-clock", color: source === "external" ? "#c43e1c" : "var(--text-base)" }
 }
 
 function revert(index: number) {
@@ -128,28 +128,30 @@ onBeforeUnmount(() => {
 <style scoped>
 .version-pop {
   position: fixed;
-  z-index: 4000;
+  z-index: 10000;
   display: flex;
   flex-direction: column;
-  width: 320px;
-  max-height: 420px;
+  width: 340px;
+  max-height: 320px;
+  padding: 8px;
   overflow: hidden;
+  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
+  color: #151c13cc;
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
-  border-radius: 12px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
 }
 
+/* MiMo's head carries no rule under it: the 8 below the title is all there is. */
 .vp-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 9px 12px;
-  border-bottom: 1px solid var(--border-weak);
+  padding: 4px 6px 8px;
 }
 
 .vp-title {
-  color: var(--text-strong);
   font-size: 13px;
   font-weight: 600;
 }
@@ -157,20 +159,22 @@ onBeforeUnmount(() => {
 .vp-close {
   display: grid;
   place-items: center;
-  padding: 2px;
-  color: var(--text-weak);
+  padding: 4px;
+  color: var(--text-base);
   background: transparent;
   border: none;
 }
 
 .vp-list {
-  padding: 4px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   overflow: auto;
 }
 
 .vp-empty {
-  padding: 18px 12px;
-  color: var(--text-weak);
+  padding: 16px;
+  color: var(--text-base);
   font-size: 13px;
   text-align: center;
 }
@@ -182,8 +186,9 @@ onBeforeUnmount(() => {
 .vp-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
+  gap: 8px;
+  padding: 6px 4px;
+  border-radius: 8px;
 }
 
 .vp-left {
@@ -192,7 +197,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   align-items: center;
   gap: 2px;
-  width: 40px;
+  width: 44px;
 }
 
 .vp-icon {
@@ -203,7 +208,7 @@ onBeforeUnmount(() => {
 }
 
 .vp-time {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: 10px;
   white-space: nowrap;
 }
@@ -217,43 +222,41 @@ onBeforeUnmount(() => {
 
 .vp-note {
   overflow: hidden;
-  color: var(--text-strong);
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* MiMo's pill keeps its one teal pair in both themes. */
 .vp-current {
   flex-shrink: 0;
   margin-left: 6px;
-  padding: 0 4px;
-  color: #ff6a2b;
-  border: 1px solid #ff6a2b;
-  border-radius: 4px;
+  padding: 1px 6px;
+  color: #0f766e;
+  background: #e8f5f3;
+  border-radius: 999px;
   font-size: 10px;
   white-space: nowrap;
 }
 
 .vp-restore {
   flex-shrink: 0;
-  padding: 3px 9px;
-  color: var(--text-strong);
-  background: transparent;
+  padding: 4px 8px;
+  color: inherit;
+  background: var(--surface-base);
   border: 1px solid var(--border-weak);
-  border-radius: 7px;
+  border-radius: 6px;
   font-size: 12px;
 }
 
 .vp-tip {
   position: fixed;
-  z-index: 4001;
+  z-index: 10001;
   max-width: 300px;
-  padding: 6px 10px;
-  color: var(--text-strong);
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weak);
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  padding: 6px 8px;
+  color: #fff;
+  background: rgba(15, 23, 42, 0.92);
+  border-radius: 6px;
   font-size: 12px;
   line-height: 1.5;
   white-space: normal;
@@ -261,5 +264,16 @@ onBeforeUnmount(() => {
   word-break: break-word;
   overflow-wrap: anywhere;
   pointer-events: none;
+}
+
+/* MiMo's --color-txt is #f4f4f5 in dark, not a translucent white. */
+:root[data-theme="dark"] .version-pop {
+  color: #f4f4f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .version-pop {
+    color: #f4f4f5;
+  }
 }
 </style>

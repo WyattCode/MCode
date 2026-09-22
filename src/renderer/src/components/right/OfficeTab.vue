@@ -155,7 +155,7 @@ async function reveal() {
   justify-content: center;
   width: 100%;
   padding: 20px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: 13px;
   text-align: center;
 }
@@ -186,10 +186,14 @@ async function reveal() {
   font-weight: 600;
 }
 
+/*
+ * MiMo writes the two spaces before the separator into its markup and lets
+ * normal white-space collapse them; holding them with `pre` printed a double
+ * space nothing in MiMo has.
+ */
 .office-meta {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: 12px;
-  white-space: pre;
 }
 
 /* MiMo's .fc-btn with the tab's override: 5 by 8, a 1px line on an 8px corner. */
@@ -199,8 +203,9 @@ async function reveal() {
   align-items: center;
   gap: 6px;
   padding: 5px 8px;
-  color: var(--text-strong);
-  background: var(--surface-raised);
+  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
+  color: #151c13cc;
+  background: var(--surface-base);
   border: 1px solid var(--border-weak);
   border-radius: 8px;
   font: inherit;
@@ -224,5 +229,16 @@ async function reveal() {
   min-height: 0;
   overflow: hidden;
   background: var(--surface-raised);
+}
+
+/* MiMo's --color-txt is #f4f4f5 in dark, not a translucent white. */
+:root[data-theme="dark"] .fc-btn {
+  color: #f4f4f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .fc-btn {
+    color: #f4f4f5;
+  }
 }
 </style>
