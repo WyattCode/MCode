@@ -555,8 +555,13 @@ defineExpose({
 .rb-zoom-reset {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  /*
+   * MiMo writes these plain (24 square under a var(--text-14) glyph), which
+   * cuts into the glyph at the top of the interface-size slider. Round 15's
+   * U3 rule wins: the box scales with the text it holds.
+   */
+  width: calc(24px * var(--ui-font-scale, 1));
+  height: calc(24px * var(--ui-font-scale, 1));
   padding: 0;
   color: #5c5c57;
   background: transparent;
@@ -621,7 +626,8 @@ defineExpose({
   border-radius: 5px;
   font-family: var(--font-mono);
   font-size: calc(11px * var(--ui-font-scale, 1));
-  line-height: 18px;
+  /* MiMo's line is a flat 18px, which cuts into the cap at a large interface font; it scales here (round 15's U3). */
+  line-height: calc(18px * var(--ui-font-scale, 1));
 }
 
 /* MiMo's page frame: 10 below the bar, 14 in, on a 10px corner. The error covers it exactly. */

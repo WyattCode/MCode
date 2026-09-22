@@ -124,10 +124,11 @@ export async function roundTwentyOneF3Checks(check: Check, section: (name: strin
     check("the empty tab has no inset of its own", !/margin-inline/.test(rule(browser, ".rb-local")), rule(browser, ".rb-local"))
     check("no hairline is a fixed #f1f1f1 any more", !/#f1f1f1/.test(browser), (browser.match(/#f1f1f1/g) ?? []).length)
     check("the Ctrl+. cap and the annotate hint are platform-formatted", !/\{\{ ANNOTATE_COMBO \}\}/.test(browser) && !/combo: ANNOTATE_COMBO/.test(browser))
-    check("the zoom stepper and its reset are plain 24px", /width: 24px;\s*height: 24px;/.test(rule(browser, ".rb-zoom-reset") + rule(browser, ".rb-step,\n.rb-zoom-reset")) || /\.rb-step,\n\.rb-zoom-reset \{[^}]*width: 24px;/.test(browser))
-    check("and the annotate button a plain 34 high", /\.rb-annotate \{[^}]*height: 34px;/.test(browser))
+    check("the annotate button is MiMo's plain 34 high", /\.rb-annotate \{[^}]*height: 34px;/.test(browser))
     check("the address, the failed page's address and the cap follow the interface font", !/font-size: calc\(1[12]px \* var\(--code-font-scale, 1\)\)/.test(browser), (browser.match(/calc\(\d+px \* var\(--code-font-scale, 1\)\)/g) ?? []).join(" "))
-    check("the cap's line is a flat 18px", /line-height: 18px;/.test(rule(browser, ".rb-annotate-kbd")))
+    // MiMo writes the zoom stepper 24 square under a var(--text-14) glyph, and the cap an 18px line under a var(--text-11)
+    // one; both cut into their own text at the top of the interface-size slider, so round 15's U3 rule keeps them scaling.
+    check("the stepper and the cap's line still scale, where MiMo's plain px would clip", /width: calc\(24px \* var\(--ui-font-scale, 1\)\)/.test(browser) && /line-height: calc\(18px \* var\(--ui-font-scale, 1\)\);/.test(rule(browser, ".rb-annotate-kbd")))
     check("each menu label is a span that never wraps", (browser.match(/class="rb-item-name"/g) ?? []).length === 4 && /white-space: nowrap;/.test(rule(browser, ".rb-item-name")))
     check("a disabled back button still lights under the pointer", /\.rb-round:hover \{/.test(browser) && !/\.rb-round:hover:not\(:disabled\)/.test(browser))
   }

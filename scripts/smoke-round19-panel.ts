@@ -25,37 +25,29 @@ import { useApp } from "../src/renderer/src/stores/app"
 const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
 
 export async function roundNineteenPanelChecks(check: Check, section: (name: string) => void): Promise<void> {
-  section("Round 19 (lane B): RP-7 the launcher's cards carry MiMo's own short descriptions")
+  /*
+   * R21-F3-3 superseded RP-7. MiMo does render .lc-desc, but its only rule for
+   * it is `display: none`, so no description is ever on screen; the user chose
+   * parity and the element went, taking the five strings with it. What is left
+   * to hold is that no table carries them any more and the card is a name and
+   * a key cap.
+   */
+  section("Round 19 (lane B, as R21-F3-3 settled it): the launcher's cards are a name and a key cap")
   {
     const before = language.value
-    const mimo: Record<string, string[]> = {
-      "zh-CN": ["查看工作区改动", "浏览项目文件", "发起侧边对话", "打开网站", "启动交互式 shell"],
-      "zh-TW": ["檢視工作區變更", "瀏覽專案檔案", "開始一個側邊對話", "開啟一個網站", "啟動一個互動式殼層"],
-      en: ["View workspace changes", "Browse project files", "Start a side conversation", "Open a website", "Launch an interactive shell"],
-      ko: ["작업 공간 변경 사항 보기", "프로젝트 파일 탐색", "사이드 대화 시작", "웹사이트 열기", "대화형 셸 실행"],
-      ja: ["ワークスペースの変更を表示", "プロジェクトファイルを閲覧", "サイド会話を開始", "ウェブサイトを開く", "対話型シェルを起動"],
-      de: ["Änderungen im Arbeitsbereich anzeigen", "Projektdateien durchsuchen", "Eine Nebenunterhaltung starten", "Eine Website öffnen", "Eine interaktive Shell starten"],
-      fr: ["Voir les modifications de l'espace de travail", "Parcourir les fichiers du projet", "Démarrer une conversation latérale", "Ouvrir un site web", "Lancer un shell interactif"],
-    }
     const tools = ["review", "files", "chat", "browser", "terminal"]
-    for (const [id, lines] of Object.entries(mimo)) {
-      language.value = id as typeof language.value
-      const shown = tools.map((tool) => t(`launch.${tool}Desc`))
-      check(`RP-7: the ${id} launcher reads as MiMo's`, shown.join("|") === lines.join("|"), shown)
-    }
-    // The four tables MiMo does not ship follow the same short style, none keeps round 16's sentence.
-    const english = mimo.en!
-    const own: string[] = []
+    const kept: string[] = []
     for (const { id } of LANGUAGES) {
-      if (id in mimo) continue
       language.value = id
       for (const tool of tools) {
-        const line = t(`launch.${tool}Desc`)
-        if (english.includes(line) || line.split(" ").length > 6) own.push(`${id}:${line}`)
+        const key = `launch.${tool}Desc`
+        if (t(key) !== key) kept.push(`${id}:${key}`)
       }
     }
-    check("RP-7: the other tables carry short lines of their own", own.length === 0, own)
+    check("RP-7: no language table still carries a launcher description", kept.length === 0, kept)
     language.value = before
+    const panel = await read("src/renderer/src/components/RightPanel.vue")
+    check("RP-7: and the card draws only the icon, the name and the key cap", !/lc-desc/.test(panel))
   }
 
   section("Round 19 (lane B): RP-8 a middle click closes a tab on release, as MiMo's auxclick does")

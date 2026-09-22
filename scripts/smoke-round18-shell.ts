@@ -327,7 +327,8 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
     const panel = await read("src/renderer/src/components/RightPanel.vue")
     const app = await read("src/renderer/src/App.vue")
     check("R18-U1: the header starts at 129, past 新建任务, as MiMo's does", /\.head\.after-rail \{\s*padding-inline-start: 129px;/.test(header))
-    check("R18-U1: a full-screen panel's tabs start at 139", /\.right-panel\.fullscreen\.side-collapsed \.rp-head \{\s*padding-inline-start: 139px;/.test(panel))
+    // R21-F3-26 read MiMo's own arithmetic again: on macOS the inset is 62 + 34 + 32 + 24 + 8 = 160, not the Windows 107 + 24 + 8.
+    check("R18-U1: a full-screen panel's tabs start at 160 on macOS", /\.right-panel\.fullscreen\.side-collapsed \.rp-head \{\s*padding-inline-start: 160px;/.test(panel))
     check("R18-U1: the no-drag patch covers the two controls where they now stand", /\.rail-no-drag \{[^}]*inset-inline-start: 75px;[^}]*width: 56px;/.test(app))
     // The user's 2026-09-21 choice: off macOS the folded controls keep the side column's own start, 18, as the unfolded row does.
     check("R18-U1: off macOS the folded toggle is left-aligned at 18, like the unfolded top row", /\.app:not\(\[data-platform="darwin"\]\) \.rail-tools \{\s*inset-inline-start: 18px;/.test(side) && /\.top \{[^}]*padding-inline: 18px 8px;/.test(side), side.length)

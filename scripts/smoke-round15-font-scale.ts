@@ -44,7 +44,16 @@ type Rule = { file: string; line: number; selector: string; body: string }
  * while a picture loads is a picture-sized hole, and its caption sits inside
  * with room to spare at any size.
  */
-const NOT_TEXT_SIZED = new Set(["components/parts/LocalMedia.vue|.text .md-media-skeleton", "components/parts/SvgFileCard.vue|.text .md-svg-wait"])
+const NOT_TEXT_SIZED = new Set([
+  "components/parts/LocalMedia.vue|.text .md-media-skeleton",
+  "components/parts/SvgFileCard.vue|.text .md-svg-wait",
+  /*
+   * MiMo's .rp-annotate-btn is a plain 34 high (R21-F3-37), and 34 still holds
+   * its 12px label and the key cap beside it at the top of the slider, where
+   * the tallest of the two is the cap's 30.9px line inside a 1px border.
+   */
+  "components/right/RpBrowser.vue|.rb-annotate",
+])
 
 /** Every declaration block in the renderer's styles, with where it came from. */
 async function rules(root: string): Promise<Rule[]> {
