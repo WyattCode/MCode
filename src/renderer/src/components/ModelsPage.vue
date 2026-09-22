@@ -635,7 +635,7 @@ h2 {
 }
 
 .dock-btn.danger:hover {
-  color: var(--text-critical);
+  color: #fb2c36;
 }
 
 .dock-btn:disabled {

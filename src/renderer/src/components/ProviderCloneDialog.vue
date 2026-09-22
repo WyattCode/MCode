@@ -125,13 +125,15 @@ h2 {
   border-color: var(--border-strong);
 }
 
+/* MiMo rings a bad id in red-400 and says why in red-500. Both are written out
+   until lane F1's --text-critical token lands. */
 .field-in.bad {
-  border-color: var(--text-critical);
+  border-color: #ff6467;
 }
 
 .error {
   margin-top: 4px;
-  color: var(--text-critical);
+  color: #fb2c36;
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 

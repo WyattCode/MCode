@@ -887,7 +887,7 @@ async function toggleHardwareAcceleration() {
  */
 const iconTiles = APP_ICONS.map((spec) => ({
   spec,
-  svg: spec.original ? "" : appIconSvg(spec, 44),
+  svg: spec.original ? "" : appIconSvg(spec, 60),
   image: spec.original ? classicIcon : "",
 }))
 
@@ -2011,12 +2011,12 @@ onBeforeUnmount(() => {
           </div>
 
           <!--
-            MiMo's 应用图标: a section heading and the grid as a block of its own.
+            MiMo's 应用图标: a section heading and the grid, which is itself a card.
             The tiles are drawn from the same string the icon files are rasterised
             from, so the tile a reader presses is the icon they get.
           -->
           <h3 data-app-icon-head>{{ t("set.appIcon") }}</h3>
-          <div class="gallery" role="radiogroup" :aria-label="t('set.appIcon')">
+          <div class="card gallery" role="radiogroup" :aria-label="t('set.appIcon')">
             <button
               v-for="tile in iconTiles"
               :key="tile.spec.id"
@@ -2027,7 +2027,7 @@ onBeforeUnmount(() => {
               :aria-label="tile.spec.name"
               @click="chooseAppIcon(tile.spec.id)"
             >
-              <img v-if="tile.image" class="tile-art" :src="tile.image" width="44" height="44" alt="" />
+              <img v-if="tile.image" class="tile-art" :src="tile.image" width="60" height="60" alt="" />
               <span v-else class="tile-art" v-html="tile.svg" />
               <span class="tile-name">{{ tile.spec.name }}</span>
             </button>
@@ -3578,10 +3578,16 @@ h3 {
   border-color: color-mix(in srgb, var(--text-success) 35%, transparent);
 }
 
+/*
+ * MiMo's own failure pill: --color-err (#d23f3f, one value for both schemes)
+ * under an 8% fill and a 35% ring. Written out because MCode has no red token
+ * yet - this is the --text-critical lane F1 is adding; swap it back when it
+ * lands.
+ */
 .mcp-status.err {
-  color: var(--text-critical);
-  background: color-mix(in srgb, var(--text-critical) 8%, transparent);
-  border-color: color-mix(in srgb, var(--text-critical) 35%, transparent);
+  color: #d23f3f;
+  background: color-mix(in srgb, #d23f3f 8%, transparent);
+  border-color: color-mix(in srgb, #d23f3f 35%, transparent);
 }
 
 .mcp-status.warn {
@@ -3614,8 +3620,9 @@ h3 {
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
+/* MiMo's tools error line is the same --color-err (lane F1's --text-critical). */
 .mcp-tools-hint.err {
-  color: var(--text-critical);
+  color: #d23f3f;
 }
 
 .mcp-tools-head {
@@ -3922,10 +3929,15 @@ h3 {
   animation: keys-record-pulse 2s ease-in-out infinite;
 }
 
+/*
+ * A conflict is MiMo's red-500 (#fb2c36) on its own 5% wash, border and text
+ * alike. Written out for the same reason as the pill above: lane F1 owns the
+ * --text-critical token this wants.
+ */
 .keys-record-box.conflict {
-  color: var(--text-critical);
-  background: color-mix(in srgb, var(--text-critical) 5%, transparent);
-  border-color: var(--text-critical);
+  color: #fb2c36;
+  background: color-mix(in srgb, #fb2c36 5%, transparent);
+  border-color: #fb2c36;
   animation: none;
 }
 
@@ -3957,7 +3969,7 @@ h3 {
 }
 
 .keys-record-conflict {
-  color: var(--text-critical);
+  color: #fb2c36;
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -3983,7 +3995,7 @@ h3 {
 }
 
 .keys-icon.danger:hover {
-  color: var(--text-critical);
+  color: #fb2c36;
 }
 
 .keys-empty {
@@ -4386,47 +4398,93 @@ h3 {
   line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
-/* MiMo's app icon grid: a block under its own section heading, between the two cards. */
-.gallery {
+/*
+ * MiMo's app icon grid, which is itself a set-card ("set-card app-icon-grid"):
+ * four equal columns, 18 between rows and 12 between columns, 18 by 16 of
+ * padding. The card rule below gives it the fill, the line and the 16px corner.
+ */
+.card.gallery {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
-  gap: 10px;
-  margin-block: 8px 16px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 18px 12px;
+  padding: 18px 16px;
 }
 
+/* A cell is a column of thumb and name with nothing of its own - no padding, no
+   border, no hover fill; the thumb's ring is what answers the pointer. */
 .tile {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 8px 4px;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: 10px;
+  border: 0;
   cursor: pointer;
 }
 
-.tile:hover {
-  background: var(--surface-hover);
-}
-
-/* The chosen one is said twice - a ring and a stronger name - because a ring
-   alone is easy to miss at this size and colour is not everyone's channel. */
-.tile.on {
-  border-color: var(--icon-base);
-}
-
+/*
+ * The thumb: 60 square on a 14px corner under an inset hairline. Hover lays a
+ * 2px menu-hover ring outside it; the chosen one is ringed twice - 2px of the
+ * page colour, then 4px of the selection mark - so the mark reads as a gap and
+ * a ring rather than a thicker border.
+ */
 .tile-art {
   display: block;
+  box-sizing: border-box;
+  width: 60px;
+  height: 60px;
   overflow: hidden;
-  border-radius: 10px;
+  border-radius: 14px;
+  box-shadow: inset 0 0 0 1px #00000014;
   line-height: 0;
+  transition: box-shadow 0.12s ease;
+}
+
+.tile-art :deep(svg),
+img.tile-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tile:hover .tile-art {
+  box-shadow: inset 0 0 0 1px #00000014, 0 0 0 2px #f1f0ec;
+}
+
+.tile.on .tile-art {
+  box-shadow: inset 0 0 0 1px #00000014, 0 0 0 2px #fffefd, 0 0 0 4px #151c13;
+}
+
+:root[data-theme="dark"] .tile:hover .tile-art {
+  box-shadow: inset 0 0 0 1px #00000014, 0 0 0 2px #ffffff0f;
+}
+
+:root[data-theme="dark"] .tile.on .tile-art {
+  box-shadow: inset 0 0 0 1px #00000014, 0 0 0 2px #181818, 0 0 0 4px #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .tile:hover .tile-art {
+    box-shadow: inset 0 0 0 1px #00000014, 0 0 0 2px #ffffff0f;
+  }
+
+  :root:not([data-theme="light"]) .tile.on .tile-art {
+    box-shadow: inset 0 0 0 1px #00000014, 0 0 0 2px #181818, 0 0 0 4px #ffffff;
+  }
 }
 
 .tile-name {
-  color: var(--text-weak);
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: calc(16px * var(--ui-font-scale, 1));
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tile.on .tile-name {
@@ -4454,7 +4512,8 @@ h3 {
   height: 100%;
   min-width: 0;
   padding: 0 12px;
-  color: var(--text-weak);
+  /* MiMo's th-seg-btn rests in mut, not the step below it. */
+  color: var(--text-base);
   background: var(--surface-raised);
   border: 0;
   font-size: calc(12px * var(--ui-font-scale, 1));
@@ -4466,6 +4525,12 @@ h3 {
   color: var(--text-strong);
 }
 
+/*
+ * The picked segment is MiMo's primary pair - --color-primary on
+ * --color-primary-foreground - which is #151c13 under white in light and
+ * #ececec under #0d0d0d in dark. It had no dark value at all, so the dark
+ * dialog drew near-black text on near-black fill.
+ */
 .choice-btn.on {
   color: #ffffff;
   background: #151c13;
@@ -4475,9 +4540,19 @@ h3 {
   border-color: #3d3d3d;
 }
 
+:root[data-theme="dark"] .choice-btn.on {
+  color: #0d0d0d;
+  background: #ececec;
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .choice {
     border-color: #3d3d3d;
+  }
+
+  :root:not([data-theme="light"]) .choice-btn.on {
+    color: #0d0d0d;
+    background: #ececec;
   }
 }
 

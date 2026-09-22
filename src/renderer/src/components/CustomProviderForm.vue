@@ -790,8 +790,12 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   color: var(--text-weak);
 }
 
+/*
+ * MiMo rings a field it will not accept in red-400 and says why in red-500.
+ * Written out until lane F1's --text-critical token lands.
+ */
 .cp-in.bad {
-  border-color: var(--text-critical);
+  border-color: #ff6467;
 }
 
 .cp-secret {
@@ -829,7 +833,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 }
 
 .cp-error {
-  color: var(--text-critical);
+  color: #fb2c36;
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.5;
 }
@@ -846,8 +850,14 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   color: var(--text-weak);
 }
 
+/*
+ * MiMo draws the failed probe's sentence in its muted colour, which says the
+ * same thing as the grey line beside it and nothing more. MCode keeps it red:
+ * the words are the only place the reason is written, and a reader who cannot
+ * tell the light's colours apart has nothing else to go on. (2026-09-23.)
+ */
 .cp-probe-text.fail {
-  color: var(--text-critical);
+  color: #fb2c36;
 }
 
 /* MiMo's 10px light: green once it answered, red when it did not, a line colour before. */
@@ -864,7 +874,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 }
 
 .cp-light.fail {
-  background: var(--text-critical);
+  background: #fb2c36;
 }
 
 .cp-btn {
@@ -995,7 +1005,7 @@ label.cp-option {
 }
 
 .cp-model-remove:hover {
-  color: var(--text-critical);
+  color: #fb2c36;
 }
 
 .cp-model-names,
@@ -1075,7 +1085,7 @@ label.cp-option {
 }
 
 .cp-drop:hover:not(:disabled) {
-  color: var(--text-critical);
+  color: #fb2c36;
 }
 
 .cp-drop:disabled {
