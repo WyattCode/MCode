@@ -78,6 +78,63 @@ for (const isDark of [true, false]) {
 }
 
 /*
+ * A var(--...) nobody defines.
+ *
+ * `var(--text-critical)` was written in twenty rules across six components and
+ * defined in none of them, so every red state it painted - a failed probe's
+ * dot, an invalid field's message - rendered as nothing at all. `--overlay-hover`
+ * was the same story in one rule, and `--motion-fast` in three. A missing custom
+ * property is not a CSS error: the declaration is simply dropped, and the defect
+ * is invisible until someone looks for the colour that never appeared.
+ *
+ * Definitions are collected from everywhere, not only from stylesheets: a value
+ * bound as `:style="{ '--rw': ... }"` or set with `setProperty("--h", ...)` is
+ * as real a definition as one written in tokens.css. Uses are read only from
+ * stylesheets, because that is where a name that resolves to nothing does its
+ * damage, and comments are stripped from both - this file's own comments name
+ * half the tokens in it.
+ */
+{
+  const stylesheets: string[] = []
+  const everything: string[] = []
+  const collect = (directory: string) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const full = path.join(directory, entry.name)
+      if (entry.isDirectory()) collect(full)
+      else everything.push(full)
+      if (entry.isFile() && (entry.name.endsWith(".vue") || entry.name.endsWith(".css"))) stylesheets.push(full)
+    }
+  }
+  collect(path.join(here, "../src/renderer/src"))
+
+  const uncomment = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, "")
+  const defined = new Set<string>([
+    // shiki writes this one onto every token of a highlighted block.
+    "--shiki-dark",
+  ])
+  for (const file of everything) {
+    const source = fs.readFileSync(file, "utf8")
+    // `--name:`, `"--name":` and `'--name':` alike - an object key is quoted.
+    for (const match of uncomment(source).matchAll(/(--[a-zA-Z0-9-]+)["'`]?\s*:/g)) defined.add(match[1])
+    for (const match of source.matchAll(/setProperty\(\s*["'`](--[a-zA-Z0-9-]+)/g)) defined.add(match[1])
+  }
+
+  const root = path.join(here, "..")
+  for (const file of stylesheets) {
+    const source = fs.readFileSync(file, "utf8")
+    const styles = file.endsWith(".css")
+      ? source
+      : [...source.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((match) => match[1]).join("\n")
+    const seen = new Set<string>()
+    for (const match of uncomment(styles).matchAll(/var\(\s*(--[a-zA-Z0-9-]+)\s*[,)]/g)) {
+      if (defined.has(match[1]) || seen.has(match[1])) continue
+      seen.add(match[1])
+      problems.push(`${path.relative(root, file)}: var(${match[1]}) - nothing defines it, so the declaration is dropped`)
+    }
+  }
+}
+
+/*
  * No palette is painted over the stylesheet: MiMo's only colour setting is the
  * scheme, and the window must not bring the engine back.
  */
