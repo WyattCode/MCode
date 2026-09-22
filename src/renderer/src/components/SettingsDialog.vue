@@ -3426,10 +3426,22 @@ h3 {
   cursor: default;
 }
 
-/* MiMo's 重启更新 is its filled button, and the hint under the version a line of its own. */
+/* MiMo's 重启更新 is its primary button - the same pair the models page saves with. */
 .ctl-btn.update-install {
-  color: var(--surface-base);
-  background: var(--text-strong);
+  color: #ffffff;
+  background: #151c13;
+}
+
+:root[data-theme="dark"] .ctl-btn.update-install {
+  color: #0d0d0d;
+  background: #ececec;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ctl-btn.update-install {
+    color: #0d0d0d;
+    background: #ececec;
+  }
 }
 
 .update-hint {
@@ -3437,7 +3449,6 @@ h3 {
 }
 
 .ctl-btn.update-install:disabled {
-  color: var(--surface-base);
   opacity: 0.4;
 }
 

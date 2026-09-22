@@ -477,7 +477,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
             id="cp-name"
             v-model="form.name"
             class="cp-in"
-            :placeholder="form.providerID.trim() || t('provider.custom.field.name.placeholder')"
+            :placeholder="form.providerID.trim() || 'my-provider'"
             spellcheck="false"
             data-provider-name
           />

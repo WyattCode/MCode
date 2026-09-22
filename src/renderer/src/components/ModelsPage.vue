@@ -561,9 +561,24 @@ h2 {
   }
 }
 
+/*
+ * MiMo draws a provider mark at 20 square on a 6px corner with an 11/500
+ * monogram, in a tab and in a chip alike. Only the settings side moves: the
+ * same component draws the model menu, which is another lane's page.
+ */
+.tab :deep(.mark),
 .preset-mark {
-  width: 16px;
-  height: 16px;
+  width: calc(20px * var(--ui-font-scale, 1));
+  height: calc(20px * var(--ui-font-scale, 1));
+  border-radius: 6px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-weight: 500;
+}
+
+.tab :deep(.glyph),
+.preset-mark :deep(.glyph) {
+  width: 14px;
+  height: 14px;
 }
 
 .preset-plus {
