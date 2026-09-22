@@ -1664,7 +1664,8 @@ onBeforeUnmount(() => {
         </div>
       </nav>
 
-      <div ref="contentEl" class="content">
+      <!-- MiMo's #set-main carries the thin 9px bar the nav column already has. -->
+      <div ref="contentEl" class="content u-scrollbar-thin">
         <!-- General -->
         <template v-if="section === 'general'">
           <h2>{{ t("set.nav.general") }}</h2>
@@ -2159,7 +2160,7 @@ onBeforeUnmount(() => {
           <p class="page-sub">{{ t("set.personalSub") }}</p>
           <h3>{{ t("set.instructions") }}</h3>
           <!-- MiMo's 了解更多 follows the sentence with no space between. -->
-          <p class="page-sub ci-sub">
+          <p class="page-sub">
             {{ t("set.instructionsSub") }}<button type="button" class="ci-link" data-ci-link :aria-expanded="ciHelpOpen" @click="ciHelpOpen = !ciHelpOpen">{{ t("set.learnMore") }}</button>
           </p>
           <div v-if="ciHelpOpen" class="ci-help" data-ci-help>
@@ -2513,7 +2514,7 @@ onBeforeUnmount(() => {
           </div>
 
           <h3>{{ t("set.mcp.manualTitle") }}</h3>
-          <p class="page-sub mcp-sub">{{ t("set.mcp.manualSub") }}</p>
+          <p class="page-sub">{{ t("set.mcp.manualSub") }}</p>
           <div class="card">
             <div class="line">
               <div class="line-text">
@@ -2678,46 +2679,51 @@ onBeforeUnmount(() => {
           <h2>{{ t("set.nav.usage") }}</h2>
           <p class="page-sub">{{ t("set.usageSub") }}</p>
           <!-- Every figure below covers the same days, counted on this machine's calendar. -->
-          <p class="page-sub usage-window" data-usage-window>{{ t("set.usageWindow", { n: String(usage?.days ?? 14) }) }}</p>
+          <p class="page-sub" data-usage-window>{{ t("set.usageWindow", { n: String(usage?.days ?? 14) }) }}</p>
+          <!-- These two cards hold figures rather than rows, so the block inside carries the row's own 16. -->
           <div class="card">
-            <div class="totals">
-              <div class="total">
-                <span class="total-value" data-usage-total-cost>{{ usage ? spent({ usage: usage.total, priced: usage.priced, unpriced: usage.unpriced }) : money.format(0) }}</span>
-                <span class="total-name">{{ t("context.usage.cost") }}</span>
+            <div class="usage-block">
+              <div class="totals">
+                <div class="total">
+                  <span class="total-value" data-usage-total-cost>{{ usage ? spent({ usage: usage.total, priced: usage.priced, unpriced: usage.unpriced }) : money.format(0) }}</span>
+                  <span class="total-name">{{ t("context.usage.cost") }}</span>
+                </div>
+                <div class="total">
+                  <span class="total-value">{{ compactTokens(usage?.total.input ?? 0) }}</span>
+                  <span class="total-name">{{ t("set.usageInput") }}</span>
+                </div>
+                <div class="total">
+                  <span class="total-value">{{ compactTokens(usage?.total.output ?? 0) }}</span>
+                  <span class="total-name">{{ t("set.usageOutput") }}</span>
+                </div>
+                <div class="total">
+                  <span class="total-value">{{ usage?.turns ?? 0 }}</span>
+                  <span class="total-name">{{ t("set.usageTurns") }}</span>
+                </div>
               </div>
-              <div class="total">
-                <span class="total-value">{{ compactTokens(usage?.total.input ?? 0) }}</span>
-                <span class="total-name">{{ t("set.usageInput") }}</span>
-              </div>
-              <div class="total">
-                <span class="total-value">{{ compactTokens(usage?.total.output ?? 0) }}</span>
-                <span class="total-name">{{ t("set.usageOutput") }}</span>
-              </div>
-              <div class="total">
-                <span class="total-value">{{ usage?.turns ?? 0 }}</span>
-                <span class="total-name">{{ t("set.usageTurns") }}</span>
-              </div>
+              <p v-if="usage?.priced && usage.unpriced" class="line-sub" data-usage-partly-priced>{{ t("set.usagePartlyPriced") }}</p>
             </div>
-            <p v-if="usage?.priced && usage.unpriced" class="line-sub" data-usage-partly-priced>{{ t("set.usagePartlyPriced") }}</p>
           </div>
 
           <h3>{{ t("set.usageByDay", { n: String(usage?.days ?? 14) }) }}</h3>
           <div class="card">
-            <div v-for="day in usage?.byDay ?? []" :key="day.key" class="day">
-              <span class="day-name">{{ dayLabel(day.key) }}</span>
-              <span class="day-bar">
-                <span
-                  class="day-fill"
-                  :style="{
-                    width:
-                      Math.max(2, ((day.usage.input + day.usage.output) / busiestDay) * 100) + '%',
-                  }"
-                />
-              </span>
-              <span class="day-value">{{ compactTokens(day.usage.input + day.usage.output) }}</span>
-              <span class="day-cost">{{ spent(day) }}</span>
+            <div class="usage-block">
+              <div v-for="day in usage?.byDay ?? []" :key="day.key" class="day">
+                <span class="day-name">{{ dayLabel(day.key) }}</span>
+                <span class="day-bar">
+                  <span
+                    class="day-fill"
+                    :style="{
+                      width:
+                        Math.max(2, ((day.usage.input + day.usage.output) / busiestDay) * 100) + '%',
+                    }"
+                  />
+                </span>
+                <span class="day-value">{{ compactTokens(day.usage.input + day.usage.output) }}</span>
+                <span class="day-cost">{{ spent(day) }}</span>
+              </div>
+              <p v-if="usage && !usage.byDay.length" class="line-sub">{{ t("set.usageNone") }}</p>
             </div>
-            <p v-if="usage && !usage.byDay.length" class="line-sub">{{ t("set.usageNone") }}</p>
           </div>
 
           <h3>{{ t("set.usageByModel") }}</h3>
@@ -3333,10 +3339,14 @@ h3 {
   line-height: 1;
 }
 
+/*
+ * MiMo's sc-sub with mt-[8px]: a line under the card it belongs to, not pulled
+ * up into it. 13px in mut, as every other sub-line on these pages.
+ */
 .note {
-  margin: -8px 0 14px;
-  color: var(--text-weak);
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  margin: 8px 0 14px;
+  color: var(--text-base);
+  font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }
 
@@ -3663,10 +3673,6 @@ h3 {
   line-height: 1.45;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-}
-
-.page-sub.mcp-sub {
-  margin-top: 0;
 }
 
 /* An import row's command or address wraps where it must, and the actions sit under the lists. */
@@ -4059,10 +4065,6 @@ h3 {
   white-space: nowrap;
 }
 
-.page-sub.mcp-example-label {
-  margin: 14px 0 8px;
-}
-
 .mcp-example {
   margin: 0;
   padding: 12px 14px;
@@ -4206,6 +4208,15 @@ h3 {
  * as one setting with three positions rather than three separate buttons that
  * happen to sit together.
  */
+/*
+ * The usage cards hold figures, not rows, so nothing inside them carried the
+ * 16 a row's padding gives - the four totals and the day list sat flush against
+ * the card's corners. The block takes that padding on their behalf.
+ */
+.usage-block {
+  padding-block: 16px;
+}
+
 /* Four figures across, each its own column so they line up whatever their width. */
 .totals {
   display: grid;
@@ -4284,11 +4295,6 @@ h3 {
  * MiMo's custom instructions: a heading, a line with an inline 了解更多 that
  * opens three lines of help, a 200px box on the page itself, and Save below.
  */
-.page-sub.ci-sub,
-.page-sub.usage-window {
-  margin-top: 0;
-}
-
 .ci-link {
   display: inline;
   padding: 0;
@@ -4391,11 +4397,18 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+/* MiMo's sc-sub: 14 below, nothing above, so it sits on the title's own 26. */
 .page-sub {
-  margin: -4px 0 14px;
+  margin: 0 0 14px;
   color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: calc(20px * var(--ui-font-scale, 1));
+}
+
+/* MiMo's import note and example label are the same sub-line, pushed 14 down. */
+.page-sub.mcp-skills-note,
+.page-sub.mcp-example-label {
+  margin-top: 14px;
 }
 
 /*
@@ -4604,7 +4617,8 @@ img.tile-art {
 /* MiMo's light scrim, its settings-full rule and the warm nav fill; dark values follow below. */
 .overlay {
   background: #0000001a;
-  animation: settings-overlay-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  /* MiMo opens the overlay on --ease-enter, not the emphatic curve. */
+  animation: settings-overlay-in 0.18s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
 /* MiMo fades the whole overlay in from .99 and out over .12s while it keeps rendering. */
@@ -4642,13 +4656,21 @@ img.tile-art {
   }
 }
 
+/*
+ * MiMo's settings-full: it gives up a fixed 48 of width and 88 of height to the
+ * window rather than a share of it, so the dialog keeps its full 960 until the
+ * window is under 1008 wide. --shadow-pop (0 12px 40px of alpha-dark-14) is
+ * written out because MCode has no token for it; it replaces the stale
+ * --shadow-lg left over from the opencode-era shell above.
+ */
 .dialog {
   position: relative;
-  width: min(960px, 92vw);
-  height: min(660px, 86vh);
+  width: min(960px, 100vw - 48px);
+  height: min(660px, 100vh - 88px);
   background: #ffffff;
   border: 1px solid #f3efeb;
   border-radius: 20px;
+  box-shadow: 0 12px 40px #00000024;
   outline: none;
 }
 
@@ -4833,31 +4855,35 @@ img.tile-art {
   }
 }
 
+/* MiMo's sc-h1 and sc-sec are both 26 off what follows them. */
 h2 {
-  margin: 0 0 27px;
+  margin: 0 0 26px;
   font-size: calc(24px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: calc(38.4px * var(--ui-font-scale, 1));
 }
 
 h3 {
-  margin: 27px 0 4px;
+  margin: 26px 0 4px;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: calc(22.4px * var(--ui-font-scale, 1));
 }
 
-/* MiMo's set-card: white on the white page in light, a faint warm rule between; #282828 on #1f1f1f in dark. */
+/*
+ * MiMo's set-card: white on the white page in light, a faint warm rule between;
+ * #282828 on #1f1f1f in dark. Its inset is 16 - the row's own padding, which
+ * the divider is drawn inside - and the space to whatever follows is the card's
+ * own 8 of margin rather than a rule between two cards, so a heading or a
+ * paragraph after it sits on the same beat another card would.
+ */
 .card {
-  padding: 0 17px;
+  padding: 0 16px;
+  margin-bottom: 8px;
   background: #ffffff;
   border: 1px solid #f3efeb;
   border-radius: 16px;
   box-shadow: none;
-}
-
-.card + .card {
-  margin-top: 16px;
 }
 
 .line {
@@ -5096,7 +5122,7 @@ h3 {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: 27px 0 4px;
+  margin: 26px 0 4px;
 }
 
 .sec-row h3 {
@@ -5160,17 +5186,17 @@ h3 {
   background: var(--surface-hover);
 }
 
-/* The count and loading lines are MiMo's sc-empty-title: 14/500 strong. */
+/* The count and loading lines are MiMo's sc-empty-title: 14/500 strong, with no margin of its own. */
 .wt-status {
-  margin: 4px 0 8px;
+  margin: 0;
   color: var(--text-strong);
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
 }
 
-/* The other sentence-in-a-card on this page, on the same 16/17 rhythm as `.empty-card`. */
+/* The other sentence-in-a-card on this page, on the card row's own 16. */
 .card.wt-empty {
-  padding: 16px 17px;
+  padding: 16px;
 }
 
 .wt-empty-title {
@@ -5404,7 +5430,7 @@ h3 {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-block-end: 27px;
+  margin-block-end: 26px;
 }
 
 .page-head h2 {
@@ -5529,7 +5555,8 @@ h3 {
   z-index: 130;
   display: grid;
   place-items: center;
-  background: var(--scrim);
+  /* MiMo's dialog scrim is bg-black/50 in both schemes, not a lighter one in light. */
+  background: #00000080;
 }
 
 .vs-dialog {
@@ -5539,7 +5566,8 @@ h3 {
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-overlay);
+  /* MiMo's --shadow-pop; MCode has no token for it (lane F1 owns the token set). */
+  box-shadow: 0 12px 40px #00000024;
 }
 
 .vs-head {

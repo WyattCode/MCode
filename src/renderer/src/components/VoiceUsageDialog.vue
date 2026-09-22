@@ -49,7 +49,8 @@ useEscapeLayer(() => emit("close"))
   z-index: 130;
   display: grid;
   place-items: center;
-  background: var(--scrim);
+  /* MiMo's dialog scrim is bg-black/50 in both schemes, not a lighter one in light. */
+  background: #00000080;
 }
 
 /* The max height is MCode's safety net for short windows; MiMo's dialog has none. */
@@ -63,7 +64,8 @@ useEscapeLayer(() => emit("close"))
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-overlay);
+  /* MiMo's --shadow-pop; MCode has no token for it (lane F1 owns the token set). */
+  box-shadow: 0 12px 40px #00000024;
 }
 
 h2 {

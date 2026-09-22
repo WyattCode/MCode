@@ -50,7 +50,8 @@ onMounted(() => {
   z-index: 130;
   display: grid;
   place-items: center;
-  background: var(--scrim);
+  /* MiMo's dialog scrim is bg-black/50 in both schemes, not a lighter one in light. */
+  background: #00000080;
 }
 
 .dialog {
@@ -62,7 +63,8 @@ onMounted(() => {
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-overlay);
+  /* MiMo's --shadow-pop; MCode has no token for it (lane F1 owns the token set). */
+  box-shadow: 0 12px 40px #00000024;
 }
 
 h2 {
@@ -74,7 +76,8 @@ h2 {
 
 .body {
   margin: 8px 0 0;
-  color: var(--text-weak);
+  /* MiMo draws a dialog’s message in mut, the same as a row’s sub-line. */
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.6;
   white-space: pre-wrap;
