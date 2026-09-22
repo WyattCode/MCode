@@ -89,7 +89,8 @@ export async function roundTwentyOneLaneFTwoChecks(check: Check, section: (name:
     check("the worktree count has no margin of its own", /margin: 0;/.test(rule(style, ".wt-status")))
     check("the figures sit on a row's 16 rather than flush", /<div class="usage-block">/.test(template) && /padding-block: 16px;/.test(rule(style, ".usage-block")))
     check("a dialog's scrim is bg-black/50 in both schemes", /background: #00000080;/.test(rule(confirm, ".scrim")) && /background: #00000080;/.test(rule(clone, ".scrim")) && /background: #00000080;/.test(rule(style, ".vs-scrim")))
-    check("and its lift is --shadow-pop", /box-shadow: 0 12px 40px #00000024;/.test(rule(confirm, ".dialog")))
+    // Lane F1 landed the token in the same round, so the dialog now names it rather than MiMo's literal.
+    check("and its lift is --shadow-pop", /box-shadow: var\(--shadow-pop\);/.test(rule(confirm, ".dialog")))
   }
 
   // ------------------------------------------------------------------ F2-4
