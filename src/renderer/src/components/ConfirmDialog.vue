@@ -50,7 +50,8 @@ onMounted(() => {
   z-index: 130;
   display: grid;
   place-items: center;
-  background: var(--scrim);
+  /* MiMo's dialog scrim is bg-black/50 in both schemes, not a lighter one in light. */
+  background: #00000080;
 }
 
 .dialog {
@@ -74,6 +75,7 @@ h2 {
 
 .body {
   margin: 8px 0 0;
+  /* MiMo draws a dialog's message in mut, the same as a row's sub-line. */
   color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.6;

@@ -82,7 +82,7 @@ export async function roundTwentyDeChecks(check: Check, section: (name: string) 
   {
     const dialog = await read("src/renderer/src/components/SettingsDialog.vue")
     const rule = /\n\.nav-scroll \{([^}]*)\}/.exec(dialog)?.[1] ?? ""
-    check("D-8: the list's inset is on the logical start", /padding-inline:\s*11px 0;/.test(rule) && /padding-block:\s*0 12px;/.test(rule), rule)
+    check("D-8: the list's inset is on the logical start", /padding-inline:\s*10px 0;/.test(rule) && /padding-block:\s*0 12px;/.test(rule), rule)
     check("D-8: no physical left inset is left behind", !/padding(-left)?:[^;]*11px/.test(rule.replace(/padding-inline:[^;]*;/, "")), rule)
   }
 

@@ -426,6 +426,8 @@ import { roundTwentyVisualFiveChecks } from "./smoke-round20-v5"
 import { roundTwentyOneLaneF1Checks } from "./smoke-round21-f1"
 // Round 21, lane F3: the right panel, its viewers and the terminal dock against MiMo 26.920.
 import { roundTwentyOneF3Checks } from "./smoke-round21-f3"
+// Round 21, lane F2: the settings dialog against MiMo 26.920 (shell, column, rhythm, 外观, 快捷键, MCP, 环境, 已归档, 模型).
+import { roundTwentyOneLaneFTwoChecks } from "./smoke-round21-f2"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7075,6 +7077,7 @@ async function main() {
   await roundTwentyVisualFiveChecks(check, section)
   await roundTwentyOneLaneF1Checks(check, section)
   await roundTwentyOneF3Checks(check, section)
+  await roundTwentyOneLaneFTwoChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

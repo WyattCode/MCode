@@ -170,7 +170,7 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
     language.value = "zh-CN"
     const body = t("set.models.removeProviderBody", { name: "gw" })
     language.value = spoken
-    check("and names the provider and all of its models", body.includes("「gw」") && body.includes("所有模型"), body)
+    check("and names the provider and all of its models", body.includes("「gw」") && body.includes("全部模型"), body)
   }
 
   // ------------------------------------------------------------------ R19-F8

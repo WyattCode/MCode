@@ -56,6 +56,7 @@ onMounted(() => {
         v-model="id"
         class="field-in"
         :class="{ bad: error }"
+        placeholder="my-provider-copy"
         data-clone-provider-id
         spellcheck="false"
         autocomplete="off"
@@ -77,7 +78,8 @@ onMounted(() => {
   z-index: 130;
   display: grid;
   place-items: center;
-  background: var(--scrim);
+  /* MiMo's dialog scrim is bg-black/50 in both schemes, not a lighter one in light. */
+  background: #00000080;
 }
 
 .dialog {
@@ -89,7 +91,8 @@ onMounted(() => {
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-overlay);
+  /* MiMo's --shadow-pop; MCode has no token for it (lane F1 owns the token set). */
+  box-shadow: 0 12px 40px #00000024;
 }
 
 h2 {
@@ -113,25 +116,43 @@ h2 {
   margin-top: 16px;
   padding: 0 12px;
   color: var(--text-strong);
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weak);
-  border-radius: 8px;
-  font-family: var(--font-mono);
+  background: transparent;
+  border: 1px solid #e3e3e0;
+  border-radius: 6px;
+  box-shadow: 0 1px 2px #0000000d;
   font-size: calc(13px * var(--ui-font-scale, 1));
   outline: none;
 }
 
-.field-in:focus {
-  border-color: var(--border-strong);
+.field-in::placeholder {
+  color: var(--text-base);
 }
 
+.field-in:focus {
+  border-color: var(--text-weak);
+}
+
+:root[data-theme="dark"] .field-in {
+  background: rgb(58 58 58 / 0.3);
+  border-color: #3a3a3a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .field-in {
+    background: rgb(58 58 58 / 0.3);
+    border-color: #3a3a3a;
+  }
+}
+
+/* MiMo rings a bad id in red-400 and says why in red-500. Both are written out
+   until lane F1's --text-critical token lands. */
 .field-in.bad {
-  border-color: var(--text-critical);
+  border-color: #ff6467;
 }
 
 .error {
   margin-top: 4px;
-  color: var(--text-critical);
+  color: #fb2c36;
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 

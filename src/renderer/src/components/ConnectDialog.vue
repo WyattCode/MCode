@@ -879,9 +879,10 @@ useEscapeLayer(dismiss)
   }
 }
 
+/* MiMo's red-500; lane F1 owns the --text-critical token this wants. */
 .error {
   margin-top: 16px;
-  color: var(--text-critical);
+  color: #fb2c36;
   font-size: calc(12.5px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }

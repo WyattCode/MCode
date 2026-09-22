@@ -117,10 +117,11 @@ export async function roundFifteenSettingsUiChecks(check: Check, section: (name:
   }
 
   // ----------------------------------------------------------------- R15-U22
-  section("Round 15 (R15-U22): the config path keeps its 11.5px, and the empty worktree card the rows' 17")
+  section("Round 15 (R15-U22): the config path keeps its 11.5px, and the empty worktree card the rows' 16")
   {
     // R18-M5: the models page lost its config path (26.920 keeps it on the config page alone), and with it these measurements.
     const pad = layout.padding
-    check("and that is the rows' 16 above and below, 17 aside", pad?.wtEmpty === "16px 17px", pad?.wtEmpty)
+    // R21-F2: MiMo's sr is 16 on every side, so the card that holds a sentence is too.
+    check("and that is the rows' 16 on every side", pad?.wtEmpty === "16px", pad?.wtEmpty)
   }
 }
