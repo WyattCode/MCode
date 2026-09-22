@@ -268,7 +268,7 @@ onBeforeUnmount(() => {
   gap: 4px;
   height: calc(24px * var(--ui-font-scale, 1));
   padding: 4px 4px 4px 8px;
-  color: var(--text-strong);
+  color: var(--text-body);
   background: transparent;
   border: 0;
   border-radius: 4px;
@@ -286,7 +286,7 @@ onBeforeUnmount(() => {
 }
 
 .trigger:focus-visible {
-  outline-color: var(--interactive);
+  outline-color: var(--ring);
 }
 
 .label {
@@ -313,8 +313,11 @@ onBeforeUnmount(() => {
  * Unscoped: the popup is teleported out of the component, so a scoped rule
  * would not reach it. Sits above the settings dialog (z-index 120).
  *
- * MiMo's select popup: 12 round, a 1px line, the menu glass with its 18px blur,
- * 5px of padding; rows 8 round at 6 / 32 / 6 / 8 with the check at the end.
+ * MiMo's settings select, which is not the bare shadcn one: its SelectContent
+ * is `z-[1000] rounded-[12px] border border-line shadow-menu` plus `menu-glass`
+ * and `p-[5px]`, and its SelectItem is `rounded-[8px] focus:bg-side-hover
+ * focus:text-txt`. So: 12 round on a 1px line, the menu glass with its 18px
+ * blur, 5px of padding; rows 8 round at 6 / 32 / 6 / 8 with the check at the end.
  */
 .select-pop {
   width: max-content;
@@ -324,10 +327,10 @@ onBeforeUnmount(() => {
   z-index: 200;
   box-sizing: border-box;
   padding: 5px;
-  background: var(--surface-menu);
+  background: var(--surface-glass);
   border: 1px solid var(--border-weak);
   border-radius: 12px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-menu);
   -webkit-backdrop-filter: blur(18px) saturate(150%);
   backdrop-filter: blur(18px) saturate(150%);
   max-height: 12rem;
@@ -353,7 +356,7 @@ onBeforeUnmount(() => {
   gap: 10px;
   width: 100%;
   padding: 6px 32px 6px 8px;
-  color: var(--text-strong);
+  color: var(--text-body);
   text-align: start;
   border-radius: 8px;
   font-size: calc(14px * var(--ui-font-scale, 1));
@@ -382,24 +385,25 @@ onBeforeUnmount(() => {
   background: transparent;
 }
 
-/* MiMo's app tile: an 18px icon on a 4px corner, or the name's first letter on the side fill. */
+/* MiMo's app tile (`.mi-ic-logo img` / `.mi-ic`): 20px on a 6px corner. */
 .select .opt-icon,
 .select .opt-letter,
 .select-pop .opt-icon,
 .select-pop .opt-letter {
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
 }
 
 .select .opt-letter,
 .select-pop .opt-letter {
   display: grid;
   place-items: center;
-  color: var(--text-weak);
+  color: var(--text-body);
   background: var(--surface-hover);
-  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-weight: 500;
   line-height: 1;
 }
 
