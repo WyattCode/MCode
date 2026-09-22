@@ -98,4 +98,14 @@ export async function roundTwentyVisualFiveChecks(check: Check, section: (name: 
     check("the brand row follows it with no gap of its own", /margin: 0 8px;/.test(brand) && /height: 28px;/.test(brand) && /padding-inline-start: 14px;/.test(brand), brand)
     check("in the preview the row is 43, MiMo's inside the card", /\.side-shell\.preview \.top \{\s*height: 43px;/.test(style))
   }
+
+  // ------------------------------------------------------------------ R20-V5-4
+  section("Round 20 (V5-4): 新建任务 is a speech bubble with a plus, as MiMo draws it")
+  {
+    const bubble = /<path d="M20\.3 15\.4A9 9 0 1 0 16\.5 19\.8L21 21z" \/>\s*<path d="M12 9\.5v5M9\.5 12h5" \/>/
+    const row = element(template, `<button class="row" data-new-task`, "button")
+    check("the column's row: a 24-grid bubble and plus on a 2 line at 18px", /<svg class="row-ico" width="18" height="18" viewBox="0 0 24 24"[^>]*stroke-width="2"/.test(row) && bubble.test(row), row.length)
+    const folded = element(template, `<button class="ico" data-collapsed-new-task`, "button")
+    check("the folded control: the same glyph on MiMo's 1.75 line", /stroke-width="1\.75"/.test(folded) && bubble.test(folded), folded.length)
+  }
 }

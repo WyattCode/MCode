@@ -1091,10 +1091,11 @@ onBeforeUnmount(() => {
           <path d="M9 2.5v19" />
         </svg>
       </button>
+      <!-- The same speech bubble with a plus as the column's 新建任务, on MiMo's lighter 1.75 line. -->
       <button class="ico" data-collapsed-new-task :aria-label="t('side.newTask')" v-tip="{ label: t('side.newTask'), hint: 'Ctrl+N' }" @click="closePreview(), emit('newTask')">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M11 4.5H6.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V13" />
-          <path d="M17.8 3.7a1.7 1.7 0 0 1 2.5 2.5L12.5 14l-3.3.8.8-3.3z" />
+          <path d="M20.3 15.4A9 9 0 1 0 16.5 19.8L21 21z" />
+          <path d="M12 9.5v5M9.5 12h5" />
         </svg>
       </button>
     </div>
@@ -1165,10 +1166,11 @@ onBeforeUnmount(() => {
     </div>
 
     <nav class="nav" :aria-label="t('key.groupNavigation')">
+      <!-- MiMo's 新建任务: a round speech bubble, its tail at the lower end, a plus inside - 24 grid, 2 line, 18px. -->
       <button class="row" data-new-task @click="emit('newTask')">
-        <svg class="row-ico" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <circle cx="10" cy="10" r="7" stroke="currentColor" />
-          <path d="M10 6.5V13.5M6.5 10H13.5" stroke="currentColor" stroke-linecap="square" />
+        <svg class="row-ico" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20.3 15.4A9 9 0 1 0 16.5 19.8L21 21z" />
+          <path d="M12 9.5v5M9.5 12h5" />
         </svg>
         <span class="row-label">{{ t("side.newTask") }}</span>
       </button>
