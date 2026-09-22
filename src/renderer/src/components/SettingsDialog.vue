@@ -3163,14 +3163,9 @@ onBeforeUnmount(() => {
   background: var(--scrim);
 }
 
+/* The shell's own layout; its size, fills and lift are MiMo's, further down. */
 .dialog {
   display: flex;
-  width: min(980px, 88vw);
-  height: min(600px, 84vh);
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weak);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 

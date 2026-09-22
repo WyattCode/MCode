@@ -44,13 +44,15 @@ export async function roundEighteenSettingsNavChecks(check: Check, section: (nam
 
     const list = lastRule(style, ".nav-scroll")
     check("the list is the part that scrolls: it takes the rest of the column and may shrink below its rows", /overflow-y:\s*auto/.test(list) && /min-height:\s*0/.test(list) && /flex:\s*1\b/.test(list), list)
-    check("as MiMo's: the start inset, 12 below the last row, nothing on the trailing side for the scrollbar's lane", /padding-block:\s*0 12px/.test(list) && /padding-inline:\s*11px 0/.test(list), list)
+    check("as MiMo's: the start inset, 12 below the last row, nothing on the trailing side for the scrollbar's lane", /padding-block:\s*0 12px/.test(list) && /padding-inline:\s*10px 0/.test(list), list)
     check("it never scrolls sideways - a long label still breaks inside the row", /overflow-x:\s*hidden/.test(list), list)
     const column = lastRule(style, ".nav")
     check("the column keeps no padding of its own that the list could run past", /padding:\s*0;/.test(column), column)
     const top = lastRule(style, ".nav-top")
-    check("the top part does not shrink and keeps the column's 19 above the title", /flex:\s*none/.test(top) && /padding:\s*19px 11px 0/.test(top), top)
-    check("the first group keeps its 7 under the search, now as the list's first row", /\.nav-scroll > \.nav-group:first-child \{[^}]*margin-top:\s*7px/.test(style))
+    check("the top part does not shrink and keeps the column's 18 above the title", /flex:\s*none/.test(top) && /padding:\s*18px 10px 0/.test(top), top)
+    // R21-F2: MiMo's sn-group carries its own 12 above the label, which is the
+    // whole step under the search as well as between two groups.
+    check("the first group sits on its own 12 under the search, as every group does", /\.nav-group \{[^}]*padding: 12px 10px 4px/s.test(style) && !/\.nav-scroll > \.nav-group:first-child/.test(style))
   }
 
   section("Round 18: the selected nav row is brought into the list's view, as MiMo's")
