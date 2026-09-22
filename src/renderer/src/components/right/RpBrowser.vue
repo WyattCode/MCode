@@ -830,7 +830,7 @@ defineExpose({
   color: #a0a0a0;
 }
 
-:root[data-theme="dark"] .rb-round:hover:not(:disabled),
+:root[data-theme="dark"] .rb-round:hover,
 :root[data-theme="dark"] .rb-url:hover,
 :root[data-theme="dark"] .rb-url:focus,
 :root[data-theme="dark"] .rb-item:hover:not(:disabled),
@@ -926,7 +926,7 @@ defineExpose({
     color: #a0a0a0;
   }
 
-  :root:not([data-theme="light"]) .rb-round:hover:not(:disabled),
+  :root:not([data-theme="light"]) .rb-round:hover,
   :root:not([data-theme="light"]) .rb-url:hover,
   :root:not([data-theme="light"]) .rb-url:focus,
   :root:not([data-theme="light"]) .rb-item:hover:not(:disabled),

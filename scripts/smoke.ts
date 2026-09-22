@@ -420,6 +420,8 @@ import { roundTwentyCopyChecks } from "./smoke-round20-copy"
 import { roundTwentyVisualOneChecks } from "./smoke-round20-v1"
 // Round 20, visual lane 5: the side column against MiMo 26.920 (search and bell, brand row, account row, glyphs, list edges).
 import { roundTwentyVisualFiveChecks } from "./smoke-round20-v5"
+// Round 21, lane F3: the right panel, its viewers and the terminal dock against MiMo 26.920.
+import { roundTwentyOneF3Checks } from "./smoke-round21-f3"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7066,6 +7068,7 @@ async function main() {
   roundTwentyCopyChecks(check, section)
   await roundTwentyVisualOneChecks(check, section)
   await roundTwentyVisualFiveChecks(check, section)
+  await roundTwentyOneF3Checks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
