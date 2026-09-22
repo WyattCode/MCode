@@ -3607,13 +3607,20 @@ h3 {
  * hovered row, a pulsing blue box while recording (red on a conflict), and the
  * reset or delete control in a 28px column at the end.
  */
+/*
+ * MiMo puts the search bar and the table on the settings card colour with the
+ * card's own rule (#settings-overlay redefines both for them by name), and
+ * everything drawn inside them - the column head, the row rules, a key cap, the
+ * mode button - on --color-line. What was here instead was the opencode-era
+ * formula, a percentage of the ink mixed into the menu surface.
+ */
 .keys-search {
   display: flex;
   align-items: center;
   margin-bottom: 16px;
   padding: 10px 16px;
-  background: color-mix(in srgb, var(--text-strong) 4%, var(--surface-menu));
-  border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  background: #ffffff;
+  border: 1px solid #f3efeb;
   border-radius: 12px;
 }
 
@@ -3663,7 +3670,7 @@ h3 {
   width: 28px;
   height: 28px;
   color: var(--text-weak);
-  border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  border: 1px solid #f0ebe5;
   border-radius: 6px;
 }
 
@@ -3674,7 +3681,7 @@ h3 {
 
 .keys-search-mode.on {
   color: var(--text-strong);
-  background: color-mix(in srgb, var(--text-strong) 8%, var(--surface-menu));
+  background: #f8f7f5;
 }
 
 .keys-search-mode svg {
@@ -3684,8 +3691,8 @@ h3 {
 
 .keys-table {
   overflow: hidden;
-  background: color-mix(in srgb, var(--text-strong) 4%, var(--surface-menu));
-  border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  background: #ffffff;
+  border: 1px solid #f3efeb;
   border-radius: 12px;
 }
 
@@ -3694,7 +3701,7 @@ h3 {
   align-items: center;
   padding: 10px 20px;
   color: var(--text-base);
-  border-bottom: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  border-bottom: 1px solid #f0ebe5;
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -3707,7 +3714,7 @@ h3 {
   display: flex;
   align-items: center;
   padding: 14px 20px;
-  border-bottom: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  border-bottom: 1px solid #f0ebe5;
   transition: background-color 0.15s;
 }
 
@@ -3715,8 +3722,13 @@ h3 {
   border-bottom: 0;
 }
 
+/*
+ * MiMo's row hover is --color-side, which on Windows and Linux in light is the
+ * warm #f8f7f5 rather than the white it is elsewhere - so it does show against
+ * the card, and MCode can take it rather than keeping a mix of its own.
+ */
 .keys-row:hover {
-  background: color-mix(in srgb, var(--text-strong) 5%, var(--surface-menu));
+  background: #f8f7f5;
 }
 
 .keys-command {
@@ -3783,11 +3795,30 @@ h3 {
   padding: 2px 8px;
   color: var(--text-strong);
   background: #f0f0f2;
-  border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  border: 1px solid #f0ebe5;
   border-radius: 6px;
   box-shadow: 0 1px 3px 0 #0000001a, 0 1px 2px -1px #0000001a;
   font-family: var(--font-sans);
   font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+:root[data-theme="dark"] .keys-search,
+:root[data-theme="dark"] .keys-table {
+  background: #282828;
+  border-color: #3d3d3d;
+}
+
+:root[data-theme="dark"] .keys-cols,
+:root[data-theme="dark"] .keys-row,
+:root[data-theme="dark"] .keys-kbd,
+:root[data-theme="dark"] .keys-search-mode,
+:root[data-theme="dark"] .keys-record-cancel {
+  border-color: #2e2e2e;
+}
+
+:root[data-theme="dark"] .keys-search-mode.on,
+:root[data-theme="dark"] .keys-row:hover {
+  background: #141414;
 }
 
 :root[data-theme="dark"] .keys-kbd {
@@ -3795,6 +3826,25 @@ h3 {
 }
 
 @media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .keys-search,
+  :root:not([data-theme="light"]) .keys-table {
+    background: #282828;
+    border-color: #3d3d3d;
+  }
+
+  :root:not([data-theme="light"]) .keys-cols,
+  :root:not([data-theme="light"]) .keys-row,
+  :root:not([data-theme="light"]) .keys-kbd,
+  :root:not([data-theme="light"]) .keys-search-mode,
+  :root:not([data-theme="light"]) .keys-record-cancel {
+    border-color: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .keys-search-mode.on,
+  :root:not([data-theme="light"]) .keys-row:hover {
+    background: #141414;
+  }
+
   :root:not([data-theme="light"]) .keys-kbd {
     background: #2e2e2e;
   }
@@ -3888,7 +3938,7 @@ h3 {
 
 .keys-record-cancel {
   color: var(--text-weak);
-  border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  border: 1px solid #f0ebe5;
 }
 
 .keys-record-cancel:hover {
@@ -5338,14 +5388,15 @@ h3 {
  * with select all at the start, the count after it and the two actions at the
  * far end - and a checkbox at the start of each row while selecting.
  */
+/* MiMo's toolbar and its 批量管理 button both sit on bg-bg inside --color-line. */
 .batch-bar {
   display: flex;
   align-items: center;
   gap: 10px;
   margin: 0 0 10px;
   padding: 8px 12px;
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
+  background: #fffefd;
+  border: 1px solid #f0ebe5;
   border-radius: 10px;
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
@@ -5393,21 +5444,52 @@ h3 {
   margin-inline-start: auto;
   padding: 5px 12px;
   color: var(--text-strong);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
+  background: #fffefd;
+  border: 1px solid #f0ebe5;
   border-radius: 7px;
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 400;
 }
 
 .archived-manage:hover {
-  background: var(--surface-hover);
+  background: #f1f0ec;
 }
 
-/* MiMo's ghost delete: red text, a light red wash on hover. */
+:root[data-theme="dark"] .batch-bar,
+:root[data-theme="dark"] .archived-manage {
+  background: #181818;
+  border-color: #2e2e2e;
+}
+
+:root[data-theme="dark"] .archived-manage:hover {
+  background: #ffffff0f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .batch-bar,
+  :root:not([data-theme="light"]) .archived-manage {
+    background: #181818;
+    border-color: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .archived-manage:hover {
+    background: #ffffff0f;
+  }
+}
+
+/*
+ * MiMo's inline and bulk delete are a ghost button in --color-del (#e5484d,
+ * one value for both schemes) washed with red-50 on hover. What was here was
+ * #d93025 on #fdecea - MiMo's confirm-button pair, which belongs on the dialog
+ * that asks, not on the row that opens it.
+ *
+ * MiMo keeps the pink wash in dark too, where it is a near-white plate behind
+ * red text; that is its own oversight rather than a value to copy, so the dark
+ * hover stays the warm dark fill MCode already had (2026-09-23).
+ */
 .archived-delete {
   padding: 4px 10px;
-  color: #d93025;
+  color: #e5484d;
   background: transparent;
   border: 0;
   border-radius: 7px;
@@ -5415,11 +5497,7 @@ h3 {
 }
 
 .archived-delete:hover:not(:disabled) {
-  background: #fdecea;
-}
-
-:root[data-theme="dark"] .archived-delete {
-  color: #ff9b7f;
+  background: #fef2f2;
 }
 
 :root[data-theme="dark"] .archived-delete:hover:not(:disabled) {
@@ -5427,10 +5505,6 @@ h3 {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .archived-delete {
-    color: #ff9b7f;
-  }
-
   :root:not([data-theme="light"]) .archived-delete:hover:not(:disabled) {
     background: #3a2320;
   }
