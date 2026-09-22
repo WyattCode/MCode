@@ -3183,123 +3183,29 @@ onBeforeUnmount(() => {
 }
 
 /*
- * Measured off opencode's own settings tabs-list rather than chosen: 200px
- * wide with 12px of padding, where MCode had 260 and 22/14/16. The extra 60px
- * was empty in every language - the longest label here is two characters wider
- * than the icon column - and it came out of the page being configured.
- */
-/*
- * The column is lighter than the page, and the cards are the page lifted.
- *
- * Measured off the reference itself (1.18.27, driven over its own devtools
- * rather than read off its stylesheet): the page is rgb(22,22,22), the tab
- * column rgb(36,36,36), and the cards are rgb(22,22,22) again - the same colour
- * as the page - carrying `--v2-elevation-raised`. So what lifts a card is its
- * shadow, not a fill.
- *
- * Both of those I had guessed backwards a moment ago: the column had gone down
- * to 8 and the cards up to 36. The stylesheet was no help either - its settings
- * variant still says `gap: 0` while the running app measures 4px - which is why
- * this was measured in the end instead of read.
+ * The navigation column's shape. Everything it is made of - its width, fills,
+ * insets and type - is MiMo's and lives in the settings-dialog block below;
+ * what is left here is the layout the rows need in any of those skins.
  */
 .nav {
   display: flex;
   flex-direction: column;
-  /* 240 and 740 are what the reference splits its 980 into, and this dialog is
-     already 980 wide. */
-  /* 6 between rows, which is what the reference measures between its tab
-     wrappers and between a section title and its first tab. */
-  gap: 6px;
-  width: 240px;
-  min-width: 240px;
-  padding: 12px;
-  background: var(--surface-raised-hover);
-  /* The seam between the column and the page it is choosing, so it belongs on
-     whichever of the column's edges the page is on. */
-  border-inline-end: 1px solid var(--border-weak);
 }
 
-/*
- * The group heading, matched to opencode's tabs-section-title: --text-weak
- * rather than the step below it, 13px, medium weight, and indented less than
- * the rows under it (its 4px against the trigger's 12px).
- */
-/*
- * A section title in the navigation, measured on opencode's: 24 tall,
- * `padding: 0 0 0 4px`, `12px/500/24px` in text-base. The rhythm around it
- * is 6 from the title to its first tab, 6 between tabs, and 12 from a
- * section's last tab to the next title. This was 13px in text-weak with
- * ten of top padding and ten of right, which put the label a size larger and
- * a shade fainter than the reference's, and its groups on a different beat.
- */
-.nav-group {
-  min-height: calc(24px * var(--ui-font-scale, 1));
-  padding: 0 0 0 4px;
-  color: var(--text-base);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  font-weight: 500;
-  line-height: calc(24px * var(--ui-font-scale, 1));
-}
-
-/* 12 from the last tab of one section to the next title: the 6 the list
-   already puts between rows, and 6 more. */
-.nav-item + .nav-group {
-  margin-top: 6px;
-}
-
-.nav-group:first-child {
-  padding-top: 0;
-}
-
-/*
- * opencode 1.18.29's tab: the wrapper is `215x28` on a 4px radius, the trigger
- * inside it `padding: 0 6px` at `13px/440`, and the selected one fills with
- * `rgb(58, 58, 58)` - which is `--surface-key` here, the same fill the
- * selected project row uses. The numbers this carried before (32 tall, radius
- * 8, `0 10px`, 13.5px) were measured on 1.18.27; the reference moved.
- */
 .nav-item {
   display: flex;
-  /* The navigation is a flex column; without this the row measured 27 for a
-     declared 28 - the same squeeze the terminal's new-tab button had. */
+  /* The navigation is a flex column; without this a row measures a pixel short
+     of what it declares - the same squeeze the terminal's new-tab button had. */
   flex-shrink: 0;
   align-items: center;
-  gap: 10px;
   width: 100%;
-  min-height: calc(28px * var(--ui-font-scale, 1));
-  padding: 0 6px;
-  color: var(--text-base);
   text-align: start;
-  border-radius: 4px;
-  font-size: calc(13px * var(--ui-font-scale, 1));
   transition: background 0.12s, color 0.12s;
 }
 
-/* One size and stroke weight for every nav glyph, so the column reads evenly. */
 .nav-ico {
-  width: 20px;
-  height: 20px;
   flex-shrink: 0;
-  color: var(--icon-base);
   transition: color 0.12s;
-}
-
-.nav-item:hover {
-  color: var(--text-strong);
-}
-
-/*
- * An overlay rather than a colour.
- *
- * Pinned to a token this went wrong twice in one sitting - first
- * --surface-raised-hover, which became the column's own fill, then a mix
- * against a ground the column no longer had. `--surface-selected` is
- * overlay/simple-overlay-pressed, a wash of white over whatever is behind it,
- * so it cannot match the plane it sits on however that plane changes.
- */
-.nav-item.on {
-  color: var(--text-strong);
-  background: var(--surface-key);
 }
 
 /* settings-v2-tab-header is 40/40/32 and the body below it 0/40/40, so the
@@ -4703,9 +4609,9 @@ img.tile-art {
 }
 
 .nav {
-  gap: 2px;
-  width: 241px;
-  min-width: 241px;
+  /* MiMo's rows carry their own 2 of margin, so the column needs no gap. */
+  width: 240px;
+  min-width: 240px;
   /* The padding lives on the two parts below: the fixed top and the list. */
   padding: 0;
   /* The column is a fixed width, so a row whose label outgrows it used to
@@ -4723,8 +4629,7 @@ img.tile-art {
   display: flex;
   flex: none;
   flex-direction: column;
-  gap: 2px;
-  padding: 19px 11px 0;
+  padding: 18px 10px 0;
 }
 
 /*
@@ -4739,10 +4644,9 @@ img.tile-art {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 2px;
   min-height: 0;
   padding-block: 0 12px;
-  padding-inline: 11px 0;
+  padding-inline: 10px 0;
   overflow-x: hidden;
   overflow-y: auto;
 }
@@ -4777,37 +4681,39 @@ img.tile-art {
   }
 }
 
+/*
+ * MiMo's sn-title: 2 above the words and 10 under them rather than one line
+ * box the text is centred in, so the title sits nearer the top of the column.
+ */
 .nav-title {
   flex-shrink: 0;
-  min-height: calc(36px * var(--ui-font-scale, 1));
-  padding: 0 11px;
+  padding: 2px 10px 10px;
   color: var(--text-strong);
   font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 600;
-  line-height: calc(36px * var(--ui-font-scale, 1));
+  line-height: calc(24px * var(--ui-font-scale, 1));
 }
 
+/*
+ * MiMo's sn-group, likewise: 12 above the label and 4 under it. The 12 is what
+ * separates a group from the last row of the one before, which already carries
+ * 2 of its own - so a group label needs no margin rule of its own.
+ */
 .nav-group {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  min-height: calc(35px * var(--ui-font-scale, 1));
-  padding: 0 11px;
+  padding: 12px 10px 4px;
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: calc(19.2px * var(--ui-font-scale, 1));
 }
 
-.nav-title + .nav-group,
-.nav-item + .nav-group {
-  margin-top: 6px;
-}
-
 .nav-item {
   gap: 10px;
-  min-height: calc(36px * var(--ui-font-scale, 1));
-  padding: 0 11px;
+  margin-bottom: 2px;
+  padding: 8px 10px;
   color: var(--text-strong);
   border-radius: 8px;
   font-size: calc(14px * var(--ui-font-scale, 1));
@@ -4831,13 +4737,34 @@ img.tile-art {
   background: transparent;
 }
 
+/* MiMo's menu-hover and side-sel, which are warm greys in light and washes of white in dark. */
 .nav.mouse-active .nav-item:hover {
-  background: color-mix(in srgb, var(--text-strong) 5%, transparent);
+  background: #f1f0ec;
 }
 
 .nav-item.on,
 .nav.mouse-active .nav-item.on:hover {
-  background: color-mix(in srgb, var(--text-strong) 8%, transparent);
+  background: #eeedec;
+}
+
+:root[data-theme="dark"] .nav.mouse-active .nav-item:hover {
+  background: #ffffff0f;
+}
+
+:root[data-theme="dark"] .nav-item.on,
+:root[data-theme="dark"] .nav.mouse-active .nav-item.on:hover {
+  background: #ffffff1a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .nav.mouse-active .nav-item:hover {
+    background: #ffffff0f;
+  }
+
+  :root:not([data-theme="light"]) .nav-item.on,
+  :root:not([data-theme="light"]) .nav.mouse-active .nav-item.on:hover {
+    background: #ffffff1a;
+  }
 }
 
 .content {
@@ -4896,9 +4823,12 @@ h3 {
   border-color: #3d3d3d;
 }
 
-:root[data-theme="dark"] .line,
-:root[data-theme="dark"] .nav-search {
+:root[data-theme="dark"] .line {
   border-color: #3d3d3d;
+}
+
+:root[data-theme="dark"] .nav-search {
+  border-color: #2e2e2e;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -4907,9 +4837,12 @@ h3 {
     border-color: #3d3d3d;
   }
 
-  :root:not([data-theme="light"]) .line,
-  :root:not([data-theme="light"]) .nav-search {
+  :root:not([data-theme="light"]) .line {
     border-color: #3d3d3d;
+  }
+
+  :root:not([data-theme="light"]) .nav-search {
+    border-color: #2e2e2e;
   }
 }
 
@@ -5078,19 +5011,25 @@ h3 {
   }
 }
 
-/* The column's search field: MiMo's 36 tall with an 8px corner and a quiet rule. */
+/*
+ * The column's search field, as MiMo insets it: 6 of margin inside the column's
+ * own 10, which is what puts its edge 16 in, and 6 by 10 of padding rather than
+ * a fixed height, so it grows with the interface font. The rule is --color-line
+ * (#f0ebe5 / #2e2e2e), not a mix against the column's fill.
+ */
 .nav-search {
   flex-shrink: 0;
-  height: calc(36px * var(--ui-font-scale, 1));
-  margin-top: 6px;
-  padding: 0 14px;
+  box-sizing: border-box;
+  width: calc(100% - 12px);
+  margin: 6px;
+  padding: 6px 10px;
   color: var(--text-strong);
   background: transparent;
-  border: 1px solid color-mix(in srgb, var(--text-strong) 16%, var(--surface-raised));
+  border: 1px solid #f0ebe5;
   border-radius: 8px;
   outline: none;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: calc(22.4px * var(--ui-font-scale, 1));
+  line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
 .nav-search::placeholder {
@@ -5098,12 +5037,7 @@ h3 {
 }
 
 .nav-search:focus {
-  border-color: color-mix(in srgb, var(--text-strong) 32%, var(--surface-raised));
-}
-
-/* The first group under the search, now the first row of the scrolling list. */
-.nav-scroll > .nav-group:first-child {
-  margin-top: 7px;
+  border-color: var(--text-base);
 }
 
 /* MiMo's empty search: 13px dim, 10 at the sides and 16 above. */
