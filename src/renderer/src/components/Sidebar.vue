@@ -1353,22 +1353,42 @@ onBeforeUnmount(() => {
               v-tip="{ label: project.directory, disabled: pickingProjects || menuDirectory === project.directory }"
               @click="pressProject(project.directory)"
             >
-              <!-- Open while its tasks are listed under it, as MiMo draws an expanded project. -->
+              <!--
+                Open while its tasks are listed under it, as MiMo draws an
+                expanded project: MiMo's 16px folders, 24 grid on a 2 line.
+              -->
               <svg
                 v-if="isExpanded(project.directory)"
                 class="row-ico"
                 data-folder="open"
-                width="18"
-                height="18"
-                viewBox="0 0 20 20"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
                 fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
                 aria-hidden="true"
               >
-                <path d="M3.5 15V5.5H8L9.5 7H15V9" stroke="currentColor" stroke-linejoin="round" />
-                <path d="M3.5 15 5.6 9H17.4L15.3 15H3.5Z" stroke="currentColor" stroke-linejoin="round" />
+                <path d="M18.5 10v-.8a1.8 1.8 0 0 0-1.8-1.8h-6.1L8.4 5H4.2a1.8 1.8 0 0 0-1.8 1.8v12.4A1.8 1.8 0 0 0 4.2 21" />
+                <path d="M4.2 21h12.4a1.8 1.8 0 0 0 1.7-1.2l2.9-7.4a1.6 1.6 0 0 0-1.5-2.4H8.6a1.8 1.8 0 0 0-1.7 1.2z" />
               </svg>
-              <svg v-else class="row-ico" data-folder="closed" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                <path d="M3.5 5.5H8L9.5 7H16.5V15H3.5V5.5Z" stroke="currentColor" stroke-linejoin="round" />
+              <svg
+                v-else
+                class="row-ico"
+                data-folder="closed"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M2.4 7a2 2 0 0 1 2-2H9l2.4 3h8.2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4.4a2 2 0 0 1-2-2z" />
               </svg>
               <span class="row-label plain">{{ projectLabel(project.directory) }}</span>
               <!--
@@ -2145,9 +2165,9 @@ onBeforeUnmount(() => {
   gap: 0;
 }
 
-/* The folder centred in MiMo's 46px cell, so the name starts at 46. */
+/* The 16px folder centred in MiMo's 46px cell, so the name starts at 46. */
 .row.project > .project-toggle > .row-ico {
-  margin-inline: 14px;
+  margin-inline: 15px;
 }
 
 .row.task {

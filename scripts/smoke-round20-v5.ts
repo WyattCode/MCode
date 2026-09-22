@@ -108,4 +108,14 @@ export async function roundTwentyVisualFiveChecks(check: Check, section: (name: 
     const folded = element(template, `<button class="ico" data-collapsed-new-task`, "button")
     check("the folded control: the same glyph on MiMo's 1.75 line", /stroke-width="1\.75"/.test(folded) && bubble.test(folded), folded.length)
   }
+
+  // ------------------------------------------------------------------ R20-V5-5
+  section("Round 20 (V5-5): a project's folder is 16px, centred in its 46px cell")
+  {
+    for (const state of ["open", "closed"]) {
+      const svg = new RegExp(`class="row-ico"\\s*data-folder="${state}"\\s*width="16"\\s*height="16"\\s*viewBox="0 0 24 24"[^>]*stroke-width="2"`)
+      check(`the ${state} folder: 16px, 24 grid, a 2 line`, svg.test(template))
+    }
+    check("its cell stays 46: 15 either side", /\.row\.project > \.project-toggle > \.row-ico \{\s*margin-inline: 15px;/.test(style))
+  }
 }
