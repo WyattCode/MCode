@@ -2525,13 +2525,13 @@ button.section-head:focus-visible {
   margin: 10px 8px;
 }
 
-/* The row: 38 tall, 8 round, 14px regular in the strongest text. */
+/* The row: 38 tall (more under a larger interface font), 8 round, 14px regular in the strongest text. */
 .account {
   display: flex;
   flex: 1;
   align-items: center;
   min-width: 0;
-  height: 38px;
+  min-height: 38px;
   color: var(--text-strong);
   border-radius: 8px;
   font-size: calc(14px * var(--ui-font-scale, 1));

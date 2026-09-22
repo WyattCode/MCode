@@ -82,7 +82,7 @@ export async function roundTwentyVisualFiveChecks(check: Check, section: (name: 
     const foot$ = rule(style, ".foot")
     check("MiMo's side-bottom: a flex row 8 apart, 10 above and below", /display: flex;/.test(foot$) && /gap: 8px;/.test(foot$) && /margin: 10px 8px;/.test(foot$), foot$)
     const row = rule(style, ".account")
-    check("the row: 38 tall, 8 round, 14px regular, growing to fill", /height: 38px;/.test(row) && /border-radius: 8px;/.test(row) && /font-size: calc\(14px \* var\(--ui-font-scale, 1\)\);/.test(row) && /font-weight: 400;/.test(row) && /flex: 1;/.test(row), row)
+    check("the row: 38 tall, 8 round, 14px regular, growing to fill", /min-height: 38px;/.test(row) && /border-radius: 8px;/.test(row) && /font-size: calc\(14px \* var\(--ui-font-scale, 1\)\);/.test(row) && /font-weight: 400;/.test(row) && /flex: 1;/.test(row), row)
     check("its cell 46 by 38, its label on a 20px line", /width: 46px;/.test(rule(style, ".account-cell")) && /height: 38px;/.test(rule(style, ".account-cell")) && /line-height: calc\(20px \* var\(--ui-font-scale, 1\)\);/.test(rule(style, ".account-label")))
     const avatar = rule(style, ".avatar")
     check("the avatar 28 round on MiMo's input-border line, in both schemes", /width: 28px;/.test(avatar) && /height: 28px;/.test(avatar) && /border: 1px solid #151c130f;/.test(avatar) && /border-radius: 50%;/.test(avatar) && /:root\[data-theme="dark"\] \.avatar \{\s*border-color: #2e2e2e;/.test(style), avatar)
