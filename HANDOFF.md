@@ -5,7 +5,7 @@
 - 分支：`v2.0`，2026-09-22 起推到 GitHub `WyattCode/MCode`（私有仓库，跟踪 `origin/v2.0`）；拉取请求 https://github.com/WyattCode/MCode/pull/4 已于 2026-09-22 合并进 `main`（合并提交 `76b86ed`）；0.3.8 已发布为预发布版 https://github.com/WyattCode/MCode/releases/tag/v0.3.8
 - 目标：在界面和功能上 1:1 复刻 Xiaomi MiMo 桌面端，MCode 保留自己的名字、图标和字标
 - 对照清单（逐项实测，含百分比）：https://claude.ai/code/artifact/f149a5d1-857e-4bae-80be-ca03265d9f83
-- 最近更新：2026-09-23（第二十轮，版本 0.4.0）
+- 最近更新：2026-09-23（第二十一轮，版本 0.4.1）
 - 第十二轮（2026-09-19/20）：三个新的只读角度（数据生命周期与版本升级、主进程与界面的通信契约、失败与空状态）的审计已做完，34 项全部完成并合并入 `v2.0`，见下方「第十二轮」一节。报告在 scratchpad `round12-lifecycle.md` / `round12-ipc.md` / `round12-failure-ux.md`
 - 第十三轮（2026-09-20）：键盘与焦点、多实例与窗口生命周期、大数据量三个只读角度，37 项全部完成并合并入 `v2.0`，见下方「第十三轮」一节。报告在 scratchpad `round13-keyboard.md` / `round13-instances.md` / `round13-scale.md`
 - 第十四轮（2026-09-20）：网络与代理、本地化格式与从右到左、打包安装与自动更新三个只读角度，16 项全部完成并合并入 `v2.0`，见下方「第十四轮」一节。报告在 scratchpad `round14-network.md` / `round14-locale.md` / `round14-packaging.md`
@@ -25,6 +25,17 @@
 - **共用控件照 MiMo 重画**：焦点环换成 `--color-ring`（墨色 / 白）；`kbd` 换成 MiMo 的 11px 边框小帽（原来是 mono 填充键帽）；`.icon-btn` 30/7；`.btn` 8 圆角 / 500 / 真边框 / shadow-xs / 按下 .97 / 填充态 hover 用 `bg-primary/90`；`.field` 用 `--color-btn-border` 真边框、无填充、聚焦只压深边框；`.dialog` 16 圆角 + 1px 线 + `--shadow-pop`；`.dialog-close` = `.u-modal-close`（28/8/16px 字形/按下 .96）；工具菜单换成 MiMo 自己的配方（glass + 0.5px input-border + shadow-composer）；SelectMenu 保持 MiMo 设置页那一版（menu 壳 + glass + shadow-menu）。
 - **真窗口探针**（`scratchpad/r21f1-probe.cjs` / `r21f1-probe2.cjs`，win32、浅深两套、一次性配置目录、`win.isVisible() === true`）：30 个 token 全部按 MiMo 值解析；菜单 `#fffefd`/`#f1f1f1`/12 圆角/shadow-menu、行 `#151c13cc`、字形 `#5c5c57`；快捷键帽 11px/mut/5 圆角/1px 5px；tooltip 与 MiMo 的 `rounded-[8px] border-line bg-bg px-8 py-5 text-12 shadow-tip` 完全一致；`.btn` 28/8/500/13、主按钮 `#151c13`+白字（深色 `#ececec`+`#0d0d0d`）；`.field` 28/6/`#e3e3e0`（深 `#3a3a3a`）；焦点环浅色 `rgb(21,28,19)`、深色 `#fff`，按钮自绘 3px 半透明光晕。
 - **留给其他路**：见报告里的清单（composer 需要 `--surface-composer`、7 个对话框仍写 `--surface-raised` + `--shadow-overlay`、19 处 `--shadow-lg` 与 12 处 `--shadow-overlay`、dim/mut 反用的清扫、0.5px 边线换 `--border-input`、`App.vue` 里已冗余的两行 win32 覆盖、`TerminalDrawer` 的 `--overlay-hover`）。
+
+## 第二十一轮（2026-09-23）：其余页面照 MiMo 26.920 校准 + 全局配色
+
+用户要求继续补齐与 MiMo 的差异。四路只读对照（首页/搜索/产物中心/通知、设置、右侧面板、全局 token 与通用控件）共约 150 条，加一路修停靠。用户四个决定：MiMo 自己写坏的地方**不复刻**（保留 MCode 的正常写法并记入有意差异）；**全局配色整体换成 MiMo 的，本轮解禁新增 CSS 变量名**；**删掉命令面板**（MiMo 无）；**首页字标区补足高度并自画背景装饰**。
+
+- **F1 配色与通用控件**：`--surface-hover/-selected` 改 MiMo 的暖灰 `#f1f0ec`/`#eeedec`，`--border-weak` `#f1f1f1`/`#2e2e2e`，`--surface-sunken`、`--icon-base`、`--text-weaker`（原是背景档却被约 40 处当文字用）、`--text-accent`、`--scrim` 全部取实测值；新增 `--surface-page`/`--surface-glass`/`--text-body`/`--text-critical`/`--text-destructive`/`--border-input`/`--border-button`/`--ring`/四个 `--shadow-*`/三个 `--motion-*`/`--overlay-hover`，删 15 个死 token。**themecheck 新规则：任何 `var(--…)` 找不到定义即失败**（`--text-critical` 被 20 条规则引用却从未定义，设置里所有红色状态和连接失败点都是坏的，就是这样漏掉的）。通用控件（按钮、输入框、菜单、select、弹窗、tooltip、键帽、图标按钮、焦点环、按下动画）照 MiMo 重做。
+- **F2 设置页 25 项**：暗色选中分段（近黑压近黑不可读）、外观图标网格（4 列 60px 卡片，另修 PNG 图标被撑到 140px 的 bug）、导航列尺寸与实心图标（12 个自绘）、卡片与页面节奏、模型页卡片/按钮/输入框/悬浮保存栏、模型下拉改为目录+探测合并（原先必须先测试连接才有内容）、快捷键页与归档页配色、MCP 与环境页细节、文案照 MiMo。
+- **F3 右侧面板 41 项**：约 40 处次要文字升一档、子智能体记录不再被限死 320px、版本历史弹窗尺寸、代码底色在暗色不再反向、地址栏占位符、文件页 Markdown 排版、+ 菜单补子智能体、图片预览与错误条配色、五处硬编码线条。实测纠正了清单两处算错（底部终端标签高度 38/28 是对的；浏览器缩放按钮在 MiMo 大字号下会切字，保留 MCode 做法）。
+- **F4 首页/搜索/产物中心/通知 58 项**：首页 hero 按 MiMo 的 527×299 几何重排并加 MCode 自绘的蓝图装饰（问候语实测 195.84，目标 195.8）；浅色输入框卡片改纯白；搜索浮层五处不可见的灰色、类型徽标、无对话的项目也能搜到、放大镜重画；**删除命令面板**（连同 14 个键 ×18 表、死路径 `file.list`）；产物中心页面内缩、图标、hover 阴影、空态节奏，并新增 `artifact.changed` 事件（开着页面删对话即时刷新，不再靠轮询）；通知列以正文区为中心、距顶 24、最新在最上、超限排队不再丢弃、点亮铃铛 `#3295fb`；侧栏勾选框、标题色、完成点等。
+- **P1 停靠**：问题停靠只测一次且无人看守，加上漏抄 MiMo 的 `overflow-anchor: none`，以及停靠自身滚动被误判成「读者滑到底」导致跟随恢复。修好后长/短会话、编辑中发送在动画开与减少动画下都稳定在目标位（偏差 <0.3px）。
+- 验证：typecheck、i18ncheck、wiringcheck、themecheck、mdcheck、promptcheck、toolcheck、sessioncheck、build 全过，smoke **6812 全过**；各路新检查都在旧代码上证明会失败（F1 49 条、F2 106 条里 105 条、F3 78 条里 72 条、F4 78 条里 69 条、P1 13 条）。界面项均在真窗口（一次性配置、窗口可见）深浅色实测并看过截图。
 
 ## 第二十轮（2026-09-22/23）：二次复核代码 + 对话页照 MiMo 校准
 
