@@ -318,7 +318,7 @@ export function wordingChecks(check: Check, section: (name: string) => void): vo
   {
     const calls = retiredSessionCalls(process.cwd())
     check("no screen draws a locked 会话 / Session row any more", calls.length === 0, calls)
-    for (const key of ["key.groupConversation", "conv.prev", "conv.next", "conv.search", "conv.prevUnread", "conv.nextUnread"]) {
+    for (const key of ["key.groupConversation", "conv.prev", "conv.next", "conv.prevUnread", "conv.nextUnread"]) {
       const absent = Object.keys(tables).filter((name) => !tables[name][key])
       check(`${key} is written in every table`, absent.length === 0, absent)
     }

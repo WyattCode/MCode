@@ -676,10 +676,9 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
 
   section("Round 11 (N11-23/N11-24/N11-25/N11-38/N11-39/N11-40/N11-41): smaller ends")
   {
-    const palette = await read("src/renderer/src/components/CommandPalette.vue")
-    check("the file picker searches the project as the query changes, newest answer only", /type: "file\.search", directory, query: needle/.test(palette) && /ticket !== searchTicket/.test(palette))
+    // N11-23's file picker was the command palette's, which went with it in round 21 (R21-F4-24): MiMo has no palette.
     const handlers = await read("src/server/handlers.ts")
-    check("file.list stops after a budget of entries, and the search budget is MiMo's", /visits < LIST_VISITS/.test(handlers) && /const SEARCH_VISITS = 4000/.test(handlers))
+    check("the @ menu's search stops after MiMo's budget of entries", /const SEARCH_VISITS = 4000/.test(handlers) && /visits < SEARCH_VISITS/.test(handlers))
     const store = await read("src/renderer/src/stores/app.ts")
     check("a deleted conversation's draft and annotations go with it", /for \(const key of \[`main:\$\{sessionID\}`, `side:\$\{sessionID\}`\]\)/.test(store) && /forgetDrafts\(sessionID\)/.test(store))
     // N11-25's rail card went with the rail in round 18 (R18-U1); the folded column's preview is the column itself, paged as it is.

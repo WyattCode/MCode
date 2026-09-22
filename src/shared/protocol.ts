@@ -2202,7 +2202,6 @@ export type Request =
   | { type: "git.repoRoots"; directories: string[] }
   /* A subject line for the pending changes, from the conversation's model; `update …` when it does not answer. */
   | { type: "git.commitMessage"; directory: string; sessionID?: string; paths: string[] }
-  | { type: "file.list"; directory: string; query?: string }
   /* One folder level of a project for the @ menu; `sub` is relative to `directory`, empty for its root. */
   /* `all`: the files tab's tree, which shows dot entries and skips only MiMo's ignored folders. */
   | { type: "file.listDir"; directory: string; sub?: string; all?: boolean }
@@ -2272,12 +2271,6 @@ export type RequestOf<T extends RequestType> = Extract<Request, { type: T }>
 // ---------------------------------------------------------------------------
 // Responses (server -> renderer, correlated by request id)
 // ---------------------------------------------------------------------------
-
-export interface FileEntry {
-  path: string
-  name: string
-  directory: boolean
-}
 
 /* One row of a folder the @ menu is browsing. */
 export interface DirEntry {
@@ -2435,7 +2428,6 @@ export interface ResponseMap {
   "git.pullRequest": PullRequestState
   "git.repoRoots": { roots: Record<string, string>; missing: string[] }
   "git.commitMessage": { message: string; generated: boolean }
-  "file.list": { files: FileEntry[] }
   /* Folders first, then files, each by name; dot entries and the ignored folders left out. */
   "file.listDir": { entries: DirEntry[] }
   /* `truncated` when more matched than `limit` allowed. */

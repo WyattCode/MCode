@@ -144,4 +144,26 @@ export async function roundTwentyOneLaneFourChecks(check: Check, section: (name:
     const search = code(await read("src/server/search.ts"))
     check("a search reads each step's line as well as its output", /part\.type === "tool" \? \[part\.title, part\.output\]/.test(search), search.slice(search.indexOf("flatMap"), search.indexOf("flatMap") + 160))
   }
+
+  // ------------------------------------------------------------------ R21-F4-5
+  section("Round 21 (F4-24): the command palette is gone, MiMo having none")
+  {
+    const gone = await fs
+      .access(path.join(root, "src/renderer/src/components/CommandPalette.vue"))
+      .then(() => false)
+      .catch(() => true)
+    check("the component itself is deleted", gone)
+    const shell = code(await read("src/renderer/src/App.vue"))
+    check("nothing in the window opens or closes it any more", !/paletteOpen|PaletteMode|openPalette|CommandPalette/.test(shell), shell.match(/.*palette.*/i)?.[0])
+    check("Ctrl+K still opens the search, under MiMo's own wording for it", /id: "app\.search"[\s\S]{0,140}title: t\("key\.label\.search"\)/.test(shell) && /hint: "Ctrl\+K"/.test(shell))
+    check("its two commands went with it", !/app\.searchSessions|app\.searchProjects/.test(shell))
+    check("so did the batch move it was the only way into, which MiMo's batch bar has no button for", !/movingMany|movingSession|pickedProject/.test(shell) && !/action === "move"/.test(shell))
+    const i18n = await read("src/renderer/src/lib/i18n.ts")
+    for (const key of ["palette.empty", "palette.navigate", "palette.run", "palette.cancel", "search.in.files", "search.in.projects", "cmd.searchProjects", "key.palette"]) {
+      check(`its "${key}" is out of all eighteen tables`, !i18n.includes(`"${key}":`))
+    }
+    const protocol = await read("src/shared/protocol.ts")
+    const handlers = await read("src/server/handlers.ts")
+    check("and file.list, which only the palette sent, is off the wire", !/"file\.list"/.test(protocol) && !/"file\.list"/.test(handlers) && !/listFiles/.test(handlers))
+  }
 }

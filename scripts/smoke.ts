@@ -1041,8 +1041,9 @@ async function main() {
   const renamed = await call({ type: "session.get", sessionID })
   check("session.rename persists", renamed.session.title === "Smoke test", renamed.session.title)
 
-  const files = await call({ type: "file.list", directory: project, query: "app" })
-  check("file.list filters by query", files.files.some((f: any) => f.path === "src/app.ts"), files.files)
+  // file.list went with the command palette in round 21 (R21-F4-24): the @ menu browses with file.listDir and searches with file.search, both covered below.
+  const byName = await call({ type: "file.search", directory: project, query: "app", nameOnly: true })
+  check("file.search finds a file by name", byName.entries.some((entry: { rel: string }) => entry.rel === "src/app.ts"), byName.entries)
 
   let rejected = false
   await call({ type: "session.get", sessionID: "ses_missing" }).catch(() => (rejected = true))
