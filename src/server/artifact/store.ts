@@ -160,6 +160,14 @@ const RECHECK_PARALLEL = 16
 /** How many re-check answers go into one transaction. */
 const RECORD_BATCH = 200
 
+/**
+ * How long changes are gathered before the windows are told of them.
+ *
+ * A pass over a hundred conversations writes a hundred times; MiMo's page
+ * refetches on one revision, so one event for the burst is what it wants.
+ */
+const CHANGE_NOTICE_MS = 400
+
 export interface ArtifactQuery {
   query?: string
   category?: ArtifactCategory
@@ -245,6 +253,18 @@ export class ArtifactStore {
    * while it was reading.
    */
   private readonly dirty = new Map<string, number>()
+  /**
+   * How many times the store's contents have changed, and who is told of it.
+   *
+   * MiMo publishes an artifacts-changed event carrying a revision, and its page
+   * refetches whenever the revision it holds is behind - which is how the page
+   * fills in while it is open rather than only while the store is being built
+   * (S13-3). Notices are gathered over CHANGE_NOTICE_MS so a bulk pass says so
+   * once rather than a hundred times.
+   */
+  private rev = 0
+  private listener: ((revision: number) => void) | undefined
+  private notifying: ReturnType<typeof setTimeout> | undefined
 
   private constructor(
     /** The store's file, open in a worker of its own (N11-12). */
@@ -372,6 +392,33 @@ export class ArtifactStore {
     return this.running !== undefined && this.bulk
   }
 
+  /** What the store has been through: a window holding an older number is out of date. */
+  get revision(): number {
+    return this.rev
+  }
+
+  /** Told, at most once every CHANGE_NOTICE_MS, that the store's contents changed. */
+  onChanged(listener: (revision: number) => void): () => void {
+    this.listener = listener
+    return () => {
+      if (this.listener !== listener) return
+      this.listener = undefined
+      if (this.notifying) clearTimeout(this.notifying)
+      this.notifying = undefined
+    }
+  }
+
+  /** One write landed. The revision moves at once; the notice waits for the burst to end. */
+  private changed(): void {
+    this.rev += 1
+    if (!this.listener || this.notifying) return
+    this.notifying = setTimeout(() => {
+      this.notifying = undefined
+      this.listener?.(this.rev)
+    }, CHANGE_NOTICE_MS)
+    this.notifying.unref?.()
+  }
+
   /**
    * Brings the store up to date with what the conversations say; with
    * `recheck`, also asks the disk whether each file is still there.
@@ -486,6 +533,8 @@ export class ArtifactStore {
    */
   private async reconcileSession(session: SessionInfo, messages: readonly Message[], fingerprint: string | undefined): Promise<void> {
     const now = Date.now()
+    /* Whether this pass wrote anything, so an unchanged conversation does not tell the windows to read again. */
+    let wrote = false
     const checkpointed = await this.db.transaction(async (tx) => {
       // Checked inside the transaction, so a detach cannot land between the check and the writes.
       if (await tx.get("SELECT 1 AS x FROM artifact_purged_session WHERE session_id = ?", session.id)) return false
@@ -542,6 +591,7 @@ export class ArtifactStore {
         touched.add(row.artifact_id)
       }
       for (const id of touched) await ArtifactStore.settle(tx, id, now)
+      wrote = touched.size > 0 || stale.length > 0
       if (fingerprint === undefined) return false
       await tx.run(
         `INSERT INTO artifact_reconcile (session_id, fingerprint, updated_at) VALUES (?, ?, ?)
@@ -552,6 +602,7 @@ export class ArtifactStore {
       )
       return true
     })
+    if (wrote) this.changed()
     // A write that landed since the pass began has dropped it again, and it stays dropped.
     if (checkpointed && fingerprint !== undefined && !this.dirty.has(session.id)) this.checkpoints?.set(session.id, fingerprint)
   }
@@ -649,6 +700,7 @@ export class ArtifactStore {
   }
 
   private async recordBatch(answers: readonly Row[]): Promise<void> {
+    this.changed()
     await this.db.transaction(async (tx) => {
       for (const answer of answers) {
         await tx.run(
@@ -772,6 +824,7 @@ export class ArtifactStore {
      * conversation nobody can read still owes a reconcile.
      */
     this.dirty.delete(sessionID)
+    this.changed()
     const now = Date.now()
     await this.db.transaction(async (tx) => {
       await tx.run("INSERT OR IGNORE INTO artifact_purged_session (session_id, purged_at) VALUES (?, ?)", sessionID, now)

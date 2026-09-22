@@ -56,7 +56,12 @@ export async function roundFifteenStateChecks(check: Check, section: (name: stri
      * The shipped notice module, driven as the app drives it. A notice with no
      * duration stands until something takes it away - the reconnect banner is
      * raised once, cannot be closed by hand, and nothing re-raises it - so it
-     * must not be pushed out by ordinary notices arriving behind it.
+     * must still be in the column after ordinary notices arrive behind it.
+     *
+     * Round 21 (R21-F4-45/47) put it on MiMo's footing: notices are prepended
+     * and none is discarded, the column showing the first three and keeping
+     * the rest for when one in front goes. The banner is therefore held rather
+     * than dropped, which is what these check.
      */
     /* Every notice taken away with its clock, so one case does not colour the next. */
     const clearNotices = () => {
@@ -70,10 +75,10 @@ export async function roundFifteenStateChecks(check: Check, section: (name: stri
     notify("Conversation id copied")
     notify("Preference not saved")
     check("R15-R2: the standing reconnect banner survives three ordinary notices", toasts.value.some((entry) => entry.id === RECONNECT), titles())
-    check("R15-R2: and the ordinary ones on screen are the newest two, so the stack is still three", toasts.value.length === 3, titles())
+    check("R15-R2: nothing was discarded to make room for them", toasts.value.length === 4, titles())
     check(
-      "R15-R2: the oldest ordinary notice is the one that went, order kept",
-      titles().join("|") === "Reconnecting · backend still down|Conversation id copied|Preference not saved",
+      "R15-R2: the newest is at the front and the banner waits behind them, as MiMo's column keeps it",
+      titles().join("|") === "Preference not saved|Conversation id copied|Folder copied|Reconnecting · backend still down",
       titles(),
     )
 
@@ -83,7 +88,7 @@ export async function roundFifteenStateChecks(check: Check, section: (name: stri
     notify("two")
     notify("three")
     notify("four")
-    check("R15-R2: ordinary notices alone still cap at MiMo's three, oldest first out", titles().join("|") === "two|three|four", titles())
+    check("R15-R2: ordinary notices are kept in full, newest first", titles().join("|") === "four|three|two|one", titles())
 
     /*
      * Four standing notices have nothing on a timer to give way, so the oldest
@@ -96,8 +101,8 @@ export async function roundFifteenStateChecks(check: Check, section: (name: stri
     notice.warning("storage problem A", { duration: 0 })
     notice.warning("storage problem B", { duration: 0 })
     check(
-      "R15-R2: four standing notices still drop the oldest rather than pile up",
-      titles().join("|") === "credentials unreadable|storage problem A|storage problem B",
+      "R15-R2: four standing notices are all held, newest first",
+      titles().join("|") === "storage problem B|storage problem A|credentials unreadable|config unreadable",
       titles(),
     )
 
@@ -108,8 +113,8 @@ export async function roundFifteenStateChecks(check: Check, section: (name: stri
     notify("Folder copied")
     notify("Conversation id copied")
     check(
-      "R15-R2: a timed notice arriving behind two standing ones replaces the timed one, not a standing one",
-      titles().join("|") === "expired sign-in|config unreadable|Conversation id copied",
+      "R15-R2: a timed notice arriving behind two standing ones takes the front and leaves them alone",
+      titles().join("|") === "Conversation id copied|Folder copied|config unreadable|expired sign-in",
       titles(),
     )
     clearNotices()

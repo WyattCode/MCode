@@ -1272,8 +1272,8 @@ onBeforeUnmount(() => {
         >
           <button class="row-open" @click="press(block.session.id)">
             <span v-if="picking" class="tick" :class="{ on: ticked(block.session.id) }" aria-hidden="true">
-              <svg v-if="ticked(block.session.id)" width="11" height="11" viewBox="0 0 16 16" fill="none">
-                <path d="M3.5 8.2 6.4 11.2 12.5 4.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+              <svg v-if="ticked(block.session.id)" width="12" height="12" viewBox="0 0 24 24" fill="none">
+                <path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </span>
             <!-- MiMo's pinned conversation leads with a conversation mark in a 46px cell. -->
@@ -1385,8 +1385,8 @@ onBeforeUnmount(() => {
               data-project-tick
               aria-hidden="true"
             >
-              <svg v-if="projectTicked(project.directory)" width="11" height="11" viewBox="0 0 16 16" fill="none">
-                <path d="M3.5 8.2 6.4 11.2 12.5 4.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+              <svg v-if="projectTicked(project.directory)" width="12" height="12" viewBox="0 0 24 24" fill="none">
+                <path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </span>
             <button
@@ -1506,8 +1506,8 @@ onBeforeUnmount(() => {
             >
               <button class="row-open" @click="press(session.id)">
                 <span v-if="picking" class="tick" :class="{ on: ticked(session.id) }" aria-hidden="true">
-                  <svg v-if="ticked(session.id)" width="11" height="11" viewBox="0 0 16 16" fill="none">
-                    <path d="M3.5 8.2 6.4 11.2 12.5 4.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  <svg v-if="ticked(session.id)" width="12" height="12" viewBox="0 0 24 24" fill="none">
+                    <path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
                   </svg>
                 </span>
                 <svg v-if="app.isPinned(session.id)" class="pin" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -1650,8 +1650,8 @@ onBeforeUnmount(() => {
         >
           <button class="row-open" @click="press(entry.session.id)">
             <span v-if="picking" class="tick" :class="{ on: ticked(entry.session.id) }" aria-hidden="true">
-              <svg v-if="ticked(entry.session.id)" width="11" height="11" viewBox="0 0 16 16" fill="none">
-                <path d="M3.5 8.2 6.4 11.2 12.5 4.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+              <svg v-if="ticked(entry.session.id)" width="12" height="12" viewBox="0 0 24 24" fill="none">
+                <path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </span>
             <svg v-if="app.isPinned(entry.session.id)" class="pin" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -1973,42 +1973,88 @@ onBeforeUnmount(() => {
   transition: background var(--motion-fast, 0.12s), color var(--motion-fast, 0.12s);
 }
 
+/* MiMo's hover colour for these is its --color-txt, #151c13cc light and #f4f4f5 dark (below). */
 .ico:hover {
-  color: var(--text-strong);
+  color: #151c13cc;
   background: var(--surface-hover);
 }
 
 /*
- * The title-bar row in MiMo's icon colour: near the strongest text on a dark
- * ground, and that text at 60% on a light one. Its glyphs are drawn on a 24
- * grid with a 2-unit round stroke shown at 14px, the bell at 16 - about a
- * 1.2px line, where the old 17px icons on a 20 grid came out near 0.85.
+ * The title-bar row in MiMo's --color-topbar-icon: the strongest text at 60%
+ * on a light ground (#151c1399), and #f4f4f5 rather than white on a dark one.
+ * Its glyphs are drawn on a 24 grid with a 2-unit round stroke shown at 14px,
+ * the bell at 16 - about a 1.2px line, where the old 17px icons on a 20 grid
+ * came out near 0.85.
  */
 .top .ico,
 .brand-actions .ico,
 .rail-tools .ico {
-  color: color-mix(in srgb, var(--text-strong) 60%, transparent);
+  color: #151c1399;
+}
+
+/* The bell alone rests in MiMo's --color-mut, which is a step back from the others on dark. */
+.brand-actions .ico.bell,
+.rail-tools .ico.bell {
+  color: var(--text-base);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .top .ico,
   :root:not([data-theme="light"]) .brand-actions .ico,
   :root:not([data-theme="light"]) .rail-tools .ico {
-    color: var(--text-strong);
+    color: #f4f4f5;
+  }
+
+  :root:not([data-theme="light"]) .brand-actions .ico.bell,
+  :root:not([data-theme="light"]) .rail-tools .ico.bell {
+    color: var(--text-base);
   }
 }
 
 :root[data-theme="dark"] .top .ico,
 :root[data-theme="dark"] .brand-actions .ico,
 :root[data-theme="dark"] .rail-tools .ico {
-  color: var(--text-strong);
+  color: #f4f4f5;
 }
 
-/* MiMo on Windows: these glyphs 12px in one solid colour; a spent arrow and the lit bell keep their own. */
+:root[data-theme="dark"] .brand-actions .ico.bell,
+:root[data-theme="dark"] .rail-tools .ico.bell {
+  color: var(--text-base);
+}
+
+/*
+ * MiMo on Windows: these glyphs 12px in its own --color-topbar-icon for that
+ * platform, #2b2b2b light and #ececec dark (below) - the bell included, since
+ * --topbar-priority-color and --topbar-hover-color both point at it there. A
+ * spent arrow and the lit bell keep their own.
+ */
 .app[data-platform="win32"] .top .ico:not(:disabled),
 .app[data-platform="win32"] .brand-actions .ico:not(.on),
-.app[data-platform="win32"] .rail-tools .ico:not(:disabled) {
-  color: var(--text-strong);
+.app[data-platform="win32"] .rail-tools .ico:not(:disabled),
+.app[data-platform="win32"] .top .ico:not(:disabled):hover,
+.app[data-platform="win32"] .brand-actions .ico:not(.on):hover,
+.app[data-platform="win32"] .rail-tools .ico:not(:disabled):hover {
+  color: #2b2b2b;
+}
+
+:root[data-theme="dark"] .app[data-platform="win32"] .top .ico:not(:disabled),
+:root[data-theme="dark"] .app[data-platform="win32"] .brand-actions .ico:not(.on),
+:root[data-theme="dark"] .app[data-platform="win32"] .rail-tools .ico:not(:disabled),
+:root[data-theme="dark"] .app[data-platform="win32"] .top .ico:not(:disabled):hover,
+:root[data-theme="dark"] .app[data-platform="win32"] .brand-actions .ico:not(.on):hover,
+:root[data-theme="dark"] .app[data-platform="win32"] .rail-tools .ico:not(:disabled):hover {
+  color: #ececec;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .app[data-platform="win32"] .top .ico:not(:disabled),
+  :root:not([data-theme="light"]) .app[data-platform="win32"] .brand-actions .ico:not(.on),
+  :root:not([data-theme="light"]) .app[data-platform="win32"] .rail-tools .ico:not(:disabled),
+  :root:not([data-theme="light"]) .app[data-platform="win32"] .top .ico:not(:disabled):hover,
+  :root:not([data-theme="light"]) .app[data-platform="win32"] .brand-actions .ico:not(.on):hover,
+  :root:not([data-theme="light"]) .app[data-platform="win32"] .rail-tools .ico:not(:disabled):hover {
+    color: #ececec;
+  }
 }
 
 .app[data-platform="win32"] .top .ico svg,
@@ -2352,8 +2398,9 @@ button.section-head:focus-visible {
   padding-inline-start: 46px;
 }
 
+/* MiMo's --color-side-item: #4a4a4a on light, #ccc on dark (below). */
 .task-label {
-  color: color-mix(in srgb, var(--text-strong) 80%, transparent);
+  color: #4a4a4a;
   font-weight: 400;
   line-height: calc(22px * var(--ui-font-scale, 1));
 }
@@ -2396,19 +2443,18 @@ button.section-head:focus-visible {
   pointer-events: auto;
 }
 
-/* MiMo's show-more row: 12px in the secondary colour, 9 by 7 of padding. */
+/* MiMo's show-more row: 12px in its muted colour, 9 by 7 of padding, and no fill under the pointer. */
 .show-more {
   width: 100%;
   padding: 7px 9px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-radius: 6px;
   font-size: calc(12px * var(--ui-font-scale, 1));
   text-align: start;
 }
 
 .show-more:hover {
-  color: var(--text-strong);
-  background: var(--surface-hover);
+  color: #151c13cc;
 }
 
 /* A pinned conversation: MiMo's 46px mark cell in place of the 9px start, the title right after it. */
@@ -2428,26 +2474,26 @@ button.section-head:focus-visible {
   color: var(--text-weak);
 }
 
-/* 展开更多 under the first five pinned rows: 12px in the secondary colour, 9 in, 5 above and below. */
+/* 展开更多 under the first five pinned rows: 12px in the muted colour, 9 in, 5 above and below. */
 .pinned-more {
   width: 100%;
   padding: 5px 9px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: calc(22px * var(--ui-font-scale, 1));
   text-align: start;
 }
 
 .pinned-more:hover {
-  color: var(--text-strong);
+  color: #151c13cc;
 }
 
-/* Under a project's first five: 12px in the secondary colour, in line with the task names. */
+/* Under a project's first five: 12px in the muted colour, in line with the task names. */
 .project-show-all {
   width: 100%;
   padding-block: 5px;
   padding-inline: 46px 9px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   /* MiMo's buttons keep the body's 22px line, which makes the row 32 tall. */
   line-height: calc(22px * var(--ui-font-scale, 1));
@@ -2455,7 +2501,7 @@ button.section-head:focus-visible {
 }
 
 .project-show-all:hover {
-  color: var(--text-strong);
+  color: #151c13cc;
 }
 
 /* MiMo's pages row under the projects: more on the left, collapse on the right. */
@@ -2471,13 +2517,13 @@ button.section-head:focus-visible {
 
 .projects-pages button {
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: inherit;
   text-align: start;
 }
 
 .projects-pages button:hover {
-  color: var(--text-strong);
+  color: #151c13cc;
 }
 
 .pages-more {
@@ -2498,9 +2544,10 @@ button.section-head:focus-visible {
   border-radius: 6px;
 }
 
+/* MiMo's --color-priority-on is #3295fb on both schemes, not the accent that turns over with them. */
 .ico.bell.on,
 :root .brand-actions .ico.bell.on {
-  color: var(--text-accent);
+  color: #3295fb;
 }
 
 /* The priority section's menu button shows while its heading is hovered. */
@@ -2628,7 +2675,7 @@ button.section-head:focus-visible {
 
 .pin {
   flex-shrink: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
 }
 
 .row-menu {
@@ -2638,7 +2685,7 @@ button.section-head:focus-visible {
   width: 22px;
   height: 22px;
   margin-inline-start: 4px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-radius: 6px;
   opacity: 0;
   transition: opacity 0.12s, background 0.12s, color 0.12s;
@@ -2651,25 +2698,32 @@ button.section-head:focus-visible {
 }
 
 .row-menu:hover {
-  color: var(--text-strong);
+  color: #151c13cc;
   background: var(--surface-hover);
 }
 
-/* Selection mode: a box before each row, and the bar that acts on them. */
+/*
+ * Selection mode: a box before each row, and the bar that acts on them. MiMo's
+ * is 18 on a 5px corner, outlined in its --color-dim while empty and filled
+ * with its --color-send, tick in --color-send-fg, once it is ticked.
+ */
 .tick {
   display: grid;
   flex-shrink: 0;
   place-items: center;
-  width: 15px;
-  height: 15px;
-  color: var(--surface-base);
-  border: 1px solid var(--border-weak);
-  border-radius: 4px;
+  width: 18px;
+  height: 18px;
+  color: transparent;
+  background: transparent;
+  border: 1px solid var(--text-weak);
+  border-radius: 5px;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 
 .tick.on {
-  background: var(--interactive);
-  border-color: var(--interactive);
+  color: #ffffff;
+  background: #151c13;
+  border-color: #151c13;
 }
 
 /* A project's tick sits before its folder cell, 9 in and 7 before the folder, as MiMo's does. */
@@ -2736,7 +2790,7 @@ button.section-head:focus-visible {
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
-  color: var(--text-strong);
+  color: #151c13cc;
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 7px;
@@ -2839,7 +2893,7 @@ button.section-head:focus-visible {
   width: 22px;
   height: 22px;
   margin-inline-start: 2px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-radius: 6px;
   opacity: 0;
   transition: opacity 0.12s, background 0.12s, color 0.12s;
@@ -2851,12 +2905,13 @@ button.section-head:focus-visible {
   opacity: 1;
 }
 
+/* A pinned row's pin keeps MiMo's --color-priority-on, one blue in both schemes. */
 .row-pin.on {
-  color: var(--text-base);
+  color: #3295fb;
 }
 
 .row-pin:hover {
-  color: var(--text-strong);
+  color: #151c13cc;
   background: var(--surface-hover);
 }
 /*
@@ -2934,10 +2989,11 @@ button.section-head:focus-visible {
   }
 }
 
+/* MiMo's --color-blue, which --interactive already is: #2f6fed light, #5a9cff dark. */
 .status-dot {
   width: 7px;
   height: 7px;
-  background: var(--text-interactive);
+  background: var(--interactive);
   border-radius: 50%;
 }
 
@@ -3096,5 +3152,54 @@ button.section-head:focus-visible {
 .row.project:focus-within .row-status:has(.status-pill) {
   opacity: 1;
   padding-inline-end: 52px;
+}
+
+/*
+ * MiMo's --color-txt, --color-side-item, --color-send and --color-send-fg on
+ * the dark scheme. Lane F1 is adding tokens for the first; until they land the
+ * pair is written out.
+ */
+:root[data-theme="dark"] .ico:hover,
+:root[data-theme="dark"] .row-menu:hover,
+:root[data-theme="dark"] .row-pin:hover,
+:root[data-theme="dark"] .show-more:hover,
+:root[data-theme="dark"] .pinned-more:hover,
+:root[data-theme="dark"] .project-show-all:hover,
+:root[data-theme="dark"] .projects-pages button:hover,
+:root[data-theme="dark"] .sb-btn:not(.danger) {
+  color: #f4f4f5;
+}
+
+:root[data-theme="dark"] .task-label {
+  color: #cccccc;
+}
+
+:root[data-theme="dark"] .tick.on {
+  color: #0d0d0d;
+  background: #ececec;
+  border-color: #ececec;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ico:hover,
+  :root:not([data-theme="light"]) .row-menu:hover,
+  :root:not([data-theme="light"]) .row-pin:hover,
+  :root:not([data-theme="light"]) .show-more:hover,
+  :root:not([data-theme="light"]) .pinned-more:hover,
+  :root:not([data-theme="light"]) .project-show-all:hover,
+  :root:not([data-theme="light"]) .projects-pages button:hover,
+  :root:not([data-theme="light"]) .sb-btn:not(.danger) {
+    color: #f4f4f5;
+  }
+
+  :root:not([data-theme="light"]) .task-label {
+    color: #cccccc;
+  }
+
+  :root:not([data-theme="light"]) .tick.on {
+    color: #0d0d0d;
+    background: #ececec;
+    border-color: #ececec;
+  }
 }
 </style>

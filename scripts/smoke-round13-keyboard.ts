@@ -185,8 +185,9 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
   {
     const covered = shell.slice(shell.indexOf("function conversationCovered("), shell.indexOf("\n}\n", shell.indexOf("function conversationCovered(")))
     check(
-      "K13-5: a conversation is covered while a modal, the search, the palette or any dialog on the page is up",
-      /modalOpen\.value/.test(covered) && /searchOpen\.value/.test(covered) && /paletteOpen\.value/.test(covered) && /dialogOpen\(\)/.test(covered),
+      // The palette went in round 21 (R21-F4-24), MiMo having none; the search is what Ctrl+K opens.
+      "K13-5: a conversation is covered while a modal, the search or any dialog on the page is up",
+      /modalOpen\.value/.test(covered) && /searchOpen\.value/.test(covered) && /dialogOpen\(\)/.test(covered),
       covered,
     )
     const unguarded = ["p", "r", "a", "s", "u", "c", "l"].filter((letter) => {
@@ -217,8 +218,8 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
 
     const run = shell.slice(shell.indexOf("function newTaskOverLayers("), shell.indexOf("\n}\n", shell.indexOf("function newTaskOverLayers(")))
     check(
-      "K13-6: new task closes the menus, the search, the palette, the previews and Settings (asking first about unsaved edits), then runs",
-      /dismissMenus\(\)/.test(run) && /searchOpen\.value = false/.test(run) && /paletteOpen\.value = false/.test(run) && /closeImagePreview\(\)/.test(run) && /closeVideoPreview\(\)/.test(run) &&
+      "K13-6: new task closes the menus, the search, the previews and Settings (asking first about unsaved edits), then runs",
+      /dismissMenus\(\)/.test(run) && /searchOpen\.value = false/.test(run) && /closeImagePreview\(\)/.test(run) && /closeVideoPreview\(\)/.test(run) &&
         /settingsDialog\.value\.leaveThen\(\(\) => \{\s+settingsOpen\.value = false\s+newSession\(\)/.test(run) && /\n  newSession\(\)\n  return true$/.test(run),
       run,
     )
@@ -228,8 +229,8 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
       /if \(isNewTaskChord\(chordOf\(event, platform\)\) && !commandDisabled\("session\.new"\) && newTaskOverLayers\(\)\) \{/.test(shell) &&
         shell.indexOf("if (isNewTaskChord(") < shell.indexOf("if (!modalOpen.value) {\n    const chord = chordOf(") && /"new-session": \(\) => void newTaskOverLayers\(\)/.test(shell),
     )
-    const cleared = await Promise.all(["SettingsDialog", "SearchOverlay", "CommandPalette", "ImagePreview", "VideoPreview"].map(async (name) => /data-new-task-clears/.test(await component(name))))
-    check("K13-6: Settings, the search, the palette and both previews are marked as what a new task clears", cleared.every(Boolean), cleared)
+    const cleared = await Promise.all(["SettingsDialog", "SearchOverlay", "ImagePreview", "VideoPreview"].map(async (name) => /data-new-task-clears/.test(await component(name))))
+    check("K13-6: Settings, the search and both previews are marked as what a new task clears", cleared.every(Boolean), cleared)
     check("K13-6: Settings leaves for it through its own unsaved-edits guard", /function leaveThen\(action: \(\) => void\) \{\n\s+requestLeave\(/.test(settings) && /defineExpose\(\{ leaveThen \}\)/.test(settings))
   }
 
@@ -256,8 +257,6 @@ export async function roundThirteenKeyboardChecks(check: Check, section: (name: 
     )
     const unguarded = await enterFieldsWithoutImeGuard()
     check("K13-9: every Enter handler on a text field steps aside while an input method is composing", unguarded.length === 0, unguarded)
-    const palette = await component("CommandPalette")
-    check("K13-9: the palette's Enter, bound on its dialog rather than its field, is guarded too", /event\.key === "Enter" && !composing\(event\)/.test(palette))
   }
 
   // ---------------------------------------------------------------- K13-10

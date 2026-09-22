@@ -18,7 +18,6 @@ import { DEFAULT_APP_ICON } from "@shared/app-icons"
 const ArtifactsView = defineAsyncComponent(() => import("./components/ArtifactsView.vue"))
 const PluginsView = defineAsyncComponent(() => import("./components/PluginsView.vue"))
 import RightPanel from "./components/RightPanel.vue"
-import CommandPalette, { type PaletteMode } from "./components/CommandPalette.vue"
 import QuestionDock from "./components/QuestionDock.vue"
 import { useQuestions } from "./stores/questions"
 import type SettingsDialogComponent from "./components/SettingsDialog.vue"
@@ -366,7 +365,6 @@ onMounted(() => {
   onBeforeUnmount(offLink)
 })
 onBeforeUnmount(() => find.unmount())
-const paletteOpen = ref(false)
 /* MiMo's search over conversations, projects and artifacts: the side column's magnifier and Ctrl+K. */
 const searchOpen = ref(false)
 const searchOverlay = ref<InstanceType<typeof SearchOverlay>>()
@@ -456,7 +454,6 @@ provideRestoreDraft((message) => {
   }
   composer.value?.set(draftFromMessage(message))
 })
-const paletteMode = ref<PaletteMode>("files")
 
 /**
  * Writes out what the app has been complaining about.
@@ -610,37 +607,6 @@ async function runShellCommand(command: string) {
   }
 }
 
-/**
- * Opens the palette on one kind of thing.
- *
- * The reference offers separate pickers for files, sessions and projects; they
- * are the same list with a different filter, so they are the same surface here
- * rather than three dialogs that would drift apart.
- */
-/*
- * The project picker answers two questions: which project a new task starts
- * in, and which project a conversation moves to. Which one is being asked is
- * held in `movingSession` while the picker is up.
- */
-async function pickedProject(directory: string) {
-  const moving = movingSession.value
-  const many = movingMany.value
-  movingSession.value = undefined
-  movingMany.value = undefined
-  if (many?.length) {
-    for (const sessionID of many) await app.move(sessionID, directory)
-    selecting.value = undefined
-    return
-  }
-  if (moving) {
-    await app.move(moving, directory)
-    return
-  }
-  startIn(directory)
-}
-
-/* Set while the picker is being used to move everything that is ticked. */
-const movingMany = ref<string[]>()
 
 /** A conversation ticked or unticked in the side column's selection mode. */
 function toggleSelected(sessionID: string) {
@@ -657,7 +623,7 @@ function toggleSelected(sessionID: string) {
  * rules that already hold - leaving an archived session, the confirmation
  * before a delete - hold here too.
  */
-async function runBatch(action: "archive" | "move" | "delete" | "cancel" | "all" | "none", ids: string[] = []) {
+async function runBatch(action: "archive" | "delete" | "cancel" | "all" | "none", ids: string[] = []) {
   const chosen = selecting.value ?? []
   if (action === "cancel") {
     selecting.value = undefined
@@ -672,11 +638,6 @@ async function runBatch(action: "archive" | "move" | "delete" | "cancel" | "all"
   if (action === "archive") {
     await archiveSessions([...chosen])
     selecting.value = undefined
-    return
-  }
-  if (action === "move") {
-    movingMany.value = [...chosen]
-    openPalette("projects")
     return
   }
   deletingMany.value = [...chosen]
@@ -719,11 +680,6 @@ async function undoArchive(ids: readonly string[]) {
     return
   }
   for (const sessionID of still) await app.archive(sessionID, false)
-}
-
-function openPalette(mode: PaletteMode) {
-  paletteMode.value = mode
-  paletteOpen.value = true
 }
 
 /**
@@ -1282,7 +1238,6 @@ function newTaskOverLayers(): boolean {
   if (asking || editingProject.value || renamingSession.value || renamingProject.value) return false
   dismissMenus()
   searchOpen.value = false
-  paletteOpen.value = false
   closeImagePreview()
   closeVideoPreview()
   if (settingsOpen.value && settingsDialog.value) {
@@ -1355,9 +1310,6 @@ const sessionMenu = ref<{ x: number; y: number; sessionID?: string; header?: boo
 const menuSession = computed(() =>
   app.sessions.find((entry) => entry.id === (sessionMenu.value?.sessionID ?? app.currentID)),
 )
-
-/* Set while the project picker is being used to move a conversation. */
-const movingSession = ref<string>()
 
 /* The project row's menu, and which project folder it is about. */
 const projectMenu = ref<{ x: number; y: number; directory: string }>()
@@ -2739,19 +2691,6 @@ const bindableCommands = computed((): AppCommand[] => {
       run: () => addSelection(),
     },
     {
-      id: "app.searchSessions",
-      group: "key.groupGeneral",
-      // No chord: MiMo's Ctrl+F is only the find bar's.
-      title: t("conv.search"),
-      run: () => openPalette("sessions"),
-    },
-    {
-      id: "app.searchProjects",
-      group: "key.groupGeneral",
-      title: t("cmd.searchProjects"),
-      run: () => openPalette("projects"),
-    },
-    {
       id: "session.prevUnread",
       group: "key.groupConversation",
       title: t("conv.prevUnread"),
@@ -2987,7 +2926,7 @@ const bindableCommands = computed((): AppCommand[] => {
       // MiMo's 搜索: the search overlay.
       id: "app.search",
       group: "key.groupGeneral",
-      title: t("key.palette"),
+      title: t("key.label.search"),
       hint: "Ctrl+K",
       run: () => {
         searchOpen.value = true
@@ -3111,7 +3050,7 @@ const CONVERSATION_COMMANDS = new Set([
  * palette and every confirmation count without a list of them to keep.
  */
 function conversationCovered(): boolean {
-  return modalOpen.value || searchOpen.value || paletteOpen.value || dialogOpen()
+  return modalOpen.value || searchOpen.value || dialogOpen()
 }
 
 /* The box MiMo's annotations go to: the open conversation's, or the home screen's. */
@@ -3243,7 +3182,7 @@ function onKeydown(event: KeyboardEvent) {
 
   /* MiMo's terminal toggle is its `ctrl` chord: Control+` on a Mac as well. */
   if (controlHeld(event) && !event.altKey && !event.shiftKey && event.code === "Backquote") {
-    if (modalOpen.value || paletteOpen.value) return
+    if (modalOpen.value) return
     event.preventDefault()
     if (!commandDisabled("view.terminal")) terminalOpen.value = !terminalOpen.value
     return
@@ -3264,11 +3203,9 @@ function onKeydown(event: KeyboardEvent) {
 
   /*
    * A shortcut fired behind a dialog acts on a screen the user cannot see -
-   * Ctrl+N would quietly start a session under the settings window. The palette
-   * is the one exception: its own shortcut still closes it.
+   * Ctrl+N would quietly start a session under the settings window.
    */
   if (modalOpen.value) return
-  if (paletteOpen.value && event.key !== "k") return
 
   /*
    * Shift combinations first: they are separate commands, not variants, and a
@@ -4160,15 +4097,6 @@ onBeforeUnmount(() => {
 
 
 
-    <CommandPalette
-      v-if="paletteOpen"
-      :mode="paletteMode"
-      :projects="openProjects"
-      @close="paletteOpen = false"
-      @file="composer?.mention($event)"
-      @project="pickedProject"
-    />
-
     <SearchOverlay
       v-if="searchOpen"
       ref="searchOverlay"
@@ -4554,14 +4482,29 @@ onBeforeUnmount(() => {
   inset-inline-end: v-bind(infoInset);
 }
 
+/* MiMo's card: its page ground (#fffefd, #181818 dark below) under the composer's shadow, not the dialog lift. */
 .drop-card {
   padding: 10px 18px;
   color: #ff6a2b;
-  background: var(--surface-base);
+  background: #fffefd;
   border-radius: 12px;
-  box-shadow: var(--shadow-md);
+  box-shadow:
+    0 1px 2px #0000000d,
+    0 6px 18px #0000001b;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
+}
+
+:root[data-theme="dark"] .drop-card {
+  background: #181818;
+  box-shadow: 0 1px 3px #0006;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .drop-card {
+    background: #181818;
+    box-shadow: 0 1px 3px #0006;
+  }
 }
 
 /*

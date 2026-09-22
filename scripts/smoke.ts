@@ -428,6 +428,8 @@ import { roundTwentyOneLaneF1Checks } from "./smoke-round21-f1"
 import { roundTwentyOneF3Checks } from "./smoke-round21-f3"
 // Round 21, lane F2: the settings dialog against MiMo 26.920 (shell, column, rhythm, 外观, 快捷键, MCP, 环境, 已归档, 模型).
 import { roundTwentyOneLaneFTwoChecks } from "./smoke-round21-f2"
+// Round 21, lane F4: the home screen, search overlay, artifacts centre, toasts/bell and the side column leftovers, against MiMo 26.920.
+import { roundTwentyOneLaneFourChecks } from "./smoke-round21-f4"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -853,7 +855,12 @@ async function main() {
   check("a notice of another level with the same title is a second notice", toasts.value.length === 2, toasts.value)
   notify("One", { level: "success" })
   notify("Two", { level: "warning" })
-  check("at most three notices are kept, the oldest dropped", toasts.value.length === 3 && toasts.value[0]?.title === "Copied" && toasts.value[0]?.level === "danger", toasts.value)
+  // R21-F4-45/47: MiMo prepends and keeps them all, showing the first three; the column hides the rest rather than the store dropping them.
+  check(
+    "a new notice goes to the front, and none is thrown away",
+    toasts.value.map((entry) => entry.title).join("|") === "Two|One|Copied|Copied" && toasts.value[0]?.level === "warning" && toasts.value[3]?.level === "info",
+    toasts.value,
+  )
   const linked = notice.info("Links", {
     links: [
       { label: "a", run: () => {} },
@@ -1047,8 +1054,9 @@ async function main() {
   const renamed = await call({ type: "session.get", sessionID })
   check("session.rename persists", renamed.session.title === "Smoke test", renamed.session.title)
 
-  const files = await call({ type: "file.list", directory: project, query: "app" })
-  check("file.list filters by query", files.files.some((f: any) => f.path === "src/app.ts"), files.files)
+  // file.list went with the command palette in round 21 (R21-F4-24): the @ menu browses with file.listDir and searches with file.search, both covered below.
+  const byName = await call({ type: "file.search", directory: project, query: "app", nameOnly: true })
+  check("file.search finds a file by name", byName.entries.some((entry: { rel: string }) => entry.rel === "src/app.ts"), byName.entries)
 
   let rejected = false
   await call({ type: "session.get", sessionID: "ses_missing" }).catch(() => (rejected = true))
@@ -7078,6 +7086,7 @@ async function main() {
   await roundTwentyOneLaneF1Checks(check, section)
   await roundTwentyOneF3Checks(check, section)
   await roundTwentyOneLaneFTwoChecks(check, section)
+  await roundTwentyOneLaneFourChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

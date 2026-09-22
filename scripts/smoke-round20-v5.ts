@@ -61,8 +61,9 @@ export async function roundTwentyVisualFiveChecks(check: Check, section: (name: 
     const box = rule(style, ".brand-actions")
     check("MiMo's box: 24 tall, 8 apart, ending 8 in from the brand row (16 from the column)", /height: 24px;/.test(box) && /gap: 8px;/.test(box) && /margin-inline: auto 8px;/.test(box), box)
     check("the bell is 6 round, search 7", /border-radius: 6px;/.test(rule(style, ".ico.bell")))
-    check("they take the title-bar icon colour and its 12px Windows glyphs", /\.brand-actions \.ico,\n\.rail-tools \.ico \{\s*color: color-mix/.test(style) && /\.app\[data-platform="win32"\] \.brand-actions \.ico svg,/.test(style) && /:root\[data-theme="dark"\] \.brand-actions \.ico,/.test(style))
-    check("the lit bell outranks the dark icon colour from its new place", /:root \.brand-actions \.ico\.bell\.on \{\s*color: var\(--text-accent\);/.test(style))
+    // R21-F4-48/49 gave these MiMo's own --color-topbar-icon and --color-priority-on; the placement each check was written for is unchanged.
+    check("they take the title-bar icon colour and its 12px Windows glyphs", /\.brand-actions \.ico,\n\.rail-tools \.ico \{\s*color: #151c1399;/.test(style) && /\.app\[data-platform="win32"\] \.brand-actions \.ico svg,/.test(style) && /:root\[data-theme="dark"\] \.brand-actions \.ico,/.test(style))
+    check("the lit bell outranks the dark icon colour from its new place", /:root \.brand-actions \.ico\.bell\.on \{\s*color: #3295fb;/.test(style))
     check("the preview no longer pushes a row of search and bell to the end", !/\.side-shell\.preview \.top \{[^}]*justify-content: flex-end/.test(style))
   }
 
