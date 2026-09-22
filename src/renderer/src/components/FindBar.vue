@@ -125,7 +125,8 @@ watch(input, (element) => props.find.setInput(element))
   gap: 6px;
   max-inline-size: calc(2 * 10px + 2 * 1px + 15px + 180px + 42px + 3 * 22px + 5 * 6px);
   padding: 6px 10px;
-  background: var(--surface-base);
+  /* MiMo's --color-bg: #fffefd on light, #181818 on dark (below). */
+  background: #fffefd;
   border: 1px solid var(--border-weak);
   border-radius: 10px;
   box-shadow: 0 4px 16px rgb(0 0 0 / 0.14);
@@ -135,14 +136,14 @@ watch(input, (element) => props.find.setInput(element))
   flex-shrink: 0;
   width: 15px;
   height: 15px;
-  color: var(--text-weak);
+  color: var(--text-base);
 }
 
 .needle {
   flex: 0 1 180px;
   width: 180px;
   min-inline-size: 72px;
-  color: var(--text-base);
+  color: #151c13cc;
   font-size: calc(13px * var(--ui-font-scale, 1));
   background: transparent;
   border: none;
@@ -171,7 +172,7 @@ watch(input, (element) => props.find.setInput(element))
   width: 22px;
   height: 22px;
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 6px;
@@ -188,5 +189,27 @@ watch(input, (element) => props.find.setInput(element))
 
 .step:disabled {
   opacity: 0.4;
+}
+
+/*
+ * MiMo's --color-txt on the dark scheme (#f4f4f5); lane F1 is adding a token
+ * for it, so the pair is written out here.
+ */
+:root[data-theme="dark"] .find {
+  background: #181818;
+}
+
+:root[data-theme="dark"] .needle {
+  color: #f4f4f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .find {
+    background: #181818;
+  }
+
+  :root:not([data-theme="light"]) .needle {
+    color: #f4f4f5;
+  }
 }
 </style>

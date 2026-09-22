@@ -210,4 +210,69 @@ export async function roundTwentyOneLaneFourChecks(check: Check, section: (name:
     const kinds = code(await read("src/renderer/src/lib/artifact-kind.ts"))
     check("the PDF badge is the corner-cut page with a letter in the notch", /const CORNER_PAGE = "M12 22h6a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v6"/.test(kinds) && /pdf: \{[^}]*glyph: \[CORNER_PAGE, FOLD, "M3 16v-2h8v2", "M7 14v8", "M6 22h2"\]/.test(kinds))
   }
+
+  // ------------------------------------------------------------------ R21-F4-7
+  section("Round 21 (F4-43..53): the notices against MiMo 26.920")
+  {
+    const column = parts("Toasts.vue")(code(await read("src/renderer/src/components/Toasts.vue")))
+    const store = code(await read("src/renderer/src/lib/toast.ts"))
+    // Item 43: MiMo centres them on the work area, and only a full scrim sends them back to the window's centre.
+    check("the column stands over the middle of the work area, followed as it resizes", /document\.querySelector\("main\.main"\)/.test(column.all) && /new ResizeObserver\(measure\)/.test(column.all) && /:style="centre \? \{ left: centre \} : undefined"/.test(column.template))
+    check("and goes back to the window's centre under a full scrim, as MiMo's does", /#app:has\(\.overlay, \.scrim, \.search-overlay\) \.toasts \{\s*\n\s*left: 50% !important;/.test(column.style))
+    // Item 44: sonner's own 24, MiMo's 8 being scoped to its login gate.
+    check("they sit 24 under the top edge, not 8", /\.toasts \{[^}]*top: 24px/.test(column.style) && !/top: 8px/.test(column.style))
+    // Item 45: MiMo prepends.
+    check("a new notice goes to the front of the column", /toasts\.value = \[entry, \.\.\.toasts\.value\]/.test(store))
+    // Item 47: the ones past the third are kept rather than dropped.
+    check("nothing past the third is thrown away; it waits its turn", !/const over = next\.length - LIMIT/.test(store) && !/doomed/.test(store) && /export const LIMIT = 3/.test(store))
+    check("and the column hides it rather than unmounting it", /\{ over: at >= LIMIT \}/.test(column.template) && /\.notice\.over \{\s*\n\s*display: none;/.test(column.style))
+    // Item 46: MiMo's own travel and duration.
+    check("they arrive and leave over .4s, travelling their own height", /transition:\s*\n\s*opacity 0\.4s,\s*\n\s*transform 0\.4s;/.test(column.style) && /transform: translateY\(-100%\);/.test(column.style) && !/translateY\(-8px\)/.test(column.style))
+    check("with the reduced-motion fallback kept", /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?transform: none;/.test(column.style))
+    // Items 50/51/53.
+    check("the capsule's text is MiMo's --color-txt", /\.notice \{[^}]*color: #151c13cc/.test(column.style) && /:root\[data-theme="dark"\] \.notice \{\s*\n\s*color: #f4f4f5;/.test(column.style))
+    check("the column is above both previews, which are 210 and 220", /z-index: 230/.test(column.style))
+    check("a link sits on a line of its own height", /\.link \{[^}]*line-height: 1;/.test(column.style))
+    check("Alt+T counts whatever else is held down, as MiMo's check does", /if \(!event\.altKey \|\| event\.code !== "KeyT"\) return/.test(column.all))
+  }
+
+  // ------------------------------------------------------------------ R21-F4-8
+  section("Round 21 (F4-48..58): the bell, the side column's leftovers and the small cards")
+  {
+    const side = parts("Sidebar.vue")(code(await read("src/renderer/src/components/Sidebar.vue")))
+    // Item 48: one blue in both schemes.
+    check("the lit bell is MiMo's --color-priority-on in both schemes", /\.ico\.bell\.on,\s*\n:root \.brand-actions \.ico\.bell\.on \{\s*\n\s*color: #3295fb;/.test(side.style) && !/--text-accent/.test(side.style))
+    // Item 49: MiMo's topbar icon colour, and its Windows pair.
+    check("the title-bar glyphs are MiMo's --color-topbar-icon", /\.rail-tools \.ico \{\s*\n\s*color: #151c1399;/.test(side.style) && /:root\[data-theme="dark"\] \.rail-tools \.ico \{\s*\n\s*color: #f4f4f5;/.test(side.style))
+    check("the bell alone rests in its --color-mut off Windows", /\.rail-tools \.ico\.bell \{\s*\n\s*color: var\(--text-base\);/.test(side.style))
+    check("and on Windows they are #2b2b2b / #ececec, hover included", /\.app\[data-platform="win32"\][^{]*\{\s*\n\s*color: #2b2b2b;/.test(side.style) && /color: #ececec;/.test(side.style))
+    check("their hover colour is MiMo's --color-txt", /\.ico:hover \{\s*\n\s*color: #151c13cc;/.test(side.style))
+    // Item 54.
+    check("a conversation's title is MiMo's --color-side-item", /\.task-label \{\s*\n\s*color: #4a4a4a;/.test(side.style) && /:root\[data-theme="dark"\] \.task-label \{\s*\n\s*color: #cccccc;/.test(side.style))
+    check("a row's pin and menu rest in the muted grey and hover to --color-txt", /\.pin \{[^}]*color: var\(--text-base\)/.test(side.style) && /\.row-menu:hover \{\s*\n\s*color: #151c13cc;/.test(side.style) && /\.row-pin:hover \{\s*\n\s*color: #151c13cc;/.test(side.style))
+    check("a pinned row's pin keeps the priority blue", /\.row-pin\.on \{\s*\n\s*color: #3295fb;/.test(side.style))
+    check("the show-more rows are muted, hover to --color-txt and take no fill", /\.show-more \{[^}]*color: var\(--text-base\)/.test(side.style) && /\.show-more:hover \{\s*\n\s*color: #151c13cc;\s*\n\}/.test(side.style) && /\.project-show-all \{[^}]*color: var\(--text-base\)/.test(side.style) && /\.projects-pages button \{[^}]*color: var\(--text-base\)/.test(side.style))
+    check("the selection box is MiMo's 18 on a 5px corner, filled with --color-send", /\.tick \{[^}]*width: 18px;[^}]*border-radius: 5px/.test(side.style) && /\.tick\.on \{\s*\n\s*color: #ffffff;\s*\n\s*background: #151c13;/.test(side.style) && /:root\[data-theme="dark"\] \.tick\.on \{\s*\n\s*color: #0d0d0d;\s*\n\s*background: #ececec;/.test(side.style))
+    check("and its tick is MiMo's 12px mark on the 24 grid", (side.template.match(/d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="3"/g) ?? []).length === 4 && !/M3\.5 8\.2 6\.4 11\.2 12\.5 4\.6/.test(side.template))
+    check("the batch bar's neutral button takes --color-txt; its red one is MiMo's own and stays", /\.sb-btn \{[^}]*color: #151c13cc/.test(side.style) && /\.sb-btn\.danger \{[^}]*color: #d93025;[^}]*background: #fdecea/.test(side.style))
+    check("a finished conversation's dot is MiMo's --color-blue", /\.status-dot \{[^}]*background: var\(--interactive\)/.test(side.style))
+    // Item 55.
+    const find = parts("FindBar.vue")(code(await read("src/renderer/src/components/FindBar.vue")))
+    check("the find bar lies on MiMo's --color-bg, its glyph and steps muted, its field --color-txt", /\.find \{[^}]*background: #fffefd/.test(find.style) && /\.glass \{[^}]*color: var\(--text-base\)/.test(find.style) && /\.step \{[^}]*color: var\(--text-base\)/.test(find.style) && /\.needle \{[^}]*color: #151c13cc/.test(find.style))
+    // Item 56.
+    const spine = parts("SessionSpine.vue")(code(await read("src/renderer/src/components/SessionSpine.vue")))
+    check("the rail's fades end on the work area's fill", /\.spine-fade\.top \{[^}]*var\(--surface-raised\) 30%/.test(spine.style) && !/--surface-base\) 30%/.test(spine.style))
+    check("its preview chips are MiMo's --color-code-bg under --color-txt", /\.sp-tool \{[^}]*color: #151c13cc;[^}]*background: #f0f0f2/.test(spine.style) && /:root\[data-theme="dark"\] \.sp-tool \{\s*\n\s*color: #f4f4f5;\s*\n\s*background: #2e2e2e;/.test(spine.style))
+    // Item 57.
+    const hero = code(await read("src/renderer/src/components/SessionHero.vue"))
+    const mark = code(await read("src/renderer/src/components/ModelMark.vue"))
+    check("the empty conversation's foot is the muted grey", /\.foot \{[^}]*color: var\(--text-base\)/.test(hero))
+    check("the model's letter is MiMo's --color-txt", /\.letter \{[^}]*color: #151c13cc/.test(mark) && /:root\[data-theme="dark"\] \.letter \{\s*\n\s*color: #f4f4f5;/.test(mark))
+    // Item 58.
+    const shell = code(await read("src/renderer/src/App.vue"))
+    const pill = code(await read("src/renderer/src/components/LiveEditPill.vue"))
+    const files = code(await read("src/renderer/src/components/EditedFilesCard.vue"))
+    check("the drop card is MiMo's page ground under the composer's shadow", /\.drop-card \{[^}]*background: #fffefd;[^}]*box-shadow:\s*\n\s*0 1px 2px #0000000d,\s*\n\s*0 6px 18px #0000001b;/.test(shell) && /:root\[data-theme="dark"\] \.drop-card \{\s*\n\s*background: #181818;/.test(shell))
+    check("the live-edit pill and the edited-files button take the same ground", /\.live-edit-pill \{[^}]*background: #fffefd/.test(pill) && /background: #181818;/.test(pill) && /\.fc-review \{[^}]*background: #fffefd/.test(files) && /:root\[data-theme="dark"\] \.file-card,\s*\n:root\[data-theme="dark"\] \.fc-review \{\s*\n\s*background: #181818;/.test(files))
+  }
 }

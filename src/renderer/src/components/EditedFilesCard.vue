@@ -434,9 +434,10 @@ async function pickMenu(key: string) {
   border: 0;
 }
 
+/* MiMo's --color-bg: #fffefd on light, #181818 on dark (below). */
 .fc-review {
   padding: 0 11px;
-  background: var(--surface-base);
+  background: #fffefd;
   border: 1px solid var(--border-weak);
 }
 
@@ -574,8 +575,12 @@ async function pickMenu(key: string) {
   opacity: 0.9;
 }
 
-:root[data-theme="dark"] .file-card {
+:root[data-theme="dark"] .file-card,
+:root[data-theme="dark"] .fc-review {
   background: #181818;
+}
+
+:root[data-theme="dark"] .file-card {
   border-color: #2e2e2e;
 }
 
@@ -607,8 +612,12 @@ async function pickMenu(key: string) {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .file-card {
+  :root:not([data-theme="light"]) .file-card,
+  :root:not([data-theme="light"]) .fc-review {
     background: #181818;
+  }
+
+  :root:not([data-theme="light"]) .file-card {
     border-color: #2e2e2e;
   }
 

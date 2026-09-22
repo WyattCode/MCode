@@ -444,14 +444,15 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
+/* The rail lies on the work area, so its fades end on MiMo's --color-main-bg, which --surface-raised already is. */
 .spine-fade.top {
   top: 0;
-  background: linear-gradient(180deg, var(--surface-base) 30%, transparent);
+  background: linear-gradient(180deg, var(--surface-raised) 30%, transparent);
 }
 
 .spine-fade.bottom {
   bottom: 0;
-  background: linear-gradient(0deg, var(--surface-base) 30%, transparent);
+  background: linear-gradient(0deg, var(--surface-raised) 30%, transparent);
 }
 
 .spine-preview {
@@ -544,17 +545,34 @@ onBeforeUnmount(() => {
   margin-top: 9px;
 }
 
+/* MiMo's --color-code-bg under its --color-txt: #f0f0f2 on light, #2e2e2e on dark (below). */
 .sp-tool {
   max-width: 148px;
   padding: 1px 6px;
   overflow: hidden;
-  color: var(--text-strong);
-  background: var(--surface-hover);
+  color: #151c13cc;
+  background: #f0f0f2;
   border-radius: 6px;
   font-family: var(--font-mono);
   font-size: calc(11px * var(--code-font-scale, 1));
   line-height: calc(16px * var(--code-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/*
+ * MiMo's --color-txt on the dark scheme (#f4f4f5); lane F1 is adding a token
+ * for it, so the pair is written out here.
+ */
+:root[data-theme="dark"] .sp-tool {
+  color: #f4f4f5;
+  background: #2e2e2e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sp-tool {
+    color: #f4f4f5;
+    background: #2e2e2e;
+  }
 }
 </style>

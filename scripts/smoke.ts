@@ -847,7 +847,12 @@ async function main() {
   check("a notice of another level with the same title is a second notice", toasts.value.length === 2, toasts.value)
   notify("One", { level: "success" })
   notify("Two", { level: "warning" })
-  check("at most three notices are kept, the oldest dropped", toasts.value.length === 3 && toasts.value[0]?.title === "Copied" && toasts.value[0]?.level === "danger", toasts.value)
+  // R21-F4-45/47: MiMo prepends and keeps them all, showing the first three; the column hides the rest rather than the store dropping them.
+  check(
+    "a new notice goes to the front, and none is thrown away",
+    toasts.value.map((entry) => entry.title).join("|") === "Two|One|Copied|Copied" && toasts.value[0]?.level === "warning" && toasts.value[3]?.level === "info",
+    toasts.value,
+  )
   const linked = notice.info("Links", {
     links: [
       { label: "a", run: () => {} },

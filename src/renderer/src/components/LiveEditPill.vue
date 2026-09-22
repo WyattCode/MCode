@@ -75,7 +75,8 @@ function toggle() {
   color: #151c1399;
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 500;
-  background: var(--surface-base);
+  /* MiMo's --color-bg: #fffefd on light, #181818 on dark (below). */
+  background: #fffefd;
   border: 1px solid #151c130f;
   border-radius: 12px;
   cursor: pointer;
@@ -114,6 +115,7 @@ function toggle() {
 
 :root[data-theme="dark"] .live-edit-pill {
   color: #b8b8b8;
+  background: #181818;
   border-color: #2e2e2e;
 }
 
@@ -128,6 +130,7 @@ function toggle() {
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .live-edit-pill {
     color: #b8b8b8;
+    background: #181818;
     border-color: #2e2e2e;
   }
 

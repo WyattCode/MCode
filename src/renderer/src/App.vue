@@ -4482,14 +4482,29 @@ onBeforeUnmount(() => {
   inset-inline-end: v-bind(infoInset);
 }
 
+/* MiMo's card: its page ground (#fffefd, #181818 dark below) under the composer's shadow, not the dialog lift. */
 .drop-card {
   padding: 10px 18px;
   color: #ff6a2b;
-  background: var(--surface-base);
+  background: #fffefd;
   border-radius: 12px;
-  box-shadow: var(--shadow-md);
+  box-shadow:
+    0 1px 2px #0000000d,
+    0 6px 18px #0000001b;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
+}
+
+:root[data-theme="dark"] .drop-card {
+  background: #181818;
+  box-shadow: 0 1px 3px #0006;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .drop-card {
+    background: #181818;
+    box-shadow: 0 1px 3px #0006;
+  }
 }
 
 /*
