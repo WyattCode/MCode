@@ -4408,6 +4408,11 @@ h3 {
  * page colour, then 4px of the selection mark - so the mark reads as a gap and
  * a ring rather than a thicker border.
  */
+/*
+ * The thumb is the artwork itself, drawn or rasterised, so the size lives here
+ * rather than on a wrapper: a rule for the image inside would have to outrank
+ * this one, and did - the classic icon's PNG filled its whole grid cell.
+ */
 .tile-art {
   display: block;
   box-sizing: border-box;
@@ -4416,16 +4421,15 @@ h3 {
   overflow: hidden;
   border-radius: 14px;
   box-shadow: inset 0 0 0 1px #00000014;
+  object-fit: cover;
   line-height: 0;
   transition: box-shadow 0.12s ease;
 }
 
-.tile-art :deep(svg),
-img.tile-art {
+.tile-art :deep(svg) {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
 }
 
 .tile:hover .tile-art {
