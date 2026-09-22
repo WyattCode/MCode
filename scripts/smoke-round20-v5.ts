@@ -118,4 +118,18 @@ export async function roundTwentyVisualFiveChecks(check: Check, section: (name: 
     }
     check("its cell stays 46: 15 either side", /\.row\.project > \.project-toggle > \.row-ico \{\s*margin-inline: 15px;/.test(style))
   }
+
+  // ------------------------------------------------------------------ R20-V5-6
+  section("Round 20 (V5-6): the list has MiMo's edge lines, each shown only while rows hide past it")
+  {
+    const script = side.slice(0, side.indexOf("<template>"))
+    const lists = rule(style, ".lists")
+    check("MiMo's box: 18 down, 8 to 2 across with 6 kept clear, 8 of room below", /margin-block-start: 18px;/.test(lists) && /margin-inline: 8px 2px;/.test(lists) && /padding-inline-end: 6px;/.test(lists) && /padding-block-end: 8px;/.test(lists), lists)
+    check("two 1px hairlines, clear by default", /border-block: 1px solid transparent;/.test(lists))
+    check("line-soft where rows hide past them: #0000000d light, #ffffff12 dark", /\.lists:not\(\.at-top\) \{\s*border-block-start-color: #0000000d;/.test(style) && /\.lists:not\(\.at-end\) \{\s*border-block-end-color: #0000000d;/.test(style) && /:root\[data-theme="dark"\] \.lists:not\(\.at-top\) \{\s*border-block-start-color: #ffffff12;/.test(style) && /:root:not\(\[data-theme="light"\]\) \.lists:not\(\.at-end\) \{\s*border-block-end-color: #ffffff12;/.test(style))
+    check("the list's scroll decides them, as MiMo's does", /:class="\{ 'at-top': atTop, 'at-end': atEnd \}"/.test(template) && /@scroll="measureEdges"/.test(template) && /atTop\.value = root\.scrollTop <= 0/.test(script) && /atEnd\.value = root\.scrollTop \+ root\.clientHeight >= root\.scrollHeight - 1/.test(script))
+    check("and are measured again when the list resizes or re-renders", /new ResizeObserver\(measureEdges\)/.test(script) && /onUpdated\(measureEdges\)/.test(script) && /edgeWatch\?\.disconnect\(\)/.test(script))
+    check("the first heading keeps its place (17 + 18 + 1 = the old 36)", /\.lists > \.section:first-child,\n\.lists > \.folder-ring \+ \.section \{\s*margin-top: 17px;/.test(style))
+    check("a dropped folder's ring measures past the top hairline and keeps off the 6px end", /top - base\.top - root\.clientTop \+ root\.scrollTop/.test(script) && /\.folder-ring \{\s*position: absolute;\s*inset-inline: 0 6px;/.test(style))
+  }
 }

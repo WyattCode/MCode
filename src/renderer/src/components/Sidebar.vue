@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { SessionInfo } from "@shared/protocol"
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, onBeforeUnmount, onMounted, onUpdated, ref, watch } from "vue"
 import RowTitle from "./RowTitle.vue"
 import ChatLinkMark from "./ChatLinkMark.vue"
 import { convoCard } from "../lib/convo-card"
@@ -438,8 +438,34 @@ function ringProjects() {
   const base = root.getBoundingClientRect()
   const top = parts[0]!.getBoundingClientRect().top
   const bottom = Math.max(...parts.map((part) => part.getBoundingClientRect().bottom))
-  folderRing.value = { top: top - base.top + root.scrollTop, height: bottom - top }
+  folderRing.value = { top: top - base.top - root.clientTop + root.scrollTop, height: bottom - top }
 }
+
+/*
+ * MiMo 26.920's edge lines: a hairline above and below the list, each shown
+ * only while rows lie hidden past it - clear at the top until the list is
+ * scrolled, clear at the bottom once it is scrolled to the end or has nothing
+ * to scroll.
+ */
+const atTop = ref(true)
+const atEnd = ref(true)
+
+function measureEdges() {
+  const root = listsEl.value
+  if (!root) return
+  atTop.value = root.scrollTop <= 0
+  atEnd.value = root.scrollTop + root.clientHeight >= root.scrollHeight - 1
+}
+
+let edgeWatch: ResizeObserver | undefined
+onMounted(() => {
+  measureEdges()
+  if (!listsEl.value) return
+  edgeWatch = new ResizeObserver(measureEdges)
+  edgeWatch.observe(listsEl.value)
+})
+onUpdated(measureEdges)
+onBeforeUnmount(() => edgeWatch?.disconnect())
 
 function folderOver(event: DragEvent) {
   if (carried.value || !carriesFiles(event)) return
@@ -1192,7 +1218,16 @@ onBeforeUnmount(() => {
       </button>
     </nav>
 
-    <div ref="listsEl" class="lists" @dragover="folderOver" @dragleave="folderLeave" @drop="folderDrop">
+    <div
+      ref="listsEl"
+      class="lists"
+      :class="{ 'at-top': atTop, 'at-end': atEnd }"
+      data-sidebar-content
+      @scroll="measureEdges"
+      @dragover="folderOver"
+      @dragleave="folderLeave"
+      @drop="folderDrop"
+    >
       <div
         v-if="folderRing"
         class="folder-ring"
@@ -2096,14 +2131,51 @@ onBeforeUnmount(() => {
   line-height: calc(22px * var(--ui-font-scale, 1));
 }
 
+/*
+ * MiMo's list box: 18 below the destinations, from the column's 8px inset to 2
+ * short of its end, 6 of that kept clear at the end so the rows stay 16 in from
+ * both edges; 8 of room at the bottom. Its hairlines are line-soft, and each is
+ * clear while nothing is hidden past it.
+ */
 .lists {
   display: flex;
   flex: 1;
   flex-direction: column;
   gap: 2px;
   min-height: 0;
-  margin: 0 8px;
+  margin-block-start: 18px;
+  margin-inline: 8px 2px;
+  padding-block-end: 8px;
+  padding-inline-end: 6px;
   overflow-y: auto;
+  border-block: 1px solid transparent;
+  transition: border-color var(--motion-fast, 0.12s);
+}
+
+.lists:not(.at-top) {
+  border-block-start-color: #0000000d;
+}
+
+.lists:not(.at-end) {
+  border-block-end-color: #0000000d;
+}
+
+:root[data-theme="dark"] .lists:not(.at-top) {
+  border-block-start-color: #ffffff12;
+}
+
+:root[data-theme="dark"] .lists:not(.at-end) {
+  border-block-end-color: #ffffff12;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .lists:not(.at-top) {
+    border-block-start-color: #ffffff12;
+  }
+
+  :root:not([data-theme="light"]) .lists:not(.at-end) {
+    border-block-end-color: #ffffff12;
+  }
 }
 
 /* A list heading: 12/500 in the secondary colour, 9 in from the inset. */
@@ -2119,6 +2191,12 @@ onBeforeUnmount(() => {
 .section + .row,
 .section + .empty {
   margin-top: 6px;
+}
+
+/* The first heading keeps its place under the destinations: the list's own 18 and hairline stand in for the rest. */
+.lists > .section:first-child,
+.lists > .folder-ring + .section {
+  margin-top: 17px;
 }
 
 /*
@@ -2896,7 +2974,7 @@ button.section-head:focus-visible {
 
 .folder-ring {
   position: absolute;
-  inset-inline: 0;
+  inset-inline: 0 6px;
   z-index: 2;
   border-radius: 8px;
   /* MiMo's accent, orange in both themes. */
