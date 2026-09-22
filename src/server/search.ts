@@ -13,13 +13,17 @@ import { MESSAGE_SEARCH_CHARS, scoreMatch, snippetOf } from "../shared/search-sc
 
 /**
  * What a search reads of one message, as MiMo reads it: what was asked, or
- * what was answered with each step's output after it - not reasoning - joined
- * and cut at 20,000 characters.
+ * what was answered with each step's own line and its output after it - not
+ * reasoning - joined and cut at 20,000 characters.
+ *
+ * MiMo's reader takes `step.text` as well as `step.output`, so a conversation
+ * is found by what a step said it was doing ("读取 index.ts") and not only by
+ * what the tool printed. A tool part's `title` is that line here.
  */
 export function messageText(message: Message): string {
   if (message.role === "user") return message.text.slice(0, MESSAGE_SEARCH_CHARS)
   return message.parts
-    .flatMap((part) => (part.type === "text" ? [part.text] : part.type === "tool" && part.output ? [part.output] : []))
+    .flatMap((part) => (part.type === "text" ? [part.text] : part.type === "tool" ? [part.title, part.output] : []))
     .filter(Boolean)
     .join("  ")
     .slice(0, MESSAGE_SEARCH_CHARS)

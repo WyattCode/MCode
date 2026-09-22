@@ -113,4 +113,35 @@ export async function roundTwentyOneLaneFourChecks(check: Check, section: (name:
     check("the new-project dialog's labels, close and source hint are MiMo's muted grey", (dialog.match(/color: var\(--text-base\);/g) ?? []).length >= 3 && !/\.label \{[^}]*color: var\(--text-weak\)/.test(dialog), dialog.length)
     check("its dark name field keeps MCode's raised surface (recorded: MiMo's bg-white is white on dark)", /\.field \{[^}]*background: var\(--surface-raised\)/.test(dialog))
   }
+
+  // ------------------------------------------------------------------ R21-F4-4
+  section("Round 21 (F4-4): the search overlay's colours, its magnifier and what its rows say")
+  {
+    const overlay = parts("SearchOverlay.vue")(code(await read("src/renderer/src/components/SearchOverlay.vue")))
+    // Item 15: five greys were on --text-weaker, which is a background token here, and the snippet was a step too light.
+    check("no part of the overlay paints text in --text-weaker, which is a background colour", !/--text-weaker/.test(overlay.style), overlay.style.match(/.*--text-weaker.*/)?.[0])
+    check("the field's glyph, its placeholder, the headings and the empty line are MiMo's --color-dim", /\.search-bar \.i \{[^}]*color: var\(--text-weak\)/.test(overlay.style) && /::placeholder \{\s*\n\s*color: var\(--text-weak\)/.test(overlay.style) && /\.sr-head \{[^}]*color: var\(--text-weak\)/.test(overlay.style) && /\.sr-empty \{[^}]*color: var\(--text-weak\)/.test(overlay.style))
+    check("the owner and the snippet are its --color-mut, a step darker", /\.sr-owner \{[^}]*color: var\(--text-base\)/.test(overlay.style) && /\.sr-snippet \{[^}]*color: var\(--text-base\)/.test(overlay.style))
+    // Item 18: MiMo's magnifier is the 24-grid one the side column already carries.
+    const glyph = element(overlay.template, '<svg class="i"', "svg")
+    check("the magnifier is MiMo's 24-grid circle and handle, not a 16-grid outline", glyph.includes('viewBox="0 0 24 24"') && /<circle cx="11" cy="11" r="7"/.test(glyph) && /d="m21 21-4\.3-4\.3"/.test(glyph), glyph)
+    check("drawn on a 1.7 stroke with round ends, as MiMo's .i is", /stroke-width: 1\.7/.test(overlay.style) && /stroke-linejoin: round/.test(overlay.style))
+    // Item 19: one delete colour, both schemes.
+    check("a failed search is MiMo's --color-del in both schemes", /\.sr-artifact-error \{[^}]*color: #e5484d/.test(overlay.style) && !/#d92e3c/.test(overlay.style) && !/\.sr-artifact-error \{\s*\n\s*color: #f17471/.test(overlay.style))
+    // Item 22: MiMo's page ground under the card, and its exact scrim.
+    check("the card is MiMo's --color-bg rather than the raised surface", /\.search-card \{[^}]*background: #fffefd/.test(overlay.style) && /:root\[data-theme="dark"\] \.search-card[\s\S]{0,80}background: #181818/.test(overlay.style))
+    check("and the scrim is its own #00000057", /background: #00000057/.test(overlay.style))
+    // Item 21: MiMo closes on the click.
+    check("the overlay closes on the click, as MiMo's does, not on the press", /@click\.self="close"/.test(overlay.template) && !/@mousedown\.self/.test(overlay.template))
+    // Item 20: a title match opens the conversation, it does not jump into it.
+    check("only a conversation found by what was said opens at that message", /messageID: titled \? undefined : hit\?\.messageID/.test(overlay.all))
+    // Item 17: projects come from the app's own list.
+    check("projects are searched from app.projects, so one with no conversation is still found", /for \(const directory of app\.projects\)/.test(overlay.all) && !/latest\.set\(group/.test(overlay.all))
+    check("and they carry MiMo's time of 0", (overlay.all.match(/kind: "project"[^\n]*time: 0 \}/g) ?? []).length === 2)
+    // Item 16: the right of a file row is its type, not the conversation.
+    check("a file row says its type badge, as MiMo's does, not the conversation's title", /meta: t\(badgeOf\(name\)\.key\)/.test(overlay.all) && /import \{ badgeOf \}/.test(overlay.all))
+    // Item 23: the indexed body takes each step's own line, as MiMo's reader does.
+    const search = code(await read("src/server/search.ts"))
+    check("a search reads each step's line as well as its output", /part\.type === "tool" \? \[part\.title, part\.output\]/.test(search), search.slice(search.indexOf("flatMap"), search.indexOf("flatMap") + 160))
+  }
 }
