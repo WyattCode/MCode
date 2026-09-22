@@ -1537,66 +1537,58 @@ onBeforeUnmount(() => {
           <div v-show="navShows('general') || navShows('usage') || navShows('appearance') || navShows('files') || navShows('models') || navShows('personal') || navShows('keys')" class="nav-group">{{ t("set.group.personal") }}</div>
 
           <button v-show="navShows('general')" class="nav-item" :class="{ on: section === 'general' }" @click="section = 'general'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path
-                d="M3.625 6.25H10.9375M16.375 13.75H10.5625M3.625 13.75H4.9375M11.125 6.25C11.125 4.79969 12.2997 3.625 13.75 3.625C15.2003 3.625 16.375 4.79969 16.375 6.25C16.375 7.70031 15.2003 8.875 13.75 8.875C12.2997 8.875 11.125 7.70031 11.125 6.25ZM10.375 13.75C10.375 15.2003 9.20031 16.375 7.75 16.375C6.29969 16.375 5.125 15.2003 5.125 13.75C5.125 12.2997 6.29969 11.125 7.75 11.125C9.20031 11.125 10.375 12.2997 10.375 13.75Z"
-                stroke="currentColor"
-                stroke-linecap="square"
-              />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path d="M3.6 5.55h12.8a.7.7 0 0 1 0 1.4H3.6a.7.7 0 0 1 0-1.4Z" />
+              <path d="M3.6 13.05h12.8a.7.7 0 0 1 0 1.4H3.6a.7.7 0 0 1 0-1.4Z" />
+              <path d="M13.75 3.65a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2Z" />
+              <path d="M7.75 11.15a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2Z" />
             </svg>
             {{ t("set.nav.general") }}
           </button>
 
           <button v-show="navShows('usage')" class="nav-item" :class="{ on: section === 'usage' }" @click="section = 'usage'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path d="M4 16V9M8 16V5M12 16v-4M16 16v-8" stroke="currentColor" stroke-linecap="round" />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <rect x="2.7" y="9" width="2.6" height="7.3" rx="1.1" />
+              <rect x="6.8" y="5" width="2.6" height="11.3" rx="1.1" />
+              <rect x="10.9" y="11.4" width="2.6" height="4.9" rx="1.1" />
+              <rect x="15" y="7.3" width="2.6" height="9" rx="1.1" />
             </svg>
             <span>{{ t("set.nav.usage") }}</span>
           </button>
 
           <button v-show="navShows('appearance')" class="nav-item" :class="{ on: section === 'appearance' }" @click="section = 'appearance'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <circle cx="10" cy="10" r="6.5" stroke="currentColor" />
-              <path d="M10 3.5a6.5 6.5 0 0 1 0 13z" fill="currentColor" />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" aria-hidden="true">
+              <path d="M10 2.6a7.4 7.4 0 1 1 0 14.8 7.4 7.4 0 0 1 0-14.8ZM10 4.2a5.8 5.8 0 0 0 0 11.6Z" />
             </svg>
             <span>{{ t("set.appearance") }}</span>
           </button>
 
           <button v-show="navShows('files')" class="nav-item" :class="{ on: section === 'files' }" @click="section = 'files'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path d="M5 3.5h6l4 4V16.5H5z" stroke="currentColor" stroke-linejoin="round" />
-              <path d="M11 3.5v4h4" stroke="currentColor" stroke-linejoin="round" />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" aria-hidden="true">
+              <path d="M5.4 2.6h5.4l4.4 4.4v9.8a.6.6 0 0 1-.6.6H5.4a.6.6 0 0 1-.6-.6V3.2a.6.6 0 0 1 .6-.6ZM11 4.1v3.2h3.2L11 4.1Z" />
             </svg>
             <span>{{ t("set.nav.files") }}</span>
           </button>
 
           <button v-show="navShows('models')" class="nav-item" :class="{ on: section === 'models' }" @click="section = 'models'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path
-                fill-rule="evenodd"
-                clip-rule="evenodd"
-                d="M17.5 10C12.2917 10 10 12.2917 10 17.5C10 12.2917 7.70833 10 2.5 10C7.70833 10 10 7.70833 10 2.5C10 7.70833 12.2917 10 17.5 10Z"
-                stroke="currentColor"
-              />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path d="M17.5 10C12.2917 10 10 12.2917 10 17.5 10 12.2917 7.70833 10 2.5 10 7.70833 10 10 7.70833 10 2.5c0 5.20833 2.2917 7.5 7.5 7.5Z" />
             </svg>
             {{ t("set.models") }}
           </button>
 
           <button v-show="navShows('personal')" class="nav-item" :class="{ on: section === 'personal' }" @click="section = 'personal'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <circle cx="10" cy="7" r="3" stroke="currentColor" />
-              <path d="M4.5 16c0-2.5 2.5-4 5.5-4s5.5 1.5 5.5 4" stroke="currentColor" stroke-linecap="round" />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path d="M10 3.4a3.2 3.2 0 1 1 0 6.4 3.2 3.2 0 0 1 0-6.4Z" />
+              <path d="M10 11.2c3.2 0 5.8 1.9 5.8 4.8a.6.6 0 0 1-.6.6H4.8a.6.6 0 0 1-.6-.6c0-2.9 2.6-4.8 5.8-4.8Z" />
             </svg>
             <span>{{ t("set.personal") }}</span>
           </button>
 
           <button v-show="navShows('keys')" class="nav-item" :class="{ on: section === 'keys' }" @click="section = 'keys'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path
-                d="M5.125 7.375V4.375H14.875V2.875M8.3125 13.9375H11.6875M8.125 13.9375H11.875M2.125 7.375H17.875V17.125H2.125V7.375ZM5.5 10.375H5.125V10.75H5.5V10.375ZM8.5 10.375H8.125V10.75H8.5V10.375ZM11.875 10.375H11.5V10.75H11.875V10.375ZM14.875 10.375H14.5V10.75H14.875V10.375ZM14.875 13.75H14.5V14.125H14.875V13.75ZM5.5 13.75H5.125V14.125H5.5V13.75Z"
-                stroke="currentColor"
-                stroke-linecap="square"
-              />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" aria-hidden="true">
+              <path d="M2.4 5.3h15.2a1 1 0 0 1 1 1v7.9a1 1 0 0 1-1 1H2.4a1 1 0 0 1-1-1V6.3a1 1 0 0 1 1-1Z" />
+              <path d="M3.7 7.4h1.7v1.7H3.7ZM6.9 7.4h1.7v1.7H6.9ZM10.1 7.4h1.7v1.7h-1.7ZM13.3 7.4h1.7v1.7h-1.7ZM16.5 7.4h-.8v1.7h.8ZM5.6 11.1h8.8v1.7H5.6Z" />
             </svg>
             {{ t("set.shortcuts") }}
           </button>
@@ -1604,13 +1596,10 @@ onBeforeUnmount(() => {
           <div v-show="navShows('mcp')" class="nav-group">{{ t("set.group.integrations") }}</div>
 
           <button v-show="navShows('mcp')" class="nav-item" :class="{ on: section === 'mcp' }" @click="section = 'mcp'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path
-                d="M7.5 2.5v3.5M12.5 2.5v3.5M5.5 6h9v3.5a4.5 4.5 0 0 1-9 0V6ZM10 14v3.5"
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path d="M6.75 2.7a.75.75 0 0 1 .75.75V6h-1.5V3.45a.75.75 0 0 1 .75-.75Z" />
+              <path d="M13.25 2.7a.75.75 0 0 1 .75.75V6h-1.5V3.45a.75.75 0 0 1 .75-.75Z" />
+              <path d="M5.2 7.1h9.6v2.8a4.85 4.85 0 0 1-4.05 4.78v2.62h-1.5v-2.62A4.85 4.85 0 0 1 5.2 9.9V7.1Z" />
             </svg>
             <span>{{ t("set.nav.mcp") }}</span>
           </button>
@@ -1618,11 +1607,12 @@ onBeforeUnmount(() => {
           <div v-show="navShows('environment')" class="nav-group">{{ t("set.group.coding") }}</div>
 
           <button v-show="navShows('environment')" class="nav-item" :class="{ on: section === 'environment' }" @click="section = 'environment'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path d="M6.5 4v6.5a2 2 0 0 0 2 2H14" stroke="currentColor" stroke-linecap="round" />
-              <circle cx="6.5" cy="3.6" r="1.6" stroke="currentColor" />
-              <circle cx="15.4" cy="12.5" r="1.6" stroke="currentColor" />
-              <circle cx="6.5" cy="15.4" r="1.6" stroke="currentColor" />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path d="M5.85 3.6h1.3v12.8h-1.3Z" />
+              <path d="M6.5 9.35h7.4v1.3H6.5Z" />
+              <path d="M6.5 1.4a2.2 2.2 0 1 1 0 4.4 2.2 2.2 0 0 1 0-4.4Z" />
+              <path d="M6.5 13.2a2.2 2.2 0 1 1 0 4.4 2.2 2.2 0 0 1 0-4.4Z" />
+              <path d="M15 7.8a2.2 2.2 0 1 1 0 4.4 2.2 2.2 0 0 1 0-4.4Z" />
             </svg>
             <span>{{ t("set.environment") }}</span>
           </button>
@@ -1631,9 +1621,8 @@ onBeforeUnmount(() => {
           <div v-show="navShows('lab')" class="nav-group">{{ t("set.group.lab") }}</div>
 
           <button v-show="navShows('lab')" class="nav-item" :class="{ on: section === 'lab' }" data-nav-lab @click="section = 'lab'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path d="M8 3h4M8.5 3v5L4 15.5a1 1 0 0 0 .9 1.5h10.2a1 1 0 0 0 .9-1.5L11.5 8V3" stroke="currentColor" stroke-linejoin="round" />
-              <path d="M6 12.5h8" stroke="currentColor" />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path d="M7.4 2.6h5.2v1.5h-1v4.2l4.3 7.4c.41.7-.1 1.6-.91 1.6H5.01c-.81 0-1.32-.9-.91-1.6l4.3-7.4V4.1h-1V2.6Z" />
             </svg>
             <span>{{ t("set.nav.lab") }}</span>
           </button>
@@ -1641,11 +1630,9 @@ onBeforeUnmount(() => {
           <div v-show="navShows('archive')" class="nav-group">{{ t("set.group.archived") }}</div>
 
           <button v-show="navShows('archive')" class="nav-item" :class="{ on: section === 'archive' }" @click="section = 'archive'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path
-                d="M16.8747 6.24935H17.3747V5.74935H16.8747V6.24935ZM16.8747 16.8743V17.3743H17.3747V16.8743H16.8747ZM3.12467 16.8743H2.62467V17.3743H3.12467V16.8743ZM3.12467 6.24935V5.74935H2.62467V6.24935H3.12467ZM2.08301 2.91602V2.41602H1.58301V2.91602H2.08301ZM17.9163 2.91602H18.4163V2.41602H17.9163V2.91602ZM17.9163 6.24935V6.74935H18.4163V6.24935H17.9163ZM2.08301 6.24935H1.58301V6.74935H2.08301V6.24935ZM8.33301 9.08268H7.83301V10.0827H8.33301V9.58268V9.08268ZM11.6663 10.0827H12.1663V9.08268H11.6663V9.58268V10.0827ZM16.8747 6.24935H16.3747V16.8743H16.8747H17.3747V6.24935H16.8747ZM16.8747 16.8743V16.3743H3.12467V16.8743V17.3743H16.8747V16.8743ZM3.12467 16.8743H3.62467V6.24935H3.12467H2.62467V16.8743H3.12467ZM3.12467 6.24935V6.74935H16.8747V6.24935V5.74935H3.12467V6.24935ZM2.08301 2.91602V3.41602H17.9163V2.91602V2.41602H2.08301V2.91602ZM17.9163 2.91602H17.4163V6.24935H17.9163H18.4163V2.91602H17.9163ZM17.9163 6.24935V5.74935H2.08301V6.24935V6.74935H17.9163V6.24935ZM2.08301 6.24935H2.58301V2.91602H2.08301H1.58301V6.24935H2.08301ZM8.33301 9.58268V10.0827H11.6663V9.58268V9.08268H8.33301V9.58268Z"
-                fill="currentColor"
-              />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" aria-hidden="true">
+              <path d="M2.4 2.6h15.2a.8.8 0 0 1 .8.8v2.1a.8.8 0 0 1-.8.8H2.4a.8.8 0 0 1-.8-.8V3.4a.8.8 0 0 1 .8-.8Z" />
+              <path d="M3.1 7.4h13.8v9.3a.7.7 0 0 1-.7.7H3.8a.7.7 0 0 1-.7-.7V7.4ZM8.2 9.4h3.6v1.5H8.2Z" />
             </svg>
             {{ t("set.nav.archive") }}
           </button>
@@ -1653,9 +1640,9 @@ onBeforeUnmount(() => {
           <div v-show="navShows('updates')" class="nav-group">{{ t("set.groupAbout") }}</div>
 
           <button v-show="navShows('updates')" class="nav-item" :class="{ on: section === 'updates' }" @click="section = 'updates'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path d="M10 4v8M10 4 6.8 7.2M10 4l3.2 3.2" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M4.5 13.5v2h11v-2" stroke="currentColor" stroke-linecap="round" />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path d="M10 3.1 14.5 7.6h-3.1v4.9H8.6V7.6H5.5L10 3.1Z" />
+              <path d="M4 13.4h1.5v1.6h9V13.4H16v2.4a.7.7 0 0 1-.7.7H4.7a.7.7 0 0 1-.7-.7v-2.4Z" />
             </svg>
             <span>{{ t("set.nav.updates") }}</span>
           </button>
@@ -4786,7 +4773,12 @@ img.tile-art {
   overflow-wrap: anywhere;
 }
 
-/* MiMo's nav icons are 17 square in the label's own strong colour, on every row. */
+/*
+ * MiMo's nav icons are 17 square in the label's own colour, and every one of
+ * them is a solid glyph (its .i.filled): the column reads as a block of marks
+ * rather than a column of wire drawings. MCode's are redrawn on its own grid
+ * to the same weight.
+ */
 .nav-ico {
   width: 17px;
   height: 17px;
@@ -4849,6 +4841,22 @@ h2 {
   font-size: calc(24px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: calc(38.4px * var(--ui-font-scale, 1));
+}
+
+/*
+ * MiMo draws a page title in --color-hero-title-fg, which is txt-strong in
+ * light and the softer --color-txt in dark - a 24px heading in pure white is
+ * heavier than anything else on the page. Written out until lane F1's ink
+ * token lands.
+ */
+:root[data-theme="dark"] h2 {
+  color: #f4f4f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) h2 {
+    color: #f4f4f5;
+  }
 }
 
 h3 {

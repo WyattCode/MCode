@@ -404,6 +404,17 @@ h2 {
   line-height: calc(38.4px * var(--ui-font-scale, 1));
 }
 
+/* The page title takes MiMo's softer ink in dark, as every other page's does. */
+:root[data-theme="dark"] h2 {
+  color: #f4f4f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) h2 {
+    color: #f4f4f5;
+  }
+}
+
 .note {
   margin: 2px 0 4px;
   color: var(--text-base);
