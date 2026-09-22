@@ -65,4 +65,27 @@ export async function roundTwentyVisualFiveChecks(check: Check, section: (name: 
     check("the lit bell outranks the dark icon colour from its new place", /:root \.brand-actions \.ico\.bell\.on \{\s*color: var\(--text-accent\);/.test(style))
     check("the preview no longer pushes a row of search and bell to the end", !/\.side-shell\.preview \.top \{[^}]*justify-content: flex-end/.test(style))
   }
+
+  // ------------------------------------------------------------------ R20-V5-2
+  section("Round 20 (V5-2): the bottom is one MiMo-shaped row, the theme row gone")
+  {
+    const foot = element(template, '<div class="foot">', "div")
+    const script = side.slice(0, side.indexOf("<template>"))
+    check("one row, then the update capsule beside it", (foot.match(/<button\b/g) ?? []).length === 1 && /data-account-menu/.test(foot) && /<\/button>\s*<UpdatePill \/>\s*<\/div>$/.test(foot), foot.length)
+    check("the row is a 46px cell with a 28px avatar, then the label", /<span class="account-cell">\s*<span class="avatar" aria-hidden="true">\s*<svg width="15" height="15"/.test(foot) && /<span class="account-label">\{\{ t\("side\.thisDevice"\) \}\}<\/span>/.test(foot))
+    check("the row itself opens the menu, as a menu", /class="account"\s*data-account-menu\s*:aria-expanded="Boolean\(footMenu\)"\s*aria-haspopup="menu"\s*@click="openFootMenu"/.test(foot))
+    check("the 深色 / theme-cycle row and its code are gone", !/cycleTheme|themeLabel|SCHEMES|class="row theme"/.test(side))
+    check("the menu keeps what MCode can honour: 设置 with its shortcut, MiMo's 248 wide", /key: "settings",[\s\S]{0,80}hint: "Ctrl\+,"/.test(script) && /:items="footMenuItems"\s*above\s*:min-width="248"/.test(template))
+    const foot$ = rule(style, ".foot")
+    check("MiMo's side-bottom: a flex row 8 apart, 10 above and below", /display: flex;/.test(foot$) && /gap: 8px;/.test(foot$) && /margin: 10px 8px;/.test(foot$), foot$)
+    const row = rule(style, ".account")
+    check("the row: 38 tall, 8 round, 14px regular, growing to fill", /height: 38px;/.test(row) && /border-radius: 8px;/.test(row) && /font-size: calc\(14px \* var\(--ui-font-scale, 1\)\);/.test(row) && /font-weight: 400;/.test(row) && /flex: 1;/.test(row), row)
+    check("its cell 46 by 38, its label on a 20px line", /width: 46px;/.test(rule(style, ".account-cell")) && /height: 38px;/.test(rule(style, ".account-cell")) && /line-height: calc\(20px \* var\(--ui-font-scale, 1\)\);/.test(rule(style, ".account-label")))
+    const avatar = rule(style, ".avatar")
+    check("the avatar 28 round on MiMo's input-border line, in both schemes", /width: 28px;/.test(avatar) && /height: 28px;/.test(avatar) && /border: 1px solid #151c130f;/.test(avatar) && /border-radius: 50%;/.test(avatar) && /:root\[data-theme="dark"\] \.avatar \{\s*border-color: #2e2e2e;/.test(style), avatar)
+    const pill = code(await read("src/renderer/src/components/UpdatePill.vue"))
+    check("the capsule carries no box of its own beside the row", /\.update-pill-row \{\s*display: flex;\s*flex: none;\s*\}/.test(pill))
+    const i18n = await read("src/renderer/src/lib/i18n.ts")
+    check("side.thisDevice is in all 18 tables, 本机 in zh-CN", i18n.split("\n").filter((line) => line.startsWith('  "side.thisDevice": ')).length === 18 && i18n.includes('"side.thisDevice": "本机"'))
+  }
 }

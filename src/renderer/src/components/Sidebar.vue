@@ -822,10 +822,10 @@ function pickPriorityMenu(key: string) {
 }
 
 /*
- * The footer's menu, where MiMo keeps its account menu: settings. MiMo 26.920
- * dropped the quit row that stood below it (the menu bar and the tray still
- * quit), and MCode has no account, so the profile, usage and sign-out rows
- * have nothing to stand for.
+ * The bottom row's menu, where MiMo keeps its account menu: settings, with its
+ * shortcut. MCode has no account, so MiMo's account card, profile, usage and
+ * sign-out rows have nothing to stand for; MiMo 26.920 has no quit row here
+ * either (the menu bar and the tray quit).
  */
 const footMenu = ref<{ x: number; y: number }>()
 
@@ -847,30 +847,6 @@ function openFootMenu(event: MouseEvent) {
 function pickFootMenu(key: string) {
   footMenu.value = undefined
   if (key === "settings") emit("settings")
-}
-
-/*
- * The three answers, in the order the button walks them. "Follow the machine"
- * leads because it is the default, and a reader who presses once is most
- * likely trying to pin down what the machine is currently doing.
- */
-const SCHEMES = ["system", "light", "dark"] as const
-
-const scheme = computed(() => app.config?.theme ?? "system")
-
-const themeLabel = computed(() =>
-  t(
-    scheme.value === "light"
-      ? "set.themeLight"
-      : scheme.value === "dark"
-        ? "set.themeDark"
-        : "set.themeSystem",
-  ),
-)
-
-function cycleTheme() {
-  const next = SCHEMES[(SCHEMES.indexOf(scheme.value) + 1) % SCHEMES.length]
-  app.patchConfig({ theme: next })
 }
 
 const PROJECTS_OPEN_KEY = "mcode.projectsOpen"
@@ -1733,58 +1709,28 @@ onBeforeUnmount(() => {
 
     <div class="foot">
       <!--
-        The scheme, one press away. It is in the appearance settings too - this
-        is the same choice, not a second one, and it shows which of the three
-        answers is in force rather than only offering to change it.
+        MiMo 26.920's account row: a 46px cell holding a 28px round avatar, then
+        the name. MCode signs nobody in, so the row names this machine and opens
+        the menu of what it can honour.
       -->
       <button
-        class="row theme"
-        :aria-label="themeLabel"
-        v-tip="{ label: themeLabel, placement: 'top' }"
-        @click="cycleTheme"
-      >
-        <span class="avatar" aria-hidden="true">
-          <!-- Follow the machine: half lit, half not. -->
-          <svg v-if="scheme === 'system'" width="16" height="16" viewBox="0 0 20 20" fill="none">
-            <circle cx="10" cy="10" r="6" stroke="currentColor" />
-            <path d="M10 4a6 6 0 0 0 0 12z" fill="currentColor" />
-          </svg>
-          <!-- Light: the sun. -->
-          <svg v-else-if="scheme === 'light'" width="16" height="16" viewBox="0 0 20 20" fill="none">
-            <circle cx="10" cy="10" r="3.4" stroke="currentColor" />
-            <path
-              d="M10 3v2M10 15v2M3 10h2M15 10h2M5.05 5.05l1.4 1.4M13.55 13.55l1.4 1.4M5.05 14.95l1.4-1.4M13.55 6.45l1.4-1.4"
-              stroke="currentColor"
-              stroke-linecap="round"
-            />
-          </svg>
-          <!-- Dark: the moon. -->
-          <svg v-else width="16" height="16" viewBox="0 0 20 20" fill="none">
-            <path
-              d="M15.5 12.2A6.3 6.3 0 0 1 7.8 4.5a6.3 6.3 0 1 0 7.7 7.7z"
-              stroke="currentColor"
-              stroke-linejoin="round"
-            />
-          </svg>
-        </span>
-        <span class="row-label plain">{{ themeLabel }}</span>
-      </button>
-
-      <button
-        class="row foot-menu"
+        class="account"
+        data-account-menu
         :aria-expanded="Boolean(footMenu)"
         aria-haspopup="menu"
         @click="openFootMenu"
       >
-        <span class="avatar" aria-hidden="true">
-          <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
-            <circle cx="10" cy="10" r="2.5" stroke="currentColor" />
-            <path d="M10 3.5V5.5M10 14.5V16.5M3.5 10H5.5M14.5 10H16.5M5.4 5.4L6.8 6.8M13.2 13.2L14.6 14.6M5.4 14.6L6.8 13.2M13.2 6.8L14.6 5.4" stroke="currentColor" stroke-linecap="square" />
-          </svg>
+        <span class="account-cell">
+          <span class="avatar" aria-hidden="true">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4.5" width="18" height="12" rx="2" />
+              <path d="M8.5 20h7M12 16.5V20" />
+            </svg>
+          </span>
         </span>
-        <span class="row-label plain">{{ t("rail.settings") }}</span>
+        <span class="account-label">{{ t("side.thisDevice") }}</span>
       </button>
-      <!-- MiMo's update capsule, after the footer menu. -->
+      <!-- MiMo's update capsule, beside the row. -->
       <UpdatePill />
     </div>
     </div>
@@ -1794,6 +1740,7 @@ onBeforeUnmount(() => {
       :y="footMenu.y"
       :items="footMenuItems"
       above
+      :min-width="248"
       @pick="pickFootMenu"
       @close="footMenu = undefined"
     />
@@ -2442,10 +2389,52 @@ button.section-head:focus-visible {
   opacity: 1;
 }
 
-/* The foot row sits 10 above the window's bottom edge. */
+/*
+ * MiMo's side-bottom: 4 above, then its row 6 lower, beside the update capsule
+ * 8 away, all 10 above the window's bottom edge.
+ */
 .foot {
+  display: flex;
   flex-shrink: 0;
-  margin: 8px 8px 10px;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 8px;
+}
+
+/* The row: 38 tall, 8 round, 14px regular in the strongest text. */
+.account {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  height: 38px;
+  color: var(--text-strong);
+  border-radius: 8px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  text-align: start;
+  transition: background var(--motion-fast, 0.12s);
+}
+
+.account:hover {
+  background: var(--surface-hover);
+}
+
+.account-cell {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 46px;
+  height: 38px;
+}
+
+.account-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  line-height: calc(20px * var(--ui-font-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /*
@@ -2474,16 +2463,26 @@ button.section-head:focus-visible {
   inset-inline-start: 18px;
 }
 
+/* MiMo's avatar: 28 round on its input-border line, the glyph 15px. */
 .avatar {
   display: grid;
-  flex-shrink: 0;
+  box-sizing: border-box;
   place-items: center;
-  width: 26px;
-  height: 26px;
-  margin-inline-start: -4px;
-  color: var(--text-base);
-  background: var(--surface-layer);
+  width: 28px;
+  height: 28px;
+  overflow: hidden;
+  border: 1px solid #151c130f;
   border-radius: 50%;
+}
+
+:root[data-theme="dark"] .avatar {
+  border-color: #2e2e2e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .avatar {
+    border-color: #2e2e2e;
+  }
 }
 
 /*

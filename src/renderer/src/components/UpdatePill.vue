@@ -240,11 +240,10 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* Beside the side column's bottom row, as MiMo sets its capsule: no box of its own. */
 .update-pill-row {
   display: flex;
-  justify-content: flex-end;
-  padding-inline: 8px;
-  margin-block-start: 6px;
+  flex: none;
 }
 
 /* MiMo's capsule: 24 tall, 6 round, 12px on 8px of side padding. */
