@@ -7304,9 +7304,10 @@ async function roundSixVisualChecks() {
     panel.includes("border-radius: 12px") && panel.includes("border: 1px solid var(--border-weak)") && panel.includes("min-width: 200px") && panel.includes("--pad: 5px"),
     panel,
   )
+  // R21-F1: .18s is MiMo's --motion-base, which this window now has a name for.
   check(
     "the menu pops open over .18s",
-    panel.includes("animation: menu-pop 0.18s cubic-bezier(0.16, 1, 0.3, 1)") && menu.includes("@keyframes menu-pop"),
+    panel.includes("animation: menu-pop var(--motion-base) cubic-bezier(0.16, 1, 0.3, 1)") && menu.includes("@keyframes menu-pop"),
     "",
   )
   const row = rule(menu, ".item")
