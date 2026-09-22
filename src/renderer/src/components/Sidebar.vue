@@ -2159,6 +2159,15 @@ onBeforeUnmount(() => {
   transition: border-color var(--motion-fast, 0.12s);
 }
 
+/*
+ * Every row keeps its height and the list scrolls: the compact rows set a
+ * min-height of 0, and as flex items they had been squeezed to fit instead,
+ * so a long list never scrolled and the lines below never showed.
+ */
+.lists > * {
+  flex-shrink: 0;
+}
+
 .lists:not(.at-top) {
   border-block-start-color: #0000000d;
 }
