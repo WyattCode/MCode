@@ -72,8 +72,9 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
   section("round 8 access: a keyboard focus ring (A1)")
   {
     const base = read("styles/base.css")
-    const ring = /:where\(([^)]*\([^)]*\))*[^)]*\):focus-visible \{\s*outline: 2px solid var\(--interactive\)/.exec(base)
-    check("controls reached by keyboard draw the accent ring", Boolean(ring))
+    // R21-F1: the ring is MiMo's --color-ring - the ink, white in dark - not the interactive blue.
+    const ring = /:where\(([^)]*\([^)]*\))*[^)]*\):focus-visible \{\s*outline: 2px solid var\(--ring\)/.exec(base)
+    check("controls reached by keyboard draw MiMo's ring, which is the ink", Boolean(ring))
     check("the ring covers buttons, tabs, switches and anything tabbable", Boolean(ring && ["button", '[role="tab"]', '[role="switch"]', "[tabindex]:not"].every((part) => ring[0].includes(part))))
     check("a text field is ringed only after a Tab press", /:root\[data-focus-key\] :is\([^{]*textarea[^{]*\):focus \{\s*outline: 2px/.test(base))
     const tracker = read("lib/focus-ring.ts")

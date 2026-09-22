@@ -613,15 +613,14 @@ onBeforeUnmount(() => {
   padding-inline-end: 16px;
 }
 
-/* The row that destroys something says so before it is pressed. */
+/*
+ * The row that destroys something says so before it is pressed: MiMo's
+ * `.auto-delete-menu-item { color: var(--color-del) !important }`, one red in
+ * both schemes. Its hover is the menu's own - MiMo lays no red wash under it.
+ */
 .item.danger,
-.item.danger .glyph,
-.item.danger:hover:not(:disabled) .glyph {
-  color: var(--error);
-}
-
-.item.danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--error) 12%, transparent);
+.item.danger .glyph {
+  color: var(--text-destructive);
 }
 
 /*

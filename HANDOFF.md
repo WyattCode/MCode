@@ -469,6 +469,14 @@
 
 ## 与 MiMo 故意不同的地方（用户定的，不要改回去）
 
+- 第二十一轮 F1 新增（MiMo 自己那一处 CSS 是坏的，MCode 保留能用的行为）：
+  - `--overlay-hover` 深色用 `#ffffff14`。MiMo 的 `.bp-tab-x:hover{background:#00000014}` 没有深色覆盖，深色下那层黑几乎看不见。
+  - **SelectMenu 的高亮行保持 side-hover，不采用品牌橙。** MiMo 裸 shadcn 的 `SelectItem` 是 `focus:bg-accent focus:text-accent-foreground`，而 `--color-accent` 是 `#ff6a2b`、前景是白字；但 MiMo 自己的设置页把它覆盖成了 `rounded-[8px] focus:bg-side-hover focus:text-txt`（`SettingsOverlay-*.js`，内容壳是 `Z0`+`menu-glass`+`p-[5px]`）。MCode 的 SelectMenu 复刻的正是设置页那一个，所以橙色高亮不进来。
+  - MiMo `[data-theme=dark]` 里 `--color-set-line` 仍是 `#f1f1f1c7`（深色下画浅色边）；MCode 不复制这条。
+  - shadcn `ghost` 变体的 hover 是 `bg-accent`（同样是橙）；MCode 的 ghost 不用它。
+  - MiMo 几乎不画焦点环，MCode 保留自己给键盘用户加的 `:focus-visible` 环（可达性），只把颜色从蓝色换成 MiMo 的 `--color-ring`（浅色 `#151c13`、深色 `#fff`）。
+  - 共用 `.btn` / `.field` 高度保持 28px：MiMo 自己的按钮尺寸是 26 / 30 / 36，但它的设置页用 `--settings-control-height: 28px` 压到 28，对话框里的控件行没有第四种尺寸。
+
 - 第十七轮新增：项目**内**的绝对路径打开时文件树停在项目根（项目外则与 MiMo 一样跳到文件所在文件夹，用户 2026-09-21）；审阅页只列项目子树，MiMo 列整个仓库再错解路径——MCode 这边是对的。
 
 - 第十六轮新增：内联交互组件的来源大小上限 512KB（MiMo 渲染层无上限）；内联组件由主进程在独立来源上提供并下发策略头（MiMo 直接内嵌，因其渲染层没有 CSP）；`metadata.filediff.patch` 存未裁剪补丁（撤销需要）；快捷键表里「切换编排模式」改为「切换目标模式」（该模式已删）。

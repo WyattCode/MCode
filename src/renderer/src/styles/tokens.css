@@ -117,6 +117,8 @@
   --text-body: #151c13cc;
   /* --color-err, the same red in both schemes, as every MiMo state colour is. */
   --text-critical: #d23f3f;
+  /* --color-del: the red of a row that destroys something. */
+  --text-destructive: #e5484d;
 
   /* MiMo's bare hover wash, for a control that sits on an unknown fill. */
   --overlay-hover: #00000014;
@@ -263,6 +265,8 @@
     --surface-glass: #161616b8;
     --text-body: #f4f4f5;
     --text-critical: #d23f3f;
+    /* --color-del: the red of a row that destroys something. */
+    --text-destructive: #e5484d;
     --overlay-hover: #ffffff14;
     --border-input: #2e2e2e;
     --border-button: #3a3a3a;
@@ -344,6 +348,8 @@
   --surface-glass: #161616b8;
   --text-body: #f4f4f5;
   --text-critical: #d23f3f;
+  /* --color-del: the red of a row that destroys something. */
+  --text-destructive: #e5484d;
   --overlay-hover: #ffffff14;
   --border-input: #2e2e2e;
   --border-button: #3a3a3a;
