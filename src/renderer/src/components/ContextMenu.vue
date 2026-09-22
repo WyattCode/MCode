@@ -53,10 +53,13 @@ const CLOSE_DELAY = 220
 let closeTimer: ReturnType<typeof setTimeout> | undefined
 
 onMounted(async () => {
-  // Measured rather than guessed: the width depends on the language.
+  // Measured rather than guessed: the width depends on the language. The
+  // layout size, not the drawn one: the opening animation starts the panel at
+  // 96%, which would leave a menu placed by its end or bottom short of its mark.
   await nextTick()
-  const rect = box.value?.getBoundingClientRect()
-  if (!rect) return
+  const panel = box.value
+  if (!panel) return
+  const rect = { width: panel.offsetWidth, height: panel.offsetHeight }
   const margin = 8
   if (props.above) at.value.y = Math.max(margin, props.y - rect.height)
   if (props.end) at.value.x = Math.max(margin, props.x - rect.width)

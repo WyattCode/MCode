@@ -853,7 +853,7 @@ function pickPriorityMenu(key: string) {
  * sign-out rows have nothing to stand for; MiMo 26.920 has no quit row here
  * either (the menu bar and the tray quit).
  */
-const footMenu = ref<{ x: number; y: number }>()
+const footMenu = ref<{ x: number; y: number; end: boolean }>()
 
 const footMenuItems = computed<MenuItem[]>(() => [
   {
@@ -864,10 +864,16 @@ const footMenuItems = computed<MenuItem[]>(() => [
   },
 ])
 
-/** Opens above the row, since the row sits at the bottom of the window: y is the menu's bottom edge. */
+/**
+ * Opens above the row, since the row sits at the bottom of the window: y is the
+ * menu's bottom edge. It lines up with the row's start, as MiMo's does - the
+ * right edge when the interface runs right to left.
+ */
 function openFootMenu(event: MouseEvent) {
-  const from = (event.currentTarget as HTMLElement).getBoundingClientRect()
-  footMenu.value = { x: Math.round(from.left), y: Math.round(from.top - 4) }
+  const row = event.currentTarget as HTMLElement
+  const from = row.getBoundingClientRect()
+  const end = getComputedStyle(row).direction === "rtl"
+  footMenu.value = { x: Math.round(end ? from.right : from.left), y: Math.round(from.top - 4), end }
 }
 
 function pickFootMenu(key: string) {
@@ -1797,6 +1803,7 @@ onBeforeUnmount(() => {
       :y="footMenu.y"
       :items="footMenuItems"
       above
+      :end="footMenu.end"
       :min-width="248"
       @pick="pickFootMenu"
       @close="footMenu = undefined"
