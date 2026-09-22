@@ -159,7 +159,8 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", outside, true)
   margin: 0;
   padding: 0;
   overflow-y: auto;
-  color: var(--text-strong);
+  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
+  color: #151c13cc;
   background: transparent;
   border: none;
   outline: none;
@@ -191,5 +192,16 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", outside, true)
   color: #3295fb;
   background: transparent;
   border: 1px solid var(--border-weak);
+}
+
+/* MiMo's --color-txt is #f4f4f5 in dark, not a translucent white. */
+:root[data-theme="dark"] .cell-affordance textarea {
+  color: #f4f4f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cell-affordance textarea {
+    color: #f4f4f5;
+  }
 }
 </style>

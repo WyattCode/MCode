@@ -317,7 +317,7 @@ defineExpose({
           @click="toggleAnnotate"
         >
           <span>{{ t("rp.browser.annotateLabel") }}</span>
-          <kbd class="rb-annotate-kbd">{{ ANNOTATE_COMBO }}</kbd>
+          <kbd class="rb-annotate-kbd">{{ shownChord(ANNOTATE_COMBO) }}</kbd>
         </button>
       </template>
       <button
@@ -334,8 +334,8 @@ defineExpose({
         </svg>
       </button>
       <div v-if="menuOpen" ref="menu" class="rb-menu" role="menu" data-rb-menu>
-        <button type="button" role="menuitem" class="rb-item" :disabled="!showingPage" @click="forceReload">{{ t("rp.browser.dotMenu.forceReload") }}</button>
-        <button type="button" role="menuitem" class="rb-item" data-rb-device-toolbar :disabled="!showingPage" @click="deviceToolbar">{{ t("rp.browser.dotMenu.deviceToolbar") }}</button>
+        <button type="button" role="menuitem" class="rb-item" :disabled="!showingPage" @click="forceReload"><span class="rb-item-name">{{ t("rp.browser.dotMenu.forceReload") }}</span></button>
+        <button type="button" role="menuitem" class="rb-item" data-rb-device-toolbar :disabled="!showingPage" @click="deviceToolbar"><span class="rb-item-name">{{ t("rp.browser.dotMenu.deviceToolbar") }}</span></button>
         <div class="rb-zoom" role="group" :aria-label="t('rp.browser.dotMenu.zoom')" data-rb-zoom>
           <span class="rb-zoom-label">{{ t("rp.browser.dotMenu.zoom") }}</span>
           <span class="rb-zoom-pill">
@@ -346,14 +346,14 @@ defineExpose({
           <button type="button" class="rb-zoom-reset" :disabled="!showingPage" :aria-label="t('key.zoomReset')" @click="act('zoomReset')">↻</button>
         </div>
         <div class="rb-rule" />
-        <button type="button" role="menuitem" class="rb-item danger" :disabled="!showingPage" @click="clearSite('cookies')">{{ t("rp.browser.dotMenu.clearCookies") }}</button>
-        <button type="button" role="menuitem" class="rb-item danger" :disabled="!showingPage" @click="clearSite('cache')">{{ t("rp.browser.dotMenu.clearCache") }}</button>
+        <button type="button" role="menuitem" class="rb-item danger" :disabled="!showingPage" @click="clearSite('cookies')"><span class="rb-item-name">{{ t("rp.browser.dotMenu.clearCookies") }}</span></button>
+        <button type="button" role="menuitem" class="rb-item danger" :disabled="!showingPage" @click="clearSite('cache')"><span class="rb-item-name">{{ t("rp.browser.dotMenu.clearCache") }}</span></button>
       </div>
     </div>
 
     <div v-show="showingPage || state.error" ref="stage" class="rb-frame">
       <div v-if="annotating && !state.error" class="rb-annotate-overlay" data-rb-annotate-overlay role="presentation">
-        <div class="rb-annotate-hint">{{ t("rp.browser.annotateHint", { combo: ANNOTATE_COMBO }) }}</div>
+        <div class="rb-annotate-hint">{{ t("rp.browser.annotateHint", { combo: shownChord(ANNOTATE_COMBO) }) }}</div>
       </div>
       <div v-if="state.error" class="rb-error" data-rb-error role="alert">
         <div class="rb-error-title">{{ t("rp.browser.error.title") }}</div>
@@ -424,7 +424,7 @@ defineExpose({
   border-radius: 50%;
 }
 
-.rb-round:hover:not(:disabled) {
+.rb-round:hover {
   background: #f1f0ec;
 }
 
@@ -446,8 +446,14 @@ defineExpose({
   border-radius: 8px;
   outline: none;
   font-family: var(--font-mono);
-  font-size: calc(12px * var(--code-font-scale, 1));
+  font-size: calc(12px * var(--ui-font-scale, 1));
   transition: background 0.12s;
+}
+
+/* MiMo leans on the preflight rule: the placeholder is half the field's own ink. */
+.rb-url::placeholder {
+  opacity: 1;
+  color: color-mix(in oklab, currentcolor 50%, transparent);
 }
 
 .rb-url:hover,
@@ -466,7 +472,7 @@ defineExpose({
   min-width: 230px;
   padding: 5px;
   background: #fffefd;
-  border: 1px solid #f1f1f1;
+  border: 1px solid var(--border-weak);
   border-radius: 12px;
   box-shadow: 0 8px 30px #0000002e, 0 1px 3px #0000001a;
   transform-origin: 0 100%;
@@ -496,6 +502,10 @@ defineExpose({
   border: 0;
   border-radius: 8px;
   font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.rb-item-name {
+  white-space: nowrap;
 }
 
 .rb-item:hover:not(:disabled) {
@@ -545,8 +555,8 @@ defineExpose({
 .rb-zoom-reset {
   display: grid;
   place-items: center;
-  width: calc(24px * var(--ui-font-scale, 1));
-  height: calc(24px * var(--ui-font-scale, 1));
+  width: 24px;
+  height: 24px;
   padding: 0;
   color: #5c5c57;
   background: transparent;
@@ -574,7 +584,7 @@ defineExpose({
 .rb-rule {
   height: 1px;
   margin: 4px 6px;
-  background: #f1f1f1;
+  background: var(--border-weak);
 }
 
 /* MiMo's annotate button: 34 high, a 1px line on an 8px corner, the chord in a key cap. */
@@ -583,7 +593,7 @@ defineExpose({
   flex: none;
   align-items: center;
   gap: 6px;
-  height: calc(34px * var(--ui-font-scale, 1));
+  height: 34px;
   padding: 0 10px;
   color: #151c13cc;
   background: #fffefd;
@@ -607,11 +617,11 @@ defineExpose({
   padding: 0 5px;
   color: #151c1399;
   background: #f0f0f2;
-  border: 1px solid #f1f1f1;
+  border: 1px solid var(--border-weak);
   border-radius: 5px;
   font-family: var(--font-mono);
-  font-size: calc(11px * var(--code-font-scale, 1));
-  line-height: calc(18px * var(--code-font-scale, 1));
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  line-height: 18px;
 }
 
 /* MiMo's page frame: 10 below the bar, 14 in, on a 10px corner. The error covers it exactly. */
@@ -653,7 +663,6 @@ defineExpose({
 .rb-local {
   flex: 1;
   min-height: 0;
-  margin-inline: 14px;
   padding: 8px 2px 24px;
   overflow: auto;
 }
@@ -680,7 +689,7 @@ defineExpose({
   padding: 10px 14px;
   text-align: start;
   background: #fffefd;
-  border: 1px solid #f1f1f1;
+  border: 1px solid var(--border-weak);
   border-radius: 12px;
   transition: 0.12s;
 }
@@ -699,7 +708,7 @@ defineExpose({
   height: 74px;
   padding: 18px 10px 0;
   background: #fafafa;
-  border: 1px solid #f1f1f1;
+  border: 1px solid var(--border-weak);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -795,7 +804,7 @@ defineExpose({
   max-width: 340px;
   color: #151c1399;
   font-family: var(--font-mono);
-  font-size: calc(12px * var(--code-font-scale, 1));
+  font-size: calc(12px * var(--ui-font-scale, 1));
   word-break: break-all;
 }
 
