@@ -166,4 +166,48 @@ export async function roundTwentyOneLaneFourChecks(check: Check, section: (name:
     const handlers = await read("src/server/handlers.ts")
     check("and file.list, which only the palette sent, is off the wire", !/"file\.list"/.test(protocol) && !/"file\.list"/.test(handlers) && !/listFiles/.test(handlers))
   }
+
+  // ------------------------------------------------------------------ R21-F4-6
+  section("Round 21 (F4-25..42): the artifacts centre against MiMo 26.920")
+  {
+    const page = parts("ArtifactsView.vue")(code(await read("src/renderer/src/components/ArtifactsView.vue")))
+    // Item 25/27/28: --text-weaker is a background token and was painting five kinds of text.
+    check("no part of the page paints text in --text-weaker", !/--text-weaker/.test(page.style), page.style.match(/.*--text-weaker.*/)?.[0])
+    check("an unselected tab is MiMo's --color-mut, its count the dim grey, and the selected one's count the mut", /\.chip \{[^}]*color: var\(--text-base\)/.test(page.style) && /\.chip-count \{[^}]*color: var\(--text-weak\)/.test(page.style) && /\.chip\.on \.chip-count \{\s*\n\s*color: var\(--text-base\)/.test(page.style))
+    check("the empty, no-match and failed notices are MiMo's --color-mut", /\.notice \{[^}]*color: var\(--text-base\)/.test(page.style) && /\.none \{[^}]*color: var\(--text-base\)/.test(page.style))
+    // Item 26: the third action is an arrow, not a speech bubble.
+    check("进入对话 is MiMo's arrow leaving to the top right, on the 24 grid", (page.template.match(/d="M7 7h10v10M7 17 17 7"/g) ?? []).length === 2 && !/M2\.5 3\.5h11v7h-6/.test(page.template))
+    // Item 29: MiMo's hover:shadow-sm, not a ring over the border.
+    check("hovering a tile, a row or an action lifts it with MiMo's shadow-sm", /box-shadow: 0 1px 3px 0 #0000001a, 0 1px 2px -1px #0000001a/.test(page.style) && !/--shadow-xs-border/.test(page.style))
+    // Item 31: MiMo's page ground under the view toggle; its own dark border is left alone.
+    check("the view toggle sits on MiMo's --color-bg", /\.view-toggle \{[^}]*background: #fffefd/.test(page.style) && /\.view-toggle \{\s*\n\s*background: #181818/.test(page.style))
+    check("but keeps MCode's border (recorded: MiMo's dark --color-set-line is near-white)", /\.view-toggle \{[^}]*border: 1px solid var\(--border-weak\)/.test(page.style))
+    // Item 32: MiMo's feature-page padding, narrowing with the pane.
+    check("the page is inset 40 either side, 20 once the pane is 680 or narrower", /\.column \{[^}]*padding: 54px 40px 40px/.test(page.style) && /@container \(max-width: 680px\) \{\s*\n\s*\.column \{\s*\n\s*padding-inline: 20px/.test(page.style) && /container-type: inline-size/.test(page.style))
+    // Item 33: the 18 moves onto the toolbar, so every state starts where the files would.
+    check("the 18 under the filter row belongs to that row, not to the grid", /\.bar \{[^}]*margin-bottom: 18px/.test(page.style) && !/\.grid \{[^}]*margin-top: 18px/.test(page.style) && !/\.list \{[^}]*margin-top: 18px/.test(page.style))
+    // Item 34: MiMo's gutter.
+    check("the scrollbar gutter is MiMo's stable, not both-edges", /scrollbar-gutter: stable;/.test(page.style) && !/both-edges/.test(page.style))
+    // Item 37: 加载更多 needs something above it.
+    check("加载更多 shows only when the page has rows", /v-if="!failed && nextCursor && visible\.length"/.test(page.template))
+    // Item 40: a row clips what does not fit.
+    check("a list row clips what does not fit, as MiMo's does", /\.row \{[^}]*overflow: hidden/.test(page.style))
+    // Item 41: switching a tab asks with the text in the box.
+    check("switching a tab asks with what is typed now, not the debounced copy", /watch\(kind, \(\) => \{\s*\n\s*if \(searchTimer\) clearTimeout\(searchTimer\)\s*\n\s*needle\.value = query\.value/.test(page.all))
+    // Item 35: the store says when to read again.
+    check("the page reads again when the store says its contents changed", /event\.type !== "artifact\.changed" \|\| event\.revision <= seenRevision/.test(page.all) && /offChanged = app\.client\?\.on\(/.test(page.all))
+    const protocolSource = await read("src/shared/protocol.ts")
+    const store = await read("src/server/artifact/store.ts")
+    const server = await read("src/server/index.ts")
+    check("the wire carries it, with the revision MiMo's carries", /\| \{ type: "artifact\.changed"; revision: number \}/.test(protocolSource))
+    check("the store counts its writes and tells one listener, gathering a burst", /get revision\(\): number/.test(store) && /onChanged\(listener: \(revision: number\) => void\)/.test(store) && /CHANGE_NOTICE_MS/.test(store))
+    check("and the backend publishes it", /artifacts\?\.onChanged\(\(revision\) => bus\.publish\(\{ type: "artifact\.changed", revision \}\)\)/.test(server))
+    // Items 36/38/39: MCode's own, kept and recorded.
+    check("MCode's load-ahead scroll stays (recorded: MiMo has only the button)", /const LOAD_AHEAD_PX = 240/.test(page.all))
+    check("MCode's line-heights keep the font scale (recorded: MiMo scales sizes only)", /line-height: calc\(22\.4px \* var\(--ui-font-scale, 1\)\)/.test(page.style))
+    check("MCode's own retry and load-more colours stay (recorded: MiMo's classes emit no CSS)", /\.page-btn \{[^}]*color: var\(--text-strong\)/.test(page.style))
+    // Item 30: MiMo's PDF mark.
+    const kinds = code(await read("src/renderer/src/lib/artifact-kind.ts"))
+    check("the PDF badge is the corner-cut page with a letter in the notch", /const CORNER_PAGE = "M12 22h6a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v6"/.test(kinds) && /pdf: \{[^}]*glyph: \[CORNER_PAGE, FOLD, "M3 16v-2h8v2", "M7 14v8", "M6 22h2"\]/.test(kinds))
+  }
 }

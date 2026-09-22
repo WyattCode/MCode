@@ -338,6 +338,8 @@ export async function startBackend(dataDirectory: string, options: BackendOption
   const clients = new Set<WebSocket>()
   // A git write queued behind another on the same repository says so, and the window shows it waiting (N11-14).
   onGitWaiting((directory, waiting) => bus.publish({ type: "git.waiting", directory, waiting }))
+  /* The artifacts page fills in while it is open, rather than only while the store is being built (R21-F4-35). */
+  const unwatchArtifactChanges = artifacts?.onChanged((revision) => bus.publish({ type: "artifact.changed", revision }))
 
   /**
    * Which conversations each window is drawing, as it last said (N11-4).
@@ -448,6 +450,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       watchSkillProblems(undefined)
       unwatchArtifacts()
       if (settleArtifacts) clearTimeout(settleArtifacts)
+      unwatchArtifactChanges?.()
       await artifacts?.close()
       for (const client of clients) client.terminate()
       await new Promise<void>((resolve) => server.close(() => resolve()))

@@ -2606,6 +2606,12 @@ export type ServerEvent =
   | { type: "mcp.status"; servers: McpServerState[] }
   /** skills: a SKILL.md whose frontmatter could not be read, reported once per file. */
   | { type: "skill.problem"; path: string; message: string }
+  /**
+   * What the conversations produced has changed, as MiMo's artifacts-changed
+   * tells its window (S13-3). `revision` counts the store's writes, so a page
+   * that has already answered for this one has nothing to read again.
+   */
+  | { type: "artifact.changed"; revision: number }
   /** A subscription login finished in the browser, minutes after it began. */
   | { type: "auth.completed"; provider: string; providers: ProviderStatus[] }
   /** What the providers offer changed without anyone asking - a newer models.dev catalog arrived. */

@@ -237,7 +237,8 @@ export async function roundThirteenArtifactChecks(check: Check, section: (name: 
     const page = await read("src/renderer/src/components/ArtifactsView.vue")
     check(
       "S13-3: the page asks for fifty at a time and the next page where the last ended, on scroll or the button",
-      /limit: ARTIFACT_PAGE/.test(page) && /\{ \.\.\.asking\(\), cursor \}/.test(page) && /@scroll\.passive="onScroll"/.test(page) && /v-if="!failed && nextCursor"/.test(page),
+      // R21-F4-37: the button also waits for rows above it, as MiMo's does.
+      /limit: ARTIFACT_PAGE/.test(page) && /\{ \.\.\.asking\(\), cursor \}/.test(page) && /@scroll\.passive="onScroll"/.test(page) && /v-if="!failed && nextCursor && visible\.length"/.test(page),
     )
     check("S13-3: the page's counts are the server's, and the tab is asked of the server", /facets\.value\.total/.test(page) && /category: kind\.value/.test(page) && /watch\(\[needle, kind\]/.test(page))
     check("S13-3: while the store is still being filled, the page shows what is ready and asks again", /watch\(building/.test(page) && /BUILDING_REFRESH_MS/.test(page))
