@@ -522,7 +522,7 @@ function openMenu(event: MouseEvent) {
   -webkit-app-region: no-drag;
 }
 
-/* The side column folded to its rail: the toggle, back, forward and search float over the start of this row. */
+/* The side column folded away: its toggle and 新建任务 float over the start of this row. */
 /* MiMo 26.920's inset past the folded controls: 新建任务's end (107 + 24) less 2, the window's own x now that no rail stands before it. */
 .head.after-rail {
   padding-inline-start: 129px;

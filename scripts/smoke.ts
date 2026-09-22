@@ -418,6 +418,8 @@ import { roundTwentyV2Checks } from "./smoke-round20-v2"
 import { roundTwentyCopyChecks } from "./smoke-round20-copy"
 // Round 20, visual lane 1: the conversation stream against MiMo 26.920 (turn head, harness column, reply type, action row).
 import { roundTwentyVisualOneChecks } from "./smoke-round20-v1"
+// Round 20, visual lane 5: the side column against MiMo 26.920 (search and bell, brand row, account row, glyphs, list edges).
+import { roundTwentyVisualFiveChecks } from "./smoke-round20-v5"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7063,6 +7065,7 @@ async function main() {
   await roundTwentyV2Checks(check, section)
   roundTwentyCopyChecks(check, section)
   await roundTwentyVisualOneChecks(check, section)
+  await roundTwentyVisualFiveChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

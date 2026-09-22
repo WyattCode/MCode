@@ -1154,34 +1154,38 @@ onBeforeUnmount(() => {
           <path d="M4.5 12h15M13 5.5l6.5 6.5-6.5 6.5" />
         </svg>
       </button>
-      <button class="ico" :aria-label="t('side.search')" v-tip="{ label: t('side.search'), hint: 'Ctrl+K' }" @click="emit('search')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="10.5" cy="10.5" r="6.9" />
-          <path d="m15.6 15.6 4.8 4.8" />
-        </svg>
-      </button>
-      <!--
-        MiMo's priority filter, at the far end of this row as MiMo has it: the
-        column led by what wants attention, then the rest of the week by day.
-      -->
-      <button
-        class="ico bell"
-        :class="{ on: priority }"
-        :aria-pressed="Boolean(priority)"
-        :aria-label="t(priority ? 'side.priorityOff' : 'side.priorityOn')"
-        v-tip="t(priority ? 'side.priorityTipOff' : 'side.priorityTipOn', { shortcut: shownChord('Ctrl+Alt+U') })"
-        @click="emit('toggle-priority')"
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M6.2 16.6V11a5.8 5.8 0 0 1 11.6 0v5.6l1.8 1.9H4.4z" />
-          <path d="M10 21.2a2.1 2.1 0 0 0 4 0" />
-        </svg>
-      </button>
     </div>
 
     <div class="brand">
       <span class="brand-name">MCode</span>
       <span class="badge">2.0</span>
+      <!--
+        MiMo 26.920's search and bell: out of the title-bar row and into this
+        one, their end 16 short of the column's (its left at the column's width
+        less 72).
+      -->
+      <span class="brand-actions" data-brand-actions>
+        <button class="ico" data-search :aria-label="t('side.search')" v-tip="{ label: t('side.search'), hint: 'Ctrl+K' }" @click="closePreview(), emit('search')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="10.5" cy="10.5" r="6.9" />
+            <path d="m15.6 15.6 4.8 4.8" />
+          </svg>
+        </button>
+        <!-- MiMo's priority filter: the column led by what wants attention, then the rest of the week by day. -->
+        <button
+          class="ico bell"
+          :class="{ on: priority }"
+          :aria-pressed="Boolean(priority)"
+          :aria-label="t(priority ? 'side.priorityOff' : 'side.priorityOn')"
+          v-tip="t(priority ? 'side.priorityTipOff' : 'side.priorityTipOn', { shortcut: shownChord('Ctrl+Alt+U') })"
+          @click="emit('toggle-priority')"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M6.2 16.6V11a5.8 5.8 0 0 1 11.6 0v5.6l1.8 1.9H4.4z" />
+            <path d="M10 21.2a2.1 2.1 0 0 0 4 0" />
+          </svg>
+        </button>
+      </span>
     </div>
 
     <nav class="nav" :aria-label="t('key.groupNavigation')">
@@ -1897,12 +1901,7 @@ onBeforeUnmount(() => {
   }
 }
 
-/* In the preview the title bar's own toggle stands where this row's did: the row keeps search and the bell, at its end. */
-.side-shell.preview .top {
-  justify-content: flex-end;
-  -webkit-app-region: no-drag;
-}
-
+/* In the preview the title bar's own toggle stands where this row's did, and back and forward stay folded away. */
 .side-shell.preview .side-toggle,
 .side-shell.preview .side-way {
   display: none;
@@ -1923,8 +1922,8 @@ onBeforeUnmount(() => {
   -webkit-app-region: no-drag;
 }
 
-/* The window-control row: 44 tall, buttons 24x24 at 32px pitch. It drags the
-   window; the buttons opt out.
+/* The window-control row: the toggle, back and forward, 24x24 at 32px pitch.
+   It drags the window; the buttons opt out.
    MiMo starts the row at x=65; MCode keeps it to the left on purpose, the 17px
    glyphs lining up with the brand and the destination icons at x=22. Only on
    macOS does it start at 65, clear of the traffic lights. */
@@ -1966,29 +1965,34 @@ onBeforeUnmount(() => {
  * 1.2px line, where the old 17px icons on a 20 grid came out near 0.85.
  */
 .top .ico,
+.brand-actions .ico,
 .rail-tools .ico {
   color: color-mix(in srgb, var(--text-strong) 60%, transparent);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .top .ico,
+  :root:not([data-theme="light"]) .brand-actions .ico,
   :root:not([data-theme="light"]) .rail-tools .ico {
     color: var(--text-strong);
   }
 }
 
 :root[data-theme="dark"] .top .ico,
+:root[data-theme="dark"] .brand-actions .ico,
 :root[data-theme="dark"] .rail-tools .ico {
   color: var(--text-strong);
 }
 
-/* MiMo on Windows: this row's glyphs 12px in one solid colour; a spent arrow and the lit bell keep their own. */
-.app[data-platform="win32"] .top .ico:not(:disabled):not(.on),
+/* MiMo on Windows: these glyphs 12px in one solid colour; a spent arrow and the lit bell keep their own. */
+.app[data-platform="win32"] .top .ico:not(:disabled),
+.app[data-platform="win32"] .brand-actions .ico:not(.on),
 .app[data-platform="win32"] .rail-tools .ico:not(:disabled) {
   color: var(--text-strong);
 }
 
 .app[data-platform="win32"] .top .ico svg,
+.app[data-platform="win32"] .brand-actions .ico svg,
 .app[data-platform="win32"] .rail-tools .ico svg {
   width: 12px;
   height: 12px;
@@ -2024,6 +2028,16 @@ onBeforeUnmount(() => {
   /* 4px below the controls row: everything under it moves down with it. */
   margin: 4px 8px 0;
   padding-inline-start: 14px;
+}
+
+/* MiMo's [data-brand-actions]: 24 tall, 8 apart, ending 8 in from the row's end - 16 from the column's. */
+.brand-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  margin-inline: auto 8px;
 }
 
 .brand-name {
@@ -2406,11 +2420,15 @@ button.section-head:focus-visible {
 }
 
 /*
- * The priority filter's bell: sixth in the left-aligned controls row, lit while on.
- * MiMo's lit colour overrides the row's in every theme, so this outranks the dark rows above.
+ * The priority filter's bell, 6 round where search is 7, lit while on. MiMo's
+ * lit colour overrides the row's in every theme, so this outranks the dark rows above.
  */
+.ico.bell {
+  border-radius: 6px;
+}
+
 .ico.bell.on,
-:root .top .ico.bell.on {
+:root .brand-actions .ico.bell.on {
   color: var(--text-accent);
 }
 
