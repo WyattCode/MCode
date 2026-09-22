@@ -361,7 +361,7 @@ h2 {
 
 .note {
   margin: 2px 0 4px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12.5px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }
@@ -558,7 +558,7 @@ h2 {
 }
 
 .count {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 400;
 }
@@ -619,7 +619,7 @@ h2 {
   align-items: center;
   height: calc(34px * var(--ui-font-scale, 1));
   padding: 0 10px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -645,7 +645,7 @@ h2 {
 
 .env-note {
   padding: 0 10px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 

@@ -827,7 +827,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 }
 
 .cp-help {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.5;
 }
@@ -847,7 +847,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 }
 
 .cp-probe-text {
-  color: var(--text-weak);
+  color: var(--text-base);
 }
 
 /*
@@ -940,7 +940,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 
 .cp-menu-empty {
   padding: 8px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -997,7 +997,7 @@ label.cp-option {
   place-items: center;
   width: 28px;
   height: 28px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 6px;
@@ -1048,7 +1048,7 @@ label.cp-option {
 }
 
 .cp-pick-label {
-  color: var(--text-weak);
+  color: var(--text-base);
 }
 
 .cp-pick-value {

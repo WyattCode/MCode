@@ -2584,12 +2584,14 @@ onBeforeUnmount(() => {
           <div class="card env-projects">
             <div v-for="directory in envProjects" :key="directory" class="line env-project" :data-env-project="directory">
               <div class="line-text">
+                <!-- MiMo's sr-ic folder, 18 square on the shared 1.7 stroke and inline with the name. -->
                 <div class="line-title env-project-name">
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path
-                      d="M1.9 4.2c0-.6.5-1.1 1.1-1.1h2.6l1.3 1.5h6.1c.6 0 1.1.5 1.1 1.1v6.1c0 .6-.5 1.1-1.1 1.1H3c-.6 0-1.1-.5-1.1-1.1z"
+                      d="M3.25 7.25A1.75 1.75 0 0 1 5 5.5h3.9l2 2h8.35a1.75 1.75 0 0 1 1.75 1.75v7.5a1.75 1.75 0 0 1-1.75 1.75H5a1.75 1.75 0 0 1-1.75-1.75Z"
                       stroke="currentColor"
-                      stroke-width="1.2"
+                      stroke-width="1.7"
+                      stroke-linecap="round"
                       stroke-linejoin="round"
                     />
                   </svg>
@@ -2638,8 +2640,10 @@ onBeforeUnmount(() => {
               v-tip="{ label: t('set.refreshWorktrees') }"
               @click="refreshTrees"
             >
+              <!-- MiMo's refresh: the arc stops where the arrow head starts, and the head is 5 across. -->
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6" />
+                <path d="M21 12A9 9 0 1 1 18.36 5.64" />
+                <path d="M16 9h5V4" />
               </svg>
             </button>
           </div>
@@ -2897,8 +2901,9 @@ onBeforeUnmount(() => {
                       data-edit-shortcut
                       @click="startRecord(shortcut.id)"
                     >
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">
-                        <path d="M10.8 2.7l2.5 2.5L6 12.5H3.5V10zM2.5 14.5h11" />
+                      <!-- MiMo draws this pencil filled, so MCode's own outline is filled rather than stroked. -->
+                      <svg viewBox="0 0 16 16" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" aria-hidden="true">
+                        <path d="M10.9 1.75 14.25 5.1 6.15 13.2H2.8V9.85ZM10.9 3.63 4.13 10.4v1.47H5.6L12.37 5.1ZM2.8 14.25h10.4v1.35H2.8z" />
                       </svg>
                     </button>
                   </template>
@@ -3132,7 +3137,7 @@ onBeforeUnmount(() => {
 }
 
 .unit {
-  color: var(--text-weaker);
+  color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -3301,12 +3306,6 @@ h3 {
   border-bottom: none;
 }
 
-.line.stack {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
-}
-
 /*
  * The reference's settings-v2-row-copy: a column with 8px between the title and
  * the line under it, allowed to shrink so a long description wraps instead of
@@ -3473,7 +3472,7 @@ h3 {
   align-items: center;
   gap: 5px;
   padding: 1px 7px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border: 1px solid var(--border-weak);
   border-radius: 999px;
   font-size: calc(11px * var(--ui-font-scale, 1));
@@ -3515,16 +3514,17 @@ h3 {
 /* The switch and its buttons, held to the end of the row the way `.ctl-pair` is. */
 .mcp-ctrl {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
   margin-inline-start: auto;
 }
 
+/* MiMo's mcp-tools-panel: pulled 6 up under the row it belongs to, inset by the
+   card's own 16, and with no rule of its own - the row above already draws one. */
 .mcp-tools-panel {
-  padding: 4px 0 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--text-strong) 10%, var(--surface-menu));
+  margin-top: -6px;
+  padding: 4px 16px 14px;
 }
 
 .mcp-tools-hint {
@@ -3532,7 +3532,7 @@ h3 {
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -3543,7 +3543,7 @@ h3 {
 
 .mcp-tools-head {
   margin-bottom: 8px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(11px * var(--ui-font-scale, 1));
 }
 
@@ -3565,16 +3565,31 @@ h3 {
   min-width: 0;
 }
 
+/*
+ * MiMo draws a tool's own name in --color-txt, a step above the description
+ * under it. MCode has no token for that ink yet - lane F1 is adding one - so
+ * the pair is written out here.
+ */
 .mcp-tool-name {
-  color: var(--text-base);
+  color: #151c13cc;
   font-family: var(--font-mono);
   font-size: calc(12px * var(--code-font-scale, 1));
+}
+
+:root[data-theme="dark"] .mcp-tool-name {
+  color: #f4f4f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .mcp-tool-name {
+    color: #f4f4f5;
+  }
 }
 
 .mcp-tool-desc {
   display: -webkit-box;
   overflow: hidden;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.45;
   -webkit-box-orient: vertical;
@@ -3678,7 +3693,7 @@ h3 {
   display: flex;
   align-items: center;
   padding: 10px 20px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-bottom: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
@@ -3757,7 +3772,7 @@ h3 {
 
 .keys-desc {
   margin-top: 2px;
-  color: var(--text-weaker);
+  color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -3770,7 +3785,7 @@ h3 {
   background: #f0f0f2;
   border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
   border-radius: 6px;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+  box-shadow: 0 1px 3px 0 #0000001a, 0 1px 2px -1px #0000001a;
   font-family: var(--font-sans);
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
@@ -3855,7 +3870,7 @@ h3 {
 
 @keyframes keys-record-pulse {
   50% {
-    opacity: 0.55;
+    opacity: 0.5;
   }
 }
 
@@ -4000,7 +4015,7 @@ h3 {
 
 .mcp-label {
   margin-bottom: 6px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -4065,7 +4080,7 @@ h3 {
 
 .mcp-add-row {
   align-self: flex-start;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 
 .mcp-add-row.last {
@@ -4074,7 +4089,7 @@ h3 {
 
 .mcp-hint {
   margin: 0 0 18px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }
@@ -4211,17 +4226,13 @@ h3 {
   cursor: pointer;
 }
 
-.ci-link:hover {
-  text-decoration: underline;
-}
-
 .ci-help {
   display: flex;
   flex-direction: column;
   gap: 6px;
   margin: -6px 0 14px;
   padding: 10px 12px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: var(--surface-base);
   border: 1px solid var(--border-weak);
   border-radius: 10px;
@@ -4259,7 +4270,7 @@ h3 {
 }
 
 .ci-input:focus {
-  border-color: var(--text-weaker);
+  border-color: var(--text-weak);
 }
 
 /* Clean, MiMo's save is the secondary button at full opacity, its text not greyed. */
@@ -4271,7 +4282,7 @@ h3 {
 :root[data-theme="dark"] .ci-input,
 :root[data-theme="dark"] .ci-help {
   background: #181818;
-  border-color: #3d3d3d;
+  border-color: #2e2e2e;
 }
 
 :root[data-theme="dark"] .ci-save:disabled {
@@ -4282,7 +4293,7 @@ h3 {
   :root:not([data-theme="light"]) .ci-input,
   :root:not([data-theme="light"]) .ci-help {
     background: #181818;
-    border-color: #3d3d3d;
+    border-color: #2e2e2e;
   }
 
   :root:not([data-theme="light"]) .ci-save:disabled {
@@ -4590,7 +4601,7 @@ img.tile-art {
   place-items: center;
   width: 28px;
   height: 28px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-radius: 8px;
 }
 
@@ -4920,7 +4931,7 @@ h3 {
 .content :deep(.trigger) {
   gap: 8px;
   height: calc(28px * var(--ui-font-scale, 1));
-  padding: 0 8px 0 12px;
+  padding: 0 12px;
   background: transparent;
   border: 1px solid #e3e3e0;
   border-radius: 8px;
@@ -5063,15 +5074,17 @@ h3 {
   margin: 0;
 }
 
-.env-project-name {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
+/*
+ * MiMo's sr-ic: the folder is inline with the name rather than a flex row of
+ * its own - 18 square on the .i stroke, dropped 3 below the baseline with 4
+ * after it - and it takes the title's colour instead of being greyed down.
+ */
 .env-project-name svg {
-  flex-shrink: 0;
-  color: var(--text-weak);
+  width: 18px;
+  height: 18px;
+  vertical-align: -3px;
+  margin-inline-end: 4px;
+  color: currentColor;
 }
 
 .env-icon {
@@ -5091,7 +5104,7 @@ h3 {
 }
 
 .env-del svg {
-  color: var(--text-weak);
+  color: var(--text-base);
 }
 
 .env-del:hover svg {
@@ -5109,7 +5122,7 @@ h3 {
   place-items: center;
   width: 28px;
   height: 28px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 6px;
@@ -5141,7 +5154,7 @@ h3 {
 
 .wt-empty-desc {
   margin-top: 4px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
@@ -5149,11 +5162,16 @@ h3 {
   gap: 8px;
 }
 
-/* MiMo's worktree tags: 6 round at 1 by 6, 11px dim on the soft fill, no ring. */
+/*
+ * MiMo's worktree tags are 11px dim on `bg-soft`, which ships as nothing at all -
+ * so its tags have no fill. MCode keeps the filled pill (2026-09-23 decision)
+ * and takes dim for the words: on --surface-hover, --text-weaker measured about
+ * 1.1:1 in light, which is a tag nobody can read.
+ */
 .wt-tag {
   flex-shrink: 0;
   padding: 1px 6px;
-  color: var(--text-weaker);
+  color: var(--text-weak);
   background: var(--surface-hover);
   border-radius: 6px;
   font-size: calc(11px * var(--ui-font-scale, 1));
@@ -5196,7 +5214,7 @@ h3 {
   gap: 4px;
   margin-bottom: 18px;
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   font-size: calc(14px * var(--ui-font-scale, 1));
@@ -5245,7 +5263,7 @@ h3 {
 
 .env-local-path {
   overflow: hidden;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5597,7 +5615,7 @@ h3 {
 @keyframes sr-hit {
   0%,
   20% {
-    background: var(--surface-key);
+    background: #f1f0ec;
   }
 
   100% {
@@ -5608,13 +5626,43 @@ h3 {
 /* Reduced motion keeps the fill and drops the fade. */
 :root[data-motion="on"] .sr-hit {
   animation: none;
-  background: var(--surface-key);
+  background: #f1f0ec;
 }
 
 @media (prefers-reduced-motion: reduce) {
   :root[data-motion="system"] .sr-hit {
     animation: none;
-    background: var(--surface-key);
+    background: #f1f0ec;
+  }
+}
+
+/* MiMo's side-active is a wash of white in dark, not a warm grey. */
+:root[data-theme="dark"] .sr-hit {
+  animation-name: sr-hit-dark;
+}
+
+:root[data-theme="dark"]:root[data-motion="on"] .sr-hit {
+  background: #ffffff1a;
+}
+
+@keyframes sr-hit-dark {
+  0%,
+  20% {
+    background: #ffffff1a;
+  }
+
+  100% {
+    background: transparent;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sr-hit {
+    animation-name: sr-hit-dark;
+  }
+
+  :root:not([data-theme="light"]):root[data-motion="on"] .sr-hit {
+    background: #ffffff1a;
   }
 }
 </style>
