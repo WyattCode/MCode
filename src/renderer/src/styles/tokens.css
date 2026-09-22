@@ -133,8 +133,8 @@
   --button-primary: #151c13;
   --button-primary-text: #ffffff;
 
-  /* elevation/button-neutral: an input's resting edge. */
-  --shadow-input: 0 1px 1.5px 0 #0000001a, 0 0 0 0.5px #00000024;
+  /* tailwind shadow-xs, what MiMo hangs on a button, a field and a select trigger. */
+  --shadow-xs: 0 1px 2px 0 #0000000d;
   /*
    * The edge a dock surface carries: a full-pixel ring with three very small
    * drops hung off it, which reads as a card lying on the page rather than as
@@ -270,8 +270,6 @@
     --button-primary: #ececec;
     --button-primary-text: #0d0d0d;
 
-    /* elevation/button-neutral: an input's resting edge. */
-    --shadow-input: 0 1px 2px 0 #0006, 0 0 0 0.5px #ffffff33, 0 -0.5px 0 0 #ffffff1a;
     /* A dock surface's edge, whose ring is the one layer that turns over. */
     --shadow-xs-border:
       0 0 0 1px #ffffff32, 0 1px 2px -1px #1310100a, 0 1px 2px 0 #1310100f, 0 1px 3px 0 #13101014;
@@ -353,8 +351,6 @@
   --button-primary: #ececec;
   --button-primary-text: #0d0d0d;
 
-  /* elevation/button-neutral: an input's resting edge. */
-  --shadow-input: 0 1px 2px 0 #0006, 0 0 0 0.5px #ffffff33, 0 -0.5px 0 0 #ffffff1a;
   /* A dock surface's edge, whose ring is the one layer that turns over. */
   --shadow-xs-border:
     0 0 0 1px #ffffff32, 0 1px 2px -1px #1310100a, 0 1px 2px 0 #1310100f, 0 1px 3px 0 #13101014;
