@@ -65,6 +65,17 @@ export function movedDown(before: Geometry, after: Geometry): boolean {
   return after.top > before.top && !growthEcho(before, after)
 }
 
+/*
+ * Whether a scroll event is the reader taking the view somewhere, which is what
+ * lets a parked question go. A scroll the view made itself - the pin, or a park
+ * putting its question back where it belongs - comes back as an event like any
+ * other, and is not them; nor is the browser pulling scrollTop in as what is
+ * above the question shrinks, which is neither an upward move nor an arrival.
+ */
+export function readerMoved(echo: boolean, up: boolean, arrived: boolean): boolean {
+  return !echo && (up || arrived)
+}
+
 /* Leaving always wins; coming back needs the end itself, reached by the reader. */
 export function nextFollowing(following: boolean, up: boolean, distance: number, within: number, arrived: boolean): boolean {
   if (up) return false

@@ -400,6 +400,8 @@ import { roundNineteenLaneAChecks } from "./smoke-round19-a"
 import { roundNineteenLaneCChecks } from "./smoke-round19-c"
 // Round 20, lane C: the conversation view's review findings (park edges, goal switch, narration, math).
 import { roundTwentyLaneCChecks } from "./smoke-round20-c"
+// Round 21 (P1): a sent question stays where it was parked, and the turn being written is not the browser's scroll anchor.
+import { roundTwentyOneParkChecks } from "./smoke-round21-park"
 // No window is ever told to connect to a port the browser refuses.
 import { blockedPortChecks } from "./smoke-blocked-ports"
 // Round 20, section A: the engine's turn loop - loop detectors, continuations across compaction and steering, the goal judge.
@@ -7056,6 +7058,7 @@ async function main() {
   await roundNineteenLaneAChecks(check, section)
   await roundNineteenLaneCChecks(check, section)
   await roundTwentyLaneCChecks(check, section)
+  await roundTwentyOneParkChecks(check, section)
   await blockedPortChecks(check, section)
   await artifactForgetChecks(check, section)
   await roundTwentyEngineChecks(check, section)

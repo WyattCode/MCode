@@ -43,6 +43,7 @@ import {
   parkRoom,
   parkTarget,
   parkTop,
+  readerMoved,
   reattachWithin,
   scrolledUp,
   UP_SLACK,
@@ -676,23 +677,31 @@ function onScroll() {
   const element = scroller.value
   if (!element) return
   const now = geometry(element)
-  // The reader moving the view lets a tall question's top go.
-  if (!pinEcho(now.top)) tallRest = undefined
   const ratio = window.devicePixelRatio || 1
   const width = element.clientWidth
-  // A zoom or a resize moves scrollTop on its own; counting starts again from here.
+  // A zoom or a resize moves scrollTop on its own; counting starts again from here, and a park measured at the old size is off.
   if (!seen || ratio !== seenRatio || width !== seenWidth) {
     seen = now
     seenRatio = ratio
     seenWidth = width
     upRun = 0
+    parkRest = undefined
     measureJump()
     return
   }
-  upRun = now.top > seen.top && pinEcho(now.top) ? upRun : upwardRun(upRun, seen, now)
+  // This component's own scroll, coming back as an event: the pin, and the park putting its question back.
+  const echo = pinEcho(now.top)
+  upRun = now.top > seen.top && echo ? upRun : upwardRun(upRun, seen, now)
   const up = scrolledUp(seen, now) || upRun > UP_SLACK
   if (up) upRun = 0
-  const arrived = movedDown(seen, now)
+  /*
+   * A scroll of its own is not the reader arriving at the end: a park putting
+   * its question back a few pixels down would otherwise land the view within a
+   * pixel of the end and start following again, taking the question with it.
+   */
+  const arrived = movedDown(seen, now) && !echo
+  // The reader moving the view lets a parked question go - the browser pulling scrollTop in as what is above shrinks does not.
+  if (readerMoved(echo, up, arrived)) parkRest = undefined
   seen = now
   measureJump()
   const distance = endDistance(now)
@@ -846,7 +855,7 @@ onMounted(() => {
     // The floor was measured for this width; at another the question would not sit where it was put.
     if (inner.value && inner.value.clientWidth !== floorWidth) clearFloor()
     pin()
-    keepTall()
+    keepRest()
     measureJump()
   })
   sizer.observe(inner.value)
@@ -1142,26 +1151,34 @@ function clearFloor() {
   endSlide?.()
   if (floored) floored.style.minHeight = ""
   floored = undefined
-  tallRest = undefined
+  parkRest = undefined
 }
 
 /*
- * A tall question parked by its top is not at the end, so neither the pin nor
- * the browser's anchoring (suppressed while its msg-in moves it) keeps it there
- * when what is above settles - the turn before losing its footer moved it 14px
- * up in the probe. It is held at its target until the reader scrolls.
+ * Where a parked question rests, until the reader moves the view.
+ *
+ * Nothing else keeps it there. A tall question parked by its top is not at the
+ * end, so the pin does not hold it; one parked at the end is held only as long
+ * as the floor below it and the conversation above it keep their heights, and
+ * neither does. The turn before it loses its footer as the reply starts and
+ * grows it back, and the question's own turn is measured before the one above
+ * has settled - 14px and 5px in the probe, and the browser's anchoring either
+ * sat out or made it worse. So the question is put back at its target on every
+ * layout change, until the reader scrolls.
  */
-let tallRest: { row: HTMLElement; target: number } | undefined
+let parkRest: { row: HTMLElement; target: number } | undefined
 
-function keepTall() {
+function keepRest() {
   const view = scroller.value
-  if (!tallRest || !view || following.value) return
-  if (!tallRest.row.isConnected) {
-    tallRest = undefined
+  // Not while a park slides: the column's own transform is not where the row will rest.
+  if (!parkRest || !view || following.value || endSlide) return
+  if (!parkRest.row.isConnected) {
+    parkRest = undefined
     return
   }
-  const lift = new DOMMatrixReadOnly(getComputedStyle(tallRest.row).transform).m42
-  const off = tallRest.row.getBoundingClientRect().top - lift - view.getBoundingClientRect().top - tallRest.target
+  const lift = new DOMMatrixReadOnly(getComputedStyle(parkRest.row).transform).m42
+  const off = parkRest.row.getBoundingClientRect().top - lift - view.getBoundingClientRect().top - parkRest.target
+  // A question with nothing above it cannot come down to the target; scrollTop stops at 0 and it stays where it is.
   if (Math.abs(off) >= 0.5) settle(view.scrollTop + off)
 }
 
@@ -1215,6 +1232,8 @@ function slideIn(column: HTMLElement, by: number) {
     column.style.transition = ""
     column.style.transform = ""
     endSlide = undefined
+    // The slide held the rest back; where the question now stands is where it stays.
+    keepRest()
     measureJump()
   }
   const onEnd = (event: TransitionEvent) => {
@@ -1263,10 +1282,9 @@ function park(turnID: string) {
    * to take - the question stranded at the foot of the view.
    */
   if (rest === undefined) toBottom()
-  else {
-    settle(rest)
-    tallRest = { row, target }
-  }
+  else settle(rest)
+  // Where it now rests, held there while what is above and below it settles.
+  parkRest = { row, target }
   following.value = false
   parkedIn = shownID.value
   if (room > 0 && !reducedMotion()) slideIn(column, room)
@@ -3081,8 +3099,16 @@ defineExpose({ stepMessage, scroller })
   contain-intrinsic-size: auto 240px;
 }
 
+/*
+ * MiMo's rule for the same row carries `overflow-anchor: none` with it: the
+ * turn being written is never the browser's scroll anchor. A reply growing
+ * inside it would otherwise have the browser hold that anchor still and move
+ * the view by as much, which is exactly where a parked question must not be
+ * moved from.
+ */
 .inner > .turn[data-turn-last] {
   content-visibility: visible;
+  overflow-anchor: none;
 }
 
 /*

@@ -60,9 +60,10 @@ export async function roundTwentyLaneCChecks(check: Check, section: (name: strin
     }
     const park = code(body(script, "function park("))
     check("park rests a tall question there instead of pinning it to the end", /parkTop\(/.test(park) && /settle\(rest\)/.test(park), park.slice(0, 300))
-    check("and holds it there while what is above settles", /tallRest = \{ row, target \}/.test(park) && /keepTall\(\)/.test(code(script.slice(script.indexOf("sizer = new ResizeObserver")))))
+    // R21-P1: the hold is now every park's, not only a tall one's, and only the reader's own scroll gives it up.
+    check("and holds it there while what is above settles", /parkRest = \{ row, target \}/.test(park) && /keepRest\(\)/.test(code(script.slice(script.indexOf("sizer = new ResizeObserver")))))
     const scroll = code(body(script, "function onScroll("))
-    check("until the reader scrolls", /if \(!pinEcho\(now\.top\)\) tallRest = undefined/.test(scroll))
+    check("until the reader scrolls", /if \(readerMoved\(echo, up, arrived\)\) parkRest = undefined/.test(scroll))
   }
 
   // ------------------------------------------------------------------ R20-C-4
