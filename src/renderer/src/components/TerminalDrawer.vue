@@ -496,23 +496,6 @@ function startResize(event: PointerEvent) {
   flex-shrink: 0;
   width: 26px;
   height: 26px;
-  color: var(--text-base);
-  border-radius: 7px;
-}
-
-.head .icon-btn.hide:hover {
-  color: var(--text-body);
-  background: #f1f0ec;
-}
-
-:root[data-theme="dark"] .head .icon-btn.hide:hover {
-  background: #ffffff0f;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .head .icon-btn.hide:hover {
-    background: #ffffff0f;
-  }
 }
 
 /* MiMo's close mark: a 13px ×, always there, muted, on a 4px corner. */
@@ -527,7 +510,7 @@ function startResize(event: PointerEvent) {
 
 .tab-close:hover {
   color: var(--text-body);
-  background: #00000014;
+  background: var(--overlay-hover);
 }
 
 .gap {
