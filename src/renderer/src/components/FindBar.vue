@@ -21,6 +21,16 @@ const props = defineProps<{
 const input = ref<HTMLInputElement>()
 const box = ref({ top: 0, end: 0 })
 
+/*
+ * The card floats over the pane rather than inside it, so where the pane is has
+ * to be written onto the page - and kept right afterwards. A window resize was
+ * the only thing that re-took this measurement, which left out everything that
+ * moves the pane without resizing the window: the side panel opening beside it,
+ * the side column folding, the bottom drawer coming up, and a zoom step (see
+ * `lib/zoom-resize`). The bar then sat out over the panel, or short of the
+ * pane's corner. The observer below watches the pane itself, which answers all
+ * of them.
+ */
 function measure(): void {
   const host = props.anchor()
   if (!host) return
@@ -43,19 +53,35 @@ watch(
   () => props.find.open.value,
   (open) => {
     if (!open) return
+    watchPane()
     measure()
     props.find.focus()
   },
 )
 
+let watching: ResizeObserver | undefined
+let watched: HTMLElement | undefined
+
+/* This is mounted with the window, long before the pane it hangs in exists, and the pane is replaced between views. */
+function watchPane(): void {
+  const host = props.anchor()
+  if (!host || host === watched || typeof ResizeObserver !== "function") return
+  watching?.disconnect()
+  watching = new ResizeObserver(measure)
+  watching.observe(host)
+  watched = host
+}
+
 onMounted(() => {
   props.find.setInput(input.value)
   window.addEventListener("resize", measure)
+  watchPane()
   measure()
 })
 onBeforeUnmount(() => {
   props.find.setInput(undefined)
   window.removeEventListener("resize", measure)
+  watching?.disconnect()
 })
 
 watch(input, (element) => props.find.setInput(element))

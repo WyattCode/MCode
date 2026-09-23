@@ -338,17 +338,38 @@ function wireWindow(window: BrowserWindow): void {
   window.webContents.on("did-navigate", () => closePanel(window))
 }
 
-/** Where the panel sits. The renderer measures it; only it knows the layout. */
+/**
+ * Where the panel sits. The renderer measures it; only it knows the layout.
+ *
+ * It measures in CSS pixels and a view is placed in the window's own, which are
+ * the same thing only while the interface is at 100%. At 120% the frame the
+ * renderer reports as 400 wide occupies 480 of the window, so the page used to
+ * be drawn at five sixths of its frame and up in its top corner - a zoom being
+ * the one setting under which a browser tab was visibly wrong (R24). The
+ * window's zoom factor is the conversion, and it is read here rather than sent,
+ * so a step the renderer has not heard about yet cannot place the page wrongly.
+ */
 export function setBounds(window: BrowserWindow, bounds: BrowserBounds): void {
   const panel = panels.get(window.id)
   if (!panel) return
   panel.bounds = bounds
+  const scale = window.webContents.getZoomFactor() || 1
   activeTab(panel)?.view.setBounds({
-    x: Math.round(bounds.x),
-    y: Math.round(bounds.y),
-    width: Math.max(0, Math.round(bounds.width)),
-    height: Math.max(0, Math.round(bounds.height)),
+    x: Math.round(bounds.x * scale),
+    y: Math.round(bounds.y * scale),
+    width: Math.max(0, Math.round(bounds.width * scale)),
+    height: Math.max(0, Math.round(bounds.height * scale)),
   })
+}
+
+/**
+ * The interface scaled under a page that is drawn over it. The frame has not
+ * moved in the renderer's own units, so it sends nothing; the conversion above
+ * is what changed, and the page is placed again from the bounds already held.
+ */
+export function rescale(window: BrowserWindow): void {
+  const panel = panels.get(window.id)
+  if (panel) setBounds(window, panel.bounds)
 }
 
 function closePanel(window: BrowserWindow): void {

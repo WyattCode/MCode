@@ -436,6 +436,7 @@ import { roundTwentyTwoLaneTwoChecks, dateZoneChecks } from "./smoke-round22-l2"
 import { roundTwentyTwoLaneOneChecks } from "./smoke-round22-l1"
 // Round 23: the second code review - unreadable documents answered as damage, the compaction that swallowed a question, dark-outranked state rules.
 import { roundTwentyThreeChecks } from "./smoke-round23"
+import { roundTwentyFourChecks } from "./smoke-round24"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7114,6 +7115,7 @@ async function main() {
   await dateZoneChecks(check, section)
   await roundTwentyTwoLaneOneChecks(check, section)
   await roundTwentyThreeChecks(check, section)
+  await roundTwentyFourChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

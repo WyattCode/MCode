@@ -13,6 +13,17 @@ import { t } from "../lib/i18n"
 const centre = ref<string>()
 let watching: ResizeObserver | undefined
 
+/*
+ * This is a CSS pixel written onto the page, so it goes wrong in two ways, not
+ * one. The side column and the panels change where the work area is, and the
+ * observer below catches that. A **zoom** step changes what a CSS pixel is,
+ * and used to reach nothing here at all: the number stayed as it was and the
+ * column stood off centre by the zoom ratio - measured at 110% on 2026-09-24,
+ * the work area's centre was 810 while this still carried 878, which is how
+ * the zoom notice itself came up a tenth of the window right of centre. A step
+ * now arrives as the resize it is (`lib/zoom-resize`), and an arriving notice
+ * re-measures before it is painted.
+ */
 function measure() {
   const main = document.querySelector("main.main")
   if (!main) {
@@ -20,7 +31,25 @@ function measure() {
     return
   }
   const box = main.getBoundingClientRect()
-  centre.value = box.width === 0 ? undefined : `${Math.round(box.left + box.width / 2)}px`
+  if (box.width === 0) {
+    centre.value = undefined
+    return
+  }
+  /*
+   * The work area is not all of `main`: the info card is drawn over its inline
+   * end rather than standing beside it, so centring on the whole of it put the
+   * notices half the card's width off to the side - the same thing the
+   * conversation itself was doing, and the user's complaint on 2026-09-24. The
+   * card's own box says which end it holds, so this needs no reading direction.
+   */
+  let start = box.left
+  let end = box.right
+  const card = main.querySelector(".info-card:not(.floating)")?.getBoundingClientRect()
+  if (card && card.width > 0) {
+    if (card.left - box.left > box.right - card.right) end = card.left
+    else start = card.right
+  }
+  centre.value = `${Math.round((start + end) / 2)}px`
 }
 
 /* A link runs its step, then the notice has done its job. */
@@ -74,10 +103,17 @@ function keepFocus(event: MouseEvent) {
   if (!(event.target instanceof Element && event.target.closest("button"))) event.preventDefault()
 }
 
-/* The last notice leaving with focus inside hands focus back as well. */
+/*
+ * The last notice leaving with focus inside hands focus back as well.
+ *
+ * A notice arriving re-measures first. This watcher runs before the DOM is
+ * patched, so the capsule's first painted frame already stands in the right
+ * place - see the note on `measure` for why the observers alone are not enough.
+ */
 watch(
   () => toasts.value.length,
-  (count) => {
+  (count, was) => {
+    if (count > (was ?? 0)) measure()
     if (!count && before !== null) giveBack()
   },
 )

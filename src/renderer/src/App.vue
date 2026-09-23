@@ -64,6 +64,7 @@ import { PANEL_MIN_WIDTH, useRightPanel } from "./stores/right-panel"
 import { arbitratePanel, boundChord, clampSideWidth, panelWidthShown, sideFits, toolHints } from "./lib/right-tools"
 import { exportConversationById, exportConversationMarkdown, transcriptOf } from "./lib/convo-export"
 import { ZOOM_TOAST, dismiss, notify, notifyFailure, zoomNotice } from "./lib/toast"
+import { followZoom } from "./lib/zoom-resize"
 import { openDocument } from "./lib/office-open"
 import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
 import { folderName, projectName } from "./lib/project"
@@ -180,7 +181,6 @@ function setInfoOpen(next: boolean) {
 const INFO_INLINE_MIN = 790
 const INFO_PANEL_WIDTH = 310
 const mainWidth = ref(0)
-const viewportWide = ref(false)
 const infoFloating = computed(() => mainWidth.value > 0 && mainWidth.value < INFO_INLINE_MIN)
 const infoOverlayOpen = ref(false)
 watch(infoFloating, () => (infoOverlayOpen.value = false))
@@ -210,16 +210,20 @@ const infoShowing = computed(
 const infoInline = computed(() => infoShowing.value && !infoFloating.value)
 
 /*
- * How much of the column the card holds clear: only what keeps MiMo's 768
- * reading column (1000 on a 2000px screen) out from under a 310 card, so a wide
- * window gives up nothing at all.
+ * How much of the column the card holds clear: all of it, whenever the card is
+ * inline.
+ *
+ * MiMo holds clear only as much as keeps its reading column out from under the
+ * card - `--info-inline-inset: clamp(0px, calc(--info-content-max + 2 *
+ * --info-panel-width - 100cqw), --info-panel-width)`, which MCode copied
+ * exactly. The card is drawn over the column's end rather than beside it, so on
+ * a window with room the conversation gives up nothing and stays centred on the
+ * whole column, half the card's width right of what can actually be seen. The
+ * user read that on 2026-09-24 as "the code is off to the right", which is what
+ * it is, and chose the conversation centred in what is left at every width.
+ * A deliberate difference from MiMo; do not "fix" it back.
  */
-const infoInset = computed(() => {
-  if (!infoInline.value) return "0px"
-  const column = viewportWide.value ? 1000 : 768
-  const need = column + INFO_PANEL_WIDTH * 2 - mainWidth.value
-  return `${Math.max(0, Math.min(INFO_PANEL_WIDTH, need))}px`
-})
+const infoInset = computed(() => (infoInline.value ? `${INFO_PANEL_WIDTH}px` : "0px"))
 
 let mainObserver: ResizeObserver | undefined
 onMounted(() => {
@@ -228,7 +232,6 @@ onMounted(() => {
   mainObserver = new ResizeObserver(([entry]) => {
     if (!entry) return
     mainWidth.value = entry.contentRect.width
-    viewportWide.value = window.innerWidth >= 2000
   })
   mainObserver.observe(pane)
 })
@@ -3677,6 +3680,7 @@ async function stepEffort(by: 1 | -1) {
 
 let offMenu: (() => void) | undefined
 let offZoom: (() => void) | undefined
+let offZoomResize: (() => void) | undefined
 let offQuitHint: (() => void) | undefined
 
 /* The platform for the zoom notice's key, before the backend has said it. */
@@ -3714,6 +3718,8 @@ onMounted(async () => {
   window.addEventListener("focus", app.bumpFsNonce)
   schemeQuery.addEventListener("change", onSchemeChange)
   offMenu = window.mcode.onMenu(runMenuCommand)
+  // Every measurement in this window is re-taken on a resize and on nothing else; see the module.
+  offZoomResize = followZoom()
   // MiMo's zoom notice after every step, and once at load when the window is not at 100%.
   offZoom = window.mcode.onZoomChanged((percent) =>
     notify(zoomNotice(percent, platformName()), { id: ZOOM_TOAST, duration: 5000 }),
@@ -3817,6 +3823,7 @@ onBeforeUnmount(() => {
   schemeQuery.removeEventListener("change", onSchemeChange)
   offMenu?.()
   offZoom?.()
+  offZoomResize?.()
   offQuitHint?.()
 })
 </script>
@@ -3885,10 +3892,12 @@ onBeforeUnmount(() => {
 
       <main ref="mainPane" class="main" :class="{ 'info-open': infoInline, 'info-shown': infoShowing, beside: panelBeside }">
         <ErrorBoundary :reset-key="`${view}:${app.currentID ?? ''}`">
-        <!-- A turn can run for minutes; the bar is the only thing that says so
-             without the user watching the transcript for movement. -->
-        <div v-if="app.busy" class="progress"><span /></div>
-
+        <!--
+          No bar across the top of the column while a turn runs. This used to
+          draw a sweeping blue 2px line there; the user looked at it on
+          2026-09-24 and had it taken out. A running turn already says so in
+          the transcript, in the composer's stop button and in the side column.
+        -->
         <!--
           Ahead of everything else: if the backend never opened there is no
           project, no session and no stream, so none of the usual places an
@@ -4274,35 +4283,6 @@ onBeforeUnmount(() => {
 .boot-retry:hover {
   background: var(--surface-hover);
   border-color: var(--border-strong);
-}
-
-.progress {
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  z-index: 5;
-  height: 2px;
-  overflow: hidden;
-  background: transparent;
-}
-
-.progress span {
-  display: block;
-  width: 40%;
-  height: 100%;
-  background: var(--interactive);
-  border-radius: 1px;
-  animation: sweep 1.5s ease-in-out infinite;
-}
-
-@keyframes sweep {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(250%);
-  }
 }
 
 /* The window itself is the darker frame the workspace is set into. */

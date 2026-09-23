@@ -76,6 +76,7 @@ import {
   newTab,
   openPanel,
   panelState,
+  rescale as rescaleBrowser,
   screenshot,
   selectTab,
   setBounds,
@@ -698,8 +699,12 @@ function createWindow(show = true): BrowserWindow {
   track(window, requested, () => ![...windows].some((entry) => entry !== window && !entry.isDestroyed()))
 
   // A pinch or Ctrl+wheel scales the page without going through applyZoom, so
-  // the band has to follow that as well as the menu and keyboard paths.
-  window.webContents.on("zoom-changed", () => refreshTitlebar(window))
+  // the band - and a browser tab's page, placed in the window's own pixels -
+  // has to follow that as well as the menu and keyboard paths.
+  window.webContents.on("zoom-changed", () => {
+    refreshTitlebar(window)
+    rescaleBrowser(window)
+  })
   window.webContents.on("did-finish-load", () => refreshTitlebar(window))
 
   /*
