@@ -561,8 +561,8 @@ onBeforeUnmount(() => {
 }
 
 /*
- * The tool chip's light half is --text-base, not --color-txt, so the pair is
- * written out rather than named.
+ * The chip's fill is MiMo's --color-code-bg, which has no token here, so the
+ * rule restates the dark ink beside it rather than splitting the pair in two.
  */
 :root[data-theme="dark"] .sp-tool {
   color: #f4f4f5;

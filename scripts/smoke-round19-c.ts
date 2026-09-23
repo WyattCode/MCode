@@ -133,7 +133,7 @@ export async function roundNineteenLaneCChecks(check: Check, section: (name: str
     check("overflow is measured as MiMo does, scrollHeight past clientHeight by more than 1px", /entry\.target\.scrollHeight - entry\.target\.clientHeight > 1/.test(script))
     const style = stream.slice(stream.indexOf("<style"))
     check("two lines", /\.automation-text\.clamped \{[^}]*-webkit-line-clamp: 2;/.test(style))
-    check("the button: 13px, muted, 6px below, 4px gap", /\.automation-more \{[^}]*gap: 4px;[^}]*margin-top: 6px;[^}]*color: var\(--text-weak\);[^}]*font-size: calc\(13px \* var\(--ui-font-scale, 1\)\);/.test(style))
+    check("the button: 13px, muted, 6px below, 4px gap", /\.automation-more \{[^}]*gap: 4px;[^}]*margin-top: 6px;[^}]*color: var\(--text-base\);[^}]*font-size: calc\(13px \* var\(--ui-font-scale, 1\)\);/.test(style))
     check("the key is in all 18 tables", (i18n.match(/^ {2}"stream\.automationShowMore": /gm) ?? []).length === 18)
     check("in MiMo's words", /"stream\.automationShowMore": "显示更多"/.test(i18n) && /"stream\.automationShowMore": "Show more"/.test(i18n) && /"stream\.automationShowMore": "顯示更多"/.test(i18n))
   }

@@ -71,8 +71,8 @@ export async function roundTwentyVisualOneChecks(check: Check, section: (name: s
   {
     check("V1-8: no automations-page grey left in the step sheet", !/#909091|#919191/.test(steps))
     check("V1-8: a row's words are the thread's muted colour in both themes", /color: var\(--text-base\);/.test(rule(steps, ".hs-h")) && !/:is\(\.hs-h,/.test(steps))
-    check("V1-9c: a group head hovers to MiMo's txt, #151c13cc in light", /color: #151c13cc;/.test(rule(steps, '.hs-summary:not([aria-disabled="true"]):hover')))
-    check("V1-9c: and #f4f4f5 in dark", /:root\[data-theme="dark"\] \.hs-summary:not\(\[aria-disabled="true"\]\):hover \{\s*color: #f4f4f5;/.test(steps))
+    check("V1-9c: a group head hovers to MiMo's txt", /color: var\(--text-body\);/.test(rule(steps, '.hs-summary:not([aria-disabled="true"]):hover')))
+    // The dark half is --text-body's own, so no rule restates it any more.
     const live = /if \(live\) \{([\s\S]*?)return \{ rows: all, foldAt: 0 \}/.exec(stream)?.[1] ?? ""
     check("V1-9d: while running every group of the unfinished stage opens; anything said ends the stage", /if \(speaks\(row\)\) break\s*if \(row\.kind === "group"\) row\.open = true/.test(live), live)
   }
@@ -103,7 +103,7 @@ export async function roundTwentyVisualOneChecks(check: Check, section: (name: s
   section("Round 20 V1: the action row")
   {
     check("R-11: icons are muted", /color: var\(--text-base\);/.test(rule(stream, ".msg-act")))
-    check("R-11: hover is MiMo's txt, #151c13cc light and #f4f4f5 dark", /color: #151c13cc;/.test(rule(stream, ".msg-act:hover")) && /:root\[data-theme="dark"\] \.msg-act:hover \{\s*color: #f4f4f5;/.test(stream))
+    check("R-11: hover is MiMo's txt, which --text-body now carries in both schemes", /color: var\(--text-body\);/.test(rule(stream, ".msg-act:hover")))
     const time = rule(stream, ".msg-time")
     check("R-12: the time is muted and appears without a fade", /color: var\(--text-base\);/.test(time) && !/transition/.test(time), time)
     check("R-12: behind MiMo's line, #f0ebe5 light and #2e2e2e dark", /background: #f0ebe5;/.test(rule(stream, ".msg-time::before")) && /:root\[data-theme="dark"\] \.msg-time::before \{\s*background: #2e2e2e;/.test(stream))

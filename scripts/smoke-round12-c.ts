@@ -155,7 +155,7 @@ export async function roundTwelveFailureChecks(check: Check, section: (name: str
         /<div v-else-if="emptyHere" class="thread-loading" data-thread-empty>\{\{ t\("stream\.emptyConvo"\) \}\}<\/div>/.test(stream) &&
         inTables("stream.emptyConvo"),
     )
-    check("C12-10: it is MiMo's placeholder: 80px above and below, 13px, muted, centred", /padding-block: 80px/.test(rule) && /font-size: calc\(13px/.test(rule) && /color: var\(--text-weak\)/.test(rule) && /text-align: center/.test(rule), rule)
+    check("C12-10: it is MiMo's placeholder: 80px above and below, 13px, muted, centred", /padding-block: 80px/.test(rule) && /font-size: calc\(13px/.test(rule) && /color: var\(--text-base\)/.test(rule) && /text-align: center/.test(rule), rule)
   }
 }
 

@@ -136,11 +136,11 @@ export async function roundTwentyV2Checks(check: Check, section: (name: string) 
     check("no :focus-within rule draws on the card", !/\.box:focus-within/.test(styles))
     check("the keyboard's own outline is kept", /:root\[data-focus-key\] \.box:has\(\.input:focus\) \{\s*outline: 2px solid var\(--interactive\);/.test(styles))
     const box = rules(".box").filter((body) => /box-shadow/.test(body)).at(-1) ?? ""
-    check("light: a #151c130f edge", /border: 0\.5px solid #151c130f;/.test(box), box)
-    check("light: MiMo's two-step shadow", /box-shadow: 0 1px 2px #0000000d, 0 6px 18px #0000001b;/.test(box), box)
+    check("light: a #151c130f edge", /border: 0\.5px solid var\(--border-input\);/.test(box), box)
+    check("light: MiMo's two-step shadow", /box-shadow: var\(--shadow-composer\);/.test(box), box)
     check(
-      "dark: a #2e2e2e edge under the one dark drop, and a dropped file's ring still wins",
-      /:root\[data-theme="dark"\] \.box:not\(\.dropping\) \{\s*border-color: #2e2e2e;\s*box-shadow: 0 1px 3px rgb\(0 0 0 \/ 0\.4\);/.test(styles) &&
+      "dark: a #2e2e2e edge, the dark drop now carried by --shadow-composer, and a dropped file's ring still wins",
+      /:root\[data-theme="dark"\] \.box:not\(\.dropping\) \{\s*border-color: #2e2e2e;\s*\}/.test(styles) &&
         /:root:not\(\[data-theme="light"\]\) \.box:not\(\.dropping\) \{\s*border-color: #2e2e2e;/.test(styles),
     )
   }

@@ -29,8 +29,10 @@ function rule(css: string, selector: string): string {
   return bodies.join("\n")
 }
 
-/** MiMo's --color-txt, which lane F1's token will replace: 80% ink on light, #f4f4f5 in dark. */
-const TXT = "#151c13cc"
+/** MiMo's --color-txt, which --text-body carries: 80% ink on light, #f4f4f5 in dark. */
+const TXT = "var(--text-body)"
+/** The same, safe to drop into a pattern - the token's brackets are not a group. */
+const TXT_RE = TXT.replace(/[()]/g, "\\$&")
 
 export async function roundTwentyOneF3Checks(check: Check, section: (name: string) => void, root = process.cwd()): Promise<void> {
   const read = (relative: string) => fs.readFile(path.join(root, relative), "utf8")
@@ -77,8 +79,8 @@ export async function roundTwentyOneF3Checks(check: Check, section: (name: strin
     check("the description element is gone, as its only MiMo rule is display:none", !/lc-desc/.test(panel))
     const strings = await read("src/renderer/src/lib/i18n.ts")
     check("and no language table still carries a launch description", !/"launch\.\w+Desc":/.test(strings))
-    check("MiMo's .launch-card .i.big ink is --color-txt", new RegExp(`\\.lc-icon \\{[^}]*color: ${TXT};`).test(panel), rule(panel, ".lc-icon"))
-    check("and dark takes #f4f4f5, not white", /:root\[data-theme="dark"\] \.lc-name \{\s*color: #f4f4f5;/.test(panel))
+    check("MiMo's .launch-card .i.big ink is --color-txt", new RegExp(`\\.lc-icon \\{[^}]*color: ${TXT_RE};`).test(panel), rule(panel, ".lc-icon"))
+    check("and the name beside it takes the same ink", rule(panel, ".lc-name").includes(`color: ${TXT};`))
   }
 
   // ------------------------------------------------------------------ R21-F3-4
@@ -149,7 +151,7 @@ export async function roundTwentyOneF3Checks(check: Check, section: (name: strin
     check("the resizer sits at 30, over the panel it divides", /z-index: 30;/.test(rule(drawer, ".resize")))
     check("the active tab stands on the page colour", /background: #fffefd;/.test(rule(drawer, ".tab.on")))
     check("the tab's label and the notice take --color-txt", rule(drawer, ".tab").includes(`color: ${TXT};`) && rule(drawer, ".mismatch").includes(`color: ${TXT};`))
-    check("the close mark's hover is MiMo's #00000014, not an undefined token", /background: #00000014;/.test(rule(drawer, ".tab-close:hover")) && !/--overlay-hover/.test(drawer))
+    check("the close mark's hover is MiMo's #00000014, which --overlay-hover now holds", /background: var\(--overlay-hover\);/.test(rule(drawer, ".tab-close:hover")))
     check("and the primary pill is the txt ink filled, its label the page colour", /background: #151c13cc;/.test(rule(drawer, ".mismatch-btn.primary")) && /color: #fffefd;/.test(rule(drawer, ".mismatch-btn.primary")))
     const terminal = code(await read("src/renderer/src/components/right/RpTerminal.vue"))
     check("the tab's fill is on the terminal host, where MiMo puts it", !/background/.test(rule(terminal, ".rp-term")) && /background: var\(--surface-raised\);/.test(rule(terminal, ".rp-term :deep(.term),\n.rp-term :deep(.term-host)")))
@@ -185,7 +187,7 @@ export async function roundTwentyOneF3Checks(check: Check, section: (name: strin
     check("and its .fc-btn is the office tab's rule: gap 6, no centring", /gap: 6px;/.test(rule(html, ".fc-btn")) && !/justify-content: center;/.test(rule(html, ".fc-btn")))
     check("both heads' buttons stand on the page colour in the txt ink", rule(html, ".fc-btn").includes(`color: ${TXT};`) && rule(office, ".fc-btn").includes(`color: ${TXT};`))
     check("the composer chip takes MiMo's chip tokens", /background: #0000000d;/.test(rule(chips, ".cchip")) && /color: #137a3f;/.test(rule(chips, ".cchip-name")) && /color: #8a8a82;/.test(rule(chips, ".cchip-rm,\n.ann-rm")))
-    check("and the annotation list hangs on the page colour under --shadow-menu", /background: #fffefd;/.test(rule(chips, ".ann-pop")) && /box-shadow: 0 8px 30px #0000002e, 0 1px 3px #0000001a;/.test(rule(chips, ".ann-pop")))
+    check("and the annotation list hangs on the page colour under --shadow-menu", /background: #fffefd;/.test(rule(chips, ".ann-pop")) && /box-shadow: var\(--shadow-menu\);/.test(rule(chips, ".ann-pop")))
   }
 
   // ------------------------------------------------------------------ R21-F3-13
