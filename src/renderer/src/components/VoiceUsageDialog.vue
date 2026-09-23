@@ -64,7 +64,6 @@ useEscapeLayer(() => emit("close"))
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  /* MiMo's --shadow-pop; MCode has no token for it (lane F1 owns the token set). */
   box-shadow: var(--shadow-pop);
 }
 
@@ -115,7 +114,7 @@ h2 {
 }
 
 .entry-title {
-  color: #151c13cc;
+  color: var(--text-body);
   font-weight: 500;
 }
 
@@ -132,19 +131,11 @@ h2 {
   white-space: pre-line;
 }
 
-:root[data-theme="dark"] .entry-title {
-  color: #f4f4f5;
-}
-
 :root[data-theme="dark"] .entry-examples {
   border-color: color-mix(in srgb, #5a9cff 35%, transparent);
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .entry-title {
-    color: #f4f4f5;
-  }
-
   :root:not([data-theme="light"]) .entry-examples {
     border-color: color-mix(in srgb, #5a9cff 35%, transparent);
   }

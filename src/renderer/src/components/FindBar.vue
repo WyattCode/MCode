@@ -143,7 +143,7 @@ watch(input, (element) => props.find.setInput(element))
   flex: 0 1 180px;
   width: 180px;
   min-inline-size: 72px;
-  color: #151c13cc;
+  color: var(--text-body);
   font-size: calc(13px * var(--ui-font-scale, 1));
   background: transparent;
   border: none;
@@ -192,15 +192,10 @@ watch(input, (element) => props.find.setInput(element))
 }
 
 /*
- * MiMo's --color-txt on the dark scheme (#f4f4f5); lane F1 is adding a token
- * for it, so the pair is written out here.
+ * MiMo's --color-bg and --color-side-hover on the dark scheme.
  */
 :root[data-theme="dark"] .find {
   background: #181818;
-}
-
-:root[data-theme="dark"] .needle {
-  color: #f4f4f5;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -208,8 +203,5 @@ watch(input, (element) => props.find.setInput(element))
     background: #181818;
   }
 
-  :root:not([data-theme="light"]) .needle {
-    color: #f4f4f5;
-  }
 }
 </style>

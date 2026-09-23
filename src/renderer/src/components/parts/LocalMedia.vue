@@ -483,7 +483,7 @@ onBeforeUnmount(() => {
 }
 
 .text .md-voice-more:hover {
-  color: #151c13cc;
+  color: var(--text-body);
   background: #f1f0ec;
 }
 

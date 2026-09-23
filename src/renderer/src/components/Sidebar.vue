@@ -1965,7 +1965,7 @@ onBeforeUnmount(() => {
 
 /* MiMo's hover colour for these is its --color-txt, #151c13cc light and #f4f4f5 dark (below). */
 .ico:hover {
-  color: #151c13cc;
+  color: var(--text-body);
   background: var(--surface-hover);
 }
 
@@ -2444,7 +2444,7 @@ button.section-head:focus-visible {
 }
 
 .show-more:hover {
-  color: #151c13cc;
+  color: var(--text-body);
 }
 
 /* A pinned conversation: MiMo's 46px mark cell in place of the 9px start, the title right after it. */
@@ -2475,7 +2475,7 @@ button.section-head:focus-visible {
 }
 
 .pinned-more:hover {
-  color: #151c13cc;
+  color: var(--text-body);
 }
 
 /* Under a project's first five: 12px in the muted colour, in line with the task names. */
@@ -2491,7 +2491,7 @@ button.section-head:focus-visible {
 }
 
 .project-show-all:hover {
-  color: #151c13cc;
+  color: var(--text-body);
 }
 
 /* MiMo's pages row under the projects: more on the left, collapse on the right. */
@@ -2513,7 +2513,7 @@ button.section-head:focus-visible {
 }
 
 .projects-pages button:hover {
-  color: #151c13cc;
+  color: var(--text-body);
 }
 
 .pages-more {
@@ -2688,7 +2688,7 @@ button.section-head:focus-visible {
 }
 
 .row-menu:hover {
-  color: #151c13cc;
+  color: var(--text-body);
   background: var(--surface-hover);
 }
 
@@ -2780,7 +2780,7 @@ button.section-head:focus-visible {
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
-  color: #151c13cc;
+  color: var(--text-body);
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 7px;
@@ -2901,7 +2901,7 @@ button.section-head:focus-visible {
 }
 
 .row-pin:hover {
-  color: #151c13cc;
+  color: var(--text-body);
   background: var(--surface-hover);
 }
 /*
@@ -3146,7 +3146,7 @@ button.section-head:focus-visible {
 
 /*
  * MiMo's --color-txt, --color-side-item, --color-send and --color-send-fg on
- * the dark scheme. Lane F1 is adding tokens for the first; until they land the
+ * the dark scheme. Written out because no token holds that pair, so the
  * pair is written out.
  */
 :root[data-theme="dark"] .ico:hover,

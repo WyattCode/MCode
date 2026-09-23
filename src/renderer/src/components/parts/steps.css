@@ -58,9 +58,9 @@
   padding: 5px 0;
 }
 
-/* MiMo's summary hover is its txt colour: #151c13cc in light, #f4f4f5 in dark (below). */
+/* MiMo's summary hover is its txt colour. */
 .hs-summary:not([aria-disabled="true"]):hover {
-  color: #151c13cc;
+  color: var(--text-body);
 }
 
 .hs-ic {
@@ -670,10 +670,6 @@ html[data-motion="on"] .hs-collapse {
   user-select: text;
 }
 
-:root[data-theme="dark"] .hs-summary:not([aria-disabled="true"]):hover {
-  color: #f4f4f5;
-}
-
 :root[data-theme="dark"] :is(.hs-cell, .hs-full-cmd, .hs-perm-cmd, .tc-out, .hs-title code) {
   color: #e6e6e6;
 }
@@ -691,10 +687,6 @@ html[data-motion="on"] .hs-collapse {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .hs-summary:not([aria-disabled="true"]):hover {
-    color: #f4f4f5;
-  }
-
   :root:not([data-theme="light"]) :is(.hs-cell, .hs-full-cmd, .hs-perm-cmd, .tc-out, .hs-title code) {
     color: #e6e6e6;
   }

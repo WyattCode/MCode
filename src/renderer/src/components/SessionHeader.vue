@@ -332,7 +332,6 @@ function openMenu(event: MouseEvent) {
   outline: none;
 }
 
-
 .right {
   display: flex;
   flex-shrink: 0;

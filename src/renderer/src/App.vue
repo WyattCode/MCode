@@ -142,7 +142,6 @@ const homeDirectory = ref<string>()
 /* The folder the home screen has picked, which its bottom panel's terminal opens in. */
 const homeShellDirectory = ref<string>()
 
-
 /*
  * The info card beside a conversation (2.0, after Xiaomi MiMo's): the plan,
  * what the session produced and what it read. Open unless the reader put it
@@ -607,7 +606,6 @@ async function runShellCommand(command: string) {
   }
 }
 
-
 /** A conversation ticked or unticked in the side column's selection mode. */
 function toggleSelected(sessionID: string) {
   const current = selecting.value ?? []
@@ -802,7 +800,6 @@ watch(
   },
   { immediate: true },
 )
-
 
 /*
  * The two sizes on the appearance page, carried the way MiMo carries them: a
@@ -4094,8 +4091,6 @@ onBeforeUnmount(() => {
       />
       </ErrorBoundary>
     </div>
-
-
 
     <SearchOverlay
       v-if="searchOpen"

@@ -553,7 +553,7 @@ defineExpose({ close })
 .sr-artifact-error button {
   flex: none;
   padding: 4px 9px;
-  color: #151c13cc;
+  color: var(--text-body);
   background: #fffefd;
   border: 1px solid var(--border-weak);
   border-radius: 7px;
@@ -562,16 +562,12 @@ defineExpose({ close })
 }
 
 /*
- * MiMo's --color-bg on the dark scheme (#181818); lane F1 is adding a token
- * for it, and its --color-txt for the 重试 button.
+ * MiMo's --color-bg on the dark scheme (#181818) and its --color-txt for the
+ * 重试 button.
  */
 :root[data-theme="dark"] .search-card,
 :root[data-theme="dark"] .sr-artifact-error button {
   background: #181818;
-}
-
-:root[data-theme="dark"] .sr-artifact-error button {
-  color: #f4f4f5;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -580,9 +576,6 @@ defineExpose({ close })
     background: #181818;
   }
 
-  :root:not([data-theme="light"]) .sr-artifact-error button {
-    color: #f4f4f5;
-  }
 }
 
 /* MiMo's search-card-in and overlay-fade-in move nothing: opacity only. */

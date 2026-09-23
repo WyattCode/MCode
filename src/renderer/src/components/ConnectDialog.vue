@@ -553,7 +553,6 @@ useEscapeLayer(dismiss)
   letter-spacing: -0.13px;
 }
 
-
 .lead {
   margin: 4px 0 18px;
   color: var(--text-base);
@@ -879,7 +878,7 @@ useEscapeLayer(dismiss)
   }
 }
 
-/* MiMo's red-500; lane F1 owns the --text-critical token this wants. */
+/* MiMo's red-500, which is not its --color-err, so --text-critical does not fit. */
 .error {
   margin-top: 16px;
   color: #fb2c36;

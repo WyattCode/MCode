@@ -550,7 +550,7 @@ onBeforeUnmount(() => {
   max-width: 148px;
   padding: 1px 6px;
   overflow: hidden;
-  color: #151c13cc;
+  color: var(--text-body);
   background: #f0f0f2;
   border-radius: 6px;
   font-family: var(--font-mono);
@@ -561,8 +561,8 @@ onBeforeUnmount(() => {
 }
 
 /*
- * MiMo's --color-txt on the dark scheme (#f4f4f5); lane F1 is adding a token
- * for it, so the pair is written out here.
+ * The tool chip's light half is --text-base, not --color-txt, so the pair is
+ * written out rather than named.
  */
 :root[data-theme="dark"] .sp-tool {
   color: #f4f4f5;

@@ -209,8 +209,7 @@ onBeforeUnmount(() => {
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   background: var(--surface-raised);
 }
 
@@ -368,8 +367,7 @@ onBeforeUnmount(() => {
   width: 30px;
   height: 30px;
   padding: 0;
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   background: transparent;
   border: 0;
   border-radius: 8px;
@@ -512,19 +510,10 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--surface-raised) 92%, var(--surface-selected));
 }
 
-:root[data-theme="dark"] .rp-subagents,
-:root[data-theme="dark"] .rp-subagent-back {
-  color: #f4f4f5;
-}
-
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .rp-subagent-group:not(.empty) {
     background: color-mix(in srgb, var(--surface-raised) 92%, var(--surface-selected));
   }
 
-  :root:not([data-theme="light"]) .rp-subagents,
-  :root:not([data-theme="light"]) .rp-subagent-back {
-    color: #f4f4f5;
-  }
 }
 </style>

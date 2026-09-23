@@ -752,8 +752,7 @@ body.resizing .right-panel {
   width: 18px;
   height: 18px;
   padding: 0;
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   background: transparent;
   border: 0;
   border-radius: 5px;
@@ -779,8 +778,7 @@ body.resizing .right-panel {
 }
 
 .rp-add:hover {
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   background: var(--surface-hover);
 }
 
@@ -826,13 +824,12 @@ body.resizing .right-panel {
   width: 16px;
   height: 16px;
   margin: 0 2px;
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
 }
 
 /* The name in --color-txt. */
 .lc-name {
-  color: #151c13cc;
+  color: var(--text-body);
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 400;
   white-space: nowrap;
@@ -860,13 +857,6 @@ body.resizing .right-panel {
   background: var(--surface-raised);
 }
 
-:root[data-theme="dark"] .rpt-close,
-:root[data-theme="dark"] .rp-add:hover,
-:root[data-theme="dark"] .lc-icon,
-:root[data-theme="dark"] .lc-name {
-  color: #f4f4f5;
-}
-
 :root[data-theme="dark"] .rp-add {
   color: #b8b8b8;
 }
@@ -883,13 +873,6 @@ body.resizing .right-panel {
 
   :root:not([data-theme="light"]) .rp-tab.active {
     background: var(--surface-raised);
-  }
-
-  :root:not([data-theme="light"]) .rpt-close,
-  :root:not([data-theme="light"]) .rp-add:hover,
-  :root:not([data-theme="light"]) .lc-icon,
-  :root:not([data-theme="light"]) .lc-name {
-    color: #f4f4f5;
   }
 
   :root:not([data-theme="light"]) .rp-add {

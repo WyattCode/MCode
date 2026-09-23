@@ -444,7 +444,7 @@ h2 {
   gap: 8px;
   height: calc(36px * var(--ui-font-scale, 1));
   padding: 0 12px;
-  color: #151c13cc;
+  color: var(--text-body);
   background: transparent;
   border: 1px solid #f0ebe5;
   border-radius: 8px;
@@ -508,7 +508,7 @@ h2 {
   gap: 7px;
   height: calc(32px * var(--ui-font-scale, 1));
   padding: 0 10px;
-  color: #151c13cc;
+  color: var(--text-body);
   background: transparent;
   border: 1px solid #f0ebe5;
   border-radius: 8px;

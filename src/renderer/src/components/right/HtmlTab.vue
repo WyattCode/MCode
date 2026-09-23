@@ -414,8 +414,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   padding: 5px 8px;
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   background: var(--surface-base);
   border: 1px solid var(--border-weak);
   border-radius: 8px;

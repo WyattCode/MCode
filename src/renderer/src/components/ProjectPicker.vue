@@ -319,9 +319,9 @@ svg path {
   line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
-/* Hover only: MiMo's chip goes back to rest once the pointer is in its menu, in its --color-txt (#151c13cc, #f4f4f5 dark, below). */
+/* Hover only: MiMo's chip goes back to rest once the pointer is in its menu, in its --color-txt. */
 .chip:hover {
-  color: #151c13cc;
+  color: var(--text-body);
   background: var(--surface-hover);
 }
 
@@ -407,7 +407,7 @@ svg path {
 .search input {
   flex: 1;
   min-width: 0;
-  color: #151c13cc;
+  color: var(--text-body);
   background: transparent;
   border: 0;
   outline: none;
@@ -455,7 +455,7 @@ svg path {
   width: 100%;
   min-width: 0;
   padding: 6px 10px;
-  color: #151c13cc;
+  color: var(--text-body);
   background: transparent;
   border-radius: 11px;
   font-size: calc(13px * var(--ui-font-scale, 1));
@@ -524,7 +524,7 @@ svg path {
 }
 
 .show-more:hover {
-  color: #151c13cc;
+  color: var(--text-body);
 }
 
 .rule {
@@ -585,15 +585,9 @@ svg path {
 }
 
 /*
- * MiMo's --color-txt, --color-icon and --color-send on the dark scheme. Lane F1
- * is adding tokens for the first two; until they land the pair is written out.
+ * MiMo's --color-icon and --color-send on the dark scheme. Neither has a token
+ * of its own, so both are written out.
  */
-:root[data-theme="dark"] .chip:hover,
-:root[data-theme="dark"] .row,
-:root[data-theme="dark"] .show-more:hover,
-:root[data-theme="dark"] .search input {
-  color: #f4f4f5;
-}
 
 :root[data-theme="dark"] .row .i {
   color: #d0d0d0;
@@ -604,13 +598,6 @@ svg path {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .chip:hover,
-  :root:not([data-theme="light"]) .row,
-  :root:not([data-theme="light"]) .show-more:hover,
-  :root:not([data-theme="light"]) .search input {
-    color: #f4f4f5;
-  }
-
   :root:not([data-theme="light"]) .row .i {
     color: #d0d0d0;
   }

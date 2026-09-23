@@ -430,8 +430,7 @@ onBeforeUnmount(() => {
   gap: 12px;
   width: 100%;
   padding: 10px 14px;
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 12px;
@@ -445,7 +444,7 @@ onBeforeUnmount(() => {
   width: 30px;
   height: 30px;
   padding: 0;
-  color: #151c13cc;
+  color: var(--text-body);
   background: transparent;
   border: none;
   border-radius: 7px;
@@ -481,15 +480,5 @@ onBeforeUnmount(() => {
 }
 
 /* MiMo's --color-txt is #f4f4f5 in dark, not a translucent white. */
-:root[data-theme="dark"] .vp-bar,
-:root[data-theme="dark"] .vp-toggle {
-  color: #f4f4f5;
-}
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .vp-bar,
-  :root:not([data-theme="light"]) .vp-toggle {
-    color: #f4f4f5;
-  }
-}
 </style>

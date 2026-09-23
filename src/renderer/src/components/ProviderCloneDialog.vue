@@ -91,7 +91,6 @@ onMounted(() => {
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  /* MiMo's --shadow-pop; MCode has no token for it (lane F1 owns the token set). */
   box-shadow: var(--shadow-pop);
 }
 
@@ -145,7 +144,7 @@ h2 {
 }
 
 /* MiMo rings a bad id in red-400 and says why in red-500. Both are written out
-   until lane F1's --text-critical token lands. */
+   MiMo's red-400, which is not its --color-err. */
 .field-in.bad {
   border-color: #ff6467;
 }

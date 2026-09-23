@@ -47,7 +47,6 @@ import GoalBar from "./GoalBar.vue"
 import { readContext } from "./session-context"
 import { compactTokens, t, language } from "../lib/i18n"
 
-
 const emit = defineEmits<{
   terminal: []
   "open-settings": [section?: "models"]
@@ -2263,7 +2262,6 @@ function onBoxClick() {
   syncCaret()
 }
 
-
 /** Which pill has its menu open, if any. */
 const menu = ref<"model" | "access" | "plus" | "context">()
 
@@ -2589,7 +2587,6 @@ const currentModel = computed<ModelInfo | undefined>(() =>
  * which is what the reference's `variantControlVisible: !model.loading` does.
  */
 const variants = computed<Effort[]>(() => currentModel.value?.variants ?? [])
-
 
 /*
  * The level the chip names: the conversation's own, else the default a new
@@ -4804,7 +4801,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   background-color: color-mix(in srgb, var(--text-strong) 24%, var(--surface-raised));
   cursor: default;
 }
-
 
 /*
  * The agent and model pills, measured off the reference's own button-v2 rather

@@ -81,25 +81,11 @@ const initial = computed(() => (props.name.trim() || props.id).slice(0, 1).toUpp
 
 /* MiMo's fallback: the first letter, 11/500 in its --color-txt, on a 6px-cornered square of the hover fill. */
 .letter {
-  color: #151c13cc;
+  color: var(--text-body);
   background: var(--surface-hover);
   border-radius: 6px;
   font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 1;
-}
-
-/*
- * MiMo's --color-txt on the dark scheme (#f4f4f5); lane F1 is adding a token
- * for it, so the pair is written out here.
- */
-:root[data-theme="dark"] .letter {
-  color: #f4f4f5;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .letter {
-    color: #f4f4f5;
-  }
 }
 </style>

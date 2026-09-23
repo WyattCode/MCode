@@ -590,7 +590,6 @@ function shown(turn: Turn, at: number): Row[] {
   return foldAt > 0 && !opened.value.has(turn.id) ? all.slice(foldAt) : all
 }
 
-
 /** Whether the turn has an answer block to draw: parts, a failure, an end, or a live retry. */
 function answers(turn: Turn, at: number): boolean {
   return Boolean(turn.parts.length || turn.error || turn.finish || (liveTurn(at) && turn.last?.retry))
@@ -2098,7 +2097,7 @@ defineExpose({ stepMessage, scroller })
   margin-top: 10px;
 }
 
-/* MiMo's icon-btn xs: muted, and on hover its side-hover fill under its txt colour (#151c13cc light, #f4f4f5 dark). */
+/* MiMo's icon-btn xs: muted, and on hover its side-hover fill under its txt colour. */
 .msg-act {
   display: grid;
   place-items: center;
@@ -2113,18 +2112,8 @@ defineExpose({ stepMessage, scroller })
 }
 
 .msg-act:hover {
-  color: #151c13cc;
+  color: var(--text-body);
   background: var(--surface-hover);
-}
-
-:root[data-theme="dark"] .msg-act:hover {
-  color: #f4f4f5;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .msg-act:hover {
-    color: #f4f4f5;
-  }
 }
 
 .msg-act:active {

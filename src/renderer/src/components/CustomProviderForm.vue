@@ -867,7 +867,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 
 /*
  * MiMo rings a field it will not accept in red-400 and says why in red-500.
- * Written out until lane F1's --text-critical token lands.
+ * MiMo's red-400, which is not its --color-err, so --text-critical does not fit.
  */
 .cp-in.bad {
   border-color: #ff6467;
@@ -1130,8 +1130,6 @@ label.cp-option {
 .cp-check {
   color: var(--text-weak);
 }
-
-
 
 /* One card per model: the id and its display name, then the three menus; the bin in the corner. */
 .cp-model {

@@ -264,7 +264,7 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
 }
 
 .text .md-svg-failed:hover {
-  color: #151c13cc;
+  color: var(--text-body);
 }
 
 :root[data-theme="dark"] .text .md-svg-body {
@@ -274,10 +274,6 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
 :root[data-theme="dark"] .text .md-svg-wait,
 :root[data-theme="dark"] .text .md-svg-failed {
   color: #b8b8b8;
-}
-
-:root[data-theme="dark"] .text .md-svg-failed:hover {
-  color: #f4f4f5;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -290,8 +286,5 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
     color: #b8b8b8;
   }
 
-  :root:not([data-theme="light"]) .text .md-svg-failed:hover {
-    color: #f4f4f5;
-  }
 }
 </style>

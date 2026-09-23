@@ -1280,8 +1280,6 @@ const languageOptions = computed(() => LANGUAGES.map((entry) => ({ value: entry.
  */
 const closedProjects = computed(() => app.config?.closedProjects ?? [])
 
-
-
 async function reopenProject(directory: string) {
   await app.patchConfig({
     closedProjects: closedProjects.value.filter((entry) => entry !== directory),
@@ -1406,7 +1404,6 @@ const shortcutRows = computed(() => {
   })
 })
 
-
 /* MiMo's switch: turned off while at full access, the level drops to the default and says so. */
 async function toggleFullAccess() {
   const config = app.config
@@ -1459,8 +1456,6 @@ function chooseChime(value: string) {
   void app.patchConfig({ taskDoneSound: choice })
   if (choice !== "off") chime(choice)
 }
-
-
 
 /* Clearing what the in-app browser has stored, after a confirmation, as MiMo asks for one. */
 const confirmingClear = ref(false)
@@ -3487,15 +3482,13 @@ h3 {
 }
 
 /*
- * MiMo's own failure pill: --color-err (#d23f3f, one value for both schemes)
- * under an 8% fill and a 35% ring. Written out because MCode has no red token
- * yet - this is the --text-critical lane F1 is adding; swap it back when it
- * lands.
+ * MiMo's own failure pill: --color-err, one value for both schemes, under an
+ * 8% fill and a 35% ring. --text-critical is that same --color-err.
  */
 .mcp-status.err {
-  color: #d23f3f;
-  background: color-mix(in srgb, #d23f3f 8%, transparent);
-  border-color: color-mix(in srgb, #d23f3f 35%, transparent);
+  color: var(--text-critical);
+  background: color-mix(in srgb, var(--text-critical) 8%, transparent);
+  border-color: color-mix(in srgb, var(--text-critical) 35%, transparent);
 }
 
 .mcp-status.warn {
@@ -3529,9 +3522,9 @@ h3 {
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
-/* MiMo's tools error line is the same --color-err (lane F1's --text-critical). */
+/* MiMo's tools error line is the same --color-err. */
 .mcp-tools-hint.err {
-  color: #d23f3f;
+  color: var(--text-critical);
 }
 
 .mcp-tools-head {
@@ -3560,23 +3553,12 @@ h3 {
 
 /*
  * MiMo draws a tool's own name in --color-txt, a step above the description
- * under it. MCode has no token for that ink yet - lane F1 is adding one - so
- * the pair is written out here.
+ * under it, which --text-body is.
  */
 .mcp-tool-name {
-  color: #151c13cc;
+  color: var(--text-body);
   font-family: var(--font-mono);
   font-size: calc(12px * var(--code-font-scale, 1));
-}
-
-:root[data-theme="dark"] .mcp-tool-name {
-  color: #f4f4f5;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .mcp-tool-name {
-    color: #f4f4f5;
-  }
 }
 
 .mcp-tool-desc {
@@ -3901,8 +3883,8 @@ h3 {
 
 /*
  * A conflict is MiMo's red-500 (#fb2c36) on its own 5% wash, border and text
- * alike. Written out for the same reason as the pill above: lane F1 owns the
- * --text-critical token this wants.
+ * alike. MiMo's red-500 here, which is not its --color-err, so --text-critical
+ * does not fit.
  */
 .keys-record-box.conflict {
   color: #fb2c36;
@@ -4623,9 +4605,7 @@ h3 {
 /*
  * MiMo's settings-full: it gives up a fixed 48 of width and 88 of height to the
  * window rather than a share of it, so the dialog keeps its full 960 until the
- * window is under 1008 wide. --shadow-pop (0 12px 40px of alpha-dark-14) is
- * written out because MCode has no token for it; it replaces the stale
- * --shadow-lg left over from the opencode-era shell above.
+ * window is under 1008 wide, under MiMo's --shadow-pop.
  */
 .dialog {
   position: relative;
@@ -4856,8 +4836,8 @@ h2 {
 /*
  * MiMo draws a page title in --color-hero-title-fg, which is txt-strong in
  * light and the softer --color-txt in dark - a 24px heading in pure white is
- * heavier than anything else on the page. Written out until lane F1's ink
- * token lands.
+ * heavier than anything else on the page. Written out rather than named: its
+ * light half is --text-strong, not the body ink, so no one token holds the pair.
  */
 :root[data-theme="dark"] h2 {
   color: #f4f4f5;
@@ -5610,7 +5590,6 @@ h3 {
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  /* MiMo's --shadow-pop; MCode has no token for it (lane F1 owns the token set). */
   box-shadow: var(--shadow-pop);
 }
 
