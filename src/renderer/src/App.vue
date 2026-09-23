@@ -4607,6 +4607,10 @@ onBeforeUnmount(() => {
  * lines (#f0ebe5) instead of neutral ones. macOS keeps the neutral set, and
  * dark is untouched in every platform.
  *
+ * MiMo's block also resets the hover and selected washes, but R21-F1 measured
+ * those two off its root and they are the same #f1f0ec / #eeedec there, so
+ * repeating them here only restated the default on two platforms.
+ *
  * Written as the positive light condition rather than `:not(dark)`, and hung on
  * `.app` rather than `:root`: the palette is written inline onto <html> at boot,
  * so only a rule matching a descendant of it can win.
@@ -4614,8 +4618,6 @@ onBeforeUnmount(() => {
 :root[data-theme="light"] .app[data-platform="win32"],
 :root[data-theme="light"] .app[data-platform="linux"] {
   --surface-base: #f8f7f5;
-  --surface-hover: #f1f0ec;
-  --surface-selected: #eeedec;
   --border-weak: #f0ebe5;
 }
 
@@ -4623,8 +4625,6 @@ onBeforeUnmount(() => {
   :root:not([data-theme="dark"]) .app[data-platform="win32"],
   :root:not([data-theme="dark"]) .app[data-platform="linux"] {
     --surface-base: #f8f7f5;
-    --surface-hover: #f1f0ec;
-    --surface-selected: #eeedec;
     --border-weak: #f0ebe5;
   }
 }
