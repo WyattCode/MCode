@@ -233,8 +233,9 @@ const TONE: Record<string, string> = { M: "modified", A: "added", D: "deleted", 
   border-radius: 7px;
 }
 
+/* MiMo's .icon-btn:hover is --color-menu-hover under --color-txt, not the strong ink. */
 .rv-refresh:hover:not(:disabled) {
-  color: var(--text-strong);
+  color: var(--text-body);
   background: var(--surface-hover);
 }
 
