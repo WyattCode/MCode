@@ -263,7 +263,14 @@ function onEditKey(event: KeyboardEvent) {
   padding: 2px 2px 6px;
 }
 
-/* MiMo's chip: 24 high, a pill on a faint fill, 13px, 5 between its parts. */
+/*
+ * MiMo's chip: 24 high, a pill on a faint fill, 13px, 5 between its parts.
+ *
+ * The height scales here where MiMo's is a literal 24px. MiMo's own text is
+ * var(--text-13), which does scale, so at the largest UI font its 22px line
+ * cannot stand in a 24px pill and the label is cut top and bottom; the pill is
+ * `overflow: hidden`, so nothing gives. Deliberate difference, kept working.
+ */
 .cchip {
   display: inline-flex;
   align-items: center;

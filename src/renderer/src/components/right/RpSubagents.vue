@@ -399,7 +399,12 @@ onBeforeUnmount(() => {
   font-weight: 550;
 }
 
-/* 执行记录, then MiMo's model pill: 6 apart, the label whole and the pill cut at 120. */
+/*
+ * 执行记录, then MiMo's model pill: 6 apart, the label whole and the pill cut at
+ * 120. MiMo writes both at a literal 11px rather than its scaling --text-11,
+ * and the head that holds them is a min-height, so nothing can clip: the line
+ * is copied as it stands.
+ */
 .rp-subagent-detail-subtitle {
   display: flex;
   gap: 6px;
@@ -408,7 +413,7 @@ onBeforeUnmount(() => {
   margin-top: 1px;
   overflow: hidden;
   color: var(--text-weak);
-  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-size: 11px;
 }
 
 .rp-subagent-detail-subtitle-label {
@@ -425,6 +430,8 @@ onBeforeUnmount(() => {
   max-width: 120px;
   padding: 1px 6px;
   overflow: hidden;
+  /* Pinned as MiMo pins it, so the pill cannot drift from the line it sits on. */
+  font-size: 11px;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
