@@ -5,7 +5,7 @@
 - 分支：`v2.0`，2026-09-22 起推到 GitHub `WyattCode/MCode`（私有仓库，跟踪 `origin/v2.0`）；拉取请求 https://github.com/WyattCode/MCode/pull/4 已于 2026-09-22 合并进 `main`（合并提交 `76b86ed`）；0.3.8 已发布为预发布版 https://github.com/WyattCode/MCode/releases/tag/v0.3.8
 - 目标：在界面和功能上 1:1 复刻 Xiaomi MiMo 桌面端，MCode 保留自己的名字、图标和字标
 - 对照清单（逐项实测，含百分比）：https://claude.ai/code/artifact/f149a5d1-857e-4bae-80be-ca03265d9f83
-- 最近更新：2026-09-23（第二十一轮，版本 0.4.1）
+- 最近更新：2026-09-23（第二十二轮 L2 路，版本 0.4.1）
 - 第十二轮（2026-09-19/20）：三个新的只读角度（数据生命周期与版本升级、主进程与界面的通信契约、失败与空状态）的审计已做完，34 项全部完成并合并入 `v2.0`，见下方「第十二轮」一节。报告在 scratchpad `round12-lifecycle.md` / `round12-ipc.md` / `round12-failure-ux.md`
 - 第十三轮（2026-09-20）：键盘与焦点、多实例与窗口生命周期、大数据量三个只读角度，37 项全部完成并合并入 `v2.0`，见下方「第十三轮」一节。报告在 scratchpad `round13-keyboard.md` / `round13-instances.md` / `round13-scale.md`
 - 第十四轮（2026-09-20）：网络与代理、本地化格式与从右到左、打包安装与自动更新三个只读角度，16 项全部完成并合并入 `v2.0`，见下方「第十四轮」一节。报告在 scratchpad `round14-network.md` / `round14-locale.md` / `round14-packaging.md`
@@ -14,6 +14,23 @@
 - 第十七轮（2026-09-21）：文档查看器、语音与媒体、版本控制与工作流三个角度，三路完成并合并入 `v2.0`，见下方「第十七轮」一节。报告 scratchpad `round17-viewers.md` / `round17-media.md` / `round17-workflow.md`
 - 第十八轮（2026-09-21）：**对照基准改为 MiMo 26.920**（用户让 MiMo 自动更新）；截图实测差异配色 + 26.914→26.920 版本差异，五路完成并合并入 `v2.0`，见下方「第十八轮」一节。报告 scratchpad `round18-mimo920.md` / `round18-visual-measured.md`
 - 第十九轮（2026-09-21/22）：逐页重新对照 26.920（四块只读审计 + 逐条复核，确认 28 条），A 设置与弹窗 14、B 右侧面板与侧栏 10、C 对话滚动（发送后停靠、跟随规则、暂停与重钉、入场动画、定时任务两行截断）5；另做性能：切回长对话 438→124–188ms、入口 5.90MB→2.14MB。用户定：删首启导入弹窗、新建项目位置行、「导出为对话文件」。`provider.custom.field.providerID.label` / `…providerID.exists` 的简繁中文经用户 2026-09-22 同意连同 `reference-strings.json` 一起改成 MiMo 的「供应商 ID」「该 ID 已被占用」。另修：本机动态端口从 1024 起，端口 0 可能落在浏览器拒绝的端口（5060、6000 等），后端 socket（`server/free-port.ts`）与预览服务改为避开这些端口，检查脚本的服务器由 `scripts/safe-listen.ts` 挪开（原「bad port」偶发失败）。合并后 smoke 6134 全过；合并版真窗口复测停靠 135.1（目标 136.8）。见各「第十九轮」小节。
+
+## 第二十二轮 · L2：第二十一轮右侧面板路留下的 7 条（2026-09-23）
+
+第二十一轮 F3（右侧面板）在自己的范围之外报了 7 条没做的发现。本路逐条照 MiMo 26.920（`r18-mimo920/out/out`，只读）复核后再动手——其中 2 条一读原文就不成立。
+
+- **L2-1 选中的面板标签**：MiMo `.rp-tab.active{background:var(--color-bg)}`，即 F1 的 `--surface-page`；MCode 写的是 `--surface-raised`。浅色 `#ffffff` → `#fffefd`，深色两边都是 `#181818`。**深色覆盖不能删**：`:root[data-theme="dark"] .rp-tab`（0,3,0）压过 `.rp-tab.active`（0,2,0)，删掉之后选中标签会被画成未选中的 `#ffffff1a`——这是真窗口探针抓到的，光读规则没看出来（commit `R22-L2-1` / `R22-L2-1b`）。
+- **L2-2 MiMo 画 `--color-bg` 的地方**：`--surface-base` 深色是 `#141414`，比 MiMo 的 `--color-bg` `#181818` 深一档。三处 `.fc-btn`（Office 头、HTML 头、文件页）、版本弹窗的 `.vp-restore`、以及 MiMo 写成 `bg-bg` 的 diff 标签选中段，全部改指 `--surface-page`；token 本身不动，因为它在别处是「应用底色」。MiMo 用 `--color-side` 画的两处（`.docx-rail` `$c`、结构化预览的提示条 `ol`）保留 `--surface-base`，那正是这个 token 的深色值。
+- **L2-3 MiMo 的 txt 墨色**：`.icon-btn:hover{background:var(--color-menu-hover);color:var(--color-txt)}`、diff 布局按钮 `text-mut hover:text-txt` / `bg-bg text-txt`、修订栏吸顶头 `color:var(--color-txt)`（`RpOffice-*.js` 的 `Cc`）。审阅刷新的 hover、两个 diff 布局状态、修订栏头都由 `--text-strong` 改 `--text-body`；修订卡片正文仍是强墨色，MiMo 也是。
+- **L2-4 启动器图标 20×20：不成立**。MiMo 确有 `.launch-card .i.big{width:20px;height:20px}`，但紧跟着 `.launch-card .i.big.figma-830-tool{width:16px;height:16px;margin:0 2px}`，而 `Am` 组件给除 `simulator` 外的每个工具图标都加了 `figma-830-tool`（`automation` 走另一个分支，也没有）。MiMo 启动器六项里只有 `simulator` 吃 20px，MCode 的 `LAUNCH_ORDER` 根本没有 `simulator`/`automation`——所以 MCode 的 `.lc-icon` 16×16 + `margin:0 2px` 正是 MiMo 的那条覆盖。**不改**，并加检查防止被「修回去」。
+- **L2-5 字号是否跟 UI 字号缩放**：MiMo 的 `--text-11` 等本身就是 `calc(11px * var(--ui-font-scale,1))`，所以它写字面值就是明确不缩放。
+  - `.rp-subagent-detail-subtitle` / `.rp-subagent-model`：MiMo 都写字面 `11px`，承载它们的 `.rp-subagent-detail-head` 是 `min-height:58px`（会撑开，不会切），**照 MiMo 改成字面 11px**。
+  - `.cchip`：MiMo 高度字面 `24px`，但里面的字是 `var(--text-13)`（会缩放）。最大 UI 字号（24/14 = 1.714）下 13px 变 22.3px，行盒约 26.7px 塞不进 24px 且 `overflow:hidden`——MiMo 自己会切字。**保留 MCode 的缩放高度**，记入有意差异。
+- **L2-6 修订徽标的字面颜色：维持原样**。MCode 那些字面值本来就等于 MiMo 的 `--color-revision-ins-fg/-bg`、`-comment-fg/-bg`、`-bar` 与 `--color-danger-fg/-bg`（浅深两套全部逐值核对相同），而 MCode 现有 token 里没有任何一个是这些值，本轮又不许新增 token 名——**任务描述里「第二十一轮已加了这套 token」与仓库不符，仓库里没有 revision/danger 系列**。所以保持写死，并加检查把 14 个值钉住、同时钉住「没有新造 token 名」。要换成 token，需要用户再次解禁新增 token 名。
+- **L2-7 两条错误条的外边距**：MiMo 的边界兜底是 `rounded-[8px] border border-red-300 bg-red-50 px-[12px] py-[8px]`，**没有任何 margin**，它八处调用也都没传自定义兜底。`PaneBoundary` 已经对了，`ErrorBoundary` 的 `margin: 8px` 去掉。
+- 验证：`typecheck` / `i18ncheck` / `wiringcheck` / `themecheck` / `build` 全过；`smoke` 6852 过 1 失败——失败的是**与本路无关的既有问题** `T3-8`（`scripts/smoke-perf-thread.ts:79`），在干净的 v2.0 上同样失败：`smoke-round16-continuation.ts` 把 `process.env.TZ` 改成 `Etc/GMT±12`（按运行时刻的 UTC 小时选方向）后恢复不干净，`dateIn` 缓存的格式化器与新建的对不上，所以按一天中的时间随机红。已另开任务。
+- 新检查：`scripts/smoke-round22-l2.ts`（41 条，注册在 `smoke.ts`），在 v2.0 上 21 条失败；`scripts/r22l2-prove.ts` 就是那份证明（`git show v2.0:` 取旧文件再跑同一个函数）。
+- 真窗口实测（`scratchpad/r22l2/l2-probe.cjs`，一次性配置目录、`win.show()`、`win.isVisible() === true`、缩放 1、浅深两套）：标签条、启动器、子智能体详情、带修订的 docx、版本弹窗、diff 标签、审阅刷新 hover；错误条另外用两个「打断构建」跑（`RpReview` 抛错 → `PaneBoundary`；`RightPanel` 抛错 → `ErrorBoundary`），测完已还原。测得：选中标签 `#fffefd` / `#181818`；`.fc-btn` 与 `.vp-restore` 深色 `#141414` → `#181818`；修订栏头 `#151c13cc` / `#f4f4f5`；diff 选中段 `#fffefd`+`#151c13cc` / `#181818`+`#f4f4f5`；刷新 hover `#151c13cc` / `#f4f4f5`（底 `#f1f0ec` / `#ffffff0f`）；`.lc-icon` 16×16 `margin 0 2px`；子智能体副标题与模型胶囊 11px；两条错误条 `margin: 0px`。截图在同目录 `l2-*.png`。
 
 ## 第二十一轮 · F1：颜色 token 与共用控件（2026-09-23）
 
@@ -490,6 +507,11 @@
 | 设置页：钩子、自定义插件（CLI）、连接（SSH） | 清单之外的新功能，用户选择改为打磨现有功能 |
 
 ## 与 MiMo 故意不同的地方（用户定的，不要改回去）
+
+- 第二十二轮 L2 新增（同样是 MiMo 自己写坏的地方，MCode 保留能用的行为）：
+  - **`.cchip` 的高度跟 UI 字号缩放**，MiMo 写的是字面 `24px`。MiMo 自己的字是 `var(--text-13)`（会缩放），最大 UI 字号下 22.3px 的字放不进 24px 的 `overflow:hidden` 胶囊，它会把标签上下切掉。
+  - **版本弹窗「回溯」按钮的边框用 `--border-weak`**。MiMo 写的是 `border:1px solid var(--line, #e2e8f0)`，而它从来没有定义过 `--line`（只有 `--color-line`），所以两套配色下都落到 `#e2e8f0`——深色里是一圈浅石板灰。
+  - **`.rp-tab.active` 在深色下保留一条显式覆盖**。不是差异，是必须：MiMo 的层叠里 `.rp-tab.active` 就压得过 `.rp-tab`，MCode 因为 `:root[data-theme="dark"]` 前缀反了过来，删掉覆盖会画错。
 
 - 第二十一轮 F1 新增（MiMo 自己那一处 CSS 是坏的，MCode 保留能用的行为）：
   - `--overlay-hover` 深色用 `#ffffff14`。MiMo 的 `.bp-tab-x:hover{background:#00000014}` 没有深色覆盖，深色下那层黑几乎看不见。
