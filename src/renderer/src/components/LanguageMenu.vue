@@ -207,7 +207,7 @@ onBeforeUnmount(() => {
   background: transparent;
   border: 1px solid #e3e3e0;
   border-radius: 8px;
-  box-shadow: 0 1px 2px #0000000d;
+  box-shadow: var(--shadow-xs);
   font-size: calc(14px * var(--ui-font-scale, 1));
   white-space: nowrap;
 }
@@ -261,7 +261,7 @@ onBeforeUnmount(() => {
   background: var(--surface-menu);
   border: 0.5px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-composer);
   -webkit-backdrop-filter: blur(18px) saturate(150%);
   backdrop-filter: blur(18px) saturate(150%);
 }

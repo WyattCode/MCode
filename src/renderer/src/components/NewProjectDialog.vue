@@ -131,10 +131,10 @@ onMounted(() => {
 .card {
   width: min(430px, 90vw);
   padding: 22px 24px;
-  background: var(--surface-raised);
+  background: var(--surface-page);
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--shadow-pop);
 }
 
 .head {

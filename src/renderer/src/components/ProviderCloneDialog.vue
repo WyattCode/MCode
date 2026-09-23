@@ -92,7 +92,7 @@ onMounted(() => {
   border: 1px solid var(--border-weak);
   border-radius: 16px;
   /* MiMo's --shadow-pop; MCode has no token for it (lane F1 owns the token set). */
-  box-shadow: 0 12px 40px #00000024;
+  box-shadow: var(--shadow-pop);
 }
 
 h2 {
@@ -119,7 +119,7 @@ h2 {
   background: transparent;
   border: 1px solid #e3e3e0;
   border-radius: 6px;
-  box-shadow: 0 1px 2px #0000000d;
+  box-shadow: var(--shadow-xs);
   font-size: calc(13px * var(--ui-font-scale, 1));
   outline: none;
 }

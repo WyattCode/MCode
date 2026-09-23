@@ -366,7 +366,7 @@ svg circle {
   background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
   border: 0.5px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-composer);
   backdrop-filter: blur(18px) saturate(150%);
   transform-origin: top;
   animation: menu-in 0.15s ease-out;
@@ -521,10 +521,10 @@ svg circle {
 .dialog {
   width: min(430px, 90vw);
   padding: 22px 24px;
-  background: var(--surface-raised);
+  background: var(--surface-page);
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--shadow-pop);
 }
 
 .dialog-head {

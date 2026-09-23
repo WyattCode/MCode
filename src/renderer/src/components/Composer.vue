@@ -3895,7 +3895,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
   border: 0.5px solid var(--border-weak);
   border-radius: 12px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-menu);
   backdrop-filter: blur(18px) saturate(150%);
 }
 
@@ -4856,7 +4856,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   padding: 5px;
   border: 0.5px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-composer);
   transform-origin: top;
   animation: menu-in 0.15s ease-out;
 }
@@ -4969,7 +4969,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
   border: 0.5px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-composer);
   backdrop-filter: blur(18px) saturate(150%);
   transform-origin: top left;
   animation: sub-in 0.15s ease-out;
@@ -5262,7 +5262,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   max-height: min(420px, calc(100vh - 16px));
   border: 0.5px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-composer);
   transform-origin: top left;
   animation: sub-in 0.15s ease-out;
 }
@@ -5450,7 +5450,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   background: #ffffff;
   border: 0.5px solid #151c130f;
   border-radius: 20px;
-  box-shadow: 0 1px 2px #0000000d, 0 6px 18px #0000001b;
+  box-shadow: var(--shadow-composer);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -5460,7 +5460,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
   :root:not([data-theme="light"]) .box:not(.dropping) {
     border-color: #2e2e2e;
-    box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
   }
 
   /* MiMo's --shadow-composer-home, which differs from the normal one on dark only. */
@@ -5475,7 +5474,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
 :root[data-theme="dark"] .box:not(.dropping) {
   border-color: #2e2e2e;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
 }
 
 :root[data-theme="dark"] .home-hero .box:not(.dropping) {

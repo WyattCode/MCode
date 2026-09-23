@@ -4634,7 +4634,7 @@ h3 {
   background: #ffffff;
   border: 1px solid #f3efeb;
   border-radius: 20px;
-  box-shadow: 0 12px 40px #00000024;
+  box-shadow: var(--shadow-pop);
   outline: none;
 }
 
@@ -5003,7 +5003,7 @@ h3 {
   background: transparent;
   border: 1px solid #e3e3e0;
   border-radius: 8px;
-  box-shadow: 0 1px 2px #0000000d;
+  box-shadow: var(--shadow-xs);
   font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
@@ -5611,7 +5611,7 @@ h3 {
   border: 1px solid var(--border-weak);
   border-radius: 16px;
   /* MiMo's --shadow-pop; MCode has no token for it (lane F1 owns the token set). */
-  box-shadow: 0 12px 40px #00000024;
+  box-shadow: var(--shadow-pop);
 }
 
 .vs-head {

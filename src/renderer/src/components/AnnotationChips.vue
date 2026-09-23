@@ -363,7 +363,7 @@ function onEditKey(event: KeyboardEvent) {
   background: #fffefd;
   border: 1px solid var(--border-weak);
   border-radius: 10px;
-  box-shadow: 0 8px 30px #0000002e, 0 1px 3px #0000001a;
+  box-shadow: var(--shadow-menu);
 }
 
 .ann-item {
@@ -458,7 +458,6 @@ function onEditKey(event: KeyboardEvent) {
 
 :root[data-theme="dark"] .ann-pop {
   background: #181818;
-  box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
 }
 
 :root[data-theme="dark"] .ann-title,
@@ -486,7 +485,6 @@ function onEditKey(event: KeyboardEvent) {
 
   :root:not([data-theme="light"]) .ann-pop {
     background: #181818;
-    box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
   }
 
   :root:not([data-theme="light"]) .ann-title,

@@ -1899,17 +1899,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: 0 8px 30px #0000002e, 0 1px 3px #0000001a;
-}
-
-:root[data-theme="dark"] .side-shell.preview {
-  box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .side-shell.preview {
-    box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
-  }
+  box-shadow: var(--shadow-menu);
 }
 
 /*

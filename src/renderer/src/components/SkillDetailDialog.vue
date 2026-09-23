@@ -124,9 +124,9 @@ useEscapeLayer(() => emit("close"))
   max-width: 90vw;
   max-height: 80vh;
   padding: 22px;
-  background: var(--surface-raised);
+  background: var(--surface-page);
   border-radius: 16px;
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--shadow-pop);
 }
 
 .close {

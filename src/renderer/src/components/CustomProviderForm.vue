@@ -829,7 +829,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   background: transparent;
   border: 1px solid #e3e3e0;
   border-radius: 6px;
-  box-shadow: 0 1px 2px #0000000d;
+  box-shadow: var(--shadow-xs);
   font-family: var(--font-sans);
   font-size: calc(13px * var(--ui-font-scale, 1));
   outline: none;

@@ -303,10 +303,10 @@ onBeforeUnmount(() => {
   max-width: calc(100vw - 16px);
   padding: 0;
   overflow: hidden;
-  background: var(--surface-raised);
+  background: var(--surface-page);
   border: 0;
   border-radius: 20px;
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--shadow-composer);
 }
 
 /* MiMo's 87px hero band across the top; the art is MCode's own. */

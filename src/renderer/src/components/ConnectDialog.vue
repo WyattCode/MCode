@@ -492,10 +492,10 @@ useEscapeLayer(dismiss)
   width: min(560px, calc(100vw - 64px));
   max-height: min(620px, calc(100vh - 96px));
   padding: 10px 26px 26px;
-  background: var(--surface-raised);
+  background: var(--surface-page);
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-pop);
   outline: none;
 }
 

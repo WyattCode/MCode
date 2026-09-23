@@ -460,10 +460,10 @@ onBeforeUnmount(() => {
   z-index: 60;
   width: 300px;
   padding: 12px 14px;
-  background: var(--surface-raised);
+  background: var(--surface-page);
   border: 0.5px solid var(--border-weak);
   border-radius: 20px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-composer);
   opacity: 0;
   pointer-events: none;
   transform: translateY(6px) scale(0.97);

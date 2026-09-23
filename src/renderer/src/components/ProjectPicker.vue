@@ -360,7 +360,7 @@ svg path {
   background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
   border: 0.5px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-composer);
   backdrop-filter: blur(18px) saturate(150%);
   transform-origin: top;
   animation: menu-in 0.15s ease-out;
@@ -562,7 +562,7 @@ svg path {
   background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
   border: 0.5px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-composer);
   backdrop-filter: blur(18px) saturate(150%);
   transform-origin: left top;
   animation: sub-in 0.15s ease-out;

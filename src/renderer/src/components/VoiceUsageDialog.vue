@@ -65,7 +65,7 @@ useEscapeLayer(() => emit("close"))
   border: 1px solid var(--border-weak);
   border-radius: 16px;
   /* MiMo's --shadow-pop; MCode has no token for it (lane F1 owns the token set). */
-  box-shadow: 0 12px 40px #00000024;
+  box-shadow: var(--shadow-pop);
 }
 
 h2 {

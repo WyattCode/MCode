@@ -474,7 +474,7 @@ defineExpose({
   background: #fffefd;
   border: 1px solid var(--border-weak);
   border-radius: 12px;
-  box-shadow: 0 8px 30px #0000002e, 0 1px 3px #0000001a;
+  box-shadow: var(--shadow-menu);
   transform-origin: 0 100%;
   animation: rb-menu-pop 0.18s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -882,7 +882,6 @@ defineExpose({
 
 :root[data-theme="dark"] .rb-menu {
   border-color: #2e2e2e;
-  box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
 }
 
 :root[data-theme="dark"] .rb-item.danger {
@@ -978,7 +977,6 @@ defineExpose({
 
   :root:not([data-theme="light"]) .rb-menu {
     border-color: #2e2e2e;
-    box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
   }
 
   :root:not([data-theme="light"]) .rb-item.danger {

@@ -138,17 +138,7 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", outside, true)
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 10px;
-  box-shadow: 0 2px 8px #0000000d, 0 1px 2px #0000000a;
-}
-
-:root[data-theme="dark"] .cell-affordance {
-  box-shadow: 0 2px 8px #0000004d, 0 1px 2px #00000040;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .cell-affordance {
-    box-shadow: 0 2px 8px #0000004d, 0 1px 2px #00000040;
-  }
+  box-shadow: var(--shadow-tip);
 }
 
 .cell-affordance textarea {
