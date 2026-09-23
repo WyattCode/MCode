@@ -1158,7 +1158,8 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  color: var(--text-strong);
+  /* MiMo writes the rail's head in --color-txt, the body ink. */
+  color: var(--text-body);
   background: var(--surface-raised);
   border-bottom: 1px solid var(--border-weak);
   font-size: 12px;
