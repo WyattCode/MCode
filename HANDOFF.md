@@ -1,25 +1,163 @@
 # MCode 2.0 交接文档
 
-给接手的人（或下一个会话）看的现状说明。每完成一轮就更新一次。
+给接手的人（或下一个会话）看的现状说明。每完成一轮更新一次。
 
-- 分支：`v2.0`，2026-09-22 起推到 GitHub `WyattCode/MCode`（私有仓库，跟踪 `origin/v2.0`）；拉取请求 https://github.com/WyattCode/MCode/pull/4 已于 2026-09-22 合并进 `main`（合并提交 `76b86ed`）；0.3.8 已发布为预发布版 https://github.com/WyattCode/MCode/releases/tag/v0.3.8
-- 目标：在界面和功能上 1:1 复刻 Xiaomi MiMo 桌面端，MCode 保留自己的名字、图标和字标
-- 对照清单（逐项实测，含百分比）：https://claude.ai/code/artifact/f149a5d1-857e-4bae-80be-ca03265d9f83
-- 最近更新：2026-09-24（第二十三轮：二次复核，版本 0.4.3）
-- 第二十三轮（2026-09-24，用户要求「这些背景不要，二次复核代码，打包」）：先删掉首页字标后面那层自画的虚线背景（用户看了截图后否掉，已写进「刻意的差异」）；再开五路只读复核（后端、渲染层、编码智能体、样式、检查脚本自身），13 条缺陷全部修掉。见下方「第二十三轮」一节；报告在 scratchpad `r23/R1-backend.md` … `R5-checks.md`
-- 最近更新：2026-09-23（第二十二轮 L2 路，版本 0.4.1）
-- 最近更新：2026-09-23（第二十二轮 L1，版本 0.4.1）
-- 第二十二轮 L1（2026-09-23）：把第二十一轮 F1 留下的清单扫完——两个 opencode 阴影按用途换成 MiMo 的四个、半像素边框统一 --border-input、--color-txt 改用 --text-body、dim/mut 按种类而非尺寸归位、tooltip 宽度与几处死代码。见下方「第二十二轮 · L1」一节；报告在 scratchpad r22l1-*.json / *.png
-- 第十二轮（2026-09-19/20）：三个新的只读角度（数据生命周期与版本升级、主进程与界面的通信契约、失败与空状态）的审计已做完，34 项全部完成并合并入 `v2.0`，见下方「第十二轮」一节。报告在 scratchpad `round12-lifecycle.md` / `round12-ipc.md` / `round12-failure-ux.md`
-- 第十三轮（2026-09-20）：键盘与焦点、多实例与窗口生命周期、大数据量三个只读角度，37 项全部完成并合并入 `v2.0`，见下方「第十三轮」一节。报告在 scratchpad `round13-keyboard.md` / `round13-instances.md` / `round13-scale.md`
-- 第十四轮（2026-09-20）：网络与代理、本地化格式与从右到左、打包安装与自动更新三个只读角度，16 项全部完成并合并入 `v2.0`，见下方「第十四轮」一节。报告在 scratchpad `round14-network.md` / `round14-locale.md` / `round14-packaging.md`
-- 第十五轮（2026-09-20，用户要求「二次复核所有代码，检查BUG，包括界面细节」）：六路只读复核 + 七路修复，34 条缺陷全部修掉并合并入 `v2.0`，见下方「第十五轮」一节。报告在 scratchpad `round15-main.md` / `-server-core.md` / `-tools.md` / `-renderer-state.md` / `-ui-chat.md` / `-ui-settings.md`
-- 第十六轮（2026-09-20/21）：**编码能力整体改为 MiMo 的路子**（对话方式、代码处理、编码界面），五路完成并合并入 `v2.0`，见下方「第十六轮」一节。只读对照报告 scratchpad `round16-conversation.md` / `round16-code.md` / `round16-ui.md`
-- 第十七轮（2026-09-21）：文档查看器、语音与媒体、版本控制与工作流三个角度，三路完成并合并入 `v2.0`，见下方「第十七轮」一节。报告 scratchpad `round17-viewers.md` / `round17-media.md` / `round17-workflow.md`
-- 第十八轮（2026-09-21）：**对照基准改为 MiMo 26.920**（用户让 MiMo 自动更新）；截图实测差异配色 + 26.914→26.920 版本差异，五路完成并合并入 `v2.0`，见下方「第十八轮」一节。报告 scratchpad `round18-mimo920.md` / `round18-visual-measured.md`
-- 第十九轮（2026-09-21/22）：逐页重新对照 26.920（四块只读审计 + 逐条复核，确认 28 条），A 设置与弹窗 14、B 右侧面板与侧栏 10、C 对话滚动（发送后停靠、跟随规则、暂停与重钉、入场动画、定时任务两行截断）5；另做性能：切回长对话 438→124–188ms、入口 5.90MB→2.14MB。用户定：删首启导入弹窗、新建项目位置行、「导出为对话文件」。`provider.custom.field.providerID.label` / `…providerID.exists` 的简繁中文经用户 2026-09-22 同意连同 `reference-strings.json` 一起改成 MiMo 的「供应商 ID」「该 ID 已被占用」。另修：本机动态端口从 1024 起，端口 0 可能落在浏览器拒绝的端口（5060、6000 等），后端 socket（`server/free-port.ts`）与预览服务改为避开这些端口，检查脚本的服务器由 `scripts/safe-listen.ts` 挪开（原「bad port」偶发失败）。合并后 smoke 6134 全过；合并版真窗口复测停靠 135.1（目标 136.8）。见各「第十九轮」小节。
+**这份文档怎么读**：前六节是接手就要知道的（现状、怎么跑、代码在哪、坑、刻意的差异、下一步）；第七节起是逐轮记录，按轮次从新到旧，查某个决定为什么是现在这样时再翻。最后是附录：早期的对照清单和待办。
 
-## 第二十三轮：二次复核（2026-09-24，版本 0.4.3）
+## 当前状态（2026-09-24）
+
+- **这是什么**：在界面和功能上 1:1 复刻小米 MiMo 桌面端的 Electron 应用，MCode 保留自己的名字、图标和字标。技术栈 Electron 41.7.2 + Vue 3 + Pinia + electron-vite，后端是同一进程里的 Node 服务。
+- **对照基准**：MiMo **26.920**（第十八轮起）。只读它的行为和尺寸，**不复制**它的代码、文案、图标、插画和品牌。逐项对照清单（含百分比）：https://claude.ai/code/artifact/f149a5d1-857e-4bae-80be-ca03265d9f83
+- **版本**：0.4.3，`dist\MCode-0.4.3-x64.exe`（236.7 MB）已静默装到 `D:\Apps\MCode` 并启动验证过。
+- **分支**：`v2.0`，跟踪 `origin/v2.0`（私有仓库 `WyattCode/MCode`）。`main` 停在 2026-09-22 合并的拉取请求 https://github.com/WyattCode/MCode/pull/4（合并提交 `76b86ed`），此后 `v2.0` 上又有 **165 个提交没有合并过去**——攒够了再开新的拉取请求。已发布预发布版 https://github.com/WyattCode/MCode/releases/tag/v0.3.8；自动更新地址仍是占位的 `updates.invalid`，所以发布不会触发任何更新。
+- **验证状态**：typecheck、build 和十一项专项检查全绿，smoke **6973 条全过**。
+- **已知差异**：对照 26.920 没有已知的、未决的界面差异。仍然不同的三类——用户定的刻意差异（见下）；依赖小米账号或小米服务的功能；需要 Linux / macOS 真机才能核对的细节。
+- **还没做的**：用真实模型实际连续用一段时间（见「下一步」）。
+
+## 怎么跑、怎么验
+
+```bash
+npm run dev          # 开发版（先结束残留的 node_modules/electron/dist/electron.exe）
+npm run typecheck
+npm run build
+npm run smoke        # 当前 6973 条（2026-09-24）
+npm run package      # 打包 + 自动递增补丁号，不要手改版本号
+```
+
+十一项专项检查，提交前都要过：
+
+| 命令 | 管什么 |
+| --- | --- |
+| `i18ncheck` | 18 张语言表的键一致 |
+| `themecheck` | 重新生成 `tokens.css` 并逐字节比对；也拦物理方向的 CSS |
+| `wiringcheck` | 配置字段要在设置之外被读到、事件要有监听 |
+| `mdcheck` | 仓库里的 Markdown |
+| `promptcheck` / `toolcheck` | 系统提示词、工具定义与说明 |
+| `sessioncheck` / `snapshotcheck` | 会话存储与快照 |
+| `mcpcheck` / `providercheck` / `shellcheck` | MCP、服务商、shell 选择 |
+
+还有 `sandboxcheck`（单独跑）。
+
+**界面改动一律用探针验证**，不要只读样式表。探针是一个独立的 `.cjs`：用 `node_modules/electron/dist/electron.exe` 加载 `out/main/index.js`，`app.setPath("userData")` 指到临时目录，**绝不碰用户的真实配置目录**。探针放在会话的 scratchpad 里，不进仓库；写法见「约定与坑」里的「探针」一条和各轮记录里的例子。
+
+**每条新检查都要证明「能失败」**：故意把代码改坏 → 检查报失败 → 从逐字节副本恢复并重新构建。一条不可能失败的检查比没有检查更糟，它是一句「这里验过了」的假话。第二十三轮在 6900 条里找出六条这样的检查（详见那一节）。
+
+## 代码在哪
+
+473 个 `.ts` / `.vue` 源文件，119 个脚本。
+
+- `src/main/` —— Electron 主进程：窗口与标题栏、托盘与菜单、自动更新、原生对话框、剪贴板与图片、浏览器页面（`browser-page.ts`）、Office 文档、崩溃转储、原子写（`atomic-write.ts`）。
+- `src/preload/` —— 渲染进程能调用的那一层。
+- `src/server/` —— 后端，和主进程同进程但逻辑独立，通过 WebSocket 和窗口说话（`index.ts` 起服务）：
+  - `session/` —— **对话的心脏**。`runner.ts` 是回合循环（请求、工具调用、压缩、续写、重试、取消），`store.ts` 是持久化，`loop-health.ts` 是死循环检测，`prune.ts` / `summary.ts` 是上下文压缩。
+  - `tool/` —— 模型能调用的工具（read / write / edit / bash / grep / glob / task / actor / question …）和它们的校验。
+  - `provider/` —— 各家模型协议的适配（`anthropic.ts`、`openai.ts`、`tool-schema.ts` 按模型家族改写工具 schema）。
+  - `artifact/` —— 产物库（SQLite）。`cron/`、`automation/` —— 定时任务与自动化。`memory/`、`history/` —— 记忆与历史。
+  - `storage.ts` —— 所有 JSON 文档的原子读写、损坏隔离、临时文件清理。**动它之前先读第二十三轮那一节。**
+  - `config.ts`、`permission.ts` —— 设置和记住的授权，两者都有「读不到就整轮不写」的保护。
+- `src/renderer/src/` —— 界面：`App.vue`（窗口骨架、快捷键、主题）、`components/`（对话流、输入框、侧栏、设置、右侧面板、各类查看器）、`stores/`（Pinia）、`lib/`（`i18n.ts` 里 18 张语言表，构建时按语言拆包）、`styles/`（`tokens.css` 由 `themecheck` 生成，不要手改）。
+- `src/shared/` —— 两端共用的类型和纯函数，`protocol.ts` 是前后端的契约。
+- `scripts/` —— 检查脚本。`smoke.ts` 是入口，按轮次分到 `smoke-roundN*.ts`；新加一轮就写一个文件并在 `smoke.ts` 里 import + 调用。
+
+## 约定与坑
+
+- 回复用中文；代码、标识符、注释用英文。
+- 不能新增 CSS token 名（themecheck 会重新生成 tokens.css）；CSS 用逻辑属性（`padding-inline-start` 而不是 `padding-left`）。
+- 字号一律写成 `calc(Npx * var(--ui-font-scale, 1))`，代码字号用 `--code-font-scale`。
+- 新增文案要进全部 18 张语言表（zhCN zhTW en ar bs da de es fr ja ko nb pl ptBR ru th tr uk）；用脚本按锚点插入，保留 CRLF。
+- 读 MiMo：只读方式解 `C:/Users/Wyatt/AppData/Local/Programs/Xiaomi MiMo/resources/app.asar`（用仓库里的 `@electron/asar`，内部路径要用反斜杠拼接）。只看行为和尺寸，**不复制** MiMo 的代码、文案、图标、插画和品牌。
+- 安全：不读、不打印凭据值；不替用户登录；不在用户的 MiMo 里发消息、改设置、按麦克风或铃铛；未经同意不关用户的应用。
+- 探针：
+  - 不要 `moveTop()` 窗口；用 `setBackgroundThrottling(false)`。**截图前要 `win.show()`**：只 `showInactive()` 时 `capturePage` 可能拿到旧画面（2026-09-21 一张「AI 生成」截图停在首页，数据却是对话里的）。
+  - 读数前先记 `win.isVisible()` 和 `document.visibilityState`：窗口被外部最小化或隐藏时 rAF 不跑，停靠、跟随这类依赖帧的测量全部作废（第十九轮 C 路有几轮因此偏到 268–314）。不是 MCode 自己最小化的（已用 `BrowserWindow.prototype.minimize` 钩子排除），多半是用户同时在用电脑。
+  - 合成的 `mouseDown`/`mouseMove` 拖拽在探针里选不中文字（`getSelection()` 为空），要测选区就用 `Range` 直接放选区。
+  - 有活动终端时不要直接退出探针（会弹 conpty 断言对话框）。
+  - 打开外部程序、剪贴板、选目录的 IPC（`mcode:open-file`、`mcode:reveal-file`、`mcode:clipboard-write`、`mcode:pick-directory`、`mcode:quit`）先 `removeHandler` 再换成记录器。
+  - 背景窗口里 `animation.finished` 可能一直不结束——产品代码里等动画都要配一个超时。
+  - 打开弹窗后第一次 `capturePage` 可能是旧画面，等约 2 秒并 `invalidate()` 再截。
+  - ContextMenu 当前选中项是 `.item.ticked`；侧栏底部「设置」行现在先打开菜单，再点菜单里的「设置」。
+- 开发版重启：先停旧的 `npm run dev` 任务，再结束残留 electron 进程，否则两个开发实例抢同一份配置（会报缓存无法创建）。第十三轮起未打包运行默认用独立数据目录 `%APPDATA%\MCode-dev`（I13-1），不再和安装版共用 `%APPDATA%\MCode`；探针用 `app.setPath("userData")` 或 `--user-data-dir` 仍然优先。
+- 已知不稳定检查：第五轮计划模式一节（`smoke-round5.ts`「plan mode writes one file…」）偶发 6 条一起失败，2026-09-20 四次全量里出现一次；疑似后台请求（标题生成）插进来，使 `e.bodies.at(-1)` 不是本轮请求。重跑即过，未修。第十四轮 P 路还见过一次第七轮「provider receives the long bash description」两条失败（那次请求里没有工具列表），重跑即过，疑同类。
+- 版本号只在打包时递增，不要手改。WSL 永久不在范围内。
+- 本机 TCP 动态端口从 **1024** 起（`netsh int ipv4 show dynamicport tcp`），向系统要端口 0 可能拿到浏览器 / fetch 拒绝的端口（5060、6000、6666 等）。应用里后端自己监听并重试（`server/index.ts` 的 `listenForWindow`，上限 20 次），预览服务在 `bind()` 里换掉这类端口（上限 8 次），列表在 `shared/blocked-ports.ts`；检查脚本的服务器由 `scripts/safe-listen.ts` 挪开（`smoke.ts`、`session-check.ts` 第一个 import，`smoke-blocked-ports.ts` 验证）。新写的检查脚本入口也要先 import 它。
+- 合并多路时：各路都删同一批代码（如导入弹窗、对话文件），冲突两侧都要丢掉，不能 keep-both；合并后还要 grep 检查脚本里对已删符号的引用（第十九轮 E1/E11、`openText` 就是这样漏的）。
+- 用 Python 改仓库文件一律 `open(..., newline="")` 读写，否则 Windows 下会把 LF 写成 CRLF。
+- 对用户仓库跑 git 一律用 `server/git-process.ts` 的 `runGit`（固定环境、路径不加引号、超时、隐藏窗口）；解析路径用 `-z` 输出和 `parsePorcelain`。只有影子快照仓库（`session/snapshot.ts`）自己起进程。smoke-round10-git 会扫描 `src/server`、`src/main` 里没带 `windowsHide` 的 git 进程。
+- **不要把「读不到」当成「坏了」**（第二十三轮）：`Storage.readOrCorrupt` 有三种答案——`value`（读到了）、`corrupt`（在那儿但解析不了，可以移开保存为证据）、`unreadable`（操作系统不给读，文件多半是完好的）。第三种既不能隔离（rename 会因为同一个锁失败）也**绝不能写**，否则「我读不到」就变成了「它现在空了」。拿到 `unreadable` 的调用方要整轮不写。新写任何读用户文档的代码都照这个分法。
+- **临时文件不是「不是我的进程号」就能删**：两个实例共用一个配置目录是支持的情况，别人正在写的临时文件删掉会让它的 rename 报 ENOENT。要判存活 + 判年龄（`storage.ts` 的 `sweepTemps` 和 `main/atomic-write.ts` 的 `sweepWriterTemps`）。
+- **深色规则会压过状态规则**（第二十三轮）：`.x:focus {}` 是两级，后加的 `:root[data-theme="dark"] .x {}` 是三级，于是深色下焦点框、悬停、报错红框全都消失，而浅色一切正常——所以肉眼扫二十二轮都没发现。加深色覆写时要么针对同一个选择器写，要么把每个状态（`:focus` / `:hover` / `.bad` / `:disabled`）在两个深色上下文里都重复一遍。禁用态优先用 `opacity`，主题规则取消不掉它。验证要看计算后的样式，三种主题状态（`[data-theme="dark"]`、`[data-theme="light"]`、什么都不写的跟随系统）都要看。
+- **检查脚本的夹具要放在产品真正会读的地方**（第二十三轮）：存储根目录是 `<配置目录>/storage`，不是 `<配置目录>`。写完夹具顺手加一条「产品确实看得见它」的断言。
+
+## 与 MiMo 故意不同的地方（用户定的，不要改回去）
+
+- **首页那块 527×299 的区域是空的**（第二十三轮，用户 2026-09-24 看了截图后定的）。MiMo 在自己的首页填了一张背景图；第二十一轮 F4 给 MCode 画了一层自己的虚线蓝图（辅助线、十字标记、四角括号），用户说「这些背景不要」，整块删了。`scripts/smoke-round21-f4.ts` 钉住「这块必须是空的」，以后的对照轮次不要当成缺口补回来。
+- 第二十二轮 L2 新增（同样是 MiMo 自己写坏的地方，MCode 保留能用的行为）：
+  - **`.cchip` 的高度跟 UI 字号缩放**，MiMo 写的是字面 `24px`。MiMo 自己的字是 `var(--text-13)`（会缩放），最大 UI 字号下 22.3px 的字放不进 24px 的 `overflow:hidden` 胶囊，它会把标签上下切掉。
+  - **版本弹窗「回溯」按钮的边框用 `--border-weak`**。MiMo 写的是 `border:1px solid var(--line, #e2e8f0)`，而它从来没有定义过 `--line`（只有 `--color-line`），所以两套配色下都落到 `#e2e8f0`——深色里是一圈浅石板灰。
+  - **`.rp-tab.active` 在深色下保留一条显式覆盖**。不是差异，是必须：MiMo 的层叠里 `.rp-tab.active` 就压得过 `.rp-tab`，MCode 因为 `:root[data-theme="dark"]` 前缀反了过来，删掉覆盖会画错。
+- 第二十二轮 L1 新增（照 MiMo 实测，不是疏漏）：
+  - **图片预览、视频预览、服务商选择下拉的阴影保留字面值 `0 12px 40px #00000024`，深色下不翻转。** MiMo 这三处挂的是 Tailwind 的 `shadow-pop` 工具类，工具类把浅色值烤进 `--tw-shadow`，不读 token；只有写了 CSS 规则的地方（`.np-card`、`.settings-full`）才用 `var(--shadow-pop)` 并随主题翻转。
+  - **@ 菜单与斜杠菜单不用浮层壳。** MiMo 给它们的是自己的 `.menu` 类：12 圆角、整像素 `--color-line`、`--color-bg` 底、`--shadow-menu`；`.menu-glass` 写在前面被盖掉，只剩背后那层模糊（不透明底下看不见）。其余所有弹出层才是 16 圆角 + 半像素 input-border + 玻璃 + `--shadow-composer`。
+  - **设置页的行分隔保持 `--border-weak`**，不进半像素统一：MiMo 那一条是 1px `--color-set-line` 的伪元素，左右各缩 16。
+
+- 第二十一轮 F1 新增（MiMo 自己那一处 CSS 是坏的，MCode 保留能用的行为）：
+  - `--overlay-hover` 深色用 `#ffffff14`。MiMo 的 `.bp-tab-x:hover{background:#00000014}` 没有深色覆盖，深色下那层黑几乎看不见。
+  - **SelectMenu 的高亮行保持 side-hover，不采用品牌橙。** MiMo 裸 shadcn 的 `SelectItem` 是 `focus:bg-accent focus:text-accent-foreground`，而 `--color-accent` 是 `#ff6a2b`、前景是白字；但 MiMo 自己的设置页把它覆盖成了 `rounded-[8px] focus:bg-side-hover focus:text-txt`（`SettingsOverlay-*.js`，内容壳是 `Z0`+`menu-glass`+`p-[5px]`）。MCode 的 SelectMenu 复刻的正是设置页那一个，所以橙色高亮不进来。
+  - MiMo `[data-theme=dark]` 里 `--color-set-line` 仍是 `#f1f1f1c7`（深色下画浅色边）；MCode 不复制这条。
+  - shadcn `ghost` 变体的 hover 是 `bg-accent`（同样是橙）；MCode 的 ghost 不用它。
+  - MiMo 几乎不画焦点环，MCode 保留自己给键盘用户加的 `:focus-visible` 环（可达性），只把颜色从蓝色换成 MiMo 的 `--color-ring`（浅色 `#151c13`、深色 `#fff`）。
+  - 共用 `.btn` / `.field` 高度保持 28px：MiMo 自己的按钮尺寸是 26 / 30 / 36，但它的设置页用 `--settings-control-height: 28px` 压到 28，对话框里的控件行没有第四种尺寸。
+
+- 第十七轮新增：项目**内**的绝对路径打开时文件树停在项目根（项目外则与 MiMo 一样跳到文件所在文件夹，用户 2026-09-21）；审阅页只列项目子树，MiMo 列整个仓库再错解路径——MCode 这边是对的。
+
+- 第十六轮新增：内联交互组件的来源大小上限 512KB（MiMo 渲染层无上限）；内联组件由主进程在独立来源上提供并下发策略头（MiMo 直接内嵌，因其渲染层没有 CSP）；`metadata.filediff.patch` 存未裁剪补丁（撤销需要）；快捷键表里「切换编排模式」改为「切换目标模式」（该模式已删）。
+- 第十六轮撤销：`write` 单独成桶、webfetch 默认询问这两条**不再是故意不同**，已按用户决定放松到 MiMo。
+
+- **`create_session` 的工作目录要审批（第十五轮 R15-T2）**：MiMo 对此零检查（渲染端直接 `POST /session?directory=`，连目录存在都不验）；MCode 在项目（或其仓库根）外时走既有「项目外」审批，否则模型可零弹窗读遍家目录。
+
+- 侧栏顶部一排按钮（切换侧栏、返回、前进）靠左（MiMo 从 x=65 开始）；收起时切换侧栏与新建任务也靠左（x=18）；macOS 仍留出红绿灯位置。
+- ~~侧栏内容（字标以下）整体下移 4px~~；~~搜索与铃铛在顶部一排靠左~~——两条均于 2026-09-22 由用户决定撤销（第二十轮 R20-V5）：搜索与铃铛移到字标行右端（照 26.920，距侧栏右缘 16），字标行照 26.920 的 `--sidebar-brand-top` 从 52px 开始（预览卡片内 43）；侧栏底部改为一行 MiMo 形状的账户行（28px 头像、「本机」、菜单只有「设置」），「深色」主题切换行删除（主题仍在 设置 > 外观）。
+- 首页保留 MCode 自己的静态字标，不做 MiMo 的可换图标按钮（做过后撤销，`18d888b` → `6c32812`）；点击字标会跳动一下（`ea62985`）。
+- 「帮助与反馈」暂不做。
+- 服务商预设连接后自动拉 `/models` 发现模型（MiMo 的预设是「填 Key + 手填模型名」的单模型表单）；「已添加」按服务商列行并保留刷新与地址编辑（第九轮 P9-6，2026-09-17 用户决定保留）。
+- 自定义表单保留「接口协议」（OpenAI / Anthropic）选项（MiMo 新建自定义只能是 OpenAI 兼容，P9-7）。
+- 步骤内容脱敏直播和重载都做（MiMo 只在重载后做，第十轮 K10-5）；阿拉伯语的步骤箭头镜像与方向隔离是 MCode 自有（MiMo 没有 RTL）。
+- 保留 ChatGPT Pro/Plus 订阅登录（MiMo 桌面只有小米账号登录，P9-11）；入口在连接弹窗（模型菜单 / 命令面板打开的那个），设置页快速添加里没有。
+- chat-completions 请求无条件发 `stream_options: {include_usage: true}`（第十一轮 S11-17）。MiMo 只在配置里给了 `includeUsage` 时才发，而它的通用 OpenAI 兼容服务商没有设——也就是说 **MiMo 在自建模型上根本拿不到用量**。MCode 一直发，用量卡对自建模型才有数；代价是个别严格校验未知字段的服务端可能 400。日后真有服务商报错，再做成自定义服务商表单上的开关，不要直接删掉。
+- 第十一轮（2026-09-18，用户定）输入框这几项 MCode 比 MiMo 好，保留：
+  - C11-9 输入框内的撤销 / 重做：两边的程序化改写都毁原生 undo 栈，MCode 选择保留现状并在后续有机会时做得更好（用户明确要留）。
+  - C11-7 Backspace 整块删提及的「已知名字」名单跨重启保留（MiMo 的名单只在内存里，重启后就删不动了）。
+  - C11-8 切会话时重置历史游标（MiMo 不重置，会把上一个会话的草稿带进下一个）。
+  - C11-20 代码围栏按 `/\r?\n/` 切行、语言表自有（MiMo 按 `\n` 切，Windows 复制来的 CRLF 代码识别不出来）。
+  - C11-4 Escape / Ctrl+C 在侧边聊天也能停自己那一路（MiMo 只在主对话的停靠栏生效）。
+  - C11-12 手动高度在停靠栏与侧边聊天之间双向同步（MiMo 只有 dock→侧边单向，却共用同一个 localStorage 键）。
+  - C11-19 粘贴图片落盘保留扩展名白名单（MiMo 把未知 mime 一律写成 `.png`，产出名不副实的文件）；25MB 上限已去掉。
+  - C11-21 超大粘贴只弹一条提示（MiMo 弹两条重复的）。
+  - C11-46 斜杠高亮的命令名接受 `[^\s/]+`（MiMo 只接受 `[A-Za-z0-9_-]+`）：MCode 的 MCP 提示命令名是 `服务:提示`，收严会让这类命令不再高亮；高亮本来就要求命令在缓存列表里，不会误标。
+  - C11-48 只有技能芯片、没有文字时照常发出（MiMo 拒发并提示「请输入内容」）。
+  - C11-50 运行中发送走完整路径（命令模板、技能芯片、批注都带上；MiMo 只插「文本 + 附件」）。
+- 第十九轮（2026-09-21/22，我定并已告知用户，用户可要求改回）：
+  - PDF 文内链接（目录等）点击后跳到目标位置；MiMo 26.920 的捕获阶段点击处理把它们一起拦掉，点了没反应。
+  - 乐谱与内联音频旁的「（AI生成）」按界面语言翻译（`markdown.aiGenerated`）；MiMo 在所有语言下写死中文。与查看器底部 AI 提示一致。
+  - 发送停靠的地板放在问题所在那一轮、并按列底而不是 scrollHeight 算空间（C 路）：MiMo 的算法在上一轮失去页脚时问题会漂移、对话短于视口时问题被放低。
+
+## 下一步
+
+1. **用真实模型实际用一段时间**（一直没做，最值得做的一件）。局域网 `qwen38-nvfp4`，见记忆 `reference-lan-test-model`，只用一次性配置。重点看第十九轮 C 路的发送停靠与跟随、拖选暂停、批注发光，以及第二十三轮改过的自动压缩——那条修复是「压缩后模型能看见你刚问的话」，真实长对话最容易验出来。
+2. **攒够了开新的拉取请求**：`v2.0` 比 `main` 多 165 个提交。
+3. **MiMo 若再更新**：先比新旧 bundle 的版本差异（第十八轮做法），再决定要不要重跑逐页对照（第十九轮做法：四块只读审计 + 每条独立复核）。
+4. **留着的小尾巴**：
+   - 约 90 处没写字号的 `--text-weak`，要逐个截图才能判断该用哪一档灰（第二十二轮 L1 留下）。
+   - 设置页「开源引擎」那一行还缺一个公开仓库地址。
+   - `--shadow-xs` 在深色下没有对应值，但 MiMo 可能也是这样，第二十三轮标为存疑、没动。
+   - docx 修订颜色仍写死（除非允许新增 token 名）；`.csv` 的 Excel 标记没定。
+   - 偶发不稳定的检查：第五轮计划模式一节、第七轮「provider receives the long bash description」，重跑即过，未修。
+
+更早的下一步建议留作记录，见文末「附录 C」。
+
+## 逐轮记录（新到旧）
+
+### 第二十三轮：二次复核（2026-09-24，版本 0.4.3）
 
 用户给了四张首页截图，说「这些背景不要」，然后「二次复核代码，打包」。
 
@@ -46,7 +184,7 @@
 
 **验证**：`scripts/smoke-round23.ts` 每条修复一条检查（在第二十二轮的代码上全部失败）；三条原本写死了旧行为的老检查改成断言新行为。真实应用上做了反向对照——把设置搜索框的两条深色规则去掉重新打包，聚焦边框在两种深色状态下都停在 #2e2e2e（浅色正常），加回去就变成 #b8b8b8。smoke 6973 全过，其余检查全绿，0.4.3 已静默安装到 `D:\Apps\MCode` 并启动。
 
-## 第二十二轮 · L2：第二十一轮右侧面板路留下的 7 条（2026-09-23）
+### 第二十二轮 · L2：第二十一轮右侧面板路留下的 7 条（2026-09-23）
 
 第二十一轮 F3（右侧面板）在自己的范围之外报了 7 条没做的发现。本路逐条照 MiMo 26.920（`r18-mimo920/out/out`，只读）复核后再动手——其中 2 条一读原文就不成立。
 
@@ -62,7 +200,7 @@
 - 验证：`typecheck` / `i18ncheck` / `wiringcheck` / `themecheck` / `build` 全过；`smoke` 6852 过 1 失败——失败的是**与本路无关的既有问题** `T3-8`（`scripts/smoke-perf-thread.ts:79`），在干净的 v2.0 上同样失败：`smoke-round16-continuation.ts` 把 `process.env.TZ` 改成 `Etc/GMT±12`（按运行时刻的 UTC 小时选方向）后恢复不干净，`dateIn` 缓存的格式化器与新建的对不上，所以按一天中的时间随机红。已另开任务。
 - 新检查：`scripts/smoke-round22-l2.ts`（41 条，注册在 `smoke.ts`），在 v2.0 上 21 条失败；`scripts/r22l2-prove.ts` 就是那份证明（`git show v2.0:` 取旧文件再跑同一个函数）。
 - 真窗口实测（`scratchpad/r22l2/l2-probe.cjs`，一次性配置目录、`win.show()`、`win.isVisible() === true`、缩放 1、浅深两套）：标签条、启动器、子智能体详情、带修订的 docx、版本弹窗、diff 标签、审阅刷新 hover；错误条另外用两个「打断构建」跑（`RpReview` 抛错 → `PaneBoundary`；`RightPanel` 抛错 → `ErrorBoundary`），测完已还原。测得：选中标签 `#fffefd` / `#181818`；`.fc-btn` 与 `.vp-restore` 深色 `#141414` → `#181818`；修订栏头 `#151c13cc` / `#f4f4f5`；diff 选中段 `#fffefd`+`#151c13cc` / `#181818`+`#f4f4f5`；刷新 hover `#151c13cc` / `#f4f4f5`（底 `#f1f0ec` / `#ffffff0f`）；`.lc-icon` 16×16 `margin 0 2px`；子智能体副标题与模型胶囊 11px；两条错误条 `margin: 0px`。截图在同目录 `l2-*.png`。
-## 第二十二轮 · L1：把 F1 交接的清单扫完（2026-09-23）
+### 第二十二轮 · L1：把 F1 交接的清单扫完（2026-09-23）
 
 第二十一轮 F1 只能改到 token 文件本身，剩下的散在各组件里。本轮按它留的清单逐条做完，全部重新拿 MiMo 26.920 的 `renderer/assets` 核过。
 
@@ -75,7 +213,7 @@
 - **检查**：`scripts/smoke-round22-l1.ts` 59 条。拿 v2.0 那一版渲染层跑，47 条失败；本轮跑完 59 条全过。另外把 12 条旧检查里钉死旧值的地方（`#151c13cc`、`--shadow-lg`、`0 12px 40px #00000024`、`#00000014`、`#d23f3f`、`.thread-loading` 的 dim）改成 token 名。
 - **真窗口探针**：`scratchpad/r22l1-probe.cjs`，浅深两套、一次性配置目录、`win.isVisible() === true`、截了侧栏/输入框/菜单/右键菜单/tooltip/文件页/对话框。改动前后各跑一遍（前者临时把渲染层 checkout 到 v2.0 再 build），差异只有预期的那些：菜单阴影由三层带环的 `--shadow-lg` 变成 `--shadow-composer`、边框由 `#f0ebe5` 变 `#151c130f`、对话框底色 `#ffffff`→`#fffefd`、阴影→`--shadow-pop`、关闭与副标题由 `--text-weak`（0.4 / `#777`）变 `--text-base`（0.6 / `#b8b8b8`）、卡片 tooltip 388→420、`--shadow-lg` / `--shadow-overlay` 解析为空。输入框的边框与阴影前后完全一致，证明那几处字面值换 token 是等值改写。
 
-### 没能对上的（留给以后）
+#### 没能对上的（留给以后）
 
 | 位置 | 为什么 |
 | --- | --- |
@@ -85,7 +223,7 @@
 | `.boot-msg`、`AppMenu` 的 `.brand`、`ArtifactsView` 的 `.chip-count`、`InfoSection` 的 `.count`、`SettingsDialog` 的 `.keys-desc` / `.total-name` / `.day-name` | MiMo 没有对应元素，或它那一处颜色是继承来的，分不出 dim 还是 mut |
 | 约 90 处没写 `font-size` 的 `--text-weak`（图标、字形、占位符） | MiMo 的字形有三种墨色：菜单行里是 `--color-icon`，图标按钮上是 mut，小的行内标记是 dim；要逐个截图才分得清 |
 
-## 第二十一轮 · F1：颜色 token 与共用控件（2026-09-23）
+### 第二十一轮 · F1：颜色 token 与共用控件（2026-09-23）
 
 用户本轮解除了「不许新增 CSS token 名」的禁令（仅限这项工作）。MiMo 值全部重新从 `renderer/assets/index-BcVtFvOi.css` 与同目录 JS chunk 里核过。
 
@@ -96,7 +234,7 @@
 - **真窗口探针**（`scratchpad/r21f1-probe.cjs` / `r21f1-probe2.cjs`，win32、浅深两套、一次性配置目录、`win.isVisible() === true`）：30 个 token 全部按 MiMo 值解析；菜单 `#fffefd`/`#f1f1f1`/12 圆角/shadow-menu、行 `#151c13cc`、字形 `#5c5c57`；快捷键帽 11px/mut/5 圆角/1px 5px；tooltip 与 MiMo 的 `rounded-[8px] border-line bg-bg px-8 py-5 text-12 shadow-tip` 完全一致；`.btn` 28/8/500/13、主按钮 `#151c13`+白字（深色 `#ececec`+`#0d0d0d`）；`.field` 28/6/`#e3e3e0`（深 `#3a3a3a`）；焦点环浅色 `rgb(21,28,19)`、深色 `#fff`，按钮自绘 3px 半透明光晕。
 - **留给其他路**：见报告里的清单（composer 需要 `--surface-composer`、7 个对话框仍写 `--surface-raised` + `--shadow-overlay`、19 处 `--shadow-lg` 与 12 处 `--shadow-overlay`、dim/mut 反用的清扫、0.5px 边线换 `--border-input`、`App.vue` 里已冗余的两行 win32 覆盖、`TerminalDrawer` 的 `--overlay-hover`）。
 
-## 第二十一轮（2026-09-23）：其余页面照 MiMo 26.920 校准 + 全局配色
+### 第二十一轮（2026-09-23）：其余页面照 MiMo 26.920 校准 + 全局配色
 
 用户要求继续补齐与 MiMo 的差异。四路只读对照（首页/搜索/产物中心/通知、设置、右侧面板、全局 token 与通用控件）共约 150 条，加一路修停靠。用户四个决定：MiMo 自己写坏的地方**不复刻**（保留 MCode 的正常写法并记入有意差异）；**全局配色整体换成 MiMo 的，本轮解禁新增 CSS 变量名**；**删掉命令面板**（MiMo 无）；**首页字标区补足高度并自画背景装饰**。
 
@@ -107,7 +245,7 @@
 - **P1 停靠**：问题停靠只测一次且无人看守，加上漏抄 MiMo 的 `overflow-anchor: none`，以及停靠自身滚动被误判成「读者滑到底」导致跟随恢复。修好后长/短会话、编辑中发送在动画开与减少动画下都稳定在目标位（偏差 <0.3px）。
 - 验证：typecheck、i18ncheck、wiringcheck、themecheck、mdcheck、promptcheck、toolcheck、sessioncheck、build 全过，smoke **6812 全过**；各路新检查都在旧代码上证明会失败（F1 49 条、F2 106 条里 105 条、F3 78 条里 72 条、F4 78 条里 69 条、P1 13 条）。界面项均在真窗口（一次性配置、窗口可见）深浅色实测并看过截图。
 
-## 第二十轮（2026-09-22/23）：二次复核代码 + 对话页照 MiMo 校准
+### 第二十轮（2026-09-22/23）：二次复核代码 + 对话页照 MiMo 校准
 
 用户要求「二次复核代码」，随后发来 MCode 与 MiMo 26.920 同一对话页的截图，要求界面、写代码 Agent 的逻辑、文案思路与表达全部统一向 MiMo 学习；并说明**顶部蓝色光条保留**（记为有意差异）。另注意：用户截图里的 MCode 处于 120% 页面缩放（Ctrl+0 复原），比较以 CSS 数值为准。
 
@@ -118,7 +256,9 @@
 - **违规记录**：写代码逻辑审计代理为查原因读取了用户真实数据目录下那条对话（只读）。已向用户说明，并记入记忆 `subagents-never-read-real-profile`：以后每个代理的提示都要写明禁止读取真实数据。
 - 验证：typecheck、i18ncheck、wiringcheck、themecheck、promptcheck、toolcheck、sessioncheck、mdcheck、build 全过，smoke **6453 全过**；各路新检查都在旧代码上证明会失败，界面项都在真窗口（一次性配置、窗口可见）实测并看过截图。
 
-## 当前状态（2026-09-22，第二十轮之前）
+### 当时的状态快照（2026-09-22，第二十轮之前）
+
+留作记录，最新状态见文档开头。
 
 - **对照基准**：MiMo 26.920（第十八轮起）。第十九轮逐页重新对照后确认的 28 条差异、两项性能遗留、交接文档记着的遗留项都已做完；目前没有已知的、未决的差异。
 - **版本**：0.3.8（`4f5120e`，`dist\MCode-0.3.8-x64.exe`，225.7 MB）已静默装到 `D:\Apps\MCode` 并验证能启动；此后代码没改过，不需要重新打包。
@@ -129,7 +269,396 @@
 - **仍未在真窗口验证的**：拖选时暂停跟随（探针的合成拖拽选不中文字，只用「选区留在对话里」间接验证）；批注发光的两种新入口（需真实发送，只有 smoke）。
 - **下一步可做**：见文末「下一步建议」。
 
-## 现在到哪了
+### 第十九轮 · B：右侧面板与侧栏细节（2026-09-21）
+
+清单 scratchpad `r19-laneB.json`，十项全部照 MiMo 26.920 改完；smoke `smoke-round19-panel.ts`（旧代码下各项均失败），探针 scratchpad `r19b/probe.cjs`（一次性配置，截图 `r19b/probe-*.png`）。
+- RP-1 批注发光：输入框发送与运行中追加（steer）也登记文档监视（照 MiMo 的 VD/KD/HD，只算有批注文字、且是 PDF/Office 文件），同一次运行同一文件合并为一个监视并保留首个 prompt；已在发光的查看器合并新 id（26.920 的 noteBatch）；运行结束的监视标记 ended，之后的发送另起一个
+- RP-2 子智能体详情头：「执行记录」后加模型胶囊（显示名，title 为完整 id；120 上限省略，1px 6px，圆角 999，文字色 6%，行高 1.35），模型取子对话自己的 `model`
+- RP-3 侧栏收起时右侧面板不再扣 62 的导轨：1000 宽窗口最大 520（探针实测 innerWidth 1001 → 521）
+- RP-4 同一对话/首页下目录变了，文件标签回到「打开文件」（清 viewFile / fileRoot / name，`rightPanel.reroot()`）
+- RP-5 文件页图片点开预览带缩略图 rect，从原位放大；RP-6 文件树收起改 v-show，展开后滚动位置保留
+- RP-7 启动卡描述照 MiMo 原文（14 种 MiMo 有的语言逐字，ar/bs/th/uk 自写同风格短句）
+- RP-8 标签中键在松开时关闭（auxclick），按下后拖离不关
+- R19-SH2 对话卡片在「更新于」/定时任务行之后、互聊行之前加「运行中的子智能体：…」（与胶囊同一数据，无名的略去，按 MiMo 用「、」连接；`subagentDetail.runningList` ×18）
+- R19-SH3（用户 2026-09-21 决定）删行菜单「导出为对话文件」及整条对话文件链：`session.exportFile` / `session.importFile`、`src/shared/convo-file.ts`、`mcode:open-text` 与 `openText`、8 条文案 ×18；第七轮 S4、第八轮 X17 的对应检查一并删除。保留 MiMo 的 Markdown「导出对话记录」和其他导入器用的 store 选项。上文 S4 所述「命令面板导入对话文件」已不存在
+### 第十九轮 · C：对话跟随、发送停靠与消息入场（2026-09-22）
+
+清单 scratchpad `r19-laneC.json`，五项照 MiMo 26.920 的 ThreadView / scrollStick / HarnessRow 改完；规则在 `lib/scroll-follow.ts`（纯函数），smoke `smoke-round19-c.ts` 67 条（旧代码下 35 条接线检查全部失败，其余是新库自身的单元检查），探针 scratchpad `r19c/probe.cjs`（一次性配置 + 进程内 127.0.0.1 慢速 SSE 模型，截图 `r19c/v7-*.png`）。
+- **CV-1 发送停靠**：输入框（主对话、非运行中、非 subtask）发送前 `requestPark`，被拒则 `clearPark`，3 秒过期。新问题出现时量它：目标 = min(ch/6, max(12, 2ch/3 − 行高))，所缺空间补成**该轮的** min-height 地板（另一轮接上时交给列，在原处结束），钉到底后停止跟随，列从 translateY(空间) 0.2s 滑入（减少动态效果时不滑）。地板在切对话、宽度变化时清掉；读者上滚或离底 >64、回合结束时，只在拿掉不挪视图时释放。停靠中新的权限/提问卡不拉走视图。**与 MiMo 的两处有意偏差**：MiMo 把地板放在整条 thread、按 scrollHeight 算——上一轮失去「最后一轮」页脚（实测 −14px）会让问题漂移，对话短于视口时 scrollHeight 即视口高会把问题放低（实测 267 对目标 137）；MCode 放在该轮上、按列底算。实测（40 轮含 content-visibility 占位）：问题落在 135.1px（目标 136.8，ceil 所致），回复流 2.5s 内 scrollTop 不动、scrollHeight 长 2048px，跳底按钮出现；一轮对话同为 135.1。
+- **CV-2 跟随规则**：上滚 >8px（单步或累计）即停止跟随，哪怕离底很近；只在距底 ≤ ceil(1+1/max(.25,dpr))px 且是读者向下滚到的才恢复（浏览器因内容缩短把 scrollTop 拉回、无变化的重复 scroll 事件、只等于内容增长的位移都不算）；64px 只管跳底按钮；跟随时 overflow-anchor:none，否则 auto。跳底按钮改为不占流高（margin-top −34px）——原先它出现/消失会改 scrollHeight，离底 5px 的读者会被按钮消失拉到底并重新跟随（实测复现后修掉）。旧 `turn-end` 的 `STICK/stickState` 已删。
+- **CV-3 暂停与重钉**：所有钉底走 `pin()`，拖选/选区在对话内（600ms 宽限后）、视频播放/暂停 600ms 内、编辑框打开及关闭后 300ms、150ms 内向上滚轮时不钉；窗口 focus / visibilitychange 回来且在跟随时重钉；新的待决权限或提问、运行中追加消息强制跟随并钉底。实测：拖选时 scrollTop 固定、松开后恢复；选区留在对话里保持暂停，清掉后恢复；上滚 400 后追加消息回到底部并跟随。
+- **CV-4** 本次打开后新增的问题行 `msg-in`：淡入并上移 8px，0.2s cubic-bezier(.2,.7,.2,1)；切换/一次载入的不动画。停靠测量扣除动画的位移。
+- **CV-5** 定时任务消息两行截断，溢出（scrollHeight−clientHeight>1）时显示 13px 次要色「显示更多」+13px 下箭头（上距 6、间距 4），点开不再收起；`stream.automationShowMore` ×18（ar/bs/th/uk 自写）。实测 40px → 80px。
+- 注意：探针窗口不可见时（锁屏，`win.isVisible()` 为 false）不跑渲染帧，content-visibility 的轮次从未绘制过、没有记住的尺寸，测到的停靠位置不可信；只采信窗口可见的那几轮。
+
+### 第十九轮 A 路：设置与外壳（2026-09-21）
+
+对照 26.920 的 14 条（`r19-laneA.json`），smoke `smoke-round19-a.ts`（旧代码下各节全部失败），一次性配置真窗口探针看过截图。
+- **F1**（用户定）：删首启「从其他 AI 应用导入」——MiMo 算出了钩子和懒加载弹窗却丢掉返回值，从不显示；连同 `ImportDialog.vue`、`server/import.ts`、`import.scan/run`、`importOnboarded` 及迁移、会话 `imported` 标记、18 表 `import.*` 一起删。常规页本来就没有导入入口，MiMo 也没有。
+- **F6**（用户定）：新建项目弹窗删「默认新建项目位置」行（L8 把 `showLocation` 误读成存放位置），`project.createBlank` 不再收 `location`，空白项目一律放到常规里的默认位置。
+- **F3/SH1**：原生选择框占用时主进程回 `{busy:true}`（`@shared/native-pick`），`save-png` 也纳入一次一个；窗口所有调用走 `lib/native-pick.ts`，弹 MiMo 原句 warning（`toast.pickerBusy`）。错误页没有吐司，写在它自己的提示行。
+- **F2** 删自定义模型先确认（删除自定义模型），确认即从已存配置删（新请求 `provider.removeCustomModel`，最后一个保留）；**F7** 删供应商用「及其全部模型」文案；**F8** 模型页 提供商→供应商、探测只显示「{n} 个模型」、组合框「选择或添加 model-id」；**F9** 供应商 ID 照 MiMo：只禁 `/` 与（不分大小写的）重复，前后端共用 `@shared/provider-id`。
+- **F4** 成功类吐司改 success，项目已存在/重名改 danger，批量恢复一律计数；**F10** 常规搜索词加 硬件加速/GPU/图形，高亮按整行文字；**F11** MCP 页配置文件行加 复制路径/打开；**F12** 检查更新的常驻吐司不可关，结果在同一 id 上替换；**F13** 配置页路径显示 `~`；**SH4** 重启更新抛错只显示原因句，原始错误进控制台。
+- **未改（与 `reference-strings.json` 冲突，报告）**：`provider.custom.field.providerID.label` 仍为「提供商 ID」（MiMo「供应商 ID」），`provider.custom.error.providerID.exists` 仍为「该提供商 ID 已存在」（MiMo「该 ID 已被占用」）。
+- 探针里 复制路径 在无焦点窗口被剪贴板拒绝（显示「无法复制路径」），属探针环境；success 级别用「已添加项目」验证。
+
+### 第十八轮：对照 MiMo 26.920（2026-09-21）
+
+**对照基准从 26.914 改为 26.920**（用户 2026-09-21 决定让 MiMo 自动更新；更新已由用户退出 MiMo 时自动完成）。26.920 的 out/ 已只读解到 scratchpad `r18-mimo920/out/`；26.914 的旧副本（`sf-main.mjs`、`r12-node.mjs`、`r12c-mimo/`、`r16-prompts/`）保留作对比，但 26.914 的 CSS、图片、`index.html` 没有存。从待装安装包取程序包的办法：NSIS 外壳里偏移 198712 处是一段原样 7z 流，电子打包缓存里的 `7za.exe` 能解。
+
+**截图实测（第一次运行 MiMo）**：先按记忆里的保险用一次性配置启动 MiMo，结果停在小米账号登录页（不登录什么都看不到），且任务把用户随后打开的**用户自己的 MiMo 误判为自己的实例强制结束了**——教训记在记忆 `mimo-running-lessons`（只结束当场记下的进程号；MiMo 还会读写 `~/.local/share/mimocode` 等 XDG 目录、启动时重写开始菜单快捷方式）。之后改为用户授权下用 computer use 操作**用户已登录的 MiMo**，在临时项目 `C:\Users\Wyatt\XiaomiMiMoProjects\mimo-diff-demo` 里做了两次小改动，用 DPI 感知的原生截屏取色（`r18-mimo-*.png`）。**遗留在用户 MiMo 里**：该项目与一条对话「修改 src/greet.js 的问候语与变量名」，删除属永久删除、须用户自己做。实测结论见 `round18-visual-measured.md`：MiMo **没有**「已查看」勾选框；差异配色是 diff2html 的，且**成对改动与纯删除/纯新增颜色不同**（浅色 #fdf2d0/#ddeedd 对 #fee8e9/#ddffdd，深色 #3d321a/#1e3a23 对 #2f1e1d/#1b2c1e，词 #ffb6ba/#97f295、#883e2d/#246330）。
+
+**用户决定（2026-09-21）**：拒绝后回合继续（撤销第五轮「两种拒绝都停」）；托盘删掉配置切换（撤销那条故意不同）；交付文件照 26.920 写入 AI 标识；定时任务工具不再给模型；模型层语言跟 26.920 的新分法。用户还要求「抄 MiMo 的代码和文字」——答复为不能（受版权保护的内容不能原样搬），数值、规格、行为、短标签照搬，代码与成段文字自己写，用户回复 OK。
+
+**D 差异视图（R18-D）**：删「已查看」勾选框及 18 表文案（`114a8c6`）；行号栏改为 diff2html 的单格 7.5em、面板窄时两个行号自然上下叠（`1a6627d`）；成对/纯改动分色 + 词色 + hunk 行 + 文件头按实测，深色与 MiMo 逐项相差不超过 1（半透明叠 #181818 的取整），未新增 CSS 变量名（`bd6cc6a`）；审阅页「Files changed (N)」标题（18 表）、黄色方块状态图标、蓝色路径（目录部分淡化）、标签按状态上色（`5a0ead6`、`45f6fe9`）；步骤里的差异文件头显示正斜杠绝对路径，审阅页与权限卡保持相对路径（`1e0ba6c`）；多文件改动卡图标（`d567769`）。回复操作栏本来就有悬停显示的时间
+
+**U 外壳与小界面（R18-U）**：侧栏完全收起（宽 0），悬停切换按钮 150ms 浮出整栏预览（8,8，宽 256，圆角 16）、离开 200ms 收回，按钮在 x=75（26.920 Windows 实测值）（`ac4668a`）；托盘只剩打开/退出（`ea2afac`）；删首页建议卡（`d7e4d04`）、出错卡的重试（`9abe7b4`）、底部菜单的退出应用（`e1aaa06`）；问题停靠栏可最小化、上限 50vh（`b2289f5`）；侧栏行「N 个子智能体」胶囊（`1132f63`、`61e9a16`）；更新失败 9 种原因（`src/shared/update-reason.ts`，`a724b53`）；发送中/压缩中（`7d54a32`）；自定义模型按供应商分组（`15a0d68`）；webfetch 改「读取网页」（`ffbc8c8`）；五个查看器底部「内容由 AI 生成，请注意核实」（`right/ViewerAiNote.vue`，`c14fcd0`）；乐谱与内联音频旁 MiMo 的「（AI生成）」小字已补（R18-U14，`smoke-round18-aigc-marks`）：乐谱视图在谱面上方一行（上 6、左右 12，12px，`--text-base`，代码视图不显示），语音气泡下方与气泡同宽一行（文件名占余宽截断，其后 10px / 行高 1.2、暗色 #777、不可选中；加载失败卡无此字），文件页的 .abc 与交付的音频同一组件故一并带上，文件页直接打开的音频不带（同 MiMo）；MiMo 此串写死中文，MCode 按 18 种语言翻译（`markdown.aiGenerated`）
+
+**M 模型与设置（R18-M）**：模型页照 26.920 重做（新文件 `ModelsPage.vue`）——**实际是顶部横向页签（刷新/添加/每个供应商一个）+ 下方表单**，不是分析报告说的左右分栏；自定义供应商测试连接（Key 不回传窗口）、克隆、每模型一卡（上下文/输出上限、四种输入）；`CustomModelDialog` 与配置文件卡删除；快速添加仍是 7 家（26.920 把另外五个过滤掉了）（`684a5dc`）；自定义供应商新增 `/responses` 协议，适配器选择合并为 `adapterFor(kind)`（`0bfac95`）；开机自启（仅 Windows/macOS，默认关，Windows 带 `--openAsHidden`，开发版只写文件不碰系统）（`758f446`）；实验室页常显，只放「跨对话协作」一个开关（默认开，关掉则下一轮起模型拿不到 6 个互聊工具）——另两个开关 26.920 默认关且 MCode 没有背后的功能，不做（`62a4d13`）；技能兼容路径默认读 `~/.agents/skills` 与项目 `.agents/skills`，`.claude/.codex/.opencode` 各一开关默认关（`22b2d0e`）
+
+**E 引擎与提示（R18-E）**：拒绝（含「拒绝并说明」与循环检测问题）变成交给模型的错误，只有「停止」结束回合，问题卡/计划卡保持打开，子智能体绕开，目标模式走到判定（`9b59c68`、`7bb3867`）；`cron`/`automation_update` 只在 `MCODE_E2E=1` 时提供，提示词新增「Scheduled tasks」一节说暂不可用；已存的任务照常运行、界面无创建入口（`273bde5`、`344799b`）；提示词按 26.920 新结构重排、计划模式不再附中文段、环境检测守卫删除、首条说明 2699→1202 字、目标守卫改英文（`4cfb4ce`、`f2c6fe6`）；自动工作树提示删除（`c7584a7`）；删 `frontend-design`、`design-blueprint`，新写 `less-ai-tone`、`powershell-reference`（用途与触发照 26.920，文字自写）（`d7a7b4e`、`c8f1f7a`）；toolcheck 禁止描述里用大写称呼其他工具（`58322ac`）
+
+**A AI 标识（R18-A）**：`present_files` 交付的本地文件写入 AI 标识（`src/server/tool/aigc-label.ts`，`5287377`）。可见标识是我们自己的样式：docx 右对齐灰色段落、pptx 末页右下文本框、xlsx 的 A1 追加（数字/公式不动只写元数据）、pdf 末页右下、html 角落不拦点击的徽标、wav 末尾自合成提示音（1.2kHz、80ms 单位、按国标的「AI」摩尔斯节奏）。隐藏元数据按 GB 45438-2025 七字段，生产者填「MCode」（MiMo 填小米企业编码，我们没有）。内存生成→重解析（有 python-docx/pptx/openpyxl 时也用它们打开）→临时副本→读回→改名替换，任一步失败保留原件；二次交付不再改动；撤销恢复未标注版本。未做：同回合内被再次编辑的已交付文件自动重标（再交付一次即可）
+
+**X（自查发现）**：定时任务时钟跳变守卫的基准只在第一次检查时才取，启动后第一次检查前时钟就跳（开机即睡眠）会漏判、把错过的全部触发；第十七轮那条检查单独跑 4/4 失败、全量里被前面的检查拖慢才侥幸通过。改为开始检查时就取基准（`99cfd57`）。合并 U 路时 preload 冲突「两边都保留」复活了已删的托盘配置切换通道，被第十二轮的 wiringcheck 规则抓到，已删（`a80d318`）
+
+### 第十七轮：查看器、语音与媒体、工作流（2026-09-21）
+
+三份只读对照后分三路修，合并后 13 项检查 + build 通过，smoke **5540 全过**。新增 `scripts/smoke-round17-{viewers,media,workflow}.ts`。
+
+**又一条假差距（第五次）**：**MiMo 那整套定时任务管理界面是 E2E 专用**——页面、侧栏入口、快捷键、右面板标签、「立即运行」、运行历史动作与全部 194 条 `pages.automations.*` 文案都挂在 `window.mimo?.e2e`（preload 由 `MIMO_E2E === "1"` 置位）后面，发行版一律不可达。**MCode 没有这个页面是对齐，不是差距。** 已发行的只有调度器、队列、`automation_update` 与系统通知，以及侧栏行提示里的任务块（本轮 W26 补上）。同类结论另见记忆 [[mimo-ships-code-it-never-runs]]。
+
+**文档与查看器（R17-V）**
+- V1 文件页原来用「全关」的 `renderMarkdown()`：链接不是链接、图片不画、围栏零着色、无复制按钮、无图表/乐谱/公式。抽出 `parts/MarkdownBody.vue`（渲染块、着色、媒体挂载、表格按钮、路径菜单、样式表），回复与文件页共用；实测面板与回复逐块几何一致（`136a51b`）
+- V2 查找条输入框在 640/380/300 三种面板宽度下实测 148.6/17.3/0.9px，现固定 150px，与 MiMo 同（`db545a7`）
+- V3 文件树过滤原是子串匹配 + 攒够 50 即停，路径式查询搜不到；改用已有的 `rankFileHit` 对整条相对路径打分排序（`00d3259`）
+- V4 超过 25MB 的 PDF 打不开：改为把地址交给本地预览服务（本就支持范围请求），不再 base64 走 IPC；27MB 实测两页正常、零控制台消息。版本存储仍按上限读字节，所以过大的文档没有撤销（`050a20e`）
+- V5 盘符根目录的文件打不开（`fileRoot` 成了 `C:`）；另把「项目内的绝对路径保持项目根」写进 `office-open.ts` 并注明日期（`53f10ae`）
+- V6 步骤行的路径按 MiMo 的四种写法解析（`6e51a23`）；V7 表格滚动不再被拽回（`d7919bc`）；V8 空 `<w:t/>` 不再吞标签、批注 id 转义（`c42750d`）；V9 Office 标签里的 PDF 标 `data-selectable="content"`，Ctrl+A 不再全选整窗（`3eb2d62`）；V10 PDF 批注引文折空白并补省略号（`19074c8`）；V11 重载取消上一次的滚动恢复（`f9f1406`）
+- **V13（不在清单里、自查发现）**：abcjs 的 `responsive:"resize"` 会给 SVG 绝对定位并期待独占容器，而消毒后只剩五线谱——乐谱因此画在最近定位祖先上，在回复里藏在消息列表后面、在文件页里正好压住文档首个标题。已放回文档流（`45ed8c7`）
+- ~~PDF 完整批注层~~ **已做（`aa3d041`）**：MiMo 26.920 用 react-pdf `<Page>` 默认值——pdf.js `AnnotationLayer` 开、`renderForms` 关（表单画在画布上）、外链在捕获阶段按 http/https/mailto/tel 交给 `openExternalUrl`；**它的捕获处理器连 `#` 内链一起吞掉，所以 MiMo 的文内跳转是死的**，MCode 这里让内链滚到目标页与点（与 MiMo 的差异，用户可决定是否回退）。MCode 现每页建 `lib.AnnotationLayer`（`dontFlip` 视口、`lib/pdf-links.ts` 的精简 `IPDFLinkService`），便签带 pdf.js 自带图标（构建复制到 `pdfjs/images/`，MiMo 的 `imageResourcesPath` 为空所以它的图标是裂图）与弹窗，高亮弹窗、附件、链接齐全；样式用 pdfjs-dist 5.4.296 自己的批注层规则（MiMo 带的是 react-pdf 旧版 CSS，类名 `popupWrapper` 已对不上 5.4 的 DOM）。实测 100%/130% 两档各批注框与 PDF 矩形×缩放误差 ≤0.09px，内链点击后目标点距视图顶 0.14/0.02px，外链只经 IPC 到 shell（桩），选字、V10 批注、重载滚动恢复照常。未做的原清单另一项：结构化回退（没有 Office 文本抽取就无内容可画，会多出四条 18 语言的死文案）
+
+**语音与媒体（R17-M）**
+- M1 「智能编辑」静默失败：它那次改写请求也发给了转写模型。**用户决定**：改写用当前对话模型（首页退回默认对话模型），语音模型设置只管转写，18 张表的说明同步改写；改写没成会明说（`editFailed: noModel|refused|unreadable`），不再静默退化成听写。顺带修掉写死的 `speech.webm` 分段名（`aa9cb04`）
+- M2 等待确认无声且逻辑相反：MCode 照抄了 MiMo 的「播完自家提示音后把系统通知标静音」，却没有那第二种声音，于是开着提示音反而全程无声。新增 `confirmChime()`（按 MiMo 的音高与时值测量后用自己的合成器写：E5 起、+0.16s 接 A5、1.1s/1.4s、0.85:1，测量值写在代码里），有待确认项即播、不受「超过 1 分钟」限制；只有真播了才把系统通知标静音（`172237a`）
+- M3/M4/M5 录音胶囊九种状态（6 键 ×18 表）、开麦前 `voice.precheck`（2 秒探测，模型不可用则根本不开麦克风，失败提示每次录音只说一次）、分段改为自适应语噪底 + 0.875 迟滞（快速输入 0.8s / 智能编辑 1.2s）、单段 60 秒上限、`getUserMedia` 要单声道 + 回声消除 + 降噪（`e918b0e`）。**未做**：MiMo 录音前留 0.6 秒预卷，需要编码前的环形缓冲，`MediaRecorder` 给不了，不伪造
+- M6 `speak` 不再断言「用户已要求播报」，`present_files` 点名 ```` ```sci-widget ```` 围栏（`d904361`）；M8 停止、离开对话、关掉开关都会掐断正在念的句子（`066f322`）；M7 图片全屏预览支持框选批注，坐标经平移/缩放/旋转反算（实测 1160×870 上落点精确到 0.25/0.20/0.50/0.50）（`6158c88`、`03e386b`）；M9 导航条音阶与音量对齐 MiMo（`57e96ba`）
+- 核实：**MiMo 的内嵌视频播放器是死代码**（组件、倍速、收起、CSP 放行俱全，但点击分发无条件开浏览器标签、live 的 setter 无人调用）——第五轮删掉内嵌播放是对的，别再翻案；缺的三条 `mediaCard.*` 文案只是死代码的文字
+
+**工作流（R17-W，30 项）**
+- W1 `notebook_edit` 不在两个 `EDITING` 集合里：笔记本改动既不画改动卡也永远无法撤销（`346269b`）
+- W12 **子代理进度控制**（用户决定照 MiMo 做）：带任务号的子代理不交出进度文档就不许结束，最多重入三次，写进 `memory/guard.ts` 早已记录的那个目录（`f697eb7`，新文件 `src/server/session/task-progress.ts`）。措辞英文——MiMo 自己这块与旁边的 `taskGateReminder` 都是英文
+- W9 切到别的工作树里的分支时把该工作树加入项目列表（`3b68612`）；W10 工作树提示补上 MiMo 给模型的三条指示（`e816d42`）；W11 工作树命中跨重启保留（`835f5cf`）
+- 定时任务：W17 恢复暂停不再立刻补跑已过期的那次（`bc5522b`）；W18 时钟跳变（睡眠/夏令时/改时区）后重排而不是把错过的全部一次性触发（`6d678df`）；W19 排队中的运行在交付那一刻复核（暂停或删除后不再触发）（`ce346fa`）；W20 会话忙时跳过而非挂起，`queued` 阶段随之删除（`3d56db5`）；W21 运行通知不与完成提示音重复出声（`1669952`）；W22 起不来的新任务不留空对话（`b6e93df`）；W23 运行记录保留来源与所问（`9a2e947`）；W25 队列租约对齐 MiMo 的 30 秒（`de2db55`）；W26 侧栏行提示写明所属定时任务（`7488819`）
+- W2 审阅页切文件时不再画上一个文件的差异（`0232ea5`）；W3/W4/W5/W8 提交卡写明分支、分支菜单建完分支后保持打开（实测确认）、空分支列表会说明、检出失败输出 git 的全部说明
+- W13 子代理转录放进 MiMo 的盒式面板（`8a59554`）；W14 平铺的 `background: true` 调用改为真正派生而不是阻塞（`a8c3fcf`）；W15 排队中的子代理状态报 `pending`（`99362e6`）；W16 send 接受 MiMo 的两个额外字段（`a7117d5`）
+- **W30（自查发现）**：每轮首次请求前的工作树读回两处读取都无防护，转录正被写入时会让整个回合在发出第一条请求前就结束（曾在一次计划检查里命中）。已加防护（`a0c45c5`）
+- **settle 的悬案**：停止父回合**不**连带停后台子代理——MiMo 的 `SessionRunState.cancel` 同样只取消 `(sessionID,"main")`，阻塞式 `run` 只是因为工具自己的调用随回合取消而停；MCode 行为一致且第五轮早有检查覆盖
+- 证伪后删掉的：`duplicate-run` 防护环建好后证明不可达（运行 id 是 `<任务>-<到点时刻>`，唯一重复路径已被 W19 的重叠守卫拦下），留着就是死代码
+
+### 第十六轮：编码能力照 MiMo 重做（2026-09-20/21）
+
+用户要求：编码能力不再跟 OpenCode，改为和 MiMo 1:1——对话方式、代码处理方式、编码时看到的界面。三份只读对照后分五路修，合并后 13 项检查 + build 通过，smoke **5246 全过**（两遍）。新增 `scripts/smoke-round16-{goal,prompts,tools,diff,widget,b}.ts`。
+
+**对照得出的三条底层事实（下一轮不必重查）**
+- **MiMo 的引擎本身就是 OpenCode 的分支**：`r12-node.mjs` 里 183 处 `opencode`、服务标签 `@opencode/…`、`MIMOCODE_SERVER_USERNAME:"opencode"`。所以「不跟 OpenCode 跟 MiMo」在代码处理层不是换实现，而是换配置——MCode 每一处跟的**已经是 MiMo 那一列**（蛇形参数、`actor`/`task` 分工、bash 六参数、编辑默认精确匹配而非 OpenCode 的无条件模糊）。
+- **MiMo 的提示词是 asar 里的普通文件**（`electron/prompts/*.txt|md`），已只读提取到 scratchpad `r16-prompts/`。
+- **四个看似最大的差距全是假的**：26 个格式化器、38 个语言服务器 + 诊断回流、bash 输出清洗流水线、同目录并发检测——代码都在 MiMo 包里，但它桌面端生成的引擎配置不写 `formatter`/`lsp`、清洗挂在未设的实验旗帜上、并发检测只有桌面从不调用的实验路由。**MCode 一个都没做，结果与 MiMo 桌面一致。**
+
+**用户 2026-09-20/21 的决定**：①「完全中文化」只指给模型看的那一层，界面保持 18 语言、回复语言仍跟随界面；② 完全照 MiMo 并舍弃多余的；③ 做目标模式、删编排模式；④ 删三个环境信息块；⑤ 差异做词级高亮与文件头，标签走我们自己的 18 语言表；⑥ 两处比 MiMo 严的审批放松到 MiMo；⑦ 中英分层照 MiMo 的分法（基础提示英文、护栏中文、工具说明英文）。
+
+**A 目标模式（R16-A）**
+- 加号菜单里 MiMo 放「追求目标」的那一格改为目标模式开关＋目标栏；回合将结束时把整段记录交给裁判判定（**同一个对话模型**、温度 0、无工具、结构化 JSON），未达成则注入系统提醒重入循环，上限 **12**（`r12-node.mjs:369047` 核对）。裁判失败放行停止；Stop 连裁判一起中断、目标保留；子智能体不判定；目标存在会话上，重启仍在。计划模式同时开时 MiMo 只是不注入那一句护栏、裁判照跑，照搬（`b4cb55c`、`478bc56`、`6bcce78`、`4765eb7`）
+- **删掉 MCode 自有的编排（compose/staged）模式**：代码、18 张表的文案、检查一并清除（`123c8ae`）
+- 唯一偏离 MiMo 快捷键表的地方：MiMo 那一格是「切换编排模式」，模式删除后改为「切换目标模式」（同样未绑定按键）
+
+**B 模型层（R16-B）**
+- 按 MiMo 的实际分层逐段核对后改：`claude.txt`/`desktop-base.md` 英文 → CORE/DESKTOP 保持英文；`plan-addendum`/`guard-plan`/`guard-envcheck`/MCP 配置段中文 → 对应段落改写为中文（我们自己的措辞）。汉字占比与 MiMo 逐文件对齐（MiMo 0.25%/67%/67%/29%，MCode 1.7%/70%/71%/31%）（`4c30ba0`、`5f4f972`）
+- **三个环境块删除**（`## Environment` / `## Repository` / `## Building and testing`）连同喂它们的 git/shell 调用与 `PromptModel`；提示词不再随模型变化，前缀缓存键去掉 model/shell。原来把这归功于 MiMo 的注释已更正（`f1fd288`）
+- 环路检测补到 MiMo 的四类 + 跨步重复文本 + **把重复片段从请求里裁掉**（`src/server/session/loop-health.ts`，阈值读自引擎并在声明处写明）（`afa9b6b`）
+- 便宜五项：SVG 设计令牌、Windows 工具链护栏、标题提示词、PPT 配图分支；多技能编排提醒**第十轮早已有**（审计写错）（`383aaaa`）
+- `prompt-check` 改为断言语言分层本身，`tool-check` 新增「工具描述必须是英文」（与 MiMo 一致）（`4985ab7`）
+- 内联组件那段提示按分法改回英文行文、保留中文触发词（`1d74656`）
+- 审计对 `TryBestMonitor` 的判断有误：它挂在 `MIMOCODE_ENABLE_TRY_BEST_HANDOFF` 后而桌面端不设该变量；仍按简报实现并接到已有的询问上
+
+**C 工具与审批（R16-C）**
+- 交互式命令拒绝语改中文并新增 `session.notice` 事件（只带 key，窗口用 18 语言说），每会话一次（`340217d`）；bash 说明随 shell 变化，PowerShell 5.1 明说无 `&&` 并给 `cmd1; if ($?) { cmd2 }`（`023a703`）
+- `trimDiff` 去公共缩进（`9af1b5a`）；edit/write 结果带加减行数（`e8544ab`）。**内部差异**：`metadata.filediff.patch` 存未裁剪补丁（MiMo 存裁剪过的），因为撤销要 `git apply --reverse`
+- 新增只读的 `list_external_sessions` / `read_external_session`，参数/上限/拒绝照 MiMo；说明保持英文（MiMo 这两个本身英文）（`6640a0d`）
+- **`write` 桶并入 `edit`、webfetch 默认 `allow`**，带迁移 `write-into-edit-r16`（旧配置取更严者落到 `edit`，用户设过的 `deny` 不动）（`1e1ac36`）
+- 清掉不存在的 `patch` / `apply_patch` 分支（`a9420a3`）。顺带发现未修：`notebook_edit` 不在 `EDITING` 里，笔记本改动进不了撤销
+
+**D 差异界面（R16-D）**
+- 词级高亮：照 diff2html 的 `diffStyle:"word"` 重写分词与记号比对（未抄代码），用 MiMo 包里那份当基准跑 4000 组随机对比 **0 处不一致**；配对沿用 `splitRows`，单栏与左右对照点亮同样的词；1200 行上限与折叠不变。**一处刻意保护**：记号比对走满 1000 次编辑仍不收敛就整行画平（MiMo 会一路算完，压缩文件上会卡数秒）（`409fbf3`）
+- 文件头：状态图标 + 状态标签 + 「已查看」勾选 + 重命名 `{old → new}`；标签走 18 语言表。**`+N -M` 从文件头移走**（MiMo 只在文件列表里显示）。「已查看」只记在这一次绘制上，不折叠、不存储、重绘即清——MiMo 未加载 diff2html-ui，行为如此（`10d7695`）
+- 文件列表只在整页差异标签绘制（`9bb0d6c`）；右面板启动卡补说明行（`395cd1b`）；`exec_command` 按 bash 说话、命令读 `input.cmd`（`6c2ee80`）
+- 两处从代码定不了、保持现状：深色差异配色与每文件边框；以及 MiMo 那个「已查看」勾选框是否可见（diff2html 自带样式把它设为 `display:none`，只有 diff2html-ui 才显出来）——要真截一次 MiMo 才能定
+
+**E 内联交互组件（R16-E）**
+- 复刻 `sci-widget`：围栏 + 自包含 HTML，沙箱 `allow-scripts`，流式时一行占位，**没有任何按钮、渲染层没有尺寸上限、没有错误处理**（MiMo 的减法照做）（`d121f84`、`c1c8849`）
+- **一处必须不同**：MiMo 渲染层无 CSP，MCode 有。实测在我们的策略下 `srcdoc` 框被整个拒绝、脚本永不执行，因此文档改由主进程在**不可猜测的 `<token>.localhost:<port>` 独立来源**上提供，策略作为真正的响应头下发，窗口自身 CSP 未动。实测：本地存储、父窗口、`parent.mcode`、顶层跳转、fetch/XHR/远程图片全部被拒
+- MCode 比 MiMo 多一个来源大小上限 `WIDGET_SOURCE_LIMIT` 512KB（超过则保持代码块），记为故意不同
+- 探针发现并修掉一个缺陷：按视口布局的组件会与外框互相撑大、无限震荡（一轮两帧、上千次），现在锁定后只有窗口缩放才重算
+
+### 第十六轮的真实模型端到端（2026-09-21）
+
+用户局域网的 `qwen38-nvfp4`（vLLM，256K）跑六个场景，请求体与回复流经本机回环代理全量落盘（证据在 scratchpad `r16e-*`）。**通过**：先读后改、词级差异与文件头、撤销与重做双向且逐字节核对；PowerShell 下全程无 `&&`；计划模式的中文守则、只读不写、方案文件、切到构建；目标模式的判定请求形态（无工具、温度 0、JUDGE_SYSTEM）与目标条；内联组件渲染；交互式命令的中文拒绝 + 每会话一次通知；实际发出的系统提示 36,176 字符、只有 13 个汉字（英文里引的中文触发词）、三个环境块确已消失、29 个工具含两个新的跨会话只读工具。**真实模型两次都一轮达标**，所以「不达标→再来一轮→撞 12 次上限」这条臂只有 stub 探针验过。
+
+**发现并已修的三个缺陷**
+- **E2-1 被输出上限截断的回复**：续写原本另起一条 assistant 消息，于是未闭合的 ```` ```sci-widget ```` 围栏被当代码块、后面那个落单围栏又把讲解吞成第二个代码块（真实模型上复现：16K 推理耗尽 → 5,423 字截断 → 2,048 字续写）。改为**续写接在同一条回复的同一个 text part 上**：渲染、复制、搜索、导出一次全修。连带处理重试（回到本次尝试已有的片段而非清空）、用量（输出累加、输入只取最新一次，否则上下文环会算成两倍）、`LENGTH_NOTE` 每条消息只带一次。MiMo 自己是合成一条 user 提醒再开一步，转录同样是断开的，无可照搬（`b6a206f`）
+- **E2-2 `Today:` 用 UTC**：东八区每天 00:00–08:00 报成前一天（证据 `r16e-1-user1.txt`）。改用 `localDay()`，与用量页同一套日历（`fef1a37`）
+- **E2-3 中文环境守则把 Windows 一律当 PowerShell**：从 Git Bash 启动时，同一请求里工具说明说 bash、守则说写 PowerShell。守则改为接收本轮 shell 名、只在 powershell/pwsh 下保留 PowerShell 专属两条（`ff9070a`）
+
+**未修、记在案**：真实模型会在中文回合中间整段改用英文（`## Reply language` 压不住，属模型不守指令）；`notebook_edit` 的改动仍进不了撤销。
+
+### 第十五轮：二次全面复核与修复（2026-09-20）
+
+六个只读复核代理（主进程、后端核心、工具/MCP/定时、界面状态层、对话界面、设置与弹窗）各自写报告，再由七路 worktree 修复。合并后 13 项检查 + build 通过，smoke **4891 全过**；新增 `scripts/smoke-round15-{{server,tools,main,state,ui-chat,ui-settings,font-scale}}.ts`（另有两个在 Electron 里跑的辅助文件）。每路都做了「把修复还原，检查必须失败」。
+
+**后端核心（R15-S）**
+- S1 重做必定失败：`runner.ts` 两处 `moveSnapshot` 只搬 `files`，丢了 `directory` / `messages`，正文搬进 per-project store 后就再也读不回来，条目还卡在 redo 栈。smoke 原来的 Undo 段用的是旧的内联形态所以看不见，已改成今天的 blob 形态（`e54bf19`）
+- S2 收尾照片失败（目录被删/改名、git 超时、磁盘满）后 Recording 永远留在 `live`：之后该会话每回合都被记成不可撤销、理由是假的「另一个对话改了 X」，store 永不回收。清理移进 `finally`，开头照片的镜像洞也补上（`6a89a77`、`cc59258`）
+- S3 中文搜不到（第十一轮改索引搜索引入）：`unicode61` 不切分连续汉字。改为另存一列 `search_body`（相邻 CJK 之间插空格）供 FTS 索引，查询同样切分后按短语匹配，浮层最后一个词当前缀；只有被切过的正文才存第二份——纯英文档案索引 +0%、全中文 +67%。`SCHEMA_VERSION` 2，旧索引启动自动重建。4000 条 parts 下英文 0.13→0.12ms，`配置` 0→1000 条命中。（`94b723c`、`a858ca1`）。**[已完成] 英文词中子串**（`figur` → `configuration`）：MiMo 26.920 浮层不走索引，对已载入对话逐条消息先找原样子串（1000 分 + 靠前加分 + 词边界加分）、找不到再按字符顺序散配，最多 50 条、同分按更新时间；其引擎 `history` 工具用 `unicode61 remove_diacritics 1`（只认整词）。于是模型的 `history` 工具不动；浮层的候选改由新表 `history_part_trigram`（FTS5 trigram、contentless + contentless_delete，只收浮层会读的 text / tool 行、每行前 20000 字 = MiMo 每条消息读取上限）给出：查询按空白与 `"` `\` 切块，≥3 字的块全部须在同一条消息里（INTERSECT），更短的块交给前端打分；全是 1–2 字的查询则并用旧的词索引（全量历史，词首 / 中文任意长度）与最新 3000 行 `instr` 扫描。候选取命中对话里最新的 50 个（排除归档 / 侧聊 / 子智能体）。`SCHEMA_VERSION` 3，旧索引启动自动重建。合成 4020 条 parts（4.07MB 文本）：索引 8.83→19.23MB（trigram 10.1MB）、首次建索引 1.7→2.9s；候选查询 `configuration` 1.23→0.77ms、`figur` 0→50 个对话 0.39ms、`the` 1.34→0.38ms、`配置` 0.19→8.5ms、`co` 6.2→13ms（多了扫描）；`history` 工具不变（0.47–0.55ms）。仍不同：散配（如 `cfg` → `config`）只在候选对话内生效，候选本身不按散配找
+- S4 删会话后残留的 `ArtifactStore.dirty` / `repeatsAllowed` / `worktreeHits`（`24d270c`）；S5 用量「脏」标记确认自愈，改为用检查钉住（`ff33463`）
+
+**工具 / MCP / 定时（R15-T）**
+- T1 Windows 上经 `cmd.exe` 起的 MCP 服务器只杀了外壳：`taskkill /T /F` 抽成 `src/server/kill-tree.ts` 共用，探测的子进程登记进 `probing` 并在 `close()` 回收（`fdc4c30`）
+- T2 `create_session` 可把任意绝对目录当项目根、零审批读遍家目录。**MiMo 完全不检查**（渲染端直接 `POST /session?directory=`，连目录存在都不验），本项故意不照抄：项目（或其仓库根）内照旧放行，项目外走既有「项目外」审批（`e7a08dc`，见「与 MiMo 故意不同的地方」）
+- T3 cron 项目锁拿不到就永不重试（`??` 缓存了 `owned:false`）；除重试外加锁心跳：持有者每 30 秒盖时间戳，超 5 分钟未盖的锁即使 pid 还在也可接管——这才堵上「硬杀后 pid 被复用」（`61d0f64`）
+- T4 `cron` 工具能写别的项目的 `.mcode/scheduled_tasks.json`：拒绝目录不在本次调用项目内的 `session_id`（`b693b10`）；T5 启动失败的命令永远留在 `live`（只有 `error`+`close`，没有 `exit`）（`1577ff6`）
+
+**主进程（R15-M）**
+- M1 面板页面自关（OAuth 回调页那类）后 `view.webContents` 变 `undefined`：面板所有操作抛错、`closePanel` 中断循环使其余页永不关闭、主进程多次未捕获异常。新增 `contentsOf(tab)` 与 `destroyed` 监听 → `dropTab()`（`8da2335`）
+- M2 界面重新加载后面板网页仍压在界面上且无处可关：`wireWindow` 在 `did-navigate` 上 `closePanel`（用 `did-navigate` 而非 `did-start-navigation`，`index.ts:862` 拦下的导航不会误伤）（`e52c050`）
+- M3 同一次重载永久泄漏 office 目录监听（`49ccef1`）；M4 每开一次面板多挂一个窗口 `closed` 监听，第 9 次告警，用 `WeakSet` 守门（`45ccb43`）；M5 托盘配置切换给刚建的窗口发消息必丢，改为等 `did-finish-load`（`829e827`）
+
+**界面状态层（R15-R）**
+- R1 `session.history` 的旧应答落到新会话：撤销状态张冠李戴、右侧面板被假变化触发重读。应答后核对 `currentID`（`5e72dd5`）
+- R2 提示上限 3 会把常驻提示（断线横幅、登录过期、配置/凭据损坏）挤掉且再不回来：驱逐时先挤有时钟的，总量上限仍是 MiMo 的 3（`21e830a`）
+- R3 对话框退场副本没有 `inert`，关后 200ms 内 Tab 掉进副本再落到 `<body>`；顺带修好这 200ms 内的拖放判定（`64a7869`）
+- R4 查找条跨会话不刷新（旧命中数、高亮挂在已脱离文档的 Range）（`67eddf7`）；R5 着色缓存命中不刷新 LRU（`2e56165`）；R6 `forgetSession` 漏清按会话 id 的集合（`cda1414`）
+
+**对话界面（R15-U1）**
+- U1-1 盘符根目录的 .xlsx/.pptx/.html 打不开（`slice(0, cut)` 少了分隔符，第二轮修 PDF/Docx 时漏了三个）：五个视图统一 `splitFilePath`。复核推测的「会读到 cwd 同名文件」不成立——`office-guard` 的绝对路径校验先拒（`afeefb6`）
+- U1-2 文件页查找条恒宽 324px 盖住文件树、面板拖窄时伸出面板；改为跟随面板宽度并给按钮加宽度下限（只加 `max-width` 会让按钮溢出窗口）（`e2c1344`）
+- U1-3 「历史」按钮关不掉自己的弹层（捕获阶段先关、随后的 click 又开）（`3842f4d`）；U1-4 会话导航条为 synthetic 消息画死刻度、悬停显示写给模型的内部消息（`87129a6`）；U1-6 docx 修订卡无锚点时叠成一摞（`bff33dc`）；U1-7 子智能体行焦点环被分组 `overflow:hidden` 裁掉（`50db010`）；U1-8 首页字标弹跳无视 app 自己的「减少动态效果」（`95324da`）；U1-9 `.skill-item{30px}` 被后置 `.item{28px}` 压平（`1ae049d`）；U1-10 审查页乱序返回时旧读覆盖新读（`2a78b05`）
+- 保留不改：代码字号放大后行号列重叠——MiMo 的 `.rv-ln{34px}` / `.ft-ln{44px}` 数值相同、放大同样会叠，属忠实复刻
+
+**设置与弹窗（R15-U2）**
+- U21 窄窗（窗口下限 720）下模型页与 MCP 页行重叠、按钮被卡片裁掉。真正成因不是 `.pname` 缺 `min-width:0`（它不是 flex item，加了是空操作），而是 `.ptext`/`.line-text` 的 `flex:1` 基准为 0 + 行不换行 + `.card{overflow:hidden}`。改为行可换行、控件组换行后仍靠右、文字列 `min-width: min(180px,100%)`（`e401c22`）
+- U22 `.config-path` 的 11.5px 被后置 `.line-sub{12px}` 压平 → `.line-sub.config-path`；`.card.wt-empty` 的 18px 侧距 → 17（`3d5c072`）
+
+**界面字号（R15-U3）**
+- 外观页字号可调到 24，但 168 处声明跨 42 文件只缩 `font-size` 不缩 `line-height`（常配死 `height` + `overflow:hidden`）：导航标签溢出 241px 列被页面盖住、`.ctl-btn` 文字竖向裁掉、行互相压字、侧栏与首页字形底部被切。
+- MiMo 的做法（`out/renderer/assets/index-Dz6PjQMq.css`）：`--ui-font-scale` 只出现在 16 个 `--text-N` token 和 7 个 `.type-*` 类的 **line-height** 上。照此把每条缩放字号的规则的 `line-height`（及包住该文字的 `height`）同比缩放；用 `height: calc(...)` 而非 `min-height`（后者会改变属性、破坏基类与修饰类的覆盖关系）。设置导航列另加行最小高度、`overflow-wrap: anywhere`、`.nav{overflow-x: clip}`（用 `clip` 不用 `hidden`，否则另一轴变 `auto` 会吃掉 10px 滚动条宽）。两处图片占位与九处滚动区 `max-height` 豁免（`ba1f77e`、`4c3eca0`、`214d37d`）
+- 实测：德语字号 24 下裁切 225 → 0、行溢出 21 → 0、标签压页 22 → 0；默认字号中文逐元素几何 0 处变化。唯一有意变化：德语默认字号下「已归档对话」导航行 36px → 40px（它的标签本来就要两行、原先画在行外）
+- **发现但未修（已另记）**：设置导航列在默认字号下就超出自身盒子（1400×900 中文 `scrollHeight 745` vs `clientHeight 659`），最后一组与「应用更新」被画在列外并被对话框裁掉。修它要让该列滚动，会占 10px 滚动条宽并移动默认字号下的每一行，与本路「默认像素不变」的前提冲突；MiMo 用的是内层 `.sn-scroll`。**已修（第十八轮后，`753c0a7`）**：标题与搜索框放进不滚动的 `.nav-top`，分组与各行放进 `.nav-scroll`（照 MiMo：起始侧内缩不变、末行下 12、结尾侧无内边距、9px 细滚动条 `u-scrollbar-thin`）；选中行在打开、换页、搜索时滚进视野并留 8（MiMo 同规则，新 `lib/scroll-reveal.ts`）。实测中文默认：列内 `scrollHeight 814 → 659`，列表 558 高可滚到 725，「应用更新」滚到底后完整可见可点；各行位置与高度 0 变化，宽 218.4 → 220.9（去掉的结尾内边距）；德语 24 同样可滚到底、无裁切。smoke `smoke-round18-settings-nav.ts` 15 项，旧代码下 11 项失败。
+
+### 第十四轮：网络与代理、本地化、打包与更新（2026-09-20）
+
+三份只读审计：`scratchpad/round14-network.md`、`round14-locale.md`、`round14-packaging.md`。网络只有一处与 MiMo 不同（视频卡片）；模型、`/models`、MCP、网页工具两边都不走任何代理、都没有代理设置页，证书、超时、离线启动一致。用户决定：名称排序、表格图表坐标数字继续跟随界面语言（记为故意不同）；超出 MiMo 的不做（Electron fuses 加固、全局环境变量代理）。两路 worktree，合并后 13 项检查 + build 通过，smoke **4700 全过**；新增 `scripts/smoke-round14-packaging.ts`（含 Electron 下跑的 `smoke-round14-net-electron.ts`，需要 PATH 上有 openssl）/ `smoke-round14-locale.ts`。
+
+**网络与打包（P14-*）**
+- P14-1 视频卡片标题/封面与封面代理走 Chromium 网络（跟随系统代理 / PAC），新文件 `src/main/chromium-fetch.ts` 封装 `net.request`：手动重定向返回 3xx 与 `location`、不带也不存 Cookie、referer 保留；`net.fetch` 的 `redirect: "manual"` 实测会报 "Redirect was cancelled" 所以没用；b23.tv 短链逐跳跟随（`c1f3753`）
+- P14-2 系统关机/注销引起的退出（`noteOsQuit()`，含恢复放弃时）关掉 `autoInstallOnAppQuit`，下载好的更新等下次正常退出再装（`85b9548`）
+- P14-3 `scripts/runtimes.mjs` 删掉 Python 包里名为 `tests`/`test` 的文件夹（从不删顶层包、从不删包自己导入的），保留 `numpy.testing`、`pandas._testing`；省 19.9 MB；运行时布局版本 3→4，下次打包重建（`01593f6`）
+- P14-4 先跑 electron-updater 自己的 `isUpdateSupported`（`minimumSystemVersion`），再跑 MCode 的规则（`8cc53a0`）
+- P14-5 下载完成后把安装包经临时文件改名覆盖到更新缓存的 `installer.exe`，下次可差分下载（`5b9f473`）
+- P14-6 macOS 不加载自动更新，「检查更新」说未配置更新源；去掉 mac `zip` 目标（`1b60eeb`）
+- P14-7 `electron-builder.yml` 从 `node_modules` 排除 `*.map`、`*.ts/.mts/.cts`、非许可证 `*.md`，干跑确认只少 1393 个文件（6.9 MB）（`73a3eec`）
+- P14-8 `allowScripts` 改为 `electron@41.7.2`（`40afdf5`）
+- 未端到端验证：P14-2/4/5 没有真的打包安装（打包会升版本号）
+
+**本地化（L14-*）**
+- L14-1 未手选语言时界面语言与回复语言同源：main 的 `app.getLocale()` 传给后端并回答窗口；`--lang=fr-FR` 实测界面法语、回复要求法语（`c14eeff`）
+- L14-2 `<html lang>` 跟随界面语言，`index.html` 初值 `zh-CN`（`b279ba7`）
+- L14-3 `src/shared/locale.ts` 一份语言映射给窗口与后端共用：zh-HK/zh-MO/zh-Hant→zh-TW，no/nb/nn→nb（`1e7a592`）
+- L14-4 快捷键页「全部重置」不再受 320px 限制、可折行、有悬停提示（`0fe9173`）
+- L14-5 「N 分钟/小时/天前」改为按复数类别分键，`tn()` 移入 `i18n.ts`、删 `plural.ts`；阿拉伯语有单/双/复数（`067255f`）
+- L14-6 从右到左时侧栏前进/后退箭头镜像，对话脊柱与预览卡用逻辑方向（`eaf3b7c`）
+- L14-7 用量页日期本地化（列宽 44→64px），token 数与输入框共用 `compactTokens`；该函数照 MiMo 在所有语言都用小数点「39.2K」（L 路曾改成跟随语言的小数点，合并后改回，`bbd4218`）（`d019d86`）
+- L14-8 一个日期格式器 `dateIn` / `calendarDate`，产物、侧栏、回复脚注、信息卡、版本历史、用量页都用它，泰语全应用佛历（`8a726fa`）
+- 没改：Word 批注时间照 MiMo 用 ISO 公历；PPTX 里的 echarts 切换语言后要重载才变（MiMo 同）
+
+**打包与安装实测（2026-09-20，本轮之后做的）**
+- **P14-9 打包后打不开（本轮最重要的发现）**：0.2.8 装好后主进程一直卡住、窗口始终不出现。原因是 `turndown`（第十轮加的）在 devDependencies，vite 把它打进主进程，但它对 `@mixmark-io/domino` 是运行时 `require`，而 electron-builder 只拷 `dependencies` 及其依赖，所以安装包里没有这个模块。开发和探针都从仓库的 `node_modules` 解析得到，所以一直没暴露。修法：把 `@mixmark-io/domino` 写进 `dependencies`（`0ce7d95`），并加检查「out/main 里引用的每个外部模块都必须在 `dependencies` 闭包里」（`smoke-round14-packaging.ts` P14-9）。**教训：只有真正安装的包才能发现这类问题，打包后至少装一次再发。**
+- 0.2.9（`e3997bd`）已装到 `D:\Apps\MCode`（注册表里记着该目录，原地升级），窗口正常、日志正常、真实配置目录 `%APPDATA%\mcode` 不变。
+- **自动更新端到端实测通过**：本机 `127.0.0.1:8765` 起一个 generic 更新源（`latest.yml` 写成 0.2.10，文件仍是 0.2.9 安装包），用 `MCODE_UPDATE_URL` 启动安装版（不动用户设置）。结果：启动 5 秒后检查 → 差分下载（读两个 blockmap，实际下载 0 KB，基准是缓存里的 `installer.exe`）→ 校验通过 → 正常退出时静默安装 → 装完版本正确。装完不会自动重开（electron-updater 的退出时安装不带重启），MiMo 同。测试下载已清掉，`installer.exe`（差分基准）保留。
+- 未实测：P14-2（关机时不装更新）只有 smoke 覆盖，没有真的关机验证。
+- **注意 MCode 还没有更新服务器**：`electron-builder.yml` 的 `publish.url` 是故意不可解析的 `updates.invalid`，更新源要在设置里填或用 `MCODE_UPDATE_URL`，否则装了新版也不会自动更新。
+
+### 第十三轮：键盘与焦点、多实例、大数据量（2026-09-20）
+
+三份只读审计：`scratchpad/round13-keyboard.md`（17 条）、`round13-instances.md`（7 条）、`round13-scale.md`（6 条 + 小项）。用户决定：开发版用独立数据目录（记为故意不同）；其余照 MiMo；超出 MiMo 的两条（键盘打开的菜单关闭后焦点归还、看过的子代理对话记录释放）不做。四路 worktree，合并后 13 项检查 + build 通过，smoke **4632 全过**（连跑两次）；新增 `scripts/smoke-round13-keyboard.ts` / `-instances.ts` / `-scale.ts` / `-artifacts.ts`。
+
+**键盘与焦点（K13-*）**
+- K13-7 共享 Escape 帮助函数 `lib/escape-layer.ts`：一次 Escape 只关最上一层并标记已处理；PDF/Office 批注不再被上层的 Escape 清掉；InfoPanel 的 `escapeBlocked` 名单删除（`6c5fc0d`）
+- K13-1 模型页断开/删除确认框上 Escape 只关确认框；设置改为按下时检查页面上是否还有别的层（`f3914cc`）
+- K13-2 分支选择器搜索框里 Escape 能关（`93b61da`）；K13-4 搜索浮层焦点在结果行时 Escape 能关（`d3a5fce`）；K13-11 项目选择器子菜单 Escape 只关子菜单（`45871ed`）；K13-15 导入对话框 Escape 关闭（`da708df`）
+- K13-3 「+」菜单键盘操作：打开聚焦首行，上下/Home/End，Enter/Space，右键头进技能，Escape 逐层（`c01dd63`）
+- K13-5 有浮层/弹窗/预览盖住时，置顶、重命名、归档、侧聊等对话快捷键不生效（`5c92f90`）
+- K13-6 Ctrl+N 先关菜单、搜索、命令面板、预览、设置（环境有未保存修改先问），需要回答的对话框打开时不生效（`586bca7`）
+- K13-8 图片/视频/表格预览焦点限制在内、关闭归还，视频预览打开即取焦点（`bb0bfd7`）
+- K13-9 `lib/keys.ts` `composing()`：8 个输入框输入法选字时的 Enter 不再触发；smoke 扫描所有带 Enter 的输入框（`3b07275`）
+- K13-10 输入框菜单与首页选择器焦点离开即关，菜单行不再是 Tab 停靠点（`f883a67`）
+- K13-12 设置下拉框 Space 打开、1 秒内首字母跳转（`lib/type-ahead.ts`）（`0ab91d4`）
+- K13-14 点击对话空白处聚焦输入框（`264907f`）
+- K13-17（合并后发现）新建任务从未把焦点放进首页输入框：首页有自己的 Composer（HomeHero），`focusComposer` 却只聚焦对话页那个；现在首页时聚焦 HomeHero 的，侧栏「新建任务」也聚焦（`311994a`，探针实测）
+
+**多实例与窗口（I13-*）**
+- I13-1 未打包运行默认数据目录 `<默认名>-dev`（Windows `%APPDATA%\MCode-dev`），显式指定仍优先；单实例锁仍只在打包版（`6a3e255`）
+- I13-6 单实例锁在设好数据目录后立刻取，抢不到 `process.exit(0)`（`8eeec96`）
+- I13-2 退出过程中再次启动：退出完成后 `app.relaunch` 一次（带链接参数），托盘/activate 退出期间无反应（`71156fc`、`9e27f7d`）
+- I13-5 再次启动总是先激活窗口；页面加载或替换中收到的链接存着，就绪后经 `mcode:take-link` 取走（`recovery.ts` `readyWindow()`）（`b727844`）
+- I13-4 启动时保存的位置整体放回屏幕（`work-area.ts` `startBounds` + `clampToWorkAreas`）（`8067aff`）
+- I13-3 Windows `query-session-end` 直接 `app.quit()` 走完整清理，`session-end` 同步写窗口位置；N11-1 的错误注释已改。代价：别的程序取消关机时 MCode 已退出（`1bcdc22`）
+- I13-7 Linux 最大化照 MiMo 铺满工作区并记为最大化（只有单元级 smoke）（`1a5358b`）
+
+**大数据量（S13-*）**
+- S13-1 `server/diff.ts` 自写 Myers O(ND)：去掉共同开头，超过 2000 行改动或 4000 万步退成整块替换；4 万行改一行 36.6 s/6.2 GB → 约 25 ms，7 万行约 39 ms（`68b4527`）
+- S13-2 用量页读 `storage/usage-daily.json`（`session/usage-days.ts`，按会话→日→模型汇总，版本 1，损坏挪开重建）；1990 会话首建 5 s 一次，之后 7–250 ms，旧全量扫描 24 s（`54abc74`）
+- S13-3 产物列表只重读变化的对话，每页 50 条带游标与分类计数，超过 8 个变化转后台构建；产物页与搜索浮层滚到底加载更多；列表 1000 会话/3000 文件 290–390 ms → 4–5 ms；分类规则移到 `shared/artifact-category.ts`；不再返回已不存在的文件（`2040a3f`、`10f1909`）
+- S13-4 对话列表缓存就地更新（排序 `updated` 倒序、同时间按 id），冷读 32 并发；2000 会话删 100 个 100.7 s → 1.26 s（`9d04b93`、`e3a3b33`）
+- S13-5 搜索启动检查跳过记录与消息目录都早于上次索引的对话（16 并发），索引追赶期间仍从索引回答并直接读最新 20 个未索引对话；启动后首批查询 3.6–4.6 s → 10–324 ms。已知缺口：外部原地改写的消息文件启动时察觉不到（`9238e7c`、`b84017c`、`51ef923`）
+- S13-7 文件面板先 stat，超过 25 MB 只读开头 2 MB，超 2 GB 的媒体显示「过大」，文本仍显示截断的开头（`65f53e0`）
+
+### 第十二轮：数据生命周期、失败提示、主进程契约（2026-09-20）
+
+三份只读审计：`scratchpad/round12-lifecycle.md`（22 条）、`round12-failure-ux.md`（17 条）、`round12-ipc.md`（13 条）。用户决定：凭证照 MiMo 用系统安全存储加密；卸载的技能照 MiMo 7 天清理；可选改进「MiMo 有的都做」（只做了定时任务运行记录的原因码，降级提示、无模型指路、磁盘满文案 MiMo 没有，不做）。四路 worktree 分头做，合并后 13 项检查 + build 通过，smoke **4457 全过**；新增检查文件 `scripts/smoke-round12-credentials.ts` / `smoke-round12-lifecycle.ts` / `smoke-round12-c.ts` / `smoke-round12-ipc.ts`。窗口提示用一次性配置实测过（产物库重建、对话读不出、定时任务文件损坏、凭证读不出四条中文提示都出现）。
+
+**凭证与设置（L12-1…6）**
+- L12-1 `storage/models.json` 损坏：挪成 `.corrupt-<iso>`，模型列表从空开始，启动不再失败（`6bbe519`）
+- L12-2 `credentials.json` 读不出：挪到 `credentials.json.corrupt-<iso>`，挪不动就拒绝保存 Key（`error.credentialsInvalid`）；`config.get` 带 `credentialsUnreadable`，窗口提示；模型工具不能读 `credentials.json.*`（`8ad995b`，文件处理在 `src/server/credential-file.ts`）
+- L12-3 **凭证加密**：Key 与 OAuth 令牌逐条用 Electron `safeStorage` 加密（base64）。main 注入加密器（`src/main/safe-storage.ts`），纯 node 跑时没有加密器、保持明文。一次性迁移 `credentials-sealed-r12`：写加密版→读回比对→再替换明文，失败保留明文下次重试。旧明文照读。别的用户/机器加密的文件、或无安全存储时读到加密文件，按读不出处理（走 L12-2）。系统无安全存储且确有保存内容时明文保存并提示 `error.credentialsPlaintext`（`750cc1c`）。已知取舍：Linux 密钥环暂未解锁时加密文件会被挪开，需要手动改回名字
+- L12-4 所有启动 `migrate*` 遇到更新版本写的 config 直接返回（`3e4c5e0`）
+- L12-5 设置校验只改内存副本，不认识的取值原样留在文件里，直到用户改该项（`517e84f`；`smoke-round9-settings.ts` 相应改了一条）
+- L12-6 `Storage.drain()` / `Config.drain()`，`close()` 末尾依次 `permissions.flush()`、config、storage，仍在 5 秒上限内（`b2c6d40`）
+
+**其余存储（L12-7…17）**
+- L12-7 `artifacts.db` 真损坏时连同 -wal/-shm/-journal 挪开重建，`reconcile()` 补回，窗口提示 `error.artifactsRecreated`；损坏判断与挪开抽到 `sql-worker.ts` 与 search.db 共用（`dc017de`）
+- L12-8 `.mcode/scheduled_tasks.json` 读不出挪开，挪不动拒绝写；解析不了的 cron 串写回时保留、不触发（`25ebb66`）
+- L12-9 `imported.json` 损坏不再导致重复导入：用 `SessionInfo.imported` 去重，新增 `mtime`（`a70577f`）
+- L12-10 `mcp-auth.json` 解析失败挪开；读不了时 `mutate()` 拒绝（`error.mcpAuthUnreadable`）（`c266065`）
+- L12-11 读不出的 `info.json`：原地保留、记日志一次，checkpoint 清理与 artifacts reconcile 当作仍在用，窗口提示 `error.sessionsUnreadable`（`e6bf337`）
+- L12-12 `skill-trash` 启动时删掉超过 7 天的（按名字开头的时间戳）（`c75b76c`）
+- L12-13 撤销仓库启动约 1 分钟后、之后每小时 `git repack -a -d --keep-unreachable -q`，从不 prune，持有该仓库的 git 锁（`abb278e`）
+- L12-14 `automations.json` 损坏启动时窗口提示 `error.automationsInvalid`（`a1f1f81`）
+- L12-15 search.db schema 不匹配直接删掉重建；启动时清理超过 30 天的 `*.corrupt-*`，每份文档留最新一份（`f2b25a5`）
+- L12-16 记忆 project-id 原子写（临时文件 + 硬链接），无效旧文件先另存（`b1c1142`）
+- L12-17 定时任务运行记录带 MiMo 的 `errorCode`（`target-missing` / `project-unavailable` / `target-busy` / `schedule-changed` / `app_interrupted` / `empty-prompt` / `model-unavailable`），只改数据（`b95b894`）
+- 窗口提示走新请求 `storage.problems`（`src/server/store-notices.ts`），每次启动每个 code 只说一次。注意提示最多同时显示 3 条（`lib/toast.ts` `LIMIT`），四个文件同时损坏时最早那条会被挤掉
+
+**失败提示与空状态（C12-1…10）**
+- C12-1 重试倒计时 18 种语言不再显示花括号；i18ncheck 拒绝任何 `{{`（`bb69baa`）
+- C12-2 断线时只让已发出的请求失败，未发出的等重连（最多 30 秒），不会先报失败再发出；错误说本地服务（`error.backendLost`）（`8944bd3`）
+- C12-3 启动后断线保留对话界面，只升级重连提示（`error.connectionStillDown`）；顺带修了离线计时每次重连都被重置、从未到点的旧 bug；`boot.unreachable` 删除（`7b0e3f1`、`c21462b`）
+- C12-4 发送/子任务失败改成「请求失败」提示并保留草稿，`app.error` 只给启动失败；失败回合横幅读 `turnError`（`b0cc90a`）
+- C12-5 消息搜索失败显示错误行加重试（`searchOverlay.messageError`）（`403bc8b`）
+- C12-6 插件页列表失败显示失败行加重试（`plugins.listUnavailable`），刷新失败说「刷新失败：…」且不清空技能（`b429fce`、`ed7ad6d`）
+- C12-7 表格视图离开时没写进去的编辑提示 `office.saveFailed`（`5ec2e0d`）
+- C12-8 侧边对话历史加载失败：加载中→`subagentDetail.error`→每 2 秒重试；删了 `loadSubagent`（`5c92051`）
+- C12-9 三句英文改成表内文案：限速重试行 `error.rateLimited`、不能继续用 `composer.reviewRestricted`、PDF 读失败 `rp.files.errCannotRead`（`17a0afe`）
+- C12-10 读出来但没有可显示内容的对话显示「这个对话还没有消息」（`stream.emptyConvo`，MCode 自己的措辞）；全新空会话仍是欢迎页（`428059a`）
+
+**主进程契约（D12-1…7）**
+- D12-1 删掉没人调用的 `browserClose` 与 `mcode:browser-close`；wiringcheck 新规则：preload 暴露的每个方法都必须在渲染端有调用（`75bd186`）
+- D12-2 `mcode:menu-labels` 只收纯对象里的字符串（`9d64d40`）
+- D12-3 `clipboard-write` / `browser-bounds` / `titlebar-mode`（及 `browser-open` 的框）形状不对就忽略，`src/main/ipc-input.ts`（`1525bc3`）
+- D12-4 `edit` / `view` / `window` / `browser-act` 不认识的动作什么也不做（`4c17a48`）
+- D12-5 Office 通道检查抛错时回答自己的拒绝形状（`guarded()`）（`68397b4`）
+- D12-6 `pick-directory` 标题只收文本、开关只认 `=== true`（`d47a3d9`）
+- D12-7 `src/main/atomic-write.ts` `writeAtomicSync`：`boot-prefs.json` / `display-server.json` / `window.json` 走临时文件+fsync+改名（`c1ce049`）。收尾已做：`updates/update-transaction.json` 经 `fileTransactionStore` 走 `writeAtomicSync`（`399382f`）；`composer-input.ts` 也走 `writeAtomicSync`（`5d0db97`），只有关页那次 flush 做 fsync，打字时 300 ms 一次的保存不做（本机 NVMe 16 MB：无 fsync 约 8 ms，有 fsync 约 12 ms）；启动时 `sweepWriterTemps` 清三个目录里本写入者格式、进程已不在（或超过一小时）的 `*.<pid>.<n>.tmp`，含 composer-input 旧的 `.<pid>.tmp`（`bdcc62b`）。检查在 `scripts/smoke-atomic-leftovers.ts`。MiMo 26.920：更新记录走临时文件+改名、无 fsync；composer-input 直接覆盖写；不清残留临时文件
+
+### 第十一轮：并发与长期运行（2026-09-18）
+
+只读审计在 `scratchpad/round11-concurrency.md`（N11-1…N11-41，高 7）。**全部完成并验证，已合并入 `v2.0`（合并提交 `19c3a7e`）。**十一条 N11 提交加 N11-12，合并后 typecheck / build 通过，smoke **4168 全过**（新增第十一轮检查文件 `scripts/smoke-round11.ts`）。
+
+**N11-12：SQLite 进 worker 线程（本轮最后一项）**
+- 新文件 `src/server/sql-worker.ts`：`WORKER_SOURCE` / `SqlDatabase` / `SqlError`，每个库一个 worker 线程；MiMo 的四条 pragma（`busy_timeout = 5000` / `journal_mode = WAL` / `synchronous = NORMAL` / `temp_store = MEMORY`）、`SQL_REQUEST_TIMEOUT_MS = 15_000`、事务与回滚都在工作线程里跑。
+- 转换：`history/database.ts`、`history/index.ts`、`history/service.ts`、`artifact/store.ts`、`memory/index.ts`、`search.ts`、`tool/history.ts`、`index.ts`、`handlers.ts`、`session/context.ts`（数据库调用全部变异步，调用点全部 await）。
+- 收尾竞态：`HistoryIndex` 新增 `starting`，`start()` 拆成 `start()` / `begin()`，`close()` 依次等 `starting`、`flushed`、`writing`——否则后台 VACUUM / reconcile 还在飞时关库会抛未处理异常。
+- smoke 新增 9 条：pragma 集合、超时、两个库都从 worker 打开、事务护住语句、pragma 到达文件、写入报 changes、事务整体落地与回滚、**一条慢语句不占调用线程**（四百万次递归查询跑在 worker 上时 1ms 定时器跳 480 次；同一查询放主线程实测只跳 0 次）。改坏 pragma 后对应检查确实报失败。
+
+**其余 N11 提交**：退出、运行队列与通知说法（`b104b09`）；阴影仓库的锁、超时与半删除的存储（`957039c`）；界面搜索走索引、列表只读一次（`e6bc517`）；消息改逐 part 递给正在绘制它的窗口（`48421eb`）；git 写操作轮流、恢复不打扰快照（`62633a3`）；等待服务商时对用户开放、限流最多 30 分钟带倒计时（`decd517`）；子智能体闸门、更省的流式保存、删除对话后的残留（`bd0efdc`）；抽屉与面板终端各自拥有 pty（`28c1f67`）；MCP 在多个会话下（`d1fc2b2`）；小尾巴（`6fe3dc5`）；以及 N11-12（`c206feb`）。
+
+### 第十一轮：输入框全链路（2026-09-18）
+
+只读审计在 `scratchpad/round11-composer.md`（C11-1…C11-52，分卷稿 `r11-part-A.md`…`r11-part-D.md`）。除上面「故意不同」里列的十一项外全部按 MiMo 做了；当时没做的两项（C11-15、C11-13）已于 2026-09-18 补齐（见本节末尾）。
+
+**附件怎么到模型那里（C11-30/31/32/33/24，用户定「完全照 MiMo」）**
+- `lib/attach.ts`：只要文件在磁盘上就一律 `{path: 绝对路径, byPath: true}`；8 MiB 以内的图片 / 视频另外读一份 base64**只给缩略图**。以前「够小能画缩略图」被当成「不用留路径」，加号菜单选的、拖进来的图片会丢路径、整份 base64 进消息、还写进草稿文件（正好抵消 L6）。
+- 只有图片进消息。文本、Office、二进制（音频 / 视频 / 压缩包 / `.svg`）全部只给绝对路径，走 `session/context.ts` 的三段 `[Attachments]` 块（文本一段 / Office 一段带每种格式的库名 / 二进制一段），每段都以同一句「按给定绝对路径操作，不要搜索、不要 glob、不要列目录」收尾。
+- 文本附件不再内联、不再伪装成「read 已替你调过」（一个 300 KB 的日志以前只到模型手里 50 KB）；PDF / 音频 / 视频的字节不再送出。
+- 工具结果里的附件规则不变：`read` 当时拿到的字节仍原样随结果走。`attachmentParts(…, source)` 区分两者，`session/attachments.ts` 的 loader 对用户附件只读图片。
+- 四类扩展名表搬到 `src/shared/attachment-kind.ts`（渲染层和服务端共用）。文本表从 45 个扩展名扩到约 130（`.rst .cjs .gradle .tf` 之类），空文本文件也算提及。
+
+**@ 提及恢复后端搜索（C11-38/39/40/41/42，用户定回滚 L7）**
+- 第五轮的 L7 基于「MiMo 是本地过滤」的误判；26.912 和 26.914 都是主进程 `searchFiles`。现在查询非空就发 `file.search`（150ms 去抖、只认最后一次答复、50 条）。
+- `handlers.ts` 新增 `rankFileHit()`：不含 `/` 时只看文件名（全等 1000 / 前缀 900 / 包含 800，再减 `min(路径长,200)×0.02`）；含 `/` 时基准 500、按段在目录链上依次匹配，末段落在文件名上 +200/+150/+100，中间段 +40/+30/+20，任一段不匹配即淘汰；同分按路径升序。
+- 忽略名单改用 MiMo 那 22 项（`TREE_IGNORED`），隐藏文件可搜到；结果里没有目录。
+- 补 `composer.at.searchFailed`、`composer.at.truncated` 两键 × 18 张表；删掉 MiMo 从不渲染的 `composer.at.enterFolder` 和用它的按钮（`›` 改回不可点的字形，整行点击进入）；「引用」胶囊只在 hover 有底色；文件名不收缩、目录收缩；`referenceFolder` 写 `@rel ` 不再多一个 `/`。
+
+**按键、菜单、草稿（C11-1/2/3/5/6/10/11/13/14）**
+- 「发送消息」快捷键现在真的生效：绑定能解析成 Enter 系组合就精确匹配并关掉 Ctrl+Enter 换行，否则维持默认。输入框自己处理过的键一律 `stopPropagation()`（以前 Ctrl+Enter 绑成发送会先插换行再把它发出去）。
+- shell 模式的 Escape 进了 `onKeydown`、排在输入法守卫之后（中文组字时关候选窗不再退出 shell 模式）。
+- 菜单开着时 Enter 不看修饰键，Ctrl+Enter 选行而不是插换行。
+- 程序化改写（调历史、整块删提及、Ctrl+Enter 换行、语音填充、选技能）会关掉两个菜单，等同 MiMo 的 `wn()`。
+- 加 ResizeObserver：宽度变了 60ms 后重测高度，手动高度同时重新 clamp；宽度 ≤28px 时跳过测量。
+- `focus()` 先 `focus({preventScroll:true})` 再把光标放到末尾；切会话恢复草稿时把光标真的写进 DOM；语音填充前先把焦点从麦克风按钮拿回输入框。
+
+**粘贴与拖放（C11-16/17/18/19/22/25/26/27/28/29/34）**
+- 超大粘贴写盘失败时把原文插回输入框（替换选区），不再因为超过 50MB 就把内容丢掉。
+- 粘贴和拖放都读 `text/uri-list`，解析出的路径先经新 IPC `mcode:describe-files` 过滤存在性，再走同一套「提及 / 附件」拆分；拖放不再从 `text/plain` 里抠 `file:`。
+- 新 IPC `mcode:clipboard-has-image`（只回布尔）作为剪贴板图片判定的第一档；粘贴图片落盘去掉 25MB 上限。
+- 拖入纯文本交还给浏览器（能拖字进框、能在框内挪选区）；窗口提示层与输入框光环共用 `acceptsDrop()`；拖到输入框上时只亮光环；提示层不再盖住右侧信息面板那一列；`.box.dropping` 补边框色并保住原阴影；系统吞掉拖动时下一次按下就清理（窗口和输入框两处）。
+- `attach.tooLarge` 的数字改成从常量渲染（`{size}`，18 张表），以前写死 8 MB 而实际是 50 MB。
+
+**斜杠、发送、芯片（C11-43/44/45/47/49）**
+- 技能芯片显示技能的本地化名（`localizations` 随命令下发，`commandTitle()`）。
+- 会话自带的 `/compact` 胜过同名项目命令；首页隐藏名为 `compact` 的项目命令。
+- 选技能不再多吞一个空格；来源标签回到三种，删 `composer.slashBuiltinSkill`。
+- 只有附件没有文字时正文写成一句本地化的「（见附件）」（新键 `composer.seeAttachments` × 18 张表；MiMo 是硬编码中文，MCode 按 18 张表翻）。
+
+**附件胶囊与语音（C11-35/36/51/52/37）**
+- 胶囊换成文件树那套带色文件页图标（`--ft-*` 从 RpFiles 的 scoped 块搬到 `base.css`，两处共用）；删除标记改成 `✕` 字符 13px；`filetype.ts` 的文字徽标只剩命令面板在用。
+- 语音去掉 60 秒上限，改成边说边分段：1.2s 静音切一段，每段单独转写、按顺序落到当时的输入框状态（`lib/voice.ts` 的 `onSegment`）。
+- 录音改成全应用一份 + `voiceOwner`：三个输入框同时挂载，以前各自 `new VoiceRecorder()` 能开出两路 `getUserMedia`；现在换一个框按麦克风会先停掉上一个。
+- MiMo 的 `visionAutoSwitch` 是死文案（19 张表里有、全包无调用），不照抄；改为模型读不了图片时在界面上直说（新键 `attach.noImageInput` × 18 张表）。
+
+**C11-15 / C11-13（2026-09-18 补齐，用户「全干」）**
+- **C11-15 已接上**：协议 `SessionInfo.reviewRestricted?: boolean`（缺省即未限制，旧记录照旧）；请求 `session.reviewRestricted {sessionID, restricted}`，应答 `{ session: SessionInfo }`；`SessionStore.setReviewRestricted()` 不动 `updated`（照 `setAccess`，选状态不算活动），解除时删掉字段而不写 `false`；`handlers.ts` 的 `session.prompt` 在调 `runner.prompt` 之前先查，限制住就报「this conversation can't be continued」；Composer 的 `restrictedHere` 接管占位符（排在 compaction 之后、模式行之前，照 MiMo 的顺序）与 `:disabled`（textarea 和发送钮），`submit()` 里再一道退路。文案 `composer.reviewRestricted` × 18 张表：简体/繁体/英/日/韩/俄/德/法/西/葡/丹/挚麦/波/土/阿/阿拉伯用 MiMo 原文（`reviewRestricted:"…"`，逐条从 MiMo composer 分包取出），bs / th / uk 自译。**MCode 没有审核后端，所以新增一个可触发入口**（用户选的完整机制 + 可触发）：会话菜单里的 `row.reviewRestricted`（列表行与头部菜单都有，`menu.restrictConversation` / `menu.allowContinue` × 18），再报请求开关。新 smoke 检查 8 条（初始未限制、标记落盘与读回、不算活动、解除删字段、旧会话不限制、请求与应答在线、服务端拒绝）；改坏 `setReviewRestricted` 或拆掉报拒都会报失败。
+- **C11-13 已补齐**：`Composer` 的 `onMounted` 在 `text.value` 非空时`void nextTick(focus)`——MiMo 恢复草稿后真的把键盘拿过去，光标置尾；MCode 的三个输入框不同时在屏（首页与会话、侧边与浮动各自随视图挂载），空草稿不抢键盘。新 smoke 检查 3 条（有草稿就聚焦、空草稿不聚焦、聚焦把光标置尾）；删掉那一行会报失败。
+注："没做的两项"从此清空，下方那段「C11-13 的 `focus()` 那一半没有探针」仍然成立（DOM 焦点在探针窗口里测不到），所以新增的检查放在 smoke 里而不是探针里。
+
+探针 `scratchpad/mcode-round11-composer.cjs`（12 段，截图 4 张）。每段都在故意改坏的构建上跑过一次并给出不同读数（`mcode-round11-composer.broken*.json`）。**C11-13 的 `focus()` 那一半没有探针**：探针窗口即使被 OS 激活，`document.activeElement` 也落不到 textarea 上，任何读数都只是 DOM 原来的位置——宁可不写，也不留一条不会失败的检查。
+
+### 更早的轮次：第六轮前后的提交
+
+| 提交 | 内容 |
+| --- | --- |
+| `0c493b2` | 设置「环境」页按 MiMo 重做：项目列表（添加 / 移除 / 配置显示名）+ 所有项目的工作树（分支、项目标签、数量、刷新）；随后修了工作树名称被路径挤掉的问题 |
+| `ea62985` | 首页字标点击跳动 |
+| `6c32812` | 撤销首页可换图标按钮 |
+| `ec4134c` | 会话导航条（每轮一个刻度、悬停预览、点击跳转）+ 导航条音效开关 |
+| `00f31f3` | 产物页：打开预览 / 下载（定位文件）/ 进入对话，预览弹窗 |
+| `cd73a7a` | 插件页：刷新列表、状态 + 类型筛选，已安装里列出技能 |
+| `fb06971` | 侧栏底部菜单：设置、退出应用 |
+| `43696f3` / `0984a62` | 侧栏内容下移 4px；顶部按钮靠左 |
+| `30c3a0e` | 长任务完成提示音（超过 1 分钟、五种音效）+ 默认新建项目位置 |
+
+更早的提交见 `git log`。
+
+### 更早的轮次：设置「环境」页与工作树
+
+- `src/renderer/src/components/SettingsDialog.vue`：`environment` 一节。
+  - 项目 = 会话所归的项目（排除已归档、无项目任务、已关闭的项目），和侧栏同一套规则。**第十轮（G10-8）起**：会话有「移动至项目」标签就按标签；否则会话目录本身是已列出的项目就归它；否则照 MiMo 归到该目录所属的主仓库（`git.repoRoots`，`rev-parse --git-common-dir` 的上一级），所以链接工作树、仓库子目录里的对话都在主仓库项目下；目录已不存在的会话不归任何项目（进「最近」），目录已不存在的项目不在列表里显示（配置里仍保留）。
+  - 「添加项目」：选目录；若曾关闭就重新打开；没有会话就在那里新建一个（MCode 的项目靠会话存在）。
+  - 「移除项目」：确认后加入 `closedProjects`，会话保留。
+  - 「+」配置：返回按钮、本地环境卡片、名称输入框，保存到 `projectNames`（和侧栏重命名是同一个字段）。
+  - 工作树：对每个项目调 `workspace.list`，去掉主工作树、按路径去重；每行名称、分支标签、「项目：名称」标签（名称绘制时实时查，改名立刻生效）、路径；有数量行、刷新按钮和提示、空状态、加载中。
+- 删掉了不再使用的文案键：`set.project`、`set.noProject`、`set.mainTree`、`set.noWorktrees`。
+
+## 附录 A：逐项对照清单（第一轮到第十九轮）
 
 对照 MiMo 26.912.121036：第一轮（原清单 69 项 + 截图对照 13 项 + 清单外审计）**合计 134 项，全部完成**。
 
@@ -559,491 +1088,9 @@
 | 创建插件 | MiMo 的「创建插件 / 更多创建」 |
 | 设置页：钩子、自定义插件（CLI）、连接（SSH） | 清单之外的新功能，用户选择改为打磨现有功能 |
 
-## 与 MiMo 故意不同的地方（用户定的，不要改回去）
+## 附录 B：更早的待办清单（2026-09-13，均已处理或由用户决定不做）
 
-- 第二十二轮 L2 新增（同样是 MiMo 自己写坏的地方，MCode 保留能用的行为）：
-  - **`.cchip` 的高度跟 UI 字号缩放**，MiMo 写的是字面 `24px`。MiMo 自己的字是 `var(--text-13)`（会缩放），最大 UI 字号下 22.3px 的字放不进 24px 的 `overflow:hidden` 胶囊，它会把标签上下切掉。
-  - **版本弹窗「回溯」按钮的边框用 `--border-weak`**。MiMo 写的是 `border:1px solid var(--line, #e2e8f0)`，而它从来没有定义过 `--line`（只有 `--color-line`），所以两套配色下都落到 `#e2e8f0`——深色里是一圈浅石板灰。
-  - **`.rp-tab.active` 在深色下保留一条显式覆盖**。不是差异，是必须：MiMo 的层叠里 `.rp-tab.active` 就压得过 `.rp-tab`，MCode 因为 `:root[data-theme="dark"]` 前缀反了过来，删掉覆盖会画错。
-- 第二十二轮 L1 新增（照 MiMo 实测，不是疏漏）：
-  - **图片预览、视频预览、服务商选择下拉的阴影保留字面值 `0 12px 40px #00000024`，深色下不翻转。** MiMo 这三处挂的是 Tailwind 的 `shadow-pop` 工具类，工具类把浅色值烤进 `--tw-shadow`，不读 token；只有写了 CSS 规则的地方（`.np-card`、`.settings-full`）才用 `var(--shadow-pop)` 并随主题翻转。
-  - **@ 菜单与斜杠菜单不用浮层壳。** MiMo 给它们的是自己的 `.menu` 类：12 圆角、整像素 `--color-line`、`--color-bg` 底、`--shadow-menu`；`.menu-glass` 写在前面被盖掉，只剩背后那层模糊（不透明底下看不见）。其余所有弹出层才是 16 圆角 + 半像素 input-border + 玻璃 + `--shadow-composer`。
-  - **设置页的行分隔保持 `--border-weak`**，不进半像素统一：MiMo 那一条是 1px `--color-set-line` 的伪元素，左右各缩 16。
-
-- 第二十一轮 F1 新增（MiMo 自己那一处 CSS 是坏的，MCode 保留能用的行为）：
-  - `--overlay-hover` 深色用 `#ffffff14`。MiMo 的 `.bp-tab-x:hover{background:#00000014}` 没有深色覆盖，深色下那层黑几乎看不见。
-  - **SelectMenu 的高亮行保持 side-hover，不采用品牌橙。** MiMo 裸 shadcn 的 `SelectItem` 是 `focus:bg-accent focus:text-accent-foreground`，而 `--color-accent` 是 `#ff6a2b`、前景是白字；但 MiMo 自己的设置页把它覆盖成了 `rounded-[8px] focus:bg-side-hover focus:text-txt`（`SettingsOverlay-*.js`，内容壳是 `Z0`+`menu-glass`+`p-[5px]`）。MCode 的 SelectMenu 复刻的正是设置页那一个，所以橙色高亮不进来。
-  - MiMo `[data-theme=dark]` 里 `--color-set-line` 仍是 `#f1f1f1c7`（深色下画浅色边）；MCode 不复制这条。
-  - shadcn `ghost` 变体的 hover 是 `bg-accent`（同样是橙）；MCode 的 ghost 不用它。
-  - MiMo 几乎不画焦点环，MCode 保留自己给键盘用户加的 `:focus-visible` 环（可达性），只把颜色从蓝色换成 MiMo 的 `--color-ring`（浅色 `#151c13`、深色 `#fff`）。
-  - 共用 `.btn` / `.field` 高度保持 28px：MiMo 自己的按钮尺寸是 26 / 30 / 36，但它的设置页用 `--settings-control-height: 28px` 压到 28，对话框里的控件行没有第四种尺寸。
-
-- 第十七轮新增：项目**内**的绝对路径打开时文件树停在项目根（项目外则与 MiMo 一样跳到文件所在文件夹，用户 2026-09-21）；审阅页只列项目子树，MiMo 列整个仓库再错解路径——MCode 这边是对的。
-
-- 第十六轮新增：内联交互组件的来源大小上限 512KB（MiMo 渲染层无上限）；内联组件由主进程在独立来源上提供并下发策略头（MiMo 直接内嵌，因其渲染层没有 CSP）；`metadata.filediff.patch` 存未裁剪补丁（撤销需要）；快捷键表里「切换编排模式」改为「切换目标模式」（该模式已删）。
-- 第十六轮撤销：`write` 单独成桶、webfetch 默认询问这两条**不再是故意不同**，已按用户决定放松到 MiMo。
-
-- **`create_session` 的工作目录要审批（第十五轮 R15-T2）**：MiMo 对此零检查（渲染端直接 `POST /session?directory=`，连目录存在都不验）；MCode 在项目（或其仓库根）外时走既有「项目外」审批，否则模型可零弹窗读遍家目录。
-
-- 侧栏顶部一排按钮（切换侧栏、返回、前进）靠左（MiMo 从 x=65 开始）；收起时切换侧栏与新建任务也靠左（x=18）；macOS 仍留出红绿灯位置。
-- ~~侧栏内容（字标以下）整体下移 4px~~；~~搜索与铃铛在顶部一排靠左~~——两条均于 2026-09-22 由用户决定撤销（第二十轮 R20-V5）：搜索与铃铛移到字标行右端（照 26.920，距侧栏右缘 16），字标行照 26.920 的 `--sidebar-brand-top` 从 52px 开始（预览卡片内 43）；侧栏底部改为一行 MiMo 形状的账户行（28px 头像、「本机」、菜单只有「设置」），「深色」主题切换行删除（主题仍在 设置 > 外观）。
-- 首页保留 MCode 自己的静态字标，不做 MiMo 的可换图标按钮（做过后撤销，`18d888b` → `6c32812`）；点击字标会跳动一下（`ea62985`）。
-- 「帮助与反馈」暂不做。
-- 服务商预设连接后自动拉 `/models` 发现模型（MiMo 的预设是「填 Key + 手填模型名」的单模型表单）；「已添加」按服务商列行并保留刷新与地址编辑（第九轮 P9-6，2026-09-17 用户决定保留）。
-- 自定义表单保留「接口协议」（OpenAI / Anthropic）选项（MiMo 新建自定义只能是 OpenAI 兼容，P9-7）。
-- 步骤内容脱敏直播和重载都做（MiMo 只在重载后做，第十轮 K10-5）；阿拉伯语的步骤箭头镜像与方向隔离是 MCode 自有（MiMo 没有 RTL）。
-- 保留 ChatGPT Pro/Plus 订阅登录（MiMo 桌面只有小米账号登录，P9-11）；入口在连接弹窗（模型菜单 / 命令面板打开的那个），设置页快速添加里没有。
-- chat-completions 请求无条件发 `stream_options: {include_usage: true}`（第十一轮 S11-17）。MiMo 只在配置里给了 `includeUsage` 时才发，而它的通用 OpenAI 兼容服务商没有设——也就是说 **MiMo 在自建模型上根本拿不到用量**。MCode 一直发，用量卡对自建模型才有数；代价是个别严格校验未知字段的服务端可能 400。日后真有服务商报错，再做成自定义服务商表单上的开关，不要直接删掉。
-- 第十一轮（2026-09-18，用户定）输入框这几项 MCode 比 MiMo 好，保留：
-  - C11-9 输入框内的撤销 / 重做：两边的程序化改写都毁原生 undo 栈，MCode 选择保留现状并在后续有机会时做得更好（用户明确要留）。
-  - C11-7 Backspace 整块删提及的「已知名字」名单跨重启保留（MiMo 的名单只在内存里，重启后就删不动了）。
-  - C11-8 切会话时重置历史游标（MiMo 不重置，会把上一个会话的草稿带进下一个）。
-  - C11-20 代码围栏按 `/\r?\n/` 切行、语言表自有（MiMo 按 `\n` 切，Windows 复制来的 CRLF 代码识别不出来）。
-  - C11-4 Escape / Ctrl+C 在侧边聊天也能停自己那一路（MiMo 只在主对话的停靠栏生效）。
-  - C11-12 手动高度在停靠栏与侧边聊天之间双向同步（MiMo 只有 dock→侧边单向，却共用同一个 localStorage 键）。
-  - C11-19 粘贴图片落盘保留扩展名白名单（MiMo 把未知 mime 一律写成 `.png`，产出名不副实的文件）；25MB 上限已去掉。
-  - C11-21 超大粘贴只弹一条提示（MiMo 弹两条重复的）。
-  - C11-46 斜杠高亮的命令名接受 `[^\s/]+`（MiMo 只接受 `[A-Za-z0-9_-]+`）：MCode 的 MCP 提示命令名是 `服务:提示`，收严会让这类命令不再高亮；高亮本来就要求命令在缓存列表里，不会误标。
-  - C11-48 只有技能芯片、没有文字时照常发出（MiMo 拒发并提示「请输入内容」）。
-  - C11-50 运行中发送走完整路径（命令模板、技能芯片、批注都带上；MiMo 只插「文本 + 附件」）。
-- 第十九轮（2026-09-21/22，我定并已告知用户，用户可要求改回）：
-  - PDF 文内链接（目录等）点击后跳到目标位置；MiMo 26.920 的捕获阶段点击处理把它们一起拦掉，点了没反应。
-  - 乐谱与内联音频旁的「（AI生成）」按界面语言翻译（`markdown.aiGenerated`）；MiMo 在所有语言下写死中文。与查看器底部 AI 提示一致。
-  - 发送停靠的地板放在问题所在那一轮、并按列底而不是 scrollHeight 算空间（C 路）：MiMo 的算法在上一轮失去页脚时问题会漂移、对话短于视口时问题被放低。
-
-## 第十九轮 · B：右侧面板与侧栏细节（2026-09-21）
-
-清单 scratchpad `r19-laneB.json`，十项全部照 MiMo 26.920 改完；smoke `smoke-round19-panel.ts`（旧代码下各项均失败），探针 scratchpad `r19b/probe.cjs`（一次性配置，截图 `r19b/probe-*.png`）。
-- RP-1 批注发光：输入框发送与运行中追加（steer）也登记文档监视（照 MiMo 的 VD/KD/HD，只算有批注文字、且是 PDF/Office 文件），同一次运行同一文件合并为一个监视并保留首个 prompt；已在发光的查看器合并新 id（26.920 的 noteBatch）；运行结束的监视标记 ended，之后的发送另起一个
-- RP-2 子智能体详情头：「执行记录」后加模型胶囊（显示名，title 为完整 id；120 上限省略，1px 6px，圆角 999，文字色 6%，行高 1.35），模型取子对话自己的 `model`
-- RP-3 侧栏收起时右侧面板不再扣 62 的导轨：1000 宽窗口最大 520（探针实测 innerWidth 1001 → 521）
-- RP-4 同一对话/首页下目录变了，文件标签回到「打开文件」（清 viewFile / fileRoot / name，`rightPanel.reroot()`）
-- RP-5 文件页图片点开预览带缩略图 rect，从原位放大；RP-6 文件树收起改 v-show，展开后滚动位置保留
-- RP-7 启动卡描述照 MiMo 原文（14 种 MiMo 有的语言逐字，ar/bs/th/uk 自写同风格短句）
-- RP-8 标签中键在松开时关闭（auxclick），按下后拖离不关
-- R19-SH2 对话卡片在「更新于」/定时任务行之后、互聊行之前加「运行中的子智能体：…」（与胶囊同一数据，无名的略去，按 MiMo 用「、」连接；`subagentDetail.runningList` ×18）
-- R19-SH3（用户 2026-09-21 决定）删行菜单「导出为对话文件」及整条对话文件链：`session.exportFile` / `session.importFile`、`src/shared/convo-file.ts`、`mcode:open-text` 与 `openText`、8 条文案 ×18；第七轮 S4、第八轮 X17 的对应检查一并删除。保留 MiMo 的 Markdown「导出对话记录」和其他导入器用的 store 选项。上文 S4 所述「命令面板导入对话文件」已不存在
-## 第十九轮 · C：对话跟随、发送停靠与消息入场（2026-09-22）
-
-清单 scratchpad `r19-laneC.json`，五项照 MiMo 26.920 的 ThreadView / scrollStick / HarnessRow 改完；规则在 `lib/scroll-follow.ts`（纯函数），smoke `smoke-round19-c.ts` 67 条（旧代码下 35 条接线检查全部失败，其余是新库自身的单元检查），探针 scratchpad `r19c/probe.cjs`（一次性配置 + 进程内 127.0.0.1 慢速 SSE 模型，截图 `r19c/v7-*.png`）。
-- **CV-1 发送停靠**：输入框（主对话、非运行中、非 subtask）发送前 `requestPark`，被拒则 `clearPark`，3 秒过期。新问题出现时量它：目标 = min(ch/6, max(12, 2ch/3 − 行高))，所缺空间补成**该轮的** min-height 地板（另一轮接上时交给列，在原处结束），钉到底后停止跟随，列从 translateY(空间) 0.2s 滑入（减少动态效果时不滑）。地板在切对话、宽度变化时清掉；读者上滚或离底 >64、回合结束时，只在拿掉不挪视图时释放。停靠中新的权限/提问卡不拉走视图。**与 MiMo 的两处有意偏差**：MiMo 把地板放在整条 thread、按 scrollHeight 算——上一轮失去「最后一轮」页脚（实测 −14px）会让问题漂移，对话短于视口时 scrollHeight 即视口高会把问题放低（实测 267 对目标 137）；MCode 放在该轮上、按列底算。实测（40 轮含 content-visibility 占位）：问题落在 135.1px（目标 136.8，ceil 所致），回复流 2.5s 内 scrollTop 不动、scrollHeight 长 2048px，跳底按钮出现；一轮对话同为 135.1。
-- **CV-2 跟随规则**：上滚 >8px（单步或累计）即停止跟随，哪怕离底很近；只在距底 ≤ ceil(1+1/max(.25,dpr))px 且是读者向下滚到的才恢复（浏览器因内容缩短把 scrollTop 拉回、无变化的重复 scroll 事件、只等于内容增长的位移都不算）；64px 只管跳底按钮；跟随时 overflow-anchor:none，否则 auto。跳底按钮改为不占流高（margin-top −34px）——原先它出现/消失会改 scrollHeight，离底 5px 的读者会被按钮消失拉到底并重新跟随（实测复现后修掉）。旧 `turn-end` 的 `STICK/stickState` 已删。
-- **CV-3 暂停与重钉**：所有钉底走 `pin()`，拖选/选区在对话内（600ms 宽限后）、视频播放/暂停 600ms 内、编辑框打开及关闭后 300ms、150ms 内向上滚轮时不钉；窗口 focus / visibilitychange 回来且在跟随时重钉；新的待决权限或提问、运行中追加消息强制跟随并钉底。实测：拖选时 scrollTop 固定、松开后恢复；选区留在对话里保持暂停，清掉后恢复；上滚 400 后追加消息回到底部并跟随。
-- **CV-4** 本次打开后新增的问题行 `msg-in`：淡入并上移 8px，0.2s cubic-bezier(.2,.7,.2,1)；切换/一次载入的不动画。停靠测量扣除动画的位移。
-- **CV-5** 定时任务消息两行截断，溢出（scrollHeight−clientHeight>1）时显示 13px 次要色「显示更多」+13px 下箭头（上距 6、间距 4），点开不再收起；`stream.automationShowMore` ×18（ar/bs/th/uk 自写）。实测 40px → 80px。
-- 注意：探针窗口不可见时（锁屏，`win.isVisible()` 为 false）不跑渲染帧，content-visibility 的轮次从未绘制过、没有记住的尺寸，测到的停靠位置不可信；只采信窗口可见的那几轮。
-
-## 第十九轮 A 路：设置与外壳（2026-09-21）
-
-对照 26.920 的 14 条（`r19-laneA.json`），smoke `smoke-round19-a.ts`（旧代码下各节全部失败），一次性配置真窗口探针看过截图。
-- **F1**（用户定）：删首启「从其他 AI 应用导入」——MiMo 算出了钩子和懒加载弹窗却丢掉返回值，从不显示；连同 `ImportDialog.vue`、`server/import.ts`、`import.scan/run`、`importOnboarded` 及迁移、会话 `imported` 标记、18 表 `import.*` 一起删。常规页本来就没有导入入口，MiMo 也没有。
-- **F6**（用户定）：新建项目弹窗删「默认新建项目位置」行（L8 把 `showLocation` 误读成存放位置），`project.createBlank` 不再收 `location`，空白项目一律放到常规里的默认位置。
-- **F3/SH1**：原生选择框占用时主进程回 `{busy:true}`（`@shared/native-pick`），`save-png` 也纳入一次一个；窗口所有调用走 `lib/native-pick.ts`，弹 MiMo 原句 warning（`toast.pickerBusy`）。错误页没有吐司，写在它自己的提示行。
-- **F2** 删自定义模型先确认（删除自定义模型），确认即从已存配置删（新请求 `provider.removeCustomModel`，最后一个保留）；**F7** 删供应商用「及其全部模型」文案；**F8** 模型页 提供商→供应商、探测只显示「{n} 个模型」、组合框「选择或添加 model-id」；**F9** 供应商 ID 照 MiMo：只禁 `/` 与（不分大小写的）重复，前后端共用 `@shared/provider-id`。
-- **F4** 成功类吐司改 success，项目已存在/重名改 danger，批量恢复一律计数；**F10** 常规搜索词加 硬件加速/GPU/图形，高亮按整行文字；**F11** MCP 页配置文件行加 复制路径/打开；**F12** 检查更新的常驻吐司不可关，结果在同一 id 上替换；**F13** 配置页路径显示 `~`；**SH4** 重启更新抛错只显示原因句，原始错误进控制台。
-- **未改（与 `reference-strings.json` 冲突，报告）**：`provider.custom.field.providerID.label` 仍为「提供商 ID」（MiMo「供应商 ID」），`provider.custom.error.providerID.exists` 仍为「该提供商 ID 已存在」（MiMo「该 ID 已被占用」）。
-- 探针里 复制路径 在无焦点窗口被剪贴板拒绝（显示「无法复制路径」），属探针环境；success 级别用「已添加项目」验证。
-
-## 第十八轮：对照 MiMo 26.920（2026-09-21）
-
-**对照基准从 26.914 改为 26.920**（用户 2026-09-21 决定让 MiMo 自动更新；更新已由用户退出 MiMo 时自动完成）。26.920 的 out/ 已只读解到 scratchpad `r18-mimo920/out/`；26.914 的旧副本（`sf-main.mjs`、`r12-node.mjs`、`r12c-mimo/`、`r16-prompts/`）保留作对比，但 26.914 的 CSS、图片、`index.html` 没有存。从待装安装包取程序包的办法：NSIS 外壳里偏移 198712 处是一段原样 7z 流，电子打包缓存里的 `7za.exe` 能解。
-
-**截图实测（第一次运行 MiMo）**：先按记忆里的保险用一次性配置启动 MiMo，结果停在小米账号登录页（不登录什么都看不到），且任务把用户随后打开的**用户自己的 MiMo 误判为自己的实例强制结束了**——教训记在记忆 `mimo-running-lessons`（只结束当场记下的进程号；MiMo 还会读写 `~/.local/share/mimocode` 等 XDG 目录、启动时重写开始菜单快捷方式）。之后改为用户授权下用 computer use 操作**用户已登录的 MiMo**，在临时项目 `C:\Users\Wyatt\XiaomiMiMoProjects\mimo-diff-demo` 里做了两次小改动，用 DPI 感知的原生截屏取色（`r18-mimo-*.png`）。**遗留在用户 MiMo 里**：该项目与一条对话「修改 src/greet.js 的问候语与变量名」，删除属永久删除、须用户自己做。实测结论见 `round18-visual-measured.md`：MiMo **没有**「已查看」勾选框；差异配色是 diff2html 的，且**成对改动与纯删除/纯新增颜色不同**（浅色 #fdf2d0/#ddeedd 对 #fee8e9/#ddffdd，深色 #3d321a/#1e3a23 对 #2f1e1d/#1b2c1e，词 #ffb6ba/#97f295、#883e2d/#246330）。
-
-**用户决定（2026-09-21）**：拒绝后回合继续（撤销第五轮「两种拒绝都停」）；托盘删掉配置切换（撤销那条故意不同）；交付文件照 26.920 写入 AI 标识；定时任务工具不再给模型；模型层语言跟 26.920 的新分法。用户还要求「抄 MiMo 的代码和文字」——答复为不能（受版权保护的内容不能原样搬），数值、规格、行为、短标签照搬，代码与成段文字自己写，用户回复 OK。
-
-**D 差异视图（R18-D）**：删「已查看」勾选框及 18 表文案（`114a8c6`）；行号栏改为 diff2html 的单格 7.5em、面板窄时两个行号自然上下叠（`1a6627d`）；成对/纯改动分色 + 词色 + hunk 行 + 文件头按实测，深色与 MiMo 逐项相差不超过 1（半透明叠 #181818 的取整），未新增 CSS 变量名（`bd6cc6a`）；审阅页「Files changed (N)」标题（18 表）、黄色方块状态图标、蓝色路径（目录部分淡化）、标签按状态上色（`5a0ead6`、`45f6fe9`）；步骤里的差异文件头显示正斜杠绝对路径，审阅页与权限卡保持相对路径（`1e0ba6c`）；多文件改动卡图标（`d567769`）。回复操作栏本来就有悬停显示的时间
-
-**U 外壳与小界面（R18-U）**：侧栏完全收起（宽 0），悬停切换按钮 150ms 浮出整栏预览（8,8，宽 256，圆角 16）、离开 200ms 收回，按钮在 x=75（26.920 Windows 实测值）（`ac4668a`）；托盘只剩打开/退出（`ea2afac`）；删首页建议卡（`d7e4d04`）、出错卡的重试（`9abe7b4`）、底部菜单的退出应用（`e1aaa06`）；问题停靠栏可最小化、上限 50vh（`b2289f5`）；侧栏行「N 个子智能体」胶囊（`1132f63`、`61e9a16`）；更新失败 9 种原因（`src/shared/update-reason.ts`，`a724b53`）；发送中/压缩中（`7d54a32`）；自定义模型按供应商分组（`15a0d68`）；webfetch 改「读取网页」（`ffbc8c8`）；五个查看器底部「内容由 AI 生成，请注意核实」（`right/ViewerAiNote.vue`，`c14fcd0`）；乐谱与内联音频旁 MiMo 的「（AI生成）」小字已补（R18-U14，`smoke-round18-aigc-marks`）：乐谱视图在谱面上方一行（上 6、左右 12，12px，`--text-base`，代码视图不显示），语音气泡下方与气泡同宽一行（文件名占余宽截断，其后 10px / 行高 1.2、暗色 #777、不可选中；加载失败卡无此字），文件页的 .abc 与交付的音频同一组件故一并带上，文件页直接打开的音频不带（同 MiMo）；MiMo 此串写死中文，MCode 按 18 种语言翻译（`markdown.aiGenerated`）
-
-**M 模型与设置（R18-M）**：模型页照 26.920 重做（新文件 `ModelsPage.vue`）——**实际是顶部横向页签（刷新/添加/每个供应商一个）+ 下方表单**，不是分析报告说的左右分栏；自定义供应商测试连接（Key 不回传窗口）、克隆、每模型一卡（上下文/输出上限、四种输入）；`CustomModelDialog` 与配置文件卡删除；快速添加仍是 7 家（26.920 把另外五个过滤掉了）（`684a5dc`）；自定义供应商新增 `/responses` 协议，适配器选择合并为 `adapterFor(kind)`（`0bfac95`）；开机自启（仅 Windows/macOS，默认关，Windows 带 `--openAsHidden`，开发版只写文件不碰系统）（`758f446`）；实验室页常显，只放「跨对话协作」一个开关（默认开，关掉则下一轮起模型拿不到 6 个互聊工具）——另两个开关 26.920 默认关且 MCode 没有背后的功能，不做（`62a4d13`）；技能兼容路径默认读 `~/.agents/skills` 与项目 `.agents/skills`，`.claude/.codex/.opencode` 各一开关默认关（`22b2d0e`）
-
-**E 引擎与提示（R18-E）**：拒绝（含「拒绝并说明」与循环检测问题）变成交给模型的错误，只有「停止」结束回合，问题卡/计划卡保持打开，子智能体绕开，目标模式走到判定（`9b59c68`、`7bb3867`）；`cron`/`automation_update` 只在 `MCODE_E2E=1` 时提供，提示词新增「Scheduled tasks」一节说暂不可用；已存的任务照常运行、界面无创建入口（`273bde5`、`344799b`）；提示词按 26.920 新结构重排、计划模式不再附中文段、环境检测守卫删除、首条说明 2699→1202 字、目标守卫改英文（`4cfb4ce`、`f2c6fe6`）；自动工作树提示删除（`c7584a7`）；删 `frontend-design`、`design-blueprint`，新写 `less-ai-tone`、`powershell-reference`（用途与触发照 26.920，文字自写）（`d7a7b4e`、`c8f1f7a`）；toolcheck 禁止描述里用大写称呼其他工具（`58322ac`）
-
-**A AI 标识（R18-A）**：`present_files` 交付的本地文件写入 AI 标识（`src/server/tool/aigc-label.ts`，`5287377`）。可见标识是我们自己的样式：docx 右对齐灰色段落、pptx 末页右下文本框、xlsx 的 A1 追加（数字/公式不动只写元数据）、pdf 末页右下、html 角落不拦点击的徽标、wav 末尾自合成提示音（1.2kHz、80ms 单位、按国标的「AI」摩尔斯节奏）。隐藏元数据按 GB 45438-2025 七字段，生产者填「MCode」（MiMo 填小米企业编码，我们没有）。内存生成→重解析（有 python-docx/pptx/openpyxl 时也用它们打开）→临时副本→读回→改名替换，任一步失败保留原件；二次交付不再改动；撤销恢复未标注版本。未做：同回合内被再次编辑的已交付文件自动重标（再交付一次即可）
-
-**X（自查发现）**：定时任务时钟跳变守卫的基准只在第一次检查时才取，启动后第一次检查前时钟就跳（开机即睡眠）会漏判、把错过的全部触发；第十七轮那条检查单独跑 4/4 失败、全量里被前面的检查拖慢才侥幸通过。改为开始检查时就取基准（`99cfd57`）。合并 U 路时 preload 冲突「两边都保留」复活了已删的托盘配置切换通道，被第十二轮的 wiringcheck 规则抓到，已删（`a80d318`）
-
-## 第十七轮：查看器、语音与媒体、工作流（2026-09-21）
-
-三份只读对照后分三路修，合并后 13 项检查 + build 通过，smoke **5540 全过**。新增 `scripts/smoke-round17-{viewers,media,workflow}.ts`。
-
-**又一条假差距（第五次）**：**MiMo 那整套定时任务管理界面是 E2E 专用**——页面、侧栏入口、快捷键、右面板标签、「立即运行」、运行历史动作与全部 194 条 `pages.automations.*` 文案都挂在 `window.mimo?.e2e`（preload 由 `MIMO_E2E === "1"` 置位）后面，发行版一律不可达。**MCode 没有这个页面是对齐，不是差距。** 已发行的只有调度器、队列、`automation_update` 与系统通知，以及侧栏行提示里的任务块（本轮 W26 补上）。同类结论另见记忆 [[mimo-ships-code-it-never-runs]]。
-
-**文档与查看器（R17-V）**
-- V1 文件页原来用「全关」的 `renderMarkdown()`：链接不是链接、图片不画、围栏零着色、无复制按钮、无图表/乐谱/公式。抽出 `parts/MarkdownBody.vue`（渲染块、着色、媒体挂载、表格按钮、路径菜单、样式表），回复与文件页共用；实测面板与回复逐块几何一致（`136a51b`）
-- V2 查找条输入框在 640/380/300 三种面板宽度下实测 148.6/17.3/0.9px，现固定 150px，与 MiMo 同（`db545a7`）
-- V3 文件树过滤原是子串匹配 + 攒够 50 即停，路径式查询搜不到；改用已有的 `rankFileHit` 对整条相对路径打分排序（`00d3259`）
-- V4 超过 25MB 的 PDF 打不开：改为把地址交给本地预览服务（本就支持范围请求），不再 base64 走 IPC；27MB 实测两页正常、零控制台消息。版本存储仍按上限读字节，所以过大的文档没有撤销（`050a20e`）
-- V5 盘符根目录的文件打不开（`fileRoot` 成了 `C:`）；另把「项目内的绝对路径保持项目根」写进 `office-open.ts` 并注明日期（`53f10ae`）
-- V6 步骤行的路径按 MiMo 的四种写法解析（`6e51a23`）；V7 表格滚动不再被拽回（`d7919bc`）；V8 空 `<w:t/>` 不再吞标签、批注 id 转义（`c42750d`）；V9 Office 标签里的 PDF 标 `data-selectable="content"`，Ctrl+A 不再全选整窗（`3eb2d62`）；V10 PDF 批注引文折空白并补省略号（`19074c8`）；V11 重载取消上一次的滚动恢复（`f9f1406`）
-- **V13（不在清单里、自查发现）**：abcjs 的 `responsive:"resize"` 会给 SVG 绝对定位并期待独占容器，而消毒后只剩五线谱——乐谱因此画在最近定位祖先上，在回复里藏在消息列表后面、在文件页里正好压住文档首个标题。已放回文档流（`45ed8c7`）
-- ~~PDF 完整批注层~~ **已做（`aa3d041`）**：MiMo 26.920 用 react-pdf `<Page>` 默认值——pdf.js `AnnotationLayer` 开、`renderForms` 关（表单画在画布上）、外链在捕获阶段按 http/https/mailto/tel 交给 `openExternalUrl`；**它的捕获处理器连 `#` 内链一起吞掉，所以 MiMo 的文内跳转是死的**，MCode 这里让内链滚到目标页与点（与 MiMo 的差异，用户可决定是否回退）。MCode 现每页建 `lib.AnnotationLayer`（`dontFlip` 视口、`lib/pdf-links.ts` 的精简 `IPDFLinkService`），便签带 pdf.js 自带图标（构建复制到 `pdfjs/images/`，MiMo 的 `imageResourcesPath` 为空所以它的图标是裂图）与弹窗，高亮弹窗、附件、链接齐全；样式用 pdfjs-dist 5.4.296 自己的批注层规则（MiMo 带的是 react-pdf 旧版 CSS，类名 `popupWrapper` 已对不上 5.4 的 DOM）。实测 100%/130% 两档各批注框与 PDF 矩形×缩放误差 ≤0.09px，内链点击后目标点距视图顶 0.14/0.02px，外链只经 IPC 到 shell（桩），选字、V10 批注、重载滚动恢复照常。未做的原清单另一项：结构化回退（没有 Office 文本抽取就无内容可画，会多出四条 18 语言的死文案）
-
-**语音与媒体（R17-M）**
-- M1 「智能编辑」静默失败：它那次改写请求也发给了转写模型。**用户决定**：改写用当前对话模型（首页退回默认对话模型），语音模型设置只管转写，18 张表的说明同步改写；改写没成会明说（`editFailed: noModel|refused|unreadable`），不再静默退化成听写。顺带修掉写死的 `speech.webm` 分段名（`aa9cb04`）
-- M2 等待确认无声且逻辑相反：MCode 照抄了 MiMo 的「播完自家提示音后把系统通知标静音」，却没有那第二种声音，于是开着提示音反而全程无声。新增 `confirmChime()`（按 MiMo 的音高与时值测量后用自己的合成器写：E5 起、+0.16s 接 A5、1.1s/1.4s、0.85:1，测量值写在代码里），有待确认项即播、不受「超过 1 分钟」限制；只有真播了才把系统通知标静音（`172237a`）
-- M3/M4/M5 录音胶囊九种状态（6 键 ×18 表）、开麦前 `voice.precheck`（2 秒探测，模型不可用则根本不开麦克风，失败提示每次录音只说一次）、分段改为自适应语噪底 + 0.875 迟滞（快速输入 0.8s / 智能编辑 1.2s）、单段 60 秒上限、`getUserMedia` 要单声道 + 回声消除 + 降噪（`e918b0e`）。**未做**：MiMo 录音前留 0.6 秒预卷，需要编码前的环形缓冲，`MediaRecorder` 给不了，不伪造
-- M6 `speak` 不再断言「用户已要求播报」，`present_files` 点名 ```` ```sci-widget ```` 围栏（`d904361`）；M8 停止、离开对话、关掉开关都会掐断正在念的句子（`066f322`）；M7 图片全屏预览支持框选批注，坐标经平移/缩放/旋转反算（实测 1160×870 上落点精确到 0.25/0.20/0.50/0.50）（`6158c88`、`03e386b`）；M9 导航条音阶与音量对齐 MiMo（`57e96ba`）
-- 核实：**MiMo 的内嵌视频播放器是死代码**（组件、倍速、收起、CSP 放行俱全，但点击分发无条件开浏览器标签、live 的 setter 无人调用）——第五轮删掉内嵌播放是对的，别再翻案；缺的三条 `mediaCard.*` 文案只是死代码的文字
-
-**工作流（R17-W，30 项）**
-- W1 `notebook_edit` 不在两个 `EDITING` 集合里：笔记本改动既不画改动卡也永远无法撤销（`346269b`）
-- W12 **子代理进度控制**（用户决定照 MiMo 做）：带任务号的子代理不交出进度文档就不许结束，最多重入三次，写进 `memory/guard.ts` 早已记录的那个目录（`f697eb7`，新文件 `src/server/session/task-progress.ts`）。措辞英文——MiMo 自己这块与旁边的 `taskGateReminder` 都是英文
-- W9 切到别的工作树里的分支时把该工作树加入项目列表（`3b68612`）；W10 工作树提示补上 MiMo 给模型的三条指示（`e816d42`）；W11 工作树命中跨重启保留（`835f5cf`）
-- 定时任务：W17 恢复暂停不再立刻补跑已过期的那次（`bc5522b`）；W18 时钟跳变（睡眠/夏令时/改时区）后重排而不是把错过的全部一次性触发（`6d678df`）；W19 排队中的运行在交付那一刻复核（暂停或删除后不再触发）（`ce346fa`）；W20 会话忙时跳过而非挂起，`queued` 阶段随之删除（`3d56db5`）；W21 运行通知不与完成提示音重复出声（`1669952`）；W22 起不来的新任务不留空对话（`b6e93df`）；W23 运行记录保留来源与所问（`9a2e947`）；W25 队列租约对齐 MiMo 的 30 秒（`de2db55`）；W26 侧栏行提示写明所属定时任务（`7488819`）
-- W2 审阅页切文件时不再画上一个文件的差异（`0232ea5`）；W3/W4/W5/W8 提交卡写明分支、分支菜单建完分支后保持打开（实测确认）、空分支列表会说明、检出失败输出 git 的全部说明
-- W13 子代理转录放进 MiMo 的盒式面板（`8a59554`）；W14 平铺的 `background: true` 调用改为真正派生而不是阻塞（`a8c3fcf`）；W15 排队中的子代理状态报 `pending`（`99362e6`）；W16 send 接受 MiMo 的两个额外字段（`a7117d5`）
-- **W30（自查发现）**：每轮首次请求前的工作树读回两处读取都无防护，转录正被写入时会让整个回合在发出第一条请求前就结束（曾在一次计划检查里命中）。已加防护（`a0c45c5`）
-- **settle 的悬案**：停止父回合**不**连带停后台子代理——MiMo 的 `SessionRunState.cancel` 同样只取消 `(sessionID,"main")`，阻塞式 `run` 只是因为工具自己的调用随回合取消而停；MCode 行为一致且第五轮早有检查覆盖
-- 证伪后删掉的：`duplicate-run` 防护环建好后证明不可达（运行 id 是 `<任务>-<到点时刻>`，唯一重复路径已被 W19 的重叠守卫拦下），留着就是死代码
-
-## 第十六轮：编码能力照 MiMo 重做（2026-09-20/21）
-
-用户要求：编码能力不再跟 OpenCode，改为和 MiMo 1:1——对话方式、代码处理方式、编码时看到的界面。三份只读对照后分五路修，合并后 13 项检查 + build 通过，smoke **5246 全过**（两遍）。新增 `scripts/smoke-round16-{goal,prompts,tools,diff,widget,b}.ts`。
-
-**对照得出的三条底层事实（下一轮不必重查）**
-- **MiMo 的引擎本身就是 OpenCode 的分支**：`r12-node.mjs` 里 183 处 `opencode`、服务标签 `@opencode/…`、`MIMOCODE_SERVER_USERNAME:"opencode"`。所以「不跟 OpenCode 跟 MiMo」在代码处理层不是换实现，而是换配置——MCode 每一处跟的**已经是 MiMo 那一列**（蛇形参数、`actor`/`task` 分工、bash 六参数、编辑默认精确匹配而非 OpenCode 的无条件模糊）。
-- **MiMo 的提示词是 asar 里的普通文件**（`electron/prompts/*.txt|md`），已只读提取到 scratchpad `r16-prompts/`。
-- **四个看似最大的差距全是假的**：26 个格式化器、38 个语言服务器 + 诊断回流、bash 输出清洗流水线、同目录并发检测——代码都在 MiMo 包里，但它桌面端生成的引擎配置不写 `formatter`/`lsp`、清洗挂在未设的实验旗帜上、并发检测只有桌面从不调用的实验路由。**MCode 一个都没做，结果与 MiMo 桌面一致。**
-
-**用户 2026-09-20/21 的决定**：①「完全中文化」只指给模型看的那一层，界面保持 18 语言、回复语言仍跟随界面；② 完全照 MiMo 并舍弃多余的；③ 做目标模式、删编排模式；④ 删三个环境信息块；⑤ 差异做词级高亮与文件头，标签走我们自己的 18 语言表；⑥ 两处比 MiMo 严的审批放松到 MiMo；⑦ 中英分层照 MiMo 的分法（基础提示英文、护栏中文、工具说明英文）。
-
-**A 目标模式（R16-A）**
-- 加号菜单里 MiMo 放「追求目标」的那一格改为目标模式开关＋目标栏；回合将结束时把整段记录交给裁判判定（**同一个对话模型**、温度 0、无工具、结构化 JSON），未达成则注入系统提醒重入循环，上限 **12**（`r12-node.mjs:369047` 核对）。裁判失败放行停止；Stop 连裁判一起中断、目标保留；子智能体不判定；目标存在会话上，重启仍在。计划模式同时开时 MiMo 只是不注入那一句护栏、裁判照跑，照搬（`b4cb55c`、`478bc56`、`6bcce78`、`4765eb7`）
-- **删掉 MCode 自有的编排（compose/staged）模式**：代码、18 张表的文案、检查一并清除（`123c8ae`）
-- 唯一偏离 MiMo 快捷键表的地方：MiMo 那一格是「切换编排模式」，模式删除后改为「切换目标模式」（同样未绑定按键）
-
-**B 模型层（R16-B）**
-- 按 MiMo 的实际分层逐段核对后改：`claude.txt`/`desktop-base.md` 英文 → CORE/DESKTOP 保持英文；`plan-addendum`/`guard-plan`/`guard-envcheck`/MCP 配置段中文 → 对应段落改写为中文（我们自己的措辞）。汉字占比与 MiMo 逐文件对齐（MiMo 0.25%/67%/67%/29%，MCode 1.7%/70%/71%/31%）（`4c30ba0`、`5f4f972`）
-- **三个环境块删除**（`## Environment` / `## Repository` / `## Building and testing`）连同喂它们的 git/shell 调用与 `PromptModel`；提示词不再随模型变化，前缀缓存键去掉 model/shell。原来把这归功于 MiMo 的注释已更正（`f1fd288`）
-- 环路检测补到 MiMo 的四类 + 跨步重复文本 + **把重复片段从请求里裁掉**（`src/server/session/loop-health.ts`，阈值读自引擎并在声明处写明）（`afa9b6b`）
-- 便宜五项：SVG 设计令牌、Windows 工具链护栏、标题提示词、PPT 配图分支；多技能编排提醒**第十轮早已有**（审计写错）（`383aaaa`）
-- `prompt-check` 改为断言语言分层本身，`tool-check` 新增「工具描述必须是英文」（与 MiMo 一致）（`4985ab7`）
-- 内联组件那段提示按分法改回英文行文、保留中文触发词（`1d74656`）
-- 审计对 `TryBestMonitor` 的判断有误：它挂在 `MIMOCODE_ENABLE_TRY_BEST_HANDOFF` 后而桌面端不设该变量；仍按简报实现并接到已有的询问上
-
-**C 工具与审批（R16-C）**
-- 交互式命令拒绝语改中文并新增 `session.notice` 事件（只带 key，窗口用 18 语言说），每会话一次（`340217d`）；bash 说明随 shell 变化，PowerShell 5.1 明说无 `&&` 并给 `cmd1; if ($?) { cmd2 }`（`023a703`）
-- `trimDiff` 去公共缩进（`9af1b5a`）；edit/write 结果带加减行数（`e8544ab`）。**内部差异**：`metadata.filediff.patch` 存未裁剪补丁（MiMo 存裁剪过的），因为撤销要 `git apply --reverse`
-- 新增只读的 `list_external_sessions` / `read_external_session`，参数/上限/拒绝照 MiMo；说明保持英文（MiMo 这两个本身英文）（`6640a0d`）
-- **`write` 桶并入 `edit`、webfetch 默认 `allow`**，带迁移 `write-into-edit-r16`（旧配置取更严者落到 `edit`，用户设过的 `deny` 不动）（`1e1ac36`）
-- 清掉不存在的 `patch` / `apply_patch` 分支（`a9420a3`）。顺带发现未修：`notebook_edit` 不在 `EDITING` 里，笔记本改动进不了撤销
-
-**D 差异界面（R16-D）**
-- 词级高亮：照 diff2html 的 `diffStyle:"word"` 重写分词与记号比对（未抄代码），用 MiMo 包里那份当基准跑 4000 组随机对比 **0 处不一致**；配对沿用 `splitRows`，单栏与左右对照点亮同样的词；1200 行上限与折叠不变。**一处刻意保护**：记号比对走满 1000 次编辑仍不收敛就整行画平（MiMo 会一路算完，压缩文件上会卡数秒）（`409fbf3`）
-- 文件头：状态图标 + 状态标签 + 「已查看」勾选 + 重命名 `{old → new}`；标签走 18 语言表。**`+N -M` 从文件头移走**（MiMo 只在文件列表里显示）。「已查看」只记在这一次绘制上，不折叠、不存储、重绘即清——MiMo 未加载 diff2html-ui，行为如此（`10d7695`）
-- 文件列表只在整页差异标签绘制（`9bb0d6c`）；右面板启动卡补说明行（`395cd1b`）；`exec_command` 按 bash 说话、命令读 `input.cmd`（`6c2ee80`）
-- 两处从代码定不了、保持现状：深色差异配色与每文件边框；以及 MiMo 那个「已查看」勾选框是否可见（diff2html 自带样式把它设为 `display:none`，只有 diff2html-ui 才显出来）——要真截一次 MiMo 才能定
-
-**E 内联交互组件（R16-E）**
-- 复刻 `sci-widget`：围栏 + 自包含 HTML，沙箱 `allow-scripts`，流式时一行占位，**没有任何按钮、渲染层没有尺寸上限、没有错误处理**（MiMo 的减法照做）（`d121f84`、`c1c8849`）
-- **一处必须不同**：MiMo 渲染层无 CSP，MCode 有。实测在我们的策略下 `srcdoc` 框被整个拒绝、脚本永不执行，因此文档改由主进程在**不可猜测的 `<token>.localhost:<port>` 独立来源**上提供，策略作为真正的响应头下发，窗口自身 CSP 未动。实测：本地存储、父窗口、`parent.mcode`、顶层跳转、fetch/XHR/远程图片全部被拒
-- MCode 比 MiMo 多一个来源大小上限 `WIDGET_SOURCE_LIMIT` 512KB（超过则保持代码块），记为故意不同
-- 探针发现并修掉一个缺陷：按视口布局的组件会与外框互相撑大、无限震荡（一轮两帧、上千次），现在锁定后只有窗口缩放才重算
-
-## 第十六轮的真实模型端到端（2026-09-21）
-
-用户局域网的 `qwen38-nvfp4`（vLLM，256K）跑六个场景，请求体与回复流经本机回环代理全量落盘（证据在 scratchpad `r16e-*`）。**通过**：先读后改、词级差异与文件头、撤销与重做双向且逐字节核对；PowerShell 下全程无 `&&`；计划模式的中文守则、只读不写、方案文件、切到构建；目标模式的判定请求形态（无工具、温度 0、JUDGE_SYSTEM）与目标条；内联组件渲染；交互式命令的中文拒绝 + 每会话一次通知；实际发出的系统提示 36,176 字符、只有 13 个汉字（英文里引的中文触发词）、三个环境块确已消失、29 个工具含两个新的跨会话只读工具。**真实模型两次都一轮达标**，所以「不达标→再来一轮→撞 12 次上限」这条臂只有 stub 探针验过。
-
-**发现并已修的三个缺陷**
-- **E2-1 被输出上限截断的回复**：续写原本另起一条 assistant 消息，于是未闭合的 ```` ```sci-widget ```` 围栏被当代码块、后面那个落单围栏又把讲解吞成第二个代码块（真实模型上复现：16K 推理耗尽 → 5,423 字截断 → 2,048 字续写）。改为**续写接在同一条回复的同一个 text part 上**：渲染、复制、搜索、导出一次全修。连带处理重试（回到本次尝试已有的片段而非清空）、用量（输出累加、输入只取最新一次，否则上下文环会算成两倍）、`LENGTH_NOTE` 每条消息只带一次。MiMo 自己是合成一条 user 提醒再开一步，转录同样是断开的，无可照搬（`b6a206f`）
-- **E2-2 `Today:` 用 UTC**：东八区每天 00:00–08:00 报成前一天（证据 `r16e-1-user1.txt`）。改用 `localDay()`，与用量页同一套日历（`fef1a37`）
-- **E2-3 中文环境守则把 Windows 一律当 PowerShell**：从 Git Bash 启动时，同一请求里工具说明说 bash、守则说写 PowerShell。守则改为接收本轮 shell 名、只在 powershell/pwsh 下保留 PowerShell 专属两条（`ff9070a`）
-
-**未修、记在案**：真实模型会在中文回合中间整段改用英文（`## Reply language` 压不住，属模型不守指令）；`notebook_edit` 的改动仍进不了撤销。
-
-## 第十五轮：二次全面复核与修复（2026-09-20）
-
-六个只读复核代理（主进程、后端核心、工具/MCP/定时、界面状态层、对话界面、设置与弹窗）各自写报告，再由七路 worktree 修复。合并后 13 项检查 + build 通过，smoke **4891 全过**；新增 `scripts/smoke-round15-{{server,tools,main,state,ui-chat,ui-settings,font-scale}}.ts`（另有两个在 Electron 里跑的辅助文件）。每路都做了「把修复还原，检查必须失败」。
-
-**后端核心（R15-S）**
-- S1 重做必定失败：`runner.ts` 两处 `moveSnapshot` 只搬 `files`，丢了 `directory` / `messages`，正文搬进 per-project store 后就再也读不回来，条目还卡在 redo 栈。smoke 原来的 Undo 段用的是旧的内联形态所以看不见，已改成今天的 blob 形态（`e54bf19`）
-- S2 收尾照片失败（目录被删/改名、git 超时、磁盘满）后 Recording 永远留在 `live`：之后该会话每回合都被记成不可撤销、理由是假的「另一个对话改了 X」，store 永不回收。清理移进 `finally`，开头照片的镜像洞也补上（`6a89a77`、`cc59258`）
-- S3 中文搜不到（第十一轮改索引搜索引入）：`unicode61` 不切分连续汉字。改为另存一列 `search_body`（相邻 CJK 之间插空格）供 FTS 索引，查询同样切分后按短语匹配，浮层最后一个词当前缀；只有被切过的正文才存第二份——纯英文档案索引 +0%、全中文 +67%。`SCHEMA_VERSION` 2，旧索引启动自动重建。4000 条 parts 下英文 0.13→0.12ms，`配置` 0→1000 条命中。（`94b723c`、`a858ca1`）。**[已完成] 英文词中子串**（`figur` → `configuration`）：MiMo 26.920 浮层不走索引，对已载入对话逐条消息先找原样子串（1000 分 + 靠前加分 + 词边界加分）、找不到再按字符顺序散配，最多 50 条、同分按更新时间；其引擎 `history` 工具用 `unicode61 remove_diacritics 1`（只认整词）。于是模型的 `history` 工具不动；浮层的候选改由新表 `history_part_trigram`（FTS5 trigram、contentless + contentless_delete，只收浮层会读的 text / tool 行、每行前 20000 字 = MiMo 每条消息读取上限）给出：查询按空白与 `"` `\` 切块，≥3 字的块全部须在同一条消息里（INTERSECT），更短的块交给前端打分；全是 1–2 字的查询则并用旧的词索引（全量历史，词首 / 中文任意长度）与最新 3000 行 `instr` 扫描。候选取命中对话里最新的 50 个（排除归档 / 侧聊 / 子智能体）。`SCHEMA_VERSION` 3，旧索引启动自动重建。合成 4020 条 parts（4.07MB 文本）：索引 8.83→19.23MB（trigram 10.1MB）、首次建索引 1.7→2.9s；候选查询 `configuration` 1.23→0.77ms、`figur` 0→50 个对话 0.39ms、`the` 1.34→0.38ms、`配置` 0.19→8.5ms、`co` 6.2→13ms（多了扫描）；`history` 工具不变（0.47–0.55ms）。仍不同：散配（如 `cfg` → `config`）只在候选对话内生效，候选本身不按散配找
-- S4 删会话后残留的 `ArtifactStore.dirty` / `repeatsAllowed` / `worktreeHits`（`24d270c`）；S5 用量「脏」标记确认自愈，改为用检查钉住（`ff33463`）
-
-**工具 / MCP / 定时（R15-T）**
-- T1 Windows 上经 `cmd.exe` 起的 MCP 服务器只杀了外壳：`taskkill /T /F` 抽成 `src/server/kill-tree.ts` 共用，探测的子进程登记进 `probing` 并在 `close()` 回收（`fdc4c30`）
-- T2 `create_session` 可把任意绝对目录当项目根、零审批读遍家目录。**MiMo 完全不检查**（渲染端直接 `POST /session?directory=`，连目录存在都不验），本项故意不照抄：项目（或其仓库根）内照旧放行，项目外走既有「项目外」审批（`e7a08dc`，见「与 MiMo 故意不同的地方」）
-- T3 cron 项目锁拿不到就永不重试（`??` 缓存了 `owned:false`）；除重试外加锁心跳：持有者每 30 秒盖时间戳，超 5 分钟未盖的锁即使 pid 还在也可接管——这才堵上「硬杀后 pid 被复用」（`61d0f64`）
-- T4 `cron` 工具能写别的项目的 `.mcode/scheduled_tasks.json`：拒绝目录不在本次调用项目内的 `session_id`（`b693b10`）；T5 启动失败的命令永远留在 `live`（只有 `error`+`close`，没有 `exit`）（`1577ff6`）
-
-**主进程（R15-M）**
-- M1 面板页面自关（OAuth 回调页那类）后 `view.webContents` 变 `undefined`：面板所有操作抛错、`closePanel` 中断循环使其余页永不关闭、主进程多次未捕获异常。新增 `contentsOf(tab)` 与 `destroyed` 监听 → `dropTab()`（`8da2335`）
-- M2 界面重新加载后面板网页仍压在界面上且无处可关：`wireWindow` 在 `did-navigate` 上 `closePanel`（用 `did-navigate` 而非 `did-start-navigation`，`index.ts:862` 拦下的导航不会误伤）（`e52c050`）
-- M3 同一次重载永久泄漏 office 目录监听（`49ccef1`）；M4 每开一次面板多挂一个窗口 `closed` 监听，第 9 次告警，用 `WeakSet` 守门（`45ccb43`）；M5 托盘配置切换给刚建的窗口发消息必丢，改为等 `did-finish-load`（`829e827`）
-
-**界面状态层（R15-R）**
-- R1 `session.history` 的旧应答落到新会话：撤销状态张冠李戴、右侧面板被假变化触发重读。应答后核对 `currentID`（`5e72dd5`）
-- R2 提示上限 3 会把常驻提示（断线横幅、登录过期、配置/凭据损坏）挤掉且再不回来：驱逐时先挤有时钟的，总量上限仍是 MiMo 的 3（`21e830a`）
-- R3 对话框退场副本没有 `inert`，关后 200ms 内 Tab 掉进副本再落到 `<body>`；顺带修好这 200ms 内的拖放判定（`64a7869`）
-- R4 查找条跨会话不刷新（旧命中数、高亮挂在已脱离文档的 Range）（`67eddf7`）；R5 着色缓存命中不刷新 LRU（`2e56165`）；R6 `forgetSession` 漏清按会话 id 的集合（`cda1414`）
-
-**对话界面（R15-U1）**
-- U1-1 盘符根目录的 .xlsx/.pptx/.html 打不开（`slice(0, cut)` 少了分隔符，第二轮修 PDF/Docx 时漏了三个）：五个视图统一 `splitFilePath`。复核推测的「会读到 cwd 同名文件」不成立——`office-guard` 的绝对路径校验先拒（`afeefb6`）
-- U1-2 文件页查找条恒宽 324px 盖住文件树、面板拖窄时伸出面板；改为跟随面板宽度并给按钮加宽度下限（只加 `max-width` 会让按钮溢出窗口）（`e2c1344`）
-- U1-3 「历史」按钮关不掉自己的弹层（捕获阶段先关、随后的 click 又开）（`3842f4d`）；U1-4 会话导航条为 synthetic 消息画死刻度、悬停显示写给模型的内部消息（`87129a6`）；U1-6 docx 修订卡无锚点时叠成一摞（`bff33dc`）；U1-7 子智能体行焦点环被分组 `overflow:hidden` 裁掉（`50db010`）；U1-8 首页字标弹跳无视 app 自己的「减少动态效果」（`95324da`）；U1-9 `.skill-item{30px}` 被后置 `.item{28px}` 压平（`1ae049d`）；U1-10 审查页乱序返回时旧读覆盖新读（`2a78b05`）
-- 保留不改：代码字号放大后行号列重叠——MiMo 的 `.rv-ln{34px}` / `.ft-ln{44px}` 数值相同、放大同样会叠，属忠实复刻
-
-**设置与弹窗（R15-U2）**
-- U21 窄窗（窗口下限 720）下模型页与 MCP 页行重叠、按钮被卡片裁掉。真正成因不是 `.pname` 缺 `min-width:0`（它不是 flex item，加了是空操作），而是 `.ptext`/`.line-text` 的 `flex:1` 基准为 0 + 行不换行 + `.card{overflow:hidden}`。改为行可换行、控件组换行后仍靠右、文字列 `min-width: min(180px,100%)`（`e401c22`）
-- U22 `.config-path` 的 11.5px 被后置 `.line-sub{12px}` 压平 → `.line-sub.config-path`；`.card.wt-empty` 的 18px 侧距 → 17（`3d5c072`）
-
-**界面字号（R15-U3）**
-- 外观页字号可调到 24，但 168 处声明跨 42 文件只缩 `font-size` 不缩 `line-height`（常配死 `height` + `overflow:hidden`）：导航标签溢出 241px 列被页面盖住、`.ctl-btn` 文字竖向裁掉、行互相压字、侧栏与首页字形底部被切。
-- MiMo 的做法（`out/renderer/assets/index-Dz6PjQMq.css`）：`--ui-font-scale` 只出现在 16 个 `--text-N` token 和 7 个 `.type-*` 类的 **line-height** 上。照此把每条缩放字号的规则的 `line-height`（及包住该文字的 `height`）同比缩放；用 `height: calc(...)` 而非 `min-height`（后者会改变属性、破坏基类与修饰类的覆盖关系）。设置导航列另加行最小高度、`overflow-wrap: anywhere`、`.nav{overflow-x: clip}`（用 `clip` 不用 `hidden`，否则另一轴变 `auto` 会吃掉 10px 滚动条宽）。两处图片占位与九处滚动区 `max-height` 豁免（`ba1f77e`、`4c3eca0`、`214d37d`）
-- 实测：德语字号 24 下裁切 225 → 0、行溢出 21 → 0、标签压页 22 → 0；默认字号中文逐元素几何 0 处变化。唯一有意变化：德语默认字号下「已归档对话」导航行 36px → 40px（它的标签本来就要两行、原先画在行外）
-- **发现但未修（已另记）**：设置导航列在默认字号下就超出自身盒子（1400×900 中文 `scrollHeight 745` vs `clientHeight 659`），最后一组与「应用更新」被画在列外并被对话框裁掉。修它要让该列滚动，会占 10px 滚动条宽并移动默认字号下的每一行，与本路「默认像素不变」的前提冲突；MiMo 用的是内层 `.sn-scroll`。**已修（第十八轮后，`753c0a7`）**：标题与搜索框放进不滚动的 `.nav-top`，分组与各行放进 `.nav-scroll`（照 MiMo：起始侧内缩不变、末行下 12、结尾侧无内边距、9px 细滚动条 `u-scrollbar-thin`）；选中行在打开、换页、搜索时滚进视野并留 8（MiMo 同规则，新 `lib/scroll-reveal.ts`）。实测中文默认：列内 `scrollHeight 814 → 659`，列表 558 高可滚到 725，「应用更新」滚到底后完整可见可点；各行位置与高度 0 变化，宽 218.4 → 220.9（去掉的结尾内边距）；德语 24 同样可滚到底、无裁切。smoke `smoke-round18-settings-nav.ts` 15 项，旧代码下 11 项失败。
-
-## 第十四轮：网络与代理、本地化、打包与更新（2026-09-20）
-
-三份只读审计：`scratchpad/round14-network.md`、`round14-locale.md`、`round14-packaging.md`。网络只有一处与 MiMo 不同（视频卡片）；模型、`/models`、MCP、网页工具两边都不走任何代理、都没有代理设置页，证书、超时、离线启动一致。用户决定：名称排序、表格图表坐标数字继续跟随界面语言（记为故意不同）；超出 MiMo 的不做（Electron fuses 加固、全局环境变量代理）。两路 worktree，合并后 13 项检查 + build 通过，smoke **4700 全过**；新增 `scripts/smoke-round14-packaging.ts`（含 Electron 下跑的 `smoke-round14-net-electron.ts`，需要 PATH 上有 openssl）/ `smoke-round14-locale.ts`。
-
-**网络与打包（P14-*）**
-- P14-1 视频卡片标题/封面与封面代理走 Chromium 网络（跟随系统代理 / PAC），新文件 `src/main/chromium-fetch.ts` 封装 `net.request`：手动重定向返回 3xx 与 `location`、不带也不存 Cookie、referer 保留；`net.fetch` 的 `redirect: "manual"` 实测会报 "Redirect was cancelled" 所以没用；b23.tv 短链逐跳跟随（`c1f3753`）
-- P14-2 系统关机/注销引起的退出（`noteOsQuit()`，含恢复放弃时）关掉 `autoInstallOnAppQuit`，下载好的更新等下次正常退出再装（`85b9548`）
-- P14-3 `scripts/runtimes.mjs` 删掉 Python 包里名为 `tests`/`test` 的文件夹（从不删顶层包、从不删包自己导入的），保留 `numpy.testing`、`pandas._testing`；省 19.9 MB；运行时布局版本 3→4，下次打包重建（`01593f6`）
-- P14-4 先跑 electron-updater 自己的 `isUpdateSupported`（`minimumSystemVersion`），再跑 MCode 的规则（`8cc53a0`）
-- P14-5 下载完成后把安装包经临时文件改名覆盖到更新缓存的 `installer.exe`，下次可差分下载（`5b9f473`）
-- P14-6 macOS 不加载自动更新，「检查更新」说未配置更新源；去掉 mac `zip` 目标（`1b60eeb`）
-- P14-7 `electron-builder.yml` 从 `node_modules` 排除 `*.map`、`*.ts/.mts/.cts`、非许可证 `*.md`，干跑确认只少 1393 个文件（6.9 MB）（`73a3eec`）
-- P14-8 `allowScripts` 改为 `electron@41.7.2`（`40afdf5`）
-- 未端到端验证：P14-2/4/5 没有真的打包安装（打包会升版本号）
-
-**本地化（L14-*）**
-- L14-1 未手选语言时界面语言与回复语言同源：main 的 `app.getLocale()` 传给后端并回答窗口；`--lang=fr-FR` 实测界面法语、回复要求法语（`c14eeff`）
-- L14-2 `<html lang>` 跟随界面语言，`index.html` 初值 `zh-CN`（`b279ba7`）
-- L14-3 `src/shared/locale.ts` 一份语言映射给窗口与后端共用：zh-HK/zh-MO/zh-Hant→zh-TW，no/nb/nn→nb（`1e7a592`）
-- L14-4 快捷键页「全部重置」不再受 320px 限制、可折行、有悬停提示（`0fe9173`）
-- L14-5 「N 分钟/小时/天前」改为按复数类别分键，`tn()` 移入 `i18n.ts`、删 `plural.ts`；阿拉伯语有单/双/复数（`067255f`）
-- L14-6 从右到左时侧栏前进/后退箭头镜像，对话脊柱与预览卡用逻辑方向（`eaf3b7c`）
-- L14-7 用量页日期本地化（列宽 44→64px），token 数与输入框共用 `compactTokens`；该函数照 MiMo 在所有语言都用小数点「39.2K」（L 路曾改成跟随语言的小数点，合并后改回，`bbd4218`）（`d019d86`）
-- L14-8 一个日期格式器 `dateIn` / `calendarDate`，产物、侧栏、回复脚注、信息卡、版本历史、用量页都用它，泰语全应用佛历（`8a726fa`）
-- 没改：Word 批注时间照 MiMo 用 ISO 公历；PPTX 里的 echarts 切换语言后要重载才变（MiMo 同）
-
-**打包与安装实测（2026-09-20，本轮之后做的）**
-- **P14-9 打包后打不开（本轮最重要的发现）**：0.2.8 装好后主进程一直卡住、窗口始终不出现。原因是 `turndown`（第十轮加的）在 devDependencies，vite 把它打进主进程，但它对 `@mixmark-io/domino` 是运行时 `require`，而 electron-builder 只拷 `dependencies` 及其依赖，所以安装包里没有这个模块。开发和探针都从仓库的 `node_modules` 解析得到，所以一直没暴露。修法：把 `@mixmark-io/domino` 写进 `dependencies`（`0ce7d95`），并加检查「out/main 里引用的每个外部模块都必须在 `dependencies` 闭包里」（`smoke-round14-packaging.ts` P14-9）。**教训：只有真正安装的包才能发现这类问题，打包后至少装一次再发。**
-- 0.2.9（`e3997bd`）已装到 `D:\Apps\MCode`（注册表里记着该目录，原地升级），窗口正常、日志正常、真实配置目录 `%APPDATA%\mcode` 不变。
-- **自动更新端到端实测通过**：本机 `127.0.0.1:8765` 起一个 generic 更新源（`latest.yml` 写成 0.2.10，文件仍是 0.2.9 安装包），用 `MCODE_UPDATE_URL` 启动安装版（不动用户设置）。结果：启动 5 秒后检查 → 差分下载（读两个 blockmap，实际下载 0 KB，基准是缓存里的 `installer.exe`）→ 校验通过 → 正常退出时静默安装 → 装完版本正确。装完不会自动重开（electron-updater 的退出时安装不带重启），MiMo 同。测试下载已清掉，`installer.exe`（差分基准）保留。
-- 未实测：P14-2（关机时不装更新）只有 smoke 覆盖，没有真的关机验证。
-- **注意 MCode 还没有更新服务器**：`electron-builder.yml` 的 `publish.url` 是故意不可解析的 `updates.invalid`，更新源要在设置里填或用 `MCODE_UPDATE_URL`，否则装了新版也不会自动更新。
-
-## 第十三轮：键盘与焦点、多实例、大数据量（2026-09-20）
-
-三份只读审计：`scratchpad/round13-keyboard.md`（17 条）、`round13-instances.md`（7 条）、`round13-scale.md`（6 条 + 小项）。用户决定：开发版用独立数据目录（记为故意不同）；其余照 MiMo；超出 MiMo 的两条（键盘打开的菜单关闭后焦点归还、看过的子代理对话记录释放）不做。四路 worktree，合并后 13 项检查 + build 通过，smoke **4632 全过**（连跑两次）；新增 `scripts/smoke-round13-keyboard.ts` / `-instances.ts` / `-scale.ts` / `-artifacts.ts`。
-
-**键盘与焦点（K13-*）**
-- K13-7 共享 Escape 帮助函数 `lib/escape-layer.ts`：一次 Escape 只关最上一层并标记已处理；PDF/Office 批注不再被上层的 Escape 清掉；InfoPanel 的 `escapeBlocked` 名单删除（`6c5fc0d`）
-- K13-1 模型页断开/删除确认框上 Escape 只关确认框；设置改为按下时检查页面上是否还有别的层（`f3914cc`）
-- K13-2 分支选择器搜索框里 Escape 能关（`93b61da`）；K13-4 搜索浮层焦点在结果行时 Escape 能关（`d3a5fce`）；K13-11 项目选择器子菜单 Escape 只关子菜单（`45871ed`）；K13-15 导入对话框 Escape 关闭（`da708df`）
-- K13-3 「+」菜单键盘操作：打开聚焦首行，上下/Home/End，Enter/Space，右键头进技能，Escape 逐层（`c01dd63`）
-- K13-5 有浮层/弹窗/预览盖住时，置顶、重命名、归档、侧聊等对话快捷键不生效（`5c92f90`）
-- K13-6 Ctrl+N 先关菜单、搜索、命令面板、预览、设置（环境有未保存修改先问），需要回答的对话框打开时不生效（`586bca7`）
-- K13-8 图片/视频/表格预览焦点限制在内、关闭归还，视频预览打开即取焦点（`bb0bfd7`）
-- K13-9 `lib/keys.ts` `composing()`：8 个输入框输入法选字时的 Enter 不再触发；smoke 扫描所有带 Enter 的输入框（`3b07275`）
-- K13-10 输入框菜单与首页选择器焦点离开即关，菜单行不再是 Tab 停靠点（`f883a67`）
-- K13-12 设置下拉框 Space 打开、1 秒内首字母跳转（`lib/type-ahead.ts`）（`0ab91d4`）
-- K13-14 点击对话空白处聚焦输入框（`264907f`）
-- K13-17（合并后发现）新建任务从未把焦点放进首页输入框：首页有自己的 Composer（HomeHero），`focusComposer` 却只聚焦对话页那个；现在首页时聚焦 HomeHero 的，侧栏「新建任务」也聚焦（`311994a`，探针实测）
-
-**多实例与窗口（I13-*）**
-- I13-1 未打包运行默认数据目录 `<默认名>-dev`（Windows `%APPDATA%\MCode-dev`），显式指定仍优先；单实例锁仍只在打包版（`6a3e255`）
-- I13-6 单实例锁在设好数据目录后立刻取，抢不到 `process.exit(0)`（`8eeec96`）
-- I13-2 退出过程中再次启动：退出完成后 `app.relaunch` 一次（带链接参数），托盘/activate 退出期间无反应（`71156fc`、`9e27f7d`）
-- I13-5 再次启动总是先激活窗口；页面加载或替换中收到的链接存着，就绪后经 `mcode:take-link` 取走（`recovery.ts` `readyWindow()`）（`b727844`）
-- I13-4 启动时保存的位置整体放回屏幕（`work-area.ts` `startBounds` + `clampToWorkAreas`）（`8067aff`）
-- I13-3 Windows `query-session-end` 直接 `app.quit()` 走完整清理，`session-end` 同步写窗口位置；N11-1 的错误注释已改。代价：别的程序取消关机时 MCode 已退出（`1bcdc22`）
-- I13-7 Linux 最大化照 MiMo 铺满工作区并记为最大化（只有单元级 smoke）（`1a5358b`）
-
-**大数据量（S13-*）**
-- S13-1 `server/diff.ts` 自写 Myers O(ND)：去掉共同开头，超过 2000 行改动或 4000 万步退成整块替换；4 万行改一行 36.6 s/6.2 GB → 约 25 ms，7 万行约 39 ms（`68b4527`）
-- S13-2 用量页读 `storage/usage-daily.json`（`session/usage-days.ts`，按会话→日→模型汇总，版本 1，损坏挪开重建）；1990 会话首建 5 s 一次，之后 7–250 ms，旧全量扫描 24 s（`54abc74`）
-- S13-3 产物列表只重读变化的对话，每页 50 条带游标与分类计数，超过 8 个变化转后台构建；产物页与搜索浮层滚到底加载更多；列表 1000 会话/3000 文件 290–390 ms → 4–5 ms；分类规则移到 `shared/artifact-category.ts`；不再返回已不存在的文件（`2040a3f`、`10f1909`）
-- S13-4 对话列表缓存就地更新（排序 `updated` 倒序、同时间按 id），冷读 32 并发；2000 会话删 100 个 100.7 s → 1.26 s（`9d04b93`、`e3a3b33`）
-- S13-5 搜索启动检查跳过记录与消息目录都早于上次索引的对话（16 并发），索引追赶期间仍从索引回答并直接读最新 20 个未索引对话；启动后首批查询 3.6–4.6 s → 10–324 ms。已知缺口：外部原地改写的消息文件启动时察觉不到（`9238e7c`、`b84017c`、`51ef923`）
-- S13-7 文件面板先 stat，超过 25 MB 只读开头 2 MB，超 2 GB 的媒体显示「过大」，文本仍显示截断的开头（`65f53e0`）
-
-## 第十二轮：数据生命周期、失败提示、主进程契约（2026-09-20）
-
-三份只读审计：`scratchpad/round12-lifecycle.md`（22 条）、`round12-failure-ux.md`（17 条）、`round12-ipc.md`（13 条）。用户决定：凭证照 MiMo 用系统安全存储加密；卸载的技能照 MiMo 7 天清理；可选改进「MiMo 有的都做」（只做了定时任务运行记录的原因码，降级提示、无模型指路、磁盘满文案 MiMo 没有，不做）。四路 worktree 分头做，合并后 13 项检查 + build 通过，smoke **4457 全过**；新增检查文件 `scripts/smoke-round12-credentials.ts` / `smoke-round12-lifecycle.ts` / `smoke-round12-c.ts` / `smoke-round12-ipc.ts`。窗口提示用一次性配置实测过（产物库重建、对话读不出、定时任务文件损坏、凭证读不出四条中文提示都出现）。
-
-**凭证与设置（L12-1…6）**
-- L12-1 `storage/models.json` 损坏：挪成 `.corrupt-<iso>`，模型列表从空开始，启动不再失败（`6bbe519`）
-- L12-2 `credentials.json` 读不出：挪到 `credentials.json.corrupt-<iso>`，挪不动就拒绝保存 Key（`error.credentialsInvalid`）；`config.get` 带 `credentialsUnreadable`，窗口提示；模型工具不能读 `credentials.json.*`（`8ad995b`，文件处理在 `src/server/credential-file.ts`）
-- L12-3 **凭证加密**：Key 与 OAuth 令牌逐条用 Electron `safeStorage` 加密（base64）。main 注入加密器（`src/main/safe-storage.ts`），纯 node 跑时没有加密器、保持明文。一次性迁移 `credentials-sealed-r12`：写加密版→读回比对→再替换明文，失败保留明文下次重试。旧明文照读。别的用户/机器加密的文件、或无安全存储时读到加密文件，按读不出处理（走 L12-2）。系统无安全存储且确有保存内容时明文保存并提示 `error.credentialsPlaintext`（`750cc1c`）。已知取舍：Linux 密钥环暂未解锁时加密文件会被挪开，需要手动改回名字
-- L12-4 所有启动 `migrate*` 遇到更新版本写的 config 直接返回（`3e4c5e0`）
-- L12-5 设置校验只改内存副本，不认识的取值原样留在文件里，直到用户改该项（`517e84f`；`smoke-round9-settings.ts` 相应改了一条）
-- L12-6 `Storage.drain()` / `Config.drain()`，`close()` 末尾依次 `permissions.flush()`、config、storage，仍在 5 秒上限内（`b2c6d40`）
-
-**其余存储（L12-7…17）**
-- L12-7 `artifacts.db` 真损坏时连同 -wal/-shm/-journal 挪开重建，`reconcile()` 补回，窗口提示 `error.artifactsRecreated`；损坏判断与挪开抽到 `sql-worker.ts` 与 search.db 共用（`dc017de`）
-- L12-8 `.mcode/scheduled_tasks.json` 读不出挪开，挪不动拒绝写；解析不了的 cron 串写回时保留、不触发（`25ebb66`）
-- L12-9 `imported.json` 损坏不再导致重复导入：用 `SessionInfo.imported` 去重，新增 `mtime`（`a70577f`）
-- L12-10 `mcp-auth.json` 解析失败挪开；读不了时 `mutate()` 拒绝（`error.mcpAuthUnreadable`）（`c266065`）
-- L12-11 读不出的 `info.json`：原地保留、记日志一次，checkpoint 清理与 artifacts reconcile 当作仍在用，窗口提示 `error.sessionsUnreadable`（`e6bf337`）
-- L12-12 `skill-trash` 启动时删掉超过 7 天的（按名字开头的时间戳）（`c75b76c`）
-- L12-13 撤销仓库启动约 1 分钟后、之后每小时 `git repack -a -d --keep-unreachable -q`，从不 prune，持有该仓库的 git 锁（`abb278e`）
-- L12-14 `automations.json` 损坏启动时窗口提示 `error.automationsInvalid`（`a1f1f81`）
-- L12-15 search.db schema 不匹配直接删掉重建；启动时清理超过 30 天的 `*.corrupt-*`，每份文档留最新一份（`f2b25a5`）
-- L12-16 记忆 project-id 原子写（临时文件 + 硬链接），无效旧文件先另存（`b1c1142`）
-- L12-17 定时任务运行记录带 MiMo 的 `errorCode`（`target-missing` / `project-unavailable` / `target-busy` / `schedule-changed` / `app_interrupted` / `empty-prompt` / `model-unavailable`），只改数据（`b95b894`）
-- 窗口提示走新请求 `storage.problems`（`src/server/store-notices.ts`），每次启动每个 code 只说一次。注意提示最多同时显示 3 条（`lib/toast.ts` `LIMIT`），四个文件同时损坏时最早那条会被挤掉
-
-**失败提示与空状态（C12-1…10）**
-- C12-1 重试倒计时 18 种语言不再显示花括号；i18ncheck 拒绝任何 `{{`（`bb69baa`）
-- C12-2 断线时只让已发出的请求失败，未发出的等重连（最多 30 秒），不会先报失败再发出；错误说本地服务（`error.backendLost`）（`8944bd3`）
-- C12-3 启动后断线保留对话界面，只升级重连提示（`error.connectionStillDown`）；顺带修了离线计时每次重连都被重置、从未到点的旧 bug；`boot.unreachable` 删除（`7b0e3f1`、`c21462b`）
-- C12-4 发送/子任务失败改成「请求失败」提示并保留草稿，`app.error` 只给启动失败；失败回合横幅读 `turnError`（`b0cc90a`）
-- C12-5 消息搜索失败显示错误行加重试（`searchOverlay.messageError`）（`403bc8b`）
-- C12-6 插件页列表失败显示失败行加重试（`plugins.listUnavailable`），刷新失败说「刷新失败：…」且不清空技能（`b429fce`、`ed7ad6d`）
-- C12-7 表格视图离开时没写进去的编辑提示 `office.saveFailed`（`5ec2e0d`）
-- C12-8 侧边对话历史加载失败：加载中→`subagentDetail.error`→每 2 秒重试；删了 `loadSubagent`（`5c92051`）
-- C12-9 三句英文改成表内文案：限速重试行 `error.rateLimited`、不能继续用 `composer.reviewRestricted`、PDF 读失败 `rp.files.errCannotRead`（`17a0afe`）
-- C12-10 读出来但没有可显示内容的对话显示「这个对话还没有消息」（`stream.emptyConvo`，MCode 自己的措辞）；全新空会话仍是欢迎页（`428059a`）
-
-**主进程契约（D12-1…7）**
-- D12-1 删掉没人调用的 `browserClose` 与 `mcode:browser-close`；wiringcheck 新规则：preload 暴露的每个方法都必须在渲染端有调用（`75bd186`）
-- D12-2 `mcode:menu-labels` 只收纯对象里的字符串（`9d64d40`）
-- D12-3 `clipboard-write` / `browser-bounds` / `titlebar-mode`（及 `browser-open` 的框）形状不对就忽略，`src/main/ipc-input.ts`（`1525bc3`）
-- D12-4 `edit` / `view` / `window` / `browser-act` 不认识的动作什么也不做（`4c17a48`）
-- D12-5 Office 通道检查抛错时回答自己的拒绝形状（`guarded()`）（`68397b4`）
-- D12-6 `pick-directory` 标题只收文本、开关只认 `=== true`（`d47a3d9`）
-- D12-7 `src/main/atomic-write.ts` `writeAtomicSync`：`boot-prefs.json` / `display-server.json` / `window.json` 走临时文件+fsync+改名（`c1ce049`）。收尾已做：`updates/update-transaction.json` 经 `fileTransactionStore` 走 `writeAtomicSync`（`399382f`）；`composer-input.ts` 也走 `writeAtomicSync`（`5d0db97`），只有关页那次 flush 做 fsync，打字时 300 ms 一次的保存不做（本机 NVMe 16 MB：无 fsync 约 8 ms，有 fsync 约 12 ms）；启动时 `sweepWriterTemps` 清三个目录里本写入者格式、进程已不在（或超过一小时）的 `*.<pid>.<n>.tmp`，含 composer-input 旧的 `.<pid>.tmp`（`bdcc62b`）。检查在 `scripts/smoke-atomic-leftovers.ts`。MiMo 26.920：更新记录走临时文件+改名、无 fsync；composer-input 直接覆盖写；不清残留临时文件
-
-## 第十一轮：并发与长期运行（2026-09-18）
-
-只读审计在 `scratchpad/round11-concurrency.md`（N11-1…N11-41，高 7）。**全部完成并验证，已合并入 `v2.0`（合并提交 `19c3a7e`）。**十一条 N11 提交加 N11-12，合并后 typecheck / build 通过，smoke **4168 全过**（新增第十一轮检查文件 `scripts/smoke-round11.ts`）。
-
-**N11-12：SQLite 进 worker 线程（本轮最后一项）**
-- 新文件 `src/server/sql-worker.ts`：`WORKER_SOURCE` / `SqlDatabase` / `SqlError`，每个库一个 worker 线程；MiMo 的四条 pragma（`busy_timeout = 5000` / `journal_mode = WAL` / `synchronous = NORMAL` / `temp_store = MEMORY`）、`SQL_REQUEST_TIMEOUT_MS = 15_000`、事务与回滚都在工作线程里跑。
-- 转换：`history/database.ts`、`history/index.ts`、`history/service.ts`、`artifact/store.ts`、`memory/index.ts`、`search.ts`、`tool/history.ts`、`index.ts`、`handlers.ts`、`session/context.ts`（数据库调用全部变异步，调用点全部 await）。
-- 收尾竞态：`HistoryIndex` 新增 `starting`，`start()` 拆成 `start()` / `begin()`，`close()` 依次等 `starting`、`flushed`、`writing`——否则后台 VACUUM / reconcile 还在飞时关库会抛未处理异常。
-- smoke 新增 9 条：pragma 集合、超时、两个库都从 worker 打开、事务护住语句、pragma 到达文件、写入报 changes、事务整体落地与回滚、**一条慢语句不占调用线程**（四百万次递归查询跑在 worker 上时 1ms 定时器跳 480 次；同一查询放主线程实测只跳 0 次）。改坏 pragma 后对应检查确实报失败。
-
-**其余 N11 提交**：退出、运行队列与通知说法（`b104b09`）；阴影仓库的锁、超时与半删除的存储（`957039c`）；界面搜索走索引、列表只读一次（`e6bc517`）；消息改逐 part 递给正在绘制它的窗口（`48421eb`）；git 写操作轮流、恢复不打扰快照（`62633a3`）；等待服务商时对用户开放、限流最多 30 分钟带倒计时（`decd517`）；子智能体闸门、更省的流式保存、删除对话后的残留（`bd0efdc`）；抽屉与面板终端各自拥有 pty（`28c1f67`）；MCP 在多个会话下（`d1fc2b2`）；小尾巴（`6fe3dc5`）；以及 N11-12（`c206feb`）。
-
-## 第十一轮：输入框全链路（2026-09-18）
-
-只读审计在 `scratchpad/round11-composer.md`（C11-1…C11-52，分卷稿 `r11-part-A.md`…`r11-part-D.md`）。除上面「故意不同」里列的十一项外全部按 MiMo 做了；当时没做的两项（C11-15、C11-13）已于 2026-09-18 补齐（见本节末尾）。
-
-**附件怎么到模型那里（C11-30/31/32/33/24，用户定「完全照 MiMo」）**
-- `lib/attach.ts`：只要文件在磁盘上就一律 `{path: 绝对路径, byPath: true}`；8 MiB 以内的图片 / 视频另外读一份 base64**只给缩略图**。以前「够小能画缩略图」被当成「不用留路径」，加号菜单选的、拖进来的图片会丢路径、整份 base64 进消息、还写进草稿文件（正好抵消 L6）。
-- 只有图片进消息。文本、Office、二进制（音频 / 视频 / 压缩包 / `.svg`）全部只给绝对路径，走 `session/context.ts` 的三段 `[Attachments]` 块（文本一段 / Office 一段带每种格式的库名 / 二进制一段），每段都以同一句「按给定绝对路径操作，不要搜索、不要 glob、不要列目录」收尾。
-- 文本附件不再内联、不再伪装成「read 已替你调过」（一个 300 KB 的日志以前只到模型手里 50 KB）；PDF / 音频 / 视频的字节不再送出。
-- 工具结果里的附件规则不变：`read` 当时拿到的字节仍原样随结果走。`attachmentParts(…, source)` 区分两者，`session/attachments.ts` 的 loader 对用户附件只读图片。
-- 四类扩展名表搬到 `src/shared/attachment-kind.ts`（渲染层和服务端共用）。文本表从 45 个扩展名扩到约 130（`.rst .cjs .gradle .tf` 之类），空文本文件也算提及。
-
-**@ 提及恢复后端搜索（C11-38/39/40/41/42，用户定回滚 L7）**
-- 第五轮的 L7 基于「MiMo 是本地过滤」的误判；26.912 和 26.914 都是主进程 `searchFiles`。现在查询非空就发 `file.search`（150ms 去抖、只认最后一次答复、50 条）。
-- `handlers.ts` 新增 `rankFileHit()`：不含 `/` 时只看文件名（全等 1000 / 前缀 900 / 包含 800，再减 `min(路径长,200)×0.02`）；含 `/` 时基准 500、按段在目录链上依次匹配，末段落在文件名上 +200/+150/+100，中间段 +40/+30/+20，任一段不匹配即淘汰；同分按路径升序。
-- 忽略名单改用 MiMo 那 22 项（`TREE_IGNORED`），隐藏文件可搜到；结果里没有目录。
-- 补 `composer.at.searchFailed`、`composer.at.truncated` 两键 × 18 张表；删掉 MiMo 从不渲染的 `composer.at.enterFolder` 和用它的按钮（`›` 改回不可点的字形，整行点击进入）；「引用」胶囊只在 hover 有底色；文件名不收缩、目录收缩；`referenceFolder` 写 `@rel ` 不再多一个 `/`。
-
-**按键、菜单、草稿（C11-1/2/3/5/6/10/11/13/14）**
-- 「发送消息」快捷键现在真的生效：绑定能解析成 Enter 系组合就精确匹配并关掉 Ctrl+Enter 换行，否则维持默认。输入框自己处理过的键一律 `stopPropagation()`（以前 Ctrl+Enter 绑成发送会先插换行再把它发出去）。
-- shell 模式的 Escape 进了 `onKeydown`、排在输入法守卫之后（中文组字时关候选窗不再退出 shell 模式）。
-- 菜单开着时 Enter 不看修饰键，Ctrl+Enter 选行而不是插换行。
-- 程序化改写（调历史、整块删提及、Ctrl+Enter 换行、语音填充、选技能）会关掉两个菜单，等同 MiMo 的 `wn()`。
-- 加 ResizeObserver：宽度变了 60ms 后重测高度，手动高度同时重新 clamp；宽度 ≤28px 时跳过测量。
-- `focus()` 先 `focus({preventScroll:true})` 再把光标放到末尾；切会话恢复草稿时把光标真的写进 DOM；语音填充前先把焦点从麦克风按钮拿回输入框。
-
-**粘贴与拖放（C11-16/17/18/19/22/25/26/27/28/29/34）**
-- 超大粘贴写盘失败时把原文插回输入框（替换选区），不再因为超过 50MB 就把内容丢掉。
-- 粘贴和拖放都读 `text/uri-list`，解析出的路径先经新 IPC `mcode:describe-files` 过滤存在性，再走同一套「提及 / 附件」拆分；拖放不再从 `text/plain` 里抠 `file:`。
-- 新 IPC `mcode:clipboard-has-image`（只回布尔）作为剪贴板图片判定的第一档；粘贴图片落盘去掉 25MB 上限。
-- 拖入纯文本交还给浏览器（能拖字进框、能在框内挪选区）；窗口提示层与输入框光环共用 `acceptsDrop()`；拖到输入框上时只亮光环；提示层不再盖住右侧信息面板那一列；`.box.dropping` 补边框色并保住原阴影；系统吞掉拖动时下一次按下就清理（窗口和输入框两处）。
-- `attach.tooLarge` 的数字改成从常量渲染（`{size}`，18 张表），以前写死 8 MB 而实际是 50 MB。
-
-**斜杠、发送、芯片（C11-43/44/45/47/49）**
-- 技能芯片显示技能的本地化名（`localizations` 随命令下发，`commandTitle()`）。
-- 会话自带的 `/compact` 胜过同名项目命令；首页隐藏名为 `compact` 的项目命令。
-- 选技能不再多吞一个空格；来源标签回到三种，删 `composer.slashBuiltinSkill`。
-- 只有附件没有文字时正文写成一句本地化的「（见附件）」（新键 `composer.seeAttachments` × 18 张表；MiMo 是硬编码中文，MCode 按 18 张表翻）。
-
-**附件胶囊与语音（C11-35/36/51/52/37）**
-- 胶囊换成文件树那套带色文件页图标（`--ft-*` 从 RpFiles 的 scoped 块搬到 `base.css`，两处共用）；删除标记改成 `✕` 字符 13px；`filetype.ts` 的文字徽标只剩命令面板在用。
-- 语音去掉 60 秒上限，改成边说边分段：1.2s 静音切一段，每段单独转写、按顺序落到当时的输入框状态（`lib/voice.ts` 的 `onSegment`）。
-- 录音改成全应用一份 + `voiceOwner`：三个输入框同时挂载，以前各自 `new VoiceRecorder()` 能开出两路 `getUserMedia`；现在换一个框按麦克风会先停掉上一个。
-- MiMo 的 `visionAutoSwitch` 是死文案（19 张表里有、全包无调用），不照抄；改为模型读不了图片时在界面上直说（新键 `attach.noImageInput` × 18 张表）。
-
-**C11-15 / C11-13（2026-09-18 补齐，用户「全干」）**
-- **C11-15 已接上**：协议 `SessionInfo.reviewRestricted?: boolean`（缺省即未限制，旧记录照旧）；请求 `session.reviewRestricted {sessionID, restricted}`，应答 `{ session: SessionInfo }`；`SessionStore.setReviewRestricted()` 不动 `updated`（照 `setAccess`，选状态不算活动），解除时删掉字段而不写 `false`；`handlers.ts` 的 `session.prompt` 在调 `runner.prompt` 之前先查，限制住就报「this conversation can't be continued」；Composer 的 `restrictedHere` 接管占位符（排在 compaction 之后、模式行之前，照 MiMo 的顺序）与 `:disabled`（textarea 和发送钮），`submit()` 里再一道退路。文案 `composer.reviewRestricted` × 18 张表：简体/繁体/英/日/韩/俄/德/法/西/葡/丹/挚麦/波/土/阿/阿拉伯用 MiMo 原文（`reviewRestricted:"…"`，逐条从 MiMo composer 分包取出），bs / th / uk 自译。**MCode 没有审核后端，所以新增一个可触发入口**（用户选的完整机制 + 可触发）：会话菜单里的 `row.reviewRestricted`（列表行与头部菜单都有，`menu.restrictConversation` / `menu.allowContinue` × 18），再报请求开关。新 smoke 检查 8 条（初始未限制、标记落盘与读回、不算活动、解除删字段、旧会话不限制、请求与应答在线、服务端拒绝）；改坏 `setReviewRestricted` 或拆掉报拒都会报失败。
-- **C11-13 已补齐**：`Composer` 的 `onMounted` 在 `text.value` 非空时`void nextTick(focus)`——MiMo 恢复草稿后真的把键盘拿过去，光标置尾；MCode 的三个输入框不同时在屏（首页与会话、侧边与浮动各自随视图挂载），空草稿不抢键盘。新 smoke 检查 3 条（有草稿就聚焦、空草稿不聚焦、聚焦把光标置尾）；删掉那一行会报失败。
-注："没做的两项"从此清空，下方那段「C11-13 的 `focus()` 那一半没有探针」仍然成立（DOM 焦点在探针窗口里测不到），所以新增的检查放在 smoke 里而不是探针里。
-
-探针 `scratchpad/mcode-round11-composer.cjs`（12 段，截图 4 张）。每段都在故意改坏的构建上跑过一次并给出不同读数（`mcode-round11-composer.broken*.json`）。**C11-13 的 `focus()` 那一半没有探针**：探针窗口即使被 OS 激活，`document.activeElement` 也落不到 textarea 上，任何读数都只是 DOM 原来的位置——宁可不写，也不留一条不会失败的检查。
-
-## 本会话完成的轮次（新到旧）
-
-| 提交 | 内容 |
-| --- | --- |
-| `0c493b2` | 设置「环境」页按 MiMo 重做：项目列表（添加 / 移除 / 配置显示名）+ 所有项目的工作树（分支、项目标签、数量、刷新）；随后修了工作树名称被路径挤掉的问题 |
-| `ea62985` | 首页字标点击跳动 |
-| `6c32812` | 撤销首页可换图标按钮 |
-| `ec4134c` | 会话导航条（每轮一个刻度、悬停预览、点击跳转）+ 导航条音效开关 |
-| `00f31f3` | 产物页：打开预览 / 下载（定位文件）/ 进入对话，预览弹窗 |
-| `cd73a7a` | 插件页：刷新列表、状态 + 类型筛选，已安装里列出技能 |
-| `fb06971` | 侧栏底部菜单：设置、退出应用 |
-| `43696f3` / `0984a62` | 侧栏内容下移 4px；顶部按钮靠左 |
-| `30c3a0e` | 长任务完成提示音（超过 1 分钟、五种音效）+ 默认新建项目位置 |
-
-更早的提交见 `git log`。
-
-## 本轮：环境页与工作树
-
-- `src/renderer/src/components/SettingsDialog.vue`：`environment` 一节。
-  - 项目 = 会话所归的项目（排除已归档、无项目任务、已关闭的项目），和侧栏同一套规则。**第十轮（G10-8）起**：会话有「移动至项目」标签就按标签；否则会话目录本身是已列出的项目就归它；否则照 MiMo 归到该目录所属的主仓库（`git.repoRoots`，`rev-parse --git-common-dir` 的上一级），所以链接工作树、仓库子目录里的对话都在主仓库项目下；目录已不存在的会话不归任何项目（进「最近」），目录已不存在的项目不在列表里显示（配置里仍保留）。
-  - 「添加项目」：选目录；若曾关闭就重新打开；没有会话就在那里新建一个（MCode 的项目靠会话存在）。
-  - 「移除项目」：确认后加入 `closedProjects`，会话保留。
-  - 「+」配置：返回按钮、本地环境卡片、名称输入框，保存到 `projectNames`（和侧栏重命名是同一个字段）。
-  - 工作树：对每个项目调 `workspace.list`，去掉主工作树、按路径去重；每行名称、分支标签、「项目：名称」标签（名称绘制时实时查，改名立刻生效）、路径；有数量行、刷新按钮和提示、空状态、加载中。
-- 删掉了不再使用的文案键：`set.project`、`set.noProject`、`set.mainTree`、`set.noWorktrees`。
-
-## 怎么跑、怎么验
-
-```bash
-npm run dev          # 开发版（先结束残留的 node_modules/electron/dist/electron.exe）
-npm run typecheck
-npm run build
-npm run smoke        # 当前 6143 条（2026-09-22）
-npm run i18ncheck    # 18 种语言表键一致
-npm run themecheck   # 重新生成 tokens.css 并逐字节比对；也拦物理方向的 CSS
-npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监听
-```
-
-其余检查：mcpcheck、mdcheck、sessioncheck、snapshotcheck、sandboxcheck、toolcheck、promptcheck、shellcheck、providercheck。
-
-界面改动都用「探针」验证：一个独立的 `.cjs`，用 `node_modules/electron/dist/electron.exe` 加载 `out/main/index.js`，在临时 userData 里只复制 `config.json`、`session/`、`models.json`，不复制任何凭据。探针脚本放在会话的 scratchpad 里，**不在仓库中**；需要时照着下面的套路重写。
-
-每条新检查都要证明「能失败」：故意改坏代码 → 探针报失败 → 恢复并重新构建。
-
-## 约定与坑
-
-- 回复用中文；代码、标识符、注释用英文。
-- 不能新增 CSS token 名（themecheck 会重新生成 tokens.css）；CSS 用逻辑属性（`padding-inline-start` 而不是 `padding-left`）。
-- 字号一律写成 `calc(Npx * var(--ui-font-scale, 1))`，代码字号用 `--code-font-scale`。
-- 新增文案要进全部 18 张语言表（zhCN zhTW en ar bs da de es fr ja ko nb pl ptBR ru th tr uk）；用脚本按锚点插入，保留 CRLF。
-- 读 MiMo：只读方式解 `C:/Users/Wyatt/AppData/Local/Programs/Xiaomi MiMo/resources/app.asar`（用仓库里的 `@electron/asar`，内部路径要用反斜杠拼接）。只看行为和尺寸，**不复制** MiMo 的代码、文案、图标、插画和品牌。
-- 安全：不读、不打印凭据值；不替用户登录；不在用户的 MiMo 里发消息、改设置、按麦克风或铃铛；未经同意不关用户的应用。
-- 探针：
-  - 不要 `moveTop()` 窗口；用 `setBackgroundThrottling(false)`。**截图前要 `win.show()`**：只 `showInactive()` 时 `capturePage` 可能拿到旧画面（2026-09-21 一张「AI 生成」截图停在首页，数据却是对话里的）。
-  - 读数前先记 `win.isVisible()` 和 `document.visibilityState`：窗口被外部最小化或隐藏时 rAF 不跑，停靠、跟随这类依赖帧的测量全部作废（第十九轮 C 路有几轮因此偏到 268–314）。不是 MCode 自己最小化的（已用 `BrowserWindow.prototype.minimize` 钩子排除），多半是用户同时在用电脑。
-  - 合成的 `mouseDown`/`mouseMove` 拖拽在探针里选不中文字（`getSelection()` 为空），要测选区就用 `Range` 直接放选区。
-  - 有活动终端时不要直接退出探针（会弹 conpty 断言对话框）。
-  - 打开外部程序、剪贴板、选目录的 IPC（`mcode:open-file`、`mcode:reveal-file`、`mcode:clipboard-write`、`mcode:pick-directory`、`mcode:quit`）先 `removeHandler` 再换成记录器。
-  - 背景窗口里 `animation.finished` 可能一直不结束——产品代码里等动画都要配一个超时。
-  - 打开弹窗后第一次 `capturePage` 可能是旧画面，等约 2 秒并 `invalidate()` 再截。
-  - ContextMenu 当前选中项是 `.item.ticked`；侧栏底部「设置」行现在先打开菜单，再点菜单里的「设置」。
-- 开发版重启：先停旧的 `npm run dev` 任务，再结束残留 electron 进程，否则两个开发实例抢同一份配置（会报缓存无法创建）。第十三轮起未打包运行默认用独立数据目录 `%APPDATA%\MCode-dev`（I13-1），不再和安装版共用 `%APPDATA%\MCode`；探针用 `app.setPath("userData")` 或 `--user-data-dir` 仍然优先。
-- 已知不稳定检查：第五轮计划模式一节（`smoke-round5.ts`「plan mode writes one file…」）偶发 6 条一起失败，2026-09-20 四次全量里出现一次；疑似后台请求（标题生成）插进来，使 `e.bodies.at(-1)` 不是本轮请求。重跑即过，未修。第十四轮 P 路还见过一次第七轮「provider receives the long bash description」两条失败（那次请求里没有工具列表），重跑即过，疑同类。
-- 版本号只在打包时递增，不要手改。WSL 永久不在范围内。
-- 本机 TCP 动态端口从 **1024** 起（`netsh int ipv4 show dynamicport tcp`），向系统要端口 0 可能拿到浏览器 / fetch 拒绝的端口（5060、6000、6666 等）。应用里后端 socket 走 `server/free-port.ts` 的 `windowSafePort`，预览服务在 `bind()` 里换掉这类端口，列表在 `shared/blocked-ports.ts`；检查脚本的服务器由 `scripts/safe-listen.ts` 挪开（`smoke.ts`、`session-check.ts` 第一个 import，`smoke-blocked-ports.ts` 验证）。新写的检查脚本入口也要先 import 它。
-- 合并多路时：各路都删同一批代码（如导入弹窗、对话文件），冲突两侧都要丢掉，不能 keep-both；合并后还要 grep 检查脚本里对已删符号的引用（第十九轮 E1/E11、`openText` 就是这样漏的）。
-- 用 Python 改仓库文件一律 `open(..., newline="")` 读写，否则 Windows 下会把 LF 写成 CRLF。
-- 对用户仓库跑 git 一律用 `server/git-process.ts` 的 `runGit`（固定环境、路径不加引号、超时、隐藏窗口）；解析路径用 `-z` 输出和 `parsePorcelain`。只有影子快照仓库（`session/snapshot.ts`）自己起进程。smoke-round10-git 会扫描 `src/server`、`src/main` 里没带 `windowsHide` 的 git 进程。
-
-## 待办：用户截图逐项对照（2026-09-13，优先于下方审计清单）
+### 待办：用户截图逐项对照（2026-09-13，优先于下方审计清单）
 
 用户并排截了 MiMo 和 MCode 的同一界面，要求逐个对照、1:1 复刻。每项动手前先读 MiMo 包核实细节；账号相关（头像 Biscuit、个人资料、计费）不在范围内。
 
@@ -1061,7 +1108,7 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
 - [x] A12 输入框（已完成：核实 MiMo——输入栏没有常驻的智能体选择器，只有模式不是构建时才出现带图标的模式胶囊（悬停提示「已开启…，点击关闭」，点击回到构建）；上下文圆环只在会话已有用量时出现。MCode：删掉「Build ⌄」选择器和已无用的 `showAgentPicker` 设置（协议、服务端默认值、设置页开关、`set.agentPicker*` 文案）；加号菜单在「分阶段」上方加「计划模式」开关；开启计划模式或分阶段时栏里显示「计划」/「分阶段」胶囊，点击关闭；空对话（还没有用量）不显示圆环。Ctrl+. 循环切换智能体保留。MiMo 的「编排模式」对应 MCode 已有的「分阶段」。真实开发窗口截图核对首页输入栏。探针 `mcode-modes.cjs`，6 项）原始：MiMo 首页输入框没有智能体（Build）选择，也没有上下文圆环（需核实对话中是否出现）
 - [x] A13 项目行（已完成：真实窗口确认两处差异并修正——展开的项目改画打开的文件夹（收起时仍是合上的）；项目行尾的「…」菜单和「+」新建任务原本透明但仍占宽度，「StoneAge-Ser…」不悬停也被截断，现在和会话行一样放进 `row-actions` 悬停叠加层，平时名字占满整行，悬停时按钮盖在行尾。叠加层原来是 `background: inherit`，继承的是半透明悬停色，长名字会从按钮底下透出来（真实窗口和探针截图都看到「+」压在文字上），现改为「悬停色叠在侧栏底色上」的不透明底，打开中的行用选中色。探针 `mcode-project-row.cjs`）原始：MiMo 展开时是打开的文件夹图标；MCode 项目名被行尾按钮挤窄（会话行已改为悬停叠加，项目行还没改）
 
-## 待办：清单之外的只读审计结果（2026-09-13）
+### 待办：清单之外的只读审计结果（2026-09-13）
 
 三个只读代理对照 MiMo 安装包和 MCode 源码找出的候选差距，已排除已完成项和用户不做的项。**动手前每条都要再核实一次**（MiMo 组件里真的调用了、MCode 真的没有）。对话视图的 MiMo 组件在懒加载块 `ThreadView-*.js`、`HarnessRow-*.js`、`MarkdownImpl-*.js` 里。
 
@@ -1231,7 +1278,7 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
 - [已完成] Markdown 表格的预览和复制按钮（小到中）——见上方「回复里表格的预览和复制」一条
 - [已完成] 输入框：拖拽调高、大段粘贴转附件、拖放提示卡片（各小）——见上方三条
 
-## 下一步建议
+## 附录 C：更早的下一步建议（留作记录）
 
 **2026-09-22：第十九轮做完，已知差异清零，0.3.8 已装、`v2.0` 已推到 GitHub。** 可选的下一步：
 
