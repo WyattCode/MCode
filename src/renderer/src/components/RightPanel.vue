@@ -710,9 +710,10 @@ body.resizing .right-panel {
   flex: 1 1 auto;
 }
 
+/* The selected tab lifts onto MiMo's --color-bg, one step off the white the panel stands on. */
 .rp-tab.active {
   color: var(--text-strong);
-  background: var(--surface-raised);
+  background: var(--surface-page);
   border-color: var(--border-weak);
 }
 
@@ -856,10 +857,6 @@ body.resizing .right-panel {
   background: var(--surface-selected);
 }
 
-:root[data-theme="dark"] .rp-tab.active {
-  background: var(--surface-raised);
-}
-
 :root[data-theme="dark"] .rpt-close,
 :root[data-theme="dark"] .rp-add:hover,
 :root[data-theme="dark"] .lc-icon,
@@ -879,10 +876,6 @@ body.resizing .right-panel {
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .rp-tab {
     background: var(--surface-selected);
-  }
-
-  :root:not([data-theme="light"]) .rp-tab.active {
-    background: var(--surface-raised);
   }
 
   :root:not([data-theme="light"]) .rpt-close,
