@@ -281,26 +281,13 @@ defineExpose({ focus: () => box.value?.focus() })
     <div class="core">
       <!--
         MiMo's hero: a fixed 527 x 299 block pulled 48 into the tray below it,
-        carrying a background drawing, the mark centred at 49.95%, and the
-        greeting absolutely placed at 65.5% of its height. The drawing is
-        MCode's own - a blueprint of dashed guides around where the mark sits -
-        and so is the mark, which is the wordmark rather than MiMo's app icon.
+        the mark centred at 49.95%, and the greeting absolutely placed at 65.5%
+        of its height. MiMo fills the block with a background drawing; the user
+        looked at MCode's own (a blueprint of dashed guides) on 2026-09-24 and
+        chose a bare block instead, so nothing is drawn behind the mark. The
+        mark itself is MCode's wordmark rather than MiMo's app icon.
       -->
       <div class="hero" data-home-hero>
-        <svg class="deco" viewBox="0 0 527 299" fill="none" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
-          <g stroke="currentColor" stroke-linecap="round">
-            <rect x="40.5" y="20.5" width="446" height="258" rx="26" stroke-dasharray="5 9" opacity="0.38" />
-            <path d="M0 149.35H527" stroke-dasharray="3 11" opacity="0.4" />
-            <path d="M263.5 20.5V278.5" stroke-dasharray="3 11" opacity="0.4" />
-            <circle cx="263.5" cy="149.35" r="66" stroke-dasharray="4 10" opacity="0.46" />
-            <circle cx="263.5" cy="149.35" r="103" stroke-dasharray="2 12" opacity="0.4" />
-            <path d="M40.5 46V20.5H66M461 20.5h25.5V46M486.5 253v25.5H461M66 278.5H40.5V253" opacity="0.49" />
-            <path
-              d="M129 143.35v12M123 149.35h12M398 143.35v12M392 149.35h12M263.5 78v12M257.5 84h12M263.5 208.7v12M257.5 214.7h12"
-              opacity="0.42"
-            />
-          </g>
-        </svg>
         <div class="mark-slot">
           <div
             ref="wordmark"
@@ -401,21 +388,6 @@ defineExpose({ focus: () => box.value?.focus() })
 }
 
 /*
- * MCode's own drawing, not MiMo's: dashed guides and register marks around
- * where the mark sits. Each stroke carries its own opacity in MiMo's 38-49%
- * band; the whole layer drops to half in the dark, as MiMo's does.
- */
-.deco {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  color: var(--text-weak);
-  pointer-events: none;
-  user-select: none;
-}
-
-/*
  * The mark's place - MiMo's icon sits at 49.95% of the block's height. The
  * centring lives on this slot rather than on the mark, so the hop animation's
  * own transform has the element to itself.
@@ -498,17 +470,9 @@ defineExpose({ focus: () => box.value?.focus() })
   background: #151515;
 }
 
-:root[data-theme="dark"] .deco {
-  opacity: 0.5;
-}
-
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .tray {
     background: #151515;
-  }
-
-  :root:not([data-theme="light"]) .deco {
-    opacity: 0.5;
   }
 }
 </style>

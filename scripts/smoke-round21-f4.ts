@@ -61,10 +61,8 @@ export async function roundTwentyOneLaneFourChecks(check: Check, section: (name:
     check("it keeps MiMo's 18/600 and 0.4px tracking", /font-size:\s*calc\(18px/.test(greet) && /font-weight:\s*600/.test(greet) && /letter-spacing:\s*0\.4px/.test(greet))
     const slot = rule(hero.style, ".mark-slot")
     check("the mark is centred on 49.95% of the block's height, off the animated element", /top:\s*49\.95%/.test(slot) && /translate\(-50%, -50%\)/.test(slot), slot)
-    const deco = element(hero.template, '<svg class="deco"', "svg")
-    check("the drawing is inline SVG sized to the block, not an asset", deco.includes('viewBox="0 0 527 299"') && !/<img/.test(hero.template))
-    check("it is MCode's own dashed blueprint, in MiMo's 38-49% band", /stroke-dasharray/.test(deco) && [...deco.matchAll(/opacity="0\.(\d+)"/g)].every((m) => Number(`0.${m[1]}`) >= 0.38 && Number(`0.${m[1]}`) <= 0.49), deco.length)
-    check("and it halves on the dark scheme, as MiMo's does", /\.deco \{\s*opacity: 0\.5/.test(hero.style.replace(/:root[^\s]*\s+/g, "")) || /:root:not\(\[data-theme="light"\]\) \.deco \{\s*\n\s*opacity: 0\.5/.test(hero.style))
+    // The user saw MCode's own blueprint drawing on 2026-09-24 and asked for a bare block, so MiMo's background drawing has no counterpart here.
+    check("nothing is drawn behind the mark - no SVG, no image, no painted background (user decision 2026-09-24)", !/<svg/.test(hero.template) && !/<img/.test(hero.template) && !/\bdeco\b/.test(hero.style) && !/background(-image)?:/.test(rule(hero.style, ".hero")), hero.template.slice(0, 400))
     // Item 9: the tray is an opaque plate, not a wash of the sunken surface.
     const tray = rule(hero.style, ".tray")
     check("the tray takes MiMo's --color-composer-tray-bg (#f8f7f5) rather than a 50% wash", /background:\s*#f8f7f5/.test(tray) && !/color-mix/.test(tray), tray)
