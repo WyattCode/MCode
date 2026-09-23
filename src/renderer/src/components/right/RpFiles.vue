@@ -906,7 +906,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
   color: #151c13cc;
   white-space: nowrap;
-  background: var(--surface-base);
+  background: var(--surface-page);
   border: 1px solid var(--border-weak);
   border-radius: 8px;
   font-size: calc(12px * var(--ui-font-scale, 1));

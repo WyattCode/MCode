@@ -98,7 +98,7 @@ export async function roundTwentyOneF3Checks(check: Check, section: (name: strin
     check("the head carries no rule under it", !/border-bottom/.test(rule(versions, ".vp-head")), rule(versions, ".vp-head"))
     check("rows are 8 apart at 6 by 4 on an 8px corner, over a 44px column", /gap: 8px;/.test(rule(versions, ".vp-row")) && /padding: 6px 4px;/.test(rule(versions, ".vp-row")) && /width: 44px;/.test(rule(versions, ".vp-left")))
     check("the current mark is MiMo's filled teal pill", /background: #e8f5f3;/.test(rule(versions, ".vp-current")) && /color: #0f766e;/.test(rule(versions, ".vp-current")) && /border-radius: 999px;/.test(rule(versions, ".vp-current")))
-    check("restore is filled on the page colour at 4 by 8 on a 6px corner", /background: var\(--surface-base\);/.test(rule(versions, ".vp-restore")) && /padding: 4px 8px;/.test(rule(versions, ".vp-restore")) && /border-radius: 6px;/.test(rule(versions, ".vp-restore")))
+    check("restore is filled on the page colour at 4 by 8 on a 6px corner", /background: var\(--surface-page\);/.test(rule(versions, ".vp-restore")) && /padding: 4px 8px;/.test(rule(versions, ".vp-restore")) && /border-radius: 6px;/.test(rule(versions, ".vp-restore")))
     check("and the tip is MiMo's dark slate box", /background: rgba\(15, 23, 42, 0\.92\);/.test(rule(versions, ".vp-tip")) && /color: #fff;/.test(rule(versions, ".vp-tip")) && /z-index: 10001;/.test(rule(versions, ".vp-tip")))
   }
 

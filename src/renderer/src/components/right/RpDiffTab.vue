@@ -91,13 +91,14 @@ function setLayout(next: DiffLayout) {
   transition: color 0.15s, background-color 0.15s;
 }
 
+/* MiMo's pair is `text-mut hover:text-txt` / `bg-bg text-txt`: the body ink, not the strong one. */
 .dt-seg-btn:hover {
-  color: var(--text-strong);
+  color: var(--text-body);
 }
 
 .dt-seg-btn.on {
-  color: var(--text-strong);
-  background: var(--surface-raised);
+  color: var(--text-body);
+  background: var(--surface-page);
   box-shadow: 0 0 0 1px var(--border-weak);
 }
 </style>

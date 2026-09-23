@@ -243,7 +243,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   padding: 4px 8px;
   color: inherit;
-  background: var(--surface-base);
+  background: var(--surface-page);
   border: 1px solid var(--border-weak);
   border-radius: 6px;
   font-size: 12px;
