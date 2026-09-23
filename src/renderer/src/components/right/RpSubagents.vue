@@ -309,7 +309,7 @@ onBeforeUnmount(() => {
 
 .rp-subagent-summary {
   margin-top: 2px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -490,7 +490,7 @@ onBeforeUnmount(() => {
 /* MiMo's note inside it: 2 above and below, 12px dim, no inset of its own. */
 .rp-subagent-note {
   padding: 2px 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 

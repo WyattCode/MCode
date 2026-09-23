@@ -2407,7 +2407,7 @@ defineExpose({ stepMessage, scroller })
 
 .asked-edit-busy {
   margin-inline-end: auto;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.4;
 }
@@ -2691,7 +2691,7 @@ defineExpose({ stepMessage, scroller })
 /* MiMo's thread placeholder, loading or empty: 80 above and below, 13px, muted, centred. */
 .thread-loading {
   padding-block: 80px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   text-align: center;
 }
@@ -2766,7 +2766,7 @@ defineExpose({ stepMessage, scroller })
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--text-weak);
+  color: var(--text-base);
   font: inherit;
   font-size: calc(12px * var(--ui-font-scale, 1));
   white-space: normal;
@@ -2804,7 +2804,7 @@ defineExpose({ stepMessage, scroller })
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-weak);
+  color: var(--text-base);
   font: inherit;
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 400;
@@ -2873,7 +2873,7 @@ defineExpose({ stepMessage, scroller })
 }
 
 .steer-note {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -2943,7 +2943,7 @@ defineExpose({ stepMessage, scroller })
 }
 
 .run-time {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: calc(19.2px * var(--ui-font-scale, 1));
@@ -3030,7 +3030,7 @@ defineExpose({ stepMessage, scroller })
   flex-basis: 100%;
   min-width: 0;
   margin-top: 6px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 1.6;

@@ -3119,7 +3119,7 @@ onBeforeUnmount(() => {
 }
 
 .unit {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -5612,7 +5612,7 @@ h3 {
 
 .vs-body {
   margin: 0 0 18px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.6;
   white-space: pre-line;

@@ -889,7 +889,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   place-items: center;
   width: 26px;
   height: 26px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 6px;

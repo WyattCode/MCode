@@ -727,7 +727,7 @@ function pickFilter(key: string) {
 
 .card-state {
   flex-shrink: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: calc(16px * var(--ui-font-scale, 1));
 }

@@ -134,7 +134,7 @@ useEscapeLayer(() => emit("close"))
   top: 14px;
   inset-inline-end: 14px;
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(16px * var(--ui-font-scale, 1));
   background: transparent;
   border: 0;
@@ -194,7 +194,7 @@ useEscapeLayer(() => emit("close"))
   flex: none;
   margin: 6px 0 0;
   padding: 0 12px 10px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
@@ -223,7 +223,7 @@ useEscapeLayer(() => emit("close"))
   display: block;
   margin-top: 12px;
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   background: transparent;
   border: 0;
@@ -242,7 +242,7 @@ useEscapeLayer(() => emit("close"))
 
 .hint {
   margin-top: 8px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 

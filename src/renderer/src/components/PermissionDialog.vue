@@ -279,7 +279,7 @@ function onReasonKey(event: KeyboardEvent) {
   width: 22px;
   height: 22px;
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 6px;
@@ -298,7 +298,7 @@ function onReasonKey(event: KeyboardEvent) {
   gap: 4px;
   margin-top: 6px;
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   background: transparent;
   border: 0;
@@ -319,7 +319,7 @@ function onReasonKey(event: KeyboardEvent) {
 
 .forced {
   margin-top: 6px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 

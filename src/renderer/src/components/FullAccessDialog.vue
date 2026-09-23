@@ -85,7 +85,7 @@ h2 {
   width: 30px;
   height: 30px;
   margin-inline-end: -6px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 8px;

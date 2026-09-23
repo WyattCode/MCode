@@ -142,7 +142,7 @@ h2 {
 
 .subtitle {
   margin: 3px 0 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
@@ -152,7 +152,7 @@ h2 {
   place-items: center;
   width: 30px;
   height: 30px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 7px;

@@ -4346,7 +4346,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   position: static;
   flex: none;
   margin-inline-start: 4px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border-radius: 6px;
   /* MiMo's mark is the character at 13px, not a drawing. */

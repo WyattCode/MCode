@@ -451,7 +451,7 @@ onBeforeUnmount(() => {
 /* A group's name, the way opencode's DropdownMenu.GroupLabel reads. */
 .heading {
   padding: 6px 10px 2px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
 }

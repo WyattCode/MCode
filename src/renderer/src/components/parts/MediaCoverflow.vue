@@ -234,7 +234,7 @@ function coverFailed(url: string) {
   justify-content: center;
   gap: 12px;
   margin-top: 8px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 

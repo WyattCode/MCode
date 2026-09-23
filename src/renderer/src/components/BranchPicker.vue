@@ -549,7 +549,7 @@ svg circle {
   width: 30px;
   height: 30px;
   margin-inline-end: -4px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 7px;

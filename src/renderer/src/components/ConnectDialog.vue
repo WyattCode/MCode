@@ -743,7 +743,7 @@ useEscapeLayer(dismiss)
 .label {
   display: block;
   margin-bottom: 7px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
@@ -784,7 +784,7 @@ useEscapeLayer(dismiss)
   place-items: center;
   width: 28px;
   height: 28px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-radius: 6px;
   transform: translateY(-50%);
 }
@@ -859,7 +859,7 @@ useEscapeLayer(dismiss)
   align-items: center;
   gap: 10px;
   margin-top: 16px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 

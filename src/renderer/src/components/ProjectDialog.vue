@@ -202,7 +202,7 @@ h2 {
 }
 
 .x {
-  color: var(--text-weak);
+  color: var(--text-base);
   padding: 4px;
   border-radius: var(--radius-md);
 }
@@ -214,7 +214,7 @@ h2 {
 
 .label {
   margin-top: 8px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 

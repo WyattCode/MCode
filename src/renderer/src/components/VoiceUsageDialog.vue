@@ -125,7 +125,7 @@ h2 {
 /* Examples sit on a 2px rule in MiMo's blue at 35%. */
 .entry-examples {
   padding-inline-start: 10px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-inline-start: 2px solid color-mix(in srgb, #2f6fed 35%, transparent);
   font-size: calc(12px * var(--ui-font-scale, 1));
   white-space: pre-line;

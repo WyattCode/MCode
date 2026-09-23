@@ -103,7 +103,7 @@ h2 {
 
 .body {
   margin: 8px 0 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }

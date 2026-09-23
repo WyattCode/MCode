@@ -1088,7 +1088,7 @@ function onError(event: Event) {
 .text .md-footnotes {
   margin-top: 16px;
   padding-top: 8px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-top: 1px solid var(--border-weak);
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
@@ -1136,7 +1136,7 @@ function onError(event: Event) {
 
 .text .md-svg-loading {
   margin: 8px 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   animation: md-media-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
