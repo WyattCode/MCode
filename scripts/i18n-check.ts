@@ -98,7 +98,13 @@ const UNNAMED_TOOLS = new Set(["invalid"])
 const toolNames = fs
   .readdirSync(toolDir)
   .filter((name) => name.endsWith(".ts"))
-  .flatMap((name) => [...fs.readFileSync(path.join(toolDir, name), "utf8").matchAll(/^ {2}name: "([a-z]+)"/gm)])
+  /*
+   * Underscores as well. `[a-z]+` matched none of the thirteen tools whose
+   * names carry one - automation_update, present_files, skill_search,
+   * plan_exit, notebook_edit and the rest - so `tool.<name>` went unchecked for
+   * all of them and a new one could ship with no wording in any table (R25-F10).
+   */
+  .flatMap((name) => [...fs.readFileSync(path.join(toolDir, name), "utf8").matchAll(/^ {2}name: "([a-z_]+)"/gm)])
   .map((match) => match[1])
   .filter((name) => !UNNAMED_TOOLS.has(name))
 

@@ -354,7 +354,15 @@ export const ReadTool: ToolDefinition = {
       return {
         output: [`<path>${target}</path>`, "<type>directory</type>", "<entries>", shown.join("\n"), "", footer, "</entries>"].join("\n"),
         title: display || ".",
-        metadata: { path: display || ".", preview: shown.slice(0, PREVIEW_LINES).join("\n"), truncated: more, loaded: [] },
+        /*
+         * No `truncated` here, deliberately, and for the reason glob and grep
+         * withhold it: the runner reads that field as "this tool caps its own
+         * output" and skips the shared byte cap entirely. A listing slices by
+         * entry count only, and the count comes from the model, so
+         * `limit: 1000000` over a node_modules tree went into the request whole
+         * (R25-B4). The footer already says there is more.
+         */
+        metadata: { path: display || ".", preview: shown.slice(0, PREVIEW_LINES).join("\n"), loaded: [] },
       }
     }
 

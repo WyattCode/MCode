@@ -91,6 +91,19 @@ export async function officeRefusal(channel: string, args: readonly unknown[], r
   }
   const first = args[0] as string
   switch (channel) {
+    /*
+     * These four used to reach `default: return undefined` - no place check at
+     * all, although this file's own header says every one of them is checked
+     * before its handler runs. `file-size` was then an existence-and-size
+     * oracle for any path on the machine, the saved sign-ins included;
+     * `watch-file` would put a live directory handle on any folder, which on
+     * Windows is a handle the updater's sweep then has to fight; `reveal-path`
+     * popped Explorer anywhere (R25-E4).
+     */
+    case "mcode:file-size":
+    case "mcode:watch-file":
+    case "mcode:unwatch-file":
+    case "mcode:reveal-path":
     case "mcode:read-file-bytes":
     case "mcode:office-serve":
     case "mcode:office-convert-legacy":

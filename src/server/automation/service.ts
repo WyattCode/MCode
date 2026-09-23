@@ -381,7 +381,29 @@ export class AutomationService {
   }
 
   async start(options: { interval?: boolean } = {}): Promise<void> {
-    const raw = await fs.readFile(this.deps.file, "utf8").catch(() => undefined)
+    /*
+     * Three answers, and the third used to be read as the first.
+     *
+     * `.catch(() => undefined)` put a file that could not be *read* - a lock, a
+     * refusal, a failing disk - down the same path as a file that is not there:
+     * no tasks, no `blocked`, no `problem`, nothing said anywhere. The next
+     * change then called save(), which is gated on `blocked` alone, and wrote a
+     * one-task document over the twelve that were on disk, with no copy kept
+     * because the file was never judged damaged (R25-A2). Damage below is
+     * handled; this is the other half.
+     */
+    let raw: string | undefined
+    let unreadable: string | undefined
+    try {
+      raw = await fs.readFile(this.deps.file, "utf8")
+    } catch (cause) {
+      const code = (cause as NodeJS.ErrnoException).code
+      if (code !== "ENOENT") {
+        unreadable = `The scheduled tasks in ${this.deps.file} could not be read (${cause instanceof Error ? cause.message : String(cause)}), so nothing is saved over them. The file is intact; reopen the app once whatever is holding it has let go.`
+        this.blocked = unreadable
+        this.problem = unreadable
+      }
+    }
     if (raw !== undefined) {
       try {
         const parsed = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw) as Partial<Saved>

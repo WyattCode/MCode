@@ -26,8 +26,20 @@
  */
 export function followZoom(): () => void {
   let again = 0
+  /*
+   * How the two sources are told apart from an ordinary resize, and from each
+   * other. `devicePixelRatio` is the screen's ratio times the zoom factor, so
+   * it moves on a zoom step and holds still while a window is dragged to a new
+   * size - and the visual viewport reports both. Without this, every real
+   * resize also raised a synthetic one and the whole window re-measured two or
+   * three times per frame while the user dragged an edge (R25-C5); and a step
+   * that reached both sources announced itself twice over.
+   */
+  let ratio = window.devicePixelRatio
 
   function announce() {
+    if (window.devicePixelRatio === ratio) return
+    ratio = window.devicePixelRatio
     window.dispatchEvent(new Event("resize"))
     cancelAnimationFrame(again)
     again = requestAnimationFrame(() => window.dispatchEvent(new Event("resize")))

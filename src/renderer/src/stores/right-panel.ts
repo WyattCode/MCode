@@ -123,10 +123,21 @@ export const useRightPanel = defineStore("rightPanel", () => {
 
   function add(type: RightTabType, fields: Partial<RightTab> = {}): RightTab {
     seq += 1
+    /*
+     * The lowest number this kind is not already using, not "how many there
+     * are plus one" - which hands out a number that is taken whenever an
+     * earlier tab has been closed. Three terminals, close the first, open
+     * another, and the strip showed two tabs both called 终端 3 with nothing to
+     * tell them apart (R25-C2). The drawer's terminals have always done it this
+     * way; this path simply never asked.
+     */
+    const taken = new Set(tabs.value.filter((entry) => entry.type === type).map((entry) => entry.ord))
+    let ord = 1
+    while (taken.has(ord)) ord += 1
     const tab: RightTab = {
       id: `rt${seq}`,
       type,
-      ord: tabs.value.filter((entry) => entry.type === type).length + 1,
+      ord,
       ...fields,
     }
     tabs.value = [...tabs.value, tab]

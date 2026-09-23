@@ -242,7 +242,8 @@ export async function roundTwentyOneLaneFourChecks(check: Check, section: (name:
     check("the lit bell is MiMo's --color-priority-on in both schemes", /\.ico\.bell\.on,\s*\n:root \.brand-actions \.ico\.bell\.on \{\s*\n\s*color: #3295fb;/.test(side.style) && !/--text-accent/.test(side.style))
     // Item 49: MiMo's topbar icon colour, and its Windows pair.
     check("the title-bar glyphs are MiMo's --color-topbar-icon", /\.rail-tools \.ico \{\s*\n\s*color: #151c1399;/.test(side.style) && /:root\[data-theme="dark"\] \.rail-tools \.ico \{\s*\n\s*color: #f4f4f5;/.test(side.style))
-    check("the bell alone rests in its --color-mut off Windows", /\.rail-tools \.ico\.bell \{\s*\n\s*color: var\(--text-base\);/.test(side.style))
+    // The collapsed rail carries the toggle and 新建任务 and no bell, so the rule that styled one there was dead (R25-D10).
+    check("the bell alone rests in its --color-mut off Windows", /\.brand-actions \.ico\.bell \{\s*\n\s*color: var\(--text-base\);/.test(side.style) && !/\.rail-tools \.ico\.bell/.test(side.style))
     check("and on Windows they are #2b2b2b / #ececec, hover included", /\.app\[data-platform="win32"\][^{]*\{\s*\n\s*color: #2b2b2b;/.test(side.style) && /color: #ececec;/.test(side.style))
     check("their hover colour is MiMo's --color-txt", /\.ico:hover \{\s*\n\s*color: var\(--text-body\);/.test(side.style))
     // Item 54.

@@ -893,6 +893,15 @@ export class SessionRunner {
     else if (turn.opaque && !turn.watching) {
       blocked = "This turn was not recorded for undo, so it cannot be taken back."
     } else if (turn.opaque) blocked = watched?.unavailable
+    /*
+     * A file whose contents could not be taken blocks the turn whatever the
+     * scan said. Filing it as an ordinary turn would leave an entry that, on
+     * undo, deletes that file instead of restoring it (R25-A1).
+     */
+    if (!blocked) {
+      const lost = [...files.values()].find((file) => file.unreadable !== undefined)
+      if (lost) blocked = `${lost.unreadable}, so this turn cannot be taken back.`
+    }
 
     // A turn that changed nothing does not take up a place in the history.
     if (!blocked && files.size === 0) return
@@ -1131,7 +1140,12 @@ export class SessionRunner {
     const stored = await this.store.messages(session.id)
     const at = stored.findIndex((message) => message.id === boundary)
     if (at >= 0) {
-      for (const message of stored.slice(at)) await this.store.deleteMessage(session.id, message.id)
+      // By what is on disk, not by what could be read: see SessionStore.messageIDs.
+      const ids = await this.store.messageIDs(session.id)
+      const from = ids.indexOf(boundary)
+      for (const id of from >= 0 ? ids.slice(from) : stored.slice(at).map((message) => message.id)) {
+        await this.store.deleteMessage(session.id, id)
+      }
     }
     await this.store.dropReverted(session.id)
     const updated = await this.store.update(session.id, { revert: undefined })
@@ -1157,7 +1171,12 @@ export class SessionRunner {
     const at = stored.findIndex((message) => message.id === messageID)
     if (at < 0) throw new Error("That message is no longer in this conversation")
     const kept = new Set(stored.slice(0, at).map((message) => message.id))
-    for (const message of stored.slice(at)) await this.store.deleteMessage(sessionID, message.id)
+    // By what is on disk, not by what could be read: see SessionStore.messageIDs.
+    const ids = await this.store.messageIDs(sessionID)
+    const from = ids.indexOf(messageID)
+    for (const id of from >= 0 ? ids.slice(from) : stored.slice(at).map((message) => message.id)) {
+      await this.store.deleteMessage(sessionID, id)
+    }
     // subagents: the subagents the deleted turns started go with them.
     for (const child of await this.store.list()) {
       if (child.parentID !== sessionID || !child.parentMessageID || kept.has(child.parentMessageID)) continue
@@ -1218,7 +1237,15 @@ export class SessionRunner {
   private async writeNow(files: SnapshotFile[], directory?: string): Promise<SnapshotFile[]> {
     const swapped: SnapshotFile[] = []
     for (const file of files) {
-      swapped.push(await keepSnapshotFile(this.snapshots, directory, file.path))
+      const swap = await keepSnapshotFile(this.snapshots, directory, file.path)
+      /*
+       * What is on disk now is the other half of the swap - it is what a redo
+       * puts back. Recorded as "there was nothing here", a redo would delete
+       * the file, so a body that cannot be taken stops the restore instead
+       * (R25-A1), the same way an unanswerable store body does below.
+       */
+      if (swap.unreadable !== undefined) throw new Error(`${swap.unreadable}, so this turn cannot be put back`)
+      swapped.push(swap)
       // "Did not exist" in either shape: a checkpoint reference of null, or a legacy body of null.
       const absent = file.blob !== undefined ? file.blob === null : file.content === null
       if (absent) {
@@ -2487,6 +2514,16 @@ export class SessionRunner {
       if (controller.signal.aborted) return
       // The reference's `isLastStep`: tools that may not be called, and an instruction to write.
       const lastStep = limit !== undefined && step >= limit
+      /*
+       * And a stop, for a provider that does not honour being told no tools.
+       *
+       * `lastStep` only adds the instruction and asks for `toolChoice: "none"`.
+       * Nothing ended the loop, so a local OpenAI-compatible server that
+       * ignores `tool_choice` - which several shims do - kept calling tools and
+       * the turn ran, and billed, until the user pressed Stop, with the very
+       * setting meant to cap it switched on (R25-B3).
+       */
+      if (limit !== undefined && step > limit) break
 
       /*
        * Anything typed while the last step ran has to be on disk before the

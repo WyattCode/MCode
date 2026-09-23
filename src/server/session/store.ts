@@ -74,6 +74,18 @@ export interface SnapshotFile {
    * are bytes already and need none of this.
    */
   base64?: boolean
+  /**
+   * Why this file's contents could not be taken, when they could not.
+   *
+   * The third answer, between "here is what it held" and "it did not exist".
+   * A file that is merely locked - the routine Windows EBUSY this project waits
+   * out everywhere else - was recorded as the second, and an undo turns the
+   * second into a deletion, so pressing undo removed a file whose contents had
+   * been kept nowhere (R25-A1). Never persisted: a turn holding one of these is
+   * filed as a turn that cannot be taken back, and a restore that meets one
+   * refuses rather than going on.
+   */
+  unreadable?: string
 }
 
 /** Whether a recorded file points at the checkpoint store rather than carrying its body. */
@@ -737,6 +749,21 @@ export class SessionStore {
       await this.saveMessage({ ...message, sessionID: session.id }, true)
     }
     return session
+  }
+
+  /**
+   * Every message this conversation has on disk, in order, whether or not it
+   * can be read.
+   *
+   * `messages()` skips what it cannot read so that one damaged file does not
+   * cost the whole transcript - but a caller that *deletes* a range must not
+   * inherit that skip. Deleting "from this message on" by the messages that
+   * happened to read left the unreadable one behind, and it came back into the
+   * transcript afterwards, sitting after the message the user had just edited
+   * and going to the model as history from the branch they abandoned (R25-A4).
+   */
+  async messageIDs(sessionID: string): Promise<string[]> {
+    return this.storage.list(`session/${sessionID}/message`)
   }
 
   async messages(sessionID: string): Promise<Message[]> {

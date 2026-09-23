@@ -412,14 +412,14 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   box-sizing: border-box;
-  min-width: 19px;
-  height: 19px;
+  min-width: calc(19px * var(--ui-font-scale, 1));
+  height: calc(19px * var(--ui-font-scale, 1));
   padding: 0 4px;
   color: #fff;
   background: #3295fb;
   border-radius: 999px;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 500;
 }
 
@@ -458,7 +458,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   color: var(--text-base);
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-variant-numeric: tabular-nums;
 }
 
@@ -476,7 +476,7 @@ onBeforeUnmount(() => {
 /* The shadows stay the light ones in dark too: MiMo's utilities compile with fixed colours. */
 .vp-hint {
   color: var(--text-base);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 </style>

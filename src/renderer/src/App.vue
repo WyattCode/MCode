@@ -4522,9 +4522,17 @@ onBeforeUnmount(() => {
   padding-inline-end: calc(24px + v-bind(infoInset));
 }
 
-/* MiMo moves the find bar clear of the card whenever the card is up: 20 plus its 310. */
-.main.info-shown ~ [data-find-bar] {
-  margin-inline-end: 310px;
+/*
+ * MiMo moves the find bar clear of the card: 20 plus its own width.
+ *
+ * Keyed on `info-open`, not `info-shown`. `info-shown` is true in both modes,
+ * and a floating card takes no width at all - so on a narrow window the bar was
+ * pushed 310 in from a pane only about 460 wide and ran out over the side
+ * column (R25-D3). The width comes from the same binding every other consumer
+ * uses, so it cannot drift from INFO_PANEL_WIDTH on its own.
+ */
+.main.info-open ~ [data-find-bar] {
+  margin-inline-end: v-bind(infoInset);
 }
 
 /* Left of the caption buttons where Windows draws them, level with the header's own row: MiMo's 24px in a 32px row 9 down. */

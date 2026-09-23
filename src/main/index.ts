@@ -76,12 +76,12 @@ import {
   newTab,
   openPanel,
   panelState,
-  rescale as rescaleBrowser,
   screenshot,
   selectTab,
   setBounds,
 } from "./browser"
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
+import { EXECUTABLE_REFUSAL, isProgram } from "./paths"
 import { fcitxEnvironment } from "./linux-ime"
 import { linuxIconSync } from "./linux-icon-sync"
 import { WINDOW_STATE_FILE, maximizeAtStart, restore, saveWindowState, toggleMaximize, track } from "./window-state"
@@ -699,12 +699,9 @@ function createWindow(show = true): BrowserWindow {
   track(window, requested, () => ![...windows].some((entry) => entry !== window && !entry.isDestroyed()))
 
   // A pinch or Ctrl+wheel scales the page without going through applyZoom, so
-  // the band - and a browser tab's page, placed in the window's own pixels -
-  // has to follow that as well as the menu and keyboard paths.
-  window.webContents.on("zoom-changed", () => {
-    refreshTitlebar(window)
-    rescaleBrowser(window)
-  })
+  // the band has to follow that as well as the menu and keyboard paths. A
+  // browser tab's page is not re-placed here; see setBounds in browser.ts.
+  window.webContents.on("zoom-changed", () => refreshTitlebar(window))
   window.webContents.on("did-finish-load", () => refreshTitlebar(window))
 
   /*
@@ -1411,6 +1408,18 @@ app.whenReady().then(async () => {
     if (!target) return "outside the project"
     // No app named: hand it to the desktop, which is the default choice.
     if (openWith === undefined || openWith === null) {
+      /*
+       * Except a program. `inside` only checks the path against a root the
+       * caller itself nominated, so it settles nothing about what the file is,
+       * and this branch handed the name straight to the desktop - which on
+       * Windows runs it. The named-app branch below has always checked; this
+       * one did not, so `openFile("C:\\Windows\\System32", "cmd.exe")` started
+       * a shell with no dialog and no question (R25-E1). Same refusal as the
+       * other channel that opens a file for the reader.
+       */
+      const stat = await fs.stat(target).catch(() => undefined)
+      if (!stat?.isFile()) return "not a file"
+      if (await isProgram(target, stat)) return EXECUTABLE_REFUSAL
       // A non-empty return is the shell's reason for refusing; it is worth showing.
       return await shell.openPath(target)
     }
@@ -1453,8 +1462,21 @@ app.whenReady().then(async () => {
       // onto the shared HTML page - a file the browser would no longer open.
       filters: [saveFilter(suggested)],
     }
-    // Attached to the window where there is one (not on macOS, as MiMo), so it cannot be lost behind it.
-    const result = await (owner ? dialog.showSaveDialog(owner, options) : dialog.showSaveDialog(options)).finally(() => releaseDialog(claim))
+    /*
+     * try/finally, not `.finally` on the result. A `showSaveDialog` that throws
+     * on the way in - most plausibly an owner window destroyed between
+     * `fromWebContents` and this line, which renderer recovery does - never
+     * produced a promise to hang the release on, so the claim was held for the
+     * rest of the session and every later picker, save sheet and export in the
+     * window answered PICKER_BUSY (R25-E5).
+     */
+    let result
+    try {
+      // Attached to the window where there is one (not on macOS, as MiMo), so it cannot be lost behind it.
+      result = await (owner ? dialog.showSaveDialog(owner, options) : dialog.showSaveDialog(options))
+    } finally {
+      releaseDialog(claim)
+    }
     if (result.canceled || !result.filePath) return undefined
     await fs.writeFile(result.filePath, text, "utf8")
     savedFiles.add(result.filePath)

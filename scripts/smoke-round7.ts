@@ -942,7 +942,14 @@ export async function roundSevenModelChecks(check: Check, section: (name: string
 
     const actor = describe("actor")
     check("actor now lists the agent types, which it never did", actor.includes("Available agent types and what each one may do:"))
-    check("explore is named read-only", /explore: reads only/.test(actor))
+    /*
+     * It used to check for "explore: reads only", which the description said
+     * and the tool list contradicts: explore has bash, so it can change the
+     * project and its commands do go to the user (R25-B5). The check now pins
+     * the true pair - what it cannot do, and the warning that it is not a
+     * sandbox - so the old sentence cannot come back.
+     */
+    check("explore is named as the one that cannot write, and not as a sandbox", /explore: for finding things out/.test(actor) && /is refused to it/.test(actor) && /it is not a sandbox/.test(actor), actor.slice(actor.indexOf("- explore"), actor.indexOf("- explore") + 200))
     check("and general is named as the one that may change files", /general:/.test(actor) && actor.includes("change files"))
 
     /* The description is only worth anything if the provider is the one reading it. */

@@ -348,11 +348,22 @@ function wireWindow(window: BrowserWindow): void {
  * the one setting under which a browser tab was visibly wrong (R24). The
  * window's zoom factor is the conversion, and it is read here rather than sent,
  * so a step the renderer has not heard about yet cannot place the page wrongly.
+ *
+ * Nothing re-places the page when the zoom changes, deliberately. R24 added a
+ * `rescale` on that step and it was wrong every time: the bounds held here were
+ * measured at the *old* zoom, and the panel is pinned to the window's inline
+ * end, so its position in the renderer's own units changes as well as the
+ * conversion - multiplying the old number by the new factor threw the page
+ * hundreds of pixels past the window edge for a frame (R25-E3). The renderer
+ * re-measures and sends on the same step, which is the only account of where
+ * the frame now is; until it arrives the page holds the rect it already has,
+ * exactly as it does through a window resize.
  */
 export function setBounds(window: BrowserWindow, bounds: BrowserBounds): void {
   const panel = panels.get(window.id)
   if (!panel) return
   panel.bounds = bounds
+  if (window.isDestroyed() || window.webContents.isDestroyed()) return
   const scale = window.webContents.getZoomFactor() || 1
   activeTab(panel)?.view.setBounds({
     x: Math.round(bounds.x * scale),
@@ -360,16 +371,6 @@ export function setBounds(window: BrowserWindow, bounds: BrowserBounds): void {
     width: Math.max(0, Math.round(bounds.width * scale)),
     height: Math.max(0, Math.round(bounds.height * scale)),
   })
-}
-
-/**
- * The interface scaled under a page that is drawn over it. The frame has not
- * moved in the renderer's own units, so it sends nothing; the conversion above
- * is what changed, and the page is placed again from the bounds already held.
- */
-export function rescale(window: BrowserWindow): void {
-  const panel = panels.get(window.id)
-  if (panel) setBounds(window, panel.bounds)
 }
 
 function closePanel(window: BrowserWindow): void {

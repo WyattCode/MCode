@@ -189,13 +189,20 @@ const PHYSICAL = /^\s*(padding-(?:left|right)|margin-(?:left|right)|border-(?:le
  */
 const PHYSICAL_ALLOWED = new Set<string>([])
 
-// parts/ as well as components/ - a message part is as mirrored as a dialog is.
+/*
+ * parts/ and right/ as well as components/ - a message part is as mirrored as a
+ * dialog is, and so is the right-hand panel. right/ was missing, which is why
+ * six physical properties lived there unreported while the rule the scan states
+ * is absolute (R25-F12); wiring-check's own file list has always named it.
+ */
 const styledFiles = [
   ...fs.readdirSync(componentDir).filter((name) => name.endsWith(".vue")).map((name) => path.join(componentDir, name)),
-  ...fs
-    .readdirSync(path.join(componentDir, "parts"), { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".vue"))
-    .map((entry) => path.join(componentDir, "parts", entry.name)),
+  ...["parts", "right"].flatMap((folder) =>
+    fs
+      .readdirSync(path.join(componentDir, folder), { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".vue"))
+      .map((entry) => path.join(componentDir, folder, entry.name)),
+  ),
 ]
 
 for (const full of styledFiles) {

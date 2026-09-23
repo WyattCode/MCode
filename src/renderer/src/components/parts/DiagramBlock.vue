@@ -395,7 +395,7 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
 }
 
 .text .md-diagram-percent {
-  width: 38px;
+  width: calc(38px * var(--ui-font-scale, 1));
   color: var(--text-weak);
   font-size: calc(11px * var(--ui-font-scale, 1));
   font-variant-numeric: tabular-nums;

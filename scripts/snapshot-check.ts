@@ -11,6 +11,8 @@
  * So: a project outside git must leave no shadow repository behind, and one
  * inside git must still record and read back.
  */
+// First of all, so nothing here can read the person's own home directory.
+import "./fenced-home"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"

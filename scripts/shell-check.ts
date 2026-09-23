@@ -8,6 +8,8 @@
  * assertions that would have caught it are the two that need no input at all:
  * something arrives before anything is typed, and what is typed comes back.
  */
+// First of all, so nothing here can read the person's own home directory.
+import "./fenced-home"
 import os from "node:os"
 import path from "node:path"
 import { statSync } from "node:fs"

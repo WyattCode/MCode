@@ -107,12 +107,20 @@ if (!connect) {
     problems.push(`connect-src allows the socket source ${source}, which reaches beyond this machine`)
   }
   /*
-   * The other direction. http and https are deliberately not reachable from the
-   * window, which is what keeps rendered model output from being able to cause a
-   * request - so nothing in the renderer may use an API that needs them. The one
-   * thing that did was moved to the main process.
+   * The other direction. The open web is deliberately out of reach from the
+   * window, which is what keeps rendered model output from being able to cause
+   * a request, so nothing in the renderer may use an API that needs it.
+   *
+   * This whole scan used to sit behind `if (!/\bhttps?:/.test(connect))`, and
+   * connect-src has named `http://*.localhost:*` since the preview server
+   * arrived - so the test matched, the block was skipped, and for every round
+   * since then not one renderer file was looked at (R25-F1). The guard now says
+   * what it means: no *unrestricted* web source, and then the scan always runs.
    */
-  if (!/\bhttps?:/.test(connect)) {
+  for (const source of connect.split(/\s+/).filter(Boolean)) {
+    if (/^https?:$/.test(source) || /^https?:\/\/\*$/.test(source)) problems.push(`connect-src allows ${source}, which is the open web`)
+  }
+  {
     const walkFiles = (directory: string, out: string[] = []): string[] => {
       for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
         const full = path.join(directory, entry.name)
@@ -121,7 +129,18 @@ if (!connect) {
       }
       return out
     }
+    /*
+     * The one place the window may ask for something, and why.
+     *
+     * `officeServe` hands back a `http://<token>.localhost:<port>/` address on
+     * this app's own preview server - the source connect-src names - and the
+     * SVG card reads the file's text from it so it can draw the drawing inline
+     * rather than in a frame. Anything else on this list has to earn its line.
+     */
+    const allowed = new Map([["src/renderer/src/components/parts/LocalMedia.vue", "reads an SVG's text off this app's own preview server, which connect-src names"]])
     for (const file of walkFiles(path.join(root, "src/renderer/src"))) {
+      const relative = path.relative(root, file).replace(/\\/g, "/")
+      if (allowed.has(relative)) continue
       const text = fs.readFileSync(file, "utf8")
       for (const api of ["fetch(", "new XMLHttpRequest", "new EventSource"]) {
         // `prefetch(` and `refetch(` are ordinary names, not the global.

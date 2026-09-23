@@ -1,6 +1,5 @@
 import { BrowserWindow, type WebContents } from "electron"
 import { refreshTitlebar } from "./titlebar"
-import { rescale } from "./browser"
 import { nextZoom } from "./desktop-rules"
 
 /**
@@ -26,8 +25,6 @@ export function applyZoom(action: "in" | "out" | "reset", from?: WebContents): v
     // The caption band is drawn by the OS at whatever height it was last told,
     // so it has to be re-sent whenever the page scales under it.
     refreshTitlebar(window)
-    // Same for a browser tab's page: a native view over the panel, placed in the window's pixels.
-    rescale(window)
     // Each window says it with its own toast, as MiMo's do.
     window.webContents.send("mcode:zoom-changed", percent)
   }

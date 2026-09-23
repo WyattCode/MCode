@@ -79,8 +79,14 @@ export async function blockedPortChecks(check: Check, section: (name: string) =>
 
   for (const script of ["scripts/smoke.ts", "scripts/session-check.ts"]) {
     const source = await read(script)
-    const first = source.match(/^import .*$/m)?.[0]
-    check(`${script} loads safe-listen before anything else`, first === 'import "./safe-listen"', first)
+    const first = source.match(/^import .*$/gm)?.slice(0, 2) ?? []
+    /*
+     * Two side-effect imports, and both have to come before anything that
+     * could act on what they fence: `fenced-home` moves this process's idea of
+     * home off the person's own (R25-F), and `safe-listen` keeps every server
+     * the checks start off the ports fetch refuses.
+     */
+    check(`${script} fences the home folder and the ports before anything else`, first[0] === 'import "./fenced-home"' && first[1] === 'import "./safe-listen"', first)
   }
   // The patch itself: told the first port it gets is refused, it moves the server once, and the caller hears only the new port.
   const refused: number[] = []

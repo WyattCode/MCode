@@ -918,7 +918,21 @@ defineExpose({
   background: #242424;
 }
 
+/*
+ * The name on the card was a literal #444 with no dark rule of any kind, so on
+ * the #242424 thumbnail it sat at about 1.6:1 - the server's own name was the
+ * one thing on the card nobody could read (R25-D2). The label beside it was
+ * already #aaa.
+ */
+:root[data-theme="dark"] .rb-thumb-name {
+  color: #c8c8c8;
+}
+
 @media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .rb-thumb-name {
+    color: #c8c8c8;
+  }
+
   :root:not([data-theme="light"]) .rb-round {
     color: #a0a0a0;
   }

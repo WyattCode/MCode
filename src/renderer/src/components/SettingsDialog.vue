@@ -4223,10 +4223,16 @@ h3 {
   padding: 4px 0;
 }
 
-/* Wide enough for the longest short month and day the tables' languages write ("20 de set.", "20. Sept."). */
+/*
+ * Wide enough for the longest short month and day the tables' languages write
+ * ("20 de set.", "20. Sept.") - measured at the ordinary interface size, so the
+ * width has to follow the interface size too. It was a flat 64px against text
+ * that scales to 1.71x, with `nowrap` and nothing to clip it, so at the largest
+ * setting the date painted straight across the bar beside it (R25-D4).
+ */
 .day-name {
   flex-shrink: 0;
-  width: 64px;
+  width: calc(64px * var(--ui-font-scale, 1));
   white-space: nowrap;
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
@@ -4250,7 +4256,7 @@ h3 {
 .day-value,
 .day-cost {
   flex-shrink: 0;
-  width: 56px;
+  width: calc(56px * var(--ui-font-scale, 1));
   color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   text-align: end;
@@ -4538,13 +4544,6 @@ h3 {
     color: #0d0d0d;
     background: #ececec;
   }
-}
-
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
 }
 
 /*

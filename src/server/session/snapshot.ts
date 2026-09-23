@@ -2,7 +2,7 @@ import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import fs from "node:fs/promises"
 import path from "node:path"
-import { writeAtomic } from "../storage"
+import { readBytesWaiting, writeAtomic } from "../storage"
 import type { SnapshotFile } from "./store"
 
 /**
@@ -956,9 +956,24 @@ export class Recording {
  * document grow without bound.
  */
 export async function keepSnapshotFile(store: Checkpoints, directory: string | undefined, target: string): Promise<SnapshotFile> {
-  const bytes = await fs.readFile(target).catch(() => null)
-  // null stands for "did not exist", which a restore turns back into a deletion.
-  if (bytes === null) return { path: target, blob: null }
+  /*
+   * Three answers, not two.
+   *
+   * This used to be `.catch(() => null)`, and null is what a restore turns back
+   * into a deletion. So a file that was merely locked for a blink - the routine
+   * Windows EBUSY this project waits out everywhere else - was recorded as
+   * "there was no such file before this turn", and the undo the user pressed
+   * afterwards **deleted** it, with its contents kept nowhere. Only a genuine
+   * ENOENT may say "it did not exist"; anything else is reported up, and the
+   * turn is filed as one that cannot be taken back (R25-A1).
+   */
+  let bytes: Buffer | undefined
+  try {
+    bytes = await readBytesWaiting(target)
+  } catch (cause) {
+    return { path: target, unreadable: `${target} could not be read (${reason(cause)})` }
+  }
+  if (bytes === undefined) return { path: target, blob: null }
   /*
    * Without a project there is no store to put this in, and a turn must never
    * become un-undoable because of where it happened to run: the body is carried
@@ -1060,12 +1075,36 @@ export class Snapshots {
     return path.join(this.root, `${this.digest(directory)}.writers.json`)
   }
 
+  /**
+   * Ledgers whose file could not be read this launch, so nothing is written
+   * over them.
+   *
+   * A read failure used to be answered with `{}` - and that `{}` was cached for
+   * the life of the process, so the very next turn wrote it, plus its own
+   * paths, over a file holding every other conversation's claims. The guard
+   * that refuses an undo because "another conversation has changed X since this
+   * turn" then had nothing left to refuse on, and one conversation's undo wrote
+   * over another's later work (R25-A5). A file that will not *parse* is still
+   * rebuilt from the next turn: that one is derived data with nothing to lose.
+   */
+  private readonly unreadableLedgers = new Set<string>()
+
   private ledger(directory: string): Promise<Record<string, Writer>> {
     const file = this.ledgerFile(directory)
     const held = this.ledgers.get(file)
     if (held) return held
     const reading = (async () => {
-      const raw = await fs.readFile(file, "utf8").catch(() => undefined)
+      let raw: string | undefined
+      try {
+        raw = await fs.readFile(file, "utf8")
+      } catch (cause) {
+        if ((cause as NodeJS.ErrnoException).code !== "ENOENT") {
+          this.unreadableLedgers.add(file)
+          // Not remembered as an answer: the next turn reads again rather than inheriting this blink.
+          this.ledgers.delete(file)
+          return {}
+        }
+      }
       if (raw === undefined) return {}
       try {
         const parsed = JSON.parse(raw) as unknown
@@ -1093,6 +1132,8 @@ export class Snapshots {
 
   private async noteWrites(directory: string, sessionID: string, at: number, files: string[]): Promise<void> {
     const held = await this.ledger(directory)
+    // Read but not readable: writing now would replace every other conversation's claim with this one.
+    if (this.unreadableLedgers.delete(this.ledgerFile(directory))) return
     for (const file of files) held[pathKey(file)] = { session: sessionID, at }
     const names = Object.keys(held)
     if (names.length > WRITERS_KEPT) {
@@ -1314,14 +1355,29 @@ export class Snapshots {
       const owners = new Set(unreadable)
       for (const name of entries) {
         if (!name.endsWith(".writers.json")) continue
-        const raw = await fs.readFile(path.join(this.root, name), "utf8").catch(() => "")
+        const digest = name.slice(0, -".writers.json".length)
+        let raw: string
+        try {
+          raw = await fs.readFile(path.join(this.root, name), "utf8")
+        } catch (cause) {
+          /*
+           * A ledger that cannot be read says nothing about who owns the store,
+           * and this pass is the one that deletes stores. Answering "" used to
+           * mean the store was spoken for by nobody, so one locked ledger, in
+           * the same launch as an unreadable session record, destroyed that
+           * conversation's undo bodies for good (R25-A6). Kept instead: a store
+           * left behind costs disk, a store deleted costs the work.
+           */
+          if ((cause as NodeJS.ErrnoException).code !== "ENOENT") spokenFor.add(digest)
+          continue
+        }
         let writers: Record<string, Writer> = {}
         try {
           writers = JSON.parse(raw) as Record<string, Writer>
         } catch {
-          // An unreadable ledger names nobody.
+          // A ledger that will not parse names nobody; it is derived, and the store may go.
         }
-        if (Object.values(writers ?? {}).some((writer) => owners.has(writer?.session))) spokenFor.add(name.slice(0, -".writers.json".length))
+        if (Object.values(writers ?? {}).some((writer) => owners.has(writer?.session))) spokenFor.add(digest)
       }
     }
     let removed = 0

@@ -384,7 +384,7 @@ function openMenu(event: MouseEvent) {
 /* MiMo's title: 14 on regular weight in a 26px line, no padding, at most 320 wide. */
 .title {
   height: calc(26px * var(--ui-font-scale, 1));
-  max-width: 320px;
+  max-width: calc(320px * var(--ui-font-scale, 1));
   padding: 0;
   border-radius: 0;
   font-size: calc(14px * var(--ui-font-scale, 1));

@@ -151,7 +151,7 @@ onBeforeUnmount(() => {
 }
 
 .vp-title {
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 600;
 }
 
@@ -174,12 +174,12 @@ onBeforeUnmount(() => {
 .vp-empty {
   padding: 16px;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   text-align: center;
 }
 
 .vp-initial {
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .vp-row {
@@ -221,7 +221,7 @@ onBeforeUnmount(() => {
 
 .vp-note {
   overflow: hidden;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -229,12 +229,12 @@ onBeforeUnmount(() => {
 /* MiMo's pill keeps its one teal pair in both themes. */
 .vp-current {
   flex-shrink: 0;
-  margin-left: 6px;
+  margin-inline-start: 6px;
   padding: 1px 6px;
   color: #0f766e;
   background: #e8f5f3;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-font-scale, 1));
   white-space: nowrap;
 }
 

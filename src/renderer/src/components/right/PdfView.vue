@@ -1262,7 +1262,7 @@ const noteInside = (target: Node) => Boolean(rootEl.value?.contains(target))
 
 .pdf-rule {
   align-self: stretch;
-  border-left: 1px solid var(--border-weak);
+  border-inline-start: 1px solid var(--border-weak);
 }
 
 /* Loading, or why it failed: over the whole view, muted 13px. */
@@ -1503,7 +1503,7 @@ const noteInside = (target: Node) => Boolean(rootEl.value?.contains(target))
 .pdf-view .annotationLayer .popup > .header .popupDate {
   display: inline-block;
   width: fit-content;
-  margin-left: calc(5px * var(--total-scale-factor));
+  margin-inline-start: calc(5px * var(--total-scale-factor));
 }
 
 .pdf-view .annotationLayer .popupContent {

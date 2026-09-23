@@ -12,6 +12,8 @@
  * a helper and the one component that uses it is exactly what a type checker
  * has nothing to say about.
  */
+// First of all, so nothing here can read the person's own home directory.
+import "./fenced-home"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"

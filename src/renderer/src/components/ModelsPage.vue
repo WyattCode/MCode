@@ -538,8 +538,15 @@ h2 {
   background: #ffffff0f;
 }
 
+/*
+ * The ink as well as the rule. `.tab, .preset` above is (0,3,0) and `.tab.on`
+ * is (0,2,0), so the chosen chip's `color: var(--text-strong)` never applied in
+ * dark: the border came back here but the ink stayed the same #f4f4f5 as its
+ * neighbours, and what reads clearly in light was gone (R25-D9).
+ */
 :root[data-theme="dark"] .tab.on,
 :root[data-theme="dark"] .preset.on {
+  color: var(--text-strong);
   border-color: var(--text-strong);
 }
 
@@ -557,6 +564,7 @@ h2 {
 
   :root:not([data-theme="light"]) .tab.on,
   :root:not([data-theme="light"]) .preset.on {
+    color: var(--text-strong);
     border-color: var(--text-strong);
   }
 }

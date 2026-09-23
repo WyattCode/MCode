@@ -1125,9 +1125,29 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       await fs.writeFile(path.join(repo, "CONTEXT.md"), "ROOT-CONTEXT")
       const contextOnly = await systemPrompt({ directory: repo, agent: "build" })
       check("with neither, CONTEXT.md stands in", contextOnly.includes("ROOT-CONTEXT"))
-      const globbed = await systemPrompt({ directory: path.join(repo, "packages", "web"), agent: "build", instructionFiles: ["docs/*.md", "https://example.com/rules.md"] })
+      /*
+       * The fetch is a stub that records, so this says what its name says.
+       *
+       * It used to pass the real one, and the check below read "the web address
+       * did not end up in the prompt" - which it would not, because
+       * example.com/rules.md is a 404 and a non-2xx reply is dropped. So every
+       * run of the suite made a live request to a stranger's server, and the
+       * one thing being asserted was that stranger's status code (R25-F). What
+       * matters is that no request is made at all.
+       */
+      const fetched: string[] = []
+      const globbed = await systemPrompt({
+        directory: path.join(repo, "packages", "web"),
+        agent: "build",
+        instructionFiles: ["docs/*.md", "https://example.com/rules.md"],
+        fetchInstruction: async (url: string) => {
+          fetched.push(url)
+          return "WEB-RULES"
+        },
+      })
       check("the instructions setting's globs are found up to the repository's top", globbed.includes("DOCS-STYLE"), globbed.slice(-400))
-      check("and a web address is not fetched", !globbed.includes("example.com"))
+      check("a web address is fetched once, through the caller's own fetch", fetched.length === 1 && fetched[0] === "https://example.com/rules.md", fetched)
+      check("and what it answered is what goes in, under its address", globbed.includes("WEB-RULES") && globbed.includes('source="https://example.com/rules.md"'), globbed.slice(-300))
       const outside = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r5-plain-"))
       await fs.writeFile(path.join(outside, "AGENTS.md"), "PLAIN-AGENTS")
       check("a folder outside any repository still reads its own", (await systemPrompt({ directory: outside, agent: "build" })).includes("PLAIN-AGENTS"))

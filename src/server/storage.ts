@@ -111,10 +111,10 @@ const TRANSIENT_LOCK = new Set(["EPERM", "EACCES", "EBUSY"])
  * being the common case; readOrCorrupt still tells a lock that outlasts this
  * from a file that genuinely will not parse.
  */
-async function readWaiting(file: string): Promise<string | undefined> {
+async function readWithWait<T>(file: string, read: (file: string) => Promise<T>): Promise<T | undefined> {
   for (let attempt = 0; ; attempt++) {
     try {
-      return await fs.readFile(file, "utf8")
+      return await read(file)
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code
       if (code === "ENOENT") return undefined
@@ -122,6 +122,24 @@ async function readWaiting(file: string): Promise<string | undefined> {
       await new Promise((resolve) => setTimeout(resolve, 10 * 2 ** Math.min(attempt, 5)))
     }
   }
+}
+
+async function readWaiting(file: string): Promise<string | undefined> {
+  return readWithWait(file, (at) => fs.readFile(at, "utf8"))
+}
+
+/**
+ * The same wait, for a caller that needs the bytes rather than the text, and
+ * that has to tell the three answers apart itself.
+ *
+ * `undefined` means the file is genuinely not there - the only answer that may
+ * be read as "it did not exist". Anything else throws, because a lock is not an
+ * absence, and a caller that records one as the other records a file's whole
+ * contents as nothing. See `keepSnapshotFile`, where doing so turned an undo
+ * into a deletion.
+ */
+export async function readBytesWaiting(file: string): Promise<Buffer | undefined> {
+  return readWithWait(file, (at) => fs.readFile(at))
 }
 
 /**

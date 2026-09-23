@@ -864,8 +864,13 @@ body.resizing .right-panel {
   background: var(--surface-page);
 }
 
+/* The glyph under the pointer is repeated, or this (0,3,0) rule outranks the (0,2,0) hover and it stays dim (R25-D6). */
 :root[data-theme="dark"] .rp-add {
   color: #b8b8b8;
+}
+
+:root[data-theme="dark"] .rp-add:hover {
+  color: var(--text-body);
 }
 
 :root[data-theme="dark"] .lc-kbd {
@@ -884,6 +889,10 @@ body.resizing .right-panel {
 
   :root:not([data-theme="light"]) .rp-add {
     color: #b8b8b8;
+  }
+
+  :root:not([data-theme="light"]) .rp-add:hover {
+    color: var(--text-body);
   }
 
   :root:not([data-theme="light"]) .lc-kbd {

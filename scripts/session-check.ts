@@ -14,6 +14,8 @@
  * real ones.
  */
 // First, so every server the checks start avoids the ports fetch refuses.
+// First of all, so nothing here can read the person's own home directory.
+import "./fenced-home"
 import "./safe-listen"
 import http from "node:http"
 import { execFileSync } from "node:child_process"

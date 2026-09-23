@@ -56,7 +56,15 @@ export async function roundTwentyFourChecks(check: Check, section: (name: string
   section("Round 24 (2): a zoom step reaches the page as the resize it is")
   {
     const follow = code(await read("src/renderer/src/lib/zoom-resize.ts"))
-    check("the step is announced as a window resize, straight away", /function announce\(\) \{\s*\n\s*window\.dispatchEvent\(new Event\("resize"\)\)/.test(follow), follow)
+    check("the step is announced as a window resize, straight away", /ratio = window\.devicePixelRatio\s*\n\s*window\.dispatchEvent\(new Event\("resize"\)\)/.test(follow), follow)
+    /*
+     * And only for a step. The visual viewport reports an ordinary window
+     * resize too, so without this every real resize raised a synthetic one on
+     * top of it and the whole window re-measured two or three times a frame
+     * while an edge was dragged (R25-C5). `devicePixelRatio` is the screen's
+     * ratio times the zoom, so it moves on a step and holds still on a drag.
+     */
+    check("and only when the zoom has actually moved", /if \(window\.devicePixelRatio === ratio\) return/.test(follow))
     check(
       "from both sources, because a pinch never reaches the backend and the backend's message is the certain one",
       /window\.visualViewport\?\.addEventListener\("resize", announce\)/.test(follow) && /window\.mcode\?\.onZoomChanged\?\.\(announce\)/.test(follow),
@@ -100,13 +108,21 @@ export async function roundTwentyFourChecks(check: Check, section: (name: string
       /const scale = window\.webContents\.getZoomFactor\(\) \|\| 1/.test(browser) && /x: Math\.round\(bounds\.x \* scale\)/.test(browser) && /width: Math\.max\(0, Math\.round\(bounds\.width \* scale\)\)/.test(browser),
       browser.slice(browser.indexOf("export function setBounds"), browser.indexOf("export function setBounds") + 400),
     )
-    check("and read where it is used, so a step the renderer has not heard of cannot misplace the page", !/scale: number/.test(browser) && !/zoomFactor/.test(browser))
-    check("a step places the page again from the bounds already held", /export function rescale\(window: BrowserWindow\): void \{[\s\S]*?setBounds\(window, panel\.bounds\)/.test(browser))
-
+    check("and read where it is used, so a step the renderer has not heard of cannot misplace the page", !/bounds\.zoomFactor/.test(browser) && !/scale: number/.test(browser), browser.slice(browser.indexOf("const scale"), browser.indexOf("const scale") + 80))
+    check("a destroyed window is not asked for its zoom", /if \(window\.isDestroyed\(\) \|\| window\.webContents\.isDestroyed\(\)\) return/.test(browser))
+    /*
+     * Round 24 also re-placed the page on every zoom step, and three checks
+     * here pinned that. It was wrong every time: the bounds held in the main
+     * process were measured at the *old* zoom and the panel is pinned to the
+     * window's inline end, so multiplying them by the new factor threw the page
+     * hundreds of pixels past the window edge for a frame (R25-E3). The
+     * renderer re-measures and sends on the same step; nothing else may.
+     */
+    check("nothing re-places the page from the bounds already held, which were measured at the old zoom", !/export function rescale/.test(browser))
     const zoom = code(await read("src/main/zoom.ts"))
-    check("the keyboard and menu path calls it", /rescale\(window\)/.test(zoom))
     const main = code(await read("src/main/index.ts"))
-    check("and so does the pinch, which never goes through that path", /window\.webContents\.on\("zoom-changed", \(\) => \{[\s\S]*?rescaleBrowser\(window\)/.test(main))
+    check("so neither zoom path reaches into the browser panel", !/rescale/.test(zoom) && !/rescaleBrowser/.test(main))
+    check("and both still re-send the caption band, which does not depend on the renderer", /refreshTitlebar\(window\)/.test(zoom) && /window\.webContents\.on\("zoom-changed", \(\) => refreshTitlebar\(window\)\)/.test(main))
   }
 
   // --------------------------------------------------------------- R24-5

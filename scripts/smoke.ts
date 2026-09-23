@@ -7,6 +7,8 @@
  * itself is the one piece this cannot reach without one.
  */
 // First, so every server the checks start avoids the ports fetch refuses.
+// First of all, so nothing here can read the person's own home directory.
+import "./fenced-home"
 import "./safe-listen"
 import { nameFromId } from "../src/server/provider/model-name"
 import { commandRisk } from "../src/server/command-risk"
@@ -437,6 +439,7 @@ import { roundTwentyTwoLaneOneChecks } from "./smoke-round22-l1"
 // Round 23: the second code review - unreadable documents answered as damage, the compaction that swallowed a question, dark-outranked state rules.
 import { roundTwentyThreeChecks } from "./smoke-round23"
 import { roundTwentyFourChecks } from "./smoke-round24"
+import { roundTwentyFiveChecks } from "./smoke-round25"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7116,6 +7119,7 @@ async function main() {
   await roundTwentyTwoLaneOneChecks(check, section)
   await roundTwentyThreeChecks(check, section)
   await roundTwentyFourChecks(check, section)
+  await roundTwentyFiveChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

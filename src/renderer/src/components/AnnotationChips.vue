@@ -315,7 +315,7 @@ function onEditKey(event: KeyboardEvent) {
 }
 
 .cchip-ref {
-  max-width: 96px;
+  max-width: calc(96px * var(--ui-font-scale, 1));
   overflow: hidden;
   text-overflow: ellipsis;
 }

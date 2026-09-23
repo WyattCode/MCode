@@ -82,8 +82,15 @@ export async function openDocument(file: { path: string; name?: string }, direct
   const legacy = legacyTypeOf(name) ?? legacyTypeOf(file.path)
   if (legacy) {
     const tab = rp.openOffice({ path: file.path, sourcePath: file.path, name, fileType: legacy })
-    // A tab already showing the converted copy keeps it on screen while the (cached) conversion is checked.
-    const shown = tab.sourcePath === file.path && tab.filePath !== file.path && !tab.converting
+    /*
+     * A tab already showing the converted copy keeps it on screen while the
+     * (cached) conversion is checked. A tab that has just been made is not
+     * showing anything: `filePath` is not set yet, which used to satisfy the
+     * `!== file.path` test, so a first open of a .doc never entered the
+     * converting state and sat on 无文件 - "no file" - for the several seconds
+     * LibreOffice took, which reads as a failure (R25-C1).
+     */
+    const shown = tab.sourcePath === file.path && tab.filePath !== undefined && tab.filePath !== file.path && !tab.converting
     if (!shown) rp.update(tab.id, { converting: true })
     const result = await window.mcode.officeConvertLegacy(file.path)
     if (!result.ok) {

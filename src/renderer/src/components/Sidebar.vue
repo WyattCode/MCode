@@ -1623,7 +1623,15 @@ onBeforeUnmount(() => {
         </span>
       </div>
       <template v-if="priority || recentOpen">
-        <div v-if="!listed.length" class="empty">{{ t("side.noTasks") }}</div>
+        <!--
+          Only once the list has been read. `app.ready` exists for exactly this
+          - its own comment says so - and nothing read it, so every cold start
+          drew "no tasks" over an empty list for as long as the first
+          `session.list` took, then replaced it with the conversations (R25-C3).
+          Nothing is drawn in its place: a spinner for a few hundred
+          milliseconds is its own flicker.
+        -->
+        <div v-if="!listed.length && app.ready" class="empty">{{ t("side.noTasks") }}</div>
         <template v-for="(entry, index) in listed" :key="`${entry.group}-${entry.session?.id ?? entry.section ?? entry.head ?? index}`">
         <div v-if="entry.section" class="section priority-head">
           <span class="section-head">{{ t(entry.section === "priority" ? "side.priority" : "side.priorityPinned") }}</span>
@@ -1983,8 +1991,7 @@ onBeforeUnmount(() => {
 }
 
 /* The bell alone rests in MiMo's --color-mut, which is a step back from the others on dark. */
-.brand-actions .ico.bell,
-.rail-tools .ico.bell {
+.brand-actions .ico.bell {
   color: var(--text-base);
 }
 
@@ -1995,8 +2002,7 @@ onBeforeUnmount(() => {
     color: #f4f4f5;
   }
 
-  :root:not([data-theme="light"]) .brand-actions .ico.bell,
-  :root:not([data-theme="light"]) .rail-tools .ico.bell {
+  :root:not([data-theme="light"]) .brand-actions .ico.bell {
     color: var(--text-base);
   }
 }
@@ -2007,8 +2013,7 @@ onBeforeUnmount(() => {
   color: #f4f4f5;
 }
 
-:root[data-theme="dark"] .brand-actions .ico.bell,
-:root[data-theme="dark"] .rail-tools .ico.bell {
+:root[data-theme="dark"] .brand-actions .ico.bell {
   color: var(--text-base);
 }
 
