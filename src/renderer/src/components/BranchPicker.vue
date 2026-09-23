@@ -329,7 +329,7 @@ svg circle {
 
 /* Hover only, as MiMo's is: it has no rule holding the chip lit while its menu is open. */
 .chip:hover {
-  color: #151c13cc;
+  color: var(--text-body);
   background: var(--surface-hover);
 }
 
@@ -364,9 +364,9 @@ svg circle {
   max-width: min(320px, 100vw - 40px);
   padding: 5px;
   background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 16px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-composer);
   backdrop-filter: blur(18px) saturate(150%);
   transform-origin: top;
   animation: menu-in 0.15s ease-out;
@@ -405,7 +405,7 @@ svg circle {
 .search input {
   flex: 1;
   min-width: 0;
-  color: #151c13cc;
+  color: var(--text-body);
   background: transparent;
   border: 0;
   outline: none;
@@ -433,7 +433,7 @@ svg circle {
   width: 100%;
   min-width: 0;
   padding: 6px 10px;
-  color: #151c13cc;
+  color: var(--text-body);
   background: transparent;
   border-radius: 11px;
   font-size: calc(13px * var(--ui-font-scale, 1));
@@ -521,10 +521,10 @@ svg circle {
 .dialog {
   width: min(430px, 90vw);
   padding: 22px 24px;
-  background: var(--surface-raised);
+  background: var(--surface-page);
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--shadow-pop);
 }
 
 .dialog-head {
@@ -549,7 +549,7 @@ svg circle {
   width: 30px;
   height: 30px;
   margin-inline-end: -4px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 7px;
@@ -561,10 +561,10 @@ svg circle {
   background: var(--surface-hover);
 }
 
-/* MiMo's permc-desc: 14px in --color-txt (#151c13cc light, #f4f4f5 dark). */
+/* MiMo's permc-desc: 14px in --color-txt. */
 .dialog-desc {
   margin: 0 0 20px;
-  color: #151c13cc;
+  color: var(--text-body);
   font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: 1.65;
 }
@@ -606,15 +606,9 @@ svg circle {
 }
 
 /*
- * MiMo's --color-txt, --color-icon and --color-send on the dark scheme. Lane F1
- * is adding tokens for the first two; until they land the pair is written out.
+ * MiMo's --color-icon and --color-send on the dark scheme. Neither has a token
+ * of its own, so both are written out.
  */
-:root[data-theme="dark"] .dialog-desc,
-:root[data-theme="dark"] .chip:hover,
-:root[data-theme="dark"] .row,
-:root[data-theme="dark"] .search input {
-  color: #f4f4f5;
-}
 
 :root[data-theme="dark"] .row .i {
   color: #d0d0d0;
@@ -644,13 +638,6 @@ svg circle {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .dialog-desc,
-  :root:not([data-theme="light"]) .chip:hover,
-  :root:not([data-theme="light"]) .row,
-  :root:not([data-theme="light"]) .search input {
-    color: #f4f4f5;
-  }
-
   :root:not([data-theme="light"]) .row .i {
     color: #d0d0d0;
   }

@@ -6,6 +6,8 @@
 - 目标：在界面和功能上 1:1 复刻 Xiaomi MiMo 桌面端，MCode 保留自己的名字、图标和字标
 - 对照清单（逐项实测，含百分比）：https://claude.ai/code/artifact/f149a5d1-857e-4bae-80be-ca03265d9f83
 - 最近更新：2026-09-23（第二十二轮 L2 路，版本 0.4.1）
+- 最近更新：2026-09-23（第二十二轮 L1，版本 0.4.1）
+- 第二十二轮 L1（2026-09-23）：把第二十一轮 F1 留下的清单扫完——两个 opencode 阴影按用途换成 MiMo 的四个、半像素边框统一 --border-input、--color-txt 改用 --text-body、dim/mut 按种类而非尺寸归位、tooltip 宽度与几处死代码。见下方「第二十二轮 · L1」一节；报告在 scratchpad r22l1-*.json / *.png
 - 第十二轮（2026-09-19/20）：三个新的只读角度（数据生命周期与版本升级、主进程与界面的通信契约、失败与空状态）的审计已做完，34 项全部完成并合并入 `v2.0`，见下方「第十二轮」一节。报告在 scratchpad `round12-lifecycle.md` / `round12-ipc.md` / `round12-failure-ux.md`
 - 第十三轮（2026-09-20）：键盘与焦点、多实例与窗口生命周期、大数据量三个只读角度，37 项全部完成并合并入 `v2.0`，见下方「第十三轮」一节。报告在 scratchpad `round13-keyboard.md` / `round13-instances.md` / `round13-scale.md`
 - 第十四轮（2026-09-20）：网络与代理、本地化格式与从右到左、打包安装与自动更新三个只读角度，16 项全部完成并合并入 `v2.0`，见下方「第十四轮」一节。报告在 scratchpad `round14-network.md` / `round14-locale.md` / `round14-packaging.md`
@@ -31,6 +33,28 @@
 - 验证：`typecheck` / `i18ncheck` / `wiringcheck` / `themecheck` / `build` 全过；`smoke` 6852 过 1 失败——失败的是**与本路无关的既有问题** `T3-8`（`scripts/smoke-perf-thread.ts:79`），在干净的 v2.0 上同样失败：`smoke-round16-continuation.ts` 把 `process.env.TZ` 改成 `Etc/GMT±12`（按运行时刻的 UTC 小时选方向）后恢复不干净，`dateIn` 缓存的格式化器与新建的对不上，所以按一天中的时间随机红。已另开任务。
 - 新检查：`scripts/smoke-round22-l2.ts`（41 条，注册在 `smoke.ts`），在 v2.0 上 21 条失败；`scripts/r22l2-prove.ts` 就是那份证明（`git show v2.0:` 取旧文件再跑同一个函数）。
 - 真窗口实测（`scratchpad/r22l2/l2-probe.cjs`，一次性配置目录、`win.show()`、`win.isVisible() === true`、缩放 1、浅深两套）：标签条、启动器、子智能体详情、带修订的 docx、版本弹窗、diff 标签、审阅刷新 hover；错误条另外用两个「打断构建」跑（`RpReview` 抛错 → `PaneBoundary`；`RightPanel` 抛错 → `ErrorBoundary`），测完已还原。测得：选中标签 `#fffefd` / `#181818`；`.fc-btn` 与 `.vp-restore` 深色 `#141414` → `#181818`；修订栏头 `#151c13cc` / `#f4f4f5`；diff 选中段 `#fffefd`+`#151c13cc` / `#181818`+`#f4f4f5`；刷新 hover `#151c13cc` / `#f4f4f5`（底 `#f1f0ec` / `#ffffff0f`）；`.lc-icon` 16×16 `margin 0 2px`；子智能体副标题与模型胶囊 11px；两条错误条 `margin: 0px`。截图在同目录 `l2-*.png`。
+## 第二十二轮 · L1：把 F1 交接的清单扫完（2026-09-23）
+
+第二十一轮 F1 只能改到 token 文件本身，剩下的散在各组件里。本轮按它留的清单逐条做完，全部重新拿 MiMo 26.920 的 `renderer/assets` 核过。
+
+- **两个 opencode 时代的阴影没了**：MiMo 的浮层壳只有一套 `gC` = `z-[1000] rounded-[16px] border-[0.5px] border-input-border menu-glass p-[5px] shadow-composer`，弹出层（Radix popover）和下拉内容都用它；它自己的 `.menu` 类（@ 菜单与斜杠菜单）是 12 圆角 + 1px `--color-line` + `--color-bg` + `--shadow-menu`；对话框是 16 圆角 + line + `bg-bg` + `--shadow-pop`；`.spine-preview` 与 `.info-panel-card` 又回到 `--shadow-composer`。所以 `--shadow-lg`（19 处）与 `--shadow-overlay`（12 处）按用途分给了四个 token，对话框的 `--surface-raised` 改成 `--surface-page`。`--shadow-xs-border` 无人使用，删掉。
+- **例外（已实测，不要"修"回去）**：图片预览、视频预览、服务商选择下拉这三处 MiMo 挂的是 Tailwind 的 `shadow-pop` **工具类**，而工具类把浅色值烤死（`--tw-shadow:0 12px 40px var(--tw-shadow-color,#00000024)`），不随深色翻转；这三处保留字面值。对话框上 MiMo 既有工具类又有自己的 CSS 规则（`.np-card` 在样式表里靠后），CSS 规则胜出，所以对话框用 token。
+- **半像素边框**：MiMo 样式表里 9 条半像素规则 + 标记里 2 个半像素类，11 个全是 `--color-input-border`，它从不用别的颜色画半像素。15 处 `0.5px solid var(--border-weak)` 与 2 处字面 `#151c130f` 改成 `--border-input`。两个不算：@/斜杠菜单（MiMo 是整像素 line，顺带把玻璃底改成 `--surface-page`，因为 MiMo 的 `.menu` 写在 `.menu-glass` 之后），以及设置页行分隔（MiMo 是 1px `--color-set-line` 的伪元素，左右各缩 16）。
+- **`--text-body`**：69 条写死的 `#151c13cc` 改成 token（加上 F1 已经在 base.css 里用掉的 9 条，全仓共 78 处），只写深色那一半的 50 条规则（120 行选择器）随之删除。剩下还写着的不是这一对（浅色是 `--text-strong` 或 `--text-base`，深色才是那个墨色），留着。MCP 失败药丸的红改用 `--text-critical`；`ConnectDialog` / `CustomProviderForm` / `ProviderCloneDialog` 里的红是 Tailwind red-400/red-500，不是 `--color-err`，不动。
+- **dim / mut**：**按尺寸分不出来**。数 MiMo 自己：12px 上 mut 93 次、dim 25 次，13–14px 上 mut 62 次、dim 13 次。真正的规律是"按种类"——dim 归：菜单/侧栏/设置导航的空状态（`at-empty`、`conv-empty`、`proj-empty`、`sn-empty`、`sim-empty`）、分组标题（`at-group-label`、`sn-group`）、列表行的元信息（时间、分支、子代理胶囊）、`confirm-queue`、等宽路径；mut 归其余所有安静的东西：各种尺寸的图标按钮、菜单的段标题（`mi-section`）、对话框的标签与正文、提示、注记、加载行、消息自己的时间（`user-time`）。照此改了 52 处（含五个各自重画 `.dialog-close` 的对话框关闭按钮），更新气泡的三种墨色按 MiMo 拆开。匹配到 dim 那一类的本来就对，一个没动。
+- **其余**：`.app-tip.card` 的 `max-width: 388px` 删掉（MiMo 的 tooltip 内容两种变体共用 `max-w-[420px]`）；`MenuItem.iconColor` 与 `.tinted` 删掉（F3 拿走了最后一个调用方）；`App.vue` 的 win32/linux 覆盖里 `--surface-hover` / `--surface-selected` 删掉（MiMo 那一段确实写了，但它的根上已经是同样的 `#f1f0ec` / `#eeedec`）；终端标签关闭改用 `--overlay-hover`；终端与插件页各自重画的 `.icon-btn` 改回共用的；插件页与技能详情的开关改成 MiMo 的 32×18 与 `--color-switch-on/off`。
+- **检查**：`scripts/smoke-round22-l1.ts` 59 条。拿 v2.0 那一版渲染层跑，47 条失败；本轮跑完 59 条全过。另外把 12 条旧检查里钉死旧值的地方（`#151c13cc`、`--shadow-lg`、`0 12px 40px #00000024`、`#00000014`、`#d23f3f`、`.thread-loading` 的 dim）改成 token 名。
+- **真窗口探针**：`scratchpad/r22l1-probe.cjs`，浅深两套、一次性配置目录、`win.isVisible() === true`、截了侧栏/输入框/菜单/右键菜单/tooltip/文件页/对话框。改动前后各跑一遍（前者临时把渲染层 checkout 到 v2.0 再 build），差异只有预期的那些：菜单阴影由三层带环的 `--shadow-lg` 变成 `--shadow-composer`、边框由 `#f0ebe5` 变 `#151c130f`、对话框底色 `#ffffff`→`#fffefd`、阴影→`--shadow-pop`、关闭与副标题由 `--text-weak`（0.4 / `#777`）变 `--text-base`（0.6 / `#b8b8b8`）、卡片 tooltip 388→420、`--shadow-lg` / `--shadow-overlay` 解析为空。输入框的边框与阴影前后完全一致，证明那几处字面值换 token 是等值改写。
+
+### 没能对上的（留给以后）
+
+| 位置 | 为什么 |
+| --- | --- |
+| `SettingsDialog.vue` `.line` 的 `border-bottom: 0.5px var(--border-weak)` | MiMo 对应的是 `.sr:after` —— 1px `--color-set-line` 伪元素，左右各缩 16，不是 input-border；换过去会更错 |
+| `InfoBranchMenu.vue` 的 12 圆角 | 同族的 `InfoCommitCard` 有 `w-[300px] gap-[6px] p-[10px]` 直接对得上 `gC`（已改成 16），这一个没有同样硬的证据 |
+| `MediaCoverflow` / `MediaStrip` 的 meta 行 | MiMo 是 `text-11 text-txt`，MCode 是 12px 的安静灰；尺寸和墨色都要改，超出本轮范围 |
+| `.boot-msg`、`AppMenu` 的 `.brand`、`ArtifactsView` 的 `.chip-count`、`InfoSection` 的 `.count`、`SettingsDialog` 的 `.keys-desc` / `.total-name` / `.day-name` | MiMo 没有对应元素，或它那一处颜色是继承来的，分不出 dim 还是 mut |
+| 约 90 处没写 `font-size` 的 `--text-weak`（图标、字形、占位符） | MiMo 的字形有三种墨色：菜单行里是 `--color-icon`，图标按钮上是 mut，小的行内标记是 dim；要逐个截图才分得清 |
 
 ## 第二十一轮 · F1：颜色 token 与共用控件（2026-09-23）
 
@@ -512,6 +536,10 @@
   - **`.cchip` 的高度跟 UI 字号缩放**，MiMo 写的是字面 `24px`。MiMo 自己的字是 `var(--text-13)`（会缩放），最大 UI 字号下 22.3px 的字放不进 24px 的 `overflow:hidden` 胶囊，它会把标签上下切掉。
   - **版本弹窗「回溯」按钮的边框用 `--border-weak`**。MiMo 写的是 `border:1px solid var(--line, #e2e8f0)`，而它从来没有定义过 `--line`（只有 `--color-line`），所以两套配色下都落到 `#e2e8f0`——深色里是一圈浅石板灰。
   - **`.rp-tab.active` 在深色下保留一条显式覆盖**。不是差异，是必须：MiMo 的层叠里 `.rp-tab.active` 就压得过 `.rp-tab`，MCode 因为 `:root[data-theme="dark"]` 前缀反了过来，删掉覆盖会画错。
+- 第二十二轮 L1 新增（照 MiMo 实测，不是疏漏）：
+  - **图片预览、视频预览、服务商选择下拉的阴影保留字面值 `0 12px 40px #00000024`，深色下不翻转。** MiMo 这三处挂的是 Tailwind 的 `shadow-pop` 工具类，工具类把浅色值烤进 `--tw-shadow`，不读 token；只有写了 CSS 规则的地方（`.np-card`、`.settings-full`）才用 `var(--shadow-pop)` 并随主题翻转。
+  - **@ 菜单与斜杠菜单不用浮层壳。** MiMo 给它们的是自己的 `.menu` 类：12 圆角、整像素 `--color-line`、`--color-bg` 底、`--shadow-menu`；`.menu-glass` 写在前面被盖掉，只剩背后那层模糊（不透明底下看不见）。其余所有弹出层才是 16 圆角 + 半像素 input-border + 玻璃 + `--shadow-composer`。
+  - **设置页的行分隔保持 `--border-weak`**，不进半像素统一：MiMo 那一条是 1px `--color-set-line` 的伪元素，左右各缩 16。
 
 - 第二十一轮 F1 新增（MiMo 自己那一处 CSS 是坏的，MCode 保留能用的行为）：
   - `--overlay-hover` 深色用 `#ffffff14`。MiMo 的 `.bp-tab-x:hover{background:#00000014}` 没有深色覆盖，深色下那层黑几乎看不见。

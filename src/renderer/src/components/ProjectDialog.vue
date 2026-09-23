@@ -179,10 +179,10 @@ async function save() {
   gap: 8px;
   width: min(520px, 90vw);
   padding: 20px 22px 18px;
-  background: var(--surface-raised);
+  background: var(--surface-page);
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-pop);
 }
 
 header {
@@ -202,7 +202,7 @@ h2 {
 }
 
 .x {
-  color: var(--text-weak);
+  color: var(--text-base);
   padding: 4px;
   border-radius: var(--radius-md);
 }
@@ -214,7 +214,7 @@ h2 {
 
 .label {
   margin-top: 8px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 

@@ -40,15 +40,16 @@ export async function roundTwentyOneLaneFTwoChecks(check: Check, section: (name:
   const confirm = code(await read("src/renderer/src/components/ConfirmDialog.vue"))
   const connect = code(await read("src/renderer/src/components/ConnectDialog.vue"))
   const i18n = await read("src/renderer/src/lib/i18n.ts")
+  const tokens = code(await read("src/renderer/src/styles/tokens.css"))
 
   // ------------------------------------------------------------------ F2-1
   section("Round 21 (F2-1): the settings dialog's red states are drawn, not dropped")
   {
     const owned = [settings, models, form, clone, connect]
-    check("no settings-side red still waits on the undefined --text-critical", owned.every((file) => !/--text-critical/.test(file)))
+    check("--text-critical is defined now, so the settings reds may name it", /--text-critical: #d23f3f;/.test(tokens))
     const pill = rule(style, ".mcp-status.err")
-    check("MiMo's failure pill: --color-err under an 8% fill and a 35% ring", /color: #d23f3f;/.test(pill) && /#d23f3f 8%/.test(pill) && /#d23f3f 35%/.test(pill), pill)
-    check("its tools error line is the same red", /color: #d23f3f;/.test(rule(style, ".mcp-tools-hint.err")))
+    check("MiMo's failure pill: --color-err under an 8% fill and a 35% ring", /color: var\(--text-critical\);/.test(pill) && /--text-critical\) 8%/.test(pill) && /--text-critical\) 35%/.test(pill), pill)
+    check("its tools error line is the same red", /color: var\(--text-critical\);/.test(rule(style, ".mcp-tools-hint.err")))
     const conflict = rule(style, ".keys-record-box.conflict")
     check("a shortcut conflict is red-500, border, fill and text", /#fb2c36/.test(conflict) && (conflict.match(/#fb2c36/g) ?? []).length === 3, conflict)
     check("so is the conflict line and the delete hover", /color: #fb2c36;/.test(rule(style, ".keys-record-conflict")) && /color: #fb2c36;/.test(rule(style, ".keys-icon.danger:hover")))
@@ -77,7 +78,7 @@ export async function roundTwentyOneLaneFTwoChecks(check: Check, section: (name:
   {
     const dialog = rule(style, ".dialog")
     check("MiMo's settings-full gives up a fixed 48 and 88, not a share of the window", /width: min\(960px, 100vw - 48px\);/.test(dialog) && /height: min\(660px, 100vh - 88px\);/.test(dialog), dialog)
-    check("--shadow-pop replaces the stale --shadow-lg", /box-shadow: 0 12px 40px #00000024;/.test(dialog) && !/--shadow-lg/.test(style))
+    check("--shadow-pop replaces the stale --shadow-lg", /box-shadow: var\(--shadow-pop\);/.test(dialog) && !/--shadow-lg/.test(style))
     check("it opens on MiMo's --ease-enter", /settings-overlay-in 0\.18s cubic-bezier\(0\.2, 0\.7, 0\.2, 1\)/.test(style))
     check("the page carries the thin 9px bar", /class="content u-scrollbar-thin"/.test(template))
     check("sc-h1 and sc-sec are 26 off what follows", /margin: 0 0 26px;/.test(rule(style, "h2")) && /margin: 26px 0 4px;/.test(rule(style, "h3")))
@@ -129,8 +130,10 @@ export async function roundTwentyOneLaneFTwoChecks(check: Check, section: (name:
     ] as const) {
       check(`${name} is mut`, /color: var\(--text-base\);/.test(rule(style, selector)), selector)
     }
-    check("a tool's own name takes MiMo's txt ink", /color: #151c13cc;/.test(rule(style, ".mcp-tool-name")) && /:root\[data-theme="dark"\] \.mcp-tool-name \{\s*color: #f4f4f5;/.test(style))
-    check("the px unit and a shortcut's description move off --text-weaker", /color: var\(--text-weak\);/.test(rule(style, ".unit")) && /color: var\(--text-weak\);/.test(rule(style, ".keys-desc")))
+    check("a tool's own name takes MiMo's txt ink", /color: var\(--text-body\);/.test(rule(style, ".mcp-tool-name")))
+    // R22-L1 took the unit on to --text-base; the shortcut description has no
+    // MiMo counterpart to read a tone off, so it stays where F2 put it.
+    check("the px unit and a shortcut's description move off --text-weaker", /color: var\(--text-base\);/.test(rule(style, ".unit")) && /color: var\(--text-weak\);/.test(rule(style, ".keys-desc")))
     check("the worktree tag is legible", /color: var\(--text-weak\);/.test(rule(style, ".wt-tag")))
     const panel = rule(style, ".mcp-tools-panel")
     check("MiMo draws no rule under the tools panel, and pulls it 6 up on the card's 16", /margin-top: -6px;/.test(panel) && /padding: 4px 16px 14px;/.test(panel) && !/border-bottom/.test(panel), panel)
@@ -199,7 +202,7 @@ export async function roundTwentyOneLaneFTwoChecks(check: Check, section: (name:
     check("the three pickers show a 14px chevron", (form.match(/class="cp-caret"/g) ?? []).length === 2 && /width: 14px;/.test(rule(formStyle, ".cp-caret")))
     check("a model card is MiMo's own, on the elevated card inside --color-line", /background: #fffefd;/.test(rule(formStyle, ".cp-model")) && /border: 1px solid #f0ebe5;/.test(rule(formStyle, ".cp-model")))
 
-    check("a tab and a chip are MiMo's txt ink with no fill when chosen", /color: #151c13cc;/.test(rule(modelsStyle, ".tab")) && !/background: var\(--surface-hover\);/.test(rule(modelsStyle, ".tab.on")) && !/background: var\(--surface-hover\);/.test(rule(modelsStyle, ".preset.on")))
+    check("a tab and a chip are MiMo's txt ink with no fill when chosen", /color: var\(--text-body\);/.test(rule(modelsStyle, ".tab")) && !/background: var\(--surface-hover\);/.test(rule(modelsStyle, ".tab.on")) && !/background: var\(--surface-hover\);/.test(rule(modelsStyle, ".preset.on")))
     check("a provider mark in a tab or chip is 20 square on a 6px corner", /border-radius: 6px;/.test(rule(modelsStyle, ".tab :deep(.mark),\n.preset-mark")))
     check("MiMo's card is description-less: the endpoint hint and the key's line are gone", !/data-endpoint-hint/.test(form) && !/apiKey\.description/.test(form) && !/"model\.endpointHint"/.test(i18n) && !/"provider\.custom\.field\.apiKey\.description"/.test(i18n))
     check("请求头（可选）stays, because it is wired through", /provider\.custom\.headers\.label/.test(form))

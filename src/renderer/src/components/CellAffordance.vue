@@ -138,17 +138,7 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", outside, true)
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 10px;
-  box-shadow: 0 2px 8px #0000000d, 0 1px 2px #0000000a;
-}
-
-:root[data-theme="dark"] .cell-affordance {
-  box-shadow: 0 2px 8px #0000004d, 0 1px 2px #00000040;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .cell-affordance {
-    box-shadow: 0 2px 8px #0000004d, 0 1px 2px #00000040;
-  }
+  box-shadow: var(--shadow-tip);
 }
 
 .cell-affordance textarea {
@@ -159,8 +149,7 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", outside, true)
   margin: 0;
   padding: 0;
   overflow-y: auto;
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   background: transparent;
   border: none;
   outline: none;
@@ -194,14 +183,5 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", outside, true)
   border: 1px solid var(--border-weak);
 }
 
-/* MiMo's --color-txt is #f4f4f5 in dark, not a translucent white. */
-:root[data-theme="dark"] .cell-affordance textarea {
-  color: #f4f4f5;
-}
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .cell-affordance textarea {
-    color: #f4f4f5;
-  }
-}
 </style>

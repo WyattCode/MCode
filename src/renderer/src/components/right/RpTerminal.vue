@@ -120,8 +120,7 @@ watch(
   gap: 8px;
   margin: 6px 8px 0;
   padding: 6px 10px;
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 8px;
@@ -136,7 +135,7 @@ watch(
 .mismatch-btn {
   flex: 0 0 auto;
   padding: 2px 10px;
-  color: #151c13cc;
+  color: var(--text-body);
   background: none;
   border: 1px solid var(--border-weak);
   border-radius: 6px;
@@ -155,23 +154,13 @@ watch(
   border-color: transparent;
 }
 
-/* MiMo's --color-txt is #f4f4f5 in dark, not a translucent white. */
-:root[data-theme="dark"] .mismatch,
-:root[data-theme="dark"] .mismatch-btn {
-  color: #f4f4f5;
-}
-
+/* MiMo's --color-txt is the fill of the button that carries the turn, not a translucent white. */
 :root[data-theme="dark"] .mismatch-btn.primary {
   color: #181818;
   background: #f4f4f5;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .mismatch,
-  :root:not([data-theme="light"]) .mismatch-btn {
-    color: #f4f4f5;
-  }
-
   :root:not([data-theme="light"]) .mismatch-btn.primary {
     color: #181818;
     background: #f4f4f5;

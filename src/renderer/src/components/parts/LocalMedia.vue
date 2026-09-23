@@ -331,7 +331,7 @@ onBeforeUnmount(() => {
   place-items: center;
   width: 180px;
   height: 120px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 10px;
@@ -386,7 +386,7 @@ onBeforeUnmount(() => {
   gap: 7px;
   max-width: 100%;
   padding: 8px 11px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 10px;
@@ -483,7 +483,7 @@ onBeforeUnmount(() => {
 }
 
 .text .md-voice-more:hover {
-  color: #151c13cc;
+  color: var(--text-body);
   background: #f1f0ec;
 }
 

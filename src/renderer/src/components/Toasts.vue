@@ -221,13 +221,11 @@ onBeforeUnmount(() => {
   gap: 6px;
   max-width: min(560px, 100%);
   padding: 8px 12px;
-  color: #151c13cc;
+  color: var(--text-body);
   background: #ffffff;
   border: 1px solid #ececec;
   border-radius: 16px;
-  box-shadow:
-    0 8px 30px #0000002e,
-    0 1px 3px #0000001a;
+  box-shadow: var(--shadow-menu);
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.3;
   pointer-events: auto;
@@ -253,9 +251,6 @@ onBeforeUnmount(() => {
   color: #f4f4f5;
   background: #2e2e2e;
   border-color: #3a3a3a;
-  box-shadow:
-    0 8px 30px #00000099,
-    0 1px 3px #00000066;
 }
 
 :root[data-theme="dark"] .notice.success {
@@ -278,9 +273,6 @@ onBeforeUnmount(() => {
     color: #f4f4f5;
     background: #2e2e2e;
     border-color: #3a3a3a;
-    box-shadow:
-      0 8px 30px #00000099,
-      0 1px 3px #00000066;
   }
 
   :root:not([data-theme="light"]) .notice.success {

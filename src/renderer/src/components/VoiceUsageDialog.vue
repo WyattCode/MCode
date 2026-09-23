@@ -64,8 +64,7 @@ useEscapeLayer(() => emit("close"))
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  /* MiMo's --shadow-pop; MCode has no token for it (lane F1 owns the token set). */
-  box-shadow: 0 12px 40px #00000024;
+  box-shadow: var(--shadow-pop);
 }
 
 h2 {
@@ -115,7 +114,7 @@ h2 {
 }
 
 .entry-title {
-  color: #151c13cc;
+  color: var(--text-body);
   font-weight: 500;
 }
 
@@ -126,14 +125,10 @@ h2 {
 /* Examples sit on a 2px rule in MiMo's blue at 35%. */
 .entry-examples {
   padding-inline-start: 10px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-inline-start: 2px solid color-mix(in srgb, #2f6fed 35%, transparent);
   font-size: calc(12px * var(--ui-font-scale, 1));
   white-space: pre-line;
-}
-
-:root[data-theme="dark"] .entry-title {
-  color: #f4f4f5;
 }
 
 :root[data-theme="dark"] .entry-examples {
@@ -141,10 +136,6 @@ h2 {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .entry-title {
-    color: #f4f4f5;
-  }
-
   :root:not([data-theme="light"]) .entry-examples {
     border-color: color-mix(in srgb, #5a9cff 35%, transparent);
   }

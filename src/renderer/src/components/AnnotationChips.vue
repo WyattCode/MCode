@@ -370,7 +370,7 @@ function onEditKey(event: KeyboardEvent) {
   background: #fffefd;
   border: 1px solid var(--border-weak);
   border-radius: 10px;
-  box-shadow: 0 8px 30px #0000002e, 0 1px 3px #0000001a;
+  box-shadow: var(--shadow-menu);
 }
 
 .ann-item {
@@ -400,8 +400,7 @@ function onEditKey(event: KeyboardEvent) {
 }
 
 .ann-title {
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
@@ -411,7 +410,7 @@ function onEditKey(event: KeyboardEvent) {
 }
 
 .ann-note {
-  color: #151c13cc;
+  color: var(--text-body);
   font-size: calc(12px * var(--ui-font-scale, 1));
   overflow-wrap: anywhere;
 }
@@ -449,7 +448,7 @@ function onEditKey(event: KeyboardEvent) {
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
-/* Dark: MiMo's chip fill and ink, its --color-bg popup, and the #f4f4f5 txt. */
+/* Dark: MiMo's chip fill and ink, and its --color-bg popup. */
 :root[data-theme="dark"] .cchip {
   background: #ffffff14;
 }
@@ -465,12 +464,6 @@ function onEditKey(event: KeyboardEvent) {
 
 :root[data-theme="dark"] .ann-pop {
   background: #181818;
-  box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
-}
-
-:root[data-theme="dark"] .ann-title,
-:root[data-theme="dark"] .ann-note {
-  color: #f4f4f5;
 }
 
 :root[data-theme="dark"] .ann-note-edit:hover {
@@ -493,12 +486,6 @@ function onEditKey(event: KeyboardEvent) {
 
   :root:not([data-theme="light"]) .ann-pop {
     background: #181818;
-    box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
-  }
-
-  :root:not([data-theme="light"]) .ann-title,
-  :root:not([data-theme="light"]) .ann-note {
-    color: #f4f4f5;
   }
 
   :root:not([data-theme="light"]) .ann-note-edit:hover {

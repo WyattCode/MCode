@@ -492,10 +492,10 @@ useEscapeLayer(dismiss)
   width: min(560px, calc(100vw - 64px));
   max-height: min(620px, calc(100vh - 96px));
   padding: 10px 26px 26px;
-  background: var(--surface-raised);
+  background: var(--surface-page);
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-pop);
   outline: none;
 }
 
@@ -552,7 +552,6 @@ useEscapeLayer(dismiss)
   line-height: calc(20px * var(--ui-font-scale, 1));
   letter-spacing: -0.13px;
 }
-
 
 .lead {
   margin: 4px 0 18px;
@@ -744,7 +743,7 @@ useEscapeLayer(dismiss)
 .label {
   display: block;
   margin-bottom: 7px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
@@ -785,7 +784,7 @@ useEscapeLayer(dismiss)
   place-items: center;
   width: 28px;
   height: 28px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-radius: 6px;
   transform: translateY(-50%);
 }
@@ -860,7 +859,7 @@ useEscapeLayer(dismiss)
   align-items: center;
   gap: 10px;
   margin-top: 16px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
@@ -879,7 +878,7 @@ useEscapeLayer(dismiss)
   }
 }
 
-/* MiMo's red-500; lane F1 owns the --text-critical token this wants. */
+/* MiMo's red-500, which is not its --color-err, so --text-critical does not fit. */
 .error {
   margin-top: 16px;
   color: #fb2c36;

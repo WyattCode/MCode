@@ -261,8 +261,7 @@ const TONE: Record<string, string> = { M: "modified", A: "added", D: "deleted", 
   gap: 9px;
   margin-bottom: 2px;
   padding: 5px 9px;
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   text-align: start;
   background: transparent;
   border: 0;
@@ -341,14 +340,4 @@ const TONE: Record<string, string> = { M: "modified", A: "added", D: "deleted", 
   overflow-wrap: anywhere;
 }
 
-/* MiMo's --color-txt is #f4f4f5 in dark, not a translucent white. */
-:root[data-theme="dark"] .rv-row {
-  color: #f4f4f5;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .rv-row {
-    color: #f4f4f5;
-  }
-}
 </style>

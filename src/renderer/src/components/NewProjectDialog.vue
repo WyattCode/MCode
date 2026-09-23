@@ -131,10 +131,10 @@ onMounted(() => {
 .card {
   width: min(430px, 90vw);
   padding: 22px 24px;
-  background: var(--surface-raised);
+  background: var(--surface-page);
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--shadow-pop);
 }
 
 .head {
@@ -171,7 +171,7 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-/* MiMo's np-close: muted at rest, its --color-txt on hover (#151c13cc, #f4f4f5 dark, below). */
+/* MiMo's np-close: muted at rest, its --color-txt on hover. */
 .close {
   display: grid;
   place-items: center;
@@ -185,7 +185,7 @@ onMounted(() => {
 }
 
 .close:hover {
-  color: #151c13cc;
+  color: var(--text-body);
   background: var(--surface-hover);
 }
 
@@ -236,7 +236,7 @@ onMounted(() => {
 }
 
 .source:hover {
-  color: #151c13cc;
+  color: var(--text-body);
   background: var(--surface-selected);
 }
 
@@ -294,14 +294,10 @@ onMounted(() => {
 }
 
 /*
- * MiMo's --color-txt on the dark scheme; lane F1 is adding a token for it. The
+ * MiMo's --color-txt on the dark scheme. The
  * name field keeps MCode's raised surface: MiMo's `bg-white` beats its own
  * `.field`, leaving a white field on the dark scheme, which is its oversight.
  */
-:root[data-theme="dark"] .close:hover,
-:root[data-theme="dark"] .source:hover {
-  color: #f4f4f5;
-}
 
 :root[data-theme="dark"] .field:focus {
   border-color: #777777;
@@ -316,11 +312,6 @@ onMounted(() => {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .close:hover,
-  :root:not([data-theme="light"]) .source:hover {
-    color: #f4f4f5;
-  }
-
   :root:not([data-theme="light"]) .field:focus {
     border-color: #777777;
   }

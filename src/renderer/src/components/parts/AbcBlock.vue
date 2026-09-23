@@ -277,7 +277,7 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
 
 .text .md-abc-tabs button {
   padding: 1px 8px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 5px;
@@ -357,7 +357,7 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
 
 .text .md-abc-rendering {
   padding: 12px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 

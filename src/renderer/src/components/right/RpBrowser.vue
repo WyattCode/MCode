@@ -440,7 +440,7 @@ defineExpose({
   flex: 1;
   min-width: 0;
   padding: 6px 10px;
-  color: #151c13cc;
+  color: var(--text-body);
   background: transparent;
   border: 0;
   border-radius: 8px;
@@ -474,7 +474,7 @@ defineExpose({
   background: #fffefd;
   border: 1px solid var(--border-weak);
   border-radius: 12px;
-  box-shadow: 0 8px 30px #0000002e, 0 1px 3px #0000001a;
+  box-shadow: var(--shadow-menu);
   transform-origin: 0 100%;
   animation: rb-menu-pop 0.18s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -496,7 +496,7 @@ defineExpose({
   gap: 9px;
   width: 100%;
   padding: 6px 10px;
-  color: #151c13cc;
+  color: var(--text-body);
   text-align: start;
   background: transparent;
   border: 0;
@@ -526,7 +526,7 @@ defineExpose({
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  color: #151c13cc;
+  color: var(--text-body);
   font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
@@ -600,7 +600,7 @@ defineExpose({
   gap: 6px;
   height: 34px;
   padding: 0 10px;
-  color: #151c13cc;
+  color: var(--text-body);
   background: #fffefd;
   border: 1px solid #e3e3e0;
   border-radius: 8px;
@@ -801,7 +801,7 @@ defineExpose({
 
 .rb-error-desc {
   max-width: 340px;
-  color: #151c13cc;
+  color: var(--text-body);
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.5;
 }
@@ -848,14 +848,6 @@ defineExpose({
   background: #ffffff0f;
 }
 
-:root[data-theme="dark"] .rb-url,
-:root[data-theme="dark"] .rb-item,
-:root[data-theme="dark"] .rb-zoom,
-:root[data-theme="dark"] .rb-annotate,
-:root[data-theme="dark"] .rb-error-desc {
-  color: #f4f4f5;
-}
-
 :root[data-theme="dark"] .rb-local-head,
 :root[data-theme="dark"] .rb-server-title,
 :root[data-theme="dark"] .rb-error-title,
@@ -882,7 +874,6 @@ defineExpose({
 
 :root[data-theme="dark"] .rb-menu {
   border-color: #2e2e2e;
-  box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
 }
 
 :root[data-theme="dark"] .rb-item.danger {
@@ -944,14 +935,6 @@ defineExpose({
     background: #ffffff0f;
   }
 
-  :root:not([data-theme="light"]) .rb-url,
-  :root:not([data-theme="light"]) .rb-item,
-  :root:not([data-theme="light"]) .rb-zoom,
-  :root:not([data-theme="light"]) .rb-annotate,
-  :root:not([data-theme="light"]) .rb-error-desc {
-    color: #f4f4f5;
-  }
-
   :root:not([data-theme="light"]) .rb-local-head,
   :root:not([data-theme="light"]) .rb-server-title,
   :root:not([data-theme="light"]) .rb-error-title,
@@ -978,7 +961,6 @@ defineExpose({
 
   :root:not([data-theme="light"]) .rb-menu {
     border-color: #2e2e2e;
-    box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
   }
 
   :root:not([data-theme="light"]) .rb-item.danger {

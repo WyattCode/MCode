@@ -47,7 +47,6 @@ import GoalBar from "./GoalBar.vue"
 import { readContext } from "./session-context"
 import { compactTokens, t, language } from "../lib/i18n"
 
-
 const emit = defineEmits<{
   terminal: []
   "open-settings": [section?: "models"]
@@ -2263,7 +2262,6 @@ function onBoxClick() {
   syncCaret()
 }
 
-
 /** Which pill has its menu open, if any. */
 const menu = ref<"model" | "access" | "plus" | "context">()
 
@@ -2589,7 +2587,6 @@ const currentModel = computed<ModelInfo | undefined>(() =>
  * which is what the reference's `variantControlVisible: !model.loading` does.
  */
 const variants = computed<Effort[]>(() => currentModel.value?.variants ?? [])
-
 
 /*
  * The level the chip names: the conversation's own, else the default a new
@@ -3876,8 +3873,13 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 /*
  * The @ and slash menus float over the conversation just above the box, as
  * MiMo's do: 8 in from either side and 6 clear of its top edge, on a 12px
- * corner with the menu's frosted fill and shadow. The box is what they are
- * placed against, so they move with it.
+ * corner. The box is what they are placed against, so they move with them.
+ *
+ * These two are the one pair MiMo does not draw with its popover shell. They
+ * carry its own `.menu` class - a full pixel of --color-line over --color-bg
+ * under --shadow-menu - and that rule is written after `.menu-glass` in its
+ * stylesheet, so the frosted fill loses and only the blur behind it survives,
+ * which an opaque fill hides. Kept here so the pair matches value for value.
  */
 .box {
   position: relative;
@@ -3892,10 +3894,10 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   max-height: 320px;
   padding: 5px;
   overflow-y: auto;
-  background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
-  border: 0.5px solid var(--border-weak);
+  background: var(--surface-page);
+  border: 1px solid var(--border-weak);
   border-radius: 12px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-menu);
   backdrop-filter: blur(18px) saturate(150%);
 }
 
@@ -4344,7 +4346,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   position: static;
   flex: none;
   margin-inline-start: 4px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border-radius: 6px;
   /* MiMo's mark is the character at 13px, not a drawing. */
@@ -4453,7 +4455,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   padding: 0 4px;
   color: var(--text-base);
   background: var(--surface-layer-02);
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 2px;
   font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 530;
@@ -4800,7 +4802,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   cursor: default;
 }
 
-
 /*
  * The agent and model pills, measured off the reference's own button-v2 rather
  * than guessed: 28 tall on a 6px radius with 11px of inline padding, its text
@@ -4854,9 +4855,9 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   gap: 1px;
   min-width: 160px;
   padding: 5px;
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 16px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-composer);
   transform-origin: top;
   animation: menu-in 0.15s ease-out;
 }
@@ -4967,9 +4968,9 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   max-height: min(360px, calc(100vh - 16px));
   padding: 5px;
   background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 16px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-composer);
   backdrop-filter: blur(18px) saturate(150%);
   transform-origin: top left;
   animation: sub-in 0.15s ease-out;
@@ -5260,9 +5261,9 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   display: flex;
   min-width: 220px;
   max-height: min(420px, calc(100vh - 16px));
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 16px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-composer);
   transform-origin: top left;
   animation: sub-in 0.15s ease-out;
 }
@@ -5448,9 +5449,9 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 .box {
   padding: 8px;
   background: #ffffff;
-  border: 0.5px solid #151c130f;
+  border: 0.5px solid var(--border-input);
   border-radius: 20px;
-  box-shadow: 0 1px 2px #0000000d, 0 6px 18px #0000001b;
+  box-shadow: var(--shadow-composer);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -5460,7 +5461,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
   :root:not([data-theme="light"]) .box:not(.dropping) {
     border-color: #2e2e2e;
-    box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
   }
 
   /* MiMo's --shadow-composer-home, which differs from the normal one on dark only. */
@@ -5475,7 +5475,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
 :root[data-theme="dark"] .box:not(.dropping) {
   border-color: #2e2e2e;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
 }
 
 :root[data-theme="dark"] .home-hero .box:not(.dropping) {

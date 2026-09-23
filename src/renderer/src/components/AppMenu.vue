@@ -241,7 +241,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
   padding: 2px;
   background: var(--surface-menu);
   border-radius: 6px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-menu);
 }
 
 /* Names the app the menu belongs to, the way the platform's own menu does. */
@@ -291,7 +291,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
   padding: 2px;
   background: var(--surface-menu);
   border-radius: 6px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-menu);
 }
 
 /* Unavailable where the user is: dimmed, and not a hover target. */

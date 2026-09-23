@@ -38,7 +38,7 @@ const emit = defineEmits<{ toggle: [] }>()
   gap: 5px;
   width: 100%;
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   font: inherit;

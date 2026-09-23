@@ -433,8 +433,7 @@ function startResize(event: PointerEvent) {
   height: calc(28px * var(--ui-font-scale, 1));
   padding-block: 0;
   padding-inline: 11px;
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   border: 1px solid transparent;
   border-radius: 7px;
   font-size: calc(12px * var(--ui-font-scale, 1));
@@ -485,8 +484,7 @@ function startResize(event: PointerEvent) {
 }
 
 .add:hover {
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
 }
 
 /*
@@ -498,23 +496,6 @@ function startResize(event: PointerEvent) {
   flex-shrink: 0;
   width: 26px;
   height: 26px;
-  color: var(--text-base);
-  border-radius: 7px;
-}
-
-.head .icon-btn.hide:hover {
-  color: #151c13cc;
-  background: #f1f0ec;
-}
-
-:root[data-theme="dark"] .head .icon-btn.hide:hover {
-  background: #ffffff0f;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .head .icon-btn.hide:hover {
-    background: #ffffff0f;
-  }
 }
 
 /* MiMo's close mark: a 13px ×, always there, muted, on a 4px corner. */
@@ -528,8 +509,8 @@ function startResize(event: PointerEvent) {
 }
 
 .tab-close:hover {
-  color: #151c13cc;
-  background: #00000014;
+  color: var(--text-body);
+  background: var(--overlay-hover);
 }
 
 .gap {
@@ -548,8 +529,7 @@ function startResize(event: PointerEvent) {
   gap: 8px;
   margin: 6px 8px 0;
   padding: 6px 10px;
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 8px;
@@ -564,7 +544,7 @@ function startResize(event: PointerEvent) {
 .mismatch-btn {
   flex: 0 0 auto;
   padding: 2px 10px;
-  color: #151c13cc;
+  color: var(--text-body);
   background: none;
   border: 1px solid var(--border-weak);
   border-radius: 6px;
@@ -583,31 +563,13 @@ function startResize(event: PointerEvent) {
   border-color: transparent;
 }
 
-/* MiMo's --color-txt is #f4f4f5 in dark, not a translucent white. */
-:root[data-theme="dark"] .tab,
-:root[data-theme="dark"] .add:hover,
-:root[data-theme="dark"] .head .icon-btn.hide:hover,
-:root[data-theme="dark"] .tab-close:hover,
-:root[data-theme="dark"] .mismatch,
-:root[data-theme="dark"] .mismatch-btn {
-  color: #f4f4f5;
-}
-
+/* MiMo's --color-txt is the fill of the button that carries the turn, not a translucent white. */
 :root[data-theme="dark"] .mismatch-btn.primary {
   color: #181818;
   background: #f4f4f5;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .tab,
-  :root:not([data-theme="light"]) .add:hover,
-  :root:not([data-theme="light"]) .head .icon-btn.hide:hover,
-  :root:not([data-theme="light"]) .tab-close:hover,
-  :root:not([data-theme="light"]) .mismatch,
-  :root:not([data-theme="light"]) .mismatch-btn {
-    color: #f4f4f5;
-  }
-
   :root:not([data-theme="light"]) .mismatch-btn.primary {
     color: #181818;
     background: #f4f4f5;

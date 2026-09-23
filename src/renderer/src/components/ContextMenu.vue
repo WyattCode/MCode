@@ -271,8 +271,6 @@ onBeforeUnmount(() => {
         <svg
           v-if="item.icon"
           class="glyph"
-          :class="{ tinted: Boolean(item.iconColor) }"
-          :style="item.iconColor ? { color: item.iconColor } : undefined"
           width="14"
           height="14"
           viewBox="0 0 16 16"
@@ -339,8 +337,6 @@ onBeforeUnmount(() => {
         <svg
           v-if="child.icon"
           class="glyph"
-          :class="{ tinted: Boolean(child.iconColor) }"
-          :style="child.iconColor ? { color: child.iconColor } : undefined"
           width="14"
           height="14"
           viewBox="0 0 16 16"
@@ -455,7 +451,7 @@ onBeforeUnmount(() => {
 /* A group's name, the way opencode's DropdownMenu.GroupLabel reads. */
 .heading {
   padding: 6px 10px 2px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
 }

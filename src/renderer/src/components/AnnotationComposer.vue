@@ -372,7 +372,7 @@ watch(
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 10px;
-  box-shadow: 0 2px 8px #0000000d, 0 1px 2px #0000000a;
+  box-shadow: var(--shadow-tip);
   opacity: 0;
   transform: translateY(-6px) scale(0.96);
   transform-origin: top center;
@@ -397,25 +397,7 @@ watch(
 }
 
 .ann-composer.focused {
-  box-shadow: 0 8px 30px #0000002e, 0 1px 3px #0000001a;
-}
-
-:root[data-theme="dark"] .ann-composer {
-  box-shadow: 0 2px 8px #0000004d, 0 1px 2px #00000040;
-}
-
-:root[data-theme="dark"] .ann-composer.focused {
-  box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .ann-composer {
-    box-shadow: 0 2px 8px #0000004d, 0 1px 2px #00000040;
-  }
-
-  :root:not([data-theme="light"]) .ann-composer.focused {
-    box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
-  }
+  box-shadow: var(--shadow-menu);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -432,8 +414,7 @@ watch(
   margin: 0;
   padding: 0;
   overflow-y: auto;
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   background: transparent;
   border: none;
   outline: none;
@@ -489,14 +470,5 @@ watch(
   border-radius: 3px;
 }
 
-/* MiMo's --color-txt is #f4f4f5 in dark, not a translucent white. */
-:root[data-theme="dark"] .ann-composer textarea {
-  color: #f4f4f5;
-}
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .ann-composer textarea {
-    color: #f4f4f5;
-  }
-}
 </style>

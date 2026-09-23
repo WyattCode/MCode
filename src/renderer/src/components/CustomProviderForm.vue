@@ -829,7 +829,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   background: transparent;
   border: 1px solid #e3e3e0;
   border-radius: 6px;
-  box-shadow: 0 1px 2px #0000000d;
+  box-shadow: var(--shadow-xs);
   font-family: var(--font-sans);
   font-size: calc(13px * var(--ui-font-scale, 1));
   outline: none;
@@ -867,7 +867,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 
 /*
  * MiMo rings a field it will not accept in red-400 and says why in red-500.
- * Written out until lane F1's --text-critical token lands.
+ * MiMo's red-400, which is not its --color-err, so --text-critical does not fit.
  */
 .cp-in.bad {
   border-color: #ff6467;
@@ -889,7 +889,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   place-items: center;
   width: 26px;
   height: 26px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 6px;
@@ -1130,8 +1130,6 @@ label.cp-option {
 .cp-check {
   color: var(--text-weak);
 }
-
-
 
 /* One card per model: the id and its display name, then the three menus; the bin in the corner. */
 .cp-model {

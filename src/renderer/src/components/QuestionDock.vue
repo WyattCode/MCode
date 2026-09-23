@@ -223,7 +223,7 @@ watch(
   padding: 10px 14px;
   overflow-y: auto;
   background: var(--surface-menu);
-  border: 0.5px solid #151c130f;
+  border: 0.5px solid var(--border-input);
   border-radius: 20px;
   box-shadow: 0 2px 10px #0000000a;
   outline: none;

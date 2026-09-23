@@ -284,7 +284,7 @@ h1 {
 
 header p {
   margin: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13.5px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }
@@ -382,7 +382,7 @@ header p {
 .note {
   max-inline-size: 672px;
   margin: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   text-align: center;
   overflow-wrap: anywhere;
@@ -401,7 +401,7 @@ footer {
 
 footer p {
   margin: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 </style>

@@ -891,8 +891,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 }
 
 .fv-icon:hover:not(:disabled) {
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   background: var(--surface-hover);
 }
 
@@ -903,8 +902,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   align-items: center;
   gap: 6px;
   padding: 5px 13px;
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   white-space: nowrap;
   background: var(--surface-page);
   border: 1px solid var(--border-weak);
@@ -972,8 +970,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   flex: 1;
   min-width: 0;
   padding: 0;
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   background: transparent;
   border: 0;
   outline: none;
@@ -998,8 +995,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   gap: 5px;
   margin-bottom: 2px;
   padding: 4px 8px;
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   text-align: start;
   white-space: nowrap;
   background: transparent;
@@ -1176,8 +1172,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   flex: none;
   width: 150px;
   padding: 0;
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   background: transparent;
   border: 0;
   outline: none;
@@ -1245,8 +1240,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 }
 
 .fv-text {
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   white-space: pre;
 }
 
@@ -1280,8 +1274,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   height: 100%;
   padding: 10px 14px 10px 4px;
   overflow: auto;
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   white-space: pre;
   background: transparent;
   border: 0;
@@ -1305,8 +1298,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
  * untouched: this only reaches the copy inside the files tab.
  */
 .fv-doc :deep(.text) {
-  /* MiMo --color-txt (#151c13cc / #f4f4f5); lane F1 is adding the token. */
-  color: #151c13cc;
+  color: var(--text-body);
   font-weight: 400;
 }
 
@@ -1371,30 +1363,6 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
-/* MiMo's --color-txt is #f4f4f5 in dark, not a translucent white. */
-:root[data-theme="dark"] .fv-icon:hover:not(:disabled),
-:root[data-theme="dark"] .fc-btn,
-:root[data-theme="dark"] .fv-filter input,
-:root[data-theme="dark"] .fv-row,
-:root[data-theme="dark"] .fv-find-input,
-:root[data-theme="dark"] .fv-text,
-:root[data-theme="dark"] .fv-doc :deep(.text),
-:root[data-theme="dark"] .fv-editor {
-  color: #f4f4f5;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .fv-icon:hover:not(:disabled),
-  :root:not([data-theme="light"]) .fc-btn,
-  :root:not([data-theme="light"]) .fv-filter input,
-  :root:not([data-theme="light"]) .fv-row,
-  :root:not([data-theme="light"]) .fv-find-input,
-  :root:not([data-theme="light"]) .fv-text,
-  :root:not([data-theme="light"]) .fv-doc :deep(.text),
-  :root:not([data-theme="light"]) .fv-editor {
-    color: #f4f4f5;
-  }
-}
 </style>
 
 <style>

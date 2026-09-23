@@ -313,7 +313,7 @@ async function pick(key: string) {
 }
 
 .dl-meta {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: calc(18px * var(--ui-font-scale, 1));
 }

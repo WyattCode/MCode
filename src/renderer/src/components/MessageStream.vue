@@ -590,7 +590,6 @@ function shown(turn: Turn, at: number): Row[] {
   return foldAt > 0 && !opened.value.has(turn.id) ? all.slice(foldAt) : all
 }
 
-
 /** Whether the turn has an answer block to draw: parts, a failure, an end, or a live retry. */
 function answers(turn: Turn, at: number): boolean {
   return Boolean(turn.parts.length || turn.error || turn.finish || (liveTurn(at) && turn.last?.retry))
@@ -2098,7 +2097,7 @@ defineExpose({ stepMessage, scroller })
   margin-top: 10px;
 }
 
-/* MiMo's icon-btn xs: muted, and on hover its side-hover fill under its txt colour (#151c13cc light, #f4f4f5 dark). */
+/* MiMo's icon-btn xs: muted, and on hover its side-hover fill under its txt colour. */
 .msg-act {
   display: grid;
   place-items: center;
@@ -2113,18 +2112,8 @@ defineExpose({ stepMessage, scroller })
 }
 
 .msg-act:hover {
-  color: #151c13cc;
+  color: var(--text-body);
   background: var(--surface-hover);
-}
-
-:root[data-theme="dark"] .msg-act:hover {
-  color: #f4f4f5;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .msg-act:hover {
-    color: #f4f4f5;
-  }
 }
 
 .msg-act:active {
@@ -2418,7 +2407,7 @@ defineExpose({ stepMessage, scroller })
 
 .asked-edit-busy {
   margin-inline-end: auto;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.4;
 }
@@ -2485,7 +2474,7 @@ defineExpose({ stepMessage, scroller })
   justify-content: center;
   min-width: 0;
   background: var(--surface-layer);
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 6px;
   transition: border-color 0.15s;
 }
@@ -2702,7 +2691,7 @@ defineExpose({ stepMessage, scroller })
 /* MiMo's thread placeholder, loading or empty: 80 above and below, 13px, muted, centred. */
 .thread-loading {
   padding-block: 80px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   text-align: center;
 }
@@ -2777,7 +2766,7 @@ defineExpose({ stepMessage, scroller })
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--text-weak);
+  color: var(--text-base);
   font: inherit;
   font-size: calc(12px * var(--ui-font-scale, 1));
   white-space: normal;
@@ -2815,7 +2804,7 @@ defineExpose({ stepMessage, scroller })
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-weak);
+  color: var(--text-base);
   font: inherit;
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 400;
@@ -2884,7 +2873,7 @@ defineExpose({ stepMessage, scroller })
 }
 
 .steer-note {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -2954,7 +2943,7 @@ defineExpose({ stepMessage, scroller })
 }
 
 .run-time {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: calc(19.2px * var(--ui-font-scale, 1));
@@ -3041,7 +3030,7 @@ defineExpose({ stepMessage, scroller })
   flex-basis: 100%;
   min-width: 0;
   margin-top: 6px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 1.6;
