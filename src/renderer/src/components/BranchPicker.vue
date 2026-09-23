@@ -364,7 +364,7 @@ svg circle {
   max-width: min(320px, 100vw - 40px);
   padding: 5px;
   background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 16px;
   box-shadow: var(--shadow-composer);
   backdrop-filter: blur(18px) saturate(150%);

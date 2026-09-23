@@ -3876,8 +3876,13 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 /*
  * The @ and slash menus float over the conversation just above the box, as
  * MiMo's do: 8 in from either side and 6 clear of its top edge, on a 12px
- * corner with the menu's frosted fill and shadow. The box is what they are
- * placed against, so they move with it.
+ * corner. The box is what they are placed against, so they move with them.
+ *
+ * These two are the one pair MiMo does not draw with its popover shell. They
+ * carry its own `.menu` class - a full pixel of --color-line over --color-bg
+ * under --shadow-menu - and that rule is written after `.menu-glass` in its
+ * stylesheet, so the frosted fill loses and only the blur behind it survives,
+ * which an opaque fill hides. Kept here so the pair matches value for value.
  */
 .box {
   position: relative;
@@ -3892,8 +3897,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   max-height: 320px;
   padding: 5px;
   overflow-y: auto;
-  background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
-  border: 0.5px solid var(--border-weak);
+  background: var(--surface-page);
+  border: 1px solid var(--border-weak);
   border-radius: 12px;
   box-shadow: var(--shadow-menu);
   backdrop-filter: blur(18px) saturate(150%);
@@ -4453,7 +4458,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   padding: 0 4px;
   color: var(--text-base);
   background: var(--surface-layer-02);
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 2px;
   font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 530;
@@ -4854,7 +4859,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   gap: 1px;
   min-width: 160px;
   padding: 5px;
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 16px;
   box-shadow: var(--shadow-composer);
   transform-origin: top;
@@ -4967,7 +4972,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   max-height: min(360px, calc(100vh - 16px));
   padding: 5px;
   background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 16px;
   box-shadow: var(--shadow-composer);
   backdrop-filter: blur(18px) saturate(150%);
@@ -5260,7 +5265,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   display: flex;
   min-width: 220px;
   max-height: min(420px, calc(100vh - 16px));
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 16px;
   box-shadow: var(--shadow-composer);
   transform-origin: top left;
@@ -5448,7 +5453,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 .box {
   padding: 8px;
   background: #ffffff;
-  border: 0.5px solid #151c130f;
+  border: 0.5px solid var(--border-input);
   border-radius: 20px;
   box-shadow: var(--shadow-composer);
 }

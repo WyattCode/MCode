@@ -259,7 +259,7 @@ onBeforeUnmount(() => {
   max-height: 380px;
   padding: 5px;
   background: var(--surface-menu);
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 16px;
   box-shadow: var(--shadow-composer);
   -webkit-backdrop-filter: blur(18px) saturate(150%);

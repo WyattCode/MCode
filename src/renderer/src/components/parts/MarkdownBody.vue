@@ -510,7 +510,7 @@ function onError(event: Event) {
   padding: 12px;
   overflow-x: auto;
   background: var(--surface-raised);
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 6px;
   font-size: calc(13px * var(--code-font-scale, 1));
   line-height: 1.5;

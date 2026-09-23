@@ -387,7 +387,7 @@ onBeforeUnmount(() => {
   padding-inline: 16px;
   overflow-y: auto;
   background: var(--surface-raised);
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 20px;
   box-shadow:
     0 1px 2px rgb(0 0 0 / 0.05),

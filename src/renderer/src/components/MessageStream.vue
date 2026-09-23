@@ -2485,7 +2485,7 @@ defineExpose({ stepMessage, scroller })
   justify-content: center;
   min-width: 0;
   background: var(--surface-layer);
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 6px;
   transition: border-color 0.15s;
 }

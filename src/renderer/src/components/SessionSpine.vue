@@ -461,7 +461,7 @@ onBeforeUnmount(() => {
   width: 300px;
   padding: 12px 14px;
   background: var(--surface-page);
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 20px;
   box-shadow: var(--shadow-composer);
   opacity: 0;
