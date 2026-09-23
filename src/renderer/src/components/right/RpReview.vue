@@ -339,6 +339,4 @@ const TONE: Record<string, string> = { M: "modified", A: "added", D: "deleted", 
   overflow-wrap: anywhere;
 }
 
-/* MiMo's --color-txt is #f4f4f5 in dark, not a translucent white. */
-
 </style>

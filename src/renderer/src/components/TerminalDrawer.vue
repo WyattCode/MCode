@@ -563,8 +563,7 @@ function startResize(event: PointerEvent) {
   border-color: transparent;
 }
 
-/* MiMo's --color-txt is #f4f4f5 in dark, not a translucent white. */
-
+/* MiMo's --color-txt is the fill of the button that carries the turn, not a translucent white. */
 :root[data-theme="dark"] .mismatch-btn.primary {
   color: #181818;
   background: #f4f4f5;

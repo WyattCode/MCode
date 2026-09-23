@@ -1363,8 +1363,6 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
-/* MiMo's --color-txt is #f4f4f5 in dark, not a translucent white. */
-
 </style>
 
 <style>

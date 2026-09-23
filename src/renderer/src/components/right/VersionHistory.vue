@@ -265,6 +265,4 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-/* MiMo's --color-txt is #f4f4f5 in dark, not a translucent white. */
-
 </style>
