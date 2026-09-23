@@ -644,13 +644,27 @@ export class Config {
     if (read.corrupt) {
       const aside = await this.storage.quarantine("config")
       this.unreadable = { problem: read.corrupt, evidence: aside }
+      // Not moved aside, so it is still sitting there and must not be written over.
+      this.blocked = aside === undefined
+    }
+    /*
+     * A document the disk would not hand over is the opposite of a damaged
+     * one: it is whole, and this run simply cannot see it. Quarantining it
+     * would fail for the same reason, so it is left where it is and nothing is
+     * saved for the rest of the run - otherwise the first settings change would
+     * write a file of defaults over every setting, provider and project on the
+     * machine.
+     */
+    if (read.unreadable) {
+      this.unreadable = { problem: read.unreadable }
+      this.blocked = true
     }
     /*
      * A file that could not be read still means a profile that has been used
      * before: treating it as a first run would offer to import from other apps
      * on a machine that has been running MCode for months.
      */
-    this.existed = stored !== undefined || read.corrupt !== undefined
+    this.existed = stored !== undefined || read.corrupt !== undefined || read.unreadable !== undefined
     // Read before anything is merged: what follows must not write over a newer document.
     this.fromNewerVersion = typeof stored?.schemaVersion === "number" && stored.schemaVersion > CONFIG_SCHEMA_VERSION
     this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
@@ -665,7 +679,7 @@ export class Config {
      * cannot be read is not a first install either - answering one with the
      * first-install permissions would quietly change what this machine allows.
      */
-    if (stored === undefined && !read.corrupt) Object.assign(this.current, firstInstall())
+    if (stored === undefined && !read.corrupt && !read.unreadable) Object.assign(this.current, firstInstall())
     const migrated = this.migrate(stored)
     this.current.autoApprove = allowed(this.current.permissions)
     if ((migrated || retired) && !this.fromNewerVersion) await this.persist()
@@ -766,12 +780,14 @@ export class Config {
    * config.json as stored: JSONC, so a hand edit may carry comments and
    * trailing commas. A file that does not parse is reported with where it broke.
    */
-  private async readStored(): Promise<{ value?: Partial<AppConfig>; corrupt?: string; text?: string }> {
+  private async readStored(): Promise<{ value?: Partial<AppConfig>; corrupt?: string; unreadable?: string; text?: string }> {
     let text: string | undefined
     try {
       text = await this.storage.readText("config")
     } catch (err) {
-      return { corrupt: err instanceof Error ? err.message : String(err) }
+      // An errno is the disk refusing, not a damaged document - see readOrCorrupt.
+      const message = err instanceof Error ? err.message : String(err)
+      return typeof (err as NodeJS.ErrnoException).code === "string" ? { unreadable: message } : { corrupt: message }
     }
     if (text === undefined) return {}
     const read = parseJsonc(text)
@@ -791,8 +807,12 @@ export class Config {
    */
   private readonly written: string[] = []
 
+  /** Set when config.json is there but this run could not read it and could not keep it aside; nothing may be written over it. */
+  private blocked = false
+
   /** Writes the settings key by key into the file as it stands, refusing one that no longer parses. */
   private persist(): Promise<void> {
+    if (this.blocked) return Promise.resolve()
     const file = this.storage.fileOf("config")
     const value = this.asStored(this.current)
     return this.storage.writeText("config", (current) => {

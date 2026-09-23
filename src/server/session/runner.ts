@@ -31,6 +31,7 @@ import { globalAgentsPath } from "../global-agents"
 import { discoverSkills, enabledSkills, skillReminders, withSkillReminders, type SkillInfo } from "../skill"
 import { findTool, hasOwnToolsOnly, reachOf, repairableNames, toolsForTurn, withheldByLab } from "../tool/registry"
 import { normalizeToolInput, resolveToolName } from "../tool/repair"
+import { inputForTool } from "../provider/tool-schema"
 import { Questions } from "../tool/question"
 import type { PlanControl, SubagentControl, SubagentSpec, ToolContext, ToolDefinition, ToolResult } from "../tool/types"
 import { instructionsIn } from "../tool/read"
@@ -1394,13 +1395,25 @@ export class SessionRunner {
    * model's usual one. For an overflow the attached files are left out, since
    * they are what made it too large. A reply that is empty, not a summary, a
    * tool call, or itself too large leaves the conversation as it was.
+   *
+   * `boundary` is the last message the summary is to cover, for a caller that
+   * is compacting with a newer message already in the conversation - a turn
+   * compacting because the reply before it crossed the line has the user's new
+   * request sitting at the end. Marking there would put that request behind the
+   * mark, where `contextFor` never sends it, and the turn would answer a
+   * question the model was never shown. Left out, the mark falls at the end, as
+   * it does for the button and for an overflow.
    */
-  private async compactNow(session: TurnSession, signal: AbortSignal, trigger: CompactionTrigger): Promise<SessionInfo> {
+  private async compactNow(session: TurnSession, signal: AbortSignal, trigger: CompactionTrigger, boundary?: string): Promise<SessionInfo> {
     const stored = await this.store.messages(session.id)
     const live = this.liveMessages(session, stored)
-    const last = live.at(-1)
+    let seen = this.contextFor(session, stored)
+    const cut = boundary ? seen.findIndex((message) => message.id === boundary) : -1
+    // Summarising past the boundary would describe the request as work already done.
+    if (cut >= 0) seen = seen.slice(0, cut + 1)
+    const last = cut >= 0 ? live.find((message) => message.id === boundary) : live.at(-1)
     // skills: what a message loaded is part of the conversation being summarised.
-    const context = withSkillReminders(withAutomationNotes(withChatHeaders(this.contextFor(session, stored))))
+    const context = withSkillReminders(withAutomationNotes(withChatHeaders(seen)))
     if (!last || !context.some((message) => message.role === "user")) throw new Error("Nothing to compact yet")
 
     const definition = this.config.definition(session.model.provider)
@@ -1495,7 +1508,8 @@ export class SessionRunner {
       .find((message): message is AssistantMessage => message.role === "assistant" && message.finish !== undefined && message.usage !== undefined)
     if (!reply?.usage || !isOverflowByCount(reply.usage, this.config.modelEntry(session.model))) return session
     try {
-      return keepTurn(await this.compactNow(session, signal, "automatic"), session)
+      // The summary stops at that reply, so the request this turn is about to answer stays in front of the mark and is sent as the user wrote it.
+      return keepTurn(await this.compactNow(session, signal, "automatic", reply.id), session)
     } catch {
       return session
     }
@@ -2406,7 +2420,7 @@ export class SessionRunner {
       }
       assistant.parts.push(part)
       await this.store.saveMessage(assistant)
-      await this.runTool({ part, assistant, session: { id: sessionID, directory: session.directory }, signal: controller.signal })
+      await this.runTool({ part, assistant, session: { id: sessionID, directory: session.directory, model: session.model }, signal: controller.signal })
       assistant.time.completed = Date.now()
       if (controller.signal.aborted) assistant.finish = "aborted"
       await this.store.saveMessage(assistant)
@@ -2896,7 +2910,7 @@ export class SessionRunner {
       const calls = new Semaphore(STEP_TOOL_LIMIT)
       await Promise.all(
         pending.map((part) =>
-          calls.run(() => this.runTool({ part, assistant, session: { id: sessionID, directory: session.directory }, signal: controller.signal })),
+          calls.run(() => this.runTool({ part, assistant, session: { id: sessionID, directory: session.directory, model: session.model }, signal: controller.signal })),
         ),
       )
 
@@ -3250,7 +3264,7 @@ export class SessionRunner {
   private async runTool(input: {
     part: ToolPart
     assistant: AssistantMessage
-    session: { id: string; directory: string }
+    session: { id: string; directory: string; model: ModelRef }
     signal: AbortSignal
   }): Promise<void> {
     const { part, assistant } = input
@@ -3325,7 +3339,11 @@ export class SessionRunner {
      */
     const unreadable = this.inputErrors.get(part)
     // Argument names a model spelled its own way (filePath for file_path) are put onto the schema's, as MiMo's repair does.
-    if (tool.name !== "invalid" && !unreadable) part.input = normalizeToolInput(part.input, tool.parameters)
+    if (tool.name !== "invalid" && !unreadable) {
+      part.input = normalizeToolInput(part.input, tool.parameters)
+      // And a value this model's own schema turned into a string is read back as the number the tool declares.
+      part.input = inputForTool(input.session.model, tool.parameters, part.input) as typeof part.input
+    }
     const problems = tool.name === "invalid" ? [] : unreadable ? [unreadable] : argumentProblems(tool.parameters, part.input)
     if (problems.length) {
       part.status = "error"

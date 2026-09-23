@@ -4044,19 +4044,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
-.slash-title {
-  /*
-   * Takes the middle of the row so the hint stays against the far edge whether
-   * the row has two things on it or three.
-   */
-  flex: 1;
-  overflow: hidden;
-  color: var(--text-strong);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /*
  * What the reference says when a slash names nothing. Sized and coloured like
  * the header above it rather than like a row, because it cannot be chosen.
@@ -4091,23 +4078,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   background: color-mix(in srgb, var(--text-strong) 8%, transparent);
   border-radius: 5px;
   font-size: calc(11px * var(--ui-font-scale, 1));
-}
-
-.slash-hint {
-  /*
-   * A keyboard hint is short and must never be clipped; a directory can be
-   * half a screen wide, so it gets a ceiling and an ellipsis rather than the
-   * right to squeeze the name it belongs to off the row.
-   */
-  flex-shrink: 0;
-  max-width: 55%;
-  overflow: hidden;
-  color: var(--text-weaker);
-  font-family: var(--font-mono);
-  font-size: calc(11px * var(--ui-font-scale, 1));
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  direction: ltr;
 }
 
 .composer {

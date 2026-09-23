@@ -107,3 +107,35 @@ export function schemaFor(model: ModelRef, schema: Record<string, unknown>): Rec
   if (isMoonshot(model)) out = forMoonshot(out)
   return out as Record<string, unknown>
 }
+
+/** Puts a number back where the schema sent to the model turned one into a string. */
+function undoStringified(schema: unknown, value: unknown): unknown {
+  if (!isNode(schema)) return value
+  if (Array.isArray(value)) return isNode(schema) && "items" in schema ? value.map((entry) => undoStringified(schema.items, entry)) : value
+  if (isNode(value) && isNode(schema.properties)) {
+    const out: Node = {}
+    for (const [key, child] of Object.entries(value)) out[key] = key in schema.properties ? undoStringified(schema.properties[key], child) : child
+    return out
+  }
+  // Only where the transform actually rewrote the type: a numeric enum shown to the model as strings.
+  if (typeof value !== "string" || !Array.isArray(schema.enum)) return value
+  if (schema.type !== "integer" && schema.type !== "number") return value
+  const found = schema.enum.find((entry) => typeof entry === "number" && String(entry) === value)
+  return found ?? value
+}
+
+/**
+ * The model's arguments, read back into the types the tool actually declares.
+ *
+ * `schemaFor` rewrites a numeric enum as strings so the request is accepted,
+ * and said so - but the answer was then judged, and handed on, against the
+ * untransformed schema. A model obeying the schema it was shown answered
+ * `"2"`, the validator said "level should be integer, got string", and the
+ * model was told to call again with arguments matching parameters it had just
+ * matched: no argument satisfies both, so the turn could only loop until a
+ * detector or the step limit ended it. Only an MCP server's schema can reach
+ * this; every enum MCode declares itself is strings already.
+ */
+export function inputForTool(model: ModelRef, schema: Record<string, unknown>, input: unknown): unknown {
+  return isGemini(model) ? undoStringified(schema, input) : input
+}

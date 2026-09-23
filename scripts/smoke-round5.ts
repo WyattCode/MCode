@@ -981,7 +981,20 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       const autoAfter = await e.store.get(auto.id)
       const autoWire = wireText(e.bodies.at(-1))
       check("the next turn starts with an automatic compaction", autoAfter?.compacted?.trigger === "automatic", autoAfter?.compacted)
-      check("and its request is the summary and a note to carry on", autoWire.includes('trigger=\\"automatic\\"') && autoWire.includes("was just compacted"), autoWire.slice(0, 600))
+      /*
+       * The summary and the question this turn is answering - not a note
+       * telling the model to carry on. The mark is set at the reply that
+       * crossed the line, so the message the user just sent falls after it and
+       * is sent as they wrote it. Marking at the newest message instead put
+       * that message behind the mark, where nothing sends it: the turn was
+       * answered by a model that had never been shown the question, and the
+       * summary's own "next steps" sent it back to the previous task (R23-3-1).
+       */
+      check(
+        "and its request is the summary and the question this turn is answering",
+        autoWire.includes('trigger=\\"automatic\\"') && autoWire.includes("AUTO next") && !autoWire.includes("was just compacted"),
+        autoWire.slice(0, 600),
+      )
 
       // Overflow: the provider refuses for length, the conversation is compacted and the request posted again.
       const over = await e.store.create({ directory: e.project, model: e.model })
@@ -1020,10 +1033,14 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
     check("other models are sent none", !("reasoning_content" in ((toMessages("s", [user("u1", "q"), thought]) as Record<string, any>[])[2] ?? {})))
 
     const signedModel = { provider: "anthropic", model: "claude-opus-5" }
-    const signed = reply("a3", [{ type: "text", id: "t1", text: "first" }, done("toolu_1"), { type: "reasoning", id: "r1", text: "", time: { created: 1 }, signature: "sig" }], signedModel)
+    const signed = reply("a3", [{ type: "text", id: "t1", text: "first" }, done("toolu_1"), { type: "reasoning", id: "r1", text: "thought", time: { created: 1 }, signature: "sig" }], signedModel)
     const back = toProviderMessages([user("u1", "q"), signed], undefined, signedModel) as Record<string, any>[]
     const blocks = back[1]?.content as Record<string, any>[]
-    check("signed thinking goes back to the model that signed it", blocks?.some((block) => block.type === "thinking" && block.signature === "sig"), blocks?.map((block) => block.type))
+    check("signed thinking goes back to the model that signed it", blocks?.some((block) => block.type === "thinking" && block.thinking === "thought" && block.signature === "sig"), blocks?.map((block) => block.type))
+    // A level-2 prune empties a reasoning part and keeps its signature; sending that would sign an empty block with the signature of words it no longer carries.
+    const emptied = reply("a4", [{ type: "text", id: "t1", text: "first" }, { type: "reasoning", id: "r1", text: "", time: { created: 1 }, signature: "sig" }], signedModel)
+    const afterPrune = toProviderMessages([user("u1", "q"), emptied], undefined, signedModel) as Record<string, any>[]
+    check("but a pruned one, emptied of its words, is left out rather than sent signed", !(afterPrune[1]?.content as Record<string, any>[]).some((block) => block.type === "thinking"))
     check("and a reply's calls come after its other parts", blocks?.at(-1)?.type === "tool_use", blocks?.map((block) => block.type))
     const elsewhere = toProviderMessages([user("u1", "q"), signed], undefined, { provider: "anthropic", model: "claude-sonnet-5" }) as Record<string, any>[]
     check("but not to another model", !(elsewhere[1]?.content as Record<string, any>[]).some((block) => block.type === "thinking"))

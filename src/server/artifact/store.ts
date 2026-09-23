@@ -429,20 +429,38 @@ export class ArtifactStore {
    */
   reconcile(sessions: readonly SessionInfo[], messagesOf: (sessionID: string) => Promise<Message[]>, options: { recheck?: boolean } = {}): Promise<void> {
     if (!this.writable) return Promise.resolve()
+    /*
+     * A request to ask the disk is remembered, not dropped. Both ways out of
+     * here hand back a pass that may have been started without it: the
+     * once-a-launch sweep runs behind the rest of housekeeping, so a window
+     * that connects first and writes one message starts a plain pass, and the
+     * sweep then returned that pass as if it had rechecked. Files deleted
+     * outside the app went on showing as available until a launch won the race.
+     */
+    if (options.recheck === true) this.recheckWanted = true
     if (this.running) return this.running
     return (async () => {
       const known = await this.known()
-      return this.running ?? this.begin(this.behind(sessions, known), messagesOf, options.recheck === true)
+      return this.running ?? this.begin(this.behind(sessions, known), messagesOf)
     })()
   }
 
+  /** A recheck asked for while a pass was in flight, honoured by the next pass that starts. */
+  private recheckWanted = false
+
   /** Starts a pass over `behind`; whether it is a long one is known before anything waits on it. */
-  private begin(behind: readonly SessionInfo[], messagesOf: (sessionID: string) => Promise<Message[]>, recheck: boolean): Promise<void> {
+  private begin(behind: readonly SessionInfo[], messagesOf: (sessionID: string) => Promise<Message[]>): Promise<void> {
     this.bulk = behind.length > INLINE_RECONCILE
-    // A long pass has added files nothing has asked the disk about yet; the tabs' counts would take them on trust.
-    const checkAll = recheck || this.bulk
     this.running = (async () => {
       await this.pass(behind, messagesOf)
+      /*
+       * Read after the pass rather than before it, so a recheck asked for
+       * while this one was running is answered by this one. A long pass has
+       * added files nothing has asked the disk about yet either; the tabs'
+       * counts would otherwise take them on trust.
+       */
+      const checkAll = this.recheckWanted || this.bulk
+      this.recheckWanted = false
       if (checkAll) await this.recheck()
     })().finally(() => {
       this.running = undefined
@@ -485,7 +503,7 @@ export class ArtifactStore {
       const known = await this.known()
       if (!this.running) {
         const behind = this.behind(sessions, known)
-        if (behind.length) void this.begin(behind, messagesOf, false).catch(() => undefined)
+        if (behind.length) void this.begin(behind, messagesOf).catch(() => undefined)
       }
       if (this.running && !this.bulk) await this.running.catch(() => undefined)
     }

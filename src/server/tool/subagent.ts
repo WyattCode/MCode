@@ -125,7 +125,17 @@ export const ActorTool: ToolDefinition = {
           vision: { type: "boolean", description: "models: only models that read images" },
           limit: { type: "number", description: "models: at most this many" },
         },
-        required: ["action"],
+        /*
+         * `action` is deliberately not required, because this tool's own
+         * description tells the model it need not send one ("A call without an
+         * action is a run") and `actorAction` reads `background: true` as a
+         * spawn. Requiring it here refused exactly those two calls before
+         * `execute` ever saw them, which made the description a lie and the
+         * fallback dead code - a wasted round trip and a red row for a call the
+         * tool was written to accept. The handler defaults, and refuses in its
+         * own words anything it cannot serve. (The task tool's `required` stays:
+         * nothing there promises an action-less call.)
+         */
       },
     },
   },

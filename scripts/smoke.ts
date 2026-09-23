@@ -434,6 +434,8 @@ import { roundTwentyOneLaneFourChecks } from "./smoke-round21-f4"
 import { roundTwentyTwoLaneTwoChecks, dateZoneChecks } from "./smoke-round22-l2"
 // Round 22, lane L1: the sweep round 21 lane F1 handed over - the lifts, the half-pixel edges, --color-txt, dim vs mut.
 import { roundTwentyTwoLaneOneChecks } from "./smoke-round22-l1"
+// Round 23: the second code review - unreadable documents answered as damage, the compaction that swallowed a question, dark-outranked state rules.
+import { roundTwentyThreeChecks } from "./smoke-round23"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -1318,7 +1320,9 @@ async function main() {
 
     for (let i = 0; i < 150; i++) await put(`many/f${i}.txt`, "n")
     const many = await run("glob", { pattern: "*.txt", path: "many" }, "g-many")
-    check("glob lists at most 100 and says there were more", many.output.split("\n").filter((line) => line.endsWith(".txt")).length === 100 && many.metadata?.truncated === true, many.output.slice(-200))
+    check("glob lists at most 100 and says there were more", many.output.split("\n").filter((line) => line.endsWith(".txt")).length === 100 && many.output.includes("Only the first 100 files found are listed") && many.metadata?.count === 100, many.output.slice(-200))
+    // `truncated` in a tool's metadata is the shared cap's opt-out, for a tool that capped its own BYTES. glob caps by file count, and 100 paths can run far over that cap; grep keeps 100 matches of up to 2,000 characters each, four times over it. Neither may claim it (R23-3-2).
+    check("and neither search opts out of the shared output cap", many.metadata?.truncated === undefined && (await run("grep", { pattern: "n", path: "many" }, "gr-many")).metadata?.truncated === undefined)
     check("glob's path has to be a folder", (await run("glob", { pattern: "*", path: "src/a.ts" }, "g-file")).output.includes("has to be a folder"))
     const inFile = await run("grep", { pattern: "x", path: "twice.txt" }, "gr-file")
     check("grep searches a single file named as its path", inFile.output === `Found 2 matches\n${path.join(e24, "twice.txt")}:\n  Line 1: x\n  Line 2: x`, inFile.output)
@@ -2581,8 +2585,15 @@ async function main() {
     const finalValue = await store.read<{ index: number }>(key)
     check("the last write is the one kept", finalValue?.index === 39, finalValue?.index)
 
-    // Nothing half-written left lying about.
-    const dir = await fs.readdir(path.join(dataDirectory, "probe")).catch(() => [] as string[])
+    /*
+     * Nothing half-written left lying about. The folder is the store's own -
+     * `<dataDirectory>/storage/probe`, as index.ts builds it - and this read
+     * once named `<dataDirectory>/probe`, which never exists: the ENOENT went
+     * into the catch, `dir` was always empty and the check could not fail
+     * however many temps a broken write left (R23-5-1).
+     */
+    const dir = await fs.readdir(path.join(dataDirectory, "storage", "probe"))
+    check("the folder the writes went to is the one read", dir.includes("concurrent.json"), dir)
     check("no temp files are left behind", !dir.some((name) => name.endsWith(".tmp")), dir)
 
     await store.remove(key)
@@ -2627,9 +2638,17 @@ async function main() {
       attachments: [],
       time: { created: Date.now() },
     })
-    const messageDir = path.join(dataDirectory, "session", damaged.id, "message")
+    /*
+     * Into the store's own folder. This wrote to `<dataDirectory>/session/...`
+     * while the store reads `<dataDirectory>/storage/session/...`, so the
+     * decoy was never in the folder being read: both checks passed on a folder
+     * holding one good message, and taking the per-file guard out of
+     * `messages()` - the regression they exist for - left them green (R23-5-1).
+     */
+    const messageDir = path.join(dataDirectory, "storage", "session", damaged.id, "message")
     await fs.mkdir(messageDir, { recursive: true })
     await fs.writeFile(path.join(messageDir, "msg_broken.json"), "{ this is not json", "utf8")
+    check("the decoy is in the folder the store reads", (await fs.readdir(messageDir)).length === 2, await fs.readdir(messageDir))
     const loaded = await backend.runtime.sessions.messages(damaged.id)
     check("a damaged message is skipped, not fatal", loaded.length === 1, loaded.length)
     check("and the readable one survives", loaded[0]?.id === "msg_good", loaded[0]?.id)
@@ -7094,6 +7113,7 @@ async function main() {
   await roundTwentyTwoLaneTwoChecks(check, section)
   await dateZoneChecks(check, section)
   await roundTwentyTwoLaneOneChecks(check, section)
+  await roundTwentyThreeChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

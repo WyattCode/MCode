@@ -499,15 +499,6 @@ html[data-motion="on"] ::-webkit-scrollbar-thumb {
   padding: 16px;
 }
 
-.dialog-titles {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  min-width: 0;
-}
-
 .dialog-title {
   margin: 0;
   color: var(--text-strong);
@@ -515,15 +506,6 @@ html[data-motion="on"] ::-webkit-scrollbar-thumb {
   font-weight: 530;
   line-height: calc(20px * var(--ui-font-scale, 1));
   letter-spacing: -0.13px;
-  user-select: none;
-}
-
-.dialog-sub {
-  color: var(--text-base);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 440;
-  line-height: calc(20px * var(--ui-font-scale, 1));
-  letter-spacing: -0.04px;
   user-select: none;
 }
 

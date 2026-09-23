@@ -782,8 +782,13 @@ const Actions: FunctionalComponent = () => {
   pointer-events: none;
 }
 
+/* The plain dark ink outranks `.q-plan:hover`; without this the dotted-underline button never lifts and reads as static text. */
 :root[data-theme="dark"] .q-icon, :root[data-theme="dark"] .q-desc, :root[data-theme="dark"] .q-plan {
   color: #b8b8b8;
+}
+
+:root[data-theme="dark"] .q-plan:hover {
+  color: var(--primary);
 }
 
 :root[data-theme="dark"] .q-dim, :root[data-theme="dark"] .q-queue, :root[data-theme="dark"] .q-pager, :root[data-theme="dark"] .q-pencil, :root[data-theme="dark"] .q-ret {
@@ -837,6 +842,10 @@ const Actions: FunctionalComponent = () => {
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .q-icon, :root:not([data-theme="light"]) .q-desc, :root:not([data-theme="light"]) .q-plan {
     color: #b8b8b8;
+  }
+
+  :root:not([data-theme="light"]) .q-plan:hover {
+    color: var(--primary);
   }
 
   :root:not([data-theme="light"]) .q-dim, :root:not([data-theme="light"]) .q-queue, :root:not([data-theme="light"]) .q-pager, :root:not([data-theme="light"]) .q-pencil, :root:not([data-theme="light"]) .q-ret {

@@ -131,15 +131,32 @@ h2 {
   border-color: var(--text-weak);
 }
 
+/* The focus and refusal rings repeated for the dark fill, which would otherwise outrank both - see CustomProviderForm's .cp-in, the same shape. */
 :root[data-theme="dark"] .field-in {
   background: rgb(58 58 58 / 0.3);
   border-color: #3a3a3a;
+}
+
+:root[data-theme="dark"] .field-in:focus {
+  border-color: var(--text-weak);
+}
+
+:root[data-theme="dark"] .field-in.bad {
+  border-color: #ff6467;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .field-in {
     background: rgb(58 58 58 / 0.3);
     border-color: #3a3a3a;
+  }
+
+  :root:not([data-theme="light"]) .field-in:focus {
+    border-color: var(--text-weak);
+  }
+
+  :root:not([data-theme="light"]) .field-in.bad {
+    border-color: #ff6467;
   }
 }
 

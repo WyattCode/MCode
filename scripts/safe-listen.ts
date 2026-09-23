@@ -25,10 +25,12 @@ net.Server.prototype.listen = function (this: net.Server, ...args: unknown[]) {
   if (!asksForAnyPort(args)) return listen.apply(this, args as Parameters<typeof listen>)
   const server = this
   const emit = server.emit
+  // A refused port is moved a bounded number of times, as both of the app's own listen loops are: a suite that never hears "listening" hangs with nothing to read.
+  let moves = 0
   server.emit = function (event: string | symbol, ...rest: unknown[]) {
     if (event === "listening") {
       const bound = server.address()
-      if (typeof bound === "object" && bound && (isBlockedPort(bound.port) || moveAlso.next?.(bound.port))) {
+      if (typeof bound === "object" && bound && (isBlockedPort(bound.port) || moveAlso.next?.(bound.port)) && moves++ < 8) {
         // A "close" listener would hear this one too; none is added before a server is up.
         server.close(() => {
           listen.apply(server, args.filter((arg) => typeof arg !== "function") as Parameters<typeof listen>)

@@ -575,9 +575,14 @@ async function pickMenu(key: string) {
   opacity: 0.9;
 }
 
+/* The plain dark fill outranks `.fc-review:hover`, so the hover wash is repeated here or the button answers the pointer with nothing. */
 :root[data-theme="dark"] .file-card,
 :root[data-theme="dark"] .fc-review {
   background: #181818;
+}
+
+:root[data-theme="dark"] .fc-review:hover {
+  background: var(--surface-hover);
 }
 
 :root[data-theme="dark"] .file-card {
@@ -615,6 +620,10 @@ async function pickMenu(key: string) {
   :root:not([data-theme="light"]) .file-card,
   :root:not([data-theme="light"]) .fc-review {
     background: #181818;
+  }
+
+  :root:not([data-theme="light"]) .fc-review:hover {
+    background: var(--surface-hover);
   }
 
   :root:not([data-theme="light"]) .file-card {

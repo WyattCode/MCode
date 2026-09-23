@@ -183,8 +183,19 @@ export async function roundTenBashChecks(check: Check, section: (name: string) =
       process.env.PATH = `${fakeBin}${path.delimiter}${savedPath ?? ""}`
       const chosen = shell()
       check("with nothing chosen, pwsh is preferred when it is installed", chosen.command === path.join(fakeBin, "pwsh.exe") && chosen.powershell, chosen.command)
-      process.env.PATH = savedPath
-      check("and Windows PowerShell otherwise", /powershell\.exe$/i.test(shell().command) || /pwsh\.exe$/i.test(shell().command), shell().command)
+      /*
+       * A PATH with Windows PowerShell on it and no pwsh. Restoring the real
+       * PATH and then accepting either name meant that on any machine with
+       * PowerShell 7 installed the fallback this check is named for was never
+       * taken - it read green here only because this machine has no pwsh
+       * (R23-5-3).
+       */
+      const onlyWindows = path.join(root, "only-windows-powershell")
+      await fs.mkdir(onlyWindows, { recursive: true })
+      await fs.writeFile(path.join(onlyWindows, "powershell.exe"), "")
+      process.env.PATH = onlyWindows
+      check("and Windows PowerShell otherwise", shell().command === path.join(onlyWindows, "powershell.exe"), shell().command)
+      process.env.PATH = `${fakeBin}${path.delimiter}${savedPath ?? ""}`
       process.env.SHELL = "fish"
       check("SHELL naming fish is passed over, as MiMo passes it over", shell().powershell, shell().command)
       process.env.SHELL = "cmd.exe"

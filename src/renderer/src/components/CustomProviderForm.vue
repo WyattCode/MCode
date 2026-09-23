@@ -853,15 +853,40 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   border-color: var(--text-weak);
 }
 
+/*
+ * The dark fill is written on the plain element, which outranks the two rules
+ * above it - one class and a pseudo-class against one class inside :root and a
+ * theme attribute - so both the focus ring and the refusal ring were computed
+ * away in the dark. The field also sets `outline: none`, so its border is the
+ * only mark focus has: tabbing through this form in the dark showed nothing at
+ * all. Each state is repeated here rather than cut out of the rule above,
+ * because a focused field keeps the dark fill.
+ */
 :root[data-theme="dark"] .cp-in {
   background: rgb(58 58 58 / 0.3);
   border-color: #3a3a3a;
+}
+
+:root[data-theme="dark"] .cp-in:focus {
+  border-color: var(--text-weak);
+}
+
+:root[data-theme="dark"] .cp-in.bad {
+  border-color: #ff6467;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .cp-in {
     background: rgb(58 58 58 / 0.3);
     border-color: #3a3a3a;
+  }
+
+  :root:not([data-theme="light"]) .cp-in:focus {
+    border-color: var(--text-weak);
+  }
+
+  :root:not([data-theme="light"]) .cp-in.bad {
+    border-color: #ff6467;
   }
 }
 
@@ -899,12 +924,6 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 
 .cp-eye:hover {
   color: var(--text-strong);
-}
-
-.cp-help {
-  color: var(--text-base);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 1.5;
 }
 
 .cp-error {
@@ -1229,9 +1248,16 @@ label.cp-option {
   min-width: 180px;
 }
 
+/* The explicit-dark twin was written and the media one was not, so this hover worked for someone who picked Dark and not for the default, which follows the system. */
 .cp-pick-btn:hover,
 :root[data-theme="dark"] .cp-pick-btn:hover {
   border-color: var(--text-weak);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp-pick-btn:hover {
+    border-color: var(--text-weak);
+  }
 }
 
 .cp-pick-label {

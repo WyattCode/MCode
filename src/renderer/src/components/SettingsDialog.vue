@@ -89,6 +89,23 @@ const section = computed<Section>({
       if (navQuery.value.trim()) void flashMatch(navQuery.value)
     }),
 })
+/*
+ * A page asked for while the settings are already open.
+ *
+ * The dialog stays mounted for as long as it is open, so the prop was read
+ * once and every later request was dropped. Most callers cannot reach here -
+ * they are behind the guard that refuses to open anything over a dialog - but
+ * a toast is not: the archive notice's 「查看已归档」 sits above the settings and
+ * stays clickable, so opening the settings and then pressing it did nothing at
+ * all. Written through `section`, so the unsaved-environment guard still gets
+ * its say.
+ */
+watch(
+  () => props.section,
+  (next) => {
+    if (next && next !== currentSection.value) section.value = next
+  },
+)
 
 /* MiMo's 默认打开目标: the same remembered choice the title bar's open-location control uses. */
 const { options: openOptions, choice: openChoice, choose: chooseOpen } = useOpenWith(() => app.platform)
@@ -3411,8 +3428,16 @@ h3 {
   white-space: nowrap;
 }
 
+/*
+ * Faded rather than recoloured. The dark rule for `.ctl-btn` sets the strong
+ * ink on the plain element and outranks this one, so in the dark a disabled
+ * button drew in the same white as an enabled one on the same fill - only the
+ * missing hover wash told them apart, and only once the pointer was on it. The
+ * primary variant below already fades, and opacity is the one answer no theme
+ * rule can take away.
+ */
 .ctl-btn:disabled {
-  color: var(--text-weaker);
+  opacity: 0.4;
   cursor: default;
 }
 
@@ -3796,6 +3821,11 @@ h3 {
   background: #141414;
 }
 
+/* The shared dark border rule above outranks `.keys-search-mode:hover`, which left the toggle's border unchanged on hover. */
+:root[data-theme="dark"] .keys-search-mode:hover {
+  border-color: var(--text-strong);
+}
+
 :root[data-theme="dark"] .keys-kbd {
   background: #2e2e2e;
 }
@@ -3818,6 +3848,10 @@ h3 {
   :root:not([data-theme="light"]) .keys-search-mode.on,
   :root:not([data-theme="light"]) .keys-row:hover {
     background: #141414;
+  }
+
+  :root:not([data-theme="light"]) .keys-search-mode:hover {
+    border-color: var(--text-strong);
   }
 
   :root:not([data-theme="light"]) .keys-kbd {
@@ -4125,20 +4159,6 @@ h3 {
   gap: 10px;
 }
 
-.link-btn {
-  color: var(--text-base);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-}
-
-.link-btn:hover {
-  color: var(--text-strong);
-}
-
-.key-row {
-  display: flex;
-  gap: 8px;
-}
-
 .confirm {
   display: flex;
   flex-shrink: 0;
@@ -4283,10 +4303,6 @@ h3 {
   resize: vertical;
 }
 
-.ci-input:focus {
-  border-color: var(--border-strong);
-}
-
 /* MiMo's ci-input: the input fill (#fff / #181818) on a 1px line, the dim colour on focus. */
 .ci-input,
 .ci-help {
@@ -4304,10 +4320,15 @@ h3 {
   opacity: 1;
 }
 
+/* The dark line is written on the plain element, which outranks `.ci-input:focus` above, so the focus ring had to be repeated here; the field sets `outline: none`, so that border is the only mark focus has. */
 :root[data-theme="dark"] .ci-input,
 :root[data-theme="dark"] .ci-help {
   background: #181818;
   border-color: #2e2e2e;
+}
+
+:root[data-theme="dark"] .ci-input:focus {
+  border-color: var(--text-weak);
 }
 
 :root[data-theme="dark"] .ci-save:disabled {
@@ -4319,6 +4340,10 @@ h3 {
   :root:not([data-theme="light"]) .ci-help {
     background: #181818;
     border-color: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .ci-input:focus {
+    border-color: var(--text-weak);
   }
 
   :root:not([data-theme="light"]) .ci-save:disabled {
@@ -4522,30 +4547,12 @@ h3 {
   flex-shrink: 0;
 }
 
-.row-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-}
-
-.pmark.on {
-  color: var(--surface-base);
-  background: var(--text-strong);
-}
-
 /*
  * opencode's `button-v2` ghost variant, measured on its providers page:
  * `74x28` for 断开连接, `padding: 0 11px`, gap 6, radius 6, transparent,
  * `13px/530/20px` at `-0.04px` in text-base. This was `0 12px` on a 6% fill
  * in text-strong at 440 - a filled pill where the reference draws a ghost.
  */
-
-/* Sits inside .pform.stack, so it must not re-apply the horizontal padding -
-   otherwise the key row is inset from the fields above it. */
-.pform-row {
-  display: flex;
-  gap: 8px;
-}
 
 /* The custom-provider form sits inside the provider card, so it brings the
    card's own inset and closing rule with it rather than knowing about them. */
@@ -4890,6 +4897,11 @@ h3 {
   border-color: #2e2e2e;
 }
 
+/* As .ci-input: the plain dark rule outranks `.nav-search:focus`, so the ring is repeated for the dark schemes. */
+:root[data-theme="dark"] .nav-search:focus {
+  border-color: var(--text-base);
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .card {
     background: #282828;
@@ -4902,6 +4914,10 @@ h3 {
 
   :root:not([data-theme="light"]) .nav-search {
     border-color: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .nav-search:focus {
+    border-color: var(--text-base);
   }
 }
 

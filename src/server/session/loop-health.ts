@@ -161,7 +161,24 @@ export class LoopMonitor {
     if (EDIT_TOOLS.has(part.name)) return this.edit(part)
     if (part.name === "bash") return this.bash(part)
     // Anything else - reading, globbing, grepping - counts only towards a streak that finds nothing.
-    return this.track({ kind: lookKind(part.name), progress: part.status === "completed" && Boolean(part.output?.trim()) }, part.name)
+    return this.track({ kind: lookKind(part.name), progress: part.status === "completed" && this.found(part) }, part.name)
+  }
+
+  /**
+   * Whether a call turned anything up.
+   *
+   * "Produced some text" was the test, and it made this detector unable to fire
+   * on the case it is named for: a fruitless grep or glob answers "No files
+   * found", which is text, so twenty of them in a row counted as twenty pieces
+   * of progress and the streak never reached four. Only calls that *errored*
+   * could raise it - a different and far rarer failure than a model hunting for
+   * something that is not in the project. A search says how much it found, so
+   * that is what is read; anything else still falls back to its output.
+   */
+  private found(part: ToolPart): boolean {
+    const counted = part.metadata?.matches ?? part.metadata?.count
+    if (typeof counted === "number") return counted > 0
+    return Boolean(part.output?.trim())
   }
 
   /** After the user has answered, so the next call starts the count again rather than asking twice. */

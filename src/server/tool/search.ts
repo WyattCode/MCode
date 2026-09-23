@@ -176,7 +176,8 @@ export const GlobTool: ToolDefinition = {
     return {
       output,
       title: relative(context.directory, root),
-      metadata: { count: found.length, truncated },
+      // No `truncated` flag: that is the shared cap's opt-out, for a tool that capped its own bytes. This one caps by file count, and 100 paths can still run far over the byte cap.
+      metadata: { count: found.length },
     }
   },
 }
@@ -360,7 +361,7 @@ export const GrepTool: ToolDefinition = {
         : Promise.resolve({ rows: [] as Row[], partial: true })
     ).catch(stopped)
 
-    const empty = { output: "No files found", title: pattern, metadata: { matches: 0, truncated: false } }
+    const empty = { output: "No files found", title: pattern, metadata: { matches: 0 } }
     if (rows.length === 0) return empty
     const times = new Map<string, number>()
     for (const file of new Set(rows.map((row) => row.path))) {
@@ -385,6 +386,7 @@ export const GrepTool: ToolDefinition = {
     }
     if (truncated) lines.push("", `(${LIMIT} of ${total} matches shown. Narrow the path or the pattern to see the rest.)`)
     if (partial) lines.push("", "(Some paths could not be read and were skipped.)")
-    return { output: lines.join("\n"), title: pattern, metadata: { matches: total, truncated } }
+    // As glob above: 100 matches of up to 2 000 characters each is four times the shared byte cap, so that cap still has to run over this.
+    return { output: lines.join("\n"), title: pattern, metadata: { matches: total } }
   },
 }
