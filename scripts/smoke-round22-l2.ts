@@ -139,3 +139,42 @@ export async function roundTwentyTwoLaneTwoChecks(check: Check, section: (name: 
     check("the retry still holds the strip's end", /margin-inline-start: auto;/.test(rule(errors, ".retry")), rule(errors, ".retry"))
   }
 }
+
+/**
+ * A kept date formatter holds the zone it was built with, so the window throws
+ * them away when it comes back to the front - and the check that runs under a
+ * zone of its own throws them away too, which is what made T3-8 fail by the
+ * hour of the day.
+ */
+export async function dateZoneChecks(check: Check, section: (name: string) => void): Promise<void> {
+  section("Dates follow the machine when it changes zone")
+  const i18n = await fs.readFile(path.join(process.cwd(), "src/renderer/src/lib/i18n.ts"), "utf8")
+  check("the kept formatters can be thrown away", /export function refreshDateFormatters\(\): void \{\s*formatters\.clear\(\)/.test(i18n))
+  const app = await fs.readFile(path.join(process.cwd(), "src/renderer/src/App.vue"), "utf8")
+  check("and the window does that when it comes back to the front", /visibilitychange", \(\) => \{[\s\S]{0,160}if \(!document\.hidden\) refreshDateFormatters\(\)/.test(app))
+  const zoned = await fs.readFile(path.join(process.cwd(), "scripts/smoke-round16-continuation.ts"), "utf8")
+  check("the zone-changing check leaves none of its own behind", /process\.env\.TZ = held\s*\n[^\n]*\n\s*refreshDateFormatters\(\)/.test(zoned))
+  const { dateIn, language } = await import("../src/renderer/src/lib/i18n")
+  const held = process.env.TZ
+  const was = language.value
+  try {
+    // The two zones are a day apart at this hour, so the calendar day is what moves (their clocks read alike).
+    const moment = new Date(Date.UTC(2026, 8, 21, 12, 0))
+    const { refreshDateFormatters } = await import("../src/renderer/src/lib/i18n")
+    language.value = "en"
+    process.env.TZ = "Etc/GMT-12"
+    refreshDateFormatters()
+    const east = dateIn(moment, { month: "short", day: "numeric" })
+    process.env.TZ = "Etc/GMT+12"
+    const stale = dateIn(moment, { month: "short", day: "numeric" })
+    refreshDateFormatters()
+    const west = dateIn(moment, { month: "short", day: "numeric" })
+    check("a kept formatter writes the zone it was built with, and a refreshed one the machine's", stale === east && west !== east, { east, stale, west })
+  } finally {
+    language.value = was
+    if (held === undefined) delete process.env.TZ
+    else process.env.TZ = held
+    const { refreshDateFormatters } = await import("../src/renderer/src/lib/i18n")
+    refreshDateFormatters()
+  }
+}

@@ -41189,6 +41189,19 @@ export function compactTokens(count: number): string {
  */
 const formatters = new Map<string, Intl.DateTimeFormat>()
 
+/**
+ * Throws the kept formatters away.
+ *
+ * A formatter resolves its time zone when it is built, so one kept from before
+ * the machine moved zone - the traveller who lands and changes the clock, or a
+ * check that runs under a zone of its own - would keep writing yesterday's
+ * offset until the app restarted. The window calls this when it comes back to
+ * the front, which is when a zone change can first be seen.
+ */
+export function refreshDateFormatters(): void {
+  formatters.clear()
+}
+
 function formatterFor(tag: string, options?: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
   const key = `${tag}\n${options ? JSON.stringify(options) : ""}`
   let formatter = formatters.get(key)

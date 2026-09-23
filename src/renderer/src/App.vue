@@ -55,6 +55,7 @@ import {
   languageReady,
   loadLanguage,
   rememberLanguage,
+  refreshDateFormatters,
 } from "./lib/i18n"
 import { toggleSteps } from "./lib/steps"
 import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
@@ -3492,9 +3493,10 @@ function flushNotices() {
   }
 }
 
-/* Leaving the window sends what was held. */
+/* Leaving the window sends what was held; coming back re-reads the machine's zone (a formatter keeps the one it was built with). */
 document.addEventListener("visibilitychange", () => {
   flushNotices()
+  if (!document.hidden) refreshDateFormatters()
 })
 watch([() => app.currentID, isHome], flushNotices)
 

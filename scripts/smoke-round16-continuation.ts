@@ -21,6 +21,7 @@
  * Everything runs in temporary folders of its own. Nothing reads the user's
  * profile, calls a real model or reaches the network.
  */
+import { refreshDateFormatters } from "../src/renderer/src/lib/i18n"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -291,5 +292,7 @@ async function dateChecks(check: Check, section: Section, root: string): Promise
     await app.close()
     if (held === undefined) delete process.env.TZ
     else process.env.TZ = held
+    // The formatters kept during this zone would write it in every later check (T3-8 used to fail by the hour).
+    refreshDateFormatters()
   }
 }

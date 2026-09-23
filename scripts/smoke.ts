@@ -431,7 +431,7 @@ import { roundTwentyOneLaneFTwoChecks } from "./smoke-round21-f2"
 // Round 21, lane F4: the home screen, search overlay, artifacts centre, toasts/bell and the side column leftovers, against MiMo 26.920.
 import { roundTwentyOneLaneFourChecks } from "./smoke-round21-f4"
 // Round 22 (L2): round 21's right-panel lane leftovers, re-read against MiMo 26.920.
-import { roundTwentyTwoLaneTwoChecks } from "./smoke-round22-l2"
+import { roundTwentyTwoLaneTwoChecks, dateZoneChecks } from "./smoke-round22-l2"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7090,6 +7090,7 @@ async function main() {
   await roundTwentyOneLaneFTwoChecks(check, section)
   await roundTwentyOneLaneFourChecks(check, section)
   await roundTwentyTwoLaneTwoChecks(check, section)
+  await dateZoneChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
