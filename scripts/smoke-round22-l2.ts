@@ -55,10 +55,11 @@ export async function roundTwentyTwoLaneTwoChecks(check: Check, section: (name: 
     check("the active tab takes the page colour", /background: var\(--surface-page\);/.test(rule(panel, ".rp-tab.active")), rule(panel, ".rp-tab.active"))
     check("and no longer the raised white", !/--surface-raised/.test(rule(panel, ".rp-tab.active")))
     check("its line is still MiMo's --color-line", /border-color: var\(--border-weak\);/.test(rule(panel, ".rp-tab.active")))
+    check("nowhere does it fall back to --surface-raised", !/\.rp-tab\.active \{\s*background: var\(--surface-raised\);/.test(panel))
     check(
-      "the dark overrides that only repeated it are gone, because --surface-page is #181818 in dark anyway",
-      !/\.rp-tab\.active \{\s*background: var\(--surface-raised\);/.test(panel),
-      panel.slice(panel.indexOf('[data-theme="dark"] .rp-tab'), panel.indexOf('[data-theme="dark"] .rp-tab') + 200),
+      "and both dark overrides keep it, because `:root[…] .rp-tab` outweighs `.rp-tab.active` and would otherwise paint it unselected",
+      (panel.match(/\.rp-tab\.active \{\s*background: var\(--surface-page\);/g) ?? []).length === 2,
+      panel.match(/\.rp-tab\.active \{[^}]*\}/g) ?? [],
     )
     check("while the inactive tab keeps MiMo's --color-side-active", /background: #f1f0ec;/.test(rule(panel, ".rp-tab")) && /background: var\(--surface-selected\);/.test(panel))
   }

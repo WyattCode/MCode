@@ -857,6 +857,16 @@ body.resizing .right-panel {
   background: var(--surface-selected);
 }
 
+/*
+ * Kept although --surface-page is what the scheme-free rule already asks for:
+ * the rule above is a class inside an attribute inside :root, which outweighs
+ * `.rp-tab.active` and would otherwise paint the selected tab with the
+ * unselected fill.
+ */
+:root[data-theme="dark"] .rp-tab.active {
+  background: var(--surface-page);
+}
+
 :root[data-theme="dark"] .rpt-close,
 :root[data-theme="dark"] .rp-add:hover,
 :root[data-theme="dark"] .lc-icon,
@@ -876,6 +886,10 @@ body.resizing .right-panel {
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .rp-tab {
     background: var(--surface-selected);
+  }
+
+  :root:not([data-theme="light"]) .rp-tab.active {
+    background: var(--surface-page);
   }
 
   :root:not([data-theme="light"]) .rpt-close,
