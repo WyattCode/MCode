@@ -9,7 +9,8 @@
 - **这是什么**：在界面和功能上 1:1 复刻小米 MiMo 桌面端的 Electron 应用，MCode 保留自己的名字、图标和字标。技术栈 Electron 41.7.2 + Vue 3 + Pinia + electron-vite，后端是同一进程里的 Node 服务。
 - **对照基准**：MiMo **26.920**（第十八轮起）。只读它的行为和尺寸，**不复制**它的代码、文案、图标、插画和品牌。逐项对照清单（含百分比）：https://claude.ai/code/artifact/f149a5d1-857e-4bae-80be-ca03265d9f83
 - **版本**：0.4.5，`dist\MCode-0.4.5-x64.exe`（236.7 MB）已静默装到 `D:\Apps\MCode` 并启动验证过。
-- **分支**：`v2.0`，跟踪 `origin/v2.0`（私有仓库 `WyattCode/MCode`）。`main` 停在 2026-09-22 合并的拉取请求 https://github.com/WyattCode/MCode/pull/4（合并提交 `76b86ed`），此后 `v2.0` 上又有 **171 个提交没有合并过去**——攒够了再开新的拉取请求。已发布预发布版 https://github.com/WyattCode/MCode/releases/tag/v0.3.8；自动更新地址仍是占位的 `updates.invalid`，所以发布不会触发任何更新。
+- **分支**：`v2.0`，跟踪 `origin/v2.0`（私有仓库 `WyattCode/MCode`）。`main` 停在 2026-09-22 合并的拉取请求 https://github.com/WyattCode/MCode/pull/4（合并提交 `76b86ed`），此后 `v2.0` 上的 **172 个提交已开成 https://github.com/WyattCode/MCode/pull/5，待合**（第二十轮到第二十五轮，212 个文件，+14197 / −9773）。另有 https://github.com/WyattCode/MCode/pull/3（`macos-hardening-v2`，2026-09-09）一直开着没动，内容多半已被后来的提交覆盖，没人核过。
+- **发布**：https://github.com/WyattCode/MCode/releases/tag/v0.4.5（预发布版，附安装包、blockmap 和 `latest.yml`）；上一版是 https://github.com/WyattCode/MCode/releases/tag/v0.3.8。自动更新地址仍是占位的 `updates.invalid`，所以**发布不会触发任何自动更新**，装新版只能手动下载。要让自动更新真的工作，得把那个地址指向本仓库的 Releases。
 - **验证状态**：typecheck、build 和十二项专项检查（含 sandboxcheck）全绿，smoke **7059 条全过**。
 - **已知差异**：对照 26.920 没有已知的、未决的界面差异。仍然不同的三类——用户定的刻意差异（见下）；依赖小米账号或小米服务的功能；需要 Linux / macOS 真机才能核对的细节。
 - **还没做的**：用真实模型实际连续用一段时间（见「下一步」）。
@@ -151,14 +152,14 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 ## 下一步
 
 1. **用真实模型实际用一段时间**（一直没做，最值得做的一件）。局域网 `qwen38-nvfp4`，见记忆 `reference-lan-test-model`，只用一次性配置。重点看第十九轮 C 路的发送停靠与跟随、拖选暂停、批注发光，以及第二十三轮改过的自动压缩——那条修复是「压缩后模型能看见你刚问的话」，真实长对话最容易验出来。
-2. **攒够了开新的拉取请求**：`v2.0` 比 `main` 多 165 个提交。
+2. **把 #5 合进 `main`**：拉取请求已经开好（172 个提交），没人审过；合之前顺便决定 #3 怎么处置。
 3. **MiMo 若再更新**：先比新旧 bundle 的版本差异（第十八轮做法），再决定要不要重跑逐页对照（第十九轮做法：四块只读审计 + 每条独立复核）。
 4. **留着的小尾巴**：
    - 约 90 处没写字号的 `--text-weak`，要逐个截图才能判断该用哪一档灰（第二十二轮 L1 留下）。
    - 设置页「开源引擎」那一行还缺一个公开仓库地址。
    - `--shadow-xs` 在深色下没有对应值，但 MiMo 可能也是这样，第二十三轮标为存疑、没动。
    - docx 修订颜色仍写死（除非允许新增 token 名）；`.csv` 的 Excel 标记没定。
-   - 偶发不稳定的检查：第五轮计划模式一节、第七轮「provider receives the long bash description」，重跑即过，未修。
+   - 偶发不稳定的检查：第七轮那条**已修**（第二十五轮找到根因：它读 `bodies.at(-1)`，跟本轮请求没有绑定）。第五轮计划模式一节仍未修——六条检查都挂在一个**重算**出来的计划文件路径上，而产品用一次真实的 `gitStatus()` 决定放哪，两边不一致时六条一起红且不说明原因；正确做法是从产品回读那个路径再断言。
 
 更早的下一步建议留作记录，见文末「附录 C」。
 
