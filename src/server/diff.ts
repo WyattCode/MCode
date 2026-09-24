@@ -142,6 +142,9 @@ function diffLines(a: string[], b: string[]): Op[] {
 
 const CONTEXT = 3
 
+/** Git's own line for "this side's last line has no terminator". */
+const NO_EOL = "\\ No newline at end of file"
+
 /**
  * Renders a unified diff with the usual @@ hunk headers. Returns an empty
  * string when the two sides are identical.
@@ -149,9 +152,37 @@ const CONTEXT = 3
 export function unifiedDiff(filename: string, before: string, after: string): string {
   if (before === after) return ""
 
+  /*
+   * Splitting on the newline leaves an empty last element for text that ends
+   * with one, and that element is not a line: git counts a three-line file
+   * ending in a newline as three lines. Kept, it was written out as a blank
+   * context or added line, and reversing such a patch over a file whose two
+   * sides disagreed about the final newline put that blank line into the file.
+   * Measured, with a real model: a turn that rewrote a three-line file without
+   * a final newline came back from 撤销 with a fourth, empty line. The
+   * terminator is carried as a flag instead, the way git carries it, and
+   * written out as `\ No newline at end of file`.
+   */
   const a = before === "" ? [] : before.split("\n")
   const b = after === "" ? [] : after.split("\n")
-  const ops = diffLines(a, b)
+  if (before.endsWith("\n")) a.pop()
+  if (after.endsWith("\n")) b.pop()
+  const oldNoEOL = a.length > 0 && !before.endsWith("\n")
+  const newNoEOL = b.length > 0 && !after.endsWith("\n")
+
+  let ops = diffLines(a, b)
+  /*
+   * The final newline moved. Nothing in the lines themselves says so, so a
+   * last line the two sides still share would be left as context - and the
+   * change would not be in the diff at all: where it was the only change the
+   * diff came out empty, and where something else changed too it was silently
+   * dropped. Git writes it as that last line removed and added back, marked on
+   * the side that has no terminator, and so does this.
+   */
+  if (oldNoEOL !== newNoEOL && ops.length > 0 && ops[ops.length - 1]!.kind === "equal") {
+    const last = ops.length - 1
+    ops = [...ops.slice(0, last), { kind: "delete", line: ops[last]!.line }, { kind: "insert", line: ops[last]!.line }]
+  }
 
   // Indices of ops that are near a change and therefore belong in some hunk.
   const keep = new Set<number>()
@@ -187,14 +218,18 @@ export function unifiedDiff(filename: string, before: string, after: string): st
         newCount++
         oldLine++
         newLine++
+        // A line both sides share carries one marker, whichever side is missing its terminator.
+        if ((oldNoEOL && oldLine - 1 === a.length) || (newNoEOL && newLine - 1 === b.length)) hunk.push(NO_EOL)
       } else if (op.kind === "delete") {
         hunk.push(`-${op.line}`)
         oldCount++
         oldLine++
+        if (oldNoEOL && oldLine - 1 === a.length) hunk.push(NO_EOL)
       } else {
         hunk.push(`+${op.line}`)
         newCount++
         newLine++
+        if (newNoEOL && newLine - 1 === b.length) hunk.push(NO_EOL)
       }
       index++
     }

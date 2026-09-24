@@ -23,6 +23,14 @@ export interface DiffHunk {
   newLines: string[]
   added: number
   removed: number
+  /**
+   * The hunk reaches the end of the file and that side has no final newline -
+   * git's `\ No newline at end of file`. Carried so a patch written back out
+   * says it too: without it a reversed patch hands git a line where the file
+   * ends, and the file comes back one blank line longer.
+   */
+  oldNoEOL?: boolean
+  newNoEOL?: boolean
 }
 
 export interface DiffSection {
@@ -60,6 +68,9 @@ export function sectionCreates(section: DiffSection): boolean {
   return hunk.oldLines.length === 0 && hunk.oldStart <= 1
 }
 
+/** Git's own line for "this side's last line has no terminator". */
+const NO_EOL = "\\ No newline at end of file"
+
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/
 
 export function parseUnifiedDiff(diff: string): DiffSection[] {
@@ -95,6 +106,8 @@ export function parseUnifiedDiff(diff: string): DiffSection[] {
       removed: 0,
     }
     index++
+    /* Which side the marker belongs to is told by the line it follows. */
+    let previous = ""
     while (index < lines.length && (oldLeft > 0 || newLeft > 0)) {
       const body = lines[index]!
       const text = body.slice(1)
@@ -103,17 +116,33 @@ export function parseUnifiedDiff(diff: string): DiffSection[] {
         hunk.newLines.push(text)
         oldLeft--
         newLeft--
+        previous = " "
       } else if (body.startsWith("-")) {
         hunk.oldLines.push(text)
         hunk.removed++
         oldLeft--
+        previous = "-"
       } else if (body.startsWith("+")) {
         hunk.newLines.push(text)
         hunk.added++
         newLeft--
-      } else if (!body.startsWith("\\")) {
+        previous = "+"
+      } else if (body.startsWith("\\")) {
+        if (previous === " " || previous === "-") hunk.oldNoEOL = true
+        if (previous === " " || previous === "+") hunk.newNoEOL = true
+      } else {
         break
       }
+      index++
+    }
+    /*
+     * The marker sits after the hunk's last line, by which point the counts are
+     * spent and the loop above has already stopped - so it is read here, and it
+     * speaks for whichever side that last line belonged to.
+     */
+    if (lines[index]?.startsWith("\\")) {
+      if (previous === " " || previous === "-") hunk.oldNoEOL = true
+      if (previous === " " || previous === "+") hunk.newNoEOL = true
       index++
     }
     current.hunks.push(hunk)
@@ -161,28 +190,63 @@ export function sectionPatch(section: DiffSection): string {
      */
     let old = 0
     let fresh = 0
+    /* Where each side's last line landed, so the marker can follow it. */
+    let lastOld = -1
+    let lastNew = -1
+    const wrote = (usedOld: boolean, usedNew: boolean) => {
+      if (usedOld && old === hunk.oldLines.length) lastOld = out.length - 1
+      if (usedNew && fresh === hunk.newLines.length) lastNew = out.length - 1
+    }
     while (old < hunk.oldLines.length || fresh < hunk.newLines.length) {
       const before = hunk.oldLines[old]
       const after = hunk.newLines[fresh]
       if (old < hunk.oldLines.length && fresh < hunk.newLines.length && before === after) {
+        /*
+         * Same text on both sides is context - except at the end of a file
+         * where only the terminator moved, which is a change git writes as the
+         * last line removed and added back, marked on the side that lost it.
+         * Written as context the patch would reverse to nothing.
+         */
+        const ends = old === hunk.oldLines.length - 1 && fresh === hunk.newLines.length - 1
+        if (ends && Boolean(hunk.oldNoEOL) !== Boolean(hunk.newNoEOL)) {
+          out.push(`-${before}`)
+          old++
+          wrote(true, false)
+          out.push(`+${after}`)
+          fresh++
+          wrote(false, true)
+          continue
+        }
         out.push(` ${before}`)
         old++
         fresh++
+        wrote(true, true)
         continue
       }
       if (old < hunk.oldLines.length && (fresh >= hunk.newLines.length || !hunk.newLines.includes(before!))) {
         out.push(`-${before}`)
         old++
+        wrote(true, false)
         continue
       }
       if (fresh < hunk.newLines.length) {
         out.push(`+${after}`)
         fresh++
+        wrote(false, true)
         continue
       }
       out.push(`-${before}`)
       old++
+      wrote(true, false)
     }
+    /*
+     * Written from the back so the earlier index is still where it was, and at
+     * most once for a line both sides end on.
+     */
+    const marks = new Set<number>()
+    if (hunk.oldNoEOL && lastOld >= 0) marks.add(lastOld)
+    if (hunk.newNoEOL && lastNew >= 0) marks.add(lastNew)
+    for (const at of [...marks].sort((x, y) => y - x)) out.splice(at + 1, 0, NO_EOL)
   }
   return `${out.join("\n")}\n`
 }

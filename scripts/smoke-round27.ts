@@ -8,8 +8,13 @@
  * smoke.ts calls `roundTwentySevenChecks` with its own check and section.
  * `root` is the checkout to read, the working directory unless given.
  */
+import { execFileSync } from "node:child_process"
+import fsSync from "node:fs"
 import fs from "node:fs/promises"
+import os from "node:os"
 import path from "node:path"
+import { unifiedDiff } from "../src/server/diff"
+import { parseUnifiedDiff, sectionPatch } from "../src/shared/unified-diff"
 import type { Check } from "./smoke-round5"
 
 /** Code without its comments, so a check reads what runs. */
@@ -58,5 +63,65 @@ export async function roundTwentySevenChecks(check: Check, section: (name: strin
     const permission = code(await read("src/server/permission.ts"))
     check("a forced request is never answered by a stored rule", /if \(action === "allow" && !forced\) return/.test(permission))
     check("nor by the level, nor by full access", /!forced/.test(permission) && /readOnlyCommand/.test(permission))
+  }
+
+  // --------------------------------------------------------------- R27-3
+  section("Round 27 (3): 撤销 puts the file back byte for byte, final newline and all")
+  {
+    /*
+     * Found by watching a real model work. Asked to edit a three-line file, it
+     * wrote the new text without a final newline; 撤销 brought the right words
+     * back but left a fourth, empty line behind.
+     *
+     * Splitting on the newline leaves an empty last element for text that ends
+     * with one, and that element was being treated as a line: the recorded
+     * patch removed four lines and added three, so reversing it wrote the
+     * phantom line into the file for real. Git carries the terminator as
+     * `\ No newline at end of file` instead, and so does this now.
+     *
+     * Measured the way it actually happens rather than read: the patch a write
+     * would record is handed to real `git apply --reverse`, and the bytes on
+     * disk are compared with what they were.
+     */
+    const CASES: [string, string, string][] = [
+      ["the model dropped the final newline", "alpha one\nalpha two\nalpha three\n", "alpha one (edited)\nalpha two (edited)\nalpha three (edited)"],
+      ["the model added one", "one\ntwo", "one (e)\ntwo (e)\n"],
+      ["only the terminator changed", "one\ntwo\n", "one\ntwo"],
+      ["an ordinary edit, both sides keeping it", "one\ntwo\nthree\n", "one (e)\ntwo\nthree\n"],
+      ["a file that really does end with a blank line", "one\ntwo\n\n", "one (e)\ntwo\n\n"],
+      ["a line appended at the end", "one\ntwo\n", "one\ntwo\nthree\n"],
+    ]
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r27-eol-"))
+    for (const [name, before, after] of CASES) {
+      const directory = path.join(root, name.replace(/\W+/g, "-"))
+      await fs.mkdir(directory)
+      const git = (...args: string[]) => execFileSync("git", args, { cwd: directory, stdio: "pipe" })
+      git("init", "-q")
+      // Its own answer, so the machine's LF-to-CRLF policy is not what is being measured.
+      git("config", "core.autocrlf", "false")
+      const file = path.join(directory, "a.txt")
+      await fs.writeFile(file, before)
+      git("add", "-A")
+      git("-c", "user.name=t", "-c", "user.email=t@e.invalid", "commit", "-q", "-m", "s")
+      await fs.writeFile(file, after)
+      const section = parseUnifiedDiff(unifiedDiff("a.txt", before, after))[0]
+      const patch = path.join(directory, "p.patch")
+      await fs.writeFile(patch, section ? sectionPatch(section) : "")
+      let applied = true
+      try {
+        git("apply", "--reverse", patch)
+      } catch {
+        applied = false
+      }
+      check(`${name}: the patch reverses and the bytes are what they were`, applied && fsSync.readFileSync(file, "utf8") === before, JSON.stringify(fsSync.readFileSync(file, "utf8")))
+    }
+    await fs.rm(root, { recursive: true, force: true }).catch(() => {})
+
+    /* And the shape itself, since the shape is what git reads. */
+    const dropped = unifiedDiff("a.txt", "one\ntwo\n", "one\ntwo (e)")
+    check("a side with no final newline is marked, git's way", /\n\\ No newline at end of file$/.test(dropped), JSON.stringify(dropped))
+    check("and the counts no longer include the phantom line", /@@ -1,2 \+1,2 @@/.test(dropped), dropped.split("\n")[2])
+    const plain = unifiedDiff("a.txt", "one\ntwo\n", "one (e)\ntwo\n")
+    check("a file ending normally carries no marker and no blank tail", !plain.includes("No newline") && !/\n $/.test(plain), JSON.stringify(plain))
   }
 }
