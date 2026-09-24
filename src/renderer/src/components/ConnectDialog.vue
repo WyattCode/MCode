@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from "vue"
 import type { ProviderStatus } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
+import { localDownMessage, offMachine } from "../lib/local-runtime"
 import { composing } from "../lib/keys"
 import { notifyFailure } from "../lib/toast"
 import { useEscapeLayer } from "../lib/escape-layer"
@@ -208,9 +209,11 @@ async function connectLocal() {
   } catch (failure) {
     /*
      * The server can only say nothing answered. What is worth saying is that
-     * having the application open is not the same as its API server running.
+     * having the application open is not the same as its API server running,
+     * and - off loopback on macOS - that the Local Network permission is
+     * another reason a runtime that is running goes quiet.
      */
-    error.value = t("auth.localDown", { name: entry.name, url: endpointValue.value })
+    error.value = localDownMessage(entry.name, endpointValue.value, app.platform === "darwin" && offMachine(endpointValue.value))
     void failure
   } finally {
     busy.value = false

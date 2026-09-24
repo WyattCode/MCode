@@ -69,6 +69,19 @@ export const RTL_LANGUAGES: readonly string[] = ["ar"]
 
 export const language = ref<Language>("zh-CN")
 
+/**
+ * Languages that do not put a space between two sentences.
+ *
+ * Chinese, Japanese, Korean and Thai end a sentence with their own mark and run
+ * straight on, where the Latin scripts and the RTL ones want a space after the
+ * full stop. Joining two translated sentences needs to know which, or one of
+ * the two reads as a stray space at the seam.
+ */
+const SPACE_LESS: readonly string[] = ["zh-CN", "zh-TW", "ja", "ko", "th"]
+export function isSpaceLess(): boolean {
+  return SPACE_LESS.includes(language.value)
+}
+
 type Table = Record<string, string>
 
 const zhCN: Table = {
@@ -804,6 +817,7 @@ const zhCN: Table = {
   "auth.apiKey": "API Key",
   "auth.local": "本地运行，无需密钥",
   "auth.localDown": "{name} 没有响应（{url}）。请在该应用中启动本地 API 服务：LM Studio 在「开发者」页点 Start Server，Ollama 运行 ollama serve。",
+  "auth.localNetwork": "如果该服务正在运行，请检查「系统设置」>「隐私与安全性」>「本地网络」中是否已允许 MCode。",
   "connect.title": "连接供应商",
   "toast.connected": "{name} 已连接",
   "toast.compacted": "上下文压缩完成",
@@ -3125,6 +3139,7 @@ const zhTW: Table = {
   "auth.apiKey": "API Key",
   "auth.local": "本機執行，無需金鑰",
   "auth.localDown": "{name} 沒有回應（{url}）。請在該應用程式中啟動本機 API 服務：LM Studio 在「開發者」頁點 Start Server，Ollama 執行 ollama serve。",
+  "auth.localNetwork": "如果該服務正在執行，請檢查「系統設定」>「隱私權與安全性」>「本地網路」中是否已允許 MCode。",
   "connect.title": "連接供應商",
   "toast.connected": "{name} 已連接",
   "toast.compacted": "上下文壓縮完成",
@@ -5441,6 +5456,7 @@ const en: Table = {
   "auth.apiKey": "API Key",
   "auth.local": "Runs locally, no key",
   "auth.localDown": "{name} is not answering on {url}. Having the app open is not enough - start its local API server: in LM Studio that is the Developer tab, for Ollama it is `ollama serve`.",
+  "auth.localNetwork": "If it is running, check that MCode is allowed under Privacy & Security > Local Network in System Settings.",
   "connect.title": "Connect a provider",
   "toast.connected": "{name} connected",
   "toast.compacted": "Context compacted",
@@ -7742,6 +7758,7 @@ const ar: Table = {
   "auth.apiKey": "مفتاح API",
   "auth.local": "يعمل محليًا، دون مفتاح",
   "auth.localDown": "لا يستجيب {name} على {url}. لا يكفي أن يكون التطبيق مفتوحًا — شغّل خادم واجهته المحلية: في LM Studio هو تبويب Developer، وفي Ollama هو `ollama serve`.",
+  "auth.localNetwork": "إذا كان يعمل بالفعل، فتحقّق من السماح لـ MCode ضمن «إعدادات النظام» > «الخصوصية والأمان» > «الشبكة المحلية».",
   "connect.title": "ربط مزوّد",
   "toast.connected": "تم توصيل {name}",
   "toast.compacted": "تم ضغط السياق",
@@ -10020,6 +10037,7 @@ const bs: Table = {
   "auth.apiKey": "API ključ",
   "auth.local": "Radi lokalno, bez ključa",
   "auth.localDown": "{name} ne odgovara na {url}. Nije dovoljno da je aplikacija otvorena – pokrenite njen lokalni API server: u LM Studiju je to kartica Developer, za Ollamu `ollama serve`.",
+  "auth.localNetwork": "Ako već radi, provjerite je li MCode dozvoljen u System Settings > Privacy & Security > Local Network.",
   "connect.title": "Poveži pružatelja",
   "toast.connected": "{name} povezan",
   "toast.compacted": "Kontekst je sažet",
@@ -12298,6 +12316,7 @@ const da: Table = {
   "auth.apiKey": "API-nøgle",
   "auth.local": "Kører lokalt, ingen nøgle",
   "auth.localDown": "{name} svarer ikke på {url}. Det er ikke nok at have appen åben – start dens lokale API-server: i LM Studio er det fanen Developer, for Ollama er det `ollama serve`.",
+  "auth.localNetwork": "Hvis den allerede kører, så tjek at MCode er tilladt under Systemindstillinger > Anonymitet og sikkerhed > Lokalt netværk.",
   "connect.title": "Forbind en udbyder",
   "toast.connected": "{name} forbundet",
   "toast.compacted": "Kontekst komprimeret",
@@ -14576,6 +14595,7 @@ const de: Table = {
   "auth.apiKey": "API-Schlüssel",
   "auth.local": "Läuft lokal, kein Schlüssel",
   "auth.localDown": "{name} antwortet nicht unter {url}. Die App zu öffnen genügt nicht – starte den lokalen API-Server: in LM Studio im Tab „Developer“, bei Ollama mit `ollama serve`.",
+  "auth.localNetwork": "Falls er bereits läuft, prüfe, ob MCode unter Systemeinstellungen > Datenschutz & Sicherheit > Lokales Netzwerk erlaubt ist.",
   "connect.title": "Anbieter verbinden",
   "toast.connected": "{name} verbunden",
   "toast.compacted": "Kontext komprimiert",
@@ -16854,6 +16874,7 @@ const es: Table = {
   "auth.apiKey": "Clave API",
   "auth.local": "Se ejecuta en local, sin clave",
   "auth.localDown": "{name} no responde en {url}. No basta con tener la aplicación abierta: inicia su servidor de API local; en LM Studio es la pestaña Developer, en Ollama es `ollama serve`.",
+  "auth.localNetwork": "Si ya está en marcha, comprueba que MCode esté permitido en Ajustes del Sistema > Privacidad y seguridad > Red local.",
   "connect.title": "Conectar un proveedor",
   "toast.connected": "{name} conectado",
   "toast.compacted": "Contexto compactado",
@@ -19132,6 +19153,7 @@ const fr: Table = {
   "auth.apiKey": "Clé API",
   "auth.local": "Fonctionne en local, sans clé",
   "auth.localDown": "{name} ne répond pas sur {url}. Ouvrir l'application ne suffit pas – démarrez son serveur d'API local : dans LM Studio, c'est l'onglet Developer ; pour Ollama, `ollama serve`.",
+  "auth.localNetwork": "S'il est déjà en cours d'exécution, vérifiez que MCode est autorisé dans Réglages Système > Confidentialité et sécurité > Réseau local.",
   "connect.title": "Connecter un fournisseur",
   "toast.connected": "{name} connecté",
   "toast.compacted": "Contexte compacté",
@@ -21410,6 +21432,7 @@ const ja: Table = {
   "auth.apiKey": "APIキー",
   "auth.local": "ローカルで動作、キー不要",
   "auth.localDown": "{name} が {url} で応答しません。アプリを開いているだけでは足りません。ローカル API サーバーを起動してください。LM Studio なら Developer タブ、Ollama なら `ollama serve` です。",
+  "auth.localNetwork": "すでに起動している場合は、「システム設定」>「プライバシーとセキュリティ」>「ローカルネットワーク」で MCode が許可されているか確認してください。",
   "connect.title": "プロバイダーを接続",
   "toast.connected": "{name}が接続されました",
   "toast.compacted": "コンテキストを圧縮しました",
@@ -23688,6 +23711,7 @@ const ko: Table = {
   "auth.apiKey": "API 키",
   "auth.local": "로컬에서 실행, 키 불필요",
   "auth.localDown": "{name}이(가) {url}에서 응답하지 않습니다. 앱을 열어 두는 것만으로는 부족합니다. 로컬 API 서버를 실행하세요. LM Studio는 Developer 탭, Ollama는 `ollama serve`입니다.",
+  "auth.localNetwork": "이미 실행 중이라면 시스템 설정 > 개인정보 보호 및 보안 > 로컬 네트워크에서 MCode가 허용되어 있는지 확인하세요.",
   "connect.title": "제공자 연결",
   "toast.connected": "{name} 연결됨",
   "toast.compacted": "컨텍스트를 압축했습니다",
@@ -25966,6 +25990,7 @@ const nb: Table = {
   "auth.apiKey": "API-nøkkel",
   "auth.local": "Kjører lokalt, uten nøkkel",
   "auth.localDown": "{name} svarer ikke på {url}. Det holder ikke at appen er åpen – start den lokale API-serveren: i LM Studio er det fanen Developer, for Ollama er det `ollama serve`.",
+  "auth.localNetwork": "Hvis den allerede kjører, sjekk at MCode er tillatt under Systeminnstillinger > Personvern og sikkerhet > Lokalt nettverk.",
   "connect.title": "Koble til en tilbyder",
   "toast.connected": "{name} tilkoblet",
   "toast.compacted": "Kontekst komprimert",
@@ -28244,6 +28269,7 @@ const pl: Table = {
   "auth.apiKey": "Klucz API",
   "auth.local": "Działa lokalnie, bez klucza",
   "auth.localDown": "{name} nie odpowiada pod adresem {url}. Otwarta aplikacja nie wystarczy – uruchom jej lokalny serwer API: w LM Studio to zakładka Developer, w Ollamie `ollama serve`.",
+  "auth.localNetwork": "Jeśli już działa, sprawdź, czy MCode jest dozwolony w Ustawieniach systemowych > Prywatność i bezpieczeństwo > Sieć lokalna.",
   "connect.title": "Połącz dostawcę",
   "toast.connected": "Połączono {name}",
   "toast.compacted": "Kontekst skompresowany",
@@ -30522,6 +30548,7 @@ const ptBR: Table = {
   "auth.apiKey": "Chave de API",
   "auth.local": "Roda localmente, sem chave",
   "auth.localDown": "{name} não responde em {url}. Ter o aplicativo aberto não basta: inicie o servidor de API local; no LM Studio é a aba Developer, no Ollama é `ollama serve`.",
+  "auth.localNetwork": "Se já estiver em execução, verifique se o MCode está permitido em Ajustes do Sistema > Privacidade e Segurança > Rede Local.",
   "connect.title": "Conectar um provedor",
   "toast.connected": "{name} conectado",
   "toast.compacted": "Contexto compactado",
@@ -32800,6 +32827,7 @@ const ru: Table = {
   "auth.apiKey": "Ключ API",
   "auth.local": "Работает локально, без ключа",
   "auth.localDown": "{name} не отвечает по адресу {url}. Открытого приложения недостаточно — запустите его локальный API-сервер: в LM Studio это вкладка Developer, для Ollama — `ollama serve`.",
+  "auth.localNetwork": "Если он уже работает, проверьте, разрешён ли MCode в «Системных настройках» > «Конфиденциальность и безопасность» > «Локальная сеть».",
   "connect.title": "Подключить провайдера",
   "toast.connected": "{name} подключён",
   "toast.compacted": "Контекст сжат",
@@ -35078,6 +35106,7 @@ const th: Table = {
   "auth.apiKey": "คีย์ API",
   "auth.local": "ทำงานในเครื่อง ไม่ต้องใช้คีย์",
   "auth.localDown": "{name} ไม่ตอบสนองที่ {url} แค่เปิดแอปไว้ยังไม่พอ ให้เริ่มเซิร์ฟเวอร์ API ในเครื่อง: ใน LM Studio คือแท็บ Developer ส่วน Ollama คือ `ollama serve`",
+  "auth.localNetwork": "หากเปิดใช้งานอยู่แล้ว โปรดตรวจสอบว่า MCode ได้รับอนุญาตใน System Settings > Privacy & Security > Local Network หรือไม่",
   "connect.title": "เชื่อมต่อผู้ให้บริการ",
   "toast.connected": "เชื่อมต่อ {name} แล้ว",
   "toast.compacted": "บีบอัดบริบทเสร็จแล้ว",
@@ -37356,6 +37385,7 @@ const tr: Table = {
   "auth.apiKey": "API anahtarı",
   "auth.local": "Yerelde çalışır, anahtar gerekmez",
   "auth.localDown": "{name}, {url} adresinde yanıt vermiyor. Uygulamanın açık olması yetmez — yerel API sunucusunu başlatın: LM Studio'da Developer sekmesi, Ollama'da `ollama serve`.",
+  "auth.localNetwork": "Zaten çalışıyorsa, Sistem Ayarları > Gizlilik ve Güvenlik > Yerel Ağ altında MCode'a izin verildiğini kontrol edin.",
   "connect.title": "Sağlayıcı bağla",
   "toast.connected": "{name} bağlandı",
   "toast.compacted": "Bağlam sıkıştırıldı",
@@ -39634,6 +39664,7 @@ const uk: Table = {
   "auth.apiKey": "Ключ API",
   "auth.local": "Працює локально, без ключа",
   "auth.localDown": "{name} не відповідає за адресою {url}. Відкритого застосунку замало — запустіть його локальний API-сервер: у LM Studio це вкладка Developer, для Ollama — `ollama serve`.",
+  "auth.localNetwork": "Якщо він уже працює, перевірте, чи дозволено MCode у «Системних налаштуваннях» > «Конфіденційність і безпека» > «Локальна мережа».",
   "connect.title": "Під'єднати провайдера",
   "toast.connected": "{name} підключено",
   "toast.compacted": "Контекст стиснуто",
