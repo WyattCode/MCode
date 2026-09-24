@@ -693,17 +693,64 @@ export class Permissions {
   /** Why the saved rules may not be written: the document could not be read and could not be kept aside. */
   private blocked: string | undefined
 
+  /**
+   * Writes the remembered approvals, over what is on disk *now* rather than
+   * over what this process read at start-up.
+   *
+   * The document was read once, at load, and written back whole on every
+   * change - so with two instances sharing one data directory, an approval
+   * granted in the other window disappeared the moment this one remembered
+   * anything at all, and a conversation deleted over there had its rules
+   * written back from this one's stale copy (R26-B4). Two instances sharing a
+   * data directory is a supported case, and this is this machine's only record
+   * of what it has allowed.
+   *
+   * So the file is re-read inside the write queue, and this process's own rules
+   * are laid over it. Last writer still wins for one project's list - the two
+   * cannot be merged rule by rule without knowing which was removed and which
+   * was never there - but a project this process has said nothing about keeps
+   * whatever the other one saved. The same shape the MCP sign-in store uses.
+   */
   private persist(): Promise<void> {
     const storage = this.store
     if (!storage || this.fromNewerVersion || this.blocked) return this.writing
-    const document: StoredRules = { schemaVersion: RULES_SCHEMA_VERSION, projects: Object.fromEntries(this.rules) }
+    const mine = new Map(this.rules)
     // Serialised, so two approvals answered at once cannot land in the wrong order.
     this.writing = this.writing
       .catch(() => undefined)
-      .then(() => storage.write(RULES_KEY, document))
+      .then(async () => {
+        const read = await storage.readOrCorrupt<Partial<StoredRules>>(RULES_KEY)
+        /*
+         * A document that will not read is not written over, here as at load:
+         * this process would be replacing a file it cannot see with its own
+         * partial view of it.
+         */
+        if (read.unreadable !== undefined || read.corrupt !== undefined) return
+        if (typeof read.value?.schemaVersion === "number" && read.value.schemaVersion > RULES_SCHEMA_VERSION) return
+        const projects: Record<string, Rule[]> = {}
+        for (const [key, rules] of Object.entries(read.value?.projects ?? {})) {
+          if (Array.isArray(rules)) projects[key] = rules as Rule[]
+        }
+        for (const [key, rules] of mine) projects[key] = rules
+        // A project this process has emptied is emptied on disk too, rather than coming back from the file.
+        for (const key of Object.keys(projects)) {
+          if (!mine.has(key) && this.forgotten.has(key)) delete projects[key]
+        }
+        await storage.write(RULES_KEY, { schemaVersion: RULES_SCHEMA_VERSION, projects })
+      })
       .catch(() => undefined)
     return this.writing
   }
+
+  /**
+   * Projects whose rules this process has deliberately dropped.
+   *
+   * Without this, re-reading the file before a write would bring a forgotten
+   * project's rules straight back: they are absent from `this.rules` exactly
+   * because they were removed, and absent is also what a project this process
+   * never touched looks like.
+   */
+  private readonly forgotten = new Set<string>()
 
   /**
    * Settles the last write, for a caller that has to know the rules have
@@ -724,6 +771,8 @@ export class Permissions {
     // A subagent's background mark goes with it too (N11-37); it was only cleared for one run without a parent.
     this.background.delete(sessionID)
     if (!this.rules.delete(`session:${sessionID}`)) return
+    // Remembered as deliberately dropped, or the re-read in `persist` would bring it back.
+    this.forgotten.add(`session:${sessionID}`)
     await this.persist()
   }
 

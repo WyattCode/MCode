@@ -236,6 +236,10 @@ export async function roundTwelveLifecycleChecks(check: Check, section: (name: s
 
     const stores = async () => (await fs.readdir(path.join(base, "snapshot"))).filter((name) => /^[0-9a-f]{40}$/.test(name)).length
     const before = await stores()
+    // Aged, because the sweep keeps anything written in the last hour (R26-B1).
+    const snapshotRoot = path.join(base, "snapshot")
+    const stale = new Date(Date.now() - 3 * 60 * 60 * 1000)
+    for (const name of await fs.readdir(snapshotRoot)) await fs.utimes(path.join(snapshotRoot, name), stale, stale)
     // The call server/index.ts makes at start-up.
     const swept = await snapshots.sweep([...(await reopened.list()).map((session) => session.directory), ...(await reopened.unreadableDirectories())], unreadable)
     check("the start-up sweep keeps both of their undo stores and takes only the orphan", before === 3 && swept === 1 && (await stores()) === 2, { before, swept, after: await stores() })

@@ -135,7 +135,15 @@ function defaults(): AppConfig {
      * The value here only matters for the moment between the two.
      */
     autoApprove: allowed(DEFAULT_PERMISSIONS),
-    allowFullAccess: false,
+    /*
+     * On, where MiMo ships it off (user decision 2026-09-24).
+     *
+     * This switch only decides whether the level is *offered* in the composer's
+     * menu - choosing it still puts up MiMo's confirmation. MiMo hides the
+     * option behind a setting the reader has to find first; the user asked for
+     * it to be there from the start. A deliberate difference; see HANDOFF.
+     */
+    allowFullAccess: true,
     directory: process.cwd(),
     projects: [],
     closedProjects: [],
@@ -490,9 +498,20 @@ export class Config {
   private migrate(stored?: Partial<AppConfig>): boolean {
     const done = new Set(this.current.migrations ?? [])
     let moved = false
-    const once = (name: string, apply: () => void) => {
+    /*
+     * `apply` may answer false for "this run was not in a position to do it",
+     * and then the name is *not* recorded, so the next launch tries again.
+     *
+     * Everything here records the name whether or not the value needed
+     * changing, which is right: a migration that found nothing to do still must
+     * not run again, or it would undo a choice made after it. What is not right
+     * is recording one that was *skipped*. The R25 entry below is skipped when
+     * this run could not read the document, and recording it there retired it
+     * for good on exactly the machine it had not reached yet (R26-B6).
+     */
+    const once = (name: string, apply: () => void | boolean) => {
       if (done.has(name)) return
-      apply()
+      if (apply() === false) return
       done.add(name)
       moved = true
     }
@@ -621,6 +640,26 @@ export class Config {
       if (kept) this.current.accessBefore = kept
     })
 
+    /*
+     * The same decision for a profile that already exists. The default above
+     * only reaches a document that does not carry the field at all, and anyone
+     * who has run an earlier build has it stored as false - so without this the
+     * option stays hidden for exactly the people who have been using the app
+     * longest. Once, and recorded: turning it off afterwards stays off.
+     */
+    once("full-access-offered-r25", () => {
+      /*
+       * Only where this run could actually read the document - damaged or
+       * merely unopenable are both "this machine has a config and it says
+       * something about this switch, and this run cannot see what". Widening
+       * what the app offers off the back of a failed read is the same hazard as
+       * treating one as a first install, which the guard beside it prevents.
+       */
+      if (this.unreadable !== undefined) return false
+      this.current.allowFullAccess = true
+      return true
+    })
+
     if (moved) this.current.migrations = [...done]
     return moved
   }
@@ -680,6 +719,17 @@ export class Config {
      * first-install permissions would quietly change what this machine allows.
      */
     if (stored === undefined && !read.corrupt && !read.unreadable) Object.assign(this.current, firstInstall())
+    /*
+     * And a document that is there but could not be read keeps the narrower
+     * answer, whatever the default now is.
+     *
+     * `allowFullAccess` defaults to on since 2026-09-24, which is right for a
+     * profile whose document simply does not carry the field. It is wrong here:
+     * this machine has a config, it says something about this switch, and this
+     * run cannot see what. Widening what the app offers off the back of a
+     * failed read is the same hazard as treating one as a first install.
+     */
+    if (read.corrupt || read.unreadable) this.current.allowFullAccess = stored?.allowFullAccess === true
     const migrated = this.migrate(stored)
     this.current.autoApprove = allowed(this.current.permissions)
     if ((migrated || retired) && !this.fromNewerVersion) await this.persist()

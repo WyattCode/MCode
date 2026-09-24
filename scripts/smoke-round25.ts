@@ -89,7 +89,7 @@ export async function roundTwentyFiveChecks(check: Check, section: (name: string
     check("the automations answer the same way", /unreadable = `The scheduled tasks in/.test(automation) && /this\.blocked = unreadable/.test(automation))
 
     const snapshot = code(await read("src/server/session/snapshot.ts"))
-    check("the project's write ledger is not written over after a failed read either", /unreadableLedgers/.test(snapshot) && /if \(this\.unreadableLedgers\.delete\(this\.ledgerFile\(directory\)\)\) return/.test(snapshot))
+    check("the project's write ledger is not written over after a failed read either", /unreadableLedgers/.test(snapshot) && /if \(this\.ledgerUnreadable\(directory\)\) return/.test(snapshot))
     check("and the sweep keeps a store whose ledger it could not read, rather than deleting it", /spokenFor\.add\(digest\)\s*\n\s*continue/.test(snapshot))
 
     const store = code(await read("src/server/session/store.ts"))
@@ -301,5 +301,39 @@ export async function roundTwentyFiveChecks(check: Check, section: (name: string
     const composer = code(await read("src/renderer/src/components/Composer.vue"))
     check("the composer attaches what a data: drop carried", /if \(decoded\.length\) await take\(decoded\)/.test(composer))
     check("and says so for a web address, which this window may not fetch", /notifyFailure\(t\("attach\.webAddress"\), remote\[0\]\)/.test(composer))
+  }
+
+  // --------------------------------------------------------------- R25-8
+  section("Round 25 (8): the full access level is offered from the start, under one name")
+  {
+    /*
+     * Two deliberate differences from MiMo, chosen by the user on 2026-09-24
+     * and recorded in HANDOFF. A later parity round must not read either as a
+     * defect and put it back.
+     */
+    const config = code(await read("src/server/config.ts"))
+    check("the switch that offers the level is on where MiMo ships it off", /allowFullAccess: true,/.test(config) && !/allowFullAccess: false,/.test(config))
+    check("and a profile that already carries it off is turned on once, not on every launch", /once\("full-access-offered-r25", \(\) => \{[\s\S]{0,80}?this\.current\.allowFullAccess = true/.test(config))
+    /*
+     * The level is still a level, not a default: the switch decides whether it
+     * is *offered*, and choosing it still puts up MiMo's confirmation.
+     */
+    check("choosing it is still the reader's own step", /firstInstall\(\): Pick<AppConfig, "accessLevel" \| "allowFullAccess">/.test(config) && /accessLevel: "auto"/.test(config))
+    const dialog = await read("src/renderer/src/components/FullAccessDialog.vue")
+    check("and the menu still asks before switching to it", /composer\.access\.confirmTitle/.test(dialog) && /composer\.access\.confirmOk/.test(dialog))
+    const failures = code(await read("scripts/smoke-failures.ts"))
+    check("a config that could not be read is still not widened by the migration", /a file that could not be read is not treated as a first install/.test(failures))
+
+    /*
+     * One name. MiMo calls it 完整访问权限 in settings, 完全访问权限 in the menu
+     * and 完全访问 on the button; MCode copied all three, and the user chose
+     * the shortest for every site.
+     */
+    const i18n = await read("src/renderer/src/lib/i18n.ts")
+    for (const key of ["composer.access.full", "composer.access.fullItem", "set.allowFullAccess"]) {
+      check(`${key} reads 完全访问 in the simplified table`, i18n.includes(`"${key}": "完全访问",`), key)
+      check(`${key} reads 完全存取 in the traditional one`, i18n.includes(`"${key}": "完全存取",`), key)
+    }
+    check("and MiMo's 完整 spelling is gone from every name", !/"(?:set\.allowFullAccess|composer\.access\.fullItem)": "完整/.test(i18n))
   }
 }

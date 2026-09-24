@@ -116,6 +116,15 @@ const WRAPPERS = new Set([
 ])
 
 /**
+ * `eval` runs its arguments as a command line, so the arguments are the
+ * command. It was in neither table, and `eval "rm -rf src"` therefore showed
+ * no delete at all (R26-E3) - while `command-risk`'s own dangerous-word list
+ * has named it all along, so the codebase knew about it and this scanner did
+ * not.
+ */
+const EVAL_WORDS = new Set(["eval", "source", "."])
+
+/**
  * Interpreters whose inline code is itself a command line, so it can be read as
  * one. `node -e` and `python -c` are not here: their code is not shell, and
  * reading it as shell would name programs nobody runs. Neither is on the
@@ -138,16 +147,59 @@ function programAfterWrapper(tokens: string[]): string[] {
   return tokens.slice(at)
 }
 
-/** The body an interpreter was handed inline, whether it is its own token or attached to the flag. */
-function inlineBody(tokens: string[]): string | undefined {
+/**
+ * The body an interpreter was handed inline.
+ *
+ * Short flags cluster, and R25's reading of them was wrong in both directions
+ * (R26-E2): `bash -lc "rm -rf src"` and `sh -xc "..."` matched nothing at all
+ * and were never looked inside, while `powershell -ep bypass -Command "..."`
+ * matched `-ep` and answered "p" - so the real script, sitting behind
+ * `-Command`, was never read. A cluster is now read as the set of letters it
+ * is: if it carries the code letter, the body is whatever follows in the same
+ * token, or the next token when nothing does.
+ */
+function inlineBody(tokens: string[], posh: boolean): string | undefined {
   for (let at = 1; at < tokens.length; at++) {
     const token = tokens[at] ?? ""
+    /*
+     * PowerShell does not cluster its parameters, it abbreviates them, so the
+     * cluster reading below is wrong for it: `-ep bypass` is
+     * -ExecutionPolicy, and reading it as "a cluster carrying e and p" answered
+     * "bypass" and never reached the -Command that held the script.
+     */
+    if (posh) {
+      /*
+       * -EncodedCommand carries the script as base64 UTF-16LE, which is how a
+       * line that deletes gets past a reader that only looks at words. It is
+       * decoded here so the command inside is read like any other; a body that
+       * will not decode is left alone rather than guessed at.
+       */
+      if (/^-(?:e|en|enc|enco|encod|encode|encoded|encodedc|encodedco|encodedcom|encodedcomm|encodedcomma|encodedcomman|encodedcommand)$/i.test(token)) {
+        const encoded = unquote(tokens[at + 1] ?? "")
+        if (!encoded) return undefined
+        try {
+          const decoded = Buffer.from(encoded, "base64").toString("utf16le")
+          return /�/.test(decoded) ? undefined : decoded.trim() || undefined
+        } catch {
+          return undefined
+        }
+      }
+      if (/^-(?:c|co|com|comm|comma|comman|command)$/i.test(token)) return unquote(tokens[at + 1] ?? "") || undefined
+      continue
+    }
     const lowered = token.toLowerCase()
     if (INLINE_FLAGS.has(lowered)) return unquote(tokens[at + 1] ?? "") || undefined
-    const attached = /^-(?:e|c|p)(\S+)/.exec(token)
-    if (attached) return unquote(attached[1] ?? "") || undefined
     const evaluated = /^--eval=(.+)/.exec(token)
     if (evaluated) return unquote(evaluated[1] ?? "") || undefined
+    // A cluster of short flags: `-lc`, `-xc`. Long options are not clusters.
+    const cluster = /^-([A-Za-z]+)(.*)$/.exec(token)
+    if (!cluster || token.startsWith("--")) continue
+    const letters = cluster[1] ?? ""
+    const rest = cluster[2] ?? ""
+    // `c` is the shell's code flag; `e` and `p` are node's and perl's.
+    if (!/[cep]/.test(letters)) continue
+    if (rest) return unquote(rest) || undefined
+    return unquote(tokens[at + 1] ?? "") || undefined
   }
   return undefined
 }
@@ -163,16 +215,31 @@ function inlineBody(tokens: string[]): string | undefined {
  * "always" that covered the outer line (R25-B2).
  */
 function runsWithin(entry: SimpleCommand, powershell: boolean, depth: number): SimpleCommand[] {
+  if (depth >= NEST_LIMIT) return []
   const head = programName(entry.tokens[0] ?? "")
   if (WRAPPERS.has(head)) {
     const inner = programAfterWrapper(entry.tokens)
-    if (inner.length) return [{ tokens: inner, source: inner.join(" "), redirects: [], derived: true }]
-    return []
+    if (!inner.length) return []
+    /*
+     * And then what *that* runs. R25 stopped at one hop: the wrapper's program
+     * was produced as a command of its own and never looked inside again, so
+     * `env bash -c "rm -rf src"` - wrapper around interpreter - showed no
+     * delete at all, and at full access the tree went with no question asked.
+     * The bash tool's forced delete question is decided by this list alone;
+     * there is no second guard behind it (R26-E1).
+     */
+    const program: SimpleCommand = { tokens: inner, source: inner.join(" "), redirects: [], derived: true }
+    return [program, ...runsWithin(program, powershell, depth + 1)]
+  }
+  if (EVAL_WORDS.has(head)) {
+    const body = entry.tokens.slice(1).map(unquote).join(" ").trim()
+    if (!body) return []
+    return scanCommands(body, powershell, depth + 1).map((found) => ({ ...found, derived: true }))
   }
   if (!SHELL_INTERPRETERS.has(head)) return []
-  const body = inlineBody(entry.tokens)
-  if (!body) return []
   const asPowershell = head === "pwsh" || head === "powershell"
+  const body = inlineBody(entry.tokens, asPowershell)
+  if (!body) return []
   return scanCommands(body, asPowershell, depth + 1).map((found) => ({ ...found, derived: true }))
 }
 
@@ -354,6 +421,19 @@ export function runsInlineCode(tokens: string[]): boolean {
  */
 export function rememberedPattern(tokens: string[], source: string): string | undefined {
   if (runsInlineCode(tokens)) return /[*?]/.test(source) ? undefined : source.trim()
+  /*
+   * A wrapper keeps what it wraps, for the same reason an interpreter keeps its
+   * script. `env` has an arity of one, so one "always" for
+   * `env bash -c "npm test"` saved `env *` - which every later `env <anything>`
+   * matches. The wrapper is not the program; the rule has to name the program.
+   */
+  if (WRAPPERS.has(programName(tokens[0] ?? ""))) {
+    const inner = programAfterWrapper(tokens)
+    if (!inner.length) return `${tokens[0]} *`
+    const within = rememberedPattern(inner, inner.join(" "))
+    if (!within) return undefined
+    return `${tokens.slice(0, tokens.length - inner.length).join(" ")} ${within}`.trim()
+  }
   const prefix = arityPrefix(tokens)
   /*
    * An interpreter keeps its script as well as its name, whatever the arity
@@ -400,14 +480,31 @@ function pathArgs(tokens: string[], powershell: boolean): string[] {
      */
     const out: string[] = []
     let afterShortFlag = false
-    let wantsPattern = PATTERN_FIRST.has(tokens[0] ?? "")
+    /*
+     * The pattern slot is only open when the pattern was not supplied by a
+     * flag. R25 missed that, and it reopened the hole R25 had just closed:
+     * `grep -e x <appdata>/credentials.json` had `x` eaten as the flag's value
+     * and then the credentials path eaten as "the pattern", so `scan.files`
+     * came back empty, `guardAppData` never ran, and grep - being on the
+     * read-only allowlist - printed the saved sign-ins with nothing asked
+     * (R26-E-II). Reading a path as a pattern is the dangerous direction; the
+     * other way costs a question nobody needed.
+     */
+    const patternFromFlag = tokens.some((token) => /^-e$/.test(token) || /^--regexp=/.test(token) || /^-[A-Za-z]*e$/.test(token))
+    let wantsPattern = PATTERN_FIRST.has(tokens[0] ?? "") && !patternFromFlag
     for (const token of tokens.slice(1)) {
       if (token.startsWith("-") && !(tokens[0] === "chmod" && token.startsWith("+"))) {
         // Only a short flag takes its value as the next word; `--include=x` carries its own.
         afterShortFlag = token.length === 2
         continue
       }
-      if (afterShortFlag && (/^\d+$/.test(token) || token.length === 1)) {
+      /*
+       * A count or a placeholder, never a path - `head -c 9999 notes` names no
+       * file called 9999. Anything else after a flag is pushed, because a
+       * one-character file name is a real file and dropping it is how a path
+       * stops being checked.
+       */
+      if (afterShortFlag && (/^\d+$/.test(token) || token === "{}")) {
         afterShortFlag = false
         continue
       }

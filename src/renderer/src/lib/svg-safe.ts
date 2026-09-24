@@ -9,6 +9,18 @@
 
 export function stripSvgHazards(svg: string, keepForeignObject = false): string {
   let out = svg.replace(/<script\b[\s\S]*?(?:<\/script\s*>|$)/gi, "").replace(/<\/?script\b[^>]*>/gi, "")
+  /*
+   * A `<style>` inside an inline SVG is not scoped to the drawing - it is CSS
+   * for the whole document. A reply could therefore hide the permission rows,
+   * or paint over the window, with no script and nothing DOMPurify objects to:
+   * it does not clean CSS text, and `style` is on its SVG tag list (R26-A2).
+   * The ABC score's own sanitiser has forbidden `style` all along, which is the
+   * same knowledge not carried across to this path.
+   *
+   * A drawing that needs styling has `fill`, `stroke` and the rest on its own
+   * elements, which stay.
+   */
+  out = out.replace(/<style\b[\s\S]*?(?:<\/style\s*>|$)/gi, "").replace(/<\/?style\b[^>]*>/gi, "")
   if (!keepForeignObject) {
     out = out.replace(/<foreignObject\b[\s\S]*?(?:<\/foreignObject\s*>|$)/gi, "").replace(/<\/?foreignObject\b[^>]*>/gi, "")
   }
@@ -16,7 +28,7 @@ export function stripSvgHazards(svg: string, keepForeignObject = false): string 
   return out
     .replace(/\s+(?:xlink:)?href\s*=\s*(?:"\s*(?:javascript|data|vbscript):[^"]*"|'\s*(?:javascript|data|vbscript):[^']*'|(?:javascript|data|vbscript):[^\s>]+)/gi, "")
     .replace(/<(?!a[\s/>])[a-zA-Z][\w:-]*\b[^>]*>/g, (tag) => tag.replace(REMOTE_HREF, ""))
-    .replace(REMOTE_URL, "none")
+    .replace(STYLE_ATTRIBUTE, (attribute) => attribute.replace(REMOTE_IN_CSS, ""))
     .replace(/@import\s+(?:url\([^)]*\)|"[^"]*"|'[^']*')[^;]*;?/gi, "")
     .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
 }
@@ -27,8 +39,28 @@ export function stripSvgHazards(svg: string, keepForeignObject = false): string 
  * click). So a drawing's own pictures, patterns and styles never name a web
  * address; a link (`<a>`) is left alone, since following it takes a click.
  */
-const REMOTE_HREF = /\s+(?:xlink:)?href\s*=\s*(?:"\s*(?:https?:)?\/\/[^"]*"|'\s*(?:https?:)?\/\/[^']*'|(?:https?:)?\/\/[^\s>]+)/gi
-const REMOTE_URL = /url\(\s*(?:&quot;|["'])?\s*(?:https?:)?\/\/[^)]*\)/gi
+/*
+ * `http:/host/x` and even `http:host/x` reach the same host as `http://host/x`
+ * - the URL parser is forgiving about how many slashes a special scheme is
+ * written with. Both of these asked for two, so a reply could name a web
+ * address with one and the drawing fetched it the moment it was shown, which
+ * is the silent channel this pair exists to close (R26-A1). The scheme is what
+ * matters, so the slashes are optional here; a scheme-relative `//host/x` is
+ * still caught by the second half.
+ */
+const REMOTE = String.raw`(?:https?:\/{0,2}|\/\/)`
+const REMOTE_HREF = new RegExp(String.raw`\s+(?:xlink:)?href\s*=\s*(?:"\s*${REMOTE}[^"]*"|'\s*${REMOTE}[^']*'|${REMOTE}[^\s>]+)`, "gi")
+/*
+ * A web address inside CSS. `url(` itself can be written with escapes -
+ * `\75 rl(...)` is `url(...)` - so matching the function name is not enough;
+ * what is matched is the address, and only where CSS can appear. A drawing's
+ * `<style>` element is removed outright above, which leaves the `style`
+ * attribute, handled here. An address in a `<text>` element is words on a
+ * picture and stays; an `<a href>` stays too, because following it takes a
+ * click - stripping either was this pass reaching past its own purpose.
+ */
+const REMOTE_IN_CSS = new RegExp(String.raw`${REMOTE}[^)"'\s]*`, "gi")
+const STYLE_ATTRIBUTE = /\sstyle\s*=\s*(?:"[^"]*"|'[^']*')/gi
 
 /** MiMo's test for a picture path that gets the SVG file card: .svg, before any query or fragment. */
 export function isSvgFile(path: string): boolean {

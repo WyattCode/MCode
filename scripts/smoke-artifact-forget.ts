@@ -55,5 +55,5 @@ export async function artifactForgetChecks(check: Check, section: (name: string)
   }
 
   const backend = await read("src/server/index.ts")
-  check("the start-up housekeeping forgets vanished conversations, counting the unreadable as present", /artifacts\?\.forgetMissing\(new Set\(\[\.\.\.\(await sessions\.list\(\)\)\.map\(\(session\) => session\.id\), \.\.\.\(await sessions\.unreadable\(\)\)\]\)\)/.test(backend))
+  check("the start-up housekeeping forgets vanished conversations, counting the unreadable as present", /artifacts\?\.forgetMissing\(new Set\(\[\.\.\.\(await sessions\.listFresh\(\)\)\.map\(\(session\) => session\.id\), \.\.\.\(await sessions\.unreadable\(\)\)\]\)\)/.test(backend))
 }

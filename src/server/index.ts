@@ -190,9 +190,20 @@ export async function startBackend(dataDirectory: string, options: BackendOption
         (directories) => migrateMemoryLayout({ dataDirectory, directories }),
       )
       await migrateCheckpoints(storage, runner.checkpoints, config)
-      // Conversations whose record would not read still own their stores (L12-11).
+      /*
+       * Conversations whose record would not read still own their stores
+       * (L12-11) - and the list is read from disk again first.
+       *
+       * This pass deletes every store the list does not name, and the list it
+       * had was this process's cache, filled at start-up and patched only by
+       * this process's own writes. Another instance sharing the data directory
+       * could open a conversation in a new project during the minutes this
+       * housekeeping takes, and its whole checkpoint store - the bodies behind
+       * every 撤销 in that conversation - was deleted here without a word
+       * (R26-B1).
+       */
       await runner.checkpoints.sweep(
-        [...(await sessions.list()).map((session) => session.directory), ...(await sessions.unreadableDirectories())],
+        [...(await sessions.listFresh()).map((session) => session.directory), ...(await sessions.unreadableDirectories())],
         await sessions.unreadable(),
       )
       // Temp files a killed write of an earlier run left in the storage folder (N11-30).
@@ -205,9 +216,9 @@ export async function startBackend(dataDirectory: string, options: BackendOption
         (await pruneQuarantined(dataDirectory))
       if (pruned) console.info(`[storage] removed ${pruned} quarantined file(s) older than 30 days`)
       // Brings the store up to date with the transcripts and re-checks what is still on disk.
-      await artifacts?.reconcile(await sessions.list(), (id) => sessions.messages(id), { recheck: true })
+      await artifacts?.reconcile(await sessions.listFresh(), (id) => sessions.messages(id), { recheck: true })
       // What conversations gone without a word left in the artifact list goes too, as a delete takes it (the unreadable keep theirs).
-      const forgotten = await artifacts?.forgetMissing(new Set([...(await sessions.list()).map((session) => session.id), ...(await sessions.unreadable())]))
+      const forgotten = await artifacts?.forgetMissing(new Set([...(await sessions.listFresh()).map((session) => session.id), ...(await sessions.unreadable())]))
       if (forgotten) console.info(`[artifacts] forgot what ${forgotten} deleted conversation(s) left in the list`)
     } catch {
       // Housekeeping must never be the reason the app fails to open.

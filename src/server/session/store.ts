@@ -317,6 +317,20 @@ export class SessionStore {
     return session
   }
 
+  /**
+   * The list as the folder holds it right now, not as this process last read it.
+   *
+   * The cache is patched by this process's own writes and by nothing else, so
+   * it says nothing about a conversation another instance made since - and two
+   * instances sharing one data directory is a supported case. Every pass that
+   * *deletes* what the list does not name has to ask from disk first, or it
+   * deletes the other instance's work (R26-B1, R26-B2).
+   */
+  async listFresh(): Promise<SessionInfo[]> {
+    this.forgetList()
+    return this.list()
+  }
+
   async list(): Promise<SessionInfo[]> {
     this.listing ??= this.readAll().catch((cause: unknown) => {
       this.forgetList()
