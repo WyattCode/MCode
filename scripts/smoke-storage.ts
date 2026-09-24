@@ -134,8 +134,36 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     check("the depth is unchanged, so no turn was dropped", JSON.stringify(await store.historyDepth("ses_old")) === JSON.stringify({ undo: 1, redo: 1 }), await store.historyDepth("ses_old"))
     check("and the migration is recorded, so it does not run again", (config.get().migrations ?? []).includes(CHECKPOINT_MIGRATION), config.get().migrations)
 
-    const second = await migrateCheckpoints(storage, snapshots, config)
+    /*
+     * The mark is what stops it, not the shape of the data.
+     *
+     * The migration skips a conversation with no inline body left, so it is
+     * naturally idempotent and "running it again moves nothing" held whether or
+     * not the mark was ever read - it could not have caught the gate being
+     * deleted, which is every launch re-reading every conversation's history
+     * and is the only reason the mark exists (R25-F8). Counting what it reads
+     * is what shows the gate working.
+     */
+    let readsAfter = 0
+    // A proxy, not a spread: Storage's methods live on its prototype, and a spread copies none of them.
+    const counting = new Proxy(storage, {
+      get: (target, key, receiver) =>
+        key === "listDirectories"
+          ? async (prefix: string) => {
+              readsAfter += 1
+              return target.listDirectories(prefix)
+            }
+          : Reflect.get(target, key, receiver),
+    })
+    const second = await migrateCheckpoints(counting, snapshots, config)
     check("running it again moves nothing", second.moved === 0 && second.sessions === 0, second)
+    check("and it stops at the mark, without reading the conversations again", readsAfter === 0, readsAfter)
+    const forgetful = new Proxy(config, {
+      get: (target, key, receiver) => (key === "get" ? () => ({ ...target.get(), migrations: [] }) : Reflect.get(target, key, receiver)),
+    })
+    readsAfter = 0
+    await migrateCheckpoints(counting, snapshots, forgetful)
+    check("with the mark gone it reads them again, which is what the mark is for", readsAfter > 0, readsAfter)
   }
 
   // ------------------------------------------------------------------- S1

@@ -641,9 +641,21 @@ async function main(): Promise<void> {
       summaryRequest.max_tokens === 32000,
       String(summaryRequest.max_tokens),
     )
+    /*
+     * What the retry is *made of*, not whether the words "a summary" appear in
+     * it. The fake's ordinary reply is the string "a summary" and the fake
+     * summary opens "## Task overview\n- a summary of the work so far", so the
+     * old form held whether or not anything had been compacted - including in
+     * the exact case this section exists for, where the retry is recorded as
+     * compacted and the request is still built from the whole transcript
+     * (R25-F3). The transcript's own first turn is what must be gone.
+     */
+    const retryTurns = (retry.messages ?? []).filter((message) => message.role !== "system")
     check(
-      "the retry went out from the summary",
-      (retry.messages ?? []).some((m) => typeof m.content === "string" && m.content.includes("a summary")),
+      "the retry went out from the summary, with the replayed conversation gone",
+      retryTurns.some((message) => String(message.content).includes("## Task overview")) &&
+        !retryTurns.some((message) => String(message.content).includes("something to have a transcript")),
+      JSON.stringify(retryTurns.map((message) => String(message.content).slice(0, 40))),
     )
     check("a model with no known ceiling asks for the reference's 32k", retry.max_tokens === 32000, String(retry.max_tokens))
     refuseNext = undefined

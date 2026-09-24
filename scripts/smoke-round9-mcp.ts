@@ -294,7 +294,12 @@ async function perProject(check: Check, section: Section): Promise<void> {
     })
     await mcp.ready(path.join(dir, "third"))
     off()
-    check("a project's servers never show up in that report", statuses.every((names) => names === "life"), statuses)
+    /*
+   * The report has to have happened. `[].every(...)` is true, so a build that
+   * stopped publishing `mcp.status` altogether passed this as readily as one
+   * that publishes it correctly (R25-F13).
+   */
+  check("a project's servers never show up in that report", statuses.length > 0 && statuses.every((names) => names === "life"), statuses)
   } finally {
     await mcp.close()
     await fs.rm(dir, { recursive: true, force: true }).catch(() => {})

@@ -957,9 +957,22 @@ export async function roundSevenModelChecks(check: Check, section: (name: string
     try {
       const session = await e.store.create({ directory: e.project, model: e.model })
       e.replies.push(say("ok"))
+      /*
+       * The turn's own request, found by what is in it.
+       *
+       * This used to read `e.bodies.at(-1)`, which is bound to nothing: an
+       * out-of-band request - the review pass, the goal judge - lands in the
+       * same list, and openai.ts omits the `tools` key entirely when a request
+       * carries none, so whenever one of those happened to be last both checks
+       * below went red with a length of 0 and said nothing about the
+       * descriptions. This is the recurring false red HANDOFF records (R25-F).
+       */
+      const from = e.bodies.length
       await e.runner.prompt({ sessionID: session.id, text: "hello" })
       await e.idle(session.id)
-      const tools = (e.bodies.at(-1)?.tools ?? []) as { function?: { name?: string; description?: string } }[]
+      const mine = e.bodies.slice(from).find((body) => Array.isArray(body.tools) && body.tools.length > 0)
+      check("the turn's own request is the one being read, not whatever was last on the wire", mine !== undefined, e.bodies.slice(from).map((body) => (Array.isArray(body.tools) ? body.tools.length : "no tools")))
+      const tools = (mine?.tools ?? []) as { function?: { name?: string; description?: string } }[]
       const sent = tools.find((tool) => tool.function?.name === "bash")?.function?.description ?? ""
       check("the provider receives the long bash description, not a summary of it", sent.includes("Version control") && sent.length > 1_500, sent.length)
       const askedFor = tools.find((tool) => tool.function?.name === "question")?.function?.description ?? ""

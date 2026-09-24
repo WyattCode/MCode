@@ -1144,7 +1144,26 @@ async function main() {
    * that guards reaching outside the project was not among them - so with the
    * switch on, that prompt still stopped the agent.
    */
-  check("every kind offered can actually be asked for", PERMISSION_KINDS.includes("outside" as any), PERMISSION_KINDS)
+  /*
+   * Every kind, not one of them. This was a single `includes("outside")`, which
+   * says nothing about the five kinds the note above is really about - the ones
+   * belonging to tools that never ask, which is what made the switch misleading
+   * in the first place (R25-F13).
+   */
+  const askable = new Set<string>(TOOLS.flatMap((tool) => (tool.permission ? [tool.permission] : [])))
+  // Kinds the backend asks for itself rather than through a tool's `permission`.
+  for (const file of ["src/server/permission.ts", "src/server/mcp.ts", "src/server/mcp-sampling.ts", "src/server/tool/fs-util.ts", "src/server/tool/bash.ts"]) {
+    for (const match of (await fs.readFile(path.join(process.cwd(), file), "utf8")).matchAll(/kind: "([a-z]+)"/g)) askable.add(match[1]!)
+  }
+  /*
+   * `list` is offered, defaults to allow, and nothing asks it: MCode's read
+   * tool answers a directory itself, so there is no list tool to carry the
+   * bucket. Recorded here rather than passed over, so the day a *new* kind is
+   * added with nothing asking it, this goes red.
+   */
+  const neverAsked = PERMISSION_KINDS.filter((kind) => !askable.has(kind))
+  check("every kind offered can actually be asked for, apart from the one recorded", JSON.stringify(neverAsked) === JSON.stringify(["list"]), { offered: PERMISSION_KINDS, neverAsked })
+  check("and the kind that guards reaching outside the project is among them", askable.has("outside") && PERMISSION_KINDS.includes("outside" as never))
 
   await backend.runtime.config.set({ autoApprove: [...PERMISSION_KINDS] })
   // A directory nothing has approved: `outsideRoot` carries the "always" from
@@ -1670,9 +1689,19 @@ async function main() {
     const tempBash = seen.slice(tempAt).find((request) => request.kind === "bash")
     check("a delete of temp files asks as an ordinary command", tempBash !== undefined && tempBash.forced !== true, seen.slice(tempAt))
     replies.bash = "always"
-    await bashIn("s-e23-a", "git status")
+    /*
+     * A command that actually asks. This used to run `git status` twice, and
+     * `git status` is on the read-only allowlist - permission.ts returns before
+     * any question - so no rule was ever stored and `seen.length === alwaysAt`
+     * held by construction. It could not have caught the per-project pattern
+     * store being dropped, the prefix match being narrowed, or an "always"
+     * being confined to the conversation that gave it (R25-F2).
+     */
+    const askedAt = seen.length
+    await bashIn("s-e23-a", "npm run build")
+    check("a command that is not read-only asks the first time", seen.length === askedAt + 1 && seen[askedAt]?.kind === "bash", seen.slice(askedAt))
     const alwaysAt = seen.length
-    await bashIn("s-e23-b", "git status --short")
+    await bashIn("s-e23-b", "npm run build --silent")
     check("always on a command covers its prefix in another conversation of the project", seen.length === alwaysAt, seen.slice(alwaysAt))
 
     // As MiMo forces its delete question: commands allowed, or full access, still ask before a delete; only Deny refuses first.
@@ -3952,11 +3981,20 @@ async function main() {
       withGlobal.includes(`<instructions source="${globalAgents}">\nPrefer small commits.`),
     )
     const projectAgents = await fs.readFile(path.join(project, "AGENTS.md"), "utf8").catch(() => "")
+    /*
+     * The project's own instructions have to be *in* the prompt for "after
+     * them" to mean anything. The old form allowed the case where they are not:
+     * `indexOf` returns -1, and -1 is less than any position, so a build that
+     * dropped the project's AGENTS.md altogether passed this check about the
+     * order the two appear in (R25-F6). `## Instructions` is no anchor either -
+     * one global file is enough to emit it.
+     */
+    const projectHead = projectAgents.trim().slice(0, 20)
+    const projectAt = withGlobal.indexOf(projectHead)
     check(
       "after the project's own instructions",
-      // Present first: a missing entry's -1 would otherwise count as "after".
-      withGlobal.indexOf("## Instructions") >= 0 &&
-        (!projectAgents.trim() || withGlobal.indexOf(projectAgents.trim().slice(0, 20)) < withGlobal.indexOf("Prefer small commits.")),
+      projectHead.length > 0 && projectAt >= 0 && projectAt < withGlobal.indexOf("Prefer small commits."),
+      { projectHead, projectAt, globalAt: withGlobal.indexOf("Prefer small commits.") },
     )
     check(
       "switching it off renames it",
@@ -9365,7 +9403,21 @@ async function historyMemoryCronChecks(root: string, project: string) {
   const data = path.join(root, "hmc-data")
   const memoryRoot = path.join(data, "memory")
   const files = memoryFiles(memoryRoot, project, "ses_0abc")
-  check("project memory is filed under the folder's project id, the same however the folder is spelled", files.project === path.join(memoryRoot, "projects", projectMemoryID(project), "MEMORY.md") && projectMemoryID(project) === projectMemoryID(path.join(project, ".")))
+  /*
+   * Spellings that are different strings, not `path.join(project, ".")`, which
+   * node normalises back to `project` before it is passed - so the second half
+   * of this check used to be `f(x) === f(x)` and could not have caught an id
+   * that varies with spelling, which would scatter one project's memory across
+   * several `projects/<id>/` folders (R25-F7).
+   */
+  // Built by hand: path.join would normalise these back to `project` before the id function ever saw them.
+  const spellings = [project + path.sep, project + path.sep + "." + path.sep, path.dirname(project) + path.sep + "." + path.sep + path.basename(project)]
+  check(
+    "project memory is filed under the folder's project id, the same however the folder is spelled",
+    files.project === path.join(memoryRoot, "projects", projectMemoryID(project), "MEMORY.md") &&
+      spellings.every((spelling) => spelling !== project && projectMemoryID(spelling) === projectMemoryID(project)),
+    spellings.map((spelling) => [spelling, projectMemoryID(spelling)]),
+  )
   check(
     "a memory file reads as its scope, id and type",
     JSON.stringify(memoryLocation(memoryRoot, files.notes)) === JSON.stringify({ scope: "sessions", scope_id: "ses_0abc", type: "free", key: "notes" }) &&
