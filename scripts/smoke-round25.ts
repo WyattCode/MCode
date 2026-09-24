@@ -89,7 +89,7 @@ export async function roundTwentyFiveChecks(check: Check, section: (name: string
     check("the automations answer the same way", /unreadable = `The scheduled tasks in/.test(automation) && /this\.blocked = unreadable/.test(automation))
 
     const snapshot = code(await read("src/server/session/snapshot.ts"))
-    check("the project's write ledger is not written over after a failed read either", /unreadableLedgers/.test(snapshot) && /if \(this\.unreadableLedgers\.delete\(this\.ledgerFile\(directory\)\)\) return/.test(snapshot))
+    check("the project's write ledger is not written over after a failed read either", /unreadableLedgers/.test(snapshot) && /if \(this\.ledgerUnreadable\(directory\)\) return/.test(snapshot))
     check("and the sweep keeps a store whose ledger it could not read, rather than deleting it", /spokenFor\.add\(digest\)\s*\n\s*continue/.test(snapshot))
 
     const store = code(await read("src/server/session/store.ts"))

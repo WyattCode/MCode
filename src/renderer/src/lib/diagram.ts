@@ -60,18 +60,25 @@ export function renderMermaid(code: string, dark: boolean): Promise<string> {
   return job
 }
 
-/* Mermaid's labels are HTML inside foreignObject, so that one integration point is kept; scripts and handlers are not. */
+/*
+ * Mermaid's labels are HTML inside foreignObject, so that one integration point
+ * is kept; scripts and handlers are not. Nor is `style`: a `<style>` inside an
+ * inline SVG is CSS for the whole document, not for the drawing, and DOMPurify
+ * never cleans CSS text - so a drawing could hide or cover anything on the
+ * page (R26-A2). The score's own sanitiser below has forbidden it all along.
+ */
 export function sanitizeMermaidSvg(svg: string): string {
   return DOMPurify.sanitize(stripSvgHazards(svg, true), {
     USE_PROFILES: { svg: true, svgFilters: true, html: true },
     ADD_TAGS: ["foreignObject", "use"],
+    FORBID_TAGS: ["style"],
     HTML_INTEGRATION_POINTS: { foreignobject: true },
   })
 }
 
 /* A reply's own SVG: MiMo's svg and svgFilters profiles with use allowed, so no foreignObject, script or handler survives. */
 export function sanitizeSvgFence(code: string): string {
-  const clean = DOMPurify.sanitize(stripSvgHazards(code), { USE_PROFILES: { svg: true, svgFilters: true }, ADD_TAGS: ["use"] })
+  const clean = DOMPurify.sanitize(stripSvgHazards(code), { USE_PROFILES: { svg: true, svgFilters: true }, ADD_TAGS: ["use"], FORBID_TAGS: ["style"] })
   if (!clean) return ""
   const holder = document.createElement("div")
   holder.innerHTML = clean

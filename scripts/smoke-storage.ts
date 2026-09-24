@@ -221,6 +221,14 @@ export async function storageChecks(check: Check, section: (name: string) => voi
      * The stores already orphaned, which no deletion can go back for. Six of
      * these sat in the profile this was measured in, for two conversations.
      */
+    /*
+     * A store written minutes ago is kept, whoever it belongs to: two instances
+     * share a data directory, and this pass is the one that deletes (R26-B1).
+     * So the orphans are aged first - which is what an orphan actually looks
+     * like - and a fresh one is checked separately below.
+     */
+    const stale = new Date(Date.now() - 3 * 60 * 60 * 1000)
+    for (const name of await fs.readdir(storeRoot)) await fs.utimes(path.join(storeRoot, name), stale, stale)
     const swept = await snapshots.sweep([])
     check("a sweep collects the stores no conversation names any more", swept > 0, swept)
     check("and the folder is left empty", (await fs.readdir(storeRoot)).length === 0, await fs.readdir(storeRoot))
@@ -230,6 +238,18 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     await live.finish()
     const kept = await snapshots.sweep([two])
     check("a sweep never touches a store a live conversation still names", kept === 0 && (await fs.readdir(storeRoot)).length > 0, await fs.readdir(storeRoot))
+
+    /*
+     * And one nothing names at all, written just now: almost certainly another
+     * instance's, opened after this one read the list. Kept until it has been
+     * sitting there an hour, by which time the other instance's list would
+     * name it (R26-B1).
+     */
+    const brandNew = snapshots.begin(path.join(root, "fresh-project"))
+    await brandNew.ready()
+    await brandNew.finish()
+    const freshSwept = await snapshots.sweep([two])
+    check("a store written moments ago is left alone, whoever made it", freshSwept === 0, { freshSwept, entries: await fs.readdir(storeRoot) })
   }
 
   // ------------------------------------------------------------------- S3

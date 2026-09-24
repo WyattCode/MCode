@@ -79,7 +79,39 @@ export function parseDiffFiles(diff: string): DiffFileView[] {
   }
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index]!
-    const hunk = oldLeft > 0 || newLeft > 0 ? file?.hunks[file.hunks.length - 1] : undefined
+    /*
+     * A file header beats the hunk body, whatever the counts say.
+     *
+     * The counts come from the `@@` header, and this diff was written by a
+     * model, which gets them wrong often. While a count remained, `--- a/next`
+     * was read as a deletion line and `+++ b/next` as an addition - so a second
+     * file's changes were shown under the first file's name, and the second
+     * file never appeared in the list at all. That list is what the permission
+     * card shows before the reader approves a write (R26-A3).
+     */
+    const startsFile = line.startsWith("diff --git ") || (line.startsWith("--- ") && (lines[index + 1]?.startsWith("+++ ") ?? false))
+    if (startsFile) {
+      oldLeft = 0
+      newLeft = 0
+    }
+    /*
+     * And a count that ran out early does not end the hunk. It used to: the
+     * lines after it matched no header and were dropped without a word, so a
+     * hunk whose header said one line but held four showed the first pair and
+     * silently swallowed the rest - the dangerous half of a change presented
+     * as not existing (R26-A4). The counts are advisory now: they number the
+     * lines, they do not decide where the hunk ends. A header, or a line that
+     * is not hunk body, ends it.
+     */
+    // A trailing empty line is where the text ended, not a blank line of context.
+    const blankTail = line === "" && index === lines.length - 1
+    const body =
+      !startsFile &&
+      !blankTail &&
+      file &&
+      file.hunks.length > 0 &&
+      (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ") || line === "" || line.startsWith("\\"))
+    const hunk = body ? file?.hunks[file.hunks.length - 1] : undefined
     if (hunk && file) {
       if (line.startsWith("+")) {
         hunk.lines.push({ kind: "add", new: newLine++, text: line.slice(1) })
@@ -100,8 +132,6 @@ export function parseDiffFiles(diff: string): DiffFileView[] {
         continue
       }
       if (line.startsWith("\\")) continue
-      oldLeft = 0
-      newLeft = 0
     }
     if (line.startsWith("diff --git ")) {
       const match = /^diff --git (?:"?a\/(.+?)"?) (?:"?b\/(.+?)"?)$/.exec(line)

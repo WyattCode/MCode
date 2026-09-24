@@ -433,7 +433,17 @@ function linkHtml(image: boolean, label: string, url: string, whole: string, ctx
   return label ? text() : escapeHtml(whole)
 }
 
-const LINK = /(!?)\[([^\]\n]*)\]\(\s*<?([^\s)<>]+)>?(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g
+/*
+ * The address is bounded, and that bound is what keeps this from hanging.
+ *
+ * `[^\s)<>]+` is greedy: on a line with no closing bracket it runs to the end
+ * and then backtracks one character at a time looking for one, which is
+ * quadratic in the line's length. Measured before this bound: 20 KB took 64ms,
+ * 80 KB took 1.0s, and 500 KB - which is exactly the cap the file page reads a
+ * .md with - took **73 seconds** of frozen window (R26-A6). No real address is
+ * anywhere near 2048 characters, and a longer one is simply not a link.
+ */
+const LINK = /(!?)\[([^\]\n]*)\]\(\s*<?([^\s)<>]{1,2048})>?(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g
 
 function inline(raw: string, ctx: Context): string {
   const { options } = ctx
@@ -700,7 +710,18 @@ function tableBlock(lines: string[], at: number, alignment: ("left" | "center" |
   }
 }
 
-function parseBlocks(lines: string[], ctx: Context, top: boolean): ReplyBlock[] {
+/**
+ * How deep a quote may nest before the rest is left as text.
+ *
+ * Each level is one more frame of `parseBlocks`, and about five thousand of
+ * them overflow the stack - which is 5 KB of reply text, well inside what a
+ * model can write by accident, and the throw happens inside the component's
+ * computed, so the message fails to render at all (R26-A11). Nobody quotes
+ * sixty-four deep on purpose.
+ */
+const QUOTE_DEPTH = 64
+
+function parseBlocks(lines: string[], ctx: Context, top: boolean, depth = 0): ReplyBlock[] {
   const { options } = ctx
   const blocks: ReplyBlock[] = []
   const push = (html: string) => blocks.push({ kind: "html", html })
@@ -764,7 +785,10 @@ function parseBlocks(lines: string[], ctx: Context, top: boolean): ReplyBlock[] 
         inner.push(quoted[1])
       }
       at -= 1
-      push(`<blockquote class="md-quote">${joinHtml(parseBlocks(inner, ctx, false), options)}</blockquote>`)
+      /* Past the ceiling the quote's contents are kept as the text they are, rather than recursed into. */
+      const body: ReplyBlock[] =
+        depth >= QUOTE_DEPTH ? [{ kind: "html", html: `<p class="md-p">${escapeHtml(inner.join("\n"))}</p>` }] : parseBlocks(inner, ctx, false, depth + 1)
+      push(`<blockquote class="md-quote">${joinHtml(body, options)}</blockquote>`)
       continue
     }
 

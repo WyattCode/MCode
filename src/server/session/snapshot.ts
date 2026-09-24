@@ -161,6 +161,16 @@ export function withProjectLock<T>(directory: string, work: () => Promise<T>): P
   return run
 }
 
+/**
+ * How new a store has to be for the sweep to leave it alone.
+ *
+ * Long enough to cover the whole of a launch's housekeeping - the layout read,
+ * the memory move, the checkpoint migration and the artifact reconcile, which
+ * on a large profile is minutes - and short enough that a genuinely orphaned
+ * store is collected on the next launch rather than kept for ever.
+ */
+const SWEEP_GRACE_MS = 60 * 60 * 1000
+
 /** What a call made after its repository was collected is told. */
 const REPO_RETIRED = "this project's snapshot store has been removed"
 
@@ -1089,6 +1099,11 @@ export class Snapshots {
    */
   private readonly unreadableLedgers = new Set<string>()
 
+  /** Whether the last read of this project's ledger failed. Checked, never consumed. */
+  private ledgerUnreadable(directory: string): boolean {
+    return this.unreadableLedgers.has(this.ledgerFile(directory))
+  }
+
   private ledger(directory: string): Promise<Record<string, Writer>> {
     const file = this.ledgerFile(directory)
     const held = this.ledgers.get(file)
@@ -1104,7 +1119,10 @@ export class Snapshots {
           this.ledgers.delete(file)
           return {}
         }
+        this.unreadableLedgers.delete(file)
       }
+      // A read that worked clears the mark; it is about the last read, not for ever.
+      this.unreadableLedgers.delete(file)
       if (raw === undefined) return {}
       try {
         const parsed = JSON.parse(raw) as unknown
@@ -1132,8 +1150,14 @@ export class Snapshots {
 
   private async noteWrites(directory: string, sessionID: string, at: number, files: string[]): Promise<void> {
     const held = await this.ledger(directory)
-    // Read but not readable: writing now would replace every other conversation's claim with this one.
-    if (this.unreadableLedgers.delete(this.ledgerFile(directory))) return
+    /*
+     * Read but not readable: writing now would replace every other
+     * conversation's claim with this one. Checked rather than consumed - the
+     * mark used to be cleared here, so a failure seen by `writtenSince` was
+     * spent on the next write instead, and *that* turn's claim was thrown away
+     * although its own read had worked perfectly (R26-E5).
+     */
+    if (this.ledgerUnreadable(directory)) return
     for (const file of files) held[pathKey(file)] = { session: sessionID, at }
     const names = Object.keys(held)
     if (names.length > WRITERS_KEPT) {
@@ -1156,6 +1180,16 @@ export class Snapshots {
   async writtenSince(directory: string, sessionID: string, at: number, files: string[]): Promise<string[]> {
     if (!files.length) return []
     const held = await this.ledger(directory)
+    /*
+     * A ledger this run could not read answers nothing, and "nothing" here
+     * reads as "no other conversation touched these" - which is the permissive
+     * answer to a question asked precisely because the permissive answer is
+     * dangerous. R25 stopped the *write* over an unreadable ledger and left the
+     * read as it was, so one blink of a lock still let an undo write over
+     * another conversation's later work (R26-E4). Every file is reported
+     * instead: the refusal names them and the reader can try again.
+     */
+    if (this.ledgerUnreadable(directory)) return [...files].sort()
     const clashes: string[] = []
     for (const file of files) {
       const writer = held[pathKey(file)]
@@ -1381,11 +1415,23 @@ export class Snapshots {
       }
     }
     let removed = 0
+    const now = Date.now()
     for (const name of entries) {
       const digest = name.endsWith(".writers.json") ? name.slice(0, -".writers.json".length) : name
       // Only this app's own names, so nothing else that finds its way in here is touched.
       if (!/^[0-9a-f]{40}$/.test(digest) || spokenFor.has(digest)) continue
-      await fs.rm(path.join(this.root, name), { recursive: true, force: true }).catch(() => undefined)
+      const full = path.join(this.root, name)
+      /*
+       * A store nothing names but that was written minutes ago is almost
+       * certainly another instance's, opened after this one read the list -
+       * two instances sharing a data directory is a supported case, and this
+       * pass is the one that deletes (R26-B1). The caller re-reads the list
+       * first; this is the second line, for the conversation that appears
+       * between that read and this loop.
+       */
+      const touched = (await fs.stat(full).catch(() => undefined))?.mtimeMs ?? 0
+      if (touched && now - touched < SWEEP_GRACE_MS) continue
+      await fs.rm(full, { recursive: true, force: true }).catch(() => undefined)
       removed += 1
     }
     /*
