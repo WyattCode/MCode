@@ -89,6 +89,62 @@ export function uriListPaths(list: string): string[] {
   return out
 }
 
+/**
+ * A dragged `data:` address, turned into the file it carries.
+ *
+ * Dragging a picture out of a conversation - this app's own, or a chat in a
+ * browser - hands over an address rather than a file, and `uriListPaths` reads
+ * only `file:`. So the drop was accepted, the ring lit, the browser's own
+ * handling was suppressed, and then nothing happened at all: no attachment and
+ * no word about why (R25-#11, carried over from the audit of PR #3).
+ *
+ * Decoded here rather than fetched, because `connect-src` forbids the window
+ * fetching anything - including a `data:` address - and this is the shape the
+ * app's own conversation hands over.
+ */
+export function dataUriFile(uri: string, name: string): File | undefined {
+  const head = /^data:([^;,]*)(;[^,]*)?,/i.exec(uri)
+  if (!head) return undefined
+  const type = head[1] || "application/octet-stream"
+  const body = uri.slice(head[0].length)
+  try {
+    let bytes: Uint8Array
+    if ((head[2] ?? "").toLowerCase().includes(";base64")) {
+      const binary = atob(body)
+      bytes = new Uint8Array(binary.length)
+      for (let at = 0; at < binary.length; at++) bytes[at] = binary.charCodeAt(at)
+    } else {
+      bytes = new TextEncoder().encode(decodeURIComponent(body))
+    }
+    if (!bytes.length) return undefined
+    const extension = /^image\/(png|jpeg|gif|webp|svg\+xml)$/i.exec(type)?.[1]?.replace("svg+xml", "svg") ?? ""
+    return new File([bytes as BlobPart], extension ? `${name}.${extension}` : name, { type })
+  } catch {
+    // A malformed address is not an attachment; the caller says so rather than dropping it silently.
+    return undefined
+  }
+}
+
+/** Addresses in a `text/uri-list` that are neither `file:` nor `data:` - a web address, which this window may not fetch. */
+export function uriListRemote(list: string): string[] {
+  const out: string[] = []
+  for (const line of list.split(/\r?\n/)) {
+    const uri = line.trim()
+    if (!uri || uri.startsWith("#")) continue
+    if (/^(file|data):/i.test(uri)) continue
+    out.push(uri)
+  }
+  return out
+}
+
+/** The `data:` addresses in a `text/uri-list`, in order. */
+export function uriListData(list: string): string[] {
+  return list
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((uri) => uri.length > 0 && !uri.startsWith("#") && /^data:/i.test(uri))
+}
+
 /** Where a file lives on disk, or empty for one that does not (pasted, or outside the app). */
 function diskPath(file: File): string {
   try {
