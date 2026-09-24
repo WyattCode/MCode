@@ -238,4 +238,68 @@ export async function roundTwentyFiveChecks(check: Check, section: (name: string
     const windows = code(await read("scripts/smoke-round9-windows.ts"))
     check("the fresh-clone branch no longer holds a check that can only fail", !/Array\.isArray\(licences\)/.test(windows))
   }
+
+  // --------------------------------------------------------------- R25-7
+  section("Round 25 (7): the two defects from the abandoned pull request that still bite on Windows")
+  {
+    /*
+     * PR #3 (2026-09-09) claimed sixteen fixes and was never merged - it was
+     * written against a tree that no longer exists. Audited against the current
+     * code: the three security items and two of the hangs had since been fixed
+     * by other work, seven remain but are macOS-only, and these two still bite
+     * here. The pull request itself stays unmerged; these are the defects.
+     */
+
+    /*
+     * An id's prefix must never go backwards, because a plain string sort over
+     * ids is what orders a conversation's messages on disk. A clock correction
+     * used to write a smaller prefix, so a message arrived in the transcript
+     * before the ones it answers - and "delete from this message on", which
+     * walks the sorted ids, cut the wrong span.
+     */
+    const ids = await import("../src/shared/id")
+    const real = Date.now
+    let first: string[] = []
+    let afterRollback: string[] = []
+    try {
+      first = [ids.id("tst"), ids.id("tst")]
+      // The clock goes back a minute, as an NTP correction does.
+      const back = real() - 60_000
+      Date.now = () => back
+      afterRollback = [ids.id("tst"), ids.id("tst")]
+    } finally {
+      Date.now = real
+    }
+    const all = [...first, ...afterRollback]
+    check("ids keep rising when the clock is put back", JSON.stringify([...all].sort()) === JSON.stringify(all), all)
+    check("and every one is the same width, so a string sort is a sort by time", new Set(all.map((one) => one.length)).size === 1, all.map((one) => one.length))
+
+    /*
+     * A counter of four hex digits: the 65537th id inside one millisecond would
+     * have been five digits, one character longer, and would therefore have
+     * sorted after every id of the milliseconds that followed.
+     */
+    const frozen = real()
+    let burst: string[] = []
+    try {
+      Date.now = () => frozen
+      burst = Array.from({ length: 70_000 }, () => ids.id("bst"))
+    } finally {
+      Date.now = real
+    }
+    check("a burst past the counter's width carries into the next millisecond rather than widening it", new Set(burst.map((one) => one.length)).size === 1, new Set(burst.map((one) => one.length)))
+    check("and stays in order across the carry", JSON.stringify([...burst].sort()) === JSON.stringify(burst))
+
+    /*
+     * A drag that carries an address rather than a file. This used to be
+     * accepted, suppress the browser's own handling, and then do nothing at
+     * all: no attachment, no word about why.
+     */
+    const attach = code(await read("src/renderer/src/lib/attach.ts"))
+    check("a dropped data: address is decoded into the file it carries", /export function dataUriFile/.test(attach) && /atob\(body\)/.test(attach))
+    check("and the addresses of a drop are told apart, rather than only file: being looked for", /export function uriListData/.test(attach) && /export function uriListRemote/.test(attach))
+    const composer = code(await read("src/renderer/src/components/Composer.vue"))
+    check("the composer attaches what a data: drop carried", /if \(decoded\.length\) await take\(decoded\)/.test(composer))
+    check("and says so for a web address, which this window may not fetch", /notifyFailure\(t\("attach\.webAddress"\), remote\[0\]\)/.test(composer))
+  }
 }

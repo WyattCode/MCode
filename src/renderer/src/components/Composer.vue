@@ -16,7 +16,7 @@ import { draftTouched, drafts, homeFilled, scheduleDraftSave } from "../lib/comp
 import SlashPill from "./SlashPill.vue"
 import { accessPatch } from "../lib/confirm-queue"
 import { expandTemplate, splitCommandLine } from "@shared/command"
-import { acceptsDrop, mentionable, outsideWindow, preview, readFiles, uriListPaths, videoUrl, MAX_LABEL, MENTION_MAX } from "../lib/attach"
+import { acceptsDrop, dataUriFile, mentionable, outsideWindow, preview, readFiles, uriListData, uriListPaths, uriListRemote, videoUrl, MAX_LABEL, MENTION_MAX } from "../lib/attach"
 import { audioVerdict, isAudioFile, limitMinutes, probeAudio } from "../lib/audio-check"
 import { ACCESS_LEVELS, defaultAccess, sessionAccess, type Access } from "@shared/access"
 import { openImagePreview, openVideoPreview } from "../lib/image-preview"
@@ -702,8 +702,31 @@ async function onDrop(event: DragEvent) {
    * split, after asking the main process which of them exist - so a stale path
    * from another window never becomes a mention of a file that is not there.
    */
-  const named = uriListPaths(event.dataTransfer?.getData("text/uri-list") ?? "").filter((target) => !carried.has(target))
+  const list = event.dataTransfer?.getData("text/uri-list") ?? ""
+  const named = uriListPaths(list).filter((target) => !carried.has(target))
   if (named.length) await attachPaths(named)
+
+  /*
+   * An address that is not a path. Dragging a picture out of a conversation -
+   * this app's own, or a chat in a browser - hands one of these over, and the
+   * drop used to end here: accepted, the browser's own handling suppressed,
+   * and then nothing at all (R25-#11).
+   *
+   * A `data:` address carries the picture itself and is decoded in the page,
+   * which is what this window is allowed to do. A web address is not fetched -
+   * `connect-src` forbids it, and asking the main process to fetch whatever the
+   * page was dropped would be a new way in - so it is said rather than
+   * swallowed.
+   */
+  const carriedData = uriListData(list)
+  if (carriedData.length) {
+    const decoded = carriedData.map((uri, at) => dataUriFile(uri, `dropped-${at + 1}`)).filter((file): file is File => file !== undefined)
+    if (decoded.length) await take(decoded)
+    if (decoded.length < carriedData.length) notifyFailure(t("attach.unreadable"))
+  } else if (!named.length && !files.length) {
+    const remote = uriListRemote(list)
+    if (remote.length) notifyFailure(t("attach.webAddress"), remote[0])
+  }
 }
 
 /**
