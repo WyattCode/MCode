@@ -93,7 +93,8 @@ async function settingsChecks(check: Check, section: (name: string) => void): Pr
     check("and turning it back down lands on the defaults", full.config.get().accessBefore === undefined)
 
     const auto = await loaded({ permissions: { ...DEFAULTS, grep: "deny" }, accessLevel: "auto", allowFullAccess: false })
-    check("the middle level and the switch are the user's and stay", auto.config.get().accessLevel === "auto" && auto.config.get().allowFullAccess === false)
+    // The level is the user's and stays; the switch is on from the start now (user decision 2026-09-24, see HANDOFF).
+    check("the middle level is the user's and stays, and full access is offered", auto.config.get().accessLevel === "auto" && auto.config.get().allowFullAccess === true, auto.config.get().allowFullAccess)
     check("under it the map is the defaults", JSON.stringify(auto.config.get().permissions) === JSON.stringify(DEFAULTS))
 
     const again = await loaded({ permissions: { ...DEFAULTS, bash: "allow" }, migrations: ["orphans-r9"] })

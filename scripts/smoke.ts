@@ -2157,7 +2157,14 @@ async function main() {
       await fullStorage.write("config", { permissions: { ...PERMISSION_DEFAULTS }, allowFullAccess: false })
       const askConfig = new SubagentConfig(fullStorage, new Bus(), path.join(fullData, "credentials.json"))
       await askConfig.load()
-      check("a config below full access leaves the switch off", askConfig.get().allowFullAccess === false)
+      /*
+       * The switch is offered from the start now, where MiMo ships it off - the
+       * user's decision on 2026-09-24, recorded in HANDOFF. It only decides
+       * whether the level appears in the composer's menu; choosing it is still
+       * the reader's own step, behind MiMo's confirmation.
+       */
+      check("a config below full access is still offered the level, which MiMo hides", askConfig.get().allowFullAccess === true, askConfig.get().allowFullAccess)
+      check("and the level itself is untouched, so nothing is granted by the offer", askConfig.get().accessLevel !== "full", askConfig.get().accessLevel)
 
       /* R12, the user's 2026-09-15 decision: MiMo's first-install defaults, and only where nothing is stored. */
       const freshData = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-firstinstall-"))
@@ -2175,12 +2182,13 @@ async function main() {
       const keptConfig = new SubagentConfig(freshStorage, new Bus(), path.join(freshData, "credentials.json"))
       await keptConfig.load()
       check(
-        "a stored config without an access level keeps the default level and the switch off",
-        keptConfig.get().accessLevel === undefined && keptConfig.get().allowFullAccess === false,
+        "a stored config without an access level keeps the default level, and is offered full access",
+        keptConfig.get().accessLevel === undefined && keptConfig.get().allowFullAccess === true,
         { accessLevel: keptConfig.get().accessLevel, allowFullAccess: keptConfig.get().allowFullAccess },
       )
       const onDisk = JSON.parse(await fs.readFile(path.join(freshData, "storage", "config.json"), "utf8")) as Record<string, unknown>
-      check("and nothing rewrites those stored fields", onDisk.accessLevel === undefined && onDisk.allowFullAccess === false, { accessLevel: onDisk.accessLevel, allowFullAccess: onDisk.allowFullAccess })
+      // The level is still not written; the switch is, because a migration ran and is recorded so it runs once.
+      check("and the level itself is not written into the stored document", onDisk.accessLevel === undefined, { accessLevel: onDisk.accessLevel, allowFullAccess: onDisk.allowFullAccess })
       await fs.rm(freshData, { recursive: true, force: true })
       await fs.rm(fullData, { recursive: true, force: true })
     }
