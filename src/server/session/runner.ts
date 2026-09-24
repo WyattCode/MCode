@@ -31,6 +31,7 @@ import { globalAgentsPath } from "../global-agents"
 import { discoverSkills, enabledSkills, skillReminders, withSkillReminders, type SkillInfo } from "../skill"
 import { findTool, hasOwnToolsOnly, reachOf, repairableNames, toolsForTurn, withheldByLab } from "../tool/registry"
 import { normalizeToolInput, resolveToolName } from "../tool/repair"
+import { inputForTool } from "../provider/tool-schema"
 import { Questions } from "../tool/question"
 import type { PlanControl, SubagentControl, SubagentSpec, ToolContext, ToolDefinition, ToolResult } from "../tool/types"
 import { instructionsIn } from "../tool/read"
@@ -57,7 +58,7 @@ import { pruneLevelFor, prunedHistory, type PruneLevel } from "./prune"
 import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, shrinkLargeToolResults, touchedFiles, type CompactionTrigger } from "./summary"
 import { memorySection, systemPrompt } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
-import { GOAL_GUARD, JUDGE_SYSTEM, MAX_GOAL_REACT, cleanGoal, goalReminder, judgeQuestion, parseVerdict, type GoalVerdict } from "./goal"
+import { GOAL_GUARD, JUDGE_SYSTEM, MAX_GOAL_REACT, cleanGoal, goalReminder, judgeQuestion, judgeTranscript, parseVerdict, sameGoal, type GoalVerdict } from "./goal"
 import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf, subagentAgent } from "./plan"
 import { status as gitStatus } from "../git"
 import { historyService, memoryFilesFor, memoryWritable } from "../history/service"
@@ -256,9 +257,10 @@ const TITLE_SOURCE_CHARS = 4000
 /**
  * What the model is told on the step that has to be the last one.
  *
- * The reference's `MAX_STEPS_PROMPT`, kept as it stands. It goes in as an
- * assistant message beside a request carrying no tools at all, so the only
- * thing left to do is write.
+ * The reference's `MAX_STEPS_PROMPT`, kept as it stands. It goes in as a
+ * user message beside a request whose tool choice is "none", so the only thing
+ * left to do is write. The tools are still defined, as MiMo's are: a request
+ * that defines none is refused by Anthropic once the history holds a tool call.
  */
 const MAX_STEPS_PROMPT = [
   "CRITICAL - MAXIMUM STEPS REACHED",
@@ -891,6 +893,15 @@ export class SessionRunner {
     else if (turn.opaque && !turn.watching) {
       blocked = "This turn was not recorded for undo, so it cannot be taken back."
     } else if (turn.opaque) blocked = watched?.unavailable
+    /*
+     * A file whose contents could not be taken blocks the turn whatever the
+     * scan said. Filing it as an ordinary turn would leave an entry that, on
+     * undo, deletes that file instead of restoring it (R25-A1).
+     */
+    if (!blocked) {
+      const lost = [...files.values()].find((file) => file.unreadable !== undefined)
+      if (lost) blocked = `${lost.unreadable}, so this turn cannot be taken back.`
+    }
 
     // A turn that changed nothing does not take up a place in the history.
     if (!blocked && files.size === 0) return
@@ -1129,7 +1140,12 @@ export class SessionRunner {
     const stored = await this.store.messages(session.id)
     const at = stored.findIndex((message) => message.id === boundary)
     if (at >= 0) {
-      for (const message of stored.slice(at)) await this.store.deleteMessage(session.id, message.id)
+      // By what is on disk, not by what could be read: see SessionStore.messageIDs.
+      const ids = await this.store.messageIDs(session.id)
+      const from = ids.indexOf(boundary)
+      for (const id of from >= 0 ? ids.slice(from) : stored.slice(at).map((message) => message.id)) {
+        await this.store.deleteMessage(session.id, id)
+      }
     }
     await this.store.dropReverted(session.id)
     const updated = await this.store.update(session.id, { revert: undefined })
@@ -1155,7 +1171,12 @@ export class SessionRunner {
     const at = stored.findIndex((message) => message.id === messageID)
     if (at < 0) throw new Error("That message is no longer in this conversation")
     const kept = new Set(stored.slice(0, at).map((message) => message.id))
-    for (const message of stored.slice(at)) await this.store.deleteMessage(sessionID, message.id)
+    // By what is on disk, not by what could be read: see SessionStore.messageIDs.
+    const ids = await this.store.messageIDs(sessionID)
+    const from = ids.indexOf(messageID)
+    for (const id of from >= 0 ? ids.slice(from) : stored.slice(at).map((message) => message.id)) {
+      await this.store.deleteMessage(sessionID, id)
+    }
     // subagents: the subagents the deleted turns started go with them.
     for (const child of await this.store.list()) {
       if (child.parentID !== sessionID || !child.parentMessageID || kept.has(child.parentMessageID)) continue
@@ -1216,7 +1237,15 @@ export class SessionRunner {
   private async writeNow(files: SnapshotFile[], directory?: string): Promise<SnapshotFile[]> {
     const swapped: SnapshotFile[] = []
     for (const file of files) {
-      swapped.push(await keepSnapshotFile(this.snapshots, directory, file.path))
+      const swap = await keepSnapshotFile(this.snapshots, directory, file.path)
+      /*
+       * What is on disk now is the other half of the swap - it is what a redo
+       * puts back. Recorded as "there was nothing here", a redo would delete
+       * the file, so a body that cannot be taken stops the restore instead
+       * (R25-A1), the same way an unanswerable store body does below.
+       */
+      if (swap.unreadable !== undefined) throw new Error(`${swap.unreadable}, so this turn cannot be put back`)
+      swapped.push(swap)
       // "Did not exist" in either shape: a checkpoint reference of null, or a legacy body of null.
       const absent = file.blob !== undefined ? file.blob === null : file.content === null
       if (absent) {
@@ -1393,13 +1422,25 @@ export class SessionRunner {
    * model's usual one. For an overflow the attached files are left out, since
    * they are what made it too large. A reply that is empty, not a summary, a
    * tool call, or itself too large leaves the conversation as it was.
+   *
+   * `boundary` is the last message the summary is to cover, for a caller that
+   * is compacting with a newer message already in the conversation - a turn
+   * compacting because the reply before it crossed the line has the user's new
+   * request sitting at the end. Marking there would put that request behind the
+   * mark, where `contextFor` never sends it, and the turn would answer a
+   * question the model was never shown. Left out, the mark falls at the end, as
+   * it does for the button and for an overflow.
    */
-  private async compactNow(session: TurnSession, signal: AbortSignal, trigger: CompactionTrigger): Promise<SessionInfo> {
+  private async compactNow(session: TurnSession, signal: AbortSignal, trigger: CompactionTrigger, boundary?: string): Promise<SessionInfo> {
     const stored = await this.store.messages(session.id)
     const live = this.liveMessages(session, stored)
-    const last = live.at(-1)
+    let seen = this.contextFor(session, stored)
+    const cut = boundary ? seen.findIndex((message) => message.id === boundary) : -1
+    // Summarising past the boundary would describe the request as work already done.
+    if (cut >= 0) seen = seen.slice(0, cut + 1)
+    const last = cut >= 0 ? live.find((message) => message.id === boundary) : live.at(-1)
     // skills: what a message loaded is part of the conversation being summarised.
-    const context = withSkillReminders(withAutomationNotes(withChatHeaders(this.contextFor(session, stored))))
+    const context = withSkillReminders(withAutomationNotes(withChatHeaders(seen)))
     if (!last || !context.some((message) => message.role === "user")) throw new Error("Nothing to compact yet")
 
     const definition = this.config.definition(session.model.provider)
@@ -1494,7 +1535,8 @@ export class SessionRunner {
       .find((message): message is AssistantMessage => message.role === "assistant" && message.finish !== undefined && message.usage !== undefined)
     if (!reply?.usage || !isOverflowByCount(reply.usage, this.config.modelEntry(session.model))) return session
     try {
-      return keepTurn(await this.compactNow(session, signal, "automatic"), session)
+      // The summary stops at that reply, so the request this turn is about to answer stays in front of the mark and is sent as the user wrote it.
+      return keepTurn(await this.compactNow(session, signal, "automatic", reply.id), session)
     } catch {
       return session
     }
@@ -2097,21 +2139,28 @@ export class SessionRunner {
     const verdict = await this.judgeGoal(session, goal.condition, stopped)
     // Stop landed while the judge was reading: the goal stands, untouched, for the next turn.
     if (stopped.aborted) return false
+    /*
+     * The judge can take a minute and a half. The bar may have cleared the goal
+     * or set a new one meanwhile; the verdict is about the goal that was read
+     * above and is written to that goal only. Anything else lets the turn stop.
+     */
+    const now = (await this.store.get(sessionID))?.goal
+    if (!now || !sameGoal(now, goal)) return false
     if (!verdict) {
-      await this.endGoal(sessionID, { status: "blocked", reason: GOAL_JUDGE_FAILED, at: Date.now() })
+      await this.endGoal(sessionID, goal, { status: "blocked", reason: GOAL_JUDGE_FAILED, at: Date.now() })
       return false
     }
     if (verdict.ok || verdict.impossible) {
-      await this.endGoal(sessionID, { status: verdict.ok ? "complete" : "blocked", reason: verdict.reason, at: Date.now() })
+      await this.endGoal(sessionID, goal, { status: verdict.ok ? "complete" : "blocked", reason: verdict.reason, at: Date.now() })
       return false
     }
 
-    const attempts = goal.attempts + 1
+    const attempts = now.attempts + 1
     if (attempts > MAX_GOAL_REACT) {
-      await this.endGoal(sessionID, { status: "blocked", reason: verdict.reason, at: Date.now() })
+      await this.endGoal(sessionID, goal, { status: "blocked", reason: verdict.reason, at: Date.now() })
       return false
     }
-    await this.store.update(sessionID, { goal: { ...goal, attempts } })
+    await this.store.update(sessionID, { goal: { ...now, attempts } })
     const reminder: UserMessage = {
       id: Identifier.message(),
       sessionID,
@@ -2126,11 +2175,15 @@ export class SessionRunner {
     return true
   }
 
-  /** 追求目标: the goal stops driving turns but stays on the conversation, so the bar can say how it ended. */
-  private async endGoal(sessionID: string, done: NonNullable<SessionGoal["done"]>): Promise<void> {
-    const current = await this.store.get(sessionID)
-    if (!current?.goal || current.goal.done) return
-    await this.store.update(sessionID, { goal: { ...current.goal, done } })
+  /**
+   * 追求目标: the goal stops driving turns but stays on the conversation, so the
+   * bar can say how it ended. Only the goal that was judged: one set in its
+   * place meanwhile is a fresh goal the verdict says nothing about.
+   */
+  private async endGoal(sessionID: string, judged: SessionGoal, done: NonNullable<SessionGoal["done"]>): Promise<void> {
+    const current = (await this.store.get(sessionID))?.goal
+    if (!current || !sameGoal(current, judged)) return
+    await this.store.update(sessionID, { goal: { ...current, done } })
   }
 
   /**
@@ -2159,7 +2212,8 @@ export class SessionRunner {
     let answer = ""
     try {
       const stored = await this.store.messages(sessionID)
-      const transcript = forWire(this.contextFor(session, stored), model)
+      // Calls as text: the judge has no tools, and a tool block with none defined is refused.
+      const transcript = judgeTranscript(this.contextFor(session, stored))
       const outcome = await adapter.stream(
         {
           apiKey: tokens?.access ?? this.config.apiKey(definition.id) ?? "",
@@ -2350,6 +2404,8 @@ export class SessionRunner {
     this.turnOverrides.delete(sessionID)
     // plan: what this step is judged by; a plan approved during the turn moves it to build from the next step.
     this.turnAgents.set(sessionID, session.agent)
+    // MiMo's loop detectors watch one turn: what the last turn's calls added up to is not held against this one.
+    this.loopWatches.delete(sessionID)
     // The project's servers are connected (or have failed) before the turn is offered their tools, as MiMo's instance waits for them.
     this.workingIn.set(sessionID, session.directory)
     await this.mcp?.ready(session.directory)
@@ -2391,7 +2447,7 @@ export class SessionRunner {
       }
       assistant.parts.push(part)
       await this.store.saveMessage(assistant)
-      await this.runTool({ part, assistant, session: { id: sessionID, directory: session.directory }, signal: controller.signal })
+      await this.runTool({ part, assistant, session: { id: sessionID, directory: session.directory, model: session.model }, signal: controller.signal })
       assistant.time.completed = Date.now()
       if (controller.signal.aborted) assistant.finish = "aborted"
       await this.store.saveMessage(assistant)
@@ -2456,8 +2512,18 @@ export class SessionRunner {
     let continuing: AssistantMessage | undefined
     for (let step = 0; ; step++) {
       if (controller.signal.aborted) return
-      // The reference's `isLastStep`: no tools, and an instruction to write.
+      // The reference's `isLastStep`: tools that may not be called, and an instruction to write.
       const lastStep = limit !== undefined && step >= limit
+      /*
+       * And a stop, for a provider that does not honour being told no tools.
+       *
+       * `lastStep` only adds the instruction and asks for `toolChoice: "none"`.
+       * Nothing ended the loop, so a local OpenAI-compatible server that
+       * ignores `tool_choice` - which several shims do - kept calling tools and
+       * the turn ran, and billed, until the user pressed Stop, with the very
+       * setting meant to cap it switched on (R25-B3).
+       */
+      if (limit !== undefined && step > limit) break
 
       /*
        * Anything typed while the last step ran has to be on disk before the
@@ -2484,6 +2550,14 @@ export class SessionRunner {
       const stored = await this.store.messages(sessionID)
       const delivered = this.markDelivered(sessionID, stored)
       if (delivered.length) await this.openSteeredTurn(sessionID, session.directory, delivered, stored)
+      /*
+       * A cut reply is carried on only while it is still the last thing in the
+       * conversation. Once the user's words have come in after it, the rest is
+       * an answer to them as well, and belongs below them: welded into the cut
+       * message it would show above the question it answers, and the undo turn
+       * the steered message opened would take in a reply from the one before.
+       */
+      if (continuing && (delivered.length || stored.at(-1)?.id !== continuing.id)) continuing = undefined
       // session chat: a message from another conversation says so, in the request only; automation: a scheduled task's run says so too.
       // MiMo's pruning comes first, so the older tool output is already trimmed before anything is framed around it.
       // MiMo's recall hint: a conversation with memory or tasks is told, each step, where to look before asking.
@@ -2535,6 +2609,15 @@ export class SessionRunner {
       if (carried) {
         assistant.finish = undefined
         assistant.time.completed = undefined
+        /*
+         * The note asking for the rest has been sent with this step's request,
+         * and after it the reply is no longer a cut one. Left on, every later
+         * step of the turn told the model a finished reply had been cut off;
+         * it goes back on below only if this step is cut again.
+         */
+        const kept = (notes.get(assistant.id) ?? []).filter((note) => note !== LENGTH_NOTE)
+        if (kept.length) notes.set(assistant.id, kept)
+        else notes.delete(assistant.id)
       }
       /* What the reply already says, so this step's own words can be told apart from it below. */
       const said = carried ? textOf(assistant) : ""
@@ -2608,12 +2691,9 @@ export class SessionRunner {
         // subagents: a subagent is never handed the actor tool, so it cannot start subagents of its own,
         // nor the session chat tools, which refuse a subagent anyway and only cost it a wasted call;
         // one asked for structured output has the tool it returns it through.
-        tools: lastStep
-          ? []
-          : [
-              ...this.offeredTools(session),
-              ...(outputSchema ? [structuredOutputTool(outputSchema)] : []),
-            ],
+        tools: [...this.offeredTools(session), ...(outputSchema ? [structuredOutputTool(outputSchema)] : [])],
+        // MiMo's last step: the tools stay defined, since the history carries calls to them, but none may be called.
+        ...(lastStep ? { toolChoice: "none" as const } : {}),
         effort: effort ?? "",
 
         signal: controller.signal,
@@ -2663,8 +2743,13 @@ export class SessionRunner {
           if (!compacted) throw failure
           session = compacted
           step -= 1
-          // The step is run again into the same message, so a reply being continued is not left half-written.
-          continuing = carried ? assistant : undefined
+          /*
+           * Run again into a message of its own, even when this step was
+           * continuing a reply. That reply now lies before the compaction mark,
+           * where the request no longer reaches it: the rest of it would be
+           * written into a message the model cannot see, above the summary and
+           * the request posted again after it.
+           */
           continue
         }
         throw failure
@@ -2803,7 +2888,14 @@ export class SessionRunner {
         if ((next.note || repeatNote) && !lastStep) {
           // The rest of a sentence the limit cut belongs to the reply that started it.
           if (next.note === LENGTH_NOTE) continuing = assistant
-          if (overflowing) session = (await this.compactForOverflow(session, controller.signal)) ?? session
+          if (overflowing) {
+            const compacted = await this.compactForOverflow(session, controller.signal)
+            if (compacted) {
+              session = compacted
+              // The cut reply is behind the compaction mark now, out of the request; the next step starts a message after it.
+              continuing = undefined
+            }
+          }
           continue
         }
         /*
@@ -2855,7 +2947,7 @@ export class SessionRunner {
       const calls = new Semaphore(STEP_TOOL_LIMIT)
       await Promise.all(
         pending.map((part) =>
-          calls.run(() => this.runTool({ part, assistant, session: { id: sessionID, directory: session.directory }, signal: controller.signal })),
+          calls.run(() => this.runTool({ part, assistant, session: { id: sessionID, directory: session.directory, model: session.model }, signal: controller.signal })),
         ),
       )
 
@@ -3209,7 +3301,7 @@ export class SessionRunner {
   private async runTool(input: {
     part: ToolPart
     assistant: AssistantMessage
-    session: { id: string; directory: string }
+    session: { id: string; directory: string; model: ModelRef }
     signal: AbortSignal
   }): Promise<void> {
     const { part, assistant } = input
@@ -3284,7 +3376,11 @@ export class SessionRunner {
      */
     const unreadable = this.inputErrors.get(part)
     // Argument names a model spelled its own way (filePath for file_path) are put onto the schema's, as MiMo's repair does.
-    if (tool.name !== "invalid" && !unreadable) part.input = normalizeToolInput(part.input, tool.parameters)
+    if (tool.name !== "invalid" && !unreadable) {
+      part.input = normalizeToolInput(part.input, tool.parameters)
+      // And a value this model's own schema turned into a string is read back as the number the tool declares.
+      part.input = inputForTool(input.session.model, tool.parameters, part.input) as typeof part.input
+    }
     const problems = tool.name === "invalid" ? [] : unreadable ? [unreadable] : argumentProblems(tool.parameters, part.input)
     if (problems.length) {
       part.status = "error"
@@ -3300,6 +3396,7 @@ export class SessionRunner {
       part.metadata = { recoverable: true }
       part.time.started = Date.now()
       part.time.completed = part.time.started
+      this.settleForLoops(input.session.id, part, input.signal)
       publish()
       await this.store.saveMessage(assistant, true)
       return
@@ -3448,6 +3545,7 @@ export class SessionRunner {
       // A finished tool hands back metadata of its own, which would otherwise replace the record.
       if (decisions.length) part.metadata = { ...(part.metadata ?? {}), permissions: decisions }
       part.time.completed = Date.now()
+      this.settleForLoops(input.session.id, part, input.signal)
       publish()
       await this.store.saveMessage(assistant, true)
     }
@@ -3479,8 +3577,31 @@ export class SessionRunner {
   /** Tools a conversation said to always let repeat, by session: MiMo's `always` on its doom-loop ask. */
   private readonly repeatsAllowed = new Map<string, Set<string>>()
 
-  /** What each running conversation's tool calls are adding up to (session/loop-health.ts). */
-  private readonly loopMonitors = new Map<string, LoopMonitor>()
+  /**
+   * What each running conversation's tool calls are adding up to
+   * (session/loop-health.ts), and the incident the last settled call raised.
+   * A call is only judged once it has settled - its status, output, exit code
+   * and diff are what the detectors read - so the incident it raises is asked
+   * about before the next call runs, as MiMo's processor checks each call as
+   * it finishes. Started afresh with every turn.
+   */
+  private readonly loopWatches = new Map<string, { monitor: LoopMonitor; incident?: LoopIncident }>()
+
+  private loopWatch(sessionID: string): { monitor: LoopMonitor; incident?: LoopIncident } {
+    const known = this.loopWatches.get(sessionID)
+    if (known) return known
+    const made = { monitor: new LoopMonitor() }
+    this.loopWatches.set(sessionID, made)
+    return made
+  }
+
+  /** A call has settled: the monitor reads it, and any incident waits for the next call. A stopped call says nothing about a loop. */
+  private settleForLoops(sessionID: string, part: ToolPart, signal: AbortSignal): void {
+    if (signal.aborted) return
+    const watch = this.loopWatch(sessionID)
+    const incident = watch.monitor.consume(part)
+    if (incident) watch.incident = incident
+  }
 
   /**
    * The crop MiMo makes once a turn has been going round for three finished
@@ -3519,11 +3640,12 @@ export class SessionRunner {
    * reads that refusal and carries on, as it does a refused permission.
    */
   private async checkRepeated(part: ToolPart, assistant: AssistantMessage, sessionID: string, signal: AbortSignal): Promise<void> {
-    const monitor = this.loopMonitors.get(sessionID) ?? this.loopMonitors.set(sessionID, new LoopMonitor()).get(sessionID)!
-    const incident: LoopIncident | undefined = repeatsCall(assistant.parts, part) ? { kind: "same-call", tool: part.name } : monitor.consume(part)
-    if (!incident || this.repeatsAllowed.get(sessionID)?.has(part.name)) return
+    const watch = this.loopWatch(sessionID)
+    const incident: LoopIncident | undefined = repeatsCall(assistant.parts, part) ? { kind: "same-call", tool: part.name } : watch.incident
+    watch.incident = undefined
+    if (!incident || this.repeatsAllowed.get(sessionID)?.has(incident.tool)) return
     // Asked once per incident: the count starts again whatever the answer, so one `once` does not ask again immediately.
-    monitor.reset()
+    watch.monitor.reset()
     const [answer] = await this.questions.ask({
       sessionID,
       questions: [
@@ -3545,12 +3667,16 @@ export class SessionRunner {
     if (chosen.includes(LOOP_ANSWERS.once)) return
     if (chosen.includes(LOOP_ANSWERS.always)) {
       const allowed = this.repeatsAllowed.get(sessionID) ?? new Set<string>()
-      allowed.add(part.name)
+      allowed.add(incident.tool)
       this.repeatsAllowed.set(sessionID, allowed)
       return
     }
     const feedback = chosen.find((entry) => entry !== LOOP_ANSWERS.reject)
-    const said = feedback ? `The user stopped this repeated call and said: ${feedback}` : "The user stopped this call: it repeated the previous two calls with the same input."
+    const said = feedback
+      ? `The user stopped this repeated call and said: ${feedback}`
+      : incident.kind === "same-call"
+        ? "The user stopped this call: it repeated the previous two calls with the same input."
+        : `The user stopped this call: ${describeLoop(incident)}`
     throw new PermissionDenied(part.name, `${said}\nIt was not run. Do not repeat it; change your approach, or ask the user if you are stuck.`)
   }
 
@@ -4289,7 +4415,7 @@ export class SessionRunner {
     this.taskQueues.delete(sessionID)
     this.retrying.delete(sessionID)
     this.repeatsAllowed.delete(sessionID)
-    this.loopMonitors.delete(sessionID)
+    this.loopWatches.delete(sessionID)
     for (const key of [...this.numbering.keys()]) if (key.startsWith(`${sessionID}:`)) this.numbering.delete(key)
   }
 

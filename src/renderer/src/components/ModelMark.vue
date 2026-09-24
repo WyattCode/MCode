@@ -79,9 +79,9 @@ const initial = computed(() => (props.name.trim() || props.id).slice(0, 1).toUpp
   height: 12px;
 }
 
-/* MiMo's fallback: the first letter, 11/500, on a 6px-cornered square of the hover fill. */
+/* MiMo's fallback: the first letter, 11/500 in its --color-txt, on a 6px-cornered square of the hover fill. */
 .letter {
-  color: var(--text-strong);
+  color: var(--text-body);
   background: var(--surface-hover);
   border-radius: 6px;
   font-size: calc(11px * var(--ui-font-scale, 1));

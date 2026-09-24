@@ -5,7 +5,6 @@ import { kindFor, mimeFor } from "./media"
 import type {
   AppPath,
   ArtifactFile,
-  FileEntry,
   Request,
   ResponseMap,
   LocalServer,
@@ -1466,9 +1465,6 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "workspace.info":
       return (await workspaceInfo(request.directory)) satisfies Handled<"workspace.info">
 
-    case "file.list":
-      return { files: await listFiles(request.directory, request.query) } satisfies Handled<"file.list">
-
     /* The @ menu's browsing: one level at a time, as MiMo's listDir answers. */
     case "file.listDir":
       return { entries: await listDirectory(request.directory, request.sub, request.all) } satisfies Handled<"file.listDir">
@@ -1673,13 +1669,6 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
   }
 }
 
-const MAX_FILES = 500
-
-/**
- * Flat file listing for the file picker in the composer and the palette.
- * Filtering happens here rather than in the renderer so a large project does
- * not push thousands of paths across the socket on every keystroke.
- */
 /* Where a request's `sub` lands, refused when it climbs out of the project. */
 /* A folder inside the listed root, by spelling and by where it really leads (a junction does not pass). */
 async function insideProject(directory: string, sub?: string): Promise<{ root: string; target: string }> {
@@ -1957,39 +1946,3 @@ export async function searchFolder(directory: string, query: string, sub?: strin
   return { entries: scored.slice(0, cap).map((hit) => hit.entry), truncated: overflow || scored.length > cap }
 }
 
-/** How many entries one file.list may look at before it answers with what it has (N11-23). */
-const LIST_VISITS = 20_000
-
-async function listFiles(directory: string, query?: string): Promise<FileEntry[]> {
-  const root = path.resolve(directory)
-  const needle = query?.toLowerCase()
-  const results: FileEntry[] = []
-  const shielded = protectedFilter(root)
-  const queue = [root]
-  /*
-   * A budget on what is looked at, not only on what is kept (N11-23). With a
-   * query that matches little, filling MAX_FILES meant walking the whole tree -
-   * a hundred thousand entries on a large project.
-   */
-  let visits = 0
-
-  while (queue.length && results.length < MAX_FILES && visits < LIST_VISITS) {
-    const dir = queue.shift()!
-    const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => [])
-    for (const entry of entries) {
-      visits += 1
-      if (entry.name.startsWith(".") || IGNORED.has(entry.name)) continue
-      const absolute = path.join(dir, entry.name)
-      const rel = path.relative(root, absolute).split(path.sep).join("/")
-      if (entry.isDirectory()) {
-        if (!shielded(absolute)) queue.push(absolute)
-        continue
-      }
-      if (needle && !rel.toLowerCase().includes(needle)) continue
-      results.push({ path: rel, name: entry.name, directory: false })
-      if (results.length >= MAX_FILES) break
-    }
-  }
-
-  return results
-}

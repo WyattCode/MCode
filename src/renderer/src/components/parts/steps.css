@@ -4,9 +4,10 @@
  *
  * One global sheet rather than scoped styles, because the same pieces - the
  * 14px icon slot, the chevron, the code cells - are drawn by several
- * components and have to stay identical between them. The greys are MiMo's own
- * mut / dim and its code colours, with their dark values below; lines and
- * hovers use this app's tokens.
+ * components and have to stay identical between them. The greys are MiMo's
+ * thread mut / dim, which are this app's --text-base / --text-weak in both
+ * themes; its code colours and the summary hover are literals, with their dark
+ * values below.
  */
 
 .hstep {
@@ -14,7 +15,7 @@
   align-items: flex-start;
   padding: 5px 0;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: calc(21px * var(--ui-font-scale, 1));
+  line-height: calc(22.4px * var(--ui-font-scale, 1));
 }
 
 .hstep.indent {
@@ -37,11 +38,11 @@
   gap: 6px;
   max-width: 100%;
   padding: 0;
-  color: #909091;
+  color: var(--text-base);
   font: inherit;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: calc(21px * var(--ui-font-scale, 1));
+  line-height: calc(22.4px * var(--ui-font-scale, 1));
   text-align: start;
   background: transparent;
   border: 0;
@@ -57,8 +58,9 @@
   padding: 5px 0;
 }
 
+/* MiMo's summary hover is its txt colour. */
 .hs-summary:not([aria-disabled="true"]):hover {
-  color: var(--text-strong);
+  color: var(--text-body);
 }
 
 .hs-ic {
@@ -134,7 +136,7 @@
 
 .hs-dim {
   flex: none;
-  color: #919191;
+  color: var(--text-weak);
 }
 
 .hs-bash-desc {
@@ -144,7 +146,7 @@
   max-width: 100%;
   padding: 1px 6px;
   overflow: hidden;
-  color: #909091;
+  color: var(--text-base);
   font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: calc(19px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
@@ -215,7 +217,7 @@
 .running-shimmer {
   color: transparent;
   -webkit-text-fill-color: transparent;
-  background: linear-gradient(90deg, #919191 35%, var(--text-strong) 50%, #919191 65%);
+  background: linear-gradient(90deg, var(--text-weak) 35%, var(--text-strong) 50%, var(--text-weak) 65%);
   background-size: 200% 100%;
   -webkit-background-clip: text;
   background-clip: text;
@@ -248,16 +250,16 @@
 }
 
 html[data-motion="on"] .running-shimmer {
-  color: #909091;
-  -webkit-text-fill-color: #909091;
+  color: var(--text-base);
+  -webkit-text-fill-color: var(--text-base);
   background: none;
   animation: steps-pulse 1.8s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
   html[data-motion="system"] .running-shimmer {
-    color: #909091;
-    -webkit-text-fill-color: #909091;
+    color: var(--text-base);
+    -webkit-text-fill-color: var(--text-base);
     background: none;
     animation: steps-pulse 1.8s ease-in-out infinite;
   }
@@ -285,6 +287,11 @@ html[data-motion="on"] .running-shimmer {
 .hs-collapse-inner {
   min-height: 0;
   overflow: hidden;
+}
+
+/* MiMo's group body is the summary's sibling in the 2px column: its first row's line sits twelve under the summary's. */
+.hs-group > .hs-collapse {
+  margin-top: 2px;
 }
 
 html[data-motion="on"] .hs-collapse {
@@ -326,7 +333,7 @@ html[data-motion="on"] .hs-collapse {
 }
 
 .hs-bash-desc-line {
-  color: #909091;
+  color: var(--text-base);
 }
 
 .hs-divider {
@@ -410,7 +417,7 @@ html[data-motion="on"] .hs-collapse {
 
 .hs-skip-hint {
   margin-top: 6px;
-  color: #909091;
+  color: var(--text-base);
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 400;
   user-select: text;
@@ -445,7 +452,7 @@ html[data-motion="on"] .hs-collapse {
 }
 
 .hs-decided {
-  color: #919191;
+  color: var(--text-weak);
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
@@ -454,7 +461,7 @@ html[data-motion="on"] .hs-collapse {
   gap: 4px;
   margin-top: 6px;
   padding: 0;
-  color: #909091;
+  color: var(--text-base);
   font: inherit;
   font-size: calc(12px * var(--ui-font-scale, 1));
   background: none;
@@ -472,12 +479,12 @@ html[data-motion="on"] .hs-collapse {
 
 .hs-perm-reason {
   margin-top: 6px;
-  color: #909091;
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .hs-ic.mut {
-  color: #909091;
+  color: var(--text-base);
 }
 
 /* A question once it is answered or cancelled. */
@@ -487,7 +494,7 @@ html[data-motion="on"] .hs-collapse {
   margin: 6px 0;
   padding: 10px 12px;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: calc(21px * var(--ui-font-scale, 1));
+  line-height: calc(22.4px * var(--ui-font-scale, 1));
   background: color-mix(in srgb, var(--surface-hover) 30%, transparent);
   border: 1px solid var(--border-weak);
   border-radius: 10px;
@@ -551,7 +558,7 @@ html[data-motion="on"] .hs-collapse {
   gap: 4px;
   height: calc(20px * var(--ui-font-scale, 1));
   padding: 1px 6px;
-  color: #909091;
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: calc(18px * var(--ui-font-scale, 1));
   background: var(--surface-hover);
@@ -562,7 +569,7 @@ html[data-motion="on"] .hs-collapse {
   flex: none;
   width: 5px;
   height: 5px;
-  background: #909091;
+  background: var(--text-base);
   border-radius: 50%;
 }
 
@@ -571,7 +578,7 @@ html[data-motion="on"] .hs-collapse {
 }
 
 .hs-q-count {
-  color: #909091;
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -589,7 +596,7 @@ html[data-motion="on"] .hs-collapse {
 }
 
 .hs-q-header {
-  color: #909091;
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -602,7 +609,7 @@ html[data-motion="on"] .hs-collapse {
   gap: 6px;
   min-width: 0;
   padding-inline-start: 6px;
-  color: #909091;
+  color: var(--text-base);
   font-weight: 500;
 }
 
@@ -611,14 +618,14 @@ html[data-motion="on"] .hs-collapse {
 }
 
 .hs-retry-count {
-  color: #919191;
+  color: var(--text-weak);
   font-variant-numeric: tabular-nums;
 }
 
 /* MiMo's why: a dim dot, then the reason on one line at regular weight, cut where the row ends. */
 .hs-retry-dot,
 .hs-retry-reason {
-  color: #919191;
+  color: var(--text-weak);
 }
 
 .hs-retry-reason {
@@ -649,7 +656,7 @@ html[data-motion="on"] .hs-collapse {
 /* MiMo's "i" row: a monospaced i in the 14px icon column, the words quiet at 14px. */
 .hs-notice {
   gap: 9px;
-  color: #909091;
+  color: var(--text-base);
 }
 
 .hs-notice-mark {
@@ -663,14 +670,6 @@ html[data-motion="on"] .hs-collapse {
   user-select: text;
 }
 
-:root[data-theme="dark"] :is(.hs-h, .hs-bash-desc, .hs-bash-desc-line, .hs-skip-hint, .hs-perm-toggle, .hs-perm-reason, .hs-ic.mut, .hs-tag, .hs-q-count, .hs-q-header, .hs-retry-label, .hs-notice) {
-  color: #b8b8b8;
-}
-
-:root[data-theme="dark"] :is(.hs-dim, .hs-decided, .hs-retry-count) {
-  color: #777777;
-}
-
 :root[data-theme="dark"] :is(.hs-cell, .hs-full-cmd, .hs-perm-cmd, .tc-out, .hs-title code) {
   color: #e6e6e6;
 }
@@ -679,16 +678,8 @@ html[data-motion="on"] .hs-collapse {
   background: #2e2e2e;
 }
 
-:root[data-theme="dark"] .hs-tag-dot {
-  background: #b8b8b8;
-}
-
 :root[data-theme="dark"] .hs-divider {
   border-top-color: rgb(184 184 184 / 25%);
-}
-
-:root[data-theme="dark"] .running-shimmer {
-  background-image: linear-gradient(90deg, #777777 35%, var(--text-strong) 50%, #777777 65%);
 }
 
 :root[data-theme="dark"] .running-shimmer :is(code, .hs-bash-desc) {
@@ -696,14 +687,6 @@ html[data-motion="on"] .hs-collapse {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) :is(.hs-h, .hs-bash-desc, .hs-bash-desc-line, .hs-skip-hint, .hs-perm-toggle, .hs-perm-reason, .hs-ic.mut, .hs-tag, .hs-q-count, .hs-q-header, .hs-retry-label, .hs-notice) {
-    color: #b8b8b8;
-  }
-
-  :root:not([data-theme="light"]) :is(.hs-dim, .hs-decided, .hs-retry-count) {
-    color: #777777;
-  }
-
   :root:not([data-theme="light"]) :is(.hs-cell, .hs-full-cmd, .hs-perm-cmd, .tc-out, .hs-title code) {
     color: #e6e6e6;
   }
@@ -712,16 +695,8 @@ html[data-motion="on"] .hs-collapse {
     background: #2e2e2e;
   }
 
-  :root:not([data-theme="light"]) .hs-tag-dot {
-    background: #b8b8b8;
-  }
-
   :root:not([data-theme="light"]) .hs-divider {
     border-top-color: rgb(184 184 184 / 25%);
-  }
-
-  :root:not([data-theme="light"]) .running-shimmer {
-    background-image: linear-gradient(90deg, #777777 35%, var(--text-strong) 50%, #777777 65%);
   }
 
   :root:not([data-theme="light"]) .running-shimmer :is(code, .hs-bash-desc) {

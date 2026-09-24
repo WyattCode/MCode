@@ -263,7 +263,7 @@ export const OpenAICompatible: ProviderAdapter = {
         ...(request.variants && !request.variants.includes(request.effort)
           ? {}
           : { reasoning_effort: request.effort }),
-        ...(tools.length ? { tools, tool_choice: "auto" } : {}),
+        ...(tools.length ? { tools, tool_choice: request.toolChoice ?? "auto" } : {}),
         // MiMo's family sampling; top-k is not a chat-completions field, so it stays off this wire.
         ...(request.sampling?.temperature !== undefined ? { temperature: request.sampling.temperature } : {}),
         ...(request.sampling?.topP !== undefined ? { top_p: request.sampling.topP } : {}),

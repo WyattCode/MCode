@@ -263,7 +263,14 @@ function onEditKey(event: KeyboardEvent) {
   padding: 2px 2px 6px;
 }
 
-/* MiMo's chip: 24 high, a pill on a faint fill, 13px, 5 between its parts. */
+/*
+ * MiMo's chip: 24 high, a pill on a faint fill, 13px, 5 between its parts.
+ *
+ * The height scales here where MiMo's is a literal 24px. MiMo's own text is
+ * var(--text-13), which does scale, so at the largest UI font its 22px line
+ * cannot stand in a 24px pill and the label is cut top and bottom; the pill is
+ * `overflow: hidden`, so nothing gives. Deliberate difference, kept working.
+ */
 .cchip {
   display: inline-flex;
   align-items: center;
@@ -273,7 +280,8 @@ function onEditKey(event: KeyboardEvent) {
   padding: 0 6px 0 8px;
   overflow: hidden;
   white-space: nowrap;
-  background: color-mix(in srgb, var(--text-strong) 6%, transparent);
+  /* MiMo --color-chip-bg (#0000000d / #ffffff14). */
+  background: #0000000d;
   border-radius: 999px;
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
@@ -283,8 +291,9 @@ function onEditKey(event: KeyboardEvent) {
   color: var(--text-strong);
 }
 
+/* MiMo --color-chip-text (#137a3f / #4ade80). */
 .cchip-name {
-  color: var(--text-success);
+  color: #137a3f;
   font-weight: 400;
 }
 
@@ -306,15 +315,16 @@ function onEditKey(event: KeyboardEvent) {
 }
 
 .cchip-ref {
-  max-width: 96px;
+  max-width: calc(96px * var(--ui-font-scale, 1));
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+/* MiMo --color-chip-rm (#8a8a82 in both schemes), hovering to #1a1a1a / #e6e6e6. */
 .cchip-rm,
 .ann-rm {
   padding: 2px;
-  color: var(--text-weak);
+  color: #8a8a82;
   background: none;
   border: 0;
   font-size: calc(11px * var(--ui-font-scale, 1));
@@ -323,7 +333,7 @@ function onEditKey(event: KeyboardEvent) {
 
 .cchip-rm:hover,
 .ann-rm:hover {
-  color: var(--text-strong);
+  color: #1a1a1a;
 }
 
 /* MiMo's number: a 14px accent pill, 9px bold. */
@@ -356,10 +366,11 @@ function onEditKey(event: KeyboardEvent) {
   max-height: 300px;
   padding: 6px;
   overflow-y: auto;
-  background: var(--surface-menu);
+  /* MiMo --color-bg (#fffefd / #181818) under --shadow-menu, written out until F1's token lands. */
+  background: #fffefd;
   border: 1px solid var(--border-weak);
   border-radius: 10px;
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-menu);
 }
 
 .ann-item {
@@ -389,17 +400,17 @@ function onEditKey(event: KeyboardEvent) {
 }
 
 .ann-title {
-  color: var(--text-strong);
+  color: var(--text-body);
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .ann-range {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .ann-note {
-  color: var(--text-strong);
+  color: var(--text-body);
   font-size: calc(12px * var(--ui-font-scale, 1));
   overflow-wrap: anywhere;
 }
@@ -413,7 +424,8 @@ function onEditKey(event: KeyboardEvent) {
 }
 
 .ann-note-edit:hover {
-  background: var(--surface-base);
+  /* MiMo --color-bg (#fffefd / #181818). */
+  background: #fffefd;
   border-color: #3295fb;
   box-shadow: 0 0 0 2px color-mix(in srgb, #3295fb 18%, transparent);
 }
@@ -434,5 +446,50 @@ function onEditKey(event: KeyboardEvent) {
   resize: none;
   font: inherit;
   font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+/* Dark: MiMo's chip fill and ink, and its --color-bg popup. */
+:root[data-theme="dark"] .cchip {
+  background: #ffffff14;
+}
+
+:root[data-theme="dark"] .cchip-name {
+  color: #4ade80;
+}
+
+:root[data-theme="dark"] .cchip-rm:hover,
+:root[data-theme="dark"] .ann-rm:hover {
+  color: #e6e6e6;
+}
+
+:root[data-theme="dark"] .ann-pop {
+  background: #181818;
+}
+
+:root[data-theme="dark"] .ann-note-edit:hover {
+  background: #181818;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cchip {
+    background: #ffffff14;
+  }
+
+  :root:not([data-theme="light"]) .cchip-name {
+    color: #4ade80;
+  }
+
+  :root:not([data-theme="light"]) .cchip-rm:hover,
+  :root:not([data-theme="light"]) .ann-rm:hover {
+    color: #e6e6e6;
+  }
+
+  :root:not([data-theme="light"]) .ann-pop {
+    background: #181818;
+  }
+
+  :root:not([data-theme="light"]) .ann-note-edit:hover {
+    background: #181818;
+  }
 }
 </style>

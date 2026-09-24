@@ -45,11 +45,26 @@ export type CommandRisk = "delete" | "elevate" | "kill" | "rights" | "system" | 
 /** Risks only a person settles: they throw away work that cannot be brought back. */
 export const LOST_WORK: readonly CommandRisk[] = ["delete", "reset"]
 
+/*
+ * Words that run another program rather than being one: `env rm -rf src` and
+ * `ls | xargs rm -rf .` deleted a tree while this function read `env` and
+ * `xargs` and found nothing (R25-B2). `sudo` and its kin are deliberately not
+ * here - they are a risk in their own right and must stay the answer.
+ */
+const WRAPPERS = new Set(["env", "xargs", "nohup", "time", "timeout", "nice", "ionice", "stdbuf", "command", "exec", "setsid", "unbuffer"])
+
 function pieceRisk(piece: string): CommandRisk | undefined {
   const lowered = piece.toLowerCase()
   if (/-verb\s+runas\b/.test(lowered)) return "elevate"
   // Environment assignments in front of the program (`FOO=1 rm x`) are not the program.
-  const tokens = piece.split(/\s+/).filter((token) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(token))
+  const all = piece.split(/\s+/).filter((token) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(token))
+  let at = 0
+  while (at < all.length && WRAPPERS.has(program(all[at] ?? ""))) {
+    at++
+    // The wrapper's own flags, and the count or duration one of them takes.
+    while (at < all.length && (/^-/.test(all[at] ?? "") || /^\d+(?:\.\d+)?[smhd]?$/.test(all[at] ?? "") || all[at] === "{}")) at++
+  }
+  const tokens = all.slice(at)
   const first = program(tokens[0] ?? "")
   if (!first) return undefined
   if (DELETE.has(first)) return "delete"
@@ -151,8 +166,16 @@ export function readOnlyCommand(command: string): boolean {
  * delete is never left to the model however harmless the push in front of it.
  */
 export function commandRisk(command: string): CommandRisk | undefined {
+  /*
+   * A quote ends a piece as surely as a semicolon does. Without this, the whole
+   * of `bash -c "rm -rf src"` was one piece whose first word is `bash`, and the
+   * line carried no risk at all - so approve-for-me ran it (R25-B2). Reading
+   * the quoted half as its own piece means `echo "rm -rf src"` asks too; that
+   * is the trade this module states at the top, and a question costs less than
+   * a tree.
+   */
   const pieces = command
-    .split(/&&|\|\||[;|\n`]|\$\(|\(|\)/)
+    .split(/&&|\|\||[;|\n`'"]|\$\(|\(|\)/)
     .map((piece) => piece.trim())
     .filter(Boolean)
   let found: CommandRisk | undefined

@@ -1017,7 +1017,7 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
   align-items: center;
   justify-content: center;
   padding: 20px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: var(--surface-raised);
   font-size: 13px;
   text-align: center;

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue"
-import type { AssistantPart, ToolPart } from "@shared/protocol"
+import type { AssistantPart } from "@shared/protocol"
 import { parseUnifiedDiff } from "@shared/unified-diff"
 import { useApp } from "../stores/app"
 import { useRightPanel } from "../stores/right-panel"
-import { editedFiles } from "../lib/edited-files"
+import { editedFiles, recordedPatch } from "../lib/edited-files"
 import { requestFile } from "../lib/review-request"
 import { notify, notifyFailure } from "../lib/toast"
 import type { MenuItem } from "../lib/menu"
@@ -114,17 +114,6 @@ async function revert() {
   }
 }
 
-/* The diffs the turn's own edit, write and patch calls recorded. */
-function toolPatch(): string {
-  const diffs: string[] = []
-  for (const part of props.parts) {
-    if (part.type !== "tool" || !["edit", "write"].includes(part.name) || part.status === "error") continue
-    const diff = (part as ToolPart).metadata?.diff
-    if (typeof diff === "string" && diff) diffs.push(diff)
-  }
-  return diffs.join("\n")
-}
-
 /* A patch with at least one hunk; headers alone show nothing. */
 function changes(patch: string) {
   return parseUnifiedDiff(patch).some((section) => section.hunks.length > 0)
@@ -145,7 +134,7 @@ async function review() {
       keep(answer)
       if (answer?.repo) patch = answer.files.map((entry) => entry.patch).filter(changes).join("\n")
     }
-    if (!changes(patch)) patch = toolPatch()
+    if (!changes(patch)) patch = recordedPatch(props.parts)
     if (!changes(patch)) {
       notify(t("stream.noDiff"))
       return
@@ -445,9 +434,10 @@ async function pickMenu(key: string) {
   border: 0;
 }
 
+/* MiMo's --color-bg: #fffefd on light, #181818 on dark (below). */
 .fc-review {
   padding: 0 11px;
-  background: var(--surface-base);
+  background: #fffefd;
   border: 1px solid var(--border-weak);
 }
 
@@ -585,8 +575,17 @@ async function pickMenu(key: string) {
   opacity: 0.9;
 }
 
-:root[data-theme="dark"] .file-card {
+/* The plain dark fill outranks `.fc-review:hover`, so the hover wash is repeated here or the button answers the pointer with nothing. */
+:root[data-theme="dark"] .file-card,
+:root[data-theme="dark"] .fc-review {
   background: #181818;
+}
+
+:root[data-theme="dark"] .fc-review:hover {
+  background: var(--surface-hover);
+}
+
+:root[data-theme="dark"] .file-card {
   border-color: #2e2e2e;
 }
 
@@ -618,8 +617,16 @@ async function pickMenu(key: string) {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .file-card {
+  :root:not([data-theme="light"]) .file-card,
+  :root:not([data-theme="light"]) .fc-review {
     background: #181818;
+  }
+
+  :root:not([data-theme="light"]) .fc-review:hover {
+    background: var(--surface-hover);
+  }
+
+  :root:not([data-theme="light"]) .file-card {
     border-color: #2e2e2e;
   }
 

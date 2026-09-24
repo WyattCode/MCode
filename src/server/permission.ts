@@ -662,8 +662,21 @@ export class Permissions {
   async load(storage: Storage): Promise<void> {
     this.store = storage
     const read = await storage.readOrCorrupt<Partial<StoredRules>>(RULES_KEY)
+    /*
+     * A file the disk would not hand over is not a damaged file. Starting
+     * empty and then saving the next approval would replace every rule this
+     * machine had remembered with the one just granted, so nothing is written
+     * for the rest of the run - the same bargain the credential store makes
+     * when its own quarantine fails.
+     */
+    if (read.unreadable) {
+      this.blocked = read.unreadable
+      return
+    }
     if (read.corrupt) {
-      await storage.quarantine(RULES_KEY)
+      const aside = await storage.quarantine(RULES_KEY)
+      // Kept as evidence, or not moved at all - in which case it may not be written over either.
+      if (aside === undefined) this.blocked = read.corrupt
       return
     }
     const stored = read.value
@@ -677,9 +690,12 @@ export class Permissions {
     }
   }
 
+  /** Why the saved rules may not be written: the document could not be read and could not be kept aside. */
+  private blocked: string | undefined
+
   private persist(): Promise<void> {
     const storage = this.store
-    if (!storage || this.fromNewerVersion) return this.writing
+    if (!storage || this.fromNewerVersion || this.blocked) return this.writing
     const document: StoredRules = { schemaVersion: RULES_SCHEMA_VERSION, projects: Object.fromEntries(this.rules) }
     // Serialised, so two approvals answered at once cannot land in the wrong order.
     this.writing = this.writing

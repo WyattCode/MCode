@@ -327,7 +327,8 @@ onBeforeUnmount(() => {
         <button type="button" class="fc-btn" data-office-history :title="t('office.history')" @click="toggleHistory">
           <LucideIcon name="history" :size="15" />
         </button>
-        <button type="button" class="fc-btn" data-html-open-browser :title="t('html.openBrowser')" :disabled="!url" @click="openInBrowser">
+        <!-- MiMo's button is never disabled: it opens whatever the tab is showing. -->
+        <button type="button" class="fc-btn" data-html-open-browser :title="t('html.openBrowser')" @click="openInBrowser">
           <LucideIcon name="external-link" :size="15" />
         </button>
         <button type="button" class="fc-btn" data-office-folder :title="t('office.openFolder')" @click="reveal">
@@ -377,7 +378,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   width: 100%;
   padding: 20px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: 13px;
   text-align: center;
 }
@@ -411,10 +412,10 @@ onBeforeUnmount(() => {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  justify-content: center;
+  gap: 6px;
   padding: 5px 8px;
-  color: var(--text-strong);
-  background: var(--surface-raised);
+  color: var(--text-body);
+  background: var(--surface-page);
   border: 1px solid var(--border-weak);
   border-radius: 8px;
   font: inherit;

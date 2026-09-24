@@ -14,6 +14,20 @@ import type { Check } from "./smoke-round5"
 import * as viteConfig from "../electron.vite.config"
 import * as i18n from "../src/renderer/src/lib/i18n"
 
+/** The newest modification time under a folder, so a stale build can be told from a fresh one. */
+async function newestUnder(directory: string): Promise<number> {
+  let newest = 0
+  const walk = async (at: string): Promise<void> => {
+    for (const entry of await fs.readdir(at, { withFileTypes: true }).catch(() => [])) {
+      const full = path.join(at, entry.name)
+      if (entry.isDirectory()) await walk(full)
+      else newest = Math.max(newest, (await fs.stat(full).catch(() => undefined))?.mtimeMs ?? 0)
+    }
+  }
+  await walk(directory)
+  return newest
+}
+
 const { LANGUAGES, language, t } = i18n
 const split = viteConfig as { EAGER_LANGUAGES?: string[]; splitLanguageTables?: (code: string) => { code: string; tables: Map<string, string> } }
 const lazyI18n = i18n as { languageReady?: (id: string) => boolean; loadLanguage?: (id: string) => Promise<void> }
@@ -116,9 +130,23 @@ export async function perfEntryChecks(check: Check, section: (name: string) => v
   const assetDir = path.join(process.cwd(), "out/renderer/assets")
   const built = await fs.readdir(assetDir).catch(() => undefined)
   if (!built) {
-    console.log("  --   out/renderer holds no build, so the entry chunk itself is untested here (npm run build first)")
+    /*
+     * A recorded skip rather than a silent return: `out/` is gitignored, so
+     * this is the branch every fresh clone takes, and six checks - E9 to E14,
+     * including the entry chunk's own budget - used to disappear with only a
+     * console line nobody counts (R25-F).
+     */
+    check("(skipped: out/renderer holds no build, so E9-E14 cannot run here - npm run build first)", true, { skipped: assetDir })
     return
   }
+  /*
+   * And a build older than the source is not this source's build. The figures
+   * below were being read off whatever was last compiled, which on this machine
+   * was twenty minutes behind the files it claims to measure.
+   */
+  const newestSource = await newestUnder(path.join(process.cwd(), "src"))
+  const builtAt = (await fs.stat(path.join(process.cwd(), "out/renderer/index.html")).catch(() => undefined))?.mtimeMs ?? 0
+  check("the build being measured is at least as new as the source it was made from", builtAt >= newestSource, { builtAt: new Date(builtAt).toISOString(), newestSource: new Date(newestSource).toISOString() })
   const page = await read("out/renderer/index.html")
   const entryName = /<script[^>]*src="[./]*assets\/(index-[^"]+\.js)"/.exec(page)?.[1] ?? ""
   const entry = entryName ? await read(`out/renderer/assets/${entryName}`) : ""

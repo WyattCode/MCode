@@ -185,7 +185,8 @@ async function sourceChecks(check: Check, section: Section): Promise<void> {
     check("the card lists the files a run reached outside the project, which its undo reports on", /editedFiles\(props\.parts, props\.directory, \{ outside: true \}\)/.test(editedCard))
     const panel = await read("src/renderer/src/components/right/RpSubagents.vue")
     const box = panel.slice(panel.indexOf(".rp-subagent-transcript {"), panel.indexOf(".rp-subagent-transcript {") + 400)
-    check("a subagent's transcript is a boxed panel of its own, scrolling inside 320", /max-height: 320px/.test(box) && /border: 1px solid/.test(box) && /overflow: auto/.test(box), box)
+    // R21-F3-2 superseded the box: MiMo renders hs-subagent and then takes its border, ceiling, margin and padding away again inside the tab.
+    check("a subagent's transcript is the tab's own scroller, as MiMo leaves it", /padding: 14px 16px 28px/.test(box) && !/max-height: 320px/.test(box) && /overflow: auto/.test(box), box)
     const app = await read("src/renderer/src/App.vue")
     check(
       "a scheduled run's notice is silent when the chime already played for it",
@@ -348,8 +349,9 @@ async function automationChecks(check: Check, section: Section, root: string): P
      * ring of settled ids guards against: the prompt is held open, so the check
      * that took the entry never reports, and thirty seconds later the entry is
      * deliverable again. Here the run ids are `<task>-<due moment>`, so the
-     * overlap check is what settles it - and it settles it before anything can
-     * start.
+     * task's run history, which already holds that id, drops it before
+     * anything can start - and without recording the run that is answering as
+     * skipped (R20-B2).
      */
     clock = new Date(2026, 0, 9, 9, 0, 1).getTime()
     let releasePrompt: () => void = () => {}
@@ -363,7 +365,7 @@ async function automationChecks(check: Check, section: Section, root: string): P
     await service.tick()
     check("the run is not started a second time", prompts.length === ran, prompts.length - ran)
     const twice = service.list()[0]?.runHistory?.at(-1)
-    check("the entry is given up on as an overlap instead", twice?.status === "skipped" && twice?.errorCode === "overlap", twice)
+    check("and the run that is answering stays recorded as running, not as a skipped overlap", twice?.status === "running", twice)
     check("and nothing is left in the queue", service.queued === 0, service.queued)
     releasePrompt()
     await started

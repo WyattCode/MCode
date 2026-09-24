@@ -551,23 +551,7 @@ function pickFilter(key: string) {
   margin-inline-start: auto;
 }
 
-/* A bare 30px square with a 7px corner, filled only under the pointer. */
-.icon-btn {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  color: var(--text-base);
-  background: transparent;
-  border: 0;
-  border-radius: 7px;
-}
-
-.icon-btn:hover:not(:disabled) {
-  color: var(--text-strong);
-  background: color-mix(in srgb, var(--text-strong) 8%, transparent);
-}
-
+/* base.css draws the square; a disabled one only fades. */
 .icon-btn:disabled {
   opacity: 0.6;
 }
@@ -743,27 +727,34 @@ function pickFilter(key: string) {
 
 .card-state {
   flex-shrink: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: calc(16px * var(--ui-font-scale, 1));
 }
 
-/* The same round switch the settings page uses, so one control reads one way. */
+/*
+ * MiMo's switch away from the settings page, which is shadcn's at its default
+ * size: 32 by 18 on a full round, a 16px thumb 1 in from either end, and
+ * --color-switch-on / --color-switch-off for the track. Those two and the
+ * thumb's checked fill are MiMo's own names with no MCode token behind them,
+ * so the four values are written out; the settings page keeps its own 32 by 20,
+ * which is what MiMo forces there.
+ */
 .switch {
   position: relative;
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
   width: 32px;
-  height: 20px;
-  background: color-mix(in srgb, var(--text-strong) 22%, var(--surface-raised));
+  height: 18px;
+  background: #bcbcb6;
   border: 0;
   border-radius: 999px;
   transition: background-color 0.15s;
 }
 
 .switch.on {
-  background: var(--icon-base);
+  background: #3295fb;
 }
 
 .switch:disabled {
@@ -772,19 +763,44 @@ function pickFilter(key: string) {
 
 .knob {
   position: absolute;
-  top: 2px;
+  top: 1px;
   width: 16px;
   height: 16px;
-  /* Always the opposite of the track it sits on, in either scheme. */
-  background: var(--icon-base);
+  background: #ffffff;
   border-radius: 50%;
-  inset-inline-start: 2px;
+  inset-inline-start: 1px;
   transition: inset-inline-start 0.15s, background-color 0.15s;
 }
 
 .switch.on .knob {
-  background: var(--surface-raised);
-  inset-inline-start: 14px;
+  inset-inline-start: 15px;
+}
+
+/* --color-switch-on, --color-switch-off and --color-switch-thumb-checked on dark. */
+:root[data-theme="dark"] .switch {
+  background: #4a4a4a;
+}
+
+:root[data-theme="dark"] .switch.on {
+  background: #2f7bf6;
+}
+
+:root[data-theme="dark"] .knob {
+  background: #0d0d0d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .switch {
+    background: #4a4a4a;
+  }
+
+  :root:not([data-theme="light"]) .switch.on {
+    background: #2f7bf6;
+  }
+
+  :root:not([data-theme="light"]) .knob {
+    background: #0d0d0d;
+  }
 }
 
 .empty {

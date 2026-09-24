@@ -65,7 +65,24 @@ export function schedulable(task: CronTask): boolean {
  */
 export async function readCronFile(directory: string): Promise<{ tasks: CronTask[]; blocked?: string }> {
   const file = cronFile(directory)
-  const raw = await fs.readFile(file, "utf8").catch(() => undefined)
+  /*
+   * A file that could not be *read* is blocked too, and used not to be: the
+   * `.catch(() => undefined)` below answered a lock or a refusal with the same
+   * "there is no such file" as a project that has never scheduled anything, so
+   * the next schedule, fire or rename wrote the caller's one change over a file
+   * that still held all of them - and, not being damage, nothing was kept aside
+   * (R25-A3). Only ENOENT may mean empty.
+   */
+  let raw: string | undefined
+  try {
+    raw = await fs.readFile(file, "utf8")
+  } catch (cause) {
+    const code = (cause as NodeJS.ErrnoException).code
+    if (code !== "ENOENT") {
+      const why = cause instanceof Error ? cause.message : String(cause)
+      return { tasks: [], blocked: `The scheduled tasks in ${file} could not be read (${why}), so nothing is saved over them. The file is intact; try again once whatever is holding it has let go.` }
+    }
+  }
   if (raw === undefined) return { tasks: [] }
   try {
     const parsed = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw) as { tasks?: unknown }

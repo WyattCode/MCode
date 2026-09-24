@@ -1146,7 +1146,7 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
   flex-shrink: 0;
   width: 260px;
   background: var(--surface-base);
-  border-left: 1px solid var(--border-weak);
+  border-inline-start: 1px solid var(--border-weak);
   box-shadow: -2px 0 8px rgba(0, 0, 0, 0.06);
 }
 
@@ -1158,24 +1158,25 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  color: var(--text-strong);
+  /* MiMo writes the rail's head in --color-txt, the body ink. */
+  color: var(--text-body);
   background: var(--surface-raised);
   border-bottom: 1px solid var(--border-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
 }
 
 .rail-close {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: calc(22px * var(--ui-font-scale, 1));
+  height: calc(22px * var(--ui-font-scale, 1));
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: none;
   border-radius: 4px;
-  font-size: 16px;
+  font-size: calc(16px * var(--ui-font-scale, 1));
   line-height: 1;
 }
 
@@ -1186,7 +1187,7 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 6px;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   cursor: pointer;
 }
 
@@ -1206,9 +1207,9 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
   display: inline-block;
   padding: 1px 6px;
   border-radius: 3px;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 16px;
+  line-height: calc(16px * var(--ui-font-scale, 1));
 }
 
 .card-badge.del {
@@ -1224,28 +1225,28 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
 .card-author {
   flex: 1;
   overflow: hidden;
-  color: var(--text-weak);
-  font-size: 11px;
+  color: var(--text-base);
+  font-size: calc(11px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .card-chevron {
   flex-shrink: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
 }
 
 .card-date {
   margin-bottom: 4px;
-  color: var(--text-weak);
-  font-size: 10px;
+  color: var(--text-base);
+  font-size: calc(10px * var(--ui-font-scale, 1));
 }
 
 .card-text {
   display: -webkit-box;
   overflow: hidden;
   color: var(--text-strong);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.5;
   overflow-wrap: break-word;
   -webkit-box-orient: vertical;
@@ -1290,14 +1291,14 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
+  height: calc(28px * var(--ui-font-scale, 1));
   padding: 0 12px;
   color: #2b6cb0;
   background: #e6f0fa;
   border: 1px solid #2b6cb0;
   border-radius: 14px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
 }
 
@@ -1315,7 +1316,7 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
   border: 1px solid var(--border-weak);
   border-radius: 999px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .docx-tool {
@@ -1342,9 +1343,9 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
   align-items: center;
   justify-content: center;
   padding: 20px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: var(--surface-raised);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   text-align: center;
   pointer-events: none;
 }
@@ -1360,7 +1361,7 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
   border: 1px solid var(--border-weak);
   border-radius: 6px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   pointer-events: none;
 }
 
@@ -1368,23 +1369,23 @@ const noteInside = (target: Node) => Boolean(wrap.value?.contains(target))
   display: flex;
   flex-wrap: wrap;
   margin-bottom: 4px;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
 }
 
 .ins-tip-date {
-  margin-left: 8px;
-  color: var(--text-weak);
+  margin-inline-start: 8px;
+  color: var(--text-base);
 }
 
 .ins-tip-kind {
-  margin-left: 8px;
+  margin-inline-start: 8px;
   color: #ff6a2b;
 }
 
 .ins-tip-text {
   max-height: 180px;
   overflow: auto;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.5;
   overflow-wrap: break-word;
 }

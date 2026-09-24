@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { CustomModel, CustomProvider, ModelInfo } from "@shared/protocol"
 import { normalizeBaseURL, normalizeModelId } from "@shared/custom-endpoint"
 import { useApp } from "../stores/app"
@@ -7,7 +7,7 @@ import { t } from "../lib/i18n"
 import { notice } from "../lib/toast"
 import { useEscapeLayerWhile } from "../lib/escape-layer"
 import ConfirmDialog from "./ConfirmDialog.vue"
-import { LIMIT_PRESETS, MODALITIES, limitLabel, limitOf, modalitySummary, providerIdError, validEndpoint, type Modality } from "../lib/custom-model"
+import { LIMIT_PRESETS, MODALITIES, comboEnterValue, limitLabel, limitOf, modalitySummary, providerIdError, validEndpoint, type Modality } from "../lib/custom-model"
 import { providerIdProblem } from "@shared/provider-id"
 
 /**
@@ -32,6 +32,7 @@ const props = defineProps<{
   editing?: CustomProvider
   /** In the connect dialog: a save button of its own, and the saved model is selected. */
   standalone?: boolean
+  /** The id field takes the keys when the form opens. */
   autofocus?: boolean
 }>()
 const emit = defineEmits<{ connected: [providerID: string]; saved: [providerID: string] }>()
@@ -118,9 +119,13 @@ const form = ref({
     ? Object.entries(editing?.headers ?? {}).map(([key, value]) => ({ ...headerRow(), key, value }))
     : [headerRow()],
 })
-/* The form as it was first drawn, so an edit knows whether anything changed. */
-const pristine = JSON.stringify(form.value)
-const dirty = computed(() => JSON.stringify(form.value) !== pristine)
+/*
+ * The form as it was last saved (first, as it was drawn), so an edit knows
+ * whether anything changed since: MiMo's save clears its dirty flag, and so
+ * does a model removed, which is saved at once.
+ */
+const pristine = ref(JSON.stringify(form.value))
+const dirty = computed(() => JSON.stringify(form.value) !== pristine.value)
 
 const busy = ref(false)
 const tried = ref(false)
@@ -220,19 +225,52 @@ onMounted(() => {
   if (editing && validEndpoint(editing.baseURL)) void testConnection(true)
 })
 
+/*
+ * Asked to (the connect dialog's custom step), the id field takes the keys on
+ * opening. Focused here: Chromium skips an `autofocus` while anything else in
+ * the page holds focus, and the dialog's search box still does when this opens.
+ */
+const providerIdEl = ref<HTMLInputElement>()
+onMounted(() => {
+  if (props.autofocus) providerIdEl.value?.focus()
+})
+
 /* ------------------------------------------------------------ the model picker */
 
 const query = ref("")
 const openMenu = ref<string>()
-const highlight = ref(0)
+/* The suggestion moved to; none until the arrows or the pointer pick one. */
+const highlight = ref(-1)
 
+/**
+ * What the picker offers, as MiMo fills its own: everything the connection test
+ * found, then every model this app already knows - so a provider whose endpoint
+ * has no /models still has a list to pick from - each with the display name to
+ * show beside its id. Ids already added drop out, and the typed text narrows on
+ * either part.
+ */
 const choices = computed(() => {
+  const merged = new Map<string, string>()
+  for (const id of probe.value.models) merged.set(id, known(id)?.name ?? "")
+  for (const provider of app.providers) {
+    if (provider.id === props.editing?.id) continue
+    for (const model of provider.models) if (!merged.has(model.id)) merged.set(model.id, model.name)
+  }
   const needle = query.value.trim().toLowerCase()
   const added = new Set(form.value.models.map((row) => row.id))
-  return probe.value.models.filter((id) => !added.has(id) && (!needle || id.toLowerCase().includes(needle)))
+  return [...merged]
+    .filter(([id, name]) => !added.has(id) && (!needle || id.toLowerCase().includes(needle) || name.toLowerCase().includes(needle)))
+    .map(([id, name]) => ({ id, name: name === id ? "" : name }))
 })
 
-watch([query, () => openMenu.value === "combo"], () => (highlight.value = 0))
+/* Synchronous, so an ArrowDown that opens the list lands on its first row rather than being reset after. */
+watch([query, () => openMenu.value === "combo"], () => (highlight.value = -1), { flush: "sync" })
+const comboMenuEl = ref<HTMLElement>()
+
+/* The row the keyboard moved to is scrolled into the list's view; a row under the pointer is already in it. */
+function revealHighlight() {
+  void nextTick(() => comboMenuEl.value?.querySelector<HTMLElement>(".cp-option.on")?.scrollIntoView({ block: "nearest" }))
+}
 
 function addModel(raw: string) {
   const id = normalizeModelId(raw)
@@ -252,13 +290,14 @@ function comboKey(event: KeyboardEvent) {
     event.preventDefault()
     openMenu.value = "combo"
     highlight.value = Math.min(highlight.value + 1, Math.max(choices.value.length - 1, 0))
+    revealHighlight()
   } else if (event.key === "ArrowUp") {
     event.preventDefault()
-    highlight.value = Math.max(highlight.value - 1, 0)
+    if (highlight.value > 0) highlight.value -= 1
+    revealHighlight()
   } else if (event.key === "Enter") {
     event.preventDefault()
-    const picked = openMenu.value === "combo" ? choices.value[highlight.value] : undefined
-    addModel(picked ?? query.value)
+    addModel(comboEnterValue(openMenu.value === "combo" ? highlight.value : -1, choices.value.map((choice) => choice.id), query.value))
   }
 }
 
@@ -273,8 +312,14 @@ async function confirmRemoveModel() {
   const row = removingModel.value
   removingModel.value = undefined
   if (!row) return
-  if (editing) await app.removeCustomModel(editing.id, row.id).catch(() => undefined)
+  const removed = editing ? await app.removeCustomModel(editing.id, row.id).then(() => true, () => false) : false
   form.value.models = form.value.models.filter((entry) => entry.key !== row.key)
+  if (removed) {
+    // Saved already: the model leaves the saved form too, and every other unsaved change stays unsaved.
+    const saved = JSON.parse(pristine.value) as typeof form.value
+    saved.models = saved.models.filter((entry) => entry.key !== row.key)
+    pristine.value = JSON.stringify(saved)
+  }
 }
 
 /* ------------------------------------------------------------ limits and inputs */
@@ -381,6 +426,7 @@ async function submit(): Promise<boolean> {
   try {
     if (editing) await app.updateCustomProvider(entry)
     else await app.addCustomProvider(entry)
+    pristine.value = JSON.stringify(form.value)
     if (props.standalone) {
       const model = { provider: id, model: entry.models[0].id }
       if (app.currentID) await app.setModel(model)
@@ -411,10 +457,10 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
           <input
             id="cp-provider-id"
             v-model="form.providerID"
-            class="cp-in mono"
+            class="cp-in"
             :class="{ bad: idError }"
+            ref="providerIdEl"
             :readonly="Boolean(editing)"
-            :autofocus="props.autofocus"
             :placeholder="t('provider.custom.field.providerID.placeholder')"
             spellcheck="false"
             autocomplete="off"
@@ -431,7 +477,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
             id="cp-name"
             v-model="form.name"
             class="cp-in"
-            :placeholder="form.providerID.trim() || t('provider.custom.field.name.placeholder')"
+            :placeholder="form.providerID.trim() || 'my-provider'"
             spellcheck="false"
             data-provider-name
           />
@@ -454,7 +500,6 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
             @blur="form.baseURL = normalizeBaseURL(form.baseURL)"
           />
           <div v-if="endpointBad" class="cp-error" data-endpoint-invalid>{{ t("model.endpointInvalid") }}</div>
-          <div v-else class="cp-help" data-endpoint-hint>{{ t("model.endpointHint") }}</div>
         </div>
       </div>
 
@@ -501,7 +546,6 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
               </svg>
             </button>
           </div>
-          <div class="cp-help">{{ t("provider.custom.field.apiKey.description") }}</div>
         </div>
       </div>
 
@@ -510,7 +554,8 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
         <span class="cp-label">{{ t("set.models.probeTitle") }}</span>
         <div class="cp-probe">
           <span class="cp-probe-text" :class="probe.status" data-probe-text>{{ probe.text }}</span>
-          <span class="cp-light" :class="probe.status" data-probe-light :aria-label="probe.status" />
+          <!-- The light repeats the words beside it; a reader hears those, not "ok" or "busy". -->
+          <span class="cp-light" :class="probe.status" data-probe-light aria-hidden="true" />
           <button type="button" class="cp-btn" data-provider-probe :disabled="probe.status === 'busy'" @click="testConnection()">
             {{ t("set.models.probe") }}
           </button>
@@ -522,7 +567,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
     <div class="cp-combo" data-menu-anchor="combo">
       <input
         v-model="query"
-        class="cp-in mono"
+        class="cp-in"
         role="combobox"
         :aria-expanded="openMenu === 'combo'"
         aria-autocomplete="list"
@@ -535,21 +580,22 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
         @keydown="comboKey"
       />
       <button type="button" class="cp-btn" data-model-add :disabled="!query.trim()" @click="addModel(query)">{{ t("provider.custom.models.add") }}</button>
-      <div v-if="openMenu === 'combo'" class="cp-menu combo" role="listbox" data-model-combo-menu>
+      <div v-if="openMenu === 'combo'" ref="comboMenuEl" class="cp-menu combo" role="listbox" data-model-combo-menu>
         <div v-if="!choices.length" class="cp-menu-empty" data-model-combo-empty>{{ t("set.models.comboEmpty") }}</div>
         <button
-          v-for="(id, at) in choices"
-          :key="id"
+          v-for="(choice, at) in choices"
+          :key="choice.id"
           type="button"
           role="option"
           class="cp-option"
           :class="{ on: at === highlight }"
           :aria-selected="at === highlight"
-          :data-model-combo-option="id"
+          :data-model-combo-option="choice.id"
           @mouseenter="highlight = at"
-          @click="addModel(id)"
+          @click="addModel(choice.id)"
         >
-          {{ id }}
+          <span class="cp-option-id">{{ choice.id }}</span>
+          <span v-if="choice.name" class="cp-option-name" data-model-combo-name>{{ choice.name }}</span>
         </button>
       </div>
     </div>
@@ -569,7 +615,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
         </svg>
       </button>
       <div class="cp-model-names">
-        <input class="cp-in mono small" :value="row.id" readonly :aria-label="t('provider.custom.models.id.label')" :data-model-id="row.id" />
+        <input class="cp-in small" :value="row.id" readonly :aria-label="t('provider.custom.models.id.label')" :data-model-id="row.id" />
         <input
           v-model="row.name"
           class="cp-in small"
@@ -583,7 +629,12 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
         <div v-for="field in (['context', 'output'] as const)" :key="field" class="cp-pick" :data-menu-anchor="`${field}:${row.key}`">
           <button type="button" class="cp-pick-btn" :data-model-limit="field" @click="toggleMenu(`${field}:${row.key}`)">
             <span class="cp-pick-label">{{ t(field === "context" ? "set.models.limitContext" : "set.models.limitOutput") }}</span>
-            <span class="cp-pick-value">{{ limitLabel(row[field]) }}</span>
+            <span class="cp-pick-value">
+              {{ limitLabel(row[field]) }}
+              <svg class="cp-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m6 9.5 6 6 6-6" />
+              </svg>
+            </span>
           </button>
           <div v-if="openMenu === `${field}:${row.key}`" class="cp-menu" role="menu" :data-model-limit-menu="field">
             <button
@@ -599,20 +650,28 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
               <span>{{ value }} ({{ limitLabel(value) }})</span>
               <span v-if="row[field] === value" class="cp-check">✓</span>
             </button>
-            <input
-              class="cp-in small"
-              inputmode="numeric"
-              :value="row[field] !== undefined && !(LIMIT_PRESETS[field] as readonly number[]).includes(row[field]!) ? String(row[field]) : ''"
-              :placeholder="t('set.models.limitCustom')"
-              :data-model-limit-custom="field"
-              @input="typeLimit(row, field, $event)"
-            />
+            <!-- The number itself, preset or not, as MiMo's field shows it: typing 128000 never blanks it. -->
+            <div class="cp-menu-custom">
+              <input
+                class="cp-in tiny"
+                inputmode="numeric"
+                :value="row[field] !== undefined ? String(row[field]) : ''"
+                :placeholder="t('set.models.limitCustom')"
+                :data-model-limit-custom="field"
+                @input="typeLimit(row, field, $event)"
+              />
+            </div>
           </div>
         </div>
         <div class="cp-pick" :data-menu-anchor="`mods:${row.key}`">
           <button type="button" class="cp-pick-btn wide" data-model-modality-menu @click="toggleMenu(`mods:${row.key}`)">
             <span class="cp-pick-label">{{ t("set.models.modalities") }}</span>
-            <span class="cp-pick-value" data-model-modality-summary>{{ modalitySummary(row.mods, modLabel) }}</span>
+            <span class="cp-pick-value">
+              <span data-model-modality-summary>{{ modalitySummary(row.mods, modLabel) }}</span>
+              <svg class="cp-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m6 9.5 6 6 6-6" />
+              </svg>
+            </span>
           </button>
           <div v-if="openMenu === `mods:${row.key}`" class="cp-menu" role="menu" data-model-modality-panel>
             <label v-for="key in MODALITIES" :key="key" class="cp-option">
@@ -630,7 +689,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
       <div class="cp-cell">
         <input
           v-model="row.key"
-          class="cp-in mono small"
+          class="cp-in small"
           :aria-label="t('provider.custom.headers.key.label')"
           :placeholder="t('provider.custom.headers.key.placeholder')"
           spellcheck="false"
@@ -641,7 +700,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
       <div class="cp-cell">
         <input
           v-model="row.value"
-          class="cp-in mono small"
+          class="cp-in small"
           :aria-label="t('provider.custom.headers.value.label')"
           :placeholder="t('provider.custom.headers.value.placeholder')"
           spellcheck="false"
@@ -682,28 +741,38 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 </template>
 
 <style scoped>
+/* MiMo's page body: 16 between the blocks, 8 between one model card and the next. */
 .cp {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
-/* The provider's fields in one card, a row each: the label, then a 420px control. */
+.cp-model + .cp-model {
+  margin-top: -8px;
+}
+
+/*
+ * The provider's fields are MiMo's set-card of sr rows: a 16px corner on the
+ * settings card colour, rows 16 deep divided by the card's own rule, and titles
+ * at 14/500. Every row here is a title and a control with nothing under it, so
+ * they are centred the way MiMo centres its sr-single.
+ */
 .cp-card {
   padding: 0 16px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weak);
-  border-radius: 12px;
+  background: #ffffff;
+  border: 1px solid #f3efeb;
+  border-radius: 16px;
 }
 
 .cp-row {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 8px 16px;
-  padding: 12px 0;
-  border-bottom: 0.5px solid var(--border-weak);
+  padding: 16px 0;
+  border-bottom: 1px solid #f3efeb;
 }
 
 .cp-row:last-child {
@@ -711,10 +780,29 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 }
 
 .cp-label {
-  padding-top: 9px;
   color: var(--text-strong);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 530;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
+}
+
+:root[data-theme="dark"] .cp-card {
+  background: #282828;
+  border-color: #3d3d3d;
+}
+
+:root[data-theme="dark"] .cp-row {
+  border-color: #3d3d3d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp-card {
+    background: #282828;
+    border-color: #3d3d3d;
+  }
+
+  :root:not([data-theme="light"]) .cp-row {
+    border-color: #3d3d3d;
+  }
 }
 
 .cp-control {
@@ -725,40 +813,89 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   max-width: 100%;
 }
 
+/*
+ * MiMo's shared input, which every field on this page uses: a 6px corner over
+ * nothing at all, 12 in, the button rule around it and an input's small lip
+ * under it, focusing on dim. Every field takes the interface font - an id is
+ * not set in monospace here - and a read-only field is not greyed, because the
+ * provider id on an edit is a fact rather than a disabled control.
+ */
 .cp-in {
   box-sizing: border-box;
   width: 100%;
   height: calc(36px * var(--ui-font-scale, 1));
-  padding: 0 10px;
+  padding: 0 12px;
   color: var(--text-strong);
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weak);
-  border-radius: 8px;
+  background: transparent;
+  border: 1px solid #e3e3e0;
+  border-radius: 6px;
+  box-shadow: var(--shadow-xs);
   font-family: var(--font-sans);
   font-size: calc(13px * var(--ui-font-scale, 1));
   outline: none;
+}
+
+.cp-in::placeholder {
+  color: var(--text-base);
 }
 
 .cp-in.small {
   height: calc(32px * var(--ui-font-scale, 1));
 }
 
-/* Ids and header cells stay monospace: they are identifiers, not prose. */
-.cp-in.mono {
-  font-family: var(--font-mono);
-  font-size: calc(12.5px * var(--code-font-scale, 1));
+/* MiMo's custom-limit field is the shortest of the three. */
+.cp-in.tiny {
+  height: calc(28px * var(--ui-font-scale, 1));
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .cp-in:focus {
-  border-color: var(--border-strong);
+  border-color: var(--text-weak);
 }
 
-.cp-in[readonly] {
-  color: var(--text-weak);
+/*
+ * The dark fill is written on the plain element, which outranks the two rules
+ * above it - one class and a pseudo-class against one class inside :root and a
+ * theme attribute - so both the focus ring and the refusal ring were computed
+ * away in the dark. The field also sets `outline: none`, so its border is the
+ * only mark focus has: tabbing through this form in the dark showed nothing at
+ * all. Each state is repeated here rather than cut out of the rule above,
+ * because a focused field keeps the dark fill.
+ */
+:root[data-theme="dark"] .cp-in {
+  background: rgb(58 58 58 / 0.3);
+  border-color: #3a3a3a;
 }
 
+:root[data-theme="dark"] .cp-in:focus {
+  border-color: var(--text-weak);
+}
+
+:root[data-theme="dark"] .cp-in.bad {
+  border-color: #ff6467;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp-in {
+    background: rgb(58 58 58 / 0.3);
+    border-color: #3a3a3a;
+  }
+
+  :root:not([data-theme="light"]) .cp-in:focus {
+    border-color: var(--text-weak);
+  }
+
+  :root:not([data-theme="light"]) .cp-in.bad {
+    border-color: #ff6467;
+  }
+}
+
+/*
+ * MiMo rings a field it will not accept in red-400 and says why in red-500.
+ * MiMo's red-400, which is not its --color-err, so --text-critical does not fit.
+ */
 .cp-in.bad {
-  border-color: var(--text-critical);
+  border-color: #ff6467;
 }
 
 .cp-secret {
@@ -777,7 +914,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   place-items: center;
   width: 26px;
   height: 26px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 6px;
@@ -789,14 +926,8 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   color: var(--text-strong);
 }
 
-.cp-help {
-  color: var(--text-weak);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 1.5;
-}
-
 .cp-error {
-  color: var(--text-critical);
+  color: #fb2c36;
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.5;
 }
@@ -810,11 +941,17 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 }
 
 .cp-probe-text {
-  color: var(--text-weak);
+  color: var(--text-base);
 }
 
+/*
+ * MiMo draws the failed probe's sentence in its muted colour, which says the
+ * same thing as the grey line beside it and nothing more. MCode keeps it red:
+ * the words are the only place the reason is written, and a reader who cannot
+ * tell the light's colours apart has nothing else to go on. (2026-09-23.)
+ */
 .cp-probe-text.fail {
-  color: var(--text-critical);
+  color: #fb2c36;
 }
 
 /* MiMo's 10px light: green once it answered, red when it did not, a line colour before. */
@@ -831,24 +968,54 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 }
 
 .cp-light.fail {
-  background: var(--text-critical);
+  background: #fb2c36;
 }
 
+/*
+ * MiMo's secondary Button at size sm: 26 tall, 8 round, 12 in, 14/500 on the
+ * secondary fill with no rule at all, hovering to side-active. In a settings
+ * row it is the 28 every control in a row takes.
+ */
 .cp-btn {
   flex: none;
-  height: calc(30px * var(--ui-font-scale, 1));
-  padding: 0 10px;
-  color: var(--text-strong);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
+  height: calc(26px * var(--ui-font-scale, 1));
+  padding: 0 12px;
+  color: #151c13;
+  background: #f1f1f1;
+  border: 0;
   border-radius: 8px;
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
 }
 
+.cp-probe .cp-btn {
+  height: calc(28px * var(--ui-font-scale, 1));
+}
+
 .cp-btn:hover:not(:disabled) {
-  background: var(--surface-hover);
+  background: #f1f0ec;
+}
+
+:root[data-theme="dark"] .cp-btn {
+  color: var(--text-strong);
+  background: #2e2e2e;
+}
+
+:root[data-theme="dark"] .cp-btn:hover:not(:disabled) {
+  background: #ffffff1a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp-btn {
+    color: var(--text-strong);
+    background: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .cp-btn:hover:not(:disabled) {
+    background: #ffffff1a;
+  }
 }
 
 .cp-btn:disabled {
@@ -860,7 +1027,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   margin-top: 10px;
   color: var(--text-strong);
   font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 530;
+  font-weight: 500;
 }
 
 .cp-combo {
@@ -885,19 +1052,50 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   max-height: 240px;
   padding: 6px;
   overflow-y: auto;
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weak);
+  background: #fffefd;
+  border: 1px solid #f0ebe5;
   border-radius: 10px;
-  box-shadow: var(--shadow-overlay);
+  box-shadow: 0 12px 40px #00000024;
 }
 
+/* MiMo's picker list is the tighter of the two: 4 of padding, and full width. */
 .cp-menu.combo {
   inset-inline-end: 0;
+  padding: 4px;
+}
+
+:root[data-theme="dark"] .cp-menu {
+  background: #282828;
+  border-color: #2e2e2e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp-menu {
+    background: #282828;
+    border-color: #2e2e2e;
+  }
+}
+
+/* MiMo rules the number off from the presets above it. */
+.cp-menu-custom {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid #f0ebe5;
+}
+
+:root[data-theme="dark"] .cp-menu-custom {
+  border-color: #2e2e2e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp-menu-custom {
+    border-color: #2e2e2e;
+  }
 }
 
 .cp-menu-empty {
   padding: 8px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -906,6 +1104,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
   padding: 6px 8px;
   color: var(--text-base);
   background: transparent;
@@ -914,6 +1113,27 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   font-size: calc(12px * var(--ui-font-scale, 1));
   text-align: start;
   cursor: pointer;
+}
+
+/* A row in the picker: the id, medium and truncated, then its name at the end. */
+.cp-menu.combo .cp-option {
+  padding: 7px 8px;
+}
+
+.cp-option-id {
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-option-name {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  color: var(--text-base);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 label.cp-option {
@@ -930,20 +1150,28 @@ label.cp-option {
   color: var(--text-weak);
 }
 
-.cp-menu .cp-in {
-  margin-top: 4px;
-}
-
 /* One card per model: the id and its display name, then the three menus; the bin in the corner. */
 .cp-model {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   padding: 12px 48px 12px 14px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weak);
+  background: #fffefd;
+  border: 1px solid #f0ebe5;
   border-radius: 12px;
+}
+
+:root[data-theme="dark"] .cp-model {
+  background: #282828;
+  border-color: #2e2e2e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp-model {
+    background: #282828;
+    border-color: #2e2e2e;
+  }
 }
 
 .cp-model-remove {
@@ -954,7 +1182,7 @@ label.cp-option {
   place-items: center;
   width: 28px;
   height: 28px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 6px;
@@ -962,7 +1190,7 @@ label.cp-option {
 }
 
 .cp-model-remove:hover {
-  color: var(--text-critical);
+  color: #fb2c36;
 }
 
 .cp-model-names,
@@ -977,6 +1205,14 @@ label.cp-option {
   max-width: 100%;
 }
 
+/* MiMo's chevron after a picker's value: 14 square in the muted colour. */
+.cp-caret {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--text-base);
+}
+
 .cp-pick {
   position: relative;
 }
@@ -989,26 +1225,49 @@ label.cp-option {
   min-width: 148px;
   height: calc(32px * var(--ui-font-scale, 1));
   padding: 0 10px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weak);
+  background: #fffefd;
+  border: 1px solid #f0ebe5;
   border-radius: 8px;
   font-size: calc(12px * var(--ui-font-scale, 1));
   cursor: pointer;
+}
+
+:root[data-theme="dark"] .cp-pick-btn {
+  background: #282828;
+  border-color: #2e2e2e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp-pick-btn {
+    background: #282828;
+    border-color: #2e2e2e;
+  }
 }
 
 .cp-pick-btn.wide {
   min-width: 180px;
 }
 
-.cp-pick-btn:hover {
-  border-color: var(--border-strong);
+/* The explicit-dark twin was written and the media one was not, so this hover worked for someone who picked Dark and not for the default, which follows the system. */
+.cp-pick-btn:hover,
+:root[data-theme="dark"] .cp-pick-btn:hover {
+  border-color: var(--text-weak);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp-pick-btn:hover {
+    border-color: var(--text-weak);
+  }
 }
 
 .cp-pick-label {
-  color: var(--text-weak);
+  color: var(--text-base);
 }
 
 .cp-pick-value {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   color: var(--text-strong);
   font-weight: 500;
 }
@@ -1034,15 +1293,25 @@ label.cp-option {
   justify-content: center;
   width: 32px;
   height: 32px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: none;
-  border: 1px solid var(--border-weak);
-  border-radius: 8px;
+  border: 1px solid #e3e3e0;
+  border-radius: 6px;
   cursor: pointer;
 }
 
+:root[data-theme="dark"] .cp-drop {
+  border-color: #3a3a3a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp-drop {
+    border-color: #3a3a3a;
+  }
+}
+
 .cp-drop:hover:not(:disabled) {
-  color: var(--text-critical);
+  color: #fb2c36;
 }
 
 .cp-drop:disabled {
@@ -1066,13 +1335,27 @@ label.cp-option {
 
 .cp-submit {
   align-self: flex-end;
-  padding: 8px 18px;
-  color: var(--button-primary-text);
-  background: var(--button-primary);
-  border: 1px solid var(--button-primary);
+  height: calc(26px * var(--ui-font-scale, 1));
+  padding: 0 12px;
+  color: #ffffff;
+  background: #151c13;
+  border: 0;
   border-radius: 8px;
   font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
   cursor: pointer;
+}
+
+:root[data-theme="dark"] .cp-submit {
+  color: #0d0d0d;
+  background: #ececec;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp-submit {
+    color: #0d0d0d;
+    background: #ececec;
+  }
 }
 
 .cp-submit:disabled {

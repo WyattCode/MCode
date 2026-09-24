@@ -150,14 +150,28 @@ const pills = computed(() => {
   color: #e5484d;
 }
 
-/* Dark: the pill takes MiMo's panel mixed 92% with side-active. */
+/*
+ * Dark: the pill takes MiMo's panel mixed 92% with side-active.
+ *
+ * The hover is repeated below because this rule and it are both (0,3,0) - the
+ * theme rule wins on source order alone, and the fill under the pointer went
+ * missing in dark while the ink still brightened (R25-D5).
+ */
 :root[data-theme="dark"] .subagent-pill {
   background: color-mix(in srgb, var(--surface-raised) 92%, var(--surface-selected));
+}
+
+:root[data-theme="dark"] .subagent-pill:not(:disabled):hover {
+  background: var(--surface-hover);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .subagent-pill {
     background: color-mix(in srgb, var(--surface-raised) 92%, var(--surface-selected));
+  }
+
+  :root:not([data-theme="light"]) .subagent-pill:not(:disabled):hover {
+    background: var(--surface-hover);
   }
 }
 </style>

@@ -302,7 +302,7 @@ svg path {
   stroke-linejoin: round;
 }
 
-/* MiMo's chip in the strip: 13/400 in the muted grey, 4 by 12, radius 8, a 15px folder. */
+/* MiMo's chip in the strip: 13/400 in its muted grey, 4 by 12, radius 8, a 15px folder. */
 .chip {
   display: inline-flex;
   align-items: center;
@@ -310,7 +310,7 @@ svg path {
   min-width: 0;
   max-width: 100%;
   padding: 4px 12px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -319,9 +319,9 @@ svg path {
   line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
-/* Hover only: MiMo's chip goes back to rest once the pointer is in its menu. */
+/* Hover only: MiMo's chip goes back to rest once the pointer is in its menu, in its --color-txt. */
 .chip:hover {
-  color: var(--text-strong);
+  color: var(--text-body);
   background: var(--surface-hover);
 }
 
@@ -338,14 +338,12 @@ svg path {
   white-space: nowrap;
 }
 
+/* MiMo's caret: the chip's 15px icon size, held back to 55%. */
 .caret {
   flex: none;
-  width: 16px;
-  height: 16px;
-}
-
-.caret path {
-  stroke-width: 1;
+  width: 15px;
+  height: 15px;
+  opacity: 0.55;
 }
 
 /* Below the chip, never flipped: 260 to 440 wide on the glass menu surface, its parts 1 apart. */
@@ -356,15 +354,38 @@ svg path {
   z-index: 50;
   display: flex;
   flex-direction: column;
-  gap: 1px;
   min-width: 260px;
   max-width: min(440px, 100vw - 40px);
   padding: 5px;
   background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 16px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-composer);
   backdrop-filter: blur(18px) saturate(150%);
+  transform-origin: top;
+  animation: menu-in 0.15s ease-out;
+}
+
+/* MiMo animates every popover in: a fade, a 95% zoom and an 8px slide from its trigger. */
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.95);
+  }
+}
+
+@keyframes sub-in {
+  from {
+    opacity: 0;
+    transform: translateX(-2px) scale(0.95);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu,
+  .submenu {
+    animation: none;
+  }
 }
 
 .search {
@@ -386,7 +407,7 @@ svg path {
 .search input {
   flex: 1;
   min-width: 0;
-  color: var(--text-strong);
+  color: var(--text-body);
   background: transparent;
   border: 0;
   outline: none;
@@ -411,7 +432,6 @@ svg path {
 .list {
   display: flex;
   flex-direction: column;
-  gap: 1px;
   max-height: 132px;
   overflow-y: auto;
 }
@@ -422,7 +442,7 @@ svg path {
   z-index: 1;
   height: 18px;
   pointer-events: none;
-  background: linear-gradient(to bottom, transparent, var(--surface-menu));
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--surface-menu) 92%, transparent));
   content: "";
 }
 
@@ -435,7 +455,7 @@ svg path {
   width: 100%;
   min-width: 0;
   padding: 6px 10px;
-  color: var(--text-strong);
+  color: var(--text-body);
   background: transparent;
   border-radius: 11px;
   font-size: calc(13px * var(--ui-font-scale, 1));
@@ -452,11 +472,12 @@ svg path {
   outline: none;
 }
 
+/* MiMo's --color-icon: #5c5c57 on light, #d0d0d0 on dark (below). */
 .row .i {
   flex: none;
   width: 17px;
   height: 17px;
-  color: color-mix(in srgb, var(--text-base) 87%, transparent);
+  color: #5c5c57;
 }
 
 .names {
@@ -475,19 +496,20 @@ svg path {
 
 .hint {
   overflow: hidden;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(11px * var(--ui-font-scale, 1));
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* MiMo's tick is its --color-send: #151c13 on light, #ececec on dark (below). */
 .check {
   flex: none;
   width: 16px;
   height: 16px;
   margin-inline-start: auto;
-  color: var(--text-strong);
+  color: #151c13;
 }
 
 .muted,
@@ -497,12 +519,12 @@ svg path {
 }
 
 .show-more {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .show-more:hover {
-  color: var(--text-strong);
+  color: var(--text-body);
 }
 
 .rule {
@@ -524,7 +546,11 @@ svg path {
   opacity: 0.5;
 }
 
-/* MiMo's submenu surface, 5 of padding like every other, its rows 1 apart. */
+/*
+ * MiMo's submenu surface. Alone among its menus this one is padded 4 rather
+ * than 5 (#newproj-submenu), and it is given no width of its own - it is as
+ * wide as its two rows need.
+ */
 .submenu {
   position: absolute;
   top: -6px;
@@ -532,14 +558,14 @@ svg path {
   z-index: 2;
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  min-width: 184px;
-  padding: 5px;
+  padding: 4px;
   background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 16px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-composer);
   backdrop-filter: blur(18px) saturate(150%);
+  transform-origin: left top;
+  animation: sub-in 0.15s ease-out;
 }
 
 /* A bridge over the gap, so moving from the row into the submenu keeps it open. */
@@ -556,5 +582,28 @@ svg path {
   gap: 6px;
   padding: 5px 12px;
   white-space: nowrap;
+}
+
+/*
+ * MiMo's --color-icon and --color-send on the dark scheme. Neither has a token
+ * of its own, so both are written out.
+ */
+
+:root[data-theme="dark"] .row .i {
+  color: #d0d0d0;
+}
+
+:root[data-theme="dark"] .check {
+  color: #ececec;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .row .i {
+    color: #d0d0d0;
+  }
+
+  :root:not([data-theme="light"]) .check {
+    color: #ececec;
+  }
 }
 </style>

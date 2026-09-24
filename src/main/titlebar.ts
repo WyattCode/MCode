@@ -8,6 +8,8 @@ import { BrowserWindow, nativeTheme, type WebContents } from "electron"
  * side column's controls are centred on. At 40 they sat 5px above them.
  */
 export const TITLEBAR_HEIGHT = 50
+/* Below this the band has no hit target worth drawing, however far the page has shrunk. */
+const MIN_TITLEBAR_HEIGHT = 28
 
 /**
  * How the OS draws the caption buttons into our own title bar.
@@ -27,7 +29,16 @@ export function captionOverlay(zoom = 1, mode?: "dark" | "light") {
     color: "#00000000",
     // MiMo's glyph greys rather than pure white and black.
     symbolColor: dark ? "#ececec" : "#2b2b2b",
-    height: Math.max(TITLEBAR_HEIGHT, Math.round(TITLEBAR_HEIGHT * zoom)),
+    /*
+     * Both ways. This was floored at the unscaled height, which is right only
+     * at 100% and above: below it the app's own title row shrinks with the page
+     * while the band does not, so at 80% the glyphs were drawn below the row's
+     * centre line and the OS owned a strip reaching down over the header's own
+     * buttons - a click there hit a caption button instead (R25-E2). At 50% the
+     * band was twice the row. Still floored at something, because a band of a
+     * few pixels leaves no hit target at all.
+     */
+    height: Math.max(MIN_TITLEBAR_HEIGHT, Math.round(TITLEBAR_HEIGHT * zoom)),
   }
 }
 

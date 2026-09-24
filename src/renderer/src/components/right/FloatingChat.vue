@@ -144,7 +144,7 @@ onBeforeUnmount(() => {
 }
 
 .fc-label {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -154,7 +154,7 @@ onBeforeUnmount(() => {
   width: 22px;
   height: 22px;
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 6px;
@@ -198,7 +198,7 @@ onBeforeUnmount(() => {
   gap: 8px;
   margin-bottom: 8px;
   padding: 5px 12px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 999px;

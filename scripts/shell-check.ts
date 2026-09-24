@@ -8,6 +8,8 @@
  * assertions that would have caught it are the two that need no input at all:
  * something arrives before anything is typed, and what is typed comes back.
  */
+// First of all, so nothing here can read the person's own home directory.
+import "./fenced-home"
 import os from "node:os"
 import path from "node:path"
 import { statSync } from "node:fs"
@@ -185,33 +187,39 @@ async function main(): Promise<void> {
     const id = shells.open(SESSION, os.tmpdir(), undefined, { cols: 100, rows: 24 })
     await until(() => seen.text(id).length > 0)
 
-    let threw = false
-    try {
-      shells.resize(id, 160, 48)
-    } catch {
-      threw = true
+    /*
+     * What reached the pty, not whether the call threw.
+     *
+     * All three of these used to be `!threw`, and `resize` returns early on
+     * every refusal and wraps the one call that can throw in its own catch - so
+     * no change to it could make any of them red, including deleting the
+     * `usable({ cols, rows })` guard that is the whole point of the middle one
+     * (R25-F4). The pty's own resize is recorded instead.
+     */
+    const inner = (shells as unknown as { shells: Map<string, { proc: { resize(cols: number, rows: number): void } }> }).shells
+    const held = inner.get(id)
+    const sizes: [number, number][] = []
+    if (held) {
+      const real = held.proc.resize.bind(held.proc)
+      held.proc.resize = (cols: number, rows: number) => {
+        sizes.push([cols, rows])
+        real(cols, rows)
+      }
     }
-    check("a live shell accepts a new size", !threw)
+    check("the shell that was opened is the one being watched", held !== undefined)
+
+    shells.resize(id, 160, 48)
+    check("a live shell's new size reaches the pty, as it was given", sizes.length === 1 && sizes[0]?.[0] === 160 && sizes[0]?.[1] === 48, sizes)
 
     // A size of zero cells is what a hidden pane measures, and it crashes conpty.
-    let zeroThrew = false
-    try {
-      shells.resize(id, 0, 0)
-    } catch {
-      zeroThrew = true
-    }
-    check("a size of no cells is refused rather than passed on", !zeroThrew)
+    shells.resize(id, 0, 0)
+    check("a size of no cells is refused rather than passed on", sizes.length === 1, sizes)
 
     shells.close(id)
     await until(() => seen.exited(id))
 
-    let afterThrew = false
-    try {
-      shells.resize(id, 80, 24)
-    } catch {
-      afterThrew = true
-    }
-    check("resizing one that has already gone does nothing", !afterThrew)
+    shells.resize(id, 80, 24)
+    check("resizing one that has already gone does nothing", sizes.length === 1, sizes)
   }
 
   console.log("\nThe shells a reader can choose in settings")

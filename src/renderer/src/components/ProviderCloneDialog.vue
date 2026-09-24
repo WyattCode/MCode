@@ -56,6 +56,7 @@ onMounted(() => {
         v-model="id"
         class="field-in"
         :class="{ bad: error }"
+        placeholder="my-provider-copy"
         data-clone-provider-id
         spellcheck="false"
         autocomplete="off"
@@ -77,7 +78,8 @@ onMounted(() => {
   z-index: 130;
   display: grid;
   place-items: center;
-  background: var(--scrim);
+  /* MiMo's dialog scrim is bg-black/50 in both schemes, not a lighter one in light. */
+  background: #00000080;
 }
 
 .dialog {
@@ -89,7 +91,7 @@ onMounted(() => {
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--shadow-pop);
 }
 
 h2 {
@@ -101,7 +103,7 @@ h2 {
 
 .body {
   margin: 8px 0 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }
@@ -113,25 +115,60 @@ h2 {
   margin-top: 16px;
   padding: 0 12px;
   color: var(--text-strong);
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weak);
-  border-radius: 8px;
-  font-family: var(--font-mono);
+  background: transparent;
+  border: 1px solid #e3e3e0;
+  border-radius: 6px;
+  box-shadow: var(--shadow-xs);
   font-size: calc(13px * var(--ui-font-scale, 1));
   outline: none;
 }
 
-.field-in:focus {
-  border-color: var(--border-strong);
+.field-in::placeholder {
+  color: var(--text-base);
 }
 
+.field-in:focus {
+  border-color: var(--text-weak);
+}
+
+/* The focus and refusal rings repeated for the dark fill, which would otherwise outrank both - see CustomProviderForm's .cp-in, the same shape. */
+:root[data-theme="dark"] .field-in {
+  background: rgb(58 58 58 / 0.3);
+  border-color: #3a3a3a;
+}
+
+:root[data-theme="dark"] .field-in:focus {
+  border-color: var(--text-weak);
+}
+
+:root[data-theme="dark"] .field-in.bad {
+  border-color: #ff6467;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .field-in {
+    background: rgb(58 58 58 / 0.3);
+    border-color: #3a3a3a;
+  }
+
+  :root:not([data-theme="light"]) .field-in:focus {
+    border-color: var(--text-weak);
+  }
+
+  :root:not([data-theme="light"]) .field-in.bad {
+    border-color: #ff6467;
+  }
+}
+
+/* MiMo rings a bad id in red-400 and says why in red-500. Both are written out
+   MiMo's red-400, which is not its --color-err. */
 .field-in.bad {
-  border-color: var(--text-critical);
+  border-color: #ff6467;
 }
 
 .error {
   margin-top: 4px;
-  color: var(--text-critical);
+  color: #fb2c36;
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 

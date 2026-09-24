@@ -441,7 +441,24 @@ export async function roundNineWindowsChecks(check: Check, section: (name: strin
     if (await fs.stat(path.join(tree, "python", "python.exe")).catch(() => undefined)) {
       check("and with the runtimes placed, they match the files in the tree exactly", (runtimesScript.checkLicences(tree, licences, false) as string[]).length === 0)
     } else {
-      check("(no runtimes placed in this checkout: the tree comparison runs in scripts/runtimes.mjs at package time)", true)
+      /*
+       * Not a pass. `resources/runtimes/` is gitignored, so this branch is what
+       * every fresh clone takes, and recording `true` here meant each of them
+       * printed an ok for a comparison that never ran - the suite claiming a
+       * property it had not looked at (R23-5-4). The licence text is checked
+       * against the manifest either way, which is what can be done without the
+       * tree; the tree comparison itself is stated as skipped.
+       */
+      check("(skipped: no runtimes are placed in this checkout, so the tree comparison cannot run here - scripts/runtimes.mjs makes it at package time)", true, { skipped: tree })
+      /*
+       * `licences` is a folder path, a string, so `Array.isArray` was never
+       * going to be true: this check could only fail, and only on the fresh
+       * clone that is the one place this branch runs (R25-F9). What it means to
+       * say is that the texts the comparison reads are all here.
+       */
+      const named = ["node.txt", "python.txt", "ripgrep.txt", "python-packages.txt"]
+      const present = await Promise.all(named.map(async (name) => (await text(name)).length > 0))
+      check("the licence texts the comparison would use are all readable on their own", present.every(Boolean), named.filter((_, at) => !present[at]))
     }
 
     const builder = await fs.readFile(path.join(root, "electron-builder.yml"), "utf8")

@@ -28,6 +28,15 @@ export function limitOf(text: string): { ok: boolean; value?: number } {
   return Number.isSafeInteger(value) && value > 0 ? { ok: true, value } : { ok: false }
 }
 
+/**
+ * What Enter in the models field adds: the suggestion the reader moved to,
+ * with the arrows or the pointer, else what was typed - never a suggestion
+ * only because it heads the list, which would add `gpt-4o` for a typed `gpt-4`.
+ */
+export function comboEnterValue(highlight: number, choices: readonly string[], typed: string): string {
+  return (highlight >= 0 ? choices[highlight] : undefined) ?? typed
+}
+
 /** MiMo's endpoint check: it parses as a URL, it is http or https, and it names a host. */
 export function validEndpoint(text: string): boolean {
   try {

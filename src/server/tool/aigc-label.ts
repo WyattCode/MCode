@@ -307,9 +307,9 @@ async function setOfficeAigc(zip: JSZip, fields: AigcFields): Promise<string[]> 
     const pid = existing ? /\bpid="(\d+)"/.exec(existing[0])?.[1] ?? String(Math.max(1, ...pids) + 1) : String(Math.max(1, ...pids) + 1)
     const property = `<property fmtid="${USER_PROPERTY_FMTID}" pid="${pid}" name="AIGC"><vt:lpwstr>${value}</vt:lpwstr></property>`
     let next: string
-    if (existing) next = custom.replace(existing[0], property)
-    else if (/<Properties\b[^>]*\/>/.test(custom)) next = custom.replace(/<Properties\b([^>]*)\/>/, `<Properties$1>${property}</Properties>`)
-    else if (custom.includes("</Properties>")) next = custom.replace("</Properties>", `${property}</Properties>`)
+    if (existing) next = custom.replace(existing[0], () => property)
+    else if (/<Properties\b[^>]*\/>/.test(custom)) next = custom.replace(/<Properties\b([^>]*)\/>/, (_, attributes: string) => `<Properties${attributes}>${property}</Properties>`)
+    else if (custom.includes("</Properties>")) next = custom.replace("</Properties>", () => `${property}</Properties>`)
     else throw new Error("docProps/custom.xml has no Properties element")
     if (!/xmlns:vt=/.test(next)) throw new Error("docProps/custom.xml does not declare the vt prefix")
     zip.file(CUSTOM_PART, next)
@@ -454,12 +454,12 @@ async function xlsxExplicit(zip: JSZip): Promise<{ part: string; xml: string } |
       text = ""
     }
     if (text.includes(AIGC_TEXT)) return undefined
-    next = sheet.replace(cell[0], inline(text ? text + A1_SUFFIX : AIGC_TEXT, styleAttr))
+    next = sheet.replace(cell[0], () => inline(text ? text + A1_SUFFIX : AIGC_TEXT, styleAttr))
   } else {
     const row = /<row\b(?=[^>]*\br="1")[^>]*?(\/?)>/.exec(sheet)
     if (row) {
       const opened = row[0].replace(/\s+spans="[^"]*"/, "").replace(/\/>$/, ">")
-      next = sheet.replace(row[0], opened + inline(AIGC_TEXT, "") + (row[1] ? "</row>" : ""))
+      next = sheet.replace(row[0], () => opened + inline(AIGC_TEXT, "") + (row[1] ? "</row>" : ""))
     } else if (/<sheetData\s*\/>/.test(sheet)) {
       next = sheet.replace(/<sheetData\s*\/>/, `<sheetData><row r="1">${inline(AIGC_TEXT, "")}</row></sheetData>`)
     } else if (/<sheetData\b[^>]*>/.test(sheet)) {
@@ -533,18 +533,28 @@ const HTML_BADGE =
   `<div ${HTML_MARK}="1" aria-label="${AIGC_TEXT}" style="position:fixed;right:8px;bottom:6px;z-index:2147483647;` +
   `padding:1px 6px;border-radius:4px;background:rgba(0,0,0,.45);color:#fff;font:11px/1.5 system-ui,sans-serif;pointer-events:none">${AIGC_TEXT}</div>`
 
+/**
+ * The page with every comment and every element whose contents are text, not
+ * tags (a script, a style, a title...), blanked to spaces of the same length:
+ * a `<body>` written inside one is not the page's body, and the tag spliced
+ * there would break the script or show as text.
+ */
+const markupOnly = (text: string) =>
+  text.replace(/<!--[\s\S]*?(?:-->|$)|<(script|style|textarea|title|noscript)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, (range) => " ".repeat(range.length))
+
 /** A web page: the corner tag at the top of the body, and a comment after the doctype. */
 export function labelHtml(html: string): string | undefined {
   if (html.includes(HTML_MARK)) return undefined
   const bom = html.startsWith("\uFEFF") ? "\uFEFF" : ""
   let text = html.slice(bom.length)
-  const body = /<body\b[^>]*>/i.exec(text)
+  const markup = markupOnly(text)
+  const body = /<body\b[^>]*>/i.exec(markup)
   if (body) {
     const at = body.index + body[0].length
     text = `${text.slice(0, at)}\n${HTML_BADGE}${text.slice(at)}`
   } else {
-    const head = /<\/head\s*>/i.exec(text)
-    const opener = head ?? /<html\b[^>]*>/i.exec(text) ?? /<!doctype\b[^>]*>/i.exec(text)
+    const head = /<\/head\s*>/i.exec(markup)
+    const opener = head ?? /<html\b[^>]*>/i.exec(markup) ?? /<!doctype\b[^>]*>/i.exec(markup)
     const at = opener ? opener.index + opener[0].length : 0
     text = at ? `${text.slice(0, at)}\n${HTML_BADGE}${text.slice(at)}` : `${HTML_BADGE}\n${text}`
   }
@@ -855,7 +865,7 @@ export function xmpAigc(xmp: string): AigcFields | undefined {
 function xmpWith(xmp: string, fields: AigcFields): string | undefined {
   const value = escapeXml(aigcJson(fields))
   const match = /<([\w.-]+):AIGC\b[^>]*>[\s\S]*?<\/\1:AIGC>/.exec(xmp)
-  if (match) return xmp.replace(match[0], `<${match[1]}:AIGC>${value}</${match[1]}:AIGC>`)
+  if (match) return xmp.replace(match[0], () => `<${match[1]}:AIGC>${value}</${match[1]}:AIGC>`)
   const close = xmp.lastIndexOf("</rdf:RDF>")
   if (close < 0) return undefined
   return `${xmp.slice(0, close)}<rdf:Description rdf:about="" xmlns:AIGC="${AIGC_XMP_NS}"><AIGC:AIGC>${value}</AIGC:AIGC></rdf:Description>${xmp.slice(close)}`

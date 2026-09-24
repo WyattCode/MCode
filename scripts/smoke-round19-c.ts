@@ -82,7 +82,7 @@ export async function roundNineteenLaneCChecks(check: Check, section: (name: str
     const park = body(script, "function park(")
     check(
       "the park measures the new question's row against the view, to the column's end",
-      /parkTarget\(view\.clientHeight, box\.height\)/.test(park) && /const end = column\.getBoundingClientRect\(\)\.bottom - viewTop/.test(park) && /parkRoom\(box\.top - lift - viewTop, [^\n]*, view\.clientHeight, end\)/.test(park) &&
+      /const target = parkTarget\(view\.clientHeight, box\.height\)/.test(park) && /const end = column\.getBoundingClientRect\(\)\.bottom - viewTop/.test(park) && /const rowTop = box\.top - lift - viewTop/.test(park) && /parkRoom\(rowTop, target, view\.clientHeight, end\)/.test(park) &&
         /const lift = new DOMMatrixReadOnly\(getComputedStyle\(row\)\.transform\)\.m42/.test(park),
       park.slice(0, 200),
     )
@@ -92,11 +92,12 @@ export async function roundNineteenLaneCChecks(check: Check, section: (name: str
       "a turn that stops being the last hands its floor to the column, ending where it ended",
       /holder\.hasAttribute\("data-turn-last"\)\) return/.test(handOver) && /holder\.style\.minHeight = ""\s+column\.style\.minHeight = `\$\{Math\.ceil\(end\)\}px`\s+floored = column/.test(handOver),
     )
-    check("pins to the end and then stops following", /following\.value = true\s+pin\(\)\s+following\.value = false/.test(park))
+    // R20-C-3: straight to the end, not through pin(), which a hold vetoes; R20-C-tall: a tall question rests by its top.
+    check("pins to the end and then stops following", /if \(rest === undefined\) toBottom\(\)/.test(park) && /following\.value = false/.test(park))
     check("and slides the column up over 200ms, not under reduced motion", /if \(room > 0 && !reducedMotion\(\)\) slideIn\(column, room\)/.test(park) && /transform 0\.2s cubic-bezier\(0\.2, 0\.7, 0\.2, 1\)/.test(body(script, "function slideIn(")))
     check("a park is used when the new question appears, in the main thread only", /if \(!id \|\| id === was \|\| !here \|\| props\.side \|\| props\.latest \|\| props\.subagent\) return\s+if \(consumePark\(here\)\) park\(id\)/.test(script))
     check("the floor goes with a conversation switch and a width change", /clearFloor\(\)\s+parkedIn = undefined/.test(script) && /clientWidth !== floorWidth\) clearFloor\(\)/.test(script))
-    check("and once the reader has left it behind: scrolling up, or the turn ending", /if \(up \|\| distance > JUMP_DISTANCE\) releaseFloor\(\)/.test(script) && /if \(busy\) return\s+await nextTick\(\)\s+releaseFloor\(\)/.test(script))
+    check("and once the reader has left it behind: scrolling up, or the turn ending", /if \(!endSlide && \(up \|\| distance > JUMP_DISTANCE\)\) releaseFloor\(\)/.test(script) && /if \(busy\) return\s+await nextTick\(\)\s+releaseFloor\(\)/.test(script))
     check("a release never moves the view", /if \(view\.scrollTop < top\) \{\s+holder\.style\.minHeight = floor/.test(body(script, "function releaseFloor(")))
     check("a waiting card does not pull a parked question away", /if \(!card \|\| card === was \|\| parked\(\)\) return/.test(script))
   }
@@ -132,7 +133,7 @@ export async function roundNineteenLaneCChecks(check: Check, section: (name: str
     check("overflow is measured as MiMo does, scrollHeight past clientHeight by more than 1px", /entry\.target\.scrollHeight - entry\.target\.clientHeight > 1/.test(script))
     const style = stream.slice(stream.indexOf("<style"))
     check("two lines", /\.automation-text\.clamped \{[^}]*-webkit-line-clamp: 2;/.test(style))
-    check("the button: 13px, muted, 6px below, 4px gap", /\.automation-more \{[^}]*gap: 4px;[^}]*margin-top: 6px;[^}]*color: var\(--text-weak\);[^}]*font-size: calc\(13px \* var\(--ui-font-scale, 1\)\);/.test(style))
+    check("the button: 13px, muted, 6px below, 4px gap", /\.automation-more \{[^}]*gap: 4px;[^}]*margin-top: 6px;[^}]*color: var\(--text-base\);[^}]*font-size: calc\(13px \* var\(--ui-font-scale, 1\)\);/.test(style))
     check("the key is in all 18 tables", (i18n.match(/^ {2}"stream\.automationShowMore": /gm) ?? []).length === 18)
     check("in MiMo's words", /"stream\.automationShowMore": "显示更多"/.test(i18n) && /"stream\.automationShowMore": "Show more"/.test(i18n) && /"stream\.automationShowMore": "顯示更多"/.test(i18n))
   }

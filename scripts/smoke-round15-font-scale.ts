@@ -44,7 +44,16 @@ type Rule = { file: string; line: number; selector: string; body: string }
  * while a picture loads is a picture-sized hole, and its caption sits inside
  * with room to spare at any size.
  */
-const NOT_TEXT_SIZED = new Set(["components/parts/LocalMedia.vue|.text .md-media-skeleton", "components/parts/SvgFileCard.vue|.text .md-svg-wait"])
+const NOT_TEXT_SIZED = new Set([
+  "components/parts/LocalMedia.vue|.text .md-media-skeleton",
+  "components/parts/SvgFileCard.vue|.text .md-svg-wait",
+  /*
+   * MiMo's .rp-annotate-btn is a plain 34 high (R21-F3-37), and 34 still holds
+   * its 12px label and the key cap beside it at the top of the slider, where
+   * the tallest of the two is the cap's 30.9px line inside a 1px border.
+   */
+  "components/right/RpBrowser.vue|.rb-annotate",
+])
 
 /** Every declaration block in the renderer's styles, with where it came from. */
 async function rules(root: string): Promise<Rule[]> {
@@ -211,8 +220,14 @@ export async function roundFifteenFontScaleChecks(check: Check, section: (name: 
     const dialog = await fs.readFile(path.join(root, "src/renderer/src/components/SettingsDialog.vue"), "utf8")
     const nav = all.filter((rule) => rule.file.endsWith("SettingsDialog.vue") && rule.selector === ".nav")
     check("U3-5: the navigation column clips sideways without becoming a scroller", nav.some((rule) => /overflow-x:\s*clip/.test(rule.body)) && !nav.some((rule) => /overflow(-y)?:\s*(hidden|auto|scroll)/.test(rule.body)), nav.map((rule) => rule.body.match(/overflow[^;]*/g)))
+    /*
+     * R21-F2: these rows take their height from padding and a scaled line box,
+     * as MiMo's do, so a row grows with the interface font without stating a
+     * height at all. What matters is still that nothing in the box is pinned.
+     */
     const rows = all.filter((rule) => rule.file.endsWith("SettingsDialog.vue") && [".nav-item", ".nav-group", ".nav-title"].includes(rule.selector))
-    check("U3-5: every navigation row states a minimum height, never a fixed one", rows.length >= 5 && rows.every((rule) => !pinned(rule.body, "height") && !/(^|[;{\s])height:\s*calc/.test(rule.body)), rows.filter((rule) => /(^|[;{\s])height:/.test(rule.body)).map(where))
+    const stuck = rows.filter((rule) => pinned(rule.body, "height") || pinned(rule.body, "min-height") || pinned(rule.body, "line-height"))
+    check("U3-5: no navigation row pins a height the interface font cannot move", rows.length >= 3 && stuck.length === 0, stuck.map(where))
     check("U3-5: a navigation label too long for the column breaks instead of being drawn over the page", /\.nav-item \{[^}]*overflow-wrap: anywhere/s.test(dialog))
   }
 

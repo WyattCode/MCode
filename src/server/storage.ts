@@ -100,6 +100,49 @@ export async function writeAtomic(target: string, data: string | Uint8Array, mod
 const TRANSIENT_LOCK = new Set(["EPERM", "EACCES", "EBUSY"])
 
 /**
+ * A read that waits out a moment of sharing.
+ *
+ * The mirror of renameOver, and for the same handles: a virus scanner, a
+ * backup agent or the Search indexer opens a file for a few milliseconds
+ * without sharing, and Windows answers every other reader with EBUSY. Every
+ * caller that reads a document here treats a throw as damage - the settings,
+ * the remembered approvals, a conversation's undo - so a lock lasting one blink
+ * used to be read as a corrupt file. Waiting it out is what keeps that from
+ * being the common case; readOrCorrupt still tells a lock that outlasts this
+ * from a file that genuinely will not parse.
+ */
+async function readWithWait<T>(file: string, read: (file: string) => Promise<T>): Promise<T | undefined> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await read(file)
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      if (code === "ENOENT") return undefined
+      if (process.platform !== "win32" || !code || !TRANSIENT_LOCK.has(code) || attempt >= 8) throw err
+      await new Promise((resolve) => setTimeout(resolve, 10 * 2 ** Math.min(attempt, 5)))
+    }
+  }
+}
+
+async function readWaiting(file: string): Promise<string | undefined> {
+  return readWithWait(file, (at) => fs.readFile(at, "utf8"))
+}
+
+/**
+ * The same wait, for a caller that needs the bytes rather than the text, and
+ * that has to tell the three answers apart itself.
+ *
+ * `undefined` means the file is genuinely not there - the only answer that may
+ * be read as "it did not exist". Anything else throws, because a lock is not an
+ * absence, and a caller that records one as the other records a file's whole
+ * contents as nothing. See `keepSnapshotFile`, where doing so turned an undo
+ * into a deletion.
+ */
+export async function readBytesWaiting(file: string): Promise<Buffer | undefined> {
+  return readWithWait(file, (at) => fs.readFile(at))
+}
+
+/**
  * A rename that waits out a moment of sharing.
  *
  * Windows refuses to replace a file some other handle has open, and says so
@@ -136,8 +179,9 @@ async function renameOver(temp: string, target: string): Promise<void> {
  */
 export async function quarantine(target: string): Promise<string | undefined> {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-")
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const aside = attempt === 0 ? `${target}.corrupt-${stamp}` : `${target}.corrupt-${stamp}-${attempt}`
+  let taken = 0
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const aside = taken === 0 ? `${target}.corrupt-${stamp}` : `${target}.corrupt-${stamp}-${taken}`
     try {
       // Refuses rather than replacing: a second damaged copy must not erase the first.
       await fs.rename(target, aside)
@@ -150,7 +194,18 @@ export async function quarantine(target: string): Promise<string | undefined> {
         .access(aside)
         .then(() => true)
         .catch(() => false)
-      if (!exists) return undefined
+      // That name is already a quarantined copy: step to the next one, at once.
+      if (exists) {
+        if (++taken >= 4) return undefined
+        continue
+      }
+      /*
+       * The name is free, so it was the document itself that would not move:
+       * the same transient Windows lock renameOver waits out, and the worst
+       * moment to give up. Giving up here is what lets a caller write over a
+       * file it never managed to keep, so the lock is waited out here too.
+       */
+      await new Promise((resolve) => setTimeout(resolve, 10 * 2 ** Math.min(attempt, 5)))
     }
   }
   return undefined
@@ -212,8 +267,23 @@ export async function pruneQuarantined(directory: string, options: { recursive?:
   return removed
 }
 
-/** A temp file tempNameFor made: `.<pid>.<counter>.tmp` at the end of the name. */
-export const TEMP_NAME = /\.\d+\.\d+\.tmp$/
+/** A temp file tempNameFor made: `.<pid>.<counter>.tmp` at the end of the name. The pid is captured. */
+export const TEMP_NAME = /\.(\d+)\.\d+\.tmp$/
+
+/** How long a temp belonging to a process that is still running is left alone. */
+const TEMP_KEEP_MS = 60 * 60 * 1000
+
+/** Whether a process id is still running, for a temp that may still be being written. */
+function processAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    // EPERM means someone else owns it - which is still someone.
+    return (err as NodeJS.ErrnoException).code === "EPERM"
+  }
+}
 
 export class Storage {
   constructor(private readonly root: string) {}
@@ -226,12 +296,23 @@ export class Storage {
    * needs to tell "there is no such file" from "there is one and it is damaged",
    * because those call for opposite answers: the first is a fresh install, the
    * second must never be written over.
+   *
+   * There is a third answer, and folding it into the second was a way to lose
+   * data. `unreadable` is a document the operating system would not hand over -
+   * a lock that outlasted readWaiting, a permission, a failing disk - and it is
+   * the opposite of damage: the contents are almost certainly intact. It must
+   * not be quarantined (the rename would fail for the same reason) and above
+   * all it must not be written over, because "I could not read it" would
+   * otherwise become "it is now empty". A caller that gets this must refuse to
+   * write for the rest of the run.
    */
-  async readOrCorrupt<T>(key: string): Promise<{ value?: T; corrupt?: string }> {
+  async readOrCorrupt<T>(key: string): Promise<{ value?: T; corrupt?: string; unreadable?: string }> {
     try {
       return { value: await this.read<T>(key) }
     } catch (err) {
-      return { corrupt: err instanceof Error ? err.message : String(err) }
+      const message = err instanceof Error ? err.message : String(err)
+      // An errno is the disk answering; a parse failure carries none.
+      return typeof (err as NodeJS.ErrnoException).code === "string" ? { unreadable: message } : { corrupt: message }
     }
   }
 
@@ -275,8 +356,9 @@ export class Storage {
   }
 
   async read<T>(key: string): Promise<T | undefined> {
-    try {
-      const raw = await fs.readFile(this.file(key), "utf8")
+    const raw = await readWaiting(this.file(key))
+    if (raw === undefined) return undefined
+    {
       /*
        * A leading byte-order mark is dropped rather than parsed.
        *
@@ -290,9 +372,6 @@ export class Storage {
        * been edited by hand.
        */
       return JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw) as T
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined
-      throw err
     }
   }
 
@@ -328,12 +407,7 @@ export class Storage {
 
   /** A document's text as it sits on disk, or undefined when there is none. */
   async readText(key: string): Promise<string | undefined> {
-    try {
-      return await fs.readFile(this.file(key), "utf8")
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined
-      throw err
-    }
+    return readWaiting(this.file(key))
   }
 
   /**
@@ -370,20 +444,36 @@ export class Storage {
    * A write killed between creating its temp file and renaming it over the
    * document leaves `<name>.<pid>.<n>.tmp` in place, and nothing ever looked
    * for them: this run's own failed writes clean up after themselves, the
-   * previous process's cannot. Only names carrying another process's id are
-   * taken, so a write in flight right now is never touched.
+   * previous process's cannot.
+   *
+   * "Not my pid" is not enough to call a temp abandoned. Two instances may
+   * share one profile - sql-worker waits out the other's lock for exactly that
+   * reason - and the other one's write sits under a name like this for the
+   * moment between creating the temp and renaming it. Taking it makes that
+   * rename fail with ENOENT, which for a message is a turn lost and for the
+   * remembered approvals is a save swallowed by its own catch. So a temp whose
+   * process is still running is left alone until it is an hour old, whoever
+   * holds that id by then - the test the main process's sweep already makes.
    */
-  async sweepTemps(): Promise<number> {
+  async sweepTemps(options: { now?: number; alive?: (pid: number) => boolean } = {}): Promise<number> {
+    const now = options.now ?? Date.now()
+    const alive = options.alive ?? processAlive
     let removed = 0
-    const own = `.${process.pid}.`
     const walk = async (directory: string): Promise<void> => {
       const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => [])
       for (const entry of entries) {
         const full = path.join(directory, entry.name)
-        if (entry.isDirectory()) await walk(full)
-        else if (TEMP_NAME.test(entry.name) && !entry.name.includes(own)) {
-          await fs.rm(full, { force: true }).then(() => removed++, () => undefined)
+        if (entry.isDirectory()) {
+          await walk(full)
+          continue
         }
+        const match = TEMP_NAME.exec(entry.name)
+        if (!match || Number(match[1]) === process.pid) continue
+        if (alive(Number(match[1]))) {
+          const modified = await fs.stat(full).then((found) => found.mtimeMs, () => now)
+          if (now - modified < TEMP_KEEP_MS) continue
+        }
+        await fs.rm(full, { force: true }).then(() => removed++, () => undefined)
       }
     }
     await walk(this.root)

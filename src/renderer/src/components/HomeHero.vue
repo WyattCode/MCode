@@ -279,15 +279,27 @@ defineExpose({ focus: () => box.value?.focus() })
   <div class="home-hero">
     <div class="drag" aria-hidden="true" />
     <div class="core">
-      <div
-        ref="wordmark"
-        class="wordmark"
-        role="img"
-        aria-label="MCode"
-        :data-hopping="hopping ? 'true' : 'false'"
-        @click="hop"
-      />
-      <p class="slogan">{{ t("home.slogan") }}</p>
+      <!--
+        MiMo's hero: a fixed 527 x 299 block pulled 48 into the tray below it,
+        the mark centred at 49.95%, and the greeting absolutely placed at 65.5%
+        of its height. MiMo fills the block with a background drawing; the user
+        looked at MCode's own (a blueprint of dashed guides) on 2026-09-24 and
+        chose a bare block instead, so nothing is drawn behind the mark. The
+        mark itself is MCode's wordmark rather than MiMo's app icon.
+      -->
+      <div class="hero" data-home-hero>
+        <div class="mark-slot">
+          <div
+            ref="wordmark"
+            class="wordmark"
+            role="img"
+            aria-label="MCode"
+            :data-hopping="hopping ? 'true' : 'false'"
+            @click="hop"
+          />
+        </div>
+        <p class="slogan">{{ t("home.slogan") }}</p>
+      </div>
 
       <!-- MiMo's tray: the box, and fastened under it a 40px strip holding the project chip. -->
       <div class="tray">
@@ -318,7 +330,6 @@ defineExpose({ focus: () => box.value?.focus() })
 
       <NewProjectDialog v-if="naming" :value="t('home.blankDefault')" @close="naming = false" @submit="createBlank" />
     </div>
-
   </div>
 </template>
 
@@ -363,6 +374,32 @@ defineExpose({ focus: () => box.value?.focus() })
   width: min(712px, 100%);
 }
 
+/*
+ * MiMo's hero block: 527 by 299, centred, and pulled 48 up into the tray so
+ * 251px of it stands above the box. Everything inside is placed against its
+ * height rather than stacked, which is what holds the greeting on 195.8.
+ */
+.hero {
+  position: relative;
+  width: 527px;
+  max-width: 100%;
+  height: 299px;
+  margin: 0 auto -48px;
+}
+
+/*
+ * The mark's place - MiMo's icon sits at 49.95% of the block's height. The
+ * centring lives on this slot rather than on the mark, so the hop animation's
+ * own transform has the element to itself.
+ */
+.mark-slot {
+  position: absolute;
+  top: 49.95%;
+  left: 50%;
+  z-index: 1;
+  transform: translate(-50%, -50%);
+}
+
 .wordmark {
   width: 132px;
   height: 36px;
@@ -373,9 +410,13 @@ defineExpose({ focus: () => box.value?.focus() })
   -webkit-app-region: no-drag;
 }
 
-/* 18/600/28.8 at 0.4px, measured on MiMo's greeting. */
+/* 18/600 at 0.4px on MiMo's greeting, absolutely placed at 65.5% - 195.8px down the block. */
 .slogan {
-  margin: 22px 0 26px;
+  position: absolute;
+  top: 65.5%;
+  left: 0;
+  width: 100%;
+  margin: 0;
   color: var(--text-strong);
   font-size: calc(18px * var(--ui-font-scale, 1));
   font-weight: 600;
@@ -384,10 +425,15 @@ defineExpose({ focus: () => box.value?.focus() })
   text-align: center;
 }
 
-/* The tray the box sits in: a darker plate of the same corner, with the project strip at its foot. */
+/*
+ * The tray the box sits in, with the project strip at its foot. MiMo's
+ * --color-composer-tray-bg is an opaque plate rather than a wash: #f8f7f5 in
+ * light, #151515 in dark (below).
+ */
 .tray {
+  position: relative;
   width: 100%;
-  background: color-mix(in srgb, var(--surface-sunken) 50%, transparent);
+  background: #f8f7f5;
   border-radius: 20px;
 }
 
@@ -417,6 +463,16 @@ defineExpose({ focus: () => box.value?.focus() })
 @media (min-width: 2000px) {
   .core {
     width: min(944px, 100%);
+  }
+}
+
+:root[data-theme="dark"] .tray {
+  background: #151515;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .tray {
+    background: #151515;
   }
 }
 </style>

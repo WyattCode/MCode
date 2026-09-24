@@ -929,7 +929,7 @@ export async function roundSevenModelChecks(check: Check, section: (name: string
 
     const read = describe("read")
     check("read explains the numbered-line form the edit tool matches on", read.includes("N: text") && read.includes("edit expects you to quote back"))
-    check("it explains reading a long file in parts", read.includes("offset") && read.includes("limit") && read.includes("2,000 lines or 50 KB"))
+    check("it explains reading a long file in parts", read.includes("offset") && read.includes("limit") && read.includes("says where to continue from"))
     check("it discourages a series of tiny slices, as MiMo's does", read.includes("30-line slices"))
     check("and it is no longer a single sentence", read.length > 800, read.length)
 
@@ -942,7 +942,14 @@ export async function roundSevenModelChecks(check: Check, section: (name: string
 
     const actor = describe("actor")
     check("actor now lists the agent types, which it never did", actor.includes("Available agent types and what each one may do:"))
-    check("explore is named read-only", /explore: reads only/.test(actor))
+    /*
+     * It used to check for "explore: reads only", which the description said
+     * and the tool list contradicts: explore has bash, so it can change the
+     * project and its commands do go to the user (R25-B5). The check now pins
+     * the true pair - what it cannot do, and the warning that it is not a
+     * sandbox - so the old sentence cannot come back.
+     */
+    check("explore is named as the one that cannot write, and not as a sandbox", /explore: for finding things out/.test(actor) && /is refused to it/.test(actor) && /it is not a sandbox/.test(actor), actor.slice(actor.indexOf("- explore"), actor.indexOf("- explore") + 200))
     check("and general is named as the one that may change files", /general:/.test(actor) && actor.includes("change files"))
 
     /* The description is only worth anything if the provider is the one reading it. */
@@ -950,9 +957,22 @@ export async function roundSevenModelChecks(check: Check, section: (name: string
     try {
       const session = await e.store.create({ directory: e.project, model: e.model })
       e.replies.push(say("ok"))
+      /*
+       * The turn's own request, found by what is in it.
+       *
+       * This used to read `e.bodies.at(-1)`, which is bound to nothing: an
+       * out-of-band request - the review pass, the goal judge - lands in the
+       * same list, and openai.ts omits the `tools` key entirely when a request
+       * carries none, so whenever one of those happened to be last both checks
+       * below went red with a length of 0 and said nothing about the
+       * descriptions. This is the recurring false red HANDOFF records (R25-F).
+       */
+      const from = e.bodies.length
       await e.runner.prompt({ sessionID: session.id, text: "hello" })
       await e.idle(session.id)
-      const tools = (e.bodies.at(-1)?.tools ?? []) as { function?: { name?: string; description?: string } }[]
+      const mine = e.bodies.slice(from).find((body) => Array.isArray(body.tools) && body.tools.length > 0)
+      check("the turn's own request is the one being read, not whatever was last on the wire", mine !== undefined, e.bodies.slice(from).map((body) => (Array.isArray(body.tools) ? body.tools.length : "no tools")))
+      const tools = (mine?.tools ?? []) as { function?: { name?: string; description?: string } }[]
       const sent = tools.find((tool) => tool.function?.name === "bash")?.function?.description ?? ""
       check("the provider receives the long bash description, not a summary of it", sent.includes("Version control") && sent.length > 1_500, sent.length)
       const askedFor = tools.find((tool) => tool.function?.name === "question")?.function?.description ?? ""

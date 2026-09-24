@@ -63,7 +63,7 @@ export function followSpoken(source: { enabled: () => boolean; session: () => st
         const done = part.time.completed ?? 0
         if (done < since || Date.now() - done > RECENT_MS) continue
         const line = spokenLine(part)
-        if (line) speak(line, language.value)
+        if (line) speak(line, language.value, source.session())
       }
     },
   )

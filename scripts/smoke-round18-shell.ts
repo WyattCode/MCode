@@ -319,7 +319,7 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
     check("R18-U1: the preview is a card 8 in from the corner, 16 short of the window, 16 round, at 190", /position: fixed;/.test(card) && /inset-block-start: 8px;/.test(card) && /inset-inline-start: 8px;/.test(card) && /height: calc\(100% - 16px\);/.test(card) && /border-radius: 16px;/.test(card) && /z-index: 190;/.test(card), card)
     const tools = /\n\.rail-tools \{([^}]*)\}/.exec(side)?.[1] ?? ""
     check("R18-U1: the folded toggle stands at 75 and 13, above the preview", /position: fixed;/.test(tools) && /top: 13px;/.test(tools) && /inset-inline-start: 75px;/.test(tools) && /z-index: 201;/.test(tools), tools)
-    const folded2 = side.slice(side.indexOf('<div v-if="collapsed" class="rail-tools"'), side.indexOf('<div\n      ref="shellEl"'))
+    const folded2 = side.slice(side.indexOf('<div v-if="collapsed" ref="toolsEl" class="rail-tools"'), side.indexOf('<div\n      ref="shellEl"'))
     check("R18-U1: folded, only the toggle and 新建任务 are left - back and forward go", /data-toggle-side/.test(folded2) && /data-collapsed-new-task/.test(folded2) && !/emit\('back'\)|emit\('forward'\)/.test(folded2))
     check("R18-U1: the toggle opens the preview and carries no tip of its own", /@pointerenter="schedulePreview\(true\)"\s*@pointerleave="schedulePreview\(false\)"/.test(folded2) && !/data-toggle-side[^>]*v-tip/.test(folded2))
     check("R18-U1: the rail's quick card has gone with the rail", !/rail-quick|quickEnter|data-quick/.test(side) && (await carrying("side.railArtifacts")) === 0)
@@ -327,7 +327,8 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
     const panel = await read("src/renderer/src/components/RightPanel.vue")
     const app = await read("src/renderer/src/App.vue")
     check("R18-U1: the header starts at 129, past 新建任务, as MiMo's does", /\.head\.after-rail \{\s*padding-inline-start: 129px;/.test(header))
-    check("R18-U1: a full-screen panel's tabs start at 139", /\.right-panel\.fullscreen\.side-collapsed \.rp-head \{\s*padding-inline-start: 139px;/.test(panel))
+    // R21-F3-26 read MiMo's own arithmetic again: on macOS the inset is 62 + 34 + 32 + 24 + 8 = 160, not the Windows 107 + 24 + 8.
+    check("R18-U1: a full-screen panel's tabs start at 160 on macOS", /\.right-panel\.fullscreen\.side-collapsed \.rp-head \{\s*padding-inline-start: 160px;/.test(panel))
     check("R18-U1: the no-drag patch covers the two controls where they now stand", /\.rail-no-drag \{[^}]*inset-inline-start: 75px;[^}]*width: 56px;/.test(app))
     // The user's 2026-09-21 choice: off macOS the folded controls keep the side column's own start, 18, as the unfolded row does.
     check("R18-U1: off macOS the folded toggle is left-aligned at 18, like the unfolded top row", /\.app:not\(\[data-platform="darwin"\]\) \.rail-tools \{\s*inset-inline-start: 18px;/.test(side) && /\.top \{[^}]*padding-inline: 18px 8px;/.test(side), side.length)

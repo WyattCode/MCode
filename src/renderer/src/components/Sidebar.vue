@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { SessionInfo } from "@shared/protocol"
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, onBeforeUnmount, onMounted, onUpdated, ref, watch } from "vue"
 import RowTitle from "./RowTitle.vue"
 import ChatLinkMark from "./ChatLinkMark.vue"
 import { convoCard } from "../lib/convo-card"
@@ -438,8 +438,34 @@ function ringProjects() {
   const base = root.getBoundingClientRect()
   const top = parts[0]!.getBoundingClientRect().top
   const bottom = Math.max(...parts.map((part) => part.getBoundingClientRect().bottom))
-  folderRing.value = { top: top - base.top + root.scrollTop, height: bottom - top }
+  folderRing.value = { top: top - base.top - root.clientTop + root.scrollTop, height: bottom - top }
 }
+
+/*
+ * MiMo 26.920's edge lines: a hairline above and below the list, each shown
+ * only while rows lie hidden past it - clear at the top until the list is
+ * scrolled, clear at the bottom once it is scrolled to the end or has nothing
+ * to scroll.
+ */
+const atTop = ref(true)
+const atEnd = ref(true)
+
+function measureEdges() {
+  const root = listsEl.value
+  if (!root) return
+  atTop.value = root.scrollTop <= 0
+  atEnd.value = root.scrollTop + root.clientHeight >= root.scrollHeight - 1
+}
+
+let edgeWatch: ResizeObserver | undefined
+onMounted(() => {
+  measureEdges()
+  if (!listsEl.value) return
+  edgeWatch = new ResizeObserver(measureEdges)
+  edgeWatch.observe(listsEl.value)
+})
+onUpdated(measureEdges)
+onBeforeUnmount(() => edgeWatch?.disconnect())
 
 function folderOver(event: DragEvent) {
   if (carried.value || !carriesFiles(event)) return
@@ -822,12 +848,12 @@ function pickPriorityMenu(key: string) {
 }
 
 /*
- * The footer's menu, where MiMo keeps its account menu: settings. MiMo 26.920
- * dropped the quit row that stood below it (the menu bar and the tray still
- * quit), and MCode has no account, so the profile, usage and sign-out rows
- * have nothing to stand for.
+ * The bottom row's menu, where MiMo keeps its account menu: settings, with its
+ * shortcut. MCode has no account, so MiMo's account card, profile, usage and
+ * sign-out rows have nothing to stand for; MiMo 26.920 has no quit row here
+ * either (the menu bar and the tray quit).
  */
-const footMenu = ref<{ x: number; y: number }>()
+const footMenu = ref<{ x: number; y: number; end: boolean }>()
 
 const footMenuItems = computed<MenuItem[]>(() => [
   {
@@ -838,39 +864,21 @@ const footMenuItems = computed<MenuItem[]>(() => [
   },
 ])
 
-/** Opens above the row, since the row sits at the bottom of the window: y is the menu's bottom edge. */
+/**
+ * Opens above the row, since the row sits at the bottom of the window: y is the
+ * menu's bottom edge. It lines up with the row's start, as MiMo's does - the
+ * right edge when the interface runs right to left.
+ */
 function openFootMenu(event: MouseEvent) {
-  const from = (event.currentTarget as HTMLElement).getBoundingClientRect()
-  footMenu.value = { x: Math.round(from.left), y: Math.round(from.top - 4) }
+  const row = event.currentTarget as HTMLElement
+  const from = row.getBoundingClientRect()
+  const end = getComputedStyle(row).direction === "rtl"
+  footMenu.value = { x: Math.round(end ? from.right : from.left), y: Math.round(from.top - 4), end }
 }
 
 function pickFootMenu(key: string) {
   footMenu.value = undefined
   if (key === "settings") emit("settings")
-}
-
-/*
- * The three answers, in the order the button walks them. "Follow the machine"
- * leads because it is the default, and a reader who presses once is most
- * likely trying to pin down what the machine is currently doing.
- */
-const SCHEMES = ["system", "light", "dark"] as const
-
-const scheme = computed(() => app.config?.theme ?? "system")
-
-const themeLabel = computed(() =>
-  t(
-    scheme.value === "light"
-      ? "set.themeLight"
-      : scheme.value === "dark"
-        ? "set.themeDark"
-        : "set.themeSystem",
-  ),
-)
-
-function cycleTheme() {
-  const next = SCHEMES[(SCHEMES.indexOf(scheme.value) + 1) % SCHEMES.length]
-  app.patchConfig({ theme: next })
 }
 
 const PROJECTS_OPEN_KEY = "mcode.projectsOpen"
@@ -1020,23 +1028,58 @@ function toggleColumn() {
   emit("toggle")
 }
 
+/* An Escape a menu opened from the preview took closes that menu alone. */
 function onPreviewKey(event: KeyboardEvent) {
-  if (event.key === "Escape") closePreview()
+  if (event.key === "Escape" && !event.defaultPrevented) closePreview()
+}
+
+/*
+ * What the preview opens over the window belongs to it while it is open - a
+ * menu with the scrim under it, a conversation's information card - as the
+ * portals of MiMo's menus belong to its column: the pointer on them holds the
+ * preview, and a press on them is not a press elsewhere.
+ */
+const PREVIEW_LAYERS = '.scrim, [role="menu"], .app-tip.interactive'
+const toolsEl = ref<HTMLElement>()
+
+function inPreview(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false
+  return Boolean(shellEl.value?.contains(target) || toolsEl.value?.contains(target) || target.closest(PREVIEW_LAYERS))
+}
+
+/* Held while the pointer is on the preview, the controls beside the toggle or a layer of the preview's; let go 200ms after it leaves them. */
+let pointerInPreview = true
+function onPreviewOver(event: PointerEvent) {
+  const inside = inPreview(event.target)
+  if (inside || pointerInPreview) holdPreview(inside)
+  pointerInPreview = inside
+}
+
+/* Out of the window altogether: no element is entered, so nothing else would say so. */
+function onPreviewOut(event: PointerEvent) {
+  if (event.relatedTarget || !pointerInPreview) return
+  pointerInPreview = false
+  holdPreview(false)
 }
 
 function onPreviewPress(event: PointerEvent) {
   const target = event.target as Node | null
-  if (target && (shellEl.value?.contains(target) || toggleEl.value?.contains(target))) return
+  if (inPreview(target) || (target && toggleEl.value?.contains(target))) return
   closePreview()
 }
 
 watch(preview, (open) => {
   if (open) {
+    pointerInPreview = true
     document.addEventListener("keydown", onPreviewKey)
     document.addEventListener("pointerdown", onPreviewPress, true)
+    document.addEventListener("pointerover", onPreviewOver, true)
+    document.addEventListener("pointerout", onPreviewOut, true)
   } else {
     document.removeEventListener("keydown", onPreviewKey)
     document.removeEventListener("pointerdown", onPreviewPress, true)
+    document.removeEventListener("pointerover", onPreviewOver, true)
+    document.removeEventListener("pointerout", onPreviewOut, true)
   }
 })
 watch(
@@ -1050,6 +1093,8 @@ onBeforeUnmount(() => {
   closePreview()
   document.removeEventListener("keydown", onPreviewKey)
   document.removeEventListener("pointerdown", onPreviewPress, true)
+  document.removeEventListener("pointerover", onPreviewOver, true)
+  document.removeEventListener("pointerout", onPreviewOut, true)
 })
 </script>
 
@@ -1062,7 +1107,7 @@ onBeforeUnmount(() => {
       pointer, so it carries no tip of its own - and 新建任务. Back and forward
       go with the column.
     -->
-    <div v-if="collapsed" class="rail-tools" data-collapsed-tools @pointerenter="holdPreview(true)" @pointerleave="holdPreview(false)">
+    <div v-if="collapsed" ref="toolsEl" class="rail-tools" data-collapsed-tools>
       <button
         ref="toggleEl"
         class="ico"
@@ -1078,10 +1123,11 @@ onBeforeUnmount(() => {
           <path d="M9 2.5v19" />
         </svg>
       </button>
+      <!-- The same speech bubble with a plus as the column's 新建任务, on MiMo's lighter 1.75 line. -->
       <button class="ico" data-collapsed-new-task :aria-label="t('side.newTask')" v-tip="{ label: t('side.newTask'), hint: 'Ctrl+N' }" @click="closePreview(), emit('newTask')">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M11 4.5H6.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V13" />
-          <path d="M17.8 3.7a1.7 1.7 0 0 1 2.5 2.5L12.5 14l-3.3.8.8-3.3z" />
+          <path d="M20.3 15.4A9 9 0 1 0 16.5 19.8L21 21z" />
+          <path d="M12 9.5v5M9.5 12h5" />
         </svg>
       </button>
     </div>
@@ -1099,8 +1145,6 @@ onBeforeUnmount(() => {
       :data-side-preview="collapsed && preview ? '' : undefined"
       :inert="collapsed && !preview ? true : undefined"
       :aria-hidden="collapsed && !preview ? 'true' : undefined"
-      @pointerenter="holdPreview(true)"
-      @pointerleave="holdPreview(false)"
     >
     <div class="top" :class="{ mac: app.platform === 'darwin' }">
       <button class="ico side-toggle" :aria-label="t('side.toggle')" v-tip="{ label: t('side.toggle'), hint: 'Ctrl+B' }" @click="toggleColumn">
@@ -1119,41 +1163,46 @@ onBeforeUnmount(() => {
           <path d="M4.5 12h15M13 5.5l6.5 6.5-6.5 6.5" />
         </svg>
       </button>
-      <button class="ico" :aria-label="t('side.search')" v-tip="{ label: t('side.search'), hint: 'Ctrl+K' }" @click="emit('search')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="10.5" cy="10.5" r="6.9" />
-          <path d="m15.6 15.6 4.8 4.8" />
-        </svg>
-      </button>
-      <!--
-        MiMo's priority filter, at the far end of this row as MiMo has it: the
-        column led by what wants attention, then the rest of the week by day.
-      -->
-      <button
-        class="ico bell"
-        :class="{ on: priority }"
-        :aria-pressed="Boolean(priority)"
-        :aria-label="t(priority ? 'side.priorityOff' : 'side.priorityOn')"
-        v-tip="t(priority ? 'side.priorityTipOff' : 'side.priorityTipOn', { shortcut: shownChord('Ctrl+Alt+U') })"
-        @click="emit('toggle-priority')"
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M6.2 16.6V11a5.8 5.8 0 0 1 11.6 0v5.6l1.8 1.9H4.4z" />
-          <path d="M10 21.2a2.1 2.1 0 0 0 4 0" />
-        </svg>
-      </button>
     </div>
 
     <div class="brand">
       <span class="brand-name">MCode</span>
       <span class="badge">2.0</span>
+      <!--
+        MiMo 26.920's search and bell: out of the title-bar row and into this
+        one, their end 16 short of the column's (its left at the column's width
+        less 72).
+      -->
+      <span class="brand-actions" data-brand-actions>
+        <button class="ico" data-search :aria-label="t('side.search')" v-tip="{ label: t('side.search'), hint: 'Ctrl+K' }" @click="closePreview(), emit('search')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="10.5" cy="10.5" r="6.9" />
+            <path d="m15.6 15.6 4.8 4.8" />
+          </svg>
+        </button>
+        <!-- MiMo's priority filter: the column led by what wants attention, then the rest of the week by day. -->
+        <button
+          class="ico bell"
+          :class="{ on: priority }"
+          :aria-pressed="Boolean(priority)"
+          :aria-label="t(priority ? 'side.priorityOff' : 'side.priorityOn')"
+          v-tip="t(priority ? 'side.priorityTipOff' : 'side.priorityTipOn', { shortcut: shownChord('Ctrl+Alt+U') })"
+          @click="emit('toggle-priority')"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M6.2 16.6V11a5.8 5.8 0 0 1 11.6 0v5.6l1.8 1.9H4.4z" />
+            <path d="M10 21.2a2.1 2.1 0 0 0 4 0" />
+          </svg>
+        </button>
+      </span>
     </div>
 
     <nav class="nav" :aria-label="t('key.groupNavigation')">
+      <!-- MiMo's 新建任务: a round speech bubble, its tail at the lower end, a plus inside - 24 grid, 2 line, 18px. -->
       <button class="row" data-new-task @click="emit('newTask')">
-        <svg class="row-ico" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <circle cx="10" cy="10" r="7" stroke="currentColor" />
-          <path d="M10 6.5V13.5M6.5 10H13.5" stroke="currentColor" stroke-linecap="square" />
+        <svg class="row-ico" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20.3 15.4A9 9 0 1 0 16.5 19.8L21 21z" />
+          <path d="M12 9.5v5M9.5 12h5" />
         </svg>
         <span class="row-label">{{ t("side.newTask") }}</span>
       </button>
@@ -1175,7 +1224,16 @@ onBeforeUnmount(() => {
       </button>
     </nav>
 
-    <div ref="listsEl" class="lists" @dragover="folderOver" @dragleave="folderLeave" @drop="folderDrop">
+    <div
+      ref="listsEl"
+      class="lists"
+      :class="{ 'at-top': atTop, 'at-end': atEnd }"
+      data-sidebar-content
+      @scroll="measureEdges"
+      @dragover="folderOver"
+      @dragleave="folderLeave"
+      @drop="folderDrop"
+    >
       <div
         v-if="folderRing"
         class="folder-ring"
@@ -1214,8 +1272,8 @@ onBeforeUnmount(() => {
         >
           <button class="row-open" @click="press(block.session.id)">
             <span v-if="picking" class="tick" :class="{ on: ticked(block.session.id) }" aria-hidden="true">
-              <svg v-if="ticked(block.session.id)" width="11" height="11" viewBox="0 0 16 16" fill="none">
-                <path d="M3.5 8.2 6.4 11.2 12.5 4.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+              <svg v-if="ticked(block.session.id)" width="12" height="12" viewBox="0 0 24 24" fill="none">
+                <path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </span>
             <!-- MiMo's pinned conversation leads with a conversation mark in a 46px cell. -->
@@ -1327,8 +1385,8 @@ onBeforeUnmount(() => {
               data-project-tick
               aria-hidden="true"
             >
-              <svg v-if="projectTicked(project.directory)" width="11" height="11" viewBox="0 0 16 16" fill="none">
-                <path d="M3.5 8.2 6.4 11.2 12.5 4.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+              <svg v-if="projectTicked(project.directory)" width="12" height="12" viewBox="0 0 24 24" fill="none">
+                <path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </span>
             <button
@@ -1336,22 +1394,42 @@ onBeforeUnmount(() => {
               v-tip="{ label: project.directory, disabled: pickingProjects || menuDirectory === project.directory }"
               @click="pressProject(project.directory)"
             >
-              <!-- Open while its tasks are listed under it, as MiMo draws an expanded project. -->
+              <!--
+                Open while its tasks are listed under it, as MiMo draws an
+                expanded project: MiMo's 16px folders, 24 grid on a 2 line.
+              -->
               <svg
                 v-if="isExpanded(project.directory)"
                 class="row-ico"
                 data-folder="open"
-                width="18"
-                height="18"
-                viewBox="0 0 20 20"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
                 fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
                 aria-hidden="true"
               >
-                <path d="M3.5 15V5.5H8L9.5 7H15V9" stroke="currentColor" stroke-linejoin="round" />
-                <path d="M3.5 15 5.6 9H17.4L15.3 15H3.5Z" stroke="currentColor" stroke-linejoin="round" />
+                <path d="M18.5 10v-.8a1.8 1.8 0 0 0-1.8-1.8h-6.1L8.4 5H4.2a1.8 1.8 0 0 0-1.8 1.8v12.4A1.8 1.8 0 0 0 4.2 21" />
+                <path d="M4.2 21h12.4a1.8 1.8 0 0 0 1.7-1.2l2.9-7.4a1.6 1.6 0 0 0-1.5-2.4H8.6a1.8 1.8 0 0 0-1.7 1.2z" />
               </svg>
-              <svg v-else class="row-ico" data-folder="closed" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                <path d="M3.5 5.5H8L9.5 7H16.5V15H3.5V5.5Z" stroke="currentColor" stroke-linejoin="round" />
+              <svg
+                v-else
+                class="row-ico"
+                data-folder="closed"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M2.4 7a2 2 0 0 1 2-2H9l2.4 3h8.2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4.4a2 2 0 0 1-2-2z" />
               </svg>
               <span class="row-label plain">{{ projectLabel(project.directory) }}</span>
               <!--
@@ -1428,8 +1506,8 @@ onBeforeUnmount(() => {
             >
               <button class="row-open" @click="press(session.id)">
                 <span v-if="picking" class="tick" :class="{ on: ticked(session.id) }" aria-hidden="true">
-                  <svg v-if="ticked(session.id)" width="11" height="11" viewBox="0 0 16 16" fill="none">
-                    <path d="M3.5 8.2 6.4 11.2 12.5 4.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  <svg v-if="ticked(session.id)" width="12" height="12" viewBox="0 0 24 24" fill="none">
+                    <path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
                   </svg>
                 </span>
                 <svg v-if="app.isPinned(session.id)" class="pin" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -1545,7 +1623,15 @@ onBeforeUnmount(() => {
         </span>
       </div>
       <template v-if="priority || recentOpen">
-        <div v-if="!listed.length" class="empty">{{ t("side.noTasks") }}</div>
+        <!--
+          Only once the list has been read. `app.ready` exists for exactly this
+          - its own comment says so - and nothing read it, so every cold start
+          drew "no tasks" over an empty list for as long as the first
+          `session.list` took, then replaced it with the conversations (R25-C3).
+          Nothing is drawn in its place: a spinner for a few hundred
+          milliseconds is its own flicker.
+        -->
+        <div v-if="!listed.length && app.ready" class="empty">{{ t("side.noTasks") }}</div>
         <template v-for="(entry, index) in listed" :key="`${entry.group}-${entry.session?.id ?? entry.section ?? entry.head ?? index}`">
         <div v-if="entry.section" class="section priority-head">
           <span class="section-head">{{ t(entry.section === "priority" ? "side.priority" : "side.priorityPinned") }}</span>
@@ -1572,8 +1658,8 @@ onBeforeUnmount(() => {
         >
           <button class="row-open" @click="press(entry.session.id)">
             <span v-if="picking" class="tick" :class="{ on: ticked(entry.session.id) }" aria-hidden="true">
-              <svg v-if="ticked(entry.session.id)" width="11" height="11" viewBox="0 0 16 16" fill="none">
-                <path d="M3.5 8.2 6.4 11.2 12.5 4.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+              <svg v-if="ticked(entry.session.id)" width="12" height="12" viewBox="0 0 24 24" fill="none">
+                <path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </span>
             <svg v-if="app.isPinned(entry.session.id)" class="pin" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -1694,58 +1780,28 @@ onBeforeUnmount(() => {
 
     <div class="foot">
       <!--
-        The scheme, one press away. It is in the appearance settings too - this
-        is the same choice, not a second one, and it shows which of the three
-        answers is in force rather than only offering to change it.
+        MiMo 26.920's account row: a 46px cell holding a 28px round avatar, then
+        the name. MCode signs nobody in, so the row names this machine and opens
+        the menu of what it can honour.
       -->
       <button
-        class="row theme"
-        :aria-label="themeLabel"
-        v-tip="{ label: themeLabel, placement: 'top' }"
-        @click="cycleTheme"
-      >
-        <span class="avatar" aria-hidden="true">
-          <!-- Follow the machine: half lit, half not. -->
-          <svg v-if="scheme === 'system'" width="16" height="16" viewBox="0 0 20 20" fill="none">
-            <circle cx="10" cy="10" r="6" stroke="currentColor" />
-            <path d="M10 4a6 6 0 0 0 0 12z" fill="currentColor" />
-          </svg>
-          <!-- Light: the sun. -->
-          <svg v-else-if="scheme === 'light'" width="16" height="16" viewBox="0 0 20 20" fill="none">
-            <circle cx="10" cy="10" r="3.4" stroke="currentColor" />
-            <path
-              d="M10 3v2M10 15v2M3 10h2M15 10h2M5.05 5.05l1.4 1.4M13.55 13.55l1.4 1.4M5.05 14.95l1.4-1.4M13.55 6.45l1.4-1.4"
-              stroke="currentColor"
-              stroke-linecap="round"
-            />
-          </svg>
-          <!-- Dark: the moon. -->
-          <svg v-else width="16" height="16" viewBox="0 0 20 20" fill="none">
-            <path
-              d="M15.5 12.2A6.3 6.3 0 0 1 7.8 4.5a6.3 6.3 0 1 0 7.7 7.7z"
-              stroke="currentColor"
-              stroke-linejoin="round"
-            />
-          </svg>
-        </span>
-        <span class="row-label plain">{{ themeLabel }}</span>
-      </button>
-
-      <button
-        class="row foot-menu"
+        class="account"
+        data-account-menu
         :aria-expanded="Boolean(footMenu)"
         aria-haspopup="menu"
         @click="openFootMenu"
       >
-        <span class="avatar" aria-hidden="true">
-          <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
-            <circle cx="10" cy="10" r="2.5" stroke="currentColor" />
-            <path d="M10 3.5V5.5M10 14.5V16.5M3.5 10H5.5M14.5 10H16.5M5.4 5.4L6.8 6.8M13.2 13.2L14.6 14.6M5.4 14.6L6.8 13.2M13.2 6.8L14.6 5.4" stroke="currentColor" stroke-linecap="square" />
-          </svg>
+        <span class="account-cell">
+          <span class="avatar" aria-hidden="true">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4.5" width="18" height="12" rx="2" />
+              <path d="M8.5 20h7M12 16.5V20" />
+            </svg>
+          </span>
         </span>
-        <span class="row-label plain">{{ t("rail.settings") }}</span>
+        <span class="account-label">{{ t("side.thisDevice") }}</span>
       </button>
-      <!-- MiMo's update capsule, after the footer menu. -->
+      <!-- MiMo's update capsule, beside the row. -->
       <UpdatePill />
     </div>
     </div>
@@ -1755,6 +1811,8 @@ onBeforeUnmount(() => {
       :y="footMenu.y"
       :items="footMenuItems"
       above
+      :end="footMenu.end"
+      :min-width="248"
       @pick="pickFootMenu"
       @close="footMenu = undefined"
     />
@@ -1849,25 +1907,18 @@ onBeforeUnmount(() => {
   overflow: hidden;
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: 0 8px 30px #0000002e, 0 1px 3px #0000001a;
+  box-shadow: var(--shadow-menu);
 }
 
-:root[data-theme="dark"] .side-shell.preview {
-  box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .side-shell.preview {
-    box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
-  }
-}
-
-/* In the preview the title bar's own toggle stands where this row's did: the row keeps search and the bell, at its end. */
+/*
+ * MiMo's --sidebar-brand-top is 43 inside the preview card, whose top and
+ * hairline stand 9 below the window's: the brand row stays at 52 on screen.
+ */
 .side-shell.preview .top {
-  justify-content: flex-end;
-  -webkit-app-region: no-drag;
+  height: 43px;
 }
 
+/* In the preview the title bar's own toggle stands where this row's did, and back and forward stay folded away. */
 .side-shell.preview .side-toggle,
 .side-shell.preview .side-way {
   display: none;
@@ -1888,8 +1939,9 @@ onBeforeUnmount(() => {
   -webkit-app-region: no-drag;
 }
 
-/* The window-control row: 44 tall, buttons 24x24 at 32px pitch. It drags the
-   window; the buttons opt out.
+/* The window-control row: the toggle, back and forward, 24x24 at 32px pitch.
+   It drags the window; the buttons opt out. 52 tall - MiMo 26.920's
+   --sidebar-brand-top - so the brand row starts 52 down.
    MiMo starts the row at x=65; MCode keeps it to the left on purpose, the 17px
    glyphs lining up with the brand and the destination icons at x=22. Only on
    macOS does it start at 65, clear of the traffic lights. */
@@ -1898,7 +1950,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   align-items: flex-start;
   gap: 8px;
-  height: 44px;
+  height: 52px;
   padding-block: 13px 0;
   padding-inline: 18px 8px;
   -webkit-app-region: drag;
@@ -1919,41 +1971,89 @@ onBeforeUnmount(() => {
   transition: background var(--motion-fast, 0.12s), color var(--motion-fast, 0.12s);
 }
 
+/* MiMo's hover colour for these is its --color-txt, #151c13cc light and #f4f4f5 dark (below). */
 .ico:hover {
-  color: var(--text-strong);
+  color: var(--text-body);
   background: var(--surface-hover);
 }
 
 /*
- * The title-bar row in MiMo's icon colour: near the strongest text on a dark
- * ground, and that text at 60% on a light one. Its glyphs are drawn on a 24
- * grid with a 2-unit round stroke shown at 14px, the bell at 16 - about a
- * 1.2px line, where the old 17px icons on a 20 grid came out near 0.85.
+ * The title-bar row in MiMo's --color-topbar-icon: the strongest text at 60%
+ * on a light ground (#151c1399), and #f4f4f5 rather than white on a dark one.
+ * Its glyphs are drawn on a 24 grid with a 2-unit round stroke shown at 14px,
+ * the bell at 16 - about a 1.2px line, where the old 17px icons on a 20 grid
+ * came out near 0.85.
  */
 .top .ico,
+.brand-actions .ico,
 .rail-tools .ico {
-  color: color-mix(in srgb, var(--text-strong) 60%, transparent);
+  color: #151c1399;
+}
+
+/* The bell alone rests in MiMo's --color-mut, which is a step back from the others on dark. */
+.brand-actions .ico.bell {
+  color: var(--text-base);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .top .ico,
+  :root:not([data-theme="light"]) .brand-actions .ico,
   :root:not([data-theme="light"]) .rail-tools .ico {
-    color: var(--text-strong);
+    color: #f4f4f5;
+  }
+
+  :root:not([data-theme="light"]) .brand-actions .ico.bell {
+    color: var(--text-base);
   }
 }
 
 :root[data-theme="dark"] .top .ico,
+:root[data-theme="dark"] .brand-actions .ico,
 :root[data-theme="dark"] .rail-tools .ico {
-  color: var(--text-strong);
+  color: #f4f4f5;
 }
 
-/* MiMo on Windows: this row's glyphs 12px in one solid colour; a spent arrow and the lit bell keep their own. */
-.app[data-platform="win32"] .top .ico:not(:disabled):not(.on),
-.app[data-platform="win32"] .rail-tools .ico:not(:disabled) {
-  color: var(--text-strong);
+:root[data-theme="dark"] .brand-actions .ico.bell {
+  color: var(--text-base);
+}
+
+/*
+ * MiMo on Windows: these glyphs 12px in its own --color-topbar-icon for that
+ * platform, #2b2b2b light and #ececec dark (below) - the bell included, since
+ * --topbar-priority-color and --topbar-hover-color both point at it there. A
+ * spent arrow and the lit bell keep their own.
+ */
+.app[data-platform="win32"] .top .ico:not(:disabled),
+.app[data-platform="win32"] .brand-actions .ico:not(.on),
+.app[data-platform="win32"] .rail-tools .ico:not(:disabled),
+.app[data-platform="win32"] .top .ico:not(:disabled):hover,
+.app[data-platform="win32"] .brand-actions .ico:not(.on):hover,
+.app[data-platform="win32"] .rail-tools .ico:not(:disabled):hover {
+  color: #2b2b2b;
+}
+
+:root[data-theme="dark"] .app[data-platform="win32"] .top .ico:not(:disabled),
+:root[data-theme="dark"] .app[data-platform="win32"] .brand-actions .ico:not(.on),
+:root[data-theme="dark"] .app[data-platform="win32"] .rail-tools .ico:not(:disabled),
+:root[data-theme="dark"] .app[data-platform="win32"] .top .ico:not(:disabled):hover,
+:root[data-theme="dark"] .app[data-platform="win32"] .brand-actions .ico:not(.on):hover,
+:root[data-theme="dark"] .app[data-platform="win32"] .rail-tools .ico:not(:disabled):hover {
+  color: #ececec;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .app[data-platform="win32"] .top .ico:not(:disabled),
+  :root:not([data-theme="light"]) .app[data-platform="win32"] .brand-actions .ico:not(.on),
+  :root:not([data-theme="light"]) .app[data-platform="win32"] .rail-tools .ico:not(:disabled),
+  :root:not([data-theme="light"]) .app[data-platform="win32"] .top .ico:not(:disabled):hover,
+  :root:not([data-theme="light"]) .app[data-platform="win32"] .brand-actions .ico:not(.on):hover,
+  :root:not([data-theme="light"]) .app[data-platform="win32"] .rail-tools .ico:not(:disabled):hover {
+    color: #ececec;
+  }
 }
 
 .app[data-platform="win32"] .top .ico svg,
+.app[data-platform="win32"] .brand-actions .ico svg,
 .app[data-platform="win32"] .rail-tools .ico svg {
   width: 12px;
   height: 12px;
@@ -1979,16 +2079,25 @@ onBeforeUnmount(() => {
   opacity: 0.35;
 }
 
-/* The name row: 28 tall, 14 in from the 8px inset. */
+/* The name row: 28 tall, 14 in from the 8px inset, straight under the 52px controls row. */
 .brand {
   display: flex;
   flex-shrink: 0;
   align-items: center;
   gap: 8px;
   height: 28px;
-  /* 4px below the controls row: everything under it moves down with it. */
-  margin: 4px 8px 0;
+  margin: 0 8px;
   padding-inline-start: 14px;
+}
+
+/* MiMo's [data-brand-actions]: 24 tall, 8 apart, ending 8 in from the row's end - 16 from the column's. */
+.brand-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  margin-inline: auto 8px;
 }
 
 .brand-name {
@@ -2070,14 +2179,60 @@ onBeforeUnmount(() => {
   line-height: calc(22px * var(--ui-font-scale, 1));
 }
 
+/*
+ * MiMo's list box: 18 below the destinations, from the column's 8px inset to 2
+ * short of its end, 6 of that kept clear at the end so the rows stay 16 in from
+ * both edges; 8 of room at the bottom. Its hairlines are line-soft, and each is
+ * clear while nothing is hidden past it.
+ */
 .lists {
   display: flex;
   flex: 1;
   flex-direction: column;
   gap: 2px;
   min-height: 0;
-  margin: 0 8px;
+  margin-block-start: 18px;
+  margin-inline: 8px 2px;
+  padding-block-end: 8px;
+  padding-inline-end: 6px;
   overflow-y: auto;
+  border-block: 1px solid transparent;
+  transition: border-color var(--motion-fast, 0.12s);
+}
+
+/*
+ * Every row keeps its height and the list scrolls: the compact rows set a
+ * min-height of 0, and as flex items they had been squeezed to fit instead,
+ * so a long list never scrolled and the lines below never showed.
+ */
+.lists > * {
+  flex-shrink: 0;
+}
+
+.lists:not(.at-top) {
+  border-block-start-color: #0000000d;
+}
+
+.lists:not(.at-end) {
+  border-block-end-color: #0000000d;
+}
+
+:root[data-theme="dark"] .lists:not(.at-top) {
+  border-block-start-color: #ffffff12;
+}
+
+:root[data-theme="dark"] .lists:not(.at-end) {
+  border-block-end-color: #ffffff12;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .lists:not(.at-top) {
+    border-block-start-color: #ffffff12;
+  }
+
+  :root:not([data-theme="light"]) .lists:not(.at-end) {
+    border-block-end-color: #ffffff12;
+  }
 }
 
 /* A list heading: 12/500 in the secondary colour, 9 in from the inset. */
@@ -2093,6 +2248,12 @@ onBeforeUnmount(() => {
 .section + .row,
 .section + .empty {
   margin-top: 6px;
+}
+
+/* The first heading keeps its place under the destinations: the list's own 18 and hairline stand in for the rest. */
+.lists > .section:first-child,
+.lists > .folder-ring + .section {
+  margin-top: 17px;
 }
 
 /*
@@ -2139,9 +2300,9 @@ onBeforeUnmount(() => {
   gap: 0;
 }
 
-/* The folder centred in MiMo's 46px cell, so the name starts at 46. */
+/* The 16px folder centred in MiMo's 46px cell, so the name starts at 46. */
 .row.project > .project-toggle > .row-ico {
-  margin-inline: 14px;
+  margin-inline: 15px;
 }
 
 .row.task {
@@ -2232,8 +2393,9 @@ button.section-head:focus-visible {
   padding-inline-start: 46px;
 }
 
+/* MiMo's --color-side-item: #4a4a4a on light, #ccc on dark (below). */
 .task-label {
-  color: color-mix(in srgb, var(--text-strong) 80%, transparent);
+  color: #4a4a4a;
   font-weight: 400;
   line-height: calc(22px * var(--ui-font-scale, 1));
 }
@@ -2276,19 +2438,18 @@ button.section-head:focus-visible {
   pointer-events: auto;
 }
 
-/* MiMo's show-more row: 12px in the secondary colour, 9 by 7 of padding. */
+/* MiMo's show-more row: 12px in its muted colour, 9 by 7 of padding, and no fill under the pointer. */
 .show-more {
   width: 100%;
   padding: 7px 9px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-radius: 6px;
   font-size: calc(12px * var(--ui-font-scale, 1));
   text-align: start;
 }
 
 .show-more:hover {
-  color: var(--text-strong);
-  background: var(--surface-hover);
+  color: var(--text-body);
 }
 
 /* A pinned conversation: MiMo's 46px mark cell in place of the 9px start, the title right after it. */
@@ -2308,26 +2469,26 @@ button.section-head:focus-visible {
   color: var(--text-weak);
 }
 
-/* 展开更多 under the first five pinned rows: 12px in the secondary colour, 9 in, 5 above and below. */
+/* 展开更多 under the first five pinned rows: 12px in the muted colour, 9 in, 5 above and below. */
 .pinned-more {
   width: 100%;
   padding: 5px 9px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: calc(22px * var(--ui-font-scale, 1));
   text-align: start;
 }
 
 .pinned-more:hover {
-  color: var(--text-strong);
+  color: var(--text-body);
 }
 
-/* Under a project's first five: 12px in the secondary colour, in line with the task names. */
+/* Under a project's first five: 12px in the muted colour, in line with the task names. */
 .project-show-all {
   width: 100%;
   padding-block: 5px;
   padding-inline: 46px 9px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   /* MiMo's buttons keep the body's 22px line, which makes the row 32 tall. */
   line-height: calc(22px * var(--ui-font-scale, 1));
@@ -2335,7 +2496,7 @@ button.section-head:focus-visible {
 }
 
 .project-show-all:hover {
-  color: var(--text-strong);
+  color: var(--text-body);
 }
 
 /* MiMo's pages row under the projects: more on the left, collapse on the right. */
@@ -2351,13 +2512,13 @@ button.section-head:focus-visible {
 
 .projects-pages button {
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: inherit;
   text-align: start;
 }
 
 .projects-pages button:hover {
-  color: var(--text-strong);
+  color: var(--text-body);
 }
 
 .pages-more {
@@ -2371,12 +2532,17 @@ button.section-head:focus-visible {
 }
 
 /*
- * The priority filter's bell: sixth in the left-aligned controls row, lit while on.
- * MiMo's lit colour overrides the row's in every theme, so this outranks the dark rows above.
+ * The priority filter's bell, 6 round where search is 7, lit while on. MiMo's
+ * lit colour overrides the row's in every theme, so this outranks the dark rows above.
  */
+.ico.bell {
+  border-radius: 6px;
+}
+
+/* MiMo's --color-priority-on is #3295fb on both schemes, not the accent that turns over with them. */
 .ico.bell.on,
-:root .top .ico.bell.on {
-  color: var(--text-accent);
+:root .brand-actions .ico.bell.on {
+  color: #3295fb;
 }
 
 /* The priority section's menu button shows while its heading is hovered. */
@@ -2389,10 +2555,52 @@ button.section-head:focus-visible {
   opacity: 1;
 }
 
-/* The foot row sits 10 above the window's bottom edge. */
+/*
+ * MiMo's side-bottom: 4 above, then its row 6 lower, beside the update capsule
+ * 8 away, all 10 above the window's bottom edge.
+ */
 .foot {
+  display: flex;
   flex-shrink: 0;
-  margin: 8px 8px 10px;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 8px;
+}
+
+/* The row: 38 tall (more under a larger interface font), 8 round, 14px regular in the strongest text. */
+.account {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  min-height: 38px;
+  color: var(--text-strong);
+  border-radius: 8px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  text-align: start;
+  transition: background var(--motion-fast, 0.12s);
+}
+
+.account:hover {
+  background: var(--surface-hover);
+}
+
+.account-cell {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 46px;
+  height: 38px;
+}
+
+.account-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  line-height: calc(20px * var(--ui-font-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /*
@@ -2421,16 +2629,26 @@ button.section-head:focus-visible {
   inset-inline-start: 18px;
 }
 
+/* MiMo's avatar: 28 round on its input-border line, the glyph 15px. */
 .avatar {
   display: grid;
-  flex-shrink: 0;
+  box-sizing: border-box;
   place-items: center;
-  width: 26px;
-  height: 26px;
-  margin-inline-start: -4px;
-  color: var(--text-base);
-  background: var(--surface-layer);
+  width: 28px;
+  height: 28px;
+  overflow: hidden;
+  border: 1px solid #151c130f;
   border-radius: 50%;
+}
+
+:root[data-theme="dark"] .avatar {
+  border-color: #2e2e2e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .avatar {
+    border-color: #2e2e2e;
+  }
 }
 
 /*
@@ -2452,7 +2670,7 @@ button.section-head:focus-visible {
 
 .pin {
   flex-shrink: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
 }
 
 .row-menu {
@@ -2462,7 +2680,7 @@ button.section-head:focus-visible {
   width: 22px;
   height: 22px;
   margin-inline-start: 4px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-radius: 6px;
   opacity: 0;
   transition: opacity 0.12s, background 0.12s, color 0.12s;
@@ -2475,25 +2693,32 @@ button.section-head:focus-visible {
 }
 
 .row-menu:hover {
-  color: var(--text-strong);
+  color: var(--text-body);
   background: var(--surface-hover);
 }
 
-/* Selection mode: a box before each row, and the bar that acts on them. */
+/*
+ * Selection mode: a box before each row, and the bar that acts on them. MiMo's
+ * is 18 on a 5px corner, outlined in its --color-dim while empty and filled
+ * with its --color-send, tick in --color-send-fg, once it is ticked.
+ */
 .tick {
   display: grid;
   flex-shrink: 0;
   place-items: center;
-  width: 15px;
-  height: 15px;
-  color: var(--surface-base);
-  border: 1px solid var(--border-weak);
-  border-radius: 4px;
+  width: 18px;
+  height: 18px;
+  color: transparent;
+  background: transparent;
+  border: 1px solid var(--text-weak);
+  border-radius: 5px;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 
 .tick.on {
-  background: var(--interactive);
-  border-color: var(--interactive);
+  color: #ffffff;
+  background: #151c13;
+  border-color: #151c13;
 }
 
 /* A project's tick sits before its folder cell, 9 in and 7 before the folder, as MiMo's does. */
@@ -2560,7 +2785,7 @@ button.section-head:focus-visible {
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
-  color: var(--text-strong);
+  color: var(--text-body);
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 7px;
@@ -2663,7 +2888,7 @@ button.section-head:focus-visible {
   width: 22px;
   height: 22px;
   margin-inline-start: 2px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-radius: 6px;
   opacity: 0;
   transition: opacity 0.12s, background 0.12s, color 0.12s;
@@ -2675,12 +2900,13 @@ button.section-head:focus-visible {
   opacity: 1;
 }
 
+/* A pinned row's pin keeps MiMo's --color-priority-on, one blue in both schemes. */
 .row-pin.on {
-  color: var(--text-base);
+  color: #3295fb;
 }
 
 .row-pin:hover {
-  color: var(--text-strong);
+  color: var(--text-body);
   background: var(--surface-hover);
 }
 /*
@@ -2758,10 +2984,11 @@ button.section-head:focus-visible {
   }
 }
 
+/* MiMo's --color-blue, which --interactive already is: #2f6fed light, #5a9cff dark. */
 .status-dot {
   width: 7px;
   height: 7px;
-  background: var(--text-interactive);
+  background: var(--interactive);
   border-radius: 50%;
 }
 
@@ -2814,7 +3041,7 @@ button.section-head:focus-visible {
 
 .folder-ring {
   position: absolute;
-  inset-inline: 0;
+  inset-inline: 0 6px;
   z-index: 2;
   border-radius: 8px;
   /* MiMo's accent, orange in both themes. */
@@ -2920,5 +3147,54 @@ button.section-head:focus-visible {
 .row.project:focus-within .row-status:has(.status-pill) {
   opacity: 1;
   padding-inline-end: 52px;
+}
+
+/*
+ * MiMo's --color-txt, --color-side-item, --color-send and --color-send-fg on
+ * the dark scheme. Written out because no token holds that pair, so the
+ * pair is written out.
+ */
+:root[data-theme="dark"] .ico:hover,
+:root[data-theme="dark"] .row-menu:hover,
+:root[data-theme="dark"] .row-pin:hover,
+:root[data-theme="dark"] .show-more:hover,
+:root[data-theme="dark"] .pinned-more:hover,
+:root[data-theme="dark"] .project-show-all:hover,
+:root[data-theme="dark"] .projects-pages button:hover,
+:root[data-theme="dark"] .sb-btn:not(.danger) {
+  color: #f4f4f5;
+}
+
+:root[data-theme="dark"] .task-label {
+  color: #cccccc;
+}
+
+:root[data-theme="dark"] .tick.on {
+  color: #0d0d0d;
+  background: #ececec;
+  border-color: #ececec;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ico:hover,
+  :root:not([data-theme="light"]) .row-menu:hover,
+  :root:not([data-theme="light"]) .row-pin:hover,
+  :root:not([data-theme="light"]) .show-more:hover,
+  :root:not([data-theme="light"]) .pinned-more:hover,
+  :root:not([data-theme="light"]) .project-show-all:hover,
+  :root:not([data-theme="light"]) .projects-pages button:hover,
+  :root:not([data-theme="light"]) .sb-btn:not(.danger) {
+    color: #f4f4f5;
+  }
+
+  :root:not([data-theme="light"]) .task-label {
+    color: #cccccc;
+  }
+
+  :root:not([data-theme="light"]) .tick.on {
+    color: #0d0d0d;
+    background: #ececec;
+    border-color: #ececec;
+  }
 }
 </style>

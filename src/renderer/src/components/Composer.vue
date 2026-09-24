@@ -47,7 +47,6 @@ import GoalBar from "./GoalBar.vue"
 import { readContext } from "./session-context"
 import { compactTokens, t, language } from "../lib/i18n"
 
-
 const emit = defineEmits<{
   terminal: []
   "open-settings": [section?: "models"]
@@ -2263,7 +2262,6 @@ function onBoxClick() {
   syncCaret()
 }
 
-
 /** Which pill has its menu open, if any. */
 const menu = ref<"model" | "access" | "plus" | "context">()
 
@@ -2412,16 +2410,29 @@ function onAccessKeys(event: KeyboardEvent) {
   }
 }
 
-/* Each level's mark, on the chip and in the menu: a raised hand, a pencil, a shield with a warning in it. */
-const ACCESS_ICONS: Record<Access, string[]> = {
-  ask: [
-    "M5.4 8.6V4.1a.95.95 0 0 1 1.9 0v3.4",
-    "M7.3 7.2V3.2a.95.95 0 0 1 1.9 0v4",
-    "M9.2 7.3V3.9a.95.95 0 0 1 1.9 0v3.8",
-    "M11.1 7.6V5.6a.95.95 0 0 1 1.9 0v4.1a4.6 4.6 0 0 1-4.6 4.6h-.5a4 4 0 0 1-3.1-1.5L2.7 10a.95.95 0 0 1 1.4-1.3l1.3 1.2",
-  ],
-  auto: ["M2.8 13.4h10.4", "M10.4 2.4l2.2 2.2-6.8 6.8H3.6V9.2z"],
-  full: ["M8 1.8 13 3.7v4c0 3.1-2.1 5.4-5 6.5-2.9-1.1-5-3.4-5-6.5v-4z", "M8 5.3v2.9", "M8 10.6h.01"],
+/*
+ * Each level's mark, on the chip and in the menu, measured off MiMo's: a raised
+ * four-fingered hand drawn 16px on the chip, then a pencil and a shield with a
+ * warning in it drawn 18px, so the pencil spans 12 and the shield 11. `box` is
+ * the drawing's own square and the chip's size; the menu draws all three at 17.
+ */
+const ACCESS_ICONS: Record<Access, { box: number; stroke: number; paths: string[] }> = {
+  ask: {
+    box: 16,
+    stroke: 1,
+    paths: [
+      "M6.16 9.25V4.45a.76.76 0 0 1 1.52 0v3.81",
+      "M7.68 4.45V3.44a.76.76 0 0 1 1.52 0v4.82",
+      "M9.2 4.2a.76.76 0 0 1 1.53 0v4.06",
+      "M10.73 5.72a.76.76 0 0 1 1.52 0v4.31c0 1.83-1.48 3.31-3.3 3.31-1.14 0-1.96-.32-2.62-.89-.64-.56-1.13-1.4-1.57-2.42-.44-.99-.68-1.62-.84-2.01-.07-.22.04-.6.38-.61.77-.04 1.57.54 1.86 1.69",
+    ],
+  },
+  auto: { box: 18, stroke: 1.13, paths: ["M9 14.67h6", "M12 3.67a1.41 1.41 0 0 1 2 2L5.67 14 3 14.67l.67-2.67z"] },
+  full: {
+    box: 18,
+    stroke: 1.03,
+    paths: ["M9 2.94l5.45 3.03v3.63c0 3.03-2.3 5.15-5.45 5.45-3.15-.3-5.45-2.42-5.45-5.45V5.97z", "M9 6.58V9", "M9 11.42h.01"],
+  },
 }
 
 /*
@@ -2576,7 +2587,6 @@ const currentModel = computed<ModelInfo | undefined>(() =>
  * which is what the reference's `variantControlVisible: !model.loading` does.
  */
 const variants = computed<Effort[]>(() => currentModel.value?.variants ?? [])
-
 
 /*
  * The level the chip names: the conversation's own, else the default a new
@@ -3061,8 +3071,12 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 <template>
   <div class="composer" :class="{ noted: sessionID && !side, side }" :data-compacting="compactingHere || undefined">
     <div class="shell">
-      <!-- 追求目标: the goal and how it is going, above the box, as MiMo puts it. -->
-      <GoalBar v-if="!side && sessionID" :session-i-d="sessionID" />
+      <!--
+        追求目标: the goal and how it is going, above the box, as MiMo puts it.
+        One bar per conversation: a rewrite in progress, or an expanded goal,
+        never follows the composer to the next conversation.
+      -->
+      <GoalBar v-if="!side && sessionID" :key="sessionID" :session-i-d="sessionID" />
       <!-- MiMo's cue drawer: tucked behind the box's top edge, it slides up with the command a recording was heard as. -->
       <div class="voice-cues" :class="{ on: cueOn }" data-voice-cues>
         <div class="voice-drawer" role="status">
@@ -3424,8 +3438,17 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               v-tip="{ label: t('composer.accessTip'), disabled: menu === 'access' }"
               @click="toggle('access')"
             >
-              <svg class="access-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path v-for="d in ACCESS_ICONS[access]" :key="d" :d="d" />
+              <svg
+                class="access-icon"
+                :width="ACCESS_ICONS[access].box"
+                :height="ACCESS_ICONS[access].box"
+                :viewBox="`0 0 ${ACCESS_ICONS[access].box} ${ACCESS_ICONS[access].box}`"
+                :stroke-width="ACCESS_ICONS[access].stroke"
+                :data-access-icon="access"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path v-for="d in ACCESS_ICONS[access].paths" :key="d" :d="d" />
               </svg>
               <span class="perm-label">{{ t(`composer.access.${access}`) }}</span>
               <svg class="caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -3457,8 +3480,14 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 @mouseenter="accessHot = entry"
                 @click="chooseAccess(entry)"
               >
-                <svg class="access-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path v-for="d in ACCESS_ICONS[entry]" :key="d" :d="d" />
+                <svg
+                  class="access-icon"
+                  :viewBox="`0 0 ${ACCESS_ICONS[entry].box} ${ACCESS_ICONS[entry].box}`"
+                  :stroke-width="ACCESS_ICONS[entry].stroke"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <path v-for="d in ACCESS_ICONS[entry].paths" :key="d" :d="d" />
                 </svg>
                 <span class="item-name">{{ t(entry === "full" ? "composer.access.fullItem" : `composer.access.${entry}`) }}</span>
                 <svg class="access-check" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -3748,9 +3777,13 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               <span class="mic-spinner" aria-hidden="true" />
               <span class="voice-label" data-voice-status>{{ voiceLabel }}</span>
             </span>
-            <svg v-else width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <rect x="7.4" y="2.6" width="5.2" height="9.2" rx="2.6" stroke="currentColor" stroke-width="1.3" />
-              <path d="M4.8 9.6a5.2 5.2 0 0 0 10.4 0M10 14.8v2.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+            <!-- MiMo's microphone, filled: a capsule ring over an open cradle, no stand. -->
+            <svg v-else width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+              <path
+                fill="currentColor"
+                fill-rule="evenodd"
+                d="M9 1.56a3.54 3.54 0 0 1 3.54 3.54v4.25a3.54 3.54 0 0 1-7.08 0V5.1A3.54 3.54 0 0 1 9 1.56zm0 1.42a2.13 2.13 0 0 0-2.13 2.12v4.25a2.13 2.13 0 0 0 4.25 0V5.1A2.13 2.13 0 0 0 9 2.98zM2.05 10.74a7.09 7.09 0 0 0 13.9 0l-1.39-.28a5.67 5.67 0 0 1-11.12 0z"
+              />
             </svg>
           </button>
 
@@ -3793,8 +3826,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             v-tip="{ label: stopping ? t('composer.stop') : t('composer.send') }"
             @click="stopping ? app.abort(sessionID) : submit()"
           >
-            <svg v-if="stopping" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-              <rect width="12" height="12" rx="2" fill="currentColor" />
+            <svg v-if="stopping" width="9" height="9" viewBox="0 0 9 9" aria-hidden="true">
+              <rect width="9" height="9" rx="1.5" fill="currentColor" />
             </svg>
             <svg
               v-else-if="mode === 'shell'"
@@ -3811,13 +3844,9 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 stroke-linecap="square"
               />
             </svg>
-            <svg v-else width="18" height="18" viewBox="0 0 20 20" aria-hidden="true">
-              <path
-                fill-rule="evenodd"
-                clip-rule="evenodd"
-                d="M9.99991 2.24121L16.0921 8.33343L15.2083 9.21731L10.6249 4.63397V17.5001H9.37492V4.63398L4.7916 9.21731L3.90771 8.33343L9.99991 2.24121Z"
-                fill="currentColor"
-              />
+            <!-- MiMo's send mark: a stroked up-arrow, a shaft with a chevron on it, 10.5 tall at 18px. -->
+            <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 19V5m-7 7 7-7 7 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </button>
           </div>
@@ -3844,8 +3873,13 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 /*
  * The @ and slash menus float over the conversation just above the box, as
  * MiMo's do: 8 in from either side and 6 clear of its top edge, on a 12px
- * corner with the menu's frosted fill and shadow. The box is what they are
- * placed against, so they move with it.
+ * corner. The box is what they are placed against, so they move with them.
+ *
+ * These two are the one pair MiMo does not draw with its popover shell. They
+ * carry its own `.menu` class - a full pixel of --color-line over --color-bg
+ * under --shadow-menu - and that rule is written after `.menu-glass` in its
+ * stylesheet, so the frosted fill loses and only the blur behind it survives,
+ * which an opaque fill hides. Kept here so the pair matches value for value.
  */
 .box {
   position: relative;
@@ -3860,10 +3894,10 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   max-height: 320px;
   padding: 5px;
   overflow-y: auto;
-  background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
-  border: 0.5px solid var(--border-weak);
+  background: var(--surface-page);
+  border: 1px solid var(--border-weak);
   border-radius: 12px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-menu);
   backdrop-filter: blur(18px) saturate(150%);
 }
 
@@ -4010,19 +4044,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
-.slash-title {
-  /*
-   * Takes the middle of the row so the hint stays against the far edge whether
-   * the row has two things on it or three.
-   */
-  flex: 1;
-  overflow: hidden;
-  color: var(--text-strong);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /*
  * What the reference says when a slash names nothing. Sized and coloured like
  * the header above it rather than like a row, because it cannot be chosen.
@@ -4057,23 +4078,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   background: color-mix(in srgb, var(--text-strong) 8%, transparent);
   border-radius: 5px;
   font-size: calc(11px * var(--ui-font-scale, 1));
-}
-
-.slash-hint {
-  /*
-   * A keyboard hint is short and must never be clipped; a directory can be
-   * half a screen wide, so it gets a ceiling and an ellipsis rather than the
-   * right to squeeze the name it belongs to off the row.
-   */
-  flex-shrink: 0;
-  max-width: 55%;
-  overflow: hidden;
-  color: var(--text-weaker);
-  font-family: var(--font-mono);
-  font-size: calc(11px * var(--ui-font-scale, 1));
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  direction: ltr;
 }
 
 .composer {
@@ -4139,10 +4143,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   border-radius: 10px;
   box-shadow: var(--shadow-md);
   transition: box-shadow 0.12s;
-}
-
-.box:focus-within {
-  box-shadow: var(--shadow-md), 0 0 0 1px var(--border-strong);
 }
 
 .input {
@@ -4316,7 +4316,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   position: static;
   flex: none;
   margin-inline-start: 4px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border-radius: 6px;
   /* MiMo's mark is the character at 13px, not a drawing. */
@@ -4425,7 +4425,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   padding: 0 4px;
   color: var(--text-base);
   background: var(--surface-layer-02);
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 2px;
   font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 530;
@@ -4471,9 +4471,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   justify-content: center;
   width: 28px;
   height: 28px;
-  margin-inline-end: 2px;
   padding: 0;
-  color: var(--icon-base);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 50%;
@@ -4773,7 +4772,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   cursor: default;
 }
 
-
 /*
  * The agent and model pills, measured off the reference's own button-v2 rather
  * than guessed: 28 tall on a 6px radius with 11px of inline padding, its text
@@ -4827,9 +4825,9 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   gap: 1px;
   min-width: 160px;
   padding: 5px;
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 16px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-composer);
   transform-origin: top;
   animation: menu-in 0.15s ease-out;
 }
@@ -4855,18 +4853,22 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   animation-name: menu-in-up;
 }
 
-/* MiMo's entrance: a fade, a 95% zoom and a 2px slide from the chip. No fill mode, so no transform outlasts it. */
+/*
+ * MiMo's entrance: a fade, a 95% zoom and an 8px slide from the chip -
+ * `slide-in-from-top-2`, which is two of its 4px spacing steps, not two pixels.
+ * No fill mode, so no transform outlasts it.
+ */
 @keyframes menu-in {
   from {
     opacity: 0;
-    transform: translateY(-2px) scale(0.95);
+    transform: translateY(-8px) scale(0.95);
   }
 }
 
 @keyframes menu-in-up {
   from {
     opacity: 0;
-    transform: translateY(2px) scale(0.95);
+    transform: translateY(8px) scale(0.95);
   }
 }
 
@@ -4936,9 +4938,9 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   max-height: min(360px, calc(100vh - 16px));
   padding: 5px;
   background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 16px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-composer);
   backdrop-filter: blur(18px) saturate(150%);
   transform-origin: top left;
   animation: sub-in 0.15s ease-out;
@@ -5229,9 +5231,9 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   display: flex;
   min-width: 220px;
   max-height: min(420px, calc(100vh - 16px));
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 16px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-composer);
   transform-origin: top left;
   animation: sub-in 0.15s ease-out;
 }
@@ -5405,16 +5407,48 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   display: none;
 }
 
+/*
+ * MiMo's card: no ring when it takes focus. Its edge is #151c130f on light and
+ * #2e2e2e on dark; its shadow a soft two-step lift on light and one darker
+ * drop on dark.
+ *
+ * The fill is MiMo's --color-composer-surface, white on light and #1f1f1f on
+ * dark (below) - not the menu surface, which is a step greyer on light. The
+ * conversation's dock is the same card and takes the same white, as MiMo's does.
+ */
 .box {
   padding: 8px;
-  background: var(--surface-menu);
-  border: 0.5px solid var(--border-weak);
+  background: #ffffff;
+  border: 0.5px solid var(--border-input);
   border-radius: 20px;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+  box-shadow: var(--shadow-composer);
 }
 
-.box:focus-within {
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4), 0 0 0 0.5px var(--border-strong);
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .box {
+    background: #1f1f1f;
+  }
+
+  :root:not([data-theme="light"]) .box:not(.dropping) {
+    border-color: #2e2e2e;
+  }
+
+  /* MiMo's --shadow-composer-home, which differs from the normal one on dark only. */
+  :root:not([data-theme="light"]) .home-hero .box:not(.dropping) {
+    box-shadow: 0 2px 10px #00000080;
+  }
+}
+
+:root[data-theme="dark"] .box {
+  background: #1f1f1f;
+}
+
+:root[data-theme="dark"] .box:not(.dropping) {
+  border-color: #2e2e2e;
+}
+
+:root[data-theme="dark"] .home-hero .box:not(.dropping) {
+  box-shadow: 0 2px 10px #00000080;
 }
 
 /* The keyboard's ring (base.css) goes round the card rather than the bare writing area inside it. */
@@ -5454,13 +5488,35 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   font-weight: 500;
 }
 
+/* MiMo's written text: the strongest text on light, #f4f4f5 rather than white on dark. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .input {
+    color: #f4f4f5;
+  }
+}
+
+:root[data-theme="dark"] .input {
+  color: #f4f4f5;
+}
+
 /* Locked while the conversation is compacted. */
 .input:disabled {
   cursor: progress;
 }
 
+/* MiMo's composer placeholder: its muted text on light, #a0a0a0 on dark. */
 .input::placeholder {
-  color: var(--text-weak);
+  color: var(--text-base);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .input::placeholder {
+    color: #a0a0a0;
+  }
+}
+
+:root[data-theme="dark"] .input::placeholder {
+  color: #a0a0a0;
 }
 
 /* A height set by dragging may go past the fitted cap, to 480px or half the window, and down to MiMo's 44. */
@@ -5541,7 +5597,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   color: color-mix(in srgb, var(--text-base) 87%, transparent);
 }
 
-/* MiMo's round buttons, the plus and the microphone: 30px circles on a hairline over the page colour. */
+/* MiMo's round buttons in the composer, the plus and the microphone: 30px circles with no edge and no fill until hovered. */
 .attach,
 .mic {
   display: inline-flex;
@@ -5552,8 +5608,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   height: 30px;
   padding: 0;
   color: color-mix(in srgb, var(--text-base) 87%, transparent);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
+  background: transparent;
+  border: 0;
   border-radius: 50%;
 }
 
@@ -5582,17 +5638,31 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   line-height: calc(18px * var(--ui-font-scale, 1));
 }
 
-/* Full access is the one setting on this bar worth noticing, so it is coloured. */
-.pill.access.full,
-.pill.access.full:hover {
+/* Full access is the one setting on this bar worth noticing, so it is coloured - until hovered, where MiMo's hover colour takes over. */
+.pill.access.full:not(:hover) {
   color: #fb8147;
 }
 
+/* MiMo's send colours: #151c13 under white on light, #ececec under #0d0d0d on dark. */
 .send {
   flex: none;
   width: 30px;
   height: 30px;
+  color: #fff;
+  background: #151c13;
   border-radius: 50%;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .send:not(.empty):not(:disabled) {
+    color: #0d0d0d;
+    background: #ececec;
+  }
+}
+
+:root[data-theme="dark"] .send:not(.empty):not(:disabled) {
+  color: #0d0d0d;
+  background: #ececec;
 }
 
 /* High contrast drops the fill, so the send button keeps a system outline there; nothing changes outside that mode. */
@@ -5652,12 +5722,22 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   flex: none;
 }
 
+/* The level marks carry their own stroke weights (ACCESS_ICONS); the check keeps 1.2. */
 .access-icon path,
 .access-check path {
   stroke: currentColor;
-  stroke-width: 1.2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.access-check path {
+  stroke-width: 1.2;
+}
+
+/* MiMo's hand ends its finger partings square. */
+.access-icon[data-access-icon="ask"] path,
+.access-item[data-access="ask"] .access-icon path {
+  stroke-linecap: butt;
 }
 
 .access-item {

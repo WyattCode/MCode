@@ -239,6 +239,7 @@ export const WriteTool: ToolDefinition = {
     "Writing it",
     "- file_path is absolute, or relative to the project root. Missing folders on the way to it are created.",
     "- content is the file as it should end up, in full, with the line endings and final newline the rest of the project uses.",
+    "- Build a large file in parts: write a first portion with this tool, then add the rest with edit calls. A single call carrying the whole of a big file can run past the reply's output limit, and then the file is left cut off part way through.",
     "- Write only the files the work needs. Do not add a README, a summary of what you did, a licence header or a test file nobody asked for.",
     "- Follow the project's own conventions - imports, naming, formatting - rather than the ones you would choose on a blank page. Read a file beside it first when you are not sure what they are.",
     "The result is a diff of what changed, and the user sees it; there is no need to repeat the file back in your reply.",

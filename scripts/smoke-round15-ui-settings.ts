@@ -84,8 +84,7 @@ export async function roundFifteenSettingsUiChecks(check: Check, section: (name:
   // ----------------------------------------------------------------- R15-U21
   section("Round 15 (R15-U21): the models and MCP rows stay inside their card at the 720px minimum")
   {
-    check("the layout helper ran", !layout.error && Boolean(layout.provider && layout.mcp), layout.error)
-    const p = layout.provider
+    check("the layout helper ran", !layout.error && Boolean(layout.mcp), layout.error)
     const m = layout.mcp
     // The template the helper's markup copies: a name and its tag in one flex
     // box, the buttons in another, both inside the row the card clips.
@@ -94,10 +93,18 @@ export async function roundFifteenSettingsUiChecks(check: Check, section: (name:
       /<div class="line" :data-mcp-row="row.name">[\s\S]{0,200}?<div class="line-text">[\s\S]{0,120}?<div class="line-title">[\s\S]{0,900}?<div class="mcp-ctrl">/.test(template),
     )
 
-    check("the card is the 330 measured at the minimum width", layout.cardWidth === 330, layout.cardWidth)
-    check("the provider name is not drawn over the buttons", p?.nameOverButtons === 0, p?.nameOverButtons)
-    check("nor is its “custom” tag", p?.tagOverButtons === 0, p?.tagOverButtons)
-    check("and no button runs past the card, which would cut the last one off", (p?.buttonsPastCard ?? 1) <= 0 && p?.cardClipsX === 0, { past: p?.buttonsPastCard, clipped: p?.cardClipsX })
+    /*
+     * The provider rows are gone from here.
+     *
+     * Four measurements used to run over a fixture built from .prow / .ptext /
+     * .pname / .pdesc / .pmark, and the models page's redesign (R18-M5) took
+     * every one of those classes with it - the note eight lines down says so.
+     * The probe injects only SettingsDialog's own stylesheet, so those divs
+     * stacked unstyled, every overlap was structurally 0 and no change to the
+     * product could have made them red (R25-F5). `cardWidth === 330` measured
+     * the probe's own `#page { width: 330px }`. The MCP rows below use live
+     * classes and stay.
+     */
     check("the MCP server's name is not drawn over its switch and buttons", m?.titleOverControl === 0, m?.titleOverControl)
     check("nor do those run past the card", (m?.controlPastCard ?? 1) <= 0 && m?.cardClipsX === 0, { past: m?.controlPastCard, clipped: m?.cardClipsX })
     check("a long server name sets in two lines at most, instead of breaking into a column", (m?.titleLines ?? 9) <= 2, { lines: m?.titleLines, height: m?.titleHeight })
@@ -117,10 +124,11 @@ export async function roundFifteenSettingsUiChecks(check: Check, section: (name:
   }
 
   // ----------------------------------------------------------------- R15-U22
-  section("Round 15 (R15-U22): the config path keeps its 11.5px, and the empty worktree card the rows' 17")
+  section("Round 15 (R15-U22): the config path keeps its 11.5px, and the empty worktree card the rows' 16")
   {
     // R18-M5: the models page lost its config path (26.920 keeps it on the config page alone), and with it these measurements.
     const pad = layout.padding
-    check("and that is the rows' 16 above and below, 17 aside", pad?.wtEmpty === "16px 17px", pad?.wtEmpty)
+    // R21-F2: MiMo's sr is 16 on every side, so the card that holds a sentence is too.
+    check("and that is the rows' 16 on every side", pad?.wtEmpty === "16px", pad?.wtEmpty)
   }
 }

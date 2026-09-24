@@ -44,6 +44,9 @@ export const UNINDEXED_SCAN = 20
  */
 export const SHORT_SCAN = 3_000
 
+/** How many of a query's pieces, longest first, the trigram lookup requires; the rest are left to the overlay. */
+const TRIGRAM_PHRASES = 16
+
 /**
  * Bumped when what is indexed changes, so an index from before is filled again.
  * 2: projects are named by repository (memory/project-id.ts), and compaction
@@ -447,7 +450,7 @@ async close(): Promise<void> {
    * matches it: anywhere in the text, inside a word or across words (R15-S3).
    *
    * Pieces of three characters or more are looked up in the trigram index, a
-   * message having to hold them all; shorter pieces are then left to the
+   * message having to hold them all (the longest TRIGRAM_PHRASES); shorter pieces are then left to the
    * overlay's own matcher, which only makes the set larger. A query with no
    * piece that long has no trigram to look up, so it is answered twice over:
    * by the word index across the whole history, as before (a word, or the
@@ -458,7 +461,16 @@ async close(): Promise<void> {
     await this.flush()
     const pieces = substringPieces(query)
     if (!pieces.length) return new Set()
-    const phrases = pieces.map(trigramPhrase).filter((phrase): phrase is string => phrase !== undefined)
+    /*
+     * Each distinct phrase once, whatever its case (the trigram match ignores
+     * case), and only the longest few: every phrase is a SELECT joined by
+     * INTERSECT, which SQLite refuses past 500, and a pasted paragraph has
+     * that many. Leaving the shorter ones out only makes the set larger, and
+     * the overlay's own matcher reads every conversation it names.
+     */
+    const distinct = new Map<string, string>()
+    for (const phrase of pieces.map(trigramPhrase)) if (phrase !== undefined) distinct.set(phrase.toLowerCase(), phrase)
+    const phrases = [...distinct.values()].sort((a, b) => [...b].length - [...a].length).slice(0, TRIGRAM_PHRASES)
     if (phrases.length) {
       const one = "SELECT p.message_id, p.session_id FROM history_part_trigram t JOIN history_part p ON p.id = t.rowid WHERE history_part_trigram MATCH ?"
       const rows = await this.db.all<{ session_id: string }>(`SELECT DISTINCT session_id FROM (${phrases.map(() => one).join(" INTERSECT ")})`, ...phrases)

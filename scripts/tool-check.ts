@@ -6,6 +6,8 @@
  * it started keeps running, and an edit that silently changes the wrong line.
  * Neither is visible from the interface and neither is a type error.
  */
+// First of all, so nothing here can read the person's own home directory.
+import "./fenced-home"
 import fs from "node:fs/promises"
 import { createRequire } from "node:module"
 import { pathToFileURL } from "node:url"

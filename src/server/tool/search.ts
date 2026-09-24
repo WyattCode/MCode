@@ -176,7 +176,8 @@ export const GlobTool: ToolDefinition = {
     return {
       output,
       title: relative(context.directory, root),
-      metadata: { count: found.length, truncated },
+      // No `truncated` flag: that is the shared cap's opt-out, for a tool that capped its own bytes. This one caps by file count, and 100 paths can still run far over the byte cap.
+      metadata: { count: found.length },
     }
   },
 }
@@ -327,6 +328,7 @@ export const GrepTool: ToolDefinition = {
     "Narrow it with path - a folder to search, or a single file - and with include, a glob naming which files to look in (`*.ts`, `*.{ts,tsx}`). A file include names is searched even when .gitignore leaves it out.",
     "Matches come back as the matching lines grouped under each file, most recently changed files first, at most 100 matches; past that it says so, so a search that hits the cap should be narrowed rather than trusted as complete.",
     "It is faster than running grep or Select-String through bash and does not depend on which tools this machine has. Reach for it to find where something is used, then read that file; use glob when you are matching names rather than contents.",
+    "It shows where matches are, not how many: to count them, per file or in all, run ripgrep through bash (`rg --count`, or `rg --count-matches` for every hit on a line) rather than grep. When rg is not on the PATH, the copy MCode ships is at the path in the MCODE_RIPGREP_PATH environment variable.",
   ].join("\n"),
   permission: "grep",
   parameters: {
@@ -359,7 +361,7 @@ export const GrepTool: ToolDefinition = {
         : Promise.resolve({ rows: [] as Row[], partial: true })
     ).catch(stopped)
 
-    const empty = { output: "No files found", title: pattern, metadata: { matches: 0, truncated: false } }
+    const empty = { output: "No files found", title: pattern, metadata: { matches: 0 } }
     if (rows.length === 0) return empty
     const times = new Map<string, number>()
     for (const file of new Set(rows.map((row) => row.path))) {
@@ -384,6 +386,7 @@ export const GrepTool: ToolDefinition = {
     }
     if (truncated) lines.push("", `(${LIMIT} of ${total} matches shown. Narrow the path or the pattern to see the rest.)`)
     if (partial) lines.push("", "(Some paths could not be read and were skipped.)")
-    return { output: lines.join("\n"), title: pattern, metadata: { matches: total, truncated } }
+    // As glob above: 100 matches of up to 2 000 characters each is four times the shared byte cap, so that cap still has to run over this.
+    return { output: lines.join("\n"), title: pattern, metadata: { matches: total } }
   },
 }

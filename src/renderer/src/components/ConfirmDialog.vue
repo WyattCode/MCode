@@ -50,7 +50,8 @@ onMounted(() => {
   z-index: 130;
   display: grid;
   place-items: center;
-  background: var(--scrim);
+  /* MiMo's dialog scrim is bg-black/50 in both schemes, not a lighter one in light. */
+  background: #00000080;
 }
 
 .dialog {
@@ -59,10 +60,10 @@ onMounted(() => {
   box-sizing: border-box;
   width: min(400px, 88vw);
   padding: 22px 24px;
-  background: var(--surface-raised);
+  background: var(--surface-page);
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--shadow-pop);
 }
 
 h2 {
@@ -74,7 +75,8 @@ h2 {
 
 .body {
   margin: 8px 0 0;
-  color: var(--text-weak);
+  /* MiMo draws a dialog's message in mut, the same as a row's sub-line. */
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.6;
   white-space: pre-wrap;
@@ -100,31 +102,13 @@ footer {
 /* MiMo's dialog cancel: the page ground under a line, menu-hover on hover. */
 .ghost {
   color: var(--text-base);
-  background: #fffefd;
+  background: var(--surface-page);
   border-color: var(--border-weak);
 }
 
 .ghost:hover {
   color: var(--text-strong);
-  background: #f1f0ec;
-}
-
-:root[data-theme="dark"] .ghost {
-  background: #1a1a1a;
-}
-
-:root[data-theme="dark"] .ghost:hover {
-  background: #ffffff0f;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .ghost {
-    background: #1a1a1a;
-  }
-
-  :root:not([data-theme="light"]) .ghost:hover {
-    background: #ffffff0f;
-  }
+  background: var(--surface-hover);
 }
 
 /* Not destructive: the app's primary button. */

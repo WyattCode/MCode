@@ -73,7 +73,16 @@ export function toProviderMessages(messages: Message[], inputs?: Partial<ModelMo
 
     for (const part of message.parts) {
       if (part.type === "reasoning") {
-        if (sameModel && part.signature) assistant.push({ type: "thinking", thinking: part.text, signature: part.signature })
+        /*
+         * And only while it still has its words. A level-2 prune empties a
+         * reasoning part's text and keeps its signature, which would send a
+         * signed thinking block whose contents are not what was signed - the
+         * one shape that cannot be right, whatever the provider makes of it.
+         * The newest turns are never pruned, so the block this model must see
+         * to carry on a tool call is still whole. The text arm below guards the
+         * same way.
+         */
+        if (sameModel && part.signature && part.text) assistant.push({ type: "thinking", thinking: part.text, signature: part.signature })
       } else if (part.type === "text") {
         if (part.text.trim()) assistant.push({ type: "text", text: part.text })
       } else if (part.type === "tool") {
@@ -277,6 +286,7 @@ export function messagesRequest(request: TurnRequest): MessagesBody {
     // The conversation's own tail follows the marked prefix unmarked, so the prefix reads from one cache across conversations.
     system: [{ type: "text", text: request.system, cache_control: mark }, ...(request.systemTail ? [{ type: "text" as const, text: request.systemTail }] : [])],
     tools,
+    ...(request.toolChoice && tools.length ? { tool_choice: { type: request.toolChoice } } : {}),
     messages,
     ...reasoningRequest(request.model.model, request.effort, request.variants, maxTokens, limit ?? wanted),
     // MiMo's family sampling: none for Claude, set for another family reached over this protocol.

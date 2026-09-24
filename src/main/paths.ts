@@ -54,6 +54,24 @@ function extensionOf(file: string): string {
   return path.extname(trimmed).toLowerCase()
 }
 
+/** What the reader is told when the thing it asked to open turns out to be a program. */
+export const EXECUTABLE_REFUSAL = "出于安全,不支持直接打开可执行文件"
+
+/**
+ * Whether this is a program, by the name it is written with and by the name of
+ * what it really is.
+ *
+ * Exported because a second channel hands paths to the desktop - the file cards
+ * in the conversation - and used to do so with no check at all, so a page that
+ * could call it could start any executable on the machine (R25-E1).
+ */
+export async function isProgram(target: string, stat: { mode: number }): Promise<boolean> {
+  // The name as written and the file it really is: a link called notes.txt may point at a program.
+  const real = await fs.realpath(target).catch(() => target)
+  const unixExecutable = process.platform !== "win32" && (stat.mode & 0o111) !== 0 && !extensionOf(real)
+  return EXECUTABLE.has(extensionOf(target)) || EXECUTABLE.has(extensionOf(real)) || unixExecutable
+}
+
 export async function openNativePath(target: unknown): Promise<OpenNativeResult> {
   if (!usable(target)) return { ok: false, code: "invalid", error: "路径无效" }
   let stat
@@ -63,11 +81,8 @@ export async function openNativePath(target: unknown): Promise<OpenNativeResult>
     return { ok: false, code: "missing", error: "路径不存在(可能已被删除)" }
   }
   if (!stat.isFile()) return { ok: false, code: "notFile", error: "不是文件,无法打开" }
-  // The name as written and the file it really is: a link called notes.txt may point at a program.
-  const real = await fs.realpath(target).catch(() => target)
-  const unixExecutable = process.platform !== "win32" && (stat.mode & 0o111) !== 0 && !extensionOf(real)
-  if (EXECUTABLE.has(extensionOf(target)) || EXECUTABLE.has(extensionOf(real)) || unixExecutable) {
-    return { ok: false, code: "executable", error: "出于安全,不支持直接打开可执行文件" }
+  if (await isProgram(target, stat)) {
+    return { ok: false, code: "executable", error: EXECUTABLE_REFUSAL }
   }
   const error = await shell.openPath(target)
   return error ? { ok: false, code: "failed", error } : { ok: true }
@@ -121,7 +136,13 @@ export function registerPaths(ipcMain: IpcMain) {
   /* A diagram saved as a picture: only a PNG, only where the person chose in the dialog. */
   ipcMain.handle("mcode:save-png", async (event, suggested: unknown, base64: unknown) => {
     if (typeof base64 !== "string") return undefined
-    const name = typeof suggested === "string" ? path.basename(suggested).replace(/[<>:"|?*\x00-]/g, "_") : ""
+    /*
+     * \x00- was a range nobody finished, so the class matched a literal
+     * hyphen - "sequence-diagram.png" reached the dialog as
+     * "sequence_diagram.png" - while every control character it was meant to
+     * catch went straight through to defaultPath (R25-E6).
+     */
+    const name = typeof suggested === "string" ? path.basename(suggested).replace(/[<>:"|?*\x00-\x1f]/g, "_") : ""
     const options = {
       defaultPath: /\.png$/i.test(name) ? name : "diagram.png",
       filters: [{ name: "PNG", extensions: ["png"] }],
@@ -130,7 +151,13 @@ export function registerPaths(ipcMain: IpcMain) {
     // One native dialog at a time, as every other picker here: a second ask is answered busy.
     const claim = claimDialog(process.platform, owner)
     if (!claim) return PICKER_BUSY
-    const result = await (owner ? dialog.showSaveDialog(owner, options) : dialog.showSaveDialog(options)).finally(() => releaseDialog(claim))
+    // try/finally, not `.finally` on the result: a call that throws on the way in leaves no promise to release on (R25-E5).
+    let result
+    try {
+      result = await (owner ? dialog.showSaveDialog(owner, options) : dialog.showSaveDialog(options))
+    } finally {
+      releaseDialog(claim)
+    }
     if (result.canceled || !result.filePath) return undefined
     await fs.writeFile(result.filePath, Buffer.from(base64, "base64"))
     return result.filePath

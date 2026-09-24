@@ -396,21 +396,26 @@ function startResize(event: PointerEvent) {
   inset-inline: 0;
   height: 7px;
   cursor: row-resize;
-  z-index: 2;
+  z-index: 30;
 }
 
 :global(body.resizing-v) {
   cursor: row-resize;
 }
 
-/* MiMo's bar: 38 tall on a 5px/10px padding, four between the tabs, no rule under it. */
+/*
+ * MiMo's bar: no height of its own, 5 by 10 inside, four between the tabs and
+ * no rule under it. Its own stylesheet measures 37.71 with a tab in it, so 38
+ * is the floor here rather than the ceiling - the row grows with the interface
+ * font, as MiMo's does.
+ */
 .head {
   display: flex;
   flex-shrink: 0;
   box-sizing: border-box;
   align-items: center;
   gap: 4px;
-  height: 38px;
+  min-height: 38px;
   padding: 5px 10px;
 }
 
@@ -428,7 +433,7 @@ function startResize(event: PointerEvent) {
   height: calc(28px * var(--ui-font-scale, 1));
   padding-block: 0;
   padding-inline: 11px;
-  color: var(--text-strong);
+  color: var(--text-body);
   border: 1px solid transparent;
   border-radius: 7px;
   font-size: calc(12px * var(--ui-font-scale, 1));
@@ -439,18 +444,20 @@ function startResize(event: PointerEvent) {
   cursor: pointer;
 }
 
-/* MiMo's .bp-tab.active: the page fill inside a warm hairline (#2e2e2e in dark). */
+/* MiMo's .bp-tab.active: the page fill (#fffefd, #181818 dark) inside a warm hairline. */
 .tab.on {
-  background: var(--surface-raised);
+  background: #fffefd;
   border-color: #f0ebe5;
 }
 
 :root[data-theme="dark"] .tab.on {
+  background: #181818;
   border-color: #2e2e2e;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .tab.on {
+    background: #181818;
     border-color: #2e2e2e;
   }
 }
@@ -468,7 +475,7 @@ function startResize(event: PointerEvent) {
   align-items: center;
   justify-content: center;
   padding: 5px 8px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 7px;
@@ -477,7 +484,7 @@ function startResize(event: PointerEvent) {
 }
 
 .add:hover {
-  color: var(--text-strong);
+  color: var(--text-body);
 }
 
 /*
@@ -489,37 +496,20 @@ function startResize(event: PointerEvent) {
   flex-shrink: 0;
   width: 26px;
   height: 26px;
-  color: var(--text-weak);
-  border-radius: 7px;
-}
-
-.head .icon-btn.hide:hover {
-  color: var(--text-strong);
-  background: #f1f0ec;
-}
-
-:root[data-theme="dark"] .head .icon-btn.hide:hover {
-  background: #ffffff0f;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .head .icon-btn.hide:hover {
-    background: #ffffff0f;
-  }
 }
 
 /* MiMo's close mark: a 13px ×, always there, muted, on a 4px corner. */
 .tab-close {
   flex-shrink: 0;
   padding: 0 3px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-radius: 4px;
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: calc(18px * var(--ui-font-scale, 1));
 }
 
 .tab-close:hover {
-  color: var(--text-strong);
+  color: var(--text-body);
   background: var(--overlay-hover);
 }
 
@@ -539,7 +529,7 @@ function startResize(event: PointerEvent) {
   gap: 8px;
   margin: 6px 8px 0;
   padding: 6px 10px;
-  color: var(--text-strong);
+  color: var(--text-body);
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 8px;
@@ -554,7 +544,7 @@ function startResize(event: PointerEvent) {
 .mismatch-btn {
   flex: 0 0 auto;
   padding: 2px 10px;
-  color: var(--text-strong);
+  color: var(--text-body);
   background: none;
   border: 1px solid var(--border-weak);
   border-radius: 6px;
@@ -566,9 +556,23 @@ function startResize(event: PointerEvent) {
   opacity: 0.85;
 }
 
+/* MiMo's primary pill: the txt ink filled, its label the page colour. */
 .mismatch-btn.primary {
-  color: var(--surface-raised);
-  background: var(--text-strong);
+  color: #fffefd;
+  background: #151c13cc;
   border-color: transparent;
+}
+
+/* MiMo's --color-txt is the fill of the button that carries the turn, not a translucent white. */
+:root[data-theme="dark"] .mismatch-btn.primary {
+  color: #181818;
+  background: #f4f4f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .mismatch-btn.primary {
+    color: #181818;
+    background: #f4f4f5;
+  }
 }
 </style>

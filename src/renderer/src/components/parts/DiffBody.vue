@@ -694,7 +694,7 @@ html[data-diff-marks="signs"] .db-row.del .db-ln {
 /* MiMo's cap note: 12px muted, under the diff. */
 .db-cap {
   padding: 4px 10px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }

@@ -44,7 +44,7 @@ const groups = computed<Group[]>(() => [
     label: t("menu.file"),
     items: [
       { key: "new-session", label: t("side.newTask"), hint: "Ctrl+N" },
-      { key: "open-project", label: t("menu.openProject"), hint: "Ctrl+O" },
+      { key: "open-project", label: t("menu.openFolder"), hint: "Ctrl+O" },
       { key: "settings", label: t("menu.settings"), hint: "Ctrl+," },
       { key: "close", label: t("menu.close"), divided: true },
       { key: "quit", label: t("menu.quit") },
@@ -70,11 +70,11 @@ const groups = computed<Group[]>(() => [
       { key: "sidebar", label: t("menu.sidebar"), hint: "Ctrl+B", divided: true },
       { key: "terminal", label: t("menu.terminal"), hint: controlChord("`", app.platform) },
       { key: "reload", label: t("menu.reload"), divided: true },
-      { key: "devtools", label: t("menu.devTools") },
+      { key: "devtools", label: t("menu.developerTools") },
       { key: "zoom-reset", label: t("menu.resetZoom"), hint: "Ctrl+0", divided: true },
       { key: "zoom-in", label: t("menu.zoomIn"), hint: "Ctrl+=" },
       { key: "zoom-out", label: t("menu.zoomOut"), hint: "Ctrl+-" },
-      { key: "fullscreen", label: t("menu.fullscreen"), divided: true },
+      { key: "fullscreen", label: t("menu.enterFullscreen"), divided: true },
     ],
   },
   {
@@ -241,7 +241,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
   padding: 2px;
   background: var(--surface-menu);
   border-radius: 6px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-menu);
 }
 
 /* Names the app the menu belongs to, the way the platform's own menu does. */
@@ -291,7 +291,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
   padding: 2px;
   background: var(--surface-menu);
   border-radius: 6px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-menu);
 }
 
 /* Unavailable where the user is: dimmed, and not a hover target. */

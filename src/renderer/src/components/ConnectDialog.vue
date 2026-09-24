@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue"
+import { computed, nextTick, ref, watch } from "vue"
 import type { ProviderStatus } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
@@ -46,6 +46,21 @@ const way = ref<Way | undefined>(props.group ? waysFor(props.group.entries)[0] :
 type Step = "browse" | "methods" | "form" | "custom"
 const step = ref<Step>(
   props.group ? (waysFor(props.group.entries).length > 1 ? "methods" : "form") : "browse",
+)
+
+/*
+ * The list's search takes the keys whenever the list is shown - on opening and
+ * back from the custom form. Focused here: Chromium skips an `autofocus` while
+ * anything else in the page holds focus - the composer the dialog was opened
+ * from, or the row that led back to the list.
+ */
+const searchEl = ref<HTMLInputElement>()
+watch(
+  step,
+  (now) => {
+    if (now === "browse") void nextTick(() => searchEl.value?.focus())
+  },
+  { immediate: true },
 )
 
 /**
@@ -284,7 +299,7 @@ useEscapeLayer(dismiss)
             <circle cx="7.2" cy="7.2" r="4.4" stroke="currentColor" stroke-width="1.3" />
             <path d="M10.6 10.6 13.4 13.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
           </svg>
-          <input v-model="query" class="search-in" :placeholder="t('connect.search')" spellcheck="false" autofocus />
+          <input ref="searchEl" v-model="query" class="search-in" :placeholder="t('connect.search')" spellcheck="false" />
           <button v-if="query" class="icon small" v-tip="{ label: t('common.clear'), placement: 'bottom' }" @click="query = ''">
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2" />
@@ -444,7 +459,7 @@ useEscapeLayer(dismiss)
             <label class="label">{{ t("auth.code") }}</label>
             <button class="code" @click="copyCode">
               <span>{{ auth.userCode }}</span>
-              <span class="code-hint">{{ copied ? t("set.saved") : t("stream.copy") }}</span>
+              <span class="code-hint">{{ copied ? t("code.copied") : t("edit.copy") }}</span>
             </button>
           </template>
 
@@ -477,10 +492,10 @@ useEscapeLayer(dismiss)
   width: min(560px, calc(100vw - 64px));
   max-height: min(620px, calc(100vh - 96px));
   padding: 10px 26px 26px;
-  background: var(--surface-raised);
+  background: var(--surface-page);
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-pop);
   outline: none;
 }
 
@@ -537,7 +552,6 @@ useEscapeLayer(dismiss)
   line-height: calc(20px * var(--ui-font-scale, 1));
   letter-spacing: -0.13px;
 }
-
 
 .lead {
   margin: 4px 0 18px;
@@ -729,7 +743,7 @@ useEscapeLayer(dismiss)
 .label {
   display: block;
   margin-bottom: 7px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
@@ -770,7 +784,7 @@ useEscapeLayer(dismiss)
   place-items: center;
   width: 28px;
   height: 28px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-radius: 6px;
   transform: translateY(-50%);
 }
@@ -845,7 +859,7 @@ useEscapeLayer(dismiss)
   align-items: center;
   gap: 10px;
   margin-top: 16px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
@@ -864,9 +878,10 @@ useEscapeLayer(dismiss)
   }
 }
 
+/* MiMo's red-500, which is not its --color-err, so --text-critical does not fit. */
 .error {
   margin-top: 16px;
-  color: var(--text-critical);
+  color: #fb2c36;
   font-size: calc(12.5px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }

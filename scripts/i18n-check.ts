@@ -98,7 +98,13 @@ const UNNAMED_TOOLS = new Set(["invalid"])
 const toolNames = fs
   .readdirSync(toolDir)
   .filter((name) => name.endsWith(".ts"))
-  .flatMap((name) => [...fs.readFileSync(path.join(toolDir, name), "utf8").matchAll(/^ {2}name: "([a-z]+)"/gm)])
+  /*
+   * Underscores as well. `[a-z]+` matched none of the thirteen tools whose
+   * names carry one - automation_update, present_files, skill_search,
+   * plan_exit, notebook_edit and the rest - so `tool.<name>` went unchecked for
+   * all of them and a new one could ship with no wording in any table (R25-F10).
+   */
+  .flatMap((name) => [...fs.readFileSync(path.join(toolDir, name), "utf8").matchAll(/^ {2}name: "([a-z_]+)"/gm)])
   .map((match) => match[1])
   .filter((name) => !UNNAMED_TOOLS.has(name))
 
@@ -320,13 +326,29 @@ if (fixture && fs.existsSync(fixture)) {
   const plain = (value: string) => value.replace(/\{\{[^}]*\}\}|\{[^}]*\}/g, "{}").trim()
   const drift: string[] = []
   let compared = 0
+  /*
+   * A key no table carries at all is reported rather than skipped.
+   *
+   * `if (have === undefined) continue` is right for a key one language has not
+   * been given yet, and wrong for a key that has left every table: 137 of the
+   * fixture's keys were in none of the eighteen, so a quarter of the
+   * comparison was silently doing nothing and a key deleted everywhere would
+   * still read as "consistent with the reference" (R25-F11). The fixture is a
+   * checked-in file; a key that is no longer ours belongs out of it, as the
+   * note above says.
+   */
+  const orphans: string[] = []
   for (const [key, byLanguage] of Object.entries(expected)) {
+    if (!Object.keys(tables).some((name) => tables[name]?.[key] !== undefined)) orphans.push(key)
     for (const [name, want] of Object.entries(byLanguage)) {
       const have = tables[name]?.[key]
       if (have === undefined) continue
       compared += 1
       if (plain(have) !== plain(want)) drift.push(`${name} ${key}: ${JSON.stringify(have)} vs reference ${JSON.stringify(want)}`)
     }
+  }
+  if (orphans.length) {
+    problems.push(`${orphans.length} reference key(s) are in no language table, so they are compared against nothing: ${orphans.slice(0, 8).join(", ")}${orphans.length > 8 ? ", ..." : ""}`)
   }
   console.log(`
 compared with the reference: ${compared} string(s), ${drift.length} differing`)

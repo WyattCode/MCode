@@ -7,7 +7,6 @@ import ToolGroup from "./parts/ToolGroup.vue"
 import QuestionCard from "./parts/QuestionCard.vue"
 import ErrorStep from "./parts/ErrorStep.vue"
 import RetryRow from "./parts/RetryRow.vue"
-import TextShimmer from "./parts/TextShimmer.vue"
 import MessageSourceRow from "./parts/MessageSource.vue"
 import type { MessageSource } from "@shared/protocol"
 import SubagentActivity from "./parts/SubagentActivity.vue"
@@ -43,6 +42,8 @@ import {
   nextFollowing,
   parkRoom,
   parkTarget,
+  parkTop,
+  readerMoved,
   reattachWithin,
   scrolledUp,
   UP_SLACK,
@@ -551,14 +552,15 @@ function layout(turn: Turn, at: number): { rows: Row[]; foldAt: number } {
   if (live) {
     const retry = turn.last?.retry
     if (retry) all.push({ kind: "retry", id: `retry:${turn.last?.id}`, attempt: retry.attempt, reason: retryReason(retry.message, retry.kind), next: retry.next })
-    // The last group with nothing said after it is the one being worked in.
+    /*
+     * The stage being worked in - everything after the last thing said, where
+     * an answered question and subagent news count as said, as they end a
+     * stage in MiMo - has every one of its groups open.
+     */
     for (let index = all.length - 1; index >= 0; index--) {
       const row = all[index]!
-      if (row.kind === "part") break
-      if (row.kind === "group") {
-        row.open = true
-        break
-      }
+      if (speaks(row)) break
+      if (row.kind === "group") row.open = true
     }
     return { rows: all, foldAt: 0 }
   }
@@ -588,10 +590,9 @@ function shown(turn: Turn, at: number): Row[] {
   return foldAt > 0 && !opened.value.has(turn.id) ? all.slice(foldAt) : all
 }
 
-/** Rows that belong to MiMo's tight step column rather than the reply's paragraphs. */
-function isStep(row: Row): boolean {
-  // subagents: notices that reached a running turn are a step row of pills, spaced as steps are.
-  return row.kind === "group" || row.kind === "error" || row.kind === "retry" || row.kind === "question" || row.kind === "steer"
+/** Whether the turn has an answer block to draw: parts, a failure, an end, or a live retry. */
+function answers(turn: Turn, at: number): boolean {
+  return Boolean(turn.parts.length || turn.error || turn.finish || (liveTurn(at) && turn.last?.retry))
 }
 
 /** Whether this is the turn still being worked on. */
@@ -600,12 +601,15 @@ function liveTurn(at: number): boolean {
 }
 
 /*
- * MiMo's head time: whole seconds as "12s", past a minute "1m 5s" - not
- * worded per language. It counts up once a second while the turn runs.
+ * MiMo's head time: whole seconds as "12s", past a minute "1m 5s", past an
+ * hour "1h 2m 3s" - not worded per language. It counts up once a second while
+ * the turn runs.
  */
 function formatDuration(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000))
-  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m ${seconds % 60}s`
 }
 
 const now = ref(Date.now())
@@ -674,30 +678,51 @@ function onScroll() {
   const now = geometry(element)
   const ratio = window.devicePixelRatio || 1
   const width = element.clientWidth
-  // A zoom or a resize moves scrollTop on its own; counting starts again from here.
+  // A zoom or a resize moves scrollTop on its own; counting starts again from here, and a park measured at the old size is off.
   if (!seen || ratio !== seenRatio || width !== seenWidth) {
     seen = now
     seenRatio = ratio
     seenWidth = width
     upRun = 0
+    parkRest = undefined
     measureJump()
     return
   }
-  upRun = now.top > seen.top && pinEcho(now.top) ? upRun : upwardRun(upRun, seen, now)
+  // This component's own scroll, coming back as an event: the pin, and the park putting its question back.
+  const echo = pinEcho(now.top)
+  upRun = now.top > seen.top && echo ? upRun : upwardRun(upRun, seen, now)
   const up = scrolledUp(seen, now) || upRun > UP_SLACK
   if (up) upRun = 0
-  const arrived = movedDown(seen, now)
+  /*
+   * A scroll of its own is not the reader arriving at the end: a park putting
+   * its question back a few pixels down would otherwise land the view within a
+   * pixel of the end and start following again, taking the question with it.
+   */
+  const arrived = movedDown(seen, now) && !echo
+  // The reader moving the view lets a parked question go - the browser pulling scrollTop in as what is above shrinks does not.
+  if (readerMoved(echo, up, arrived)) parkRest = undefined
   seen = now
   measureJump()
   const distance = endDistance(now)
-  if (up || distance > JUMP_DISTANCE) releaseFloor()
+  /*
+   * Not while a park slides: its offset is overflow for 200ms, so the view reads
+   * as far from the end, and taking the floor away would not move it yet - only
+   * when the offset is gone, putting the question at the foot of the view.
+   */
+  if (!endSlide && (up || distance > JUMP_DISTANCE)) releaseFloor()
   following.value = nextFollowing(following.value, up, distance, reattachWithin(ratio), arrived)
 }
 
 function toBottom() {
   const element = scroller.value
+  if (element) settle(element.scrollHeight)
+}
+
+/* Puts the view at `top`, remembered so its own scroll event is not read as the reader's. */
+function settle(top: number) {
+  const element = scroller.value
   if (!element) return
-  element.scrollTop = element.scrollHeight
+  element.scrollTop = top
   lastPin = { at: Date.now(), to: element.scrollTop }
 }
 
@@ -829,6 +854,7 @@ onMounted(() => {
     // The floor was measured for this width; at another the question would not sit where it was put.
     if (inner.value && inner.value.clientWidth !== floorWidth) clearFloor()
     pin()
+    keepRest()
     measureJump()
   })
   sizer.observe(inner.value)
@@ -992,12 +1018,21 @@ const lastAsked = computed(() => {
 const lastTurnID = computed(() => turns.value.at(-1)?.id)
 
 /*
+ * A conversation's first question mounts this view along with it - the hero
+ * stands in while there is nothing to show - so neither the message count nor
+ * lastAsked is ever seen to change. The park the composer asked for says it
+ * was just sent: it enters, and parks (onMounted, below), as any other.
+ */
+const mountPark = !props.side && !props.latest && !props.subagent && shownID.value && lastAsked.value && consumePark(shownID.value) ? lastAsked.value : undefined
+const mountAt = mountPark ? shownMessages.value.findIndex((message) => message.id === mountPark) : -1
+
+/*
  * MiMo's msg-in: a question sent while the conversation is on screen fades in
  * and rises 8px over 200ms. Only messages added after it was opened count, so
  * a conversation opened or loaded all at once draws still (lib/scroll-follow
  * enterMark, over the message count as MiMo keeps it).
  */
-let entering: EnterMark | undefined
+let entering: EnterMark | undefined = mountAt >= 0 ? { id: shownID.value, length: mountAt, from: mountAt } : undefined
 const enterFrom = computed(() => {
   entering = enterMark(entering, shownID.value, shownMessages.value.length)
   return entering.from
@@ -1064,6 +1099,20 @@ const goalAchieved = computed(() => {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 })
 
+/*
+ * The note sits on the reply that met the goal, and only while that reply is
+ * the last: a turn asked for after the judge passed it is not it, and MiMo
+ * drops the note as soon as another turn runs (its goalDone goes on
+ * markRunning) rather than moving it down to later replies.
+ */
+const goalTurnID = computed(() => {
+  const at = shownSession.value?.goal?.done?.at
+  const last = turns.value.at(-1)
+  if (!goalAchieved.value || at === undefined || !last) return undefined
+  const began = last.asked ?? last.started
+  return began !== undefined && began <= at ? last.id : undefined
+})
+
 // The edit box holds the end while open and for 300ms after it closes, as MiMo's does.
 watch(editingAsked, (open, was) => {
   if (was && !open) editClosedAt = performance.now()
@@ -1101,6 +1150,35 @@ function clearFloor() {
   endSlide?.()
   if (floored) floored.style.minHeight = ""
   floored = undefined
+  parkRest = undefined
+}
+
+/*
+ * Where a parked question rests, until the reader moves the view.
+ *
+ * Nothing else keeps it there. A tall question parked by its top is not at the
+ * end, so the pin does not hold it; one parked at the end is held only as long
+ * as the floor below it and the conversation above it keep their heights, and
+ * neither does. The turn before it loses its footer as the reply starts and
+ * grows it back, and the question's own turn is measured before the one above
+ * has settled - 14px and 5px in the probe, and the browser's anchoring either
+ * sat out or made it worse. So the question is put back at its target on every
+ * layout change, until the reader scrolls.
+ */
+let parkRest: { row: HTMLElement; target: number } | undefined
+
+function keepRest() {
+  const view = scroller.value
+  // Not while a park slides: the column's own transform is not where the row will rest.
+  if (!parkRest || !view || following.value || endSlide) return
+  if (!parkRest.row.isConnected) {
+    parkRest = undefined
+    return
+  }
+  const lift = new DOMMatrixReadOnly(getComputedStyle(parkRest.row).transform).m42
+  const off = parkRest.row.getBoundingClientRect().top - lift - view.getBoundingClientRect().top - parkRest.target
+  // A question with nothing above it cannot come down to the target; scrollTop stops at 0 and it stays where it is.
+  if (Math.abs(off) >= 0.5) settle(view.scrollTop + off)
 }
 
 /* The floor goes as soon as taking it away would not move the view: once the reader has left it behind. */
@@ -1153,6 +1231,8 @@ function slideIn(column: HTMLElement, by: number) {
     column.style.transition = ""
     column.style.transform = ""
     endSlide = undefined
+    // The slide held the rest back; where the question now stands is where it stays.
+    keepRest()
     measureJump()
   }
   const onEnd = (event: TransitionEvent) => {
@@ -1183,15 +1263,27 @@ function park(turnID: string) {
   // Where the row stands in the layout: its msg-in is still lifting it from 8px below.
   const lift = new DOMMatrixReadOnly(getComputedStyle(row).transform).m42
   const end = column.getBoundingClientRect().bottom - viewTop
-  const room = parkRoom(box.top - lift - viewTop, parkTarget(view.clientHeight, box.height), view.clientHeight, end)
+  const rowTop = box.top - lift - viewTop
+  const target = parkTarget(view.clientHeight, box.height)
+  const room = parkRoom(rowTop, target, view.clientHeight, end)
+  // A question taller than the view keeps its top in sight; the end would show only its last lines.
+  const rest = parkTop(rowTop, target, view.clientHeight, end)
   if (room > 0) {
     turn.style.minHeight = `${Math.ceil(turn.getBoundingClientRect().height + room)}px`
     floored = turn
   }
   floorWidth = column.clientWidth
-  // To the end as a turn start does, then no longer following: the reply is written below, out of the way.
-  following.value = true
-  pin()
+  /*
+   * To the end, then no longer following: the reply is written below, out of
+   * the way. Straight there rather than through pin(), which a hold (the edit
+   * box just closed by this very send, a selection, a wheel) would veto while
+   * following still went off and the floor was left for the next scroll event
+   * to take - the question stranded at the foot of the view.
+   */
+  if (rest === undefined) toBottom()
+  else settle(rest)
+  // Where it now rests, held there while what is above and below it settles.
+  parkRest = { row, target }
   following.value = false
   parkedIn = shownID.value
   if (room > 0 && !reducedMotion()) slideIn(column, room)
@@ -1206,6 +1298,11 @@ watch(
   },
   { flush: "post" },
 )
+
+// After the mount's own toBottom, registered earlier.
+onMounted(() => {
+  if (mountPark) park(mountPark)
+})
 
 // A finished turn lets go of a floor the reader has already left.
 watch(shownBusy, async (busy) => {
@@ -1681,9 +1778,10 @@ defineExpose({ stepMessage, scroller })
                 v-tip="{ label: t('stream.copyAsked'), placement: 'top' }"
                 @click="copyAsked(turn)"
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <rect x="8" y="8" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2.2" />
-                  <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" stroke="currentColor" stroke-width="2.2" />
+                <!-- MiMo's copy at its 17 by 20 measure: a tall rounded sheet with the corner of the one behind it. -->
+                <svg width="12" height="12" viewBox="0 0 17 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M1 11V5a4 4 0 0 1 4-4h6" />
+                  <rect x="4.75" y="4.75" width="11.25" height="14.25" rx="2.25" />
                 </svg>
               </button>
               <button
@@ -1718,7 +1816,7 @@ defineExpose({ stepMessage, scroller })
         <!-- One block answers with every assistant message of the turn: the first names it, and all of them are listed. -->
         <!-- A retry drops what the failed attempt streamed, so a live turn retrying its first request has no parts yet and still shows its reconnecting row. -->
         <div
-          v-if="turn.parts.length || turn.error || turn.finish || (liveTurn(at) && turn.last?.retry)"
+          v-if="answers(turn, at)"
           class="msg assistant"
           :data-message-id="turn.messageIDs[0]"
           :data-message-ids="turn.messageIDs.join(' ')"
@@ -1745,19 +1843,24 @@ defineExpose({ stepMessage, scroller })
             :aria-label="t('turn.steps')"
             @click="foldRun(turn.id)"
           >
-            <span class="run-label">{{ t("turn.processed") }}</span>
-            <span v-if="headTime(turn, at)" class="run-time" data-turn-time>{{ headTime(turn, at) }}</span>
+            <span class="run-body">
+              <span class="run-label">{{ t("turn.processed") }}</span>
+              <span v-if="headTime(turn, at)" class="run-time" data-turn-time>{{ headTime(turn, at) }}</span>
+            </span>
             <svg class="run-chev" :class="{ open: opened.has(turn.id) }" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="m9 18 6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </button>
           <!-- P5-5: MiMo draws no head over a finished turn with neither steps nor words, so a failure card sits flush at the top. -->
           <div v-else-if="turn.started && (liveTurn(at) || answered(turn))" class="run" data-turn-head :data-live="liveTurn(at) ? 'true' : undefined">
-            <span class="run-label"><TextShimmer :text="t(subagent && liveTurn(at) ? 'subagentDetail.liveHead' : 'turn.processed')" :active="liveTurn(at)" /></span>
-            <span v-if="headTime(turn, at)" class="run-time" data-turn-time>{{ headTime(turn, at) }}</span>
+            <!-- MiMo sweeps the running head's words and its time together. -->
+            <span class="run-body" :class="{ 'running-shimmer': liveTurn(at) }">
+              <span class="run-label">{{ t(subagent && liveTurn(at) ? "subagentDetail.liveHead" : "turn.processed") }}</span>
+              <span v-if="headTime(turn, at)" class="run-time" data-turn-time>{{ headTime(turn, at) }}</span>
+            </span>
           </div>
 
-          <div v-for="row in shown(turn, at)" :key="row.id" class="part" :class="{ step: isStep(row) }">
+          <div v-for="row in shown(turn, at)" :key="row.id" class="part" :class="{ words: row.kind === 'part' && row.part.type === 'text' }">
             <!-- subagents: news of background subagents that reached the turn while it ran. -->
             <SubagentActivity v-if="row.kind === 'steer'" :notices="row.steer.notices" />
             <ToolGroup v-else-if="row.kind === 'group'" :items="row.items" :default-open="row.open" :actor="row.actor" />
@@ -1765,6 +1868,20 @@ defineExpose({ stepMessage, scroller })
             <ErrorStep v-else-if="row.kind === 'error'" :error="row.error" />
             <RetryRow v-else-if="row.kind === 'retry'" :attempt="row.attempt" :reason="row.reason" :next="row.next" @stop="app.abort(shownID)" />
             <TextPart v-else-if="row.part.type === 'text'" :part="row.part" />
+          </div>
+
+          <!-- MiMo's working indicator ends the running turn inside it, under its last row. -->
+          <div
+            v-if="thinking(turn, at)"
+            class="work-indicator"
+            role="status"
+            aria-live="polite"
+            :aria-label="t('stream.workLoading')"
+            data-work-loading
+          >
+            <svg viewBox="0 0 34 7" width="34" height="7" aria-hidden="true" focusable="false">
+              <circle v-for="x in [3.5, 12.5, 21.5, 30.5]" :key="x" :cx="x" cy="3.5" r="3" fill="currentColor" />
+            </svg>
           </div>
 
           <!--
@@ -1846,9 +1963,9 @@ defineExpose({ stepMessage, scroller })
               v-tip="{ label: t('stream.replyCopy'), placement: 'top' }"
               @click="copyReply(turn)"
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <rect x="8" y="8" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2.2" />
-                <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" stroke="currentColor" stroke-width="2.2" />
+              <svg width="12" height="12" viewBox="0 0 17 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M1 11V5a4 4 0 0 1 4-4h6" />
+                <rect x="4.75" y="4.75" width="11.25" height="14.25" rx="2.25" />
               </svg>
             </button>
             <button
@@ -1860,15 +1977,15 @@ defineExpose({ stepMessage, scroller })
               v-tip="{ label: t('stream.replyFork'), placement: 'top' }"
               @click="branchReply(turn)"
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <circle cx="6" cy="5" r="2.2" stroke="currentColor" stroke-width="2.2" />
-                <circle cx="6" cy="19" r="2.2" stroke="currentColor" stroke-width="2.2" />
-                <circle cx="18" cy="8" r="2.2" stroke="currentColor" stroke-width="2.2" />
-                <path d="M6 7.2v9.6M18 10.2c0 4-3.4 5.2-8.3 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+              <!-- MiMo's branch at its 17 by 20 measure: a stem with a branch halfway and a foot that turns right, each ending at a ring. -->
+              <svg width="12" height="12" viewBox="0 0 17 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M2 1.5v11.25a3.5 3.5 0 0 0 3.5 3.5h4.75M2 6.75h8.25" />
+                <circle cx="12.5" cy="6.75" r="2.25" />
+                <circle cx="12.5" cy="16.25" r="2.25" />
               </svg>
             </button>
             <!-- 追求目标: the one word a met goal leaves in the transcript, on the reply that met it. -->
-            <span v-if="goalAchieved && turn.id === lastTurnID" class="goal-done" data-goal-achieved>
+            <span v-if="goalAchieved && turn.id === goalTurnID" class="goal-done" data-goal-achieved>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
                 <path d="M4 12.6 9 17.5 20 6.5" />
               </svg>
@@ -1878,9 +1995,10 @@ defineExpose({ stepMessage, scroller })
           </div>
         </div>
 
+        <!-- Before the turn has anything of its own to draw, the indicator stands under the question. -->
         <div
-          v-if="thinking(turn, at)"
-          class="work-indicator"
+          v-if="thinking(turn, at) && !answers(turn, at)"
+          class="work-indicator lone"
           role="status"
           aria-live="polite"
           :aria-label="t('stream.workLoading')"
@@ -1975,17 +2093,18 @@ defineExpose({ stepMessage, scroller })
 }
 
 /* Under a card - the edited files, or the artifacts - it keeps its distance. */
-.msg-actions:is(.file-card + .msg-actions, [data-fc-reverted] + .msg-actions, .fc-confirm + .msg-actions, .err-card + .msg-actions) {
+.msg-actions:is(.file-card + .msg-actions, [data-fc-reverted] + .msg-actions, .fc-confirm + .msg-actions, .err-card + .msg-actions, .media-strip ~ .msg-actions) {
   margin-top: 10px;
 }
 
+/* MiMo's icon-btn xs: muted, and on hover its side-hover fill under its txt colour. */
 .msg-act {
   display: grid;
   place-items: center;
   width: 26px;
   height: 26px;
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 7px;
@@ -1993,7 +2112,7 @@ defineExpose({ stepMessage, scroller })
 }
 
 .msg-act:hover {
-  color: var(--text-base);
+  color: var(--text-body);
   background: var(--surface-hover);
 }
 
@@ -2007,17 +2126,27 @@ defineExpose({ stepMessage, scroller })
   align-items: center;
   gap: 8px;
   margin-inline-start: 6px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   opacity: 0;
-  transition: opacity 0.12s;
 }
 
+/* MiMo's line: #f0ebe5 in light, #2e2e2e in dark. */
 .msg-time::before {
   width: 1px;
   height: 12px;
   content: "";
-  background: var(--border-weak);
+  background: #f0ebe5;
+}
+
+:root[data-theme="dark"] .msg-time::before {
+  background: #2e2e2e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .msg-time::before {
+    background: #2e2e2e;
+  }
 }
 
 .msg.assistant:hover .msg-time,
@@ -2032,7 +2161,7 @@ defineExpose({ stepMessage, scroller })
   gap: 5px;
   margin-inline-start: 6px;
   padding-inline-start: 9px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-inline-start: 1px solid var(--border-weak);
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
@@ -2051,7 +2180,6 @@ defineExpose({ stepMessage, scroller })
   align-self: flex-end;
   align-items: center;
   gap: 4px;
-  margin-bottom: 6px;
   padding: 1.5px 7px;
   color: var(--text-strong);
   background: var(--surface-layer);
@@ -2095,8 +2223,8 @@ defineExpose({ stepMessage, scroller })
 }
 
 /*
- * MiMo's user-meta under a question: the time, then copy and edit, 2px below
- * the bubble; all of it out of sight, and the buttons out of reach, until the
+ * MiMo's user-meta under a question: the time, then copy and edit, the row's
+ * 6px gap and 2px more below the bubble; all of it out of sight, and the buttons out of reach, until the
  * question is under the pointer or holds focus.
  */
 .user-meta {
@@ -2108,7 +2236,7 @@ defineExpose({ stepMessage, scroller })
 }
 
 .user-time {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   opacity: 0;
   transition: opacity 0.12s;
@@ -2144,9 +2272,23 @@ defineExpose({ stepMessage, scroller })
   align-items: center;
   width: 40px;
   height: 14px;
-  margin-top: 6px;
+  /* MiMo's: 14 under a step row, whose 5px padding is its own. */
+  margin-top: 14px;
   color: var(--text-strong);
   opacity: 0.58;
+}
+
+/* Ten under the words being written, whose 5px padding is their own, or under the head alone. */
+.part.words + .work-indicator {
+  margin-top: 5px;
+}
+
+.run + .work-indicator {
+  margin-top: 10px;
+}
+
+.work-indicator.lone {
+  margin-top: 6px;
 }
 
 .work-indicator svg {
@@ -2207,6 +2349,7 @@ defineExpose({ stepMessage, scroller })
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  gap: 6px;
 }
 
 /* MiMo's msg-in, on a question sent while the conversation is open; the reduced-motion rule in base.css lands it at once. */
@@ -2237,7 +2380,7 @@ defineExpose({ stepMessage, scroller })
   box-sizing: border-box;
   width: 100%;
   padding: 9px 13px;
-  background: color-mix(in srgb, var(--text-strong) 9.5%, var(--surface-raised));
+  background: #f8f7f5;
   border-radius: 16px;
 }
 
@@ -2264,7 +2407,7 @@ defineExpose({ stepMessage, scroller })
 
 .asked-edit-busy {
   margin-inline-end: auto;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.4;
 }
@@ -2312,7 +2455,6 @@ defineExpose({ stepMessage, scroller })
   gap: 8px;
   width: fit-content;
   max-width: min(82%, 64ch);
-  margin-bottom: 8px;
   margin-inline-start: auto;
 }
 
@@ -2332,7 +2474,7 @@ defineExpose({ stepMessage, scroller })
   justify-content: center;
   min-width: 0;
   background: var(--surface-layer);
-  border: 0.5px solid var(--border-weak);
+  border: 0.5px solid var(--border-input);
   border-radius: 6px;
   transition: border-color 0.15s;
 }
@@ -2424,21 +2566,17 @@ defineExpose({ stepMessage, scroller })
   margin-bottom: 2px;
 }
 
-.part + .part {
-  margin-top: 24px;
-}
-
 /*
- * MiMo's steps sit in a column two apart, each row carrying its own 5px above
- * and below; a paragraph of the reply keeps a clearer break from them.
+ * MiMo's harness column: every row two apart, and each carries its own 5px
+ * above and below - a step row and a run of the reply's words alike - so any
+ * two neighbouring lines sit twelve apart.
  */
-.part + .part.step,
-.part.step + .part {
-  margin-top: 12px;
+.part + .part {
+  margin-top: 2px;
 }
 
-.part.step + .part.step {
-  margin-top: 2px;
+.part.words {
+  padding: 5px 0;
 }
 
 .err {
@@ -2553,7 +2691,7 @@ defineExpose({ stepMessage, scroller })
 /* MiMo's thread placeholder, loading or empty: 80 above and below, 13px, muted, centred. */
 .thread-loading {
   padding-block: 80px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   text-align: center;
 }
@@ -2572,7 +2710,7 @@ defineExpose({ stepMessage, scroller })
   max-width: 78%;
   padding: 9px 13px;
   color: color-mix(in srgb, var(--text-strong) 95%, transparent);
-  background: color-mix(in srgb, var(--text-strong) 9.5%, var(--surface-raised));
+  background: #f8f7f5;
   border-radius: 16px;
   font-weight: 500;
   line-height: calc(20px * var(--ui-font-scale, 1));
@@ -2595,8 +2733,29 @@ defineExpose({ stepMessage, scroller })
   inset-inline: 0;
   bottom: 0;
   height: 56px;
-  background: linear-gradient(to top, color-mix(in srgb, var(--text-strong) 9.5%, var(--surface-raised)), transparent);
+  background: linear-gradient(to top, #f8f7f5, transparent);
   pointer-events: none;
+}
+
+/* MiMo's bubble colour: its settings-nav #f8f7f5 in light, its code-bg #2e2e2e in dark. */
+:root[data-theme="dark"] .user-bubble,
+:root[data-theme="dark"] .asked-edit {
+  background: #2e2e2e;
+}
+
+:root[data-theme="dark"] .asked-text.folded::after {
+  background: linear-gradient(to top, #2e2e2e, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .user-bubble,
+  :root:not([data-theme="light"]) .asked-edit {
+    background: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .asked-text.folded::after {
+    background: linear-gradient(to top, #2e2e2e, transparent);
+  }
 }
 
 /* MiMo's: 12px in the muted colour, 2 by 4 of padding on a 6px corner. */
@@ -2607,7 +2766,7 @@ defineExpose({ stepMessage, scroller })
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--text-weak);
+  color: var(--text-base);
   font: inherit;
   font-size: calc(12px * var(--ui-font-scale, 1));
   white-space: normal;
@@ -2645,7 +2804,7 @@ defineExpose({ stepMessage, scroller })
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-weak);
+  color: var(--text-base);
   font: inherit;
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 400;
@@ -2691,7 +2850,6 @@ defineExpose({ stepMessage, scroller })
 .asked-annotations {
   justify-content: flex-end;
   max-width: 78%;
-  padding-block: 6px 0;
 }
 
 /*
@@ -2715,7 +2873,7 @@ defineExpose({ stepMessage, scroller })
 }
 
 .steer-note {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -2758,29 +2916,37 @@ defineExpose({ stepMessage, scroller })
 }
 
 /*
- * 2.0: MiMo's line above an answer - 14/500 in the base colour, the time a
- * size down and fainter beside it, and twelve clear of the first line so the
- * two sit thirty apart as they do there.
+ * 2.0: MiMo's harness head - 14/500 in the muted colour on its 1.6 line with
+ * 2px above and below, running or done, the time a size down and dimmer beside
+ * it. Five below it and the first row's own 5px put the first line ten clear.
  */
 .run {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 5px;
+  padding: 2px 0;
   color: var(--text-base);
+}
+
+.run-body {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .run-label {
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: calc(18px * var(--ui-font-scale, 1));
+  line-height: calc(22.4px * var(--ui-font-scale, 1));
 }
 
 .run-time {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: calc(16px * var(--ui-font-scale, 1));
+  line-height: calc(19.2px * var(--ui-font-scale, 1));
 }
 
 .run-time {
@@ -2790,7 +2956,6 @@ defineExpose({ stepMessage, scroller })
 /* The finished head that folds: the whole line is the button. */
 .run.foldable {
   width: fit-content;
-  padding: 2px 0;
   font: inherit;
   text-align: start;
   background: transparent;
@@ -2865,7 +3030,7 @@ defineExpose({ stepMessage, scroller })
   flex-basis: 100%;
   min-width: 0;
   margin-top: 6px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 1.6;
@@ -2923,8 +3088,16 @@ defineExpose({ stepMessage, scroller })
   contain-intrinsic-size: auto 240px;
 }
 
+/*
+ * MiMo's rule for the same row carries `overflow-anchor: none` with it: the
+ * turn being written is never the browser's scroll anchor. A reply growing
+ * inside it would otherwise have the browser hold that anchor still and move
+ * the view by as much, which is exactly where a parked question must not be
+ * moved from.
+ */
 .inner > .turn[data-turn-last] {
   content-visibility: visible;
+  overflow-anchor: none;
 }
 
 /*

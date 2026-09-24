@@ -234,7 +234,7 @@ function coverFailed(url: string) {
   justify-content: center;
   gap: 12px;
   margin-top: 8px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -271,8 +271,21 @@ function coverFailed(url: string) {
   border-color: #2e2e2e;
 }
 
+/*
+ * The state is repeated here, and its absence was invisible in light.
+ *
+ * This is the *equal* specificity form of the trap round 23 found: both
+ * `.media-coverflow-step:hover:not(:disabled)` and this rule are (0,3,0), so
+ * the theme rule does not outrank the state rule - it simply comes later and
+ * wins on source order. The border is the only thing this button's hover
+ * changes, so in dark the arrows did nothing at all under the pointer (R25-D1).
+ */
 :root[data-theme="dark"] .media-coverflow-step {
   border-color: #2e2e2e;
+}
+
+:root[data-theme="dark"] .media-coverflow-step:hover:not(:disabled) {
+  border-color: #3295fb;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -283,6 +296,10 @@ function coverFailed(url: string) {
 
   :root:not([data-theme="light"]) .media-coverflow-step {
     border-color: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .media-coverflow-step:hover:not(:disabled) {
+    border-color: #3295fb;
   }
 }
 </style>

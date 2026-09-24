@@ -115,10 +115,18 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     const [first] = queue.drain(200, 10)
     check("a due run is handed out with a generation", first?.runId === run.runId && first?.deliveryGeneration === 1)
     check("and is not handed out again while its lease holds", queue.drain(201, 10).length === 0)
-    check("a report from an earlier hand-out is ignored", queue.report(run.runId, 0, "settled") === false && queue.size === 1)
+    check("a later or failed report from an earlier hand-out is ignored", queue.report(run.runId, 0, "later") === false && queue.report(run.runId, 0, "failed") === false && queue.size === 1)
     check("a holder that says it will try later frees the entry without spending an attempt", queue.report(run.runId, 1, "later") === true && queue.drain(202, 10).length === 1)
     check("a lease that runs out frees the entry and spends an attempt", queue.releaseExpired(1300).map((entry) => entry.runId).join() === run.runId)
     check("once the attempts are used up the run is given up on rather than tried for ever", queue.drain(1400, 10).length === 1 && queue.releaseExpired(3000).length === 1 && queue.exhausted().length === 1 && queue.size === 0)
+
+    // A start that outlived its lease has still started: its "settled" finishes the entry the lease passed on (R20-B2).
+    const slow = new RunQueue({ leaseMs: 1000 })
+    slow.enqueue({ ...run })
+    slow.drain(200, 10)
+    slow.releaseExpired(1300)
+    const [again] = slow.drain(1301, 10)
+    check("a settled report from an earlier hand-out still finishes the run", again?.deliveryGeneration === 2 && slow.report(run.runId, 1, "settled") === true && slow.size === 0, slow.size)
 
     const keep = new RunQueue()
     keep.enqueue({ runId: "r1", automationID: "a", scheduledFor: 1, scheduleFingerprint: "f", source: "schedule" })
@@ -668,10 +676,9 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
 
   section("Round 11 (N11-23/N11-24/N11-25/N11-38/N11-39/N11-40/N11-41): smaller ends")
   {
-    const palette = await read("src/renderer/src/components/CommandPalette.vue")
-    check("the file picker searches the project as the query changes, newest answer only", /type: "file\.search", directory, query: needle/.test(palette) && /ticket !== searchTicket/.test(palette))
+    // N11-23's file picker was the command palette's, which went with it in round 21 (R21-F4-24): MiMo has no palette.
     const handlers = await read("src/server/handlers.ts")
-    check("file.list stops after a budget of entries, and the search budget is MiMo's", /visits < LIST_VISITS/.test(handlers) && /const SEARCH_VISITS = 4000/.test(handlers))
+    check("the @ menu's search stops after MiMo's budget of entries", /const SEARCH_VISITS = 4000/.test(handlers) && /visits < SEARCH_VISITS/.test(handlers))
     const store = await read("src/renderer/src/stores/app.ts")
     check("a deleted conversation's draft and annotations go with it", /for \(const key of \[`main:\$\{sessionID\}`, `side:\$\{sessionID\}`\]\)/.test(store) && /forgetDrafts\(sessionID\)/.test(store))
     // N11-25's rail card went with the rail in round 18 (R18-U1); the folded column's preview is the column itself, paged as it is.

@@ -309,10 +309,20 @@ async function goalChecks(check: Check, section: Section, root: string): Promise
       check("with the count of re-entries it had", found?.goal?.attempts === 3)
       check("and the switch still on", found?.goalMode === true)
 
-      /* A branch works the way its origin did, which is how MiMo's own per-conversation switch carries over. */
+      /*
+       * A branch works the way its origin did, which is how MiMo's own
+       * per-conversation switch carries over. The conversation is given a turn
+       * first: this used to read a conversation that had never been prompted,
+       * so there was no message to branch at, `fork` was never called, and
+       * `branch === undefined || ...` was true whatever fork did (R23-5-2).
+       */
+      app.script(["先看一眼"])
+      await app.runner.prompt({ sessionID: session.id, text: "看看这个" })
+      await app.settled(session.id)
       const asked = await app.store.messages(session.id)
-      const branch = asked.length ? await app.store.fork(session.id, asked.at(-1)!.id).catch(() => undefined) : undefined
-      check("a branch starts with the switch its origin had", branch === undefined || branch.goalMode === true, branch?.goalMode)
+      check("the conversation being branched has a message to branch at", asked.length > 0, asked.length)
+      const branch = await app.store.fork(session.id, asked.at(-1)!.id)
+      check("a branch starts with the switch its origin had", branch.goalMode === true, branch.goalMode)
     } finally {
       await app.close()
     }

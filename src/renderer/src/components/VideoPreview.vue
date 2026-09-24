@@ -412,14 +412,14 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   box-sizing: border-box;
-  min-width: 19px;
-  height: 19px;
+  min-width: calc(19px * var(--ui-font-scale, 1));
+  height: calc(19px * var(--ui-font-scale, 1));
   padding: 0 4px;
   color: #fff;
   background: #3295fb;
   border-radius: 999px;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 500;
 }
 
@@ -430,7 +430,7 @@ onBeforeUnmount(() => {
   gap: 12px;
   width: 100%;
   padding: 10px 14px;
-  color: var(--text-strong);
+  color: var(--text-body);
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 12px;
@@ -444,7 +444,7 @@ onBeforeUnmount(() => {
   width: 30px;
   height: 30px;
   padding: 0;
-  color: var(--text-strong);
+  color: var(--text-body);
   background: transparent;
   border: none;
   border-radius: 7px;
@@ -456,9 +456,9 @@ onBeforeUnmount(() => {
 
 .vp-time {
   flex-shrink: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-variant-numeric: tabular-nums;
 }
 
@@ -475,7 +475,8 @@ onBeforeUnmount(() => {
 
 /* The shadows stay the light ones in dark too: MiMo's utilities compile with fixed colours. */
 .vp-hint {
-  color: var(--text-weak);
-  font-size: 12px;
+  color: var(--text-base);
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
+
 </style>

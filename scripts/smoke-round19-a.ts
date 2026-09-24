@@ -48,7 +48,7 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
       "the confirmation is MiMo's: 删除自定义模型 over the model's name",
       /<ConfirmDialog\s+v-if="removingModel"\s+:title="t\('set\.models\.deleteModelTitle'\)"\s+:body="t\('set\.models\.deleteBody', \{ name: removingModel\.name\.trim\(\) \|\| removingModel\.id \}\)"/.test(form),
     )
-    check("on yes the saved provider loses the model before the card goes", /if \(editing\) await app\.removeCustomModel\(editing\.id, row\.id\)/.test(form) && /type: "provider\.removeCustomModel", provider, model/.test(store))
+    check("on yes the saved provider loses the model before the card goes", /const removed = editing \? await app\.removeCustomModel\(editing\.id, row\.id\)/.test(form) && /type: "provider\.removeCustomModel", provider, model/.test(store))
     const handler = handlers.slice(handlers.indexOf('case "provider.removeCustomModel"'), handlers.indexOf('case "auth.begin"'))
     check("the backend drops it from the stored provider, keeping the last one", /models\.length > 1/.test(handler) && /models\.filter\(\(model\) => model\.id !== request\.model\)/.test(handler))
     check("the title is in all 18 tables", (i18n.match(/^ {2}"set\.models\.deleteModelTitle": /gm) ?? []).length === 18)
@@ -101,8 +101,8 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
       toasts.value = []
       const results = [await picks.pickDirectory("t"), await picks.pickProjectFolder("t"), await picks.saveText("a.txt", "x"), await picks.savePng("a.png", "")]
       check("a busy answer reads as a cancel to the caller", JSON.stringify(results) === "[[],[],null,null]", results)
-      const warned = toasts.value.filter((entry) => entry.level === "warning" && entry.title === "已经打开了一个选择窗口，完成或取消它后再试（它可能被主窗口挡住了）")
-      check("and raises MiMo's warning (one notice, the same text each time)", warned.length === 1, toasts.value)
+      const warned = toasts.value.filter((entry) => entry.level === "warning" && entry.title === "已有一个选择窗口打开，请先完成或取消（它可能被主窗口遮挡）")
+      check("and raises the busy warning, worded in MiMo's shape (one notice, the same text each time)", warned.length === 1, toasts.value)
       toasts.value = []
       answers.pickDirectory = ["C:\\work"]
       check("a real answer passes through with no notice", JSON.stringify(await picks.pickDirectory("t")) === JSON.stringify(["C:\\work"]) && toasts.value.length === 0)
@@ -170,7 +170,7 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
     language.value = "zh-CN"
     const body = t("set.models.removeProviderBody", { name: "gw" })
     language.value = spoken
-    check("and names the provider and all of its models", body.includes("「gw」") && body.includes("所有模型"), body)
+    check("and names the provider and all of its models", body.includes("「gw」") && body.includes("全部模型"), body)
   }
 
   // ------------------------------------------------------------------ R19-F8
@@ -187,7 +187,7 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
       "set.models.removeProvider": "删除供应商",
       "set.models.cloneProvider": "克隆供应商",
       "set.models.fromProvider": "来自此供应商的模型",
-      "set.models.providerAdded": "已添加供应商",
+      "set.models.providerAdded": "已添加",
       "set.models.comboPlaceholder": "选择或添加 model-id",
     }
     for (const [key, want] of Object.entries(zh)) check(`zh-CN ${key} is ${want}`, said("zh-CN", key) === want, said("zh-CN", key))

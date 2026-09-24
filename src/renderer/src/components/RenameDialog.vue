@@ -114,10 +114,10 @@ onMounted(() => {
   box-sizing: border-box;
   width: min(430px, 88vw);
   padding: 22px 24px;
-  background: var(--surface-raised);
+  background: var(--surface-page);
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--shadow-pop);
 }
 
 /* Title and subtitle at the start, the close button at the end, 16 above the field. */
@@ -142,7 +142,7 @@ h2 {
 
 .subtitle {
   margin: 3px 0 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
@@ -152,7 +152,7 @@ h2 {
   place-items: center;
   width: 30px;
   height: 30px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 7px;

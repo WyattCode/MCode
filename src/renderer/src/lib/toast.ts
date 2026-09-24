@@ -56,8 +56,14 @@ export function toastTitle(title: string, body?: string): string {
 }
 
 export const DURATION = 5000
-/** Enough to see a couple stack up, few enough that they cannot bury the app. */
-const LIMIT = 3
+/**
+ * How many notices are on screen at once - MiMo's `visibleToasts`.
+ *
+ * The ones past it are kept rather than dropped, and become visible as the
+ * ones in front of them go; each goes on counting down where it stands, as
+ * MiMo's do.
+ */
+export const LIMIT = 3
 /** MiMo draws at most two links on a notice. */
 const LINKS = 2
 
@@ -108,24 +114,15 @@ export function show(level: ToastLevel, heading: string, options: ToastOptions =
   const links = [...(options.links ?? []), ...(options.action ? [options.action] : [])].slice(0, LINKS)
   const entry: Toast = { id, level, title, links, closable: options.closable !== false }
   if (toasts.value.some((item) => item.id === id)) {
+    // A notice raised again keeps its place in the column, as MiMo's does.
     toasts.value = toasts.value.map((item) => (item.id === id ? entry : item))
   } else {
-    const next = [...toasts.value, entry]
-    const over = next.length - LIMIT
-    if (over > 0) {
-      /*
-       * A notice with no clock stands until something takes it away - the
-       * reconnect banner, an expired sign-in, a store that would not read - so
-       * the ones on a timer make way for it rather than the other way round.
-       * Only when there is no timed notice left to drop does the oldest
-       * standing one go, which is how four storage warnings already behaved.
-       */
-      const timed = next.filter((item) => clocks.has(item.id))
-      const standing = next.filter((item) => !clocks.has(item.id))
-      const doomed = new Set([...timed, ...standing].slice(0, over))
-      for (const gone of doomed) stop(gone.id)
-      toasts.value = next.filter((item) => !doomed.has(item))
-    } else toasts.value = next
+    /*
+     * Newest first, and nothing is thrown away: MiMo prepends, and keeps every
+     * notice past the third rather than dropping it, so one whose turn comes
+     * round - because the one in front was closed - is still there to show.
+     */
+    toasts.value = [entry, ...toasts.value]
   }
   // A replacement starts its time again, as a fresh notice would.
   stop(id)

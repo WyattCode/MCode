@@ -1,6 +1,7 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { projectKey } from "./history/extract"
 
 /**
  * Conversations another coding tool on this machine has saved, read for the
@@ -285,15 +286,20 @@ function head(file: string, maxBytes: number): { text: string; read: number; tru
   }
 }
 
-/** Whether a transcript's own working directory is the one asked for; a transcript that names none is taken as any. */
+/**
+ * Whether a transcript's own working directory is the one asked for; a
+ * transcript that names none is taken as any. Compared as the file system
+ * does: the native realpath gives the folder's own spelling, and on Windows
+ * and macOS the case of what is left (a folder since removed) does not count.
+ */
 function sameProject(found: string | undefined, wanted?: string): boolean {
   if (!wanted) return true
   if (!found) return false
   const real = (target: string) => {
     try {
-      return fs.realpathSync(target)
+      return projectKey(fs.realpathSync.native(target))
     } catch {
-      return path.resolve(target)
+      return projectKey(target)
     }
   }
   return real(found) === real(wanted)

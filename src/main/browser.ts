@@ -338,16 +338,38 @@ function wireWindow(window: BrowserWindow): void {
   window.webContents.on("did-navigate", () => closePanel(window))
 }
 
-/** Where the panel sits. The renderer measures it; only it knows the layout. */
+/**
+ * Where the panel sits. The renderer measures it; only it knows the layout.
+ *
+ * It measures in CSS pixels and a view is placed in the window's own, which are
+ * the same thing only while the interface is at 100%. At 120% the frame the
+ * renderer reports as 400 wide occupies 480 of the window, so the page used to
+ * be drawn at five sixths of its frame and up in its top corner - a zoom being
+ * the one setting under which a browser tab was visibly wrong (R24). The
+ * window's zoom factor is the conversion, and it is read here rather than sent,
+ * so a step the renderer has not heard about yet cannot place the page wrongly.
+ *
+ * Nothing re-places the page when the zoom changes, deliberately. R24 added a
+ * `rescale` on that step and it was wrong every time: the bounds held here were
+ * measured at the *old* zoom, and the panel is pinned to the window's inline
+ * end, so its position in the renderer's own units changes as well as the
+ * conversion - multiplying the old number by the new factor threw the page
+ * hundreds of pixels past the window edge for a frame (R25-E3). The renderer
+ * re-measures and sends on the same step, which is the only account of where
+ * the frame now is; until it arrives the page holds the rect it already has,
+ * exactly as it does through a window resize.
+ */
 export function setBounds(window: BrowserWindow, bounds: BrowserBounds): void {
   const panel = panels.get(window.id)
   if (!panel) return
   panel.bounds = bounds
+  if (window.isDestroyed() || window.webContents.isDestroyed()) return
+  const scale = window.webContents.getZoomFactor() || 1
   activeTab(panel)?.view.setBounds({
-    x: Math.round(bounds.x),
-    y: Math.round(bounds.y),
-    width: Math.max(0, Math.round(bounds.width)),
-    height: Math.max(0, Math.round(bounds.height)),
+    x: Math.round(bounds.x * scale),
+    y: Math.round(bounds.y * scale),
+    width: Math.max(0, Math.round(bounds.width * scale)),
+    height: Math.max(0, Math.round(bounds.height * scale)),
   })
 }
 

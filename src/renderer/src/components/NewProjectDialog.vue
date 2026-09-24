@@ -131,10 +131,10 @@ onMounted(() => {
 .card {
   width: min(430px, 90vw);
   padding: 22px 24px;
-  background: var(--surface-raised);
+  background: var(--surface-page);
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--shadow-pop);
 }
 
 .head {
@@ -171,12 +171,13 @@ onMounted(() => {
   white-space: nowrap;
 }
 
+/* MiMo's np-close: muted at rest, its --color-txt on hover. */
 .close {
   display: grid;
   place-items: center;
   width: 30px;
   height: 30px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 7px;
@@ -184,14 +185,14 @@ onMounted(() => {
 }
 
 .close:hover {
-  color: var(--text-strong);
+  color: var(--text-body);
   background: var(--surface-hover);
 }
 
 .label {
   display: block;
   margin-bottom: 6px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
@@ -225,7 +226,7 @@ onMounted(() => {
   width: 100%;
   margin-bottom: 18px;
   padding: 26px 16px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font: inherit;
   font-size: calc(13px * var(--ui-font-scale, 1));
   background: var(--surface-hover);
@@ -235,7 +236,7 @@ onMounted(() => {
 }
 
 .source:hover {
-  color: var(--text-strong);
+  color: var(--text-body);
   background: var(--surface-selected);
 }
 
@@ -291,6 +292,12 @@ onMounted(() => {
   cursor: default;
   opacity: 0.45;
 }
+
+/*
+ * MiMo's --color-txt on the dark scheme. The
+ * name field keeps MCode's raised surface: MiMo's `bg-white` beats its own
+ * `.field`, leaving a white field on the dark scheme, which is its oversight.
+ */
 
 :root[data-theme="dark"] .field:focus {
   border-color: #777777;

@@ -7,6 +7,7 @@ import { projectName } from "../lib/project"
 import { projectOf } from "../lib/session-project"
 import { useEscapeLayer } from "../lib/escape-layer"
 import { scoreMatch } from "@shared/search-score"
+import { badgeOf } from "../lib/artifact-kind"
 
 /**
  * MiMo's search: one field over conversations, projects and what they made.
@@ -115,7 +116,8 @@ const items = computed<Item[]>(() => {
       kind: "convo",
       id: session.id,
       target: session.id,
-      messageID: hit?.messageID,
+      // MiMo jumps to the message only when that message is what found the conversation; a title match opens it at its end.
+      messageID: titled ? undefined : hit?.messageID,
       title: titled ? { text: title, ranges: titled.ranges } : plain(title),
       meta: owner(session),
       snippet,
@@ -125,22 +127,22 @@ const items = computed<Item[]>(() => {
     })
   }
 
-  const latest = new Map<string, number>()
-  for (const session of visible.value) {
-    const group = projectOf(session)
-    if (!group) continue
-    latest.set(group, Math.max(latest.get(group) ?? 0, session.updated))
-  }
-  for (const [directory, time] of latest) {
+  /*
+   * The projects themselves, not the projects the conversations happen to be
+   * in: MiMo searches its own project list, so a project that has never been
+   * worked in is still found. Their time is 0, as MiMo leaves it - among
+   * equal scores the conversations, which carry a real time, come first.
+   */
+  for (const directory of app.projects) {
     const name = projectName(directory, app.config?.projectNames)
     const named = match(name, needle)
     if (named) {
-      found.push({ kind: "project", id: directory, target: directory, title: { text: name, ranges: named.ranges }, meta: directory, score: named.score + 200, time })
+      found.push({ kind: "project", id: directory, target: directory, title: { text: name, ranges: named.ranges }, meta: directory, score: named.score + 200, time: 0 })
       continue
     }
     // A project found by its path ranks 100 under what the path match scored, as MiMo ranks it.
     const pathed = match(directory, needle)
-    if (pathed) found.push({ kind: "project", id: directory, target: directory, title: plain(name), meta: directory, score: pathed.score - 100, time })
+    if (pathed) found.push({ kind: "project", id: directory, target: directory, title: plain(name), meta: directory, score: pathed.score - 100, time: 0 })
   }
 
   const shown = new Set(visible.value.map((session) => session.id))
@@ -155,7 +157,8 @@ const items = computed<Item[]>(() => {
         id: `${entry.sessionID}:${file.path}`,
         target: entry.sessionID,
         title: { text: name, ranges: named.ranges },
-        meta: sessionTitle(entry.title),
+        // MiMo's row carries the file's type badge on the right, not the conversation's title.
+        meta: t(badgeOf(name).key),
         score: named.score + 100,
         time: file.at,
       })
@@ -314,12 +317,13 @@ defineExpose({ close })
 </script>
 
 <template>
-  <div class="search-overlay" :class="{ closing }" @mousedown.self="close">
+  <!-- MiMo closes on the click, not on the press: a drag out of the card never closes it. -->
+  <div class="search-overlay" :class="{ closing }" @click.self="close">
     <div v-modal class="search-card" role="dialog" data-new-task-clears :aria-label="t('searchOverlay.placeholder')">
       <div class="search-bar">
-        <svg class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M7.2 2.8a4.4 4.4 0 1 0 0 8.8 4.4 4.4 0 0 0 0-8.8z" />
-          <path d="M13.2 13.2l-2.8-2.8" />
+        <svg class="i" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m21 21-4.3-4.3" />
         </svg>
         <input
           ref="field"
@@ -379,7 +383,7 @@ defineExpose({ close })
   z-index: 110;
   display: grid;
   place-items: start center;
-  background: rgb(0 0 0 / 0.34);
+  background: #00000057;
   backdrop-filter: blur(8px);
   /* MiMo's --motion-base with --ease-enter. */
   animation: search-fade-in 0.18s cubic-bezier(0.2, 0.7, 0.2, 1);
@@ -390,7 +394,7 @@ defineExpose({ close })
   max-width: 92vw;
   margin-top: 13vh;
   overflow: hidden;
-  background: var(--surface-raised);
+  background: #fffefd;
   border: 1px solid var(--border-weak);
   border-radius: 14px;
   box-shadow: 0 18px 52px rgb(0 0 0 / 0.2);
@@ -418,13 +422,16 @@ defineExpose({ close })
   flex: none;
   width: 18px;
   height: 18px;
-  color: var(--text-weaker);
+  color: var(--text-weak);
 }
 
+/* MiMo's 24-grid glyph: a 1.7 stroke with round ends, the same drawing the side column carries. */
+.search-bar .i circle,
 .search-bar .i path {
   stroke: currentColor;
-  stroke-width: 1.3;
+  stroke-width: 1.7;
   stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .search-bar input {
@@ -439,7 +446,7 @@ defineExpose({ close })
 }
 
 .search-bar input::placeholder {
-  color: var(--text-weaker);
+  color: var(--text-weak);
 }
 
 .search-bar input:not(:placeholder-shown) {
@@ -454,7 +461,7 @@ defineExpose({ close })
 
 .sr-head {
   padding: 9px 10px 4px;
-  color: var(--text-weaker);
+  color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -499,7 +506,7 @@ defineExpose({ close })
   min-width: 0;
   max-width: 45%;
   overflow: hidden;
-  color: var(--text-weaker);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -509,7 +516,7 @@ defineExpose({ close })
   width: 100%;
   overflow: hidden;
   padding-inline-start: 1px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.4;
   text-overflow: ellipsis;
@@ -527,41 +534,48 @@ defineExpose({ close })
 
 .sr-empty {
   padding: 26px;
-  color: var(--text-weaker);
+  color: var(--text-weak);
   font-size: calc(13px * var(--ui-font-scale, 1));
   text-align: center;
 }
 
-/* MiMo's failed artifact search: the reason in the delete colour, and a small 重试. */
+/* MiMo's failed artifact search: the reason in its --color-del, which is #e5484d on both schemes, and a small 重试. */
 .sr-artifact-error {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin: 6px 10px;
-  color: #d92e3c;
+  color: #e5484d;
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .sr-artifact-error button {
   flex: none;
   padding: 4px 9px;
-  color: var(--text-strong);
-  background: var(--surface-raised);
+  color: var(--text-body);
+  background: #fffefd;
   border: 1px solid var(--border-weak);
   border-radius: 7px;
   font: inherit;
   cursor: pointer;
 }
 
-:root[data-theme="dark"] .sr-artifact-error {
-  color: #f17471;
+/*
+ * MiMo's --color-bg on the dark scheme (#181818) and its --color-txt for the
+ * 重试 button.
+ */
+:root[data-theme="dark"] .search-card,
+:root[data-theme="dark"] .sr-artifact-error button {
+  background: #181818;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .sr-artifact-error {
-    color: #f17471;
+  :root:not([data-theme="light"]) .search-card,
+  :root:not([data-theme="light"]) .sr-artifact-error button {
+    background: #181818;
   }
+
 }
 
 /* MiMo's search-card-in and overlay-fade-in move nothing: opacity only. */

@@ -133,7 +133,7 @@ watch([source, reduceMotion], () => void serve())
 
 .text .md-widget-failed {
   padding: 12px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 

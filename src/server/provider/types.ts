@@ -55,6 +55,12 @@ export interface TurnRequest {
   systemTail?: string
   history: Message[]
   tools: ToolDefinition[]
+  /**
+   * "none" keeps the tools defined but lets the model call none of them: MiMo's
+   * last step. The history may hold tool calls and results, which a provider
+   * refuses in a request that defines no tools, so the tools stay on the wire.
+   */
+  toolChoice?: "none"
   effort: string
   signal: AbortSignal
   /** Base URL for OpenAI-compatible providers. */

@@ -65,6 +65,17 @@ export function movedDown(before: Geometry, after: Geometry): boolean {
   return after.top > before.top && !growthEcho(before, after)
 }
 
+/*
+ * Whether a scroll event is the reader taking the view somewhere, which is what
+ * lets a parked question go. A scroll the view made itself - the pin, or a park
+ * putting its question back where it belongs - comes back as an event like any
+ * other, and is not them; nor is the browser pulling scrollTop in as what is
+ * above the question shrinks, which is neither an upward move nor an arrival.
+ */
+export function readerMoved(echo: boolean, up: boolean, arrived: boolean): boolean {
+  return !echo && (up || arrived)
+}
+
 /* Leaving always wins; coming back needs the end itself, reached by the reader. */
 export function nextFollowing(following: boolean, up: boolean, distance: number, within: number, arrived: boolean): boolean {
   if (up) return false
@@ -113,6 +124,16 @@ export function parkTarget(clientHeight: number, rowHeight: number): number {
 /* The room the conversation lacks below the question, which ends at `end`, for it to scroll that far. */
 export function parkRoom(rowTop: number, target: number, clientHeight: number, end: number): number {
   return Math.max(0, Math.ceil(rowTop - target + clientHeight - end))
+}
+
+/*
+ * Where the view rests for a question too tall for the room below its target:
+ * pinned to the end, its top would go above the view, so its top rests at the
+ * target instead and the reply is written below. Undefined when the end is
+ * where it rests (the room, if any, being made up by the floor).
+ */
+export function parkTop(rowTop: number, target: number, clientHeight: number, end: number): number | undefined {
+  return end - clientHeight > rowTop - target ? Math.max(0, rowTop - target) : undefined
 }
 
 /*

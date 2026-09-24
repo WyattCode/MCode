@@ -62,6 +62,9 @@ function absolute(rel: string) {
   return `${(root.value ?? "").replace(/[\\/]+$/, "")}/${rel}`
 }
 
+/* The folder of the file on view: a markdown file's relative pictures and paths are its own, not the conversation's. */
+const viewFolder = computed(() => (props.viewFile ? absolute(props.viewFile).replace(/[\\/][^\\/]*$/, "") : undefined))
+
 function baseName(rel: string) {
   return rel.split("/").pop() ?? rel
 }
@@ -387,16 +390,14 @@ const menu = ref<{ x: number; y: number; node: MenuTarget }>()
 const menuItems = computed<MenuItem[]>(() => {
   const node = menu.value?.node
   if (!node) return []
-  // B23: the file and folder glyphs wear the tree's type colours (the vars live on .rp-files, which holds the menu).
-  const kind = fileCategory(node.name)
   const tail: MenuItem[] = [
-    { key: "reveal", label: revealTitle.value, icon: GLYPH.folder, iconColor: "var(--ft-dir)" },
+    { key: "reveal", label: revealTitle.value, icon: GLYPH.folder },
     { key: "copyPath", label: t("rp.files.copyPath"), icon: GLYPH.copy },
     { key: "copyRelPath", label: t("rp.files.copyRelPath"), icon: GLYPH.copy },
   ]
   if (node.directory) return tail
   const head: MenuItem[] = [
-    { key: "open", label: t("rp.files.open"), icon: GLYPH.file, iconColor: kind === "default" ? undefined : `var(--ft-${kind})` },
+    { key: "open", label: t("rp.files.open"), icon: GLYPH.file },
     { key: "annotate", label: t("rp.files.annotate"), icon: GLYPH.comment },
   ]
   if (/\.(html?|xhtml)$/i.test(node.name)) head.push({ key: "openBrowser", label: t("rp.files.openInBrowser"), icon: GLYPH.globe })
@@ -726,7 +727,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
               @click="row.directory ? toggleFolder(row.path) : choose(row.path)"
               @contextmenu.prevent="openMenu($event, rowMenuTarget(row))"
             >
-              <svg v-if="row.directory" class="fv-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+              <svg v-if="row.directory" class="fv-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
               <svg class="fv-ic" :class="iconClass(row.name, row.directory)" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path v-if="row.directory" d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
                 <template v-else><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M13 2v7h7" /></template>
@@ -807,7 +808,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
             <div v-else-if="opened.kind === 'binary'" class="fv-empty"><div class="fv-empty-desc">{{ t("rp.files.errBinary") }}</div></div>
             <div v-else-if="isAbc" class="fv-doc text" data-ft-abc><AbcBlock :code="opened.content" /></div>
             <!-- The reply's own markdown component, as MiMo hangs it here: links, pictures, coloured fences, copy buttons, diagrams, scores, maths. -->
-            <div v-else-if="isMarkdown" class="fv-doc" data-ft-markdown><MarkdownBody :text="opened.content" /></div>
+            <div v-else-if="isMarkdown" class="fv-doc" data-ft-markdown><MarkdownBody :text="opened.content" :base-dir="viewFolder" /></div>
             <div
               v-else
               class="fv-code"
@@ -851,7 +852,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   gap: 8px;
   min-height: 36px;
   padding: 8px 12px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-bottom: 1px solid var(--border-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
   container: fthead / inline-size;
@@ -871,7 +872,8 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 }
 
 .fv-spacer {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 8px;
 }
 
 /* MiMo's icon-btn xs. */
@@ -882,19 +884,15 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   width: 26px;
   height: 26px;
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 7px;
 }
 
 .fv-icon:hover:not(:disabled) {
-  color: var(--text-strong);
+  color: var(--text-body);
   background: var(--surface-hover);
-}
-
-.fv-icon:disabled {
-  opacity: 0.5;
 }
 
 /* MiMo's fc-btn: a 14px muted icon and a label, 1px line on the page colour, 5 by 13 on an 8px corner. */
@@ -904,9 +902,9 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   align-items: center;
   gap: 6px;
   padding: 5px 13px;
-  color: var(--text-base);
+  color: var(--text-body);
   white-space: nowrap;
-  background: var(--surface-raised);
+  background: var(--surface-page);
   border: 1px solid var(--border-weak);
   border-radius: 8px;
   font-size: calc(12px * var(--ui-font-scale, 1));
@@ -914,7 +912,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 
 .fc-btn svg {
   flex: none;
-  color: var(--text-weak);
+  color: var(--text-base);
 }
 
 .fc-btn:hover:not(:disabled) {
@@ -923,6 +921,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 
 .fc-btn:disabled {
   opacity: 0.55;
+  cursor: default;
 }
 
 @container fthead (max-width: 340px) {
@@ -971,7 +970,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   flex: 1;
   min-width: 0;
   padding: 0;
-  color: var(--text-base);
+  color: var(--text-body);
   background: transparent;
   border: 0;
   outline: none;
@@ -996,7 +995,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   gap: 5px;
   margin-bottom: 2px;
   padding: 4px 8px;
-  color: var(--text-base);
+  color: var(--text-body);
   text-align: start;
   white-space: nowrap;
   background: transparent;
@@ -1029,7 +1028,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 
 .fv-ic {
   flex: none;
-  color: var(--text-weak);
+  color: var(--text-base);
 }
 
 .fv-ic.cat-dir {
@@ -1078,8 +1077,8 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   margin-inline-start: auto;
   padding-inline-start: 8px;
   overflow: hidden;
-  color: var(--text-weak);
-  font-size: calc(11px * var(--ui-font-scale, 1));
+  color: var(--text-base);
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1089,14 +1088,14 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   inset-block: 0;
   inset-inline-end: -3px;
   z-index: 2;
-  width: 6px;
+  width: 7px;
   cursor: col-resize;
 }
 
 /* MiMo's ft-empty-d with its 10px padding, used for the tree's notes. */
 .fv-note {
   padding: 10px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -1159,7 +1158,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 
 .fv-find-ic {
   flex: none;
-  color: var(--text-weak);
+  color: var(--text-base);
 }
 
 .fv-find-input {
@@ -1173,7 +1172,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   flex: none;
   width: 150px;
   padding: 0;
-  color: var(--text-base);
+  color: var(--text-body);
   background: transparent;
   border: 0;
   outline: none;
@@ -1201,7 +1200,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   width: 22px;
   height: 22px;
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 6px;
@@ -1241,8 +1240,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 }
 
 .fv-text {
-  padding-inline-end: 14px;
-  color: var(--text-base);
+  color: var(--text-body);
   white-space: pre;
 }
 
@@ -1276,7 +1274,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   height: 100%;
   padding: 10px 14px 10px 4px;
   overflow: auto;
-  color: var(--text-base);
+  color: var(--text-body);
   white-space: pre;
   background: transparent;
   border: 0;
@@ -1290,6 +1288,23 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 /* Markdown as a document: 18 by 22. */
 .fv-doc {
   padding: 18px 22px;
+}
+
+/*
+ * A markdown file is a document, not a reply. MiMo hangs its own markdown
+ * component here and lets the body's type through - 400 at --color-txt, with
+ * `.ft-doc p { margin: 8px 0; line-height: 1.7 }` - where a conversation's
+ * answer runs at 500 in the strong ink. The conversation's own rendering is
+ * untouched: this only reaches the copy inside the files tab.
+ */
+.fv-doc :deep(.text) {
+  color: var(--text-body);
+  font-weight: 400;
+}
+
+.fv-doc :deep(.md-p) {
+  margin: 8px 0;
+  line-height: 1.7;
 }
 
 /* MiMo's ft-img-view: centred, 18 in, at least the viewer's height. */
@@ -1335,7 +1350,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 }
 
 .fv-empty-ic {
-  color: var(--text-weak);
+  color: var(--text-base);
 }
 
 .fv-empty-title {
@@ -1344,9 +1359,10 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 }
 
 .fv-empty-desc {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
+
 </style>
 
 <style>

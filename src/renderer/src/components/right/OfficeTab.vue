@@ -155,7 +155,7 @@ async function reveal() {
   justify-content: center;
   width: 100%;
   padding: 20px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: 13px;
   text-align: center;
 }
@@ -186,10 +186,14 @@ async function reveal() {
   font-weight: 600;
 }
 
+/*
+ * MiMo writes the two spaces before the separator into its markup and lets
+ * normal white-space collapse them; holding them with `pre` printed a double
+ * space nothing in MiMo has.
+ */
 .office-meta {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: 12px;
-  white-space: pre;
 }
 
 /* MiMo's .fc-btn with the tab's override: 5 by 8, a 1px line on an 8px corner. */
@@ -199,8 +203,8 @@ async function reveal() {
   align-items: center;
   gap: 6px;
   padding: 5px 8px;
-  color: var(--text-strong);
-  background: var(--surface-raised);
+  color: var(--text-body);
+  background: var(--surface-page);
   border: 1px solid var(--border-weak);
   border-radius: 8px;
   font: inherit;
@@ -225,4 +229,5 @@ async function reveal() {
   overflow: hidden;
   background: var(--surface-raised);
 }
+
 </style>

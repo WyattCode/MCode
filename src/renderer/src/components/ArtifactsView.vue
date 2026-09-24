@@ -211,9 +211,38 @@ onBeforeUnmount(() => {
   if (refreshTimer) clearTimeout(refreshTimer)
 })
 
-onMounted(load)
-// Switching a tab applies at once, as MiMo's does; typing waits for `needle`.
+/*
+ * Switching a tab applies at once, as MiMo's does: it asks with the text in
+ * the box rather than with the debounced copy, which could still be a
+ * keystroke behind. Typing alone waits for `needle`.
+ */
+watch(kind, () => {
+  if (searchTimer) clearTimeout(searchTimer)
+  needle.value = query.value
+})
 watch([needle, kind], () => void load())
+
+/** The newest store revision this page has answered for. */
+let seenRevision = 0
+let offChanged: (() => void) | undefined
+
+/*
+ * The store tells the window when what the conversations produced changes
+ * (R21-F4-35), so the page fills in while it is open rather than only while
+ * the store is being built. Only the first page is read again, and only while
+ * nothing more has been paged in - a refresh would take those pages away.
+ */
+onMounted(() => {
+  void load()
+  offChanged = app.client?.on((event) => {
+    if (event.type !== "artifact.changed" || event.revision <= seenRevision) return
+    seenRevision = event.revision
+    if (loadingMore.value) return
+    if (groups.value.reduce((n, group) => n + group.files.length, 0) > ARTIFACT_PAGE) return
+    void load()
+  })
+})
+onBeforeUnmount(() => offChanged?.())
 
 /* The time is read against a clock that moves, so "just now" does not stay just now. */
 const now = ref(Date.now())
@@ -374,8 +403,9 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
                 </svg>
               </button>
               <button class="act" data-act="enter" :aria-label="t('art.back')" :title="t('art.back')" @click.stop="enter(row)">
-                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+                <!-- MiMo's 进入对话 is an arrow leaving to the top right, not a speech bubble. -->
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M7 7h10v10M7 17 17 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
               </button>
             </div>
@@ -423,8 +453,9 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
               </svg>
             </button>
             <button class="act" data-act="enter" :aria-label="t('art.back')" :title="t('art.back')" @click.stop="enter(row)">
-              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+              <!-- MiMo's 进入对话 is an arrow leaving to the top right, not a speech bubble. -->
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M7 7h10v10M7 17 17 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </button>
           </div>
@@ -446,7 +477,8 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
         <span>{{ t("art.empty") }}</span>
       </div>
 
-      <div v-if="!failed && nextCursor" class="more">
+      <!-- MiMo shows 加载更多 only when there is something above it. -->
+      <div v-if="!failed && nextCursor && visible.length" class="more">
         <button type="button" class="page-btn" data-act="load-more" :disabled="loadingMore" @click="loadMore">
           {{ t(loadingMore ? "art.loadingMore" : "art.loadMore") }}
         </button>
@@ -466,7 +498,8 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  scrollbar-gutter: stable both-edges;
+  scrollbar-gutter: stable;
+  container-type: inline-size;
 }
 
 /* No header on this page, so the top strip is what drags the window. */
@@ -477,10 +510,22 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   -webkit-app-region: drag;
 }
 
+/*
+ * MiMo's feature-page shell: 54 above and 40 below, 40 either side - 20 once
+ * the pane is 680 or narrower - with the 900 column centred inside that.
+ */
 .column {
-  max-width: 900px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 980px;
   margin: 0 auto;
-  padding: 54px 0 40px;
+  padding: 54px 40px 40px;
+}
+
+@container (max-width: 680px) {
+  .column {
+    padding-inline: 20px;
+  }
 }
 
 .title {
@@ -507,18 +552,25 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   height: 36px;
   margin-top: 18px;
   padding: 0 12px;
-  color: var(--text-weaker);
+  color: var(--text-weak);
   background: #fff;
   border: 1px solid var(--border-weak);
   border-radius: 8px;
 }
 
-:root[data-theme="dark"] .search {
+/*
+ * MiMo's --color-bg on the dark scheme. Its own dark border for the toggle is
+ * --color-set-line, which resolves to a near-white #f1f1f1c7 there - its
+ * oversight - so MCode's --border-weak stays.
+ */
+:root[data-theme="dark"] .search,
+:root[data-theme="dark"] .view-toggle {
   background: #181818;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .search {
+  :root:not([data-theme="light"]) .search,
+  :root:not([data-theme="light"]) .view-toggle {
     background: #181818;
   }
 }
@@ -539,15 +591,20 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
 }
 
 .search input::placeholder {
-  color: var(--text-weaker);
+  color: var(--text-weak);
 }
 
-/* The filter tabs take the row; the layout toggle sits at its end, as MiMo's does. */
+/*
+ * The filter tabs take the row; the layout toggle sits at its end, as MiMo's
+ * does. The 18 below it belongs to this row rather than to the grid, so the
+ * empty, no-match and failed notices start where the files would (R21-F4-33).
+ */
 .bar {
   display: flex;
   align-items: center;
   gap: 12px;
   margin-top: 16px;
+  margin-bottom: 18px;
 }
 
 .filters {
@@ -565,7 +622,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   align-items: center;
   gap: 2px;
   padding: 2px;
-  background: var(--surface-base);
+  background: #fffefd;
   border: 1px solid var(--border-weak);
   border-radius: 8px;
 }
@@ -597,7 +654,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   gap: 6px;
   height: calc(26px * var(--ui-font-scale, 1));
   padding: 0 10px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-radius: 10px;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
@@ -624,13 +681,13 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
 }
 
 .chip-count {
-  color: var(--text-weaker);
+  color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
 }
 
 .chip.on .chip-count {
-  color: var(--text-weak);
+  color: var(--text-base);
 }
 
 /* Three across with 14 between, as MiMo lays its grid. */
@@ -638,7 +695,6 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
-  margin-top: 18px;
 }
 
 .tile {
@@ -652,8 +708,11 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   transition: box-shadow 0.12s;
 }
 
-.tile:hover {
-  box-shadow: var(--shadow-xs-border);
+/* MiMo's hover:shadow-sm, which is a lift rather than a ring over the border it already carries. */
+.tile:hover,
+.row:hover,
+.act:hover {
+  box-shadow: 0 1px 3px 0 #0000001a, 0 1px 2px -1px #0000001a;
 }
 
 /* The 96px well the file's mark sits in, with its kind top left and its actions top right. */
@@ -730,7 +789,6 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
 
 .act:hover {
   color: var(--text-base);
-  box-shadow: var(--shadow-xs-border);
 }
 
 .tile-body {
@@ -754,7 +812,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
 .file-when,
 .when {
   flex-shrink: 0;
-  color: var(--text-weaker);
+  color: var(--text-weak);
   font-size: calc(11px * var(--ui-font-scale, 1));
   line-height: calc(16px * var(--ui-font-scale, 1));
 }
@@ -764,23 +822,19 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin-top: 18px;
 }
 
 .row {
   display: flex;
   align-items: center;
   gap: 10px;
+  overflow: hidden;
   padding: 10px 12px;
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 10px;
   cursor: pointer;
   transition: box-shadow 0.12s;
-}
-
-.row:hover {
-  box-shadow: var(--shadow-xs-border);
 }
 
 .row .file-name {
@@ -815,7 +869,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
 .notice {
   margin: 0;
   padding: 40px 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: calc(22.4px * var(--ui-font-scale, 1));
   text-align: center;
@@ -835,7 +889,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
   justify-content: center;
   gap: 16px;
   min-height: 60vh;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: calc(22.4px * var(--ui-font-scale, 1));
   text-align: center;
@@ -849,14 +903,14 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
 
 .illo-front {
   fill: var(--surface-raised);
-  stroke: var(--text-weaker);
+  stroke: var(--text-weak);
   stroke-width: 1.5;
 }
 
 .illo-fold,
 .illo-line,
 .illo-spark {
-  stroke: var(--text-weaker);
+  stroke: var(--text-weak);
   stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;

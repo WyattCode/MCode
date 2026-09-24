@@ -21,6 +21,16 @@ const props = defineProps<{
 const input = ref<HTMLInputElement>()
 const box = ref({ top: 0, end: 0 })
 
+/*
+ * The card floats over the pane rather than inside it, so where the pane is has
+ * to be written onto the page - and kept right afterwards. A window resize was
+ * the only thing that re-took this measurement, which left out everything that
+ * moves the pane without resizing the window: the side panel opening beside it,
+ * the side column folding, the bottom drawer coming up, and a zoom step (see
+ * `lib/zoom-resize`). The bar then sat out over the panel, or short of the
+ * pane's corner. The observer below watches the pane itself, which answers all
+ * of them.
+ */
 function measure(): void {
   const host = props.anchor()
   if (!host) return
@@ -43,19 +53,35 @@ watch(
   () => props.find.open.value,
   (open) => {
     if (!open) return
+    watchPane()
     measure()
     props.find.focus()
   },
 )
 
+let watching: ResizeObserver | undefined
+let watched: HTMLElement | undefined
+
+/* This is mounted with the window, long before the pane it hangs in exists, and the pane is replaced between views. */
+function watchPane(): void {
+  const host = props.anchor()
+  if (!host || host === watched || typeof ResizeObserver !== "function") return
+  watching?.disconnect()
+  watching = new ResizeObserver(measure)
+  watching.observe(host)
+  watched = host
+}
+
 onMounted(() => {
   props.find.setInput(input.value)
   window.addEventListener("resize", measure)
+  watchPane()
   measure()
 })
 onBeforeUnmount(() => {
   props.find.setInput(undefined)
   window.removeEventListener("resize", measure)
+  watching?.disconnect()
 })
 
 watch(input, (element) => props.find.setInput(element))
@@ -125,7 +151,8 @@ watch(input, (element) => props.find.setInput(element))
   gap: 6px;
   max-inline-size: calc(2 * 10px + 2 * 1px + 15px + 180px + 42px + 3 * 22px + 5 * 6px);
   padding: 6px 10px;
-  background: var(--surface-base);
+  /* MiMo's --color-bg: #fffefd on light, #181818 on dark (below). */
+  background: #fffefd;
   border: 1px solid var(--border-weak);
   border-radius: 10px;
   box-shadow: 0 4px 16px rgb(0 0 0 / 0.14);
@@ -135,14 +162,14 @@ watch(input, (element) => props.find.setInput(element))
   flex-shrink: 0;
   width: 15px;
   height: 15px;
-  color: var(--text-weak);
+  color: var(--text-base);
 }
 
 .needle {
   flex: 0 1 180px;
   width: 180px;
   min-inline-size: 72px;
-  color: var(--text-base);
+  color: var(--text-body);
   font-size: calc(13px * var(--ui-font-scale, 1));
   background: transparent;
   border: none;
@@ -171,7 +198,7 @@ watch(input, (element) => props.find.setInput(element))
   width: 22px;
   height: 22px;
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 6px;
@@ -188,5 +215,19 @@ watch(input, (element) => props.find.setInput(element))
 
 .step:disabled {
   opacity: 0.4;
+}
+
+/*
+ * MiMo's --color-bg and --color-side-hover on the dark scheme.
+ */
+:root[data-theme="dark"] .find {
+  background: #181818;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .find {
+    background: #181818;
+  }
+
 }
 </style>

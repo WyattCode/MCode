@@ -264,20 +264,21 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
 }
 
 .text .md-svg-failed:hover {
-  color: #151c13cc;
+  color: var(--text-body);
 }
 
 :root[data-theme="dark"] .text .md-svg-body {
   background: #141414;
 }
 
+/* The plain dark ink outranks `.md-svg-failed:hover`; repeated so the retry button still answers the pointer. */
 :root[data-theme="dark"] .text .md-svg-wait,
 :root[data-theme="dark"] .text .md-svg-failed {
   color: #b8b8b8;
 }
 
 :root[data-theme="dark"] .text .md-svg-failed:hover {
-  color: #f4f4f5;
+  color: var(--text-body);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -291,7 +292,8 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
   }
 
   :root:not([data-theme="light"]) .text .md-svg-failed:hover {
-    color: #f4f4f5;
+    color: var(--text-body);
   }
+
 }
 </style>

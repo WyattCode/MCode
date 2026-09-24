@@ -38,7 +38,7 @@ const emit = defineEmits<{ toggle: [] }>()
   gap: 5px;
   width: 100%;
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   font: inherit;
@@ -46,10 +46,6 @@ const emit = defineEmits<{ toggle: [] }>()
   font-weight: 500;
   line-height: calc(18px * var(--ui-font-scale, 1));
   text-align: start;
-}
-
-.head:hover {
-  color: var(--text-base);
 }
 
 .chev {

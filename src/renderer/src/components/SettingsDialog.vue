@@ -89,6 +89,23 @@ const section = computed<Section>({
       if (navQuery.value.trim()) void flashMatch(navQuery.value)
     }),
 })
+/*
+ * A page asked for while the settings are already open.
+ *
+ * The dialog stays mounted for as long as it is open, so the prop was read
+ * once and every later request was dropped. Most callers cannot reach here -
+ * they are behind the guard that refuses to open anything over a dialog - but
+ * a toast is not: the archive notice's 「查看已归档」 sits above the settings and
+ * stays clickable, so opening the settings and then pressing it did nothing at
+ * all. Written through `section`, so the unsaved-environment guard still gets
+ * its say.
+ */
+watch(
+  () => props.section,
+  (next) => {
+    if (next && next !== currentSection.value) section.value = next
+  },
+)
 
 /* MiMo's 默认打开目标: the same remembered choice the title bar's open-location control uses. */
 const { options: openOptions, choice: openChoice, choose: chooseOpen } = useOpenWith(() => app.platform)
@@ -887,7 +904,7 @@ async function toggleHardwareAcceleration() {
  */
 const iconTiles = APP_ICONS.map((spec) => ({
   spec,
-  svg: spec.original ? "" : appIconSvg(spec, 44),
+  svg: spec.original ? "" : appIconSvg(spec, 60),
   image: spec.original ? classicIcon : "",
 }))
 
@@ -1280,8 +1297,6 @@ const languageOptions = computed(() => LANGUAGES.map((entry) => ({ value: entry.
  */
 const closedProjects = computed(() => app.config?.closedProjects ?? [])
 
-
-
 async function reopenProject(directory: string) {
   await app.patchConfig({
     closedProjects: closedProjects.value.filter((entry) => entry !== directory),
@@ -1406,7 +1421,6 @@ const shortcutRows = computed(() => {
   })
 })
 
-
 /* MiMo's switch: turned off while at full access, the level drops to the default and says so. */
 async function toggleFullAccess() {
   const config = app.config
@@ -1459,8 +1473,6 @@ function chooseChime(value: string) {
   void app.patchConfig({ taskDoneSound: choice })
   if (choice !== "off") chime(choice)
 }
-
-
 
 /* Clearing what the in-app browser has stored, after a confirmation, as MiMo asks for one. */
 const confirmingClear = ref(false)
@@ -1537,66 +1549,58 @@ onBeforeUnmount(() => {
           <div v-show="navShows('general') || navShows('usage') || navShows('appearance') || navShows('files') || navShows('models') || navShows('personal') || navShows('keys')" class="nav-group">{{ t("set.group.personal") }}</div>
 
           <button v-show="navShows('general')" class="nav-item" :class="{ on: section === 'general' }" @click="section = 'general'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path
-                d="M3.625 6.25H10.9375M16.375 13.75H10.5625M3.625 13.75H4.9375M11.125 6.25C11.125 4.79969 12.2997 3.625 13.75 3.625C15.2003 3.625 16.375 4.79969 16.375 6.25C16.375 7.70031 15.2003 8.875 13.75 8.875C12.2997 8.875 11.125 7.70031 11.125 6.25ZM10.375 13.75C10.375 15.2003 9.20031 16.375 7.75 16.375C6.29969 16.375 5.125 15.2003 5.125 13.75C5.125 12.2997 6.29969 11.125 7.75 11.125C9.20031 11.125 10.375 12.2997 10.375 13.75Z"
-                stroke="currentColor"
-                stroke-linecap="square"
-              />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path d="M3.6 5.55h12.8a.7.7 0 0 1 0 1.4H3.6a.7.7 0 0 1 0-1.4Z" />
+              <path d="M3.6 13.05h12.8a.7.7 0 0 1 0 1.4H3.6a.7.7 0 0 1 0-1.4Z" />
+              <path d="M13.75 3.65a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2Z" />
+              <path d="M7.75 11.15a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2Z" />
             </svg>
             {{ t("set.nav.general") }}
           </button>
 
           <button v-show="navShows('usage')" class="nav-item" :class="{ on: section === 'usage' }" @click="section = 'usage'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path d="M4 16V9M8 16V5M12 16v-4M16 16v-8" stroke="currentColor" stroke-linecap="round" />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <rect x="2.7" y="9" width="2.6" height="7.3" rx="1.1" />
+              <rect x="6.8" y="5" width="2.6" height="11.3" rx="1.1" />
+              <rect x="10.9" y="11.4" width="2.6" height="4.9" rx="1.1" />
+              <rect x="15" y="7.3" width="2.6" height="9" rx="1.1" />
             </svg>
             <span>{{ t("set.nav.usage") }}</span>
           </button>
 
           <button v-show="navShows('appearance')" class="nav-item" :class="{ on: section === 'appearance' }" @click="section = 'appearance'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <circle cx="10" cy="10" r="6.5" stroke="currentColor" />
-              <path d="M10 3.5a6.5 6.5 0 0 1 0 13z" fill="currentColor" />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" aria-hidden="true">
+              <path d="M10 2.6a7.4 7.4 0 1 1 0 14.8 7.4 7.4 0 0 1 0-14.8ZM10 4.2a5.8 5.8 0 0 0 0 11.6Z" />
             </svg>
             <span>{{ t("set.appearance") }}</span>
           </button>
 
           <button v-show="navShows('files')" class="nav-item" :class="{ on: section === 'files' }" @click="section = 'files'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path d="M5 3.5h6l4 4V16.5H5z" stroke="currentColor" stroke-linejoin="round" />
-              <path d="M11 3.5v4h4" stroke="currentColor" stroke-linejoin="round" />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" aria-hidden="true">
+              <path d="M5.4 2.6h5.4l4.4 4.4v9.8a.6.6 0 0 1-.6.6H5.4a.6.6 0 0 1-.6-.6V3.2a.6.6 0 0 1 .6-.6ZM11 4.1v3.2h3.2L11 4.1Z" />
             </svg>
             <span>{{ t("set.nav.files") }}</span>
           </button>
 
           <button v-show="navShows('models')" class="nav-item" :class="{ on: section === 'models' }" @click="section = 'models'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path
-                fill-rule="evenodd"
-                clip-rule="evenodd"
-                d="M17.5 10C12.2917 10 10 12.2917 10 17.5C10 12.2917 7.70833 10 2.5 10C7.70833 10 10 7.70833 10 2.5C10 7.70833 12.2917 10 17.5 10Z"
-                stroke="currentColor"
-              />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path d="M17.5 10C12.2917 10 10 12.2917 10 17.5 10 12.2917 7.70833 10 2.5 10 7.70833 10 10 7.70833 10 2.5c0 5.20833 2.2917 7.5 7.5 7.5Z" />
             </svg>
             {{ t("set.models") }}
           </button>
 
           <button v-show="navShows('personal')" class="nav-item" :class="{ on: section === 'personal' }" @click="section = 'personal'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <circle cx="10" cy="7" r="3" stroke="currentColor" />
-              <path d="M4.5 16c0-2.5 2.5-4 5.5-4s5.5 1.5 5.5 4" stroke="currentColor" stroke-linecap="round" />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path d="M10 3.4a3.2 3.2 0 1 1 0 6.4 3.2 3.2 0 0 1 0-6.4Z" />
+              <path d="M10 11.2c3.2 0 5.8 1.9 5.8 4.8a.6.6 0 0 1-.6.6H4.8a.6.6 0 0 1-.6-.6c0-2.9 2.6-4.8 5.8-4.8Z" />
             </svg>
             <span>{{ t("set.personal") }}</span>
           </button>
 
           <button v-show="navShows('keys')" class="nav-item" :class="{ on: section === 'keys' }" @click="section = 'keys'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path
-                d="M5.125 7.375V4.375H14.875V2.875M8.3125 13.9375H11.6875M8.125 13.9375H11.875M2.125 7.375H17.875V17.125H2.125V7.375ZM5.5 10.375H5.125V10.75H5.5V10.375ZM8.5 10.375H8.125V10.75H8.5V10.375ZM11.875 10.375H11.5V10.75H11.875V10.375ZM14.875 10.375H14.5V10.75H14.875V10.375ZM14.875 13.75H14.5V14.125H14.875V13.75ZM5.5 13.75H5.125V14.125H5.5V13.75Z"
-                stroke="currentColor"
-                stroke-linecap="square"
-              />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" aria-hidden="true">
+              <path d="M2.4 5.3h15.2a1 1 0 0 1 1 1v7.9a1 1 0 0 1-1 1H2.4a1 1 0 0 1-1-1V6.3a1 1 0 0 1 1-1Z" />
+              <path d="M3.7 7.4h1.7v1.7H3.7ZM6.9 7.4h1.7v1.7H6.9ZM10.1 7.4h1.7v1.7h-1.7ZM13.3 7.4h1.7v1.7h-1.7ZM16.5 7.4h-.8v1.7h.8ZM5.6 11.1h8.8v1.7H5.6Z" />
             </svg>
             {{ t("set.shortcuts") }}
           </button>
@@ -1604,13 +1608,10 @@ onBeforeUnmount(() => {
           <div v-show="navShows('mcp')" class="nav-group">{{ t("set.group.integrations") }}</div>
 
           <button v-show="navShows('mcp')" class="nav-item" :class="{ on: section === 'mcp' }" @click="section = 'mcp'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path
-                d="M7.5 2.5v3.5M12.5 2.5v3.5M5.5 6h9v3.5a4.5 4.5 0 0 1-9 0V6ZM10 14v3.5"
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path d="M6.75 2.7a.75.75 0 0 1 .75.75V6h-1.5V3.45a.75.75 0 0 1 .75-.75Z" />
+              <path d="M13.25 2.7a.75.75 0 0 1 .75.75V6h-1.5V3.45a.75.75 0 0 1 .75-.75Z" />
+              <path d="M5.2 7.1h9.6v2.8a4.85 4.85 0 0 1-4.05 4.78v2.62h-1.5v-2.62A4.85 4.85 0 0 1 5.2 9.9V7.1Z" />
             </svg>
             <span>{{ t("set.nav.mcp") }}</span>
           </button>
@@ -1618,11 +1619,12 @@ onBeforeUnmount(() => {
           <div v-show="navShows('environment')" class="nav-group">{{ t("set.group.coding") }}</div>
 
           <button v-show="navShows('environment')" class="nav-item" :class="{ on: section === 'environment' }" @click="section = 'environment'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path d="M6.5 4v6.5a2 2 0 0 0 2 2H14" stroke="currentColor" stroke-linecap="round" />
-              <circle cx="6.5" cy="3.6" r="1.6" stroke="currentColor" />
-              <circle cx="15.4" cy="12.5" r="1.6" stroke="currentColor" />
-              <circle cx="6.5" cy="15.4" r="1.6" stroke="currentColor" />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path d="M5.85 3.6h1.3v12.8h-1.3Z" />
+              <path d="M6.5 9.35h7.4v1.3H6.5Z" />
+              <path d="M6.5 1.4a2.2 2.2 0 1 1 0 4.4 2.2 2.2 0 0 1 0-4.4Z" />
+              <path d="M6.5 13.2a2.2 2.2 0 1 1 0 4.4 2.2 2.2 0 0 1 0-4.4Z" />
+              <path d="M15 7.8a2.2 2.2 0 1 1 0 4.4 2.2 2.2 0 0 1 0-4.4Z" />
             </svg>
             <span>{{ t("set.environment") }}</span>
           </button>
@@ -1631,9 +1633,8 @@ onBeforeUnmount(() => {
           <div v-show="navShows('lab')" class="nav-group">{{ t("set.group.lab") }}</div>
 
           <button v-show="navShows('lab')" class="nav-item" :class="{ on: section === 'lab' }" data-nav-lab @click="section = 'lab'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path d="M8 3h4M8.5 3v5L4 15.5a1 1 0 0 0 .9 1.5h10.2a1 1 0 0 0 .9-1.5L11.5 8V3" stroke="currentColor" stroke-linejoin="round" />
-              <path d="M6 12.5h8" stroke="currentColor" />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path d="M7.4 2.6h5.2v1.5h-1v4.2l4.3 7.4c.41.7-.1 1.6-.91 1.6H5.01c-.81 0-1.32-.9-.91-1.6l4.3-7.4V4.1h-1V2.6Z" />
             </svg>
             <span>{{ t("set.nav.lab") }}</span>
           </button>
@@ -1641,11 +1642,9 @@ onBeforeUnmount(() => {
           <div v-show="navShows('archive')" class="nav-group">{{ t("set.group.archived") }}</div>
 
           <button v-show="navShows('archive')" class="nav-item" :class="{ on: section === 'archive' }" @click="section = 'archive'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path
-                d="M16.8747 6.24935H17.3747V5.74935H16.8747V6.24935ZM16.8747 16.8743V17.3743H17.3747V16.8743H16.8747ZM3.12467 16.8743H2.62467V17.3743H3.12467V16.8743ZM3.12467 6.24935V5.74935H2.62467V6.24935H3.12467ZM2.08301 2.91602V2.41602H1.58301V2.91602H2.08301ZM17.9163 2.91602H18.4163V2.41602H17.9163V2.91602ZM17.9163 6.24935V6.74935H18.4163V6.24935H17.9163ZM2.08301 6.24935H1.58301V6.74935H2.08301V6.24935ZM8.33301 9.08268H7.83301V10.0827H8.33301V9.58268V9.08268ZM11.6663 10.0827H12.1663V9.08268H11.6663V9.58268V10.0827ZM16.8747 6.24935H16.3747V16.8743H16.8747H17.3747V6.24935H16.8747ZM16.8747 16.8743V16.3743H3.12467V16.8743V17.3743H16.8747V16.8743ZM3.12467 16.8743H3.62467V6.24935H3.12467H2.62467V16.8743H3.12467ZM3.12467 6.24935V6.74935H16.8747V6.24935V5.74935H3.12467V6.24935ZM2.08301 2.91602V3.41602H17.9163V2.91602V2.41602H2.08301V2.91602ZM17.9163 2.91602H17.4163V6.24935H17.9163H18.4163V2.91602H17.9163ZM17.9163 6.24935V5.74935H2.08301V6.24935V6.74935H17.9163V6.24935ZM2.08301 6.24935H2.58301V2.91602H2.08301H1.58301V6.24935H2.08301ZM8.33301 9.58268V10.0827H11.6663V9.58268V9.08268H8.33301V9.58268Z"
-                fill="currentColor"
-              />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" aria-hidden="true">
+              <path d="M2.4 2.6h15.2a.8.8 0 0 1 .8.8v2.1a.8.8 0 0 1-.8.8H2.4a.8.8 0 0 1-.8-.8V3.4a.8.8 0 0 1 .8-.8Z" />
+              <path d="M3.1 7.4h13.8v9.3a.7.7 0 0 1-.7.7H3.8a.7.7 0 0 1-.7-.7V7.4ZM8.2 9.4h3.6v1.5H8.2Z" />
             </svg>
             {{ t("set.nav.archive") }}
           </button>
@@ -1653,9 +1652,9 @@ onBeforeUnmount(() => {
           <div v-show="navShows('updates')" class="nav-group">{{ t("set.groupAbout") }}</div>
 
           <button v-show="navShows('updates')" class="nav-item" :class="{ on: section === 'updates' }" @click="section = 'updates'">
-            <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path d="M10 4v8M10 4 6.8 7.2M10 4l3.2 3.2" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" />
-              <path d="M4.5 13.5v2h11v-2" stroke="currentColor" stroke-linecap="round" />
+            <svg class="nav-ico" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path d="M10 3.1 14.5 7.6h-3.1v4.9H8.6V7.6H5.5L10 3.1Z" />
+              <path d="M4 13.4h1.5v1.6h9V13.4H16v2.4a.7.7 0 0 1-.7.7H4.7a.7.7 0 0 1-.7-.7v-2.4Z" />
             </svg>
             <span>{{ t("set.nav.updates") }}</span>
           </button>
@@ -1664,7 +1663,8 @@ onBeforeUnmount(() => {
         </div>
       </nav>
 
-      <div ref="contentEl" class="content">
+      <!-- MiMo's #set-main carries the thin 9px bar the nav column already has. -->
+      <div ref="contentEl" class="content u-scrollbar-thin">
         <!-- General -->
         <template v-if="section === 'general'">
           <h2>{{ t("set.nav.general") }}</h2>
@@ -2011,12 +2011,12 @@ onBeforeUnmount(() => {
           </div>
 
           <!--
-            MiMo's 应用图标: a section heading and the grid as a block of its own.
+            MiMo's 应用图标: a section heading and the grid, which is itself a card.
             The tiles are drawn from the same string the icon files are rasterised
             from, so the tile a reader presses is the icon they get.
           -->
           <h3 data-app-icon-head>{{ t("set.appIcon") }}</h3>
-          <div class="gallery" role="radiogroup" :aria-label="t('set.appIcon')">
+          <div class="card gallery" role="radiogroup" :aria-label="t('set.appIcon')">
             <button
               v-for="tile in iconTiles"
               :key="tile.spec.id"
@@ -2027,7 +2027,7 @@ onBeforeUnmount(() => {
               :aria-label="tile.spec.name"
               @click="chooseAppIcon(tile.spec.id)"
             >
-              <img v-if="tile.image" class="tile-art" :src="tile.image" width="44" height="44" alt="" />
+              <img v-if="tile.image" class="tile-art" :src="tile.image" width="60" height="60" alt="" />
               <span v-else class="tile-art" v-html="tile.svg" />
               <span class="tile-name">{{ tile.spec.name }}</span>
             </button>
@@ -2159,7 +2159,7 @@ onBeforeUnmount(() => {
           <p class="page-sub">{{ t("set.personalSub") }}</p>
           <h3>{{ t("set.instructions") }}</h3>
           <!-- MiMo's 了解更多 follows the sentence with no space between. -->
-          <p class="page-sub ci-sub">
+          <p class="page-sub">
             {{ t("set.instructionsSub") }}<button type="button" class="ci-link" data-ci-link :aria-expanded="ciHelpOpen" @click="ciHelpOpen = !ciHelpOpen">{{ t("set.learnMore") }}</button>
           </p>
           <div v-if="ciHelpOpen" class="ci-help" data-ci-help>
@@ -2513,7 +2513,7 @@ onBeforeUnmount(() => {
           </div>
 
           <h3>{{ t("set.mcp.manualTitle") }}</h3>
-          <p class="page-sub mcp-sub">{{ t("set.mcp.manualSub") }}</p>
+          <p class="page-sub">{{ t("set.mcp.manualSub") }}</p>
           <div class="card">
             <div class="line">
               <div class="line-text">
@@ -2583,12 +2583,14 @@ onBeforeUnmount(() => {
           <div class="card env-projects">
             <div v-for="directory in envProjects" :key="directory" class="line env-project" :data-env-project="directory">
               <div class="line-text">
+                <!-- MiMo's sr-ic folder, 18 square on the shared 1.7 stroke and inline with the name. -->
                 <div class="line-title env-project-name">
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path
-                      d="M1.9 4.2c0-.6.5-1.1 1.1-1.1h2.6l1.3 1.5h6.1c.6 0 1.1.5 1.1 1.1v6.1c0 .6-.5 1.1-1.1 1.1H3c-.6 0-1.1-.5-1.1-1.1z"
+                      d="M3.25 7.25A1.75 1.75 0 0 1 5 5.5h3.9l2 2h8.35a1.75 1.75 0 0 1 1.75 1.75v7.5a1.75 1.75 0 0 1-1.75 1.75H5a1.75 1.75 0 0 1-1.75-1.75Z"
                       stroke="currentColor"
-                      stroke-width="1.2"
+                      stroke-width="1.7"
+                      stroke-linecap="round"
                       stroke-linejoin="round"
                     />
                   </svg>
@@ -2637,8 +2639,10 @@ onBeforeUnmount(() => {
               v-tip="{ label: t('set.refreshWorktrees') }"
               @click="refreshTrees"
             >
+              <!-- MiMo's refresh: the arc stops where the arrow head starts, and the head is 5 across. -->
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6" />
+                <path d="M21 12A9 9 0 1 1 18.36 5.64" />
+                <path d="M16 9h5V4" />
               </svg>
             </button>
           </div>
@@ -2678,46 +2682,51 @@ onBeforeUnmount(() => {
           <h2>{{ t("set.nav.usage") }}</h2>
           <p class="page-sub">{{ t("set.usageSub") }}</p>
           <!-- Every figure below covers the same days, counted on this machine's calendar. -->
-          <p class="page-sub usage-window" data-usage-window>{{ t("set.usageWindow", { n: String(usage?.days ?? 14) }) }}</p>
+          <p class="page-sub" data-usage-window>{{ t("set.usageWindow", { n: String(usage?.days ?? 14) }) }}</p>
+          <!-- These two cards hold figures rather than rows, so the block inside carries the row's own 16. -->
           <div class="card">
-            <div class="totals">
-              <div class="total">
-                <span class="total-value" data-usage-total-cost>{{ usage ? spent({ usage: usage.total, priced: usage.priced, unpriced: usage.unpriced }) : money.format(0) }}</span>
-                <span class="total-name">{{ t("context.usage.cost") }}</span>
+            <div class="usage-block">
+              <div class="totals">
+                <div class="total">
+                  <span class="total-value" data-usage-total-cost>{{ usage ? spent({ usage: usage.total, priced: usage.priced, unpriced: usage.unpriced }) : money.format(0) }}</span>
+                  <span class="total-name">{{ t("context.usage.cost") }}</span>
+                </div>
+                <div class="total">
+                  <span class="total-value">{{ compactTokens(usage?.total.input ?? 0) }}</span>
+                  <span class="total-name">{{ t("set.usageInput") }}</span>
+                </div>
+                <div class="total">
+                  <span class="total-value">{{ compactTokens(usage?.total.output ?? 0) }}</span>
+                  <span class="total-name">{{ t("set.usageOutput") }}</span>
+                </div>
+                <div class="total">
+                  <span class="total-value">{{ usage?.turns ?? 0 }}</span>
+                  <span class="total-name">{{ t("set.usageTurns") }}</span>
+                </div>
               </div>
-              <div class="total">
-                <span class="total-value">{{ compactTokens(usage?.total.input ?? 0) }}</span>
-                <span class="total-name">{{ t("set.usageInput") }}</span>
-              </div>
-              <div class="total">
-                <span class="total-value">{{ compactTokens(usage?.total.output ?? 0) }}</span>
-                <span class="total-name">{{ t("set.usageOutput") }}</span>
-              </div>
-              <div class="total">
-                <span class="total-value">{{ usage?.turns ?? 0 }}</span>
-                <span class="total-name">{{ t("set.usageTurns") }}</span>
-              </div>
+              <p v-if="usage?.priced && usage.unpriced" class="line-sub" data-usage-partly-priced>{{ t("set.usagePartlyPriced") }}</p>
             </div>
-            <p v-if="usage?.priced && usage.unpriced" class="line-sub" data-usage-partly-priced>{{ t("set.usagePartlyPriced") }}</p>
           </div>
 
           <h3>{{ t("set.usageByDay", { n: String(usage?.days ?? 14) }) }}</h3>
           <div class="card">
-            <div v-for="day in usage?.byDay ?? []" :key="day.key" class="day">
-              <span class="day-name">{{ dayLabel(day.key) }}</span>
-              <span class="day-bar">
-                <span
-                  class="day-fill"
-                  :style="{
-                    width:
-                      Math.max(2, ((day.usage.input + day.usage.output) / busiestDay) * 100) + '%',
-                  }"
-                />
-              </span>
-              <span class="day-value">{{ compactTokens(day.usage.input + day.usage.output) }}</span>
-              <span class="day-cost">{{ spent(day) }}</span>
+            <div class="usage-block">
+              <div v-for="day in usage?.byDay ?? []" :key="day.key" class="day">
+                <span class="day-name">{{ dayLabel(day.key) }}</span>
+                <span class="day-bar">
+                  <span
+                    class="day-fill"
+                    :style="{
+                      width:
+                        Math.max(2, ((day.usage.input + day.usage.output) / busiestDay) * 100) + '%',
+                    }"
+                  />
+                </span>
+                <span class="day-value">{{ compactTokens(day.usage.input + day.usage.output) }}</span>
+                <span class="day-cost">{{ spent(day) }}</span>
+              </div>
+              <p v-if="usage && !usage.byDay.length" class="line-sub">{{ t("set.usageNone") }}</p>
             </div>
-            <p v-if="usage && !usage.byDay.length" class="line-sub">{{ t("set.usageNone") }}</p>
           </div>
 
           <h3>{{ t("set.usageByModel") }}</h3>
@@ -2891,8 +2900,9 @@ onBeforeUnmount(() => {
                       data-edit-shortcut
                       @click="startRecord(shortcut.id)"
                     >
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">
-                        <path d="M10.8 2.7l2.5 2.5L6 12.5H3.5V10zM2.5 14.5h11" />
+                      <!-- MiMo draws this pencil filled, so MCode's own outline is filled rather than stroked. -->
+                      <svg viewBox="0 0 16 16" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" aria-hidden="true">
+                        <path d="M10.9 1.75 14.25 5.1 6.15 13.2H2.8V9.85ZM10.9 3.63 4.13 10.4v1.47H5.6L12.37 5.1ZM2.8 14.25h10.4v1.35H2.8z" />
                       </svg>
                     </button>
                   </template>
@@ -3126,7 +3136,7 @@ onBeforeUnmount(() => {
 }
 
 .unit {
-  color: var(--text-weaker);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -3165,135 +3175,36 @@ onBeforeUnmount(() => {
   background: var(--scrim);
 }
 
+/* The shell's own layout; its size, fills and lift are MiMo's, further down. */
 .dialog {
   display: flex;
-  width: min(980px, 88vw);
-  height: min(600px, 84vh);
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weak);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 
 /*
- * Measured off opencode's own settings tabs-list rather than chosen: 200px
- * wide with 12px of padding, where MCode had 260 and 22/14/16. The extra 60px
- * was empty in every language - the longest label here is two characters wider
- * than the icon column - and it came out of the page being configured.
- */
-/*
- * The column is lighter than the page, and the cards are the page lifted.
- *
- * Measured off the reference itself (1.18.27, driven over its own devtools
- * rather than read off its stylesheet): the page is rgb(22,22,22), the tab
- * column rgb(36,36,36), and the cards are rgb(22,22,22) again - the same colour
- * as the page - carrying `--v2-elevation-raised`. So what lifts a card is its
- * shadow, not a fill.
- *
- * Both of those I had guessed backwards a moment ago: the column had gone down
- * to 8 and the cards up to 36. The stylesheet was no help either - its settings
- * variant still says `gap: 0` while the running app measures 4px - which is why
- * this was measured in the end instead of read.
+ * The navigation column's shape. Everything it is made of - its width, fills,
+ * insets and type - is MiMo's and lives in the settings-dialog block below;
+ * what is left here is the layout the rows need in any of those skins.
  */
 .nav {
   display: flex;
   flex-direction: column;
-  /* 240 and 740 are what the reference splits its 980 into, and this dialog is
-     already 980 wide. */
-  /* 6 between rows, which is what the reference measures between its tab
-     wrappers and between a section title and its first tab. */
-  gap: 6px;
-  width: 240px;
-  min-width: 240px;
-  padding: 12px;
-  background: var(--surface-raised-hover);
-  /* The seam between the column and the page it is choosing, so it belongs on
-     whichever of the column's edges the page is on. */
-  border-inline-end: 1px solid var(--border-weak);
 }
 
-/*
- * The group heading, matched to opencode's tabs-section-title: --text-weak
- * rather than the step below it, 13px, medium weight, and indented less than
- * the rows under it (its 4px against the trigger's 12px).
- */
-/*
- * A section title in the navigation, measured on opencode's: 24 tall,
- * `padding: 0 0 0 4px`, `12px/500/24px` in text-base. The rhythm around it
- * is 6 from the title to its first tab, 6 between tabs, and 12 from a
- * section's last tab to the next title. This was 13px in text-weak with
- * ten of top padding and ten of right, which put the label a size larger and
- * a shade fainter than the reference's, and its groups on a different beat.
- */
-.nav-group {
-  min-height: calc(24px * var(--ui-font-scale, 1));
-  padding: 0 0 0 4px;
-  color: var(--text-base);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  font-weight: 500;
-  line-height: calc(24px * var(--ui-font-scale, 1));
-}
-
-/* 12 from the last tab of one section to the next title: the 6 the list
-   already puts between rows, and 6 more. */
-.nav-item + .nav-group {
-  margin-top: 6px;
-}
-
-.nav-group:first-child {
-  padding-top: 0;
-}
-
-/*
- * opencode 1.18.29's tab: the wrapper is `215x28` on a 4px radius, the trigger
- * inside it `padding: 0 6px` at `13px/440`, and the selected one fills with
- * `rgb(58, 58, 58)` - which is `--surface-key` here, the same fill the
- * selected project row uses. The numbers this carried before (32 tall, radius
- * 8, `0 10px`, 13.5px) were measured on 1.18.27; the reference moved.
- */
 .nav-item {
   display: flex;
-  /* The navigation is a flex column; without this the row measured 27 for a
-     declared 28 - the same squeeze the terminal's new-tab button had. */
+  /* The navigation is a flex column; without this a row measures a pixel short
+     of what it declares - the same squeeze the terminal's new-tab button had. */
   flex-shrink: 0;
   align-items: center;
-  gap: 10px;
   width: 100%;
-  min-height: calc(28px * var(--ui-font-scale, 1));
-  padding: 0 6px;
-  color: var(--text-base);
   text-align: start;
-  border-radius: 4px;
-  font-size: calc(13px * var(--ui-font-scale, 1));
   transition: background 0.12s, color 0.12s;
 }
 
-/* One size and stroke weight for every nav glyph, so the column reads evenly. */
 .nav-ico {
-  width: 20px;
-  height: 20px;
   flex-shrink: 0;
-  color: var(--icon-base);
   transition: color 0.12s;
-}
-
-.nav-item:hover {
-  color: var(--text-strong);
-}
-
-/*
- * An overlay rather than a colour.
- *
- * Pinned to a token this went wrong twice in one sitting - first
- * --surface-raised-hover, which became the column's own fill, then a mix
- * against a ground the column no longer had. `--surface-selected` is
- * overlay/simple-overlay-pressed, a wash of white over whatever is behind it,
- * so it cannot match the plane it sits on however that plane changes.
- */
-.nav-item.on {
-  color: var(--text-strong);
-  background: var(--surface-key);
 }
 
 /* settings-v2-tab-header is 40/40/32 and the body below it 0/40/40, so the
@@ -3333,10 +3244,14 @@ h3 {
   line-height: 1;
 }
 
+/*
+ * MiMo's sc-sub with mt-[8px]: a line under the card it belongs to, not pulled
+ * up into it. 13px in mut, as every other sub-line on these pages.
+ */
 .note {
-  margin: -8px 0 14px;
-  color: var(--text-weak);
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  margin: 8px 0 14px;
+  color: var(--text-base);
+  font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }
 
@@ -3383,12 +3298,6 @@ h3 {
 
 .line:last-child {
   border-bottom: none;
-}
-
-.line.stack {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
 }
 
 /*
@@ -3519,15 +3428,35 @@ h3 {
   white-space: nowrap;
 }
 
+/*
+ * Faded rather than recoloured. The dark rule for `.ctl-btn` sets the strong
+ * ink on the plain element and outranks this one, so in the dark a disabled
+ * button drew in the same white as an enabled one on the same fill - only the
+ * missing hover wash told them apart, and only once the pointer was on it. The
+ * primary variant below already fades, and opacity is the one answer no theme
+ * rule can take away.
+ */
 .ctl-btn:disabled {
-  color: var(--text-weaker);
+  opacity: 0.4;
   cursor: default;
 }
 
-/* MiMo's 重启更新 is its filled button, and the hint under the version a line of its own. */
+/* MiMo's 重启更新 is its primary button - the same pair the models page saves with. */
 .ctl-btn.update-install {
-  color: var(--surface-base);
-  background: var(--text-strong);
+  color: #ffffff;
+  background: #151c13;
+}
+
+:root[data-theme="dark"] .ctl-btn.update-install {
+  color: #0d0d0d;
+  background: #ececec;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ctl-btn.update-install {
+    color: #0d0d0d;
+    background: #ececec;
+  }
 }
 
 .update-hint {
@@ -3535,7 +3464,6 @@ h3 {
 }
 
 .ctl-btn.update-install:disabled {
-  color: var(--surface-base);
   opacity: 0.4;
 }
 
@@ -3557,7 +3485,7 @@ h3 {
   align-items: center;
   gap: 5px;
   padding: 1px 7px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border: 1px solid var(--border-weak);
   border-radius: 999px;
   font-size: calc(11px * var(--ui-font-scale, 1));
@@ -3578,6 +3506,10 @@ h3 {
   border-color: color-mix(in srgb, var(--text-success) 35%, transparent);
 }
 
+/*
+ * MiMo's own failure pill: --color-err, one value for both schemes, under an
+ * 8% fill and a 35% ring. --text-critical is that same --color-err.
+ */
 .mcp-status.err {
   color: var(--text-critical);
   background: color-mix(in srgb, var(--text-critical) 8%, transparent);
@@ -3593,16 +3525,17 @@ h3 {
 /* The switch and its buttons, held to the end of the row the way `.ctl-pair` is. */
 .mcp-ctrl {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
   margin-inline-start: auto;
 }
 
+/* MiMo's mcp-tools-panel: pulled 6 up under the row it belongs to, inset by the
+   card's own 16, and with no rule of its own - the row above already draws one. */
 .mcp-tools-panel {
-  padding: 4px 0 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--text-strong) 10%, var(--surface-menu));
+  margin-top: -6px;
+  padding: 4px 16px 14px;
 }
 
 .mcp-tools-hint {
@@ -3610,17 +3543,18 @@ h3 {
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
+/* MiMo's tools error line is the same --color-err. */
 .mcp-tools-hint.err {
   color: var(--text-critical);
 }
 
 .mcp-tools-head {
   margin-bottom: 8px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(11px * var(--ui-font-scale, 1));
 }
 
@@ -3642,8 +3576,12 @@ h3 {
   min-width: 0;
 }
 
+/*
+ * MiMo draws a tool's own name in --color-txt, a step above the description
+ * under it, which --text-body is.
+ */
 .mcp-tool-name {
-  color: var(--text-base);
+  color: var(--text-body);
   font-family: var(--font-mono);
   font-size: calc(12px * var(--code-font-scale, 1));
 }
@@ -3651,15 +3589,11 @@ h3 {
 .mcp-tool-desc {
   display: -webkit-box;
   overflow: hidden;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.45;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-}
-
-.page-sub.mcp-sub {
-  margin-top: 0;
 }
 
 /* An import row's command or address wraps where it must, and the actions sit under the lists. */
@@ -3673,13 +3607,20 @@ h3 {
  * hovered row, a pulsing blue box while recording (red on a conflict), and the
  * reset or delete control in a 28px column at the end.
  */
+/*
+ * MiMo puts the search bar and the table on the settings card colour with the
+ * card's own rule (#settings-overlay redefines both for them by name), and
+ * everything drawn inside them - the column head, the row rules, a key cap, the
+ * mode button - on --color-line. What was here instead was the opencode-era
+ * formula, a percentage of the ink mixed into the menu surface.
+ */
 .keys-search {
   display: flex;
   align-items: center;
   margin-bottom: 16px;
   padding: 10px 16px;
-  background: color-mix(in srgb, var(--text-strong) 4%, var(--surface-menu));
-  border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  background: #ffffff;
+  border: 1px solid #f3efeb;
   border-radius: 12px;
 }
 
@@ -3729,7 +3670,7 @@ h3 {
   width: 28px;
   height: 28px;
   color: var(--text-weak);
-  border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  border: 1px solid #f0ebe5;
   border-radius: 6px;
 }
 
@@ -3740,7 +3681,7 @@ h3 {
 
 .keys-search-mode.on {
   color: var(--text-strong);
-  background: color-mix(in srgb, var(--text-strong) 8%, var(--surface-menu));
+  background: #f8f7f5;
 }
 
 .keys-search-mode svg {
@@ -3750,8 +3691,8 @@ h3 {
 
 .keys-table {
   overflow: hidden;
-  background: color-mix(in srgb, var(--text-strong) 4%, var(--surface-menu));
-  border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  background: #ffffff;
+  border: 1px solid #f3efeb;
   border-radius: 12px;
 }
 
@@ -3759,8 +3700,8 @@ h3 {
   display: flex;
   align-items: center;
   padding: 10px 20px;
-  color: var(--text-weak);
-  border-bottom: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  color: var(--text-base);
+  border-bottom: 1px solid #f0ebe5;
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -3773,7 +3714,7 @@ h3 {
   display: flex;
   align-items: center;
   padding: 14px 20px;
-  border-bottom: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  border-bottom: 1px solid #f0ebe5;
   transition: background-color 0.15s;
 }
 
@@ -3781,8 +3722,13 @@ h3 {
   border-bottom: 0;
 }
 
+/*
+ * MiMo's row hover is --color-side, which on Windows and Linux in light is the
+ * warm #f8f7f5 rather than the white it is elsewhere - so it does show against
+ * the card, and MCode can take it rather than keeping a mix of its own.
+ */
 .keys-row:hover {
-  background: color-mix(in srgb, var(--text-strong) 5%, var(--surface-menu));
+  background: #f8f7f5;
 }
 
 .keys-command {
@@ -3838,7 +3784,7 @@ h3 {
 
 .keys-desc {
   margin-top: 2px;
-  color: var(--text-weaker);
+  color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -3849,11 +3795,35 @@ h3 {
   padding: 2px 8px;
   color: var(--text-strong);
   background: #f0f0f2;
-  border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  border: 1px solid #f0ebe5;
   border-radius: 6px;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+  box-shadow: 0 1px 3px 0 #0000001a, 0 1px 2px -1px #0000001a;
   font-family: var(--font-sans);
   font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+:root[data-theme="dark"] .keys-search,
+:root[data-theme="dark"] .keys-table {
+  background: #282828;
+  border-color: #3d3d3d;
+}
+
+:root[data-theme="dark"] .keys-cols,
+:root[data-theme="dark"] .keys-row,
+:root[data-theme="dark"] .keys-kbd,
+:root[data-theme="dark"] .keys-search-mode,
+:root[data-theme="dark"] .keys-record-cancel {
+  border-color: #2e2e2e;
+}
+
+:root[data-theme="dark"] .keys-search-mode.on,
+:root[data-theme="dark"] .keys-row:hover {
+  background: #141414;
+}
+
+/* The shared dark border rule above outranks `.keys-search-mode:hover`, which left the toggle's border unchanged on hover. */
+:root[data-theme="dark"] .keys-search-mode:hover {
+  border-color: var(--text-strong);
 }
 
 :root[data-theme="dark"] .keys-kbd {
@@ -3861,6 +3831,29 @@ h3 {
 }
 
 @media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .keys-search,
+  :root:not([data-theme="light"]) .keys-table {
+    background: #282828;
+    border-color: #3d3d3d;
+  }
+
+  :root:not([data-theme="light"]) .keys-cols,
+  :root:not([data-theme="light"]) .keys-row,
+  :root:not([data-theme="light"]) .keys-kbd,
+  :root:not([data-theme="light"]) .keys-search-mode,
+  :root:not([data-theme="light"]) .keys-record-cancel {
+    border-color: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .keys-search-mode.on,
+  :root:not([data-theme="light"]) .keys-row:hover {
+    background: #141414;
+  }
+
+  :root:not([data-theme="light"]) .keys-search-mode:hover {
+    border-color: var(--text-strong);
+  }
+
   :root:not([data-theme="light"]) .keys-kbd {
     background: #2e2e2e;
   }
@@ -3922,16 +3915,21 @@ h3 {
   animation: keys-record-pulse 2s ease-in-out infinite;
 }
 
+/*
+ * A conflict is MiMo's red-500 (#fb2c36) on its own 5% wash, border and text
+ * alike. MiMo's red-500 here, which is not its --color-err, so --text-critical
+ * does not fit.
+ */
 .keys-record-box.conflict {
-  color: var(--text-critical);
-  background: color-mix(in srgb, var(--text-critical) 5%, transparent);
-  border-color: var(--text-critical);
+  color: #fb2c36;
+  background: color-mix(in srgb, #fb2c36 5%, transparent);
+  border-color: #fb2c36;
   animation: none;
 }
 
 @keyframes keys-record-pulse {
   50% {
-    opacity: 0.55;
+    opacity: 0.5;
   }
 }
 
@@ -3949,7 +3947,7 @@ h3 {
 
 .keys-record-cancel {
   color: var(--text-weak);
-  border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  border: 1px solid #f0ebe5;
 }
 
 .keys-record-cancel:hover {
@@ -3957,7 +3955,7 @@ h3 {
 }
 
 .keys-record-conflict {
-  color: var(--text-critical);
+  color: #fb2c36;
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -3983,7 +3981,7 @@ h3 {
 }
 
 .keys-icon.danger:hover {
-  color: var(--text-critical);
+  color: #fb2c36;
 }
 
 .keys-empty {
@@ -4047,10 +4045,6 @@ h3 {
   white-space: nowrap;
 }
 
-.page-sub.mcp-example-label {
-  margin: 14px 0 8px;
-}
-
 .mcp-example {
   margin: 0;
   padding: 12px 14px;
@@ -4080,7 +4074,7 @@ h3 {
 
 .mcp-label {
   margin-bottom: 6px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -4145,7 +4139,7 @@ h3 {
 
 .mcp-add-row {
   align-self: flex-start;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 
 .mcp-add-row.last {
@@ -4154,7 +4148,7 @@ h3 {
 
 .mcp-hint {
   margin: 0 0 18px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }
@@ -4163,20 +4157,6 @@ h3 {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-}
-
-.link-btn {
-  color: var(--text-base);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-}
-
-.link-btn:hover {
-  color: var(--text-strong);
-}
-
-.key-row {
-  display: flex;
-  gap: 8px;
 }
 
 .confirm {
@@ -4194,6 +4174,15 @@ h3 {
  * as one setting with three positions rather than three separate buttons that
  * happen to sit together.
  */
+/*
+ * The usage cards hold figures, not rows, so nothing inside them carried the
+ * 16 a row's padding gives - the four totals and the day list sat flush against
+ * the card's corners. The block takes that padding on their behalf.
+ */
+.usage-block {
+  padding-block: 16px;
+}
+
 /* Four figures across, each its own column so they line up whatever their width. */
 .totals {
   display: grid;
@@ -4234,10 +4223,16 @@ h3 {
   padding: 4px 0;
 }
 
-/* Wide enough for the longest short month and day the tables' languages write ("20 de set.", "20. Sept."). */
+/*
+ * Wide enough for the longest short month and day the tables' languages write
+ * ("20 de set.", "20. Sept.") - measured at the ordinary interface size, so the
+ * width has to follow the interface size too. It was a flat 64px against text
+ * that scales to 1.71x, with `nowrap` and nothing to clip it, so at the largest
+ * setting the date painted straight across the bar beside it (R25-D4).
+ */
 .day-name {
   flex-shrink: 0;
-  width: 64px;
+  width: calc(64px * var(--ui-font-scale, 1));
   white-space: nowrap;
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
@@ -4261,7 +4256,7 @@ h3 {
 .day-value,
 .day-cost {
   flex-shrink: 0;
-  width: 56px;
+  width: calc(56px * var(--ui-font-scale, 1));
   color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   text-align: end;
@@ -4272,11 +4267,6 @@ h3 {
  * MiMo's custom instructions: a heading, a line with an inline 了解更多 that
  * opens three lines of help, a 200px box on the page itself, and Save below.
  */
-.page-sub.ci-sub,
-.page-sub.usage-window {
-  margin-top: 0;
-}
-
 .ci-link {
   display: inline;
   padding: 0;
@@ -4287,17 +4277,13 @@ h3 {
   cursor: pointer;
 }
 
-.ci-link:hover {
-  text-decoration: underline;
-}
-
 .ci-help {
   display: flex;
   flex-direction: column;
   gap: 6px;
   margin: -6px 0 14px;
   padding: 10px 12px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: var(--surface-base);
   border: 1px solid var(--border-weak);
   border-radius: 10px;
@@ -4323,10 +4309,6 @@ h3 {
   resize: vertical;
 }
 
-.ci-input:focus {
-  border-color: var(--border-strong);
-}
-
 /* MiMo's ci-input: the input fill (#fff / #181818) on a 1px line, the dim colour on focus. */
 .ci-input,
 .ci-help {
@@ -4335,7 +4317,7 @@ h3 {
 }
 
 .ci-input:focus {
-  border-color: var(--text-weaker);
+  border-color: var(--text-weak);
 }
 
 /* Clean, MiMo's save is the secondary button at full opacity, its text not greyed. */
@@ -4344,10 +4326,15 @@ h3 {
   opacity: 1;
 }
 
+/* The dark line is written on the plain element, which outranks `.ci-input:focus` above, so the focus ring had to be repeated here; the field sets `outline: none`, so that border is the only mark focus has. */
 :root[data-theme="dark"] .ci-input,
 :root[data-theme="dark"] .ci-help {
   background: #181818;
-  border-color: #3d3d3d;
+  border-color: #2e2e2e;
+}
+
+:root[data-theme="dark"] .ci-input:focus {
+  border-color: var(--text-weak);
 }
 
 :root[data-theme="dark"] .ci-save:disabled {
@@ -4358,7 +4345,11 @@ h3 {
   :root:not([data-theme="light"]) .ci-input,
   :root:not([data-theme="light"]) .ci-help {
     background: #181818;
-    border-color: #3d3d3d;
+    border-color: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .ci-input:focus {
+    border-color: var(--text-weak);
   }
 
   :root:not([data-theme="light"]) .ci-save:disabled {
@@ -4379,54 +4370,111 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+/* MiMo's sc-sub: 14 below, nothing above, so it sits on the title's own 26. */
 .page-sub {
-  margin: -4px 0 14px;
+  margin: 0 0 14px;
   color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
-/* MiMo's app icon grid: a block under its own section heading, between the two cards. */
-.gallery {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
-  gap: 10px;
-  margin-block: 8px 16px;
+/* MiMo's import note and example label are the same sub-line, pushed 14 down. */
+.page-sub.mcp-skills-note,
+.page-sub.mcp-example-label {
+  margin-top: 14px;
 }
 
+/*
+ * MiMo's app icon grid, which is itself a set-card ("set-card app-icon-grid"):
+ * four equal columns, 18 between rows and 12 between columns, 18 by 16 of
+ * padding. The card rule below gives it the fill, the line and the 16px corner.
+ */
+.card.gallery {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 18px 12px;
+  padding: 18px 16px;
+}
+
+/* A cell is a column of thumb and name with nothing of its own - no padding, no
+   border, no hover fill; the thumb's ring is what answers the pointer. */
 .tile {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 8px 4px;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: 10px;
+  border: 0;
   cursor: pointer;
 }
 
-.tile:hover {
-  background: var(--surface-hover);
-}
-
-/* The chosen one is said twice - a ring and a stronger name - because a ring
-   alone is easy to miss at this size and colour is not everyone's channel. */
-.tile.on {
-  border-color: var(--icon-base);
-}
-
+/*
+ * The thumb: 60 square on a 14px corner under an inset hairline. Hover lays a
+ * 2px menu-hover ring outside it; the chosen one is ringed twice - 2px of the
+ * page colour, then 4px of the selection mark - so the mark reads as a gap and
+ * a ring rather than a thicker border.
+ */
+/*
+ * The thumb is the artwork itself, drawn or rasterised, so the size lives here
+ * rather than on a wrapper: a rule for the image inside would have to outrank
+ * this one, and did - the classic icon's PNG filled its whole grid cell.
+ */
 .tile-art {
   display: block;
+  box-sizing: border-box;
+  width: 60px;
+  height: 60px;
   overflow: hidden;
-  border-radius: 10px;
+  border-radius: 14px;
+  box-shadow: inset 0 0 0 1px #00000014;
+  object-fit: cover;
   line-height: 0;
+  transition: box-shadow 0.12s ease;
+}
+
+.tile-art :deep(svg) {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.tile:hover .tile-art {
+  box-shadow: inset 0 0 0 1px #00000014, 0 0 0 2px #f1f0ec;
+}
+
+.tile.on .tile-art {
+  box-shadow: inset 0 0 0 1px #00000014, 0 0 0 2px #fffefd, 0 0 0 4px #151c13;
+}
+
+:root[data-theme="dark"] .tile:hover .tile-art {
+  box-shadow: inset 0 0 0 1px #00000014, 0 0 0 2px #ffffff0f;
+}
+
+:root[data-theme="dark"] .tile.on .tile-art {
+  box-shadow: inset 0 0 0 1px #00000014, 0 0 0 2px #181818, 0 0 0 4px #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .tile:hover .tile-art {
+    box-shadow: inset 0 0 0 1px #00000014, 0 0 0 2px #ffffff0f;
+  }
+
+  :root:not([data-theme="light"]) .tile.on .tile-art {
+    box-shadow: inset 0 0 0 1px #00000014, 0 0 0 2px #181818, 0 0 0 4px #ffffff;
+  }
 }
 
 .tile-name {
-  color: var(--text-weak);
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: calc(16px * var(--ui-font-scale, 1));
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tile.on .tile-name {
@@ -4454,7 +4502,8 @@ h3 {
   height: 100%;
   min-width: 0;
   padding: 0 12px;
-  color: var(--text-weak);
+  /* MiMo's th-seg-btn rests in mut, not the step below it. */
+  color: var(--text-base);
   background: var(--surface-raised);
   border: 0;
   font-size: calc(12px * var(--ui-font-scale, 1));
@@ -4466,6 +4515,12 @@ h3 {
   color: var(--text-strong);
 }
 
+/*
+ * The picked segment is MiMo's primary pair - --color-primary on
+ * --color-primary-foreground - which is #151c13 under white in light and
+ * #ececec under #0d0d0d in dark. It had no dark value at all, so the dark
+ * dialog drew near-black text on near-black fill.
+ */
 .choice-btn.on {
   color: #ffffff;
   background: #151c13;
@@ -4475,28 +4530,20 @@ h3 {
   border-color: #3d3d3d;
 }
 
+:root[data-theme="dark"] .choice-btn.on {
+  color: #0d0d0d;
+  background: #ececec;
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .choice {
     border-color: #3d3d3d;
   }
-}
 
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
-.row-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-}
-
-.pmark.on {
-  color: var(--surface-base);
-  background: var(--text-strong);
+  :root:not([data-theme="light"]) .choice-btn.on {
+    color: #0d0d0d;
+    background: #ececec;
+  }
 }
 
 /*
@@ -4505,13 +4552,6 @@ h3 {
  * `13px/530/20px` at `-0.04px` in text-base. This was `0 12px` on a 6% fill
  * in text-strong at 440 - a filled pill where the reference draws a ghost.
  */
-
-/* Sits inside .pform.stack, so it must not re-apply the horizontal padding -
-   otherwise the key row is inset from the fields above it. */
-.pform-row {
-  display: flex;
-  gap: 8px;
-}
 
 /* The custom-provider form sits inside the provider card, so it brings the
    card's own inset and closing rule with it rather than knowing about them. */
@@ -4529,7 +4569,8 @@ h3 {
 /* MiMo's light scrim, its settings-full rule and the warm nav fill; dark values follow below. */
 .overlay {
   background: #0000001a;
-  animation: settings-overlay-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  /* MiMo opens the overlay on --ease-enter, not the emphatic curve. */
+  animation: settings-overlay-in 0.18s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
 /* MiMo fades the whole overlay in from .99 and out over .12s while it keeps rendering. */
@@ -4567,13 +4608,19 @@ h3 {
   }
 }
 
+/*
+ * MiMo's settings-full: it gives up a fixed 48 of width and 88 of height to the
+ * window rather than a share of it, so the dialog keeps its full 960 until the
+ * window is under 1008 wide, under MiMo's --shadow-pop.
+ */
 .dialog {
   position: relative;
-  width: min(960px, 92vw);
-  height: min(660px, 86vh);
+  width: min(960px, 100vw - 48px);
+  height: min(660px, 100vh - 88px);
   background: #ffffff;
   border: 1px solid #f3efeb;
   border-radius: 20px;
+  box-shadow: var(--shadow-pop);
   outline: none;
 }
 
@@ -4587,7 +4634,7 @@ h3 {
   place-items: center;
   width: 28px;
   height: 28px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-radius: 8px;
 }
 
@@ -4606,9 +4653,9 @@ h3 {
 }
 
 .nav {
-  gap: 2px;
-  width: 241px;
-  min-width: 241px;
+  /* MiMo's rows carry their own 2 of margin, so the column needs no gap. */
+  width: 240px;
+  min-width: 240px;
   /* The padding lives on the two parts below: the fixed top and the list. */
   padding: 0;
   /* The column is a fixed width, so a row whose label outgrows it used to
@@ -4626,8 +4673,7 @@ h3 {
   display: flex;
   flex: none;
   flex-direction: column;
-  gap: 2px;
-  padding: 19px 11px 0;
+  padding: 18px 10px 0;
 }
 
 /*
@@ -4635,15 +4681,16 @@ h3 {
  * (814 against 659 in zh-CN at 1400x900), so the list scrolls inside the column
  * rather than running off its foot. As MiMo's: the same start inset, 12 below
  * the last row, nothing on the trailing side - the thin 9px scrollbar takes
- * that lane when there is anything to scroll.
+ * that lane when there is anything to scroll. Logical sides, so a
+ * right-to-left language keeps the inset at the start, away from the bar.
  */
 .nav-scroll {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 2px;
   min-height: 0;
-  padding: 0 0 12px 11px;
+  padding-block: 0 12px;
+  padding-inline: 10px 0;
   overflow-x: hidden;
   overflow-y: auto;
 }
@@ -4678,37 +4725,39 @@ h3 {
   }
 }
 
+/*
+ * MiMo's sn-title: 2 above the words and 10 under them rather than one line
+ * box the text is centred in, so the title sits nearer the top of the column.
+ */
 .nav-title {
   flex-shrink: 0;
-  min-height: calc(36px * var(--ui-font-scale, 1));
-  padding: 0 11px;
+  padding: 2px 10px 10px;
   color: var(--text-strong);
   font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 600;
-  line-height: calc(36px * var(--ui-font-scale, 1));
+  line-height: calc(24px * var(--ui-font-scale, 1));
 }
 
+/*
+ * MiMo's sn-group, likewise: 12 above the label and 4 under it. The 12 is what
+ * separates a group from the last row of the one before, which already carries
+ * 2 of its own - so a group label needs no margin rule of its own.
+ */
 .nav-group {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  min-height: calc(35px * var(--ui-font-scale, 1));
-  padding: 0 11px;
+  padding: 12px 10px 4px;
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: calc(19.2px * var(--ui-font-scale, 1));
 }
 
-.nav-title + .nav-group,
-.nav-item + .nav-group {
-  margin-top: 6px;
-}
-
 .nav-item {
   gap: 10px;
-  min-height: calc(36px * var(--ui-font-scale, 1));
-  padding: 0 11px;
+  margin-bottom: 2px;
+  padding: 8px 10px;
   color: var(--text-strong);
   border-radius: 8px;
   font-size: calc(14px * var(--ui-font-scale, 1));
@@ -4720,7 +4769,12 @@ h3 {
   overflow-wrap: anywhere;
 }
 
-/* MiMo's nav icons are 17 square in the label's own strong colour, on every row. */
+/*
+ * MiMo's nav icons are 17 square in the label's own colour, and every one of
+ * them is a solid glyph (its .i.filled): the column reads as a block of marks
+ * rather than a column of wire drawings. MCode's are redrawn on its own grid
+ * to the same weight.
+ */
 .nav-ico {
   width: 17px;
   height: 17px;
@@ -4732,13 +4786,34 @@ h3 {
   background: transparent;
 }
 
+/* MiMo's menu-hover and side-sel, which are warm greys in light and washes of white in dark. */
 .nav.mouse-active .nav-item:hover {
-  background: color-mix(in srgb, var(--text-strong) 5%, transparent);
+  background: #f1f0ec;
 }
 
 .nav-item.on,
 .nav.mouse-active .nav-item.on:hover {
-  background: color-mix(in srgb, var(--text-strong) 8%, transparent);
+  background: #eeedec;
+}
+
+:root[data-theme="dark"] .nav.mouse-active .nav-item:hover {
+  background: #ffffff0f;
+}
+
+:root[data-theme="dark"] .nav-item.on,
+:root[data-theme="dark"] .nav.mouse-active .nav-item.on:hover {
+  background: #ffffff1a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .nav.mouse-active .nav-item:hover {
+    background: #ffffff0f;
+  }
+
+  :root:not([data-theme="light"]) .nav-item.on,
+  :root:not([data-theme="light"]) .nav.mouse-active .nav-item.on:hover {
+    background: #ffffff1a;
+  }
 }
 
 .content {
@@ -4756,31 +4831,51 @@ h3 {
   }
 }
 
+/* MiMo's sc-h1 and sc-sec are both 26 off what follows them. */
 h2 {
-  margin: 0 0 27px;
+  margin: 0 0 26px;
   font-size: calc(24px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: calc(38.4px * var(--ui-font-scale, 1));
 }
 
+/*
+ * MiMo draws a page title in --color-hero-title-fg, which is txt-strong in
+ * light and the softer --color-txt in dark - a 24px heading in pure white is
+ * heavier than anything else on the page. Written out rather than named: its
+ * light half is --text-strong, not the body ink, so no one token holds the pair.
+ */
+:root[data-theme="dark"] h2 {
+  color: #f4f4f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) h2 {
+    color: #f4f4f5;
+  }
+}
+
 h3 {
-  margin: 27px 0 4px;
+  margin: 26px 0 4px;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: calc(22.4px * var(--ui-font-scale, 1));
 }
 
-/* MiMo's set-card: white on the white page in light, a faint warm rule between; #282828 on #1f1f1f in dark. */
+/*
+ * MiMo's set-card: white on the white page in light, a faint warm rule between;
+ * #282828 on #1f1f1f in dark. Its inset is 16 - the row's own padding, which
+ * the divider is drawn inside - and the space to whatever follows is the card's
+ * own 8 of margin rather than a rule between two cards, so a heading or a
+ * paragraph after it sits on the same beat another card would.
+ */
 .card {
-  padding: 0 17px;
+  padding: 0 16px;
+  margin-bottom: 8px;
   background: #ffffff;
   border: 1px solid #f3efeb;
   border-radius: 16px;
   box-shadow: none;
-}
-
-.card + .card {
-  margin-top: 16px;
 }
 
 .line {
@@ -4793,9 +4888,17 @@ h3 {
   border-color: #3d3d3d;
 }
 
-:root[data-theme="dark"] .line,
-:root[data-theme="dark"] .nav-search {
+:root[data-theme="dark"] .line {
   border-color: #3d3d3d;
+}
+
+:root[data-theme="dark"] .nav-search {
+  border-color: #2e2e2e;
+}
+
+/* As .ci-input: the plain dark rule outranks `.nav-search:focus`, so the ring is repeated for the dark schemes. */
+:root[data-theme="dark"] .nav-search:focus {
+  border-color: var(--text-base);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -4804,9 +4907,16 @@ h3 {
     border-color: #3d3d3d;
   }
 
-  :root:not([data-theme="light"]) .line,
-  :root:not([data-theme="light"]) .nav-search {
+  :root:not([data-theme="light"]) .line {
     border-color: #3d3d3d;
+  }
+
+  :root:not([data-theme="light"]) .nav-search {
+    border-color: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .nav-search:focus {
+    border-color: var(--text-base);
   }
 }
 
@@ -4884,11 +4994,11 @@ h3 {
 .content :deep(.trigger) {
   gap: 8px;
   height: calc(28px * var(--ui-font-scale, 1));
-  padding: 0 8px 0 12px;
+  padding: 0 12px;
   background: transparent;
   border: 1px solid #e3e3e0;
   border-radius: 8px;
-  box-shadow: 0 1px 2px #0000000d;
+  box-shadow: var(--shadow-xs);
   font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
@@ -4975,19 +5085,25 @@ h3 {
   }
 }
 
-/* The column's search field: MiMo's 36 tall with an 8px corner and a quiet rule. */
+/*
+ * The column's search field, as MiMo insets it: 6 of margin inside the column's
+ * own 10, which is what puts its edge 16 in, and 6 by 10 of padding rather than
+ * a fixed height, so it grows with the interface font. The rule is --color-line
+ * (#f0ebe5 / #2e2e2e), not a mix against the column's fill.
+ */
 .nav-search {
   flex-shrink: 0;
-  height: calc(36px * var(--ui-font-scale, 1));
-  margin-top: 6px;
-  padding: 0 14px;
+  box-sizing: border-box;
+  width: calc(100% - 12px);
+  margin: 6px;
+  padding: 6px 10px;
   color: var(--text-strong);
   background: transparent;
-  border: 1px solid color-mix(in srgb, var(--text-strong) 16%, var(--surface-raised));
+  border: 1px solid #f0ebe5;
   border-radius: 8px;
   outline: none;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: calc(22.4px * var(--ui-font-scale, 1));
+  line-height: calc(20px * var(--ui-font-scale, 1));
 }
 
 .nav-search::placeholder {
@@ -4995,12 +5111,7 @@ h3 {
 }
 
 .nav-search:focus {
-  border-color: color-mix(in srgb, var(--text-strong) 32%, var(--surface-raised));
-}
-
-/* The first group under the search, now the first row of the scrolling list. */
-.nav-scroll > .nav-group:first-child {
-  margin-top: 7px;
+  border-color: var(--text-base);
 }
 
 /* MiMo's empty search: 13px dim, 10 at the sides and 16 above. */
@@ -5019,22 +5130,24 @@ h3 {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: 27px 0 4px;
+  margin: 26px 0 4px;
 }
 
 .sec-row h3 {
   margin: 0;
 }
 
-.env-project-name {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
+/*
+ * MiMo's sr-ic: the folder is inline with the name rather than a flex row of
+ * its own - 18 square on the .i stroke, dropped 3 below the baseline with 4
+ * after it - and it takes the title's colour instead of being greyed down.
+ */
 .env-project-name svg {
-  flex-shrink: 0;
-  color: var(--text-weak);
+  width: 18px;
+  height: 18px;
+  vertical-align: -3px;
+  margin-inline-end: 4px;
+  color: currentColor;
 }
 
 .env-icon {
@@ -5054,7 +5167,7 @@ h3 {
 }
 
 .env-del svg {
-  color: var(--text-weak);
+  color: var(--text-base);
 }
 
 .env-del:hover svg {
@@ -5072,7 +5185,7 @@ h3 {
   place-items: center;
   width: 28px;
   height: 28px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 6px;
@@ -5083,17 +5196,17 @@ h3 {
   background: var(--surface-hover);
 }
 
-/* The count and loading lines are MiMo's sc-empty-title: 14/500 strong. */
+/* The count and loading lines are MiMo's sc-empty-title: 14/500 strong, with no margin of its own. */
 .wt-status {
-  margin: 4px 0 8px;
+  margin: 0;
   color: var(--text-strong);
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
 }
 
-/* The other sentence-in-a-card on this page, on the same 16/17 rhythm as `.empty-card`. */
+/* The other sentence-in-a-card on this page, on the card row's own 16. */
 .card.wt-empty {
-  padding: 16px 17px;
+  padding: 16px;
 }
 
 .wt-empty-title {
@@ -5104,7 +5217,7 @@ h3 {
 
 .wt-empty-desc {
   margin-top: 4px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
@@ -5112,11 +5225,16 @@ h3 {
   gap: 8px;
 }
 
-/* MiMo's worktree tags: 6 round at 1 by 6, 11px dim on the soft fill, no ring. */
+/*
+ * MiMo's worktree tags are 11px dim on `bg-soft`, which ships as nothing at all -
+ * so its tags have no fill. MCode keeps the filled pill (2026-09-23 decision)
+ * and takes dim for the words: on --surface-hover, --text-weaker measured about
+ * 1.1:1 in light, which is a tag nobody can read.
+ */
 .wt-tag {
   flex-shrink: 0;
   padding: 1px 6px;
-  color: var(--text-weaker);
+  color: var(--text-weak);
   background: var(--surface-hover);
   border-radius: 6px;
   font-size: calc(11px * var(--ui-font-scale, 1));
@@ -5159,7 +5277,7 @@ h3 {
   gap: 4px;
   margin-bottom: 18px;
   padding: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   font-size: calc(14px * var(--ui-font-scale, 1));
@@ -5208,7 +5326,7 @@ h3 {
 
 .env-local-path {
   overflow: hidden;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5283,14 +5401,15 @@ h3 {
  * with select all at the start, the count after it and the two actions at the
  * far end - and a checkbox at the start of each row while selecting.
  */
+/* MiMo's toolbar and its 批量管理 button both sit on bg-bg inside --color-line. */
 .batch-bar {
   display: flex;
   align-items: center;
   gap: 10px;
   margin: 0 0 10px;
   padding: 8px 12px;
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
+  background: #fffefd;
+  border: 1px solid #f0ebe5;
   border-radius: 10px;
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
@@ -5327,7 +5446,7 @@ h3 {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-block-end: 27px;
+  margin-block-end: 26px;
 }
 
 .page-head h2 {
@@ -5338,21 +5457,52 @@ h3 {
   margin-inline-start: auto;
   padding: 5px 12px;
   color: var(--text-strong);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
+  background: #fffefd;
+  border: 1px solid #f0ebe5;
   border-radius: 7px;
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 400;
 }
 
 .archived-manage:hover {
-  background: var(--surface-hover);
+  background: #f1f0ec;
 }
 
-/* MiMo's ghost delete: red text, a light red wash on hover. */
+:root[data-theme="dark"] .batch-bar,
+:root[data-theme="dark"] .archived-manage {
+  background: #181818;
+  border-color: #2e2e2e;
+}
+
+:root[data-theme="dark"] .archived-manage:hover {
+  background: #ffffff0f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .batch-bar,
+  :root:not([data-theme="light"]) .archived-manage {
+    background: #181818;
+    border-color: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .archived-manage:hover {
+    background: #ffffff0f;
+  }
+}
+
+/*
+ * MiMo's inline and bulk delete are a ghost button in --color-del (#e5484d,
+ * one value for both schemes) washed with red-50 on hover. What was here was
+ * #d93025 on #fdecea - MiMo's confirm-button pair, which belongs on the dialog
+ * that asks, not on the row that opens it.
+ *
+ * MiMo keeps the pink wash in dark too, where it is a near-white plate behind
+ * red text; that is its own oversight rather than a value to copy, so the dark
+ * hover stays the warm dark fill MCode already had (2026-09-23).
+ */
 .archived-delete {
   padding: 4px 10px;
-  color: #d93025;
+  color: #e5484d;
   background: transparent;
   border: 0;
   border-radius: 7px;
@@ -5360,11 +5510,7 @@ h3 {
 }
 
 .archived-delete:hover:not(:disabled) {
-  background: #fdecea;
-}
-
-:root[data-theme="dark"] .archived-delete {
-  color: #ff9b7f;
+  background: #fef2f2;
 }
 
 :root[data-theme="dark"] .archived-delete:hover:not(:disabled) {
@@ -5372,10 +5518,6 @@ h3 {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .archived-delete {
-    color: #ff9b7f;
-  }
-
   :root:not([data-theme="light"]) .archived-delete:hover:not(:disabled) {
     background: #3a2320;
   }
@@ -5452,7 +5594,8 @@ h3 {
   z-index: 130;
   display: grid;
   place-items: center;
-  background: var(--scrim);
+  /* MiMo's dialog scrim is bg-black/50 in both schemes, not a lighter one in light. */
+  background: #00000080;
 }
 
 .vs-dialog {
@@ -5462,7 +5605,7 @@ h3 {
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--shadow-pop);
 }
 
 .vs-head {
@@ -5484,7 +5627,7 @@ h3 {
 
 .vs-body {
   margin: 0 0 18px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.6;
   white-space: pre-line;
@@ -5558,7 +5701,7 @@ h3 {
 @keyframes sr-hit {
   0%,
   20% {
-    background: var(--surface-key);
+    background: #f1f0ec;
   }
 
   100% {
@@ -5569,13 +5712,43 @@ h3 {
 /* Reduced motion keeps the fill and drops the fade. */
 :root[data-motion="on"] .sr-hit {
   animation: none;
-  background: var(--surface-key);
+  background: #f1f0ec;
 }
 
 @media (prefers-reduced-motion: reduce) {
   :root[data-motion="system"] .sr-hit {
     animation: none;
-    background: var(--surface-key);
+    background: #f1f0ec;
+  }
+}
+
+/* MiMo's side-active is a wash of white in dark, not a warm grey. */
+:root[data-theme="dark"] .sr-hit {
+  animation-name: sr-hit-dark;
+}
+
+:root[data-theme="dark"]:root[data-motion="on"] .sr-hit {
+  background: #ffffff1a;
+}
+
+@keyframes sr-hit-dark {
+  0%,
+  20% {
+    background: #ffffff1a;
+  }
+
+  100% {
+    background: transparent;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sr-hit {
+    animation-name: sr-hit-dark;
+  }
+
+  :root:not([data-theme="light"]):root[data-motion="on"] .sr-hit {
+    background: #ffffff1a;
   }
 }
 </style>

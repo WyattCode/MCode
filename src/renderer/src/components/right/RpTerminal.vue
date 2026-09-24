@@ -99,12 +99,16 @@ watch(
 </template>
 
 <style scoped>
-/* MiMo's host: the page colour, the terminal filling it. */
+/* MiMo's column: no fill of its own - the page colour is on the host inside it. */
 .rp-term {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
+}
+
+.rp-term :deep(.term),
+.rp-term :deep(.term-host) {
   background: var(--surface-raised);
 }
 
@@ -116,7 +120,7 @@ watch(
   gap: 8px;
   margin: 6px 8px 0;
   padding: 6px 10px;
-  color: var(--text-strong);
+  color: var(--text-body);
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 8px;
@@ -131,7 +135,7 @@ watch(
 .mismatch-btn {
   flex: 0 0 auto;
   padding: 2px 10px;
-  color: var(--text-strong);
+  color: var(--text-body);
   background: none;
   border: 1px solid var(--border-weak);
   border-radius: 6px;
@@ -143,9 +147,23 @@ watch(
   opacity: 0.85;
 }
 
+/* MiMo's primary pill: the txt ink filled, its label the page colour. */
 .mismatch-btn.primary {
-  color: var(--surface-raised);
-  background: var(--text-strong);
+  color: #fffefd;
+  background: #151c13cc;
   border-color: transparent;
+}
+
+/* MiMo's --color-txt is the fill of the button that carries the turn, not a translucent white. */
+:root[data-theme="dark"] .mismatch-btn.primary {
+  color: #181818;
+  background: #f4f4f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .mismatch-btn.primary {
+    color: #181818;
+    background: #f4f4f5;
+  }
 }
 </style>

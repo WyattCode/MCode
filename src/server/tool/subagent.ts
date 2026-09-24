@@ -79,7 +79,15 @@ export const ActorTool: ToolDefinition = {
      * tool list depend on the turn.
      */
     "Available agent types and what each one may do:",
-    "- explore: reads only. It has read, glob, grep, list, webfetch and bash, and every tool that changes a file is refused to it. Use it to find where something lives, trace how a behaviour works, or answer a question about the project. Because it cannot change anything, it needs no permission from the user and is the cheaper of the two.",
+    /*
+     * This used to end "Because it cannot change anything, it needs no
+     * permission from the user" - which is false, and falsest where it matters:
+     * explore has `bash`, so `sed -i`, a redirection and `git reset --hard` all
+     * run from it, and they do go to the user. A model that read the old
+     * sentence would route a batch of edits into explore expecting a read-only
+     * sandbox (R25-B5).
+     */
+    "- explore: for finding things out. It has read, glob, grep, list, webfetch and bash; every tool that writes a file - edit, write and the rest - is refused to it. Use it to find where something lives, trace how a behaviour works, or answer a question about the project. It is the cheaper of the two, but it is not a sandbox: its shell commands can still change the project, and they are put to the user under the same permission rules as your own.",
     "- general: the same reading tools plus edit, write and the rest, so it can change files and run commands that do. Use it when the task is to make a change, not to find something out. Its writes and commands are put to the user under the same permission rules as your own.",
     "Neither can start subagents of its own, and neither can message another conversation.",
   ].join("\n"),
@@ -125,7 +133,17 @@ export const ActorTool: ToolDefinition = {
           vision: { type: "boolean", description: "models: only models that read images" },
           limit: { type: "number", description: "models: at most this many" },
         },
-        required: ["action"],
+        /*
+         * `action` is deliberately not required, because this tool's own
+         * description tells the model it need not send one ("A call without an
+         * action is a run") and `actorAction` reads `background: true` as a
+         * spawn. Requiring it here refused exactly those two calls before
+         * `execute` ever saw them, which made the description a lie and the
+         * fallback dead code - a wasted round trip and a red row for a call the
+         * tool was written to accept. The handler defaults, and refuses in its
+         * own words anything it cannot serve. (The task tool's `required` stays:
+         * nothing there promises an action-less call.)
+         */
       },
     },
   },

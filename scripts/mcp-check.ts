@@ -7,6 +7,8 @@
  * cannot start, because reporting that clearly is half of what the dialog is
  * for.
  */
+// First of all, so nothing here can read the person's own home directory.
+import "./fenced-home"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"

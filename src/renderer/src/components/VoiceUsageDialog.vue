@@ -49,7 +49,8 @@ useEscapeLayer(() => emit("close"))
   z-index: 130;
   display: grid;
   place-items: center;
-  background: var(--scrim);
+  /* MiMo's dialog scrim is bg-black/50 in both schemes, not a lighter one in light. */
+  background: #00000080;
 }
 
 /* The max height is MCode's safety net for short windows; MiMo's dialog has none. */
@@ -63,7 +64,7 @@ useEscapeLayer(() => emit("close"))
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--shadow-pop);
 }
 
 h2 {
@@ -82,7 +83,7 @@ h2 {
   place-items: center;
   width: 28px;
   height: 28px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 8px;
@@ -113,7 +114,7 @@ h2 {
 }
 
 .entry-title {
-  color: #151c13cc;
+  color: var(--text-body);
   font-weight: 500;
 }
 
@@ -124,14 +125,10 @@ h2 {
 /* Examples sit on a 2px rule in MiMo's blue at 35%. */
 .entry-examples {
   padding-inline-start: 10px;
-  color: var(--text-weak);
+  color: var(--text-base);
   border-inline-start: 2px solid color-mix(in srgb, #2f6fed 35%, transparent);
   font-size: calc(12px * var(--ui-font-scale, 1));
   white-space: pre-line;
-}
-
-:root[data-theme="dark"] .entry-title {
-  color: #f4f4f5;
 }
 
 :root[data-theme="dark"] .entry-examples {
@@ -139,10 +136,6 @@ h2 {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .entry-title {
-    color: #f4f4f5;
-  }
-
   :root:not([data-theme="light"]) .entry-examples {
     border-color: color-mix(in srgb, #5a9cff 35%, transparent);
   }

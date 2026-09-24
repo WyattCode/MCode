@@ -7,6 +7,8 @@
  * itself is the one piece this cannot reach without one.
  */
 // First, so every server the checks start avoids the ports fetch refuses.
+// First of all, so nothing here can read the person's own home directory.
+import "./fenced-home"
 import "./safe-listen"
 import { nameFromId } from "../src/server/provider/model-name"
 import { commandRisk } from "../src/server/command-risk"
@@ -398,8 +400,46 @@ import { loadMath } from "../src/renderer/src/lib/markdown"
 import { roundNineteenLaneAChecks } from "./smoke-round19-a"
 // Round 19, lane C: following the stream, parking a sent question, and the sent message against MiMo 26.920.
 import { roundNineteenLaneCChecks } from "./smoke-round19-c"
+// Round 20, lane C: the conversation view's review findings (park edges, goal switch, narration, math).
+import { roundTwentyLaneCChecks } from "./smoke-round20-c"
+// Round 21 (P1): a sent question stays where it was parked, and the turn being written is not the browser's scroll anchor.
+import { roundTwentyOneParkChecks } from "./smoke-round21-park"
 // No window is ever told to connect to a port the browser refuses.
 import { blockedPortChecks } from "./smoke-blocked-ports"
+// Round 20, section A: the engine's turn loop - loop detectors, continuations across compaction and steering, the goal judge.
+import { roundTwentyEngineChecks } from "./smoke-round20-engine"
+// A deleted conversation's artifacts leave the list, as MiMo's delete takes them.
+import { artifactForgetChecks } from "./smoke-artifact-forget"
+// Round 20, section B: the backend's findings from the round's review.
+import { roundTwentyServerChecks } from "./smoke-round20-server"
+// Round 20, sections D and E: settings, shell and right-panel findings of the code review.
+import { roundTwentyDeChecks } from "./smoke-round20-de"
+// Round 20, V4: the coding agent's tool advice, prompt examples, first note and last step against MiMo 26.920's engine.
+import { roundTwentyAgentChecks } from "./smoke-round20-agent"
+// Round 20, lane V2: the conversation header, composer and info card against MiMo 26.920.
+import { roundTwentyV2Checks } from "./smoke-round20-v2"
+// Round 20, V3: the interface copy follows MiMo 26.920.
+import { roundTwentyCopyChecks } from "./smoke-round20-copy"
+// Round 20, visual lane 1: the conversation stream against MiMo 26.920 (turn head, harness column, reply type, action row).
+import { roundTwentyVisualOneChecks } from "./smoke-round20-v1"
+// Round 20, visual lane 5: the side column against MiMo 26.920 (search and bell, brand row, account row, glyphs, list edges).
+import { roundTwentyVisualFiveChecks } from "./smoke-round20-v5"
+// Round 21, lane F1: the colour tokens and the shared controls against MiMo 26.920.
+import { roundTwentyOneLaneF1Checks } from "./smoke-round21-f1"
+// Round 21, lane F3: the right panel, its viewers and the terminal dock against MiMo 26.920.
+import { roundTwentyOneF3Checks } from "./smoke-round21-f3"
+// Round 21, lane F2: the settings dialog against MiMo 26.920 (shell, column, rhythm, 外观, 快捷键, MCP, 环境, 已归档, 模型).
+import { roundTwentyOneLaneFTwoChecks } from "./smoke-round21-f2"
+// Round 21, lane F4: the home screen, search overlay, artifacts centre, toasts/bell and the side column leftovers, against MiMo 26.920.
+import { roundTwentyOneLaneFourChecks } from "./smoke-round21-f4"
+// Round 22 (L2): round 21's right-panel lane leftovers, re-read against MiMo 26.920.
+import { roundTwentyTwoLaneTwoChecks, dateZoneChecks } from "./smoke-round22-l2"
+// Round 22, lane L1: the sweep round 21 lane F1 handed over - the lifts, the half-pixel edges, --color-txt, dim vs mut.
+import { roundTwentyTwoLaneOneChecks } from "./smoke-round22-l1"
+// Round 23: the second code review - unreadable documents answered as damage, the compaction that swallowed a question, dark-outranked state rules.
+import { roundTwentyThreeChecks } from "./smoke-round23"
+import { roundTwentyFourChecks } from "./smoke-round24"
+import { roundTwentyFiveChecks } from "./smoke-round25"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -825,7 +865,12 @@ async function main() {
   check("a notice of another level with the same title is a second notice", toasts.value.length === 2, toasts.value)
   notify("One", { level: "success" })
   notify("Two", { level: "warning" })
-  check("at most three notices are kept, the oldest dropped", toasts.value.length === 3 && toasts.value[0]?.title === "Copied" && toasts.value[0]?.level === "danger", toasts.value)
+  // R21-F4-45/47: MiMo prepends and keeps them all, showing the first three; the column hides the rest rather than the store dropping them.
+  check(
+    "a new notice goes to the front, and none is thrown away",
+    toasts.value.map((entry) => entry.title).join("|") === "Two|One|Copied|Copied" && toasts.value[0]?.level === "warning" && toasts.value[3]?.level === "info",
+    toasts.value,
+  )
   const linked = notice.info("Links", {
     links: [
       { label: "a", run: () => {} },
@@ -1019,8 +1064,9 @@ async function main() {
   const renamed = await call({ type: "session.get", sessionID })
   check("session.rename persists", renamed.session.title === "Smoke test", renamed.session.title)
 
-  const files = await call({ type: "file.list", directory: project, query: "app" })
-  check("file.list filters by query", files.files.some((f: any) => f.path === "src/app.ts"), files.files)
+  // file.list went with the command palette in round 21 (R21-F4-24): the @ menu browses with file.listDir and searches with file.search, both covered below.
+  const byName = await call({ type: "file.search", directory: project, query: "app", nameOnly: true })
+  check("file.search finds a file by name", byName.entries.some((entry: { rel: string }) => entry.rel === "src/app.ts"), byName.entries)
 
   let rejected = false
   await call({ type: "session.get", sessionID: "ses_missing" }).catch(() => (rejected = true))
@@ -1098,7 +1144,26 @@ async function main() {
    * that guards reaching outside the project was not among them - so with the
    * switch on, that prompt still stopped the agent.
    */
-  check("every kind offered can actually be asked for", PERMISSION_KINDS.includes("outside" as any), PERMISSION_KINDS)
+  /*
+   * Every kind, not one of them. This was a single `includes("outside")`, which
+   * says nothing about the five kinds the note above is really about - the ones
+   * belonging to tools that never ask, which is what made the switch misleading
+   * in the first place (R25-F13).
+   */
+  const askable = new Set<string>(TOOLS.flatMap((tool) => (tool.permission ? [tool.permission] : [])))
+  // Kinds the backend asks for itself rather than through a tool's `permission`.
+  for (const file of ["src/server/permission.ts", "src/server/mcp.ts", "src/server/mcp-sampling.ts", "src/server/tool/fs-util.ts", "src/server/tool/bash.ts"]) {
+    for (const match of (await fs.readFile(path.join(process.cwd(), file), "utf8")).matchAll(/kind: "([a-z]+)"/g)) askable.add(match[1]!)
+  }
+  /*
+   * `list` is offered, defaults to allow, and nothing asks it: MCode's read
+   * tool answers a directory itself, so there is no list tool to carry the
+   * bucket. Recorded here rather than passed over, so the day a *new* kind is
+   * added with nothing asking it, this goes red.
+   */
+  const neverAsked = PERMISSION_KINDS.filter((kind) => !askable.has(kind))
+  check("every kind offered can actually be asked for, apart from the one recorded", JSON.stringify(neverAsked) === JSON.stringify(["list"]), { offered: PERMISSION_KINDS, neverAsked })
+  check("and the kind that guards reaching outside the project is among them", askable.has("outside") && PERMISSION_KINDS.includes("outside" as never))
 
   await backend.runtime.config.set({ autoApprove: [...PERMISSION_KINDS] })
   // A directory nothing has approved: `outsideRoot` carries the "always" from
@@ -1278,7 +1343,9 @@ async function main() {
 
     for (let i = 0; i < 150; i++) await put(`many/f${i}.txt`, "n")
     const many = await run("glob", { pattern: "*.txt", path: "many" }, "g-many")
-    check("glob lists at most 100 and says there were more", many.output.split("\n").filter((line) => line.endsWith(".txt")).length === 100 && many.metadata?.truncated === true, many.output.slice(-200))
+    check("glob lists at most 100 and says there were more", many.output.split("\n").filter((line) => line.endsWith(".txt")).length === 100 && many.output.includes("Only the first 100 files found are listed") && many.metadata?.count === 100, many.output.slice(-200))
+    // `truncated` in a tool's metadata is the shared cap's opt-out, for a tool that capped its own BYTES. glob caps by file count, and 100 paths can run far over that cap; grep keeps 100 matches of up to 2,000 characters each, four times over it. Neither may claim it (R23-3-2).
+    check("and neither search opts out of the shared output cap", many.metadata?.truncated === undefined && (await run("grep", { pattern: "n", path: "many" }, "gr-many")).metadata?.truncated === undefined)
     check("glob's path has to be a folder", (await run("glob", { pattern: "*", path: "src/a.ts" }, "g-file")).output.includes("has to be a folder"))
     const inFile = await run("grep", { pattern: "x", path: "twice.txt" }, "gr-file")
     check("grep searches a single file named as its path", inFile.output === `Found 2 matches\n${path.join(e24, "twice.txt")}:\n  Line 1: x\n  Line 2: x`, inFile.output)
@@ -1622,9 +1689,19 @@ async function main() {
     const tempBash = seen.slice(tempAt).find((request) => request.kind === "bash")
     check("a delete of temp files asks as an ordinary command", tempBash !== undefined && tempBash.forced !== true, seen.slice(tempAt))
     replies.bash = "always"
-    await bashIn("s-e23-a", "git status")
+    /*
+     * A command that actually asks. This used to run `git status` twice, and
+     * `git status` is on the read-only allowlist - permission.ts returns before
+     * any question - so no rule was ever stored and `seen.length === alwaysAt`
+     * held by construction. It could not have caught the per-project pattern
+     * store being dropped, the prefix match being narrowed, or an "always"
+     * being confined to the conversation that gave it (R25-F2).
+     */
+    const askedAt = seen.length
+    await bashIn("s-e23-a", "npm run build")
+    check("a command that is not read-only asks the first time", seen.length === askedAt + 1 && seen[askedAt]?.kind === "bash", seen.slice(askedAt))
     const alwaysAt = seen.length
-    await bashIn("s-e23-b", "git status --short")
+    await bashIn("s-e23-b", "npm run build --silent")
     check("always on a command covers its prefix in another conversation of the project", seen.length === alwaysAt, seen.slice(alwaysAt))
 
     // As MiMo forces its delete question: commands allowed, or full access, still ask before a delete; only Deny refuses first.
@@ -2541,8 +2618,15 @@ async function main() {
     const finalValue = await store.read<{ index: number }>(key)
     check("the last write is the one kept", finalValue?.index === 39, finalValue?.index)
 
-    // Nothing half-written left lying about.
-    const dir = await fs.readdir(path.join(dataDirectory, "probe")).catch(() => [] as string[])
+    /*
+     * Nothing half-written left lying about. The folder is the store's own -
+     * `<dataDirectory>/storage/probe`, as index.ts builds it - and this read
+     * once named `<dataDirectory>/probe`, which never exists: the ENOENT went
+     * into the catch, `dir` was always empty and the check could not fail
+     * however many temps a broken write left (R23-5-1).
+     */
+    const dir = await fs.readdir(path.join(dataDirectory, "storage", "probe"))
+    check("the folder the writes went to is the one read", dir.includes("concurrent.json"), dir)
     check("no temp files are left behind", !dir.some((name) => name.endsWith(".tmp")), dir)
 
     await store.remove(key)
@@ -2587,9 +2671,17 @@ async function main() {
       attachments: [],
       time: { created: Date.now() },
     })
-    const messageDir = path.join(dataDirectory, "session", damaged.id, "message")
+    /*
+     * Into the store's own folder. This wrote to `<dataDirectory>/session/...`
+     * while the store reads `<dataDirectory>/storage/session/...`, so the
+     * decoy was never in the folder being read: both checks passed on a folder
+     * holding one good message, and taking the per-file guard out of
+     * `messages()` - the regression they exist for - left them green (R23-5-1).
+     */
+    const messageDir = path.join(dataDirectory, "storage", "session", damaged.id, "message")
     await fs.mkdir(messageDir, { recursive: true })
     await fs.writeFile(path.join(messageDir, "msg_broken.json"), "{ this is not json", "utf8")
+    check("the decoy is in the folder the store reads", (await fs.readdir(messageDir)).length === 2, await fs.readdir(messageDir))
     const loaded = await backend.runtime.sessions.messages(damaged.id)
     check("a damaged message is skipped, not fatal", loaded.length === 1, loaded.length)
     check("and the readable one survives", loaded[0]?.id === "msg_good", loaded[0]?.id)
@@ -3889,11 +3981,20 @@ async function main() {
       withGlobal.includes(`<instructions source="${globalAgents}">\nPrefer small commits.`),
     )
     const projectAgents = await fs.readFile(path.join(project, "AGENTS.md"), "utf8").catch(() => "")
+    /*
+     * The project's own instructions have to be *in* the prompt for "after
+     * them" to mean anything. The old form allowed the case where they are not:
+     * `indexOf` returns -1, and -1 is less than any position, so a build that
+     * dropped the project's AGENTS.md altogether passed this check about the
+     * order the two appear in (R25-F6). `## Instructions` is no anchor either -
+     * one global file is enough to emit it.
+     */
+    const projectHead = projectAgents.trim().slice(0, 20)
+    const projectAt = withGlobal.indexOf(projectHead)
     check(
       "after the project's own instructions",
-      // Present first: a missing entry's -1 would otherwise count as "after".
-      withGlobal.indexOf("## Instructions") >= 0 &&
-        (!projectAgents.trim() || withGlobal.indexOf(projectAgents.trim().slice(0, 20)) < withGlobal.indexOf("Prefer small commits.")),
+      projectHead.length > 0 && projectAt >= 0 && projectAt < withGlobal.indexOf("Prefer small commits."),
+      { projectHead, projectAt, globalAt: withGlobal.indexOf("Prefer small commits.") },
     )
     check(
       "switching it off renames it",
@@ -7035,7 +7136,28 @@ async function main() {
   await perfEntryChecks(check, section)
   await roundNineteenLaneAChecks(check, section)
   await roundNineteenLaneCChecks(check, section)
+  await roundTwentyLaneCChecks(check, section)
+  await roundTwentyOneParkChecks(check, section)
   await blockedPortChecks(check, section)
+  await artifactForgetChecks(check, section)
+  await roundTwentyEngineChecks(check, section)
+  await roundTwentyServerChecks(check, section)
+  await roundTwentyDeChecks(check, section)
+  await roundTwentyAgentChecks(check, section)
+  await roundTwentyV2Checks(check, section)
+  roundTwentyCopyChecks(check, section)
+  await roundTwentyVisualOneChecks(check, section)
+  await roundTwentyVisualFiveChecks(check, section)
+  await roundTwentyOneLaneF1Checks(check, section)
+  await roundTwentyOneF3Checks(check, section)
+  await roundTwentyOneLaneFTwoChecks(check, section)
+  await roundTwentyOneLaneFourChecks(check, section)
+  await roundTwentyTwoLaneTwoChecks(check, section)
+  await dateZoneChecks(check, section)
+  await roundTwentyTwoLaneOneChecks(check, section)
+  await roundTwentyThreeChecks(check, section)
+  await roundTwentyFourChecks(check, section)
+  await roundTwentyFiveChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
@@ -7271,9 +7393,10 @@ async function roundSixVisualChecks() {
     panel.includes("border-radius: 12px") && panel.includes("border: 1px solid var(--border-weak)") && panel.includes("min-width: 200px") && panel.includes("--pad: 5px"),
     panel,
   )
+  // R21-F1: .18s is MiMo's --motion-base, which this window now has a name for.
   check(
     "the menu pops open over .18s",
-    panel.includes("animation: menu-pop 0.18s cubic-bezier(0.16, 1, 0.3, 1)") && menu.includes("@keyframes menu-pop"),
+    panel.includes("animation: menu-pop var(--motion-base) cubic-bezier(0.16, 1, 0.3, 1)") && menu.includes("@keyframes menu-pop"),
     "",
   )
   const row = rule(menu, ".item")
@@ -9280,7 +9403,21 @@ async function historyMemoryCronChecks(root: string, project: string) {
   const data = path.join(root, "hmc-data")
   const memoryRoot = path.join(data, "memory")
   const files = memoryFiles(memoryRoot, project, "ses_0abc")
-  check("project memory is filed under the folder's project id, the same however the folder is spelled", files.project === path.join(memoryRoot, "projects", projectMemoryID(project), "MEMORY.md") && projectMemoryID(project) === projectMemoryID(path.join(project, ".")))
+  /*
+   * Spellings that are different strings, not `path.join(project, ".")`, which
+   * node normalises back to `project` before it is passed - so the second half
+   * of this check used to be `f(x) === f(x)` and could not have caught an id
+   * that varies with spelling, which would scatter one project's memory across
+   * several `projects/<id>/` folders (R25-F7).
+   */
+  // Built by hand: path.join would normalise these back to `project` before the id function ever saw them.
+  const spellings = [project + path.sep, project + path.sep + "." + path.sep, path.dirname(project) + path.sep + "." + path.sep + path.basename(project)]
+  check(
+    "project memory is filed under the folder's project id, the same however the folder is spelled",
+    files.project === path.join(memoryRoot, "projects", projectMemoryID(project), "MEMORY.md") &&
+      spellings.every((spelling) => spelling !== project && projectMemoryID(spelling) === projectMemoryID(project)),
+    spellings.map((spelling) => [spelling, projectMemoryID(spelling)]),
+  )
   check(
     "a memory file reads as its scope, id and type",
     JSON.stringify(memoryLocation(memoryRoot, files.notes)) === JSON.stringify({ scope: "sessions", scope_id: "ses_0abc", type: "free", key: "notes" }) &&

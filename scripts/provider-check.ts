@@ -22,6 +22,8 @@
  * Each case says what a person would expect, so a surprise reads as a finding
  * rather than as a number.
  */
+// First of all, so nothing here can read the person's own home directory.
+import "./fenced-home"
 import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"

@@ -68,10 +68,10 @@ onMounted(() => {
   max-height: 86vh;
   padding: 22px 24px;
   overflow-y: auto;
-  background: var(--surface-raised);
+  background: var(--surface-page);
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--shadow-pop);
 }
 
 h2 {
@@ -89,7 +89,7 @@ h2 {
   place-items: center;
   width: 28px;
   height: 28px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 8px;
@@ -107,7 +107,7 @@ h2 {
 
 .intro {
   margin: 0 0 14px;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.55;
 }
@@ -144,7 +144,7 @@ summary:hover {
 }
 
 .meta {
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 

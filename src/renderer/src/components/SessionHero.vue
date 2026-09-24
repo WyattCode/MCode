@@ -197,7 +197,7 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
    * used to be added to it for 48. The reference measures 32 between the box
    * and this row, the same as between the wordmark and the box.
    */
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 

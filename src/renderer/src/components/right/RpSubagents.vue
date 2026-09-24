@@ -209,7 +209,7 @@ onBeforeUnmount(() => {
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  color: color-mix(in srgb, var(--text-strong) 80%, transparent);
+  color: var(--text-body);
   background: var(--surface-raised);
 }
 
@@ -226,7 +226,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   margin: 15px 3px 7px;
-  color: color-mix(in srgb, var(--text-strong) 60%, transparent);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
   font-variant-numeric: tabular-nums;
@@ -309,7 +309,7 @@ onBeforeUnmount(() => {
 
 .rp-subagent-summary {
   margin-top: 2px;
-  color: color-mix(in srgb, var(--text-strong) 40%, transparent);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -317,7 +317,7 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 5px;
   align-items: center;
-  color: color-mix(in srgb, var(--text-strong) 40%, transparent);
+  color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -333,7 +333,7 @@ onBeforeUnmount(() => {
 
 .rp-subagent-empty {
   padding: 7px 3px;
-  color: color-mix(in srgb, var(--text-strong) 40%, transparent);
+  color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -367,7 +367,7 @@ onBeforeUnmount(() => {
   width: 30px;
   height: 30px;
   padding: 0;
-  color: color-mix(in srgb, var(--text-strong) 80%, transparent);
+  color: var(--text-body);
   background: transparent;
   border: 0;
   border-radius: 8px;
@@ -397,7 +397,12 @@ onBeforeUnmount(() => {
   font-weight: 550;
 }
 
-/* 执行记录, then MiMo's model pill: 6 apart, the label whole and the pill cut at 120. */
+/*
+ * 执行记录, then MiMo's model pill: 6 apart, the label whole and the pill cut at
+ * 120. MiMo writes both at a literal 11px rather than its scaling --text-11,
+ * and the head that holds them is a min-height, so nothing can clip: the line
+ * is copied as it stands.
+ */
 .rp-subagent-detail-subtitle {
   display: flex;
   gap: 6px;
@@ -405,8 +410,8 @@ onBeforeUnmount(() => {
   min-width: 0;
   margin-top: 1px;
   overflow: hidden;
-  color: color-mix(in srgb, var(--text-strong) 40%, transparent);
-  font-size: calc(11px * var(--ui-font-scale, 1));
+  color: var(--text-weak);
+  font-size: 11px;
 }
 
 .rp-subagent-detail-subtitle-label {
@@ -423,6 +428,8 @@ onBeforeUnmount(() => {
   max-width: 120px;
   padding: 1px 6px;
   overflow: hidden;
+  /* Pinned as MiMo pins it, so the pill cannot drift from the line it sits on. */
+  font-size: 11px;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -436,7 +443,7 @@ onBeforeUnmount(() => {
   gap: 6px;
   align-items: center;
   padding: 4px 7px;
-  color: color-mix(in srgb, var(--text-strong) 60%, transparent);
+  color: var(--text-base);
   background: var(--surface-selected);
   border-radius: 999px;
   font-size: calc(12px * var(--ui-font-scale, 1));
@@ -473,26 +480,24 @@ onBeforeUnmount(() => {
 }
 
 /*
- * MiMo's `hs-subagent`: the transcript is a boxed panel of its own rather than
- * the rest of the tab - 6 under the head, 8 rounded, a hairline round it, 12/8
- * in, and it scrolls inside 320 instead of stretching the tab.
+ * MiMo draws the boxed `hs-subagent` and then takes the box away again inside
+ * the tab - `border: 0; max-height: none; margin-top: 0; padding: 0` - so the
+ * transcript is simply the tab's scroller, 14 / 16 / 28 in like the overview.
  */
 .rp-subagent-transcript {
   display: flex;
-  flex: none;
+  flex: 1;
   flex-direction: column;
   box-sizing: border-box;
-  max-height: 320px;
-  margin-top: 6px;
-  padding: 8px 12px;
+  min-height: 0;
+  padding: 14px 16px 28px;
   overflow: auto;
-  border: 1px solid var(--border-weak);
-  border-radius: 8px;
 }
 
+/* MiMo's note inside it: 2 above and below, 12px dim, no inset of its own. */
 .rp-subagent-note {
-  padding: 16px;
-  color: color-mix(in srgb, var(--text-strong) 40%, transparent);
+  padding: 2px 0;
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -501,13 +506,13 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
-/* The stream was laid out for the middle of the window; here it takes MiMo's 14 / 16 / 28. */
+/* The stream was laid out for the middle of the window; here the scroller round it holds MiMo's 14 / 16 / 28. */
 .rp-subagent-stream :deep(.inner) {
   max-width: none;
-  padding: 14px 16px 28px;
+  padding: 0;
 }
 
-/* Dark: groups on MiMo's panel mixed 92% with side-active. */
+/* Dark: groups on MiMo's panel mixed 92% with side-active, and its #f4f4f5 ink. */
 :root[data-theme="dark"] .rp-subagent-group:not(.empty) {
   background: color-mix(in srgb, var(--surface-raised) 92%, var(--surface-selected));
 }
@@ -516,5 +521,6 @@ onBeforeUnmount(() => {
   :root:not([data-theme="light"]) .rp-subagent-group:not(.empty) {
     background: color-mix(in srgb, var(--surface-raised) 92%, var(--surface-selected));
   }
+
 }
 </style>

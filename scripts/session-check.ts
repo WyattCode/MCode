@@ -14,6 +14,8 @@
  * real ones.
  */
 // First, so every server the checks start avoids the ports fetch refuses.
+// First of all, so nothing here can read the person's own home directory.
+import "./fenced-home"
 import "./safe-listen"
 import http from "node:http"
 import { execFileSync } from "node:child_process"
@@ -639,9 +641,21 @@ async function main(): Promise<void> {
       summaryRequest.max_tokens === 32000,
       String(summaryRequest.max_tokens),
     )
+    /*
+     * What the retry is *made of*, not whether the words "a summary" appear in
+     * it. The fake's ordinary reply is the string "a summary" and the fake
+     * summary opens "## Task overview\n- a summary of the work so far", so the
+     * old form held whether or not anything had been compacted - including in
+     * the exact case this section exists for, where the retry is recorded as
+     * compacted and the request is still built from the whole transcript
+     * (R25-F3). The transcript's own first turn is what must be gone.
+     */
+    const retryTurns = (retry.messages ?? []).filter((message) => message.role !== "system")
     check(
-      "the retry went out from the summary",
-      (retry.messages ?? []).some((m) => typeof m.content === "string" && m.content.includes("a summary")),
+      "the retry went out from the summary, with the replayed conversation gone",
+      retryTurns.some((message) => String(message.content).includes("## Task overview")) &&
+        !retryTurns.some((message) => String(message.content).includes("something to have a transcript")),
+      JSON.stringify(retryTurns.map((message) => String(message.content).slice(0, 40))),
     )
     check("a model with no known ceiling asks for the reference's 32k", retry.max_tokens === 32000, String(retry.max_tokens))
     refuseNext = undefined
@@ -692,10 +706,12 @@ async function main(): Promise<void> {
     await runner.prompt({ sessionID: capped.id, text: "keep going" })
     await done
 
-    const sent = requests.slice(before).map((body) => JSON.parse(body) as { tools?: unknown[]; messages?: { role?: string; content?: unknown }[] })
+    const sent = requests.slice(before).map((body) => JSON.parse(body) as { tools?: unknown[]; tool_choice?: unknown; messages?: { role?: string; content?: unknown }[] })
     const last = sent[sent.length - 1]
     check("it took the step, then one more", sent.length === 2, String(sent.length))
-    check("the last request carried no tools", !last?.tools || last.tools.length === 0, JSON.stringify(last?.tools?.length ?? 0))
+    // As MiMo's: its history holds the step's call, which a request defining no tools is refused for.
+    check("the last request keeps the tools defined", (last?.tools?.length ?? 0) > 0, JSON.stringify(last?.tools?.length ?? 0))
+    check("but lets the model call none of them", last?.tool_choice === "none", JSON.stringify(last?.tool_choice))
     const closing = (last?.messages ?? []).at(-1)
     check(
       "and told the model to answer in words",

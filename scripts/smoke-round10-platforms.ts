@@ -428,6 +428,7 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r10-home-"))
     const savedProfile = process.env.USERPROFILE
     const savedHome = process.env.HOME
+    const fenced = os.homedir
     try {
       for (const folder of ["Pictures", "Documents", "AppData/Roaming", "code/Pictures"]) await fs.mkdir(path.join(home, folder), { recursive: true })
       for (const file of ["Pictures/note-a.txt", "Documents/note-b.txt", "AppData/Roaming/note-c.txt", "code/note-d.txt", "code/Pictures/note-e.txt"]) {
@@ -435,6 +436,14 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
       }
       process.env.USERPROFILE = home
       process.env.HOME = home
+      /*
+       * The suite fences `os.homedir` itself now (scripts/fenced-home), so the
+       * environment no longer decides it and this section has to move the
+       * fence rather than the variables. Kept as a check rather than a silent
+       * assignment: the walk below is only about private folders if the folder
+       * it walks really is what the product will call home.
+       */
+      os.homedir = () => home
       check("M10-23: the test home is the home folder", path.resolve(os.homedir()) === path.resolve(home), os.homedir())
       const names = (found: { entries: { name: string }[] }) => found.entries.map((entry) => entry.name).sort().join(",")
       if (process.platform === "win32" || process.platform === "darwin") {
@@ -448,6 +457,7 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
         check("M10-23: a private folder opened as its own project is searched", names(documents) === "note-b.txt", names(documents))
       }
     } finally {
+      os.homedir = fenced
       if (savedProfile === undefined) delete process.env.USERPROFILE
       else process.env.USERPROFILE = savedProfile
       if (savedHome === undefined) delete process.env.HOME

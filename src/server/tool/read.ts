@@ -294,9 +294,11 @@ export const ReadTool: ToolDefinition = {
     "",
     "A file comes back as numbered lines, each written `N: text`. The number and the colon are not part of the file: what follows the prefix is the line, and that is what edit expects you to quote back. A line longer than about 2,000 characters is cut, so do not treat a read as proof of a long line's exact tail.",
     "",
-    "Long files are read in parts. offset is the line to start at, counting from 1, and limit is how many lines to return; without them you get the start of the file. One read stops at 2,000 lines or 50 KB, whichever comes first, and says where to continue from.",
+    "Long files are read in parts. offset is the line to start at, counting from 1, and limit is how many lines to return; without them you get the start of the file. A read that stops early says where to continue from.",
     "",
     "How to use it well",
+    "- Looking for one thing in a large file, or in a file whose lines run very long, is a job for grep: it finds the lines without reading everything around them.",
+    "- When you are not sure of a path, find it with glob first rather than guessing at names until one reads.",
     "- Read a generous window rather than a series of 30-line slices of the same file: each call costs a round trip, and the small ones rarely tell you enough to act.",
     "- When you already know you need several files, read them in one step rather than one after another.",
     "- Prefer it to `cat`, `head` or `type` through bash; the numbered output is what the edit tool matches against.",
@@ -352,7 +354,15 @@ export const ReadTool: ToolDefinition = {
       return {
         output: [`<path>${target}</path>`, "<type>directory</type>", "<entries>", shown.join("\n"), "", footer, "</entries>"].join("\n"),
         title: display || ".",
-        metadata: { path: display || ".", preview: shown.slice(0, PREVIEW_LINES).join("\n"), truncated: more, loaded: [] },
+        /*
+         * No `truncated` here, deliberately, and for the reason glob and grep
+         * withhold it: the runner reads that field as "this tool caps its own
+         * output" and skips the shared byte cap entirely. A listing slices by
+         * entry count only, and the count comes from the model, so
+         * `limit: 1000000` over a node_modules tree went into the request whole
+         * (R25-B4). The footer already says there is more.
+         */
+        metadata: { path: display || ".", preview: shown.slice(0, PREVIEW_LINES).join("\n"), loaded: [] },
       }
     }
 

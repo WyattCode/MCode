@@ -1,7 +1,56 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from "vue"
-import { dismiss, hold, release, toasts, type ToastLink } from "../lib/toast"
+import { LIMIT, dismiss, hold, release, toasts, type ToastLink } from "../lib/toast"
 import { t } from "../lib/i18n"
+
+/*
+ * Where the column stands: over the middle of the work area, not of the
+ * window. MiMo writes the centre of its `<main>` onto the page and puts the
+ * notices there, following it as the side column and the panels resize; a
+ * scrim over the whole window sends them back to the window's own centre,
+ * which is the rule in the stylesheet below.
+ */
+const centre = ref<string>()
+let watching: ResizeObserver | undefined
+
+/*
+ * This is a CSS pixel written onto the page, so it goes wrong in two ways, not
+ * one. The side column and the panels change where the work area is, and the
+ * observer below catches that. A **zoom** step changes what a CSS pixel is,
+ * and used to reach nothing here at all: the number stayed as it was and the
+ * column stood off centre by the zoom ratio - measured at 110% on 2026-09-24,
+ * the work area's centre was 810 while this still carried 878, which is how
+ * the zoom notice itself came up a tenth of the window right of centre. A step
+ * now arrives as the resize it is (`lib/zoom-resize`), and an arriving notice
+ * re-measures before it is painted.
+ */
+function measure() {
+  const main = document.querySelector("main.main")
+  if (!main) {
+    centre.value = undefined
+    return
+  }
+  const box = main.getBoundingClientRect()
+  if (box.width === 0) {
+    centre.value = undefined
+    return
+  }
+  /*
+   * The work area is not all of `main`: the info card is drawn over its inline
+   * end rather than standing beside it, so centring on the whole of it put the
+   * notices half the card's width off to the side - the same thing the
+   * conversation itself was doing, and the user's complaint on 2026-09-24. The
+   * card's own box says which end it holds, so this needs no reading direction.
+   */
+  let start = box.left
+  let end = box.right
+  const card = main.querySelector(".info-card:not(.floating)")?.getBoundingClientRect()
+  if (card && card.width > 0) {
+    if (card.left - box.left > box.right - card.right) end = card.left
+    else start = card.right
+  }
+  centre.value = `${Math.round((start + end) / 2)}px`
+}
 
 /* A link runs its step, then the notice has done its job. */
 function follow(id: string, link: ToastLink) {
@@ -18,7 +67,8 @@ const list = ref<HTMLElement>()
 let before: HTMLElement | null = null
 
 function onHotkey(event: KeyboardEvent) {
-  if (!event.altKey || event.code !== "KeyT" || event.ctrlKey || event.metaKey || event.shiftKey) return
+  // MiMo's check asks only that Alt is down and the key is T; a chord that carries more still counts.
+  if (!event.altKey || event.code !== "KeyT") return
   if (toasts.value.length) list.value?.focus()
 }
 
@@ -53,24 +103,57 @@ function keepFocus(event: MouseEvent) {
   if (!(event.target instanceof Element && event.target.closest("button"))) event.preventDefault()
 }
 
-/* The last notice leaving with focus inside hands focus back as well. */
+/*
+ * The last notice leaving with focus inside hands focus back as well.
+ *
+ * A notice arriving re-measures first. This watcher runs before the DOM is
+ * patched, so the capsule's first painted frame already stands in the right
+ * place - see the note on `measure` for why the observers alone are not enough.
+ */
 watch(
   () => toasts.value.length,
-  (count) => {
+  (count, was) => {
+    if (count > (was ?? 0)) measure()
     if (!count && before !== null) giveBack()
   },
 )
 
-onMounted(() => document.addEventListener("keydown", onHotkey))
-onBeforeUnmount(() => document.removeEventListener("keydown", onHotkey))
+let waiting = 0
+
+/* The work area may not be on the page yet when this column is; MiMo waits a frame at a time for it, as this does. */
+function followMain() {
+  const main = document.querySelector("main.main")
+  if (!main) {
+    waiting = requestAnimationFrame(followMain)
+    return
+  }
+  measure()
+  if (typeof ResizeObserver !== "function") return
+  watching = new ResizeObserver(measure)
+  watching.observe(main)
+}
+
+onMounted(() => {
+  document.addEventListener("keydown", onHotkey)
+  followMain()
+  window.addEventListener("resize", measure)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener("keydown", onHotkey)
+  window.removeEventListener("resize", measure)
+  cancelAnimationFrame(waiting)
+  watching?.disconnect()
+})
 </script>
 
 <template>
   <!--
-    MiMo's notices: one capsule per line, centred 8px under the top edge of the
-    window, the newest last. The column lets clicks through; only a capsule
-    takes the pointer. As in MiMo, each capsule is an alert and a Tab stop of
-    its own inside the polite column.
+    MiMo's notices: one capsule per line, 24 under the top edge and centred on
+    the work area, the newest first. Only three are shown; the rest wait their
+    turn rather than being thrown away. The column lets clicks through; only a
+    capsule takes the pointer. As in MiMo, each capsule is an alert and a Tab
+    stop of its own inside the polite column.
   -->
   <div
     ref="list"
@@ -79,19 +162,21 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onHotkey))
     aria-live="polite"
     tabindex="-1"
     data-toasts
+    :style="centre ? { left: centre } : undefined"
     @focusin="onFocusIn"
     @focusout="onFocusOut"
     @keydown="onListKey"
   >
     <TransitionGroup name="toast">
       <div
-        v-for="toast in toasts"
+        v-for="(toast, at) in toasts"
         :key="toast.id"
         class="notice"
-        :class="toast.level"
+        :class="[toast.level, { over: at >= LIMIT }]"
         :data-level="toast.level"
+        :data-over="at >= LIMIT ? 'true' : undefined"
         role="alert"
-        tabindex="0"
+        :tabindex="at >= LIMIT ? -1 : 0"
         @mousedown="keepFocus"
         @mouseenter="hold(toast.id)"
         @mouseleave="release(toast.id)"
@@ -134,9 +219,12 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onHotkey))
 <style scoped>
 .toasts {
   position: fixed;
-  top: 8px;
-  inset-inline: 16px;
-  z-index: 200;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  /* Over the image and video previews, which are 210 and 220: MiMo's notices are top-most. */
+  z-index: 230;
   display: flex;
   flex-direction: column;
   /* sonner's expanded stack, which MiMo uses: 14 between notices. */
@@ -149,6 +237,19 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onHotkey))
   -webkit-app-region: no-drag;
 }
 
+/*
+ * A scrim over the whole window takes the work area's centre away, so the
+ * notices go back to the window's, as MiMo's `#app:has(.overlay.full)` does.
+ */
+#app:has(.overlay, .scrim, .search-overlay) .toasts {
+  left: 50% !important;
+}
+
+/* Past the third: kept, still on its clock, and shown the moment one in front goes. */
+.notice.over {
+  display: none;
+}
+
 /* MiMo's capsule, measured: 16 round, 8 by 12 of padding, 13px text on a 1.3 line. */
 .notice {
   display: inline-flex;
@@ -156,13 +257,11 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onHotkey))
   gap: 6px;
   max-width: min(560px, 100%);
   padding: 8px 12px;
-  color: var(--text-strong);
+  color: var(--text-body);
   background: #ffffff;
   border: 1px solid #ececec;
   border-radius: 16px;
-  box-shadow:
-    0 8px 30px #0000002e,
-    0 1px 3px #0000001a;
+  box-shadow: var(--shadow-menu);
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.3;
   pointer-events: auto;
@@ -185,11 +284,9 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onHotkey))
 }
 
 :root[data-theme="dark"] .notice {
+  color: #f4f4f5;
   background: #2e2e2e;
   border-color: #3a3a3a;
-  box-shadow:
-    0 8px 30px #00000099,
-    0 1px 3px #00000066;
 }
 
 :root[data-theme="dark"] .notice.success {
@@ -209,11 +306,9 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onHotkey))
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .notice {
+    color: #f4f4f5;
     background: #2e2e2e;
     border-color: #3a3a3a;
-    box-shadow:
-      0 8px 30px #00000099,
-      0 1px 3px #00000066;
   }
 
   :root:not([data-theme="light"]) .notice.success {
@@ -249,7 +344,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onHotkey))
   padding: 0;
   color: #2f6fed;
   font: inherit;
-  line-height: inherit;
+  line-height: 1;
   vertical-align: baseline;
   background: none;
   cursor: pointer;
@@ -288,23 +383,21 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onHotkey))
   opacity: 1;
 }
 
-/* Down from the top edge it sits against, and back up the same way. */
-.toast-enter-active {
-  transition:
-    opacity 0.15s ease-out,
-    transform 0.15s ease-out;
-}
-
+/*
+ * Down from above the top edge it sits against, and back up the same way:
+ * MiMo's notices travel their own height over .4s rather than eight pixels.
+ */
+.toast-enter-active,
 .toast-leave-active {
   transition:
-    opacity 0.1s ease-in,
-    transform 0.1s ease-in;
+    opacity 0.4s,
+    transform 0.4s;
 }
 
 .toast-enter-from,
 .toast-leave-to {
   opacity: 0;
-  transform: translateY(-8px);
+  transform: translateY(-100%);
 }
 
 @media (prefers-reduced-motion: reduce) {

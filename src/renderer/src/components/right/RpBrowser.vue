@@ -317,7 +317,7 @@ defineExpose({
           @click="toggleAnnotate"
         >
           <span>{{ t("rp.browser.annotateLabel") }}</span>
-          <kbd class="rb-annotate-kbd">{{ ANNOTATE_COMBO }}</kbd>
+          <kbd class="rb-annotate-kbd">{{ shownChord(ANNOTATE_COMBO) }}</kbd>
         </button>
       </template>
       <button
@@ -334,8 +334,8 @@ defineExpose({
         </svg>
       </button>
       <div v-if="menuOpen" ref="menu" class="rb-menu" role="menu" data-rb-menu>
-        <button type="button" role="menuitem" class="rb-item" :disabled="!showingPage" @click="forceReload">{{ t("rp.browser.dotMenu.forceReload") }}</button>
-        <button type="button" role="menuitem" class="rb-item" data-rb-device-toolbar :disabled="!showingPage" @click="deviceToolbar">{{ t("rp.browser.dotMenu.deviceToolbar") }}</button>
+        <button type="button" role="menuitem" class="rb-item" :disabled="!showingPage" @click="forceReload"><span class="rb-item-name">{{ t("rp.browser.dotMenu.forceReload") }}</span></button>
+        <button type="button" role="menuitem" class="rb-item" data-rb-device-toolbar :disabled="!showingPage" @click="deviceToolbar"><span class="rb-item-name">{{ t("rp.browser.dotMenu.deviceToolbar") }}</span></button>
         <div class="rb-zoom" role="group" :aria-label="t('rp.browser.dotMenu.zoom')" data-rb-zoom>
           <span class="rb-zoom-label">{{ t("rp.browser.dotMenu.zoom") }}</span>
           <span class="rb-zoom-pill">
@@ -346,14 +346,14 @@ defineExpose({
           <button type="button" class="rb-zoom-reset" :disabled="!showingPage" :aria-label="t('key.zoomReset')" @click="act('zoomReset')">↻</button>
         </div>
         <div class="rb-rule" />
-        <button type="button" role="menuitem" class="rb-item danger" :disabled="!showingPage" @click="clearSite('cookies')">{{ t("rp.browser.dotMenu.clearCookies") }}</button>
-        <button type="button" role="menuitem" class="rb-item danger" :disabled="!showingPage" @click="clearSite('cache')">{{ t("rp.browser.dotMenu.clearCache") }}</button>
+        <button type="button" role="menuitem" class="rb-item danger" :disabled="!showingPage" @click="clearSite('cookies')"><span class="rb-item-name">{{ t("rp.browser.dotMenu.clearCookies") }}</span></button>
+        <button type="button" role="menuitem" class="rb-item danger" :disabled="!showingPage" @click="clearSite('cache')"><span class="rb-item-name">{{ t("rp.browser.dotMenu.clearCache") }}</span></button>
       </div>
     </div>
 
     <div v-show="showingPage || state.error" ref="stage" class="rb-frame">
       <div v-if="annotating && !state.error" class="rb-annotate-overlay" data-rb-annotate-overlay role="presentation">
-        <div class="rb-annotate-hint">{{ t("rp.browser.annotateHint", { combo: ANNOTATE_COMBO }) }}</div>
+        <div class="rb-annotate-hint">{{ t("rp.browser.annotateHint", { combo: shownChord(ANNOTATE_COMBO) }) }}</div>
       </div>
       <div v-if="state.error" class="rb-error" data-rb-error role="alert">
         <div class="rb-error-title">{{ t("rp.browser.error.title") }}</div>
@@ -424,7 +424,7 @@ defineExpose({
   border-radius: 50%;
 }
 
-.rb-round:hover:not(:disabled) {
+.rb-round:hover {
   background: #f1f0ec;
 }
 
@@ -440,14 +440,20 @@ defineExpose({
   flex: 1;
   min-width: 0;
   padding: 6px 10px;
-  color: #151c13cc;
+  color: var(--text-body);
   background: transparent;
   border: 0;
   border-radius: 8px;
   outline: none;
   font-family: var(--font-mono);
-  font-size: calc(12px * var(--code-font-scale, 1));
+  font-size: calc(12px * var(--ui-font-scale, 1));
   transition: background 0.12s;
+}
+
+/* MiMo leans on the preflight rule: the placeholder is half the field's own ink. */
+.rb-url::placeholder {
+  opacity: 1;
+  color: color-mix(in oklab, currentcolor 50%, transparent);
 }
 
 .rb-url:hover,
@@ -466,9 +472,9 @@ defineExpose({
   min-width: 230px;
   padding: 5px;
   background: #fffefd;
-  border: 1px solid #f1f1f1;
+  border: 1px solid var(--border-weak);
   border-radius: 12px;
-  box-shadow: 0 8px 30px #0000002e, 0 1px 3px #0000001a;
+  box-shadow: var(--shadow-menu);
   transform-origin: 0 100%;
   animation: rb-menu-pop 0.18s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -490,12 +496,16 @@ defineExpose({
   gap: 9px;
   width: 100%;
   padding: 6px 10px;
-  color: #151c13cc;
+  color: var(--text-body);
   text-align: start;
   background: transparent;
   border: 0;
   border-radius: 8px;
   font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.rb-item-name {
+  white-space: nowrap;
 }
 
 .rb-item:hover:not(:disabled) {
@@ -516,7 +526,7 @@ defineExpose({
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  color: #151c13cc;
+  color: var(--text-body);
   font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
@@ -545,6 +555,11 @@ defineExpose({
 .rb-zoom-reset {
   display: grid;
   place-items: center;
+  /*
+   * MiMo writes these plain (24 square under a var(--text-14) glyph), which
+   * cuts into the glyph at the top of the interface-size slider. Round 15's
+   * U3 rule wins: the box scales with the text it holds.
+   */
   width: calc(24px * var(--ui-font-scale, 1));
   height: calc(24px * var(--ui-font-scale, 1));
   padding: 0;
@@ -574,7 +589,7 @@ defineExpose({
 .rb-rule {
   height: 1px;
   margin: 4px 6px;
-  background: #f1f1f1;
+  background: var(--border-weak);
 }
 
 /* MiMo's annotate button: 34 high, a 1px line on an 8px corner, the chord in a key cap. */
@@ -583,9 +598,9 @@ defineExpose({
   flex: none;
   align-items: center;
   gap: 6px;
-  height: calc(34px * var(--ui-font-scale, 1));
+  height: 34px;
   padding: 0 10px;
-  color: #151c13cc;
+  color: var(--text-body);
   background: #fffefd;
   border: 1px solid #e3e3e0;
   border-radius: 8px;
@@ -607,11 +622,12 @@ defineExpose({
   padding: 0 5px;
   color: #151c1399;
   background: #f0f0f2;
-  border: 1px solid #f1f1f1;
+  border: 1px solid var(--border-weak);
   border-radius: 5px;
   font-family: var(--font-mono);
-  font-size: calc(11px * var(--code-font-scale, 1));
-  line-height: calc(18px * var(--code-font-scale, 1));
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  /* MiMo's line is a flat 18px, which cuts into the cap at a large interface font; it scales here (round 15's U3). */
+  line-height: calc(18px * var(--ui-font-scale, 1));
 }
 
 /* MiMo's page frame: 10 below the bar, 14 in, on a 10px corner. The error covers it exactly. */
@@ -653,7 +669,6 @@ defineExpose({
 .rb-local {
   flex: 1;
   min-height: 0;
-  margin-inline: 14px;
   padding: 8px 2px 24px;
   overflow: auto;
 }
@@ -680,7 +695,7 @@ defineExpose({
   padding: 10px 14px;
   text-align: start;
   background: #fffefd;
-  border: 1px solid #f1f1f1;
+  border: 1px solid var(--border-weak);
   border-radius: 12px;
   transition: 0.12s;
 }
@@ -699,7 +714,7 @@ defineExpose({
   height: 74px;
   padding: 18px 10px 0;
   background: #fafafa;
-  border: 1px solid #f1f1f1;
+  border: 1px solid var(--border-weak);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -786,7 +801,7 @@ defineExpose({
 
 .rb-error-desc {
   max-width: 340px;
-  color: #151c13cc;
+  color: var(--text-body);
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.5;
 }
@@ -795,7 +810,7 @@ defineExpose({
   max-width: 340px;
   color: #151c1399;
   font-family: var(--font-mono);
-  font-size: calc(12px * var(--code-font-scale, 1));
+  font-size: calc(12px * var(--ui-font-scale, 1));
   word-break: break-all;
 }
 
@@ -821,7 +836,7 @@ defineExpose({
   color: #a0a0a0;
 }
 
-:root[data-theme="dark"] .rb-round:hover:not(:disabled),
+:root[data-theme="dark"] .rb-round:hover,
 :root[data-theme="dark"] .rb-url:hover,
 :root[data-theme="dark"] .rb-url:focus,
 :root[data-theme="dark"] .rb-item:hover:not(:disabled),
@@ -831,14 +846,6 @@ defineExpose({
 :root[data-theme="dark"] .rb-server:hover,
 :root[data-theme="dark"] .rb-error-retry:hover {
   background: #ffffff0f;
-}
-
-:root[data-theme="dark"] .rb-url,
-:root[data-theme="dark"] .rb-item,
-:root[data-theme="dark"] .rb-zoom,
-:root[data-theme="dark"] .rb-annotate,
-:root[data-theme="dark"] .rb-error-desc {
-  color: #f4f4f5;
 }
 
 :root[data-theme="dark"] .rb-local-head,
@@ -867,7 +874,6 @@ defineExpose({
 
 :root[data-theme="dark"] .rb-menu {
   border-color: #2e2e2e;
-  box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
 }
 
 :root[data-theme="dark"] .rb-item.danger {
@@ -912,12 +918,26 @@ defineExpose({
   background: #242424;
 }
 
+/*
+ * The name on the card was a literal #444 with no dark rule of any kind, so on
+ * the #242424 thumbnail it sat at about 1.6:1 - the server's own name was the
+ * one thing on the card nobody could read (R25-D2). The label beside it was
+ * already #aaa.
+ */
+:root[data-theme="dark"] .rb-thumb-name {
+  color: #c8c8c8;
+}
+
 @media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .rb-thumb-name {
+    color: #c8c8c8;
+  }
+
   :root:not([data-theme="light"]) .rb-round {
     color: #a0a0a0;
   }
 
-  :root:not([data-theme="light"]) .rb-round:hover:not(:disabled),
+  :root:not([data-theme="light"]) .rb-round:hover,
   :root:not([data-theme="light"]) .rb-url:hover,
   :root:not([data-theme="light"]) .rb-url:focus,
   :root:not([data-theme="light"]) .rb-item:hover:not(:disabled),
@@ -927,14 +947,6 @@ defineExpose({
   :root:not([data-theme="light"]) .rb-server:hover,
   :root:not([data-theme="light"]) .rb-error-retry:hover {
     background: #ffffff0f;
-  }
-
-  :root:not([data-theme="light"]) .rb-url,
-  :root:not([data-theme="light"]) .rb-item,
-  :root:not([data-theme="light"]) .rb-zoom,
-  :root:not([data-theme="light"]) .rb-annotate,
-  :root:not([data-theme="light"]) .rb-error-desc {
-    color: #f4f4f5;
   }
 
   :root:not([data-theme="light"]) .rb-local-head,
@@ -963,7 +975,6 @@ defineExpose({
 
   :root:not([data-theme="light"]) .rb-menu {
     border-color: #2e2e2e;
-    box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
   }
 
   :root:not([data-theme="light"]) .rb-item.danger {

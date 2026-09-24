@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto"
 import type { SessionInfo } from "@shared/protocol"
 import { scheduledPromptText } from "@shared/scheduled"
 import { JITTER, clampLoopDelay, oneShotFireAt, recurringFireAt } from "./expr"
+import type { Stats } from "node:fs"
 import { cronFile, missedTasks, readCronFile, readCronTasks, schedulable, writeCronTasks, type CronTask } from "./tasks"
 
 /**
@@ -187,14 +188,32 @@ export class CronScheduler {
 
   /** A project's durable tasks, read again only when the file has changed. */
   private async load(directory: string): Promise<Durable | undefined> {
-    const stat = await fs.stat(cronFile(directory)).catch(() => undefined)
+    /*
+     * Only a file that is genuinely gone empties the list. A failed stat used to
+     * do it too - and it emptied the cache in place without moving `mtimeMs`, so
+     * the next tick found the file unchanged, returned the emptied cache, and
+     * the project's durable tasks never fired again for the life of the process.
+     * One blink of EBUSY out of a once-a-second poll was enough, and nothing
+     * was logged or shown (R25-A3).
+     */
+    let stat: Stats | undefined
+    let unreadable = false
+    try {
+      stat = await fs.stat(cronFile(directory))
+    } catch (cause) {
+      unreadable = (cause as NodeJS.ErrnoException).code !== "ENOENT"
+    }
     const cached = this.durable.get(directory)
+    if (unreadable) return cached
     if (!stat) {
       if (cached) cached.tasks = []
       return cached
     }
     if (cached && cached.mtimeMs === stat.mtimeMs) return cached
-    const tasks = (await readCronTasks(directory)).map((task) => ({ ...task, durable: true }))
+    const read = await readCronFile(directory)
+    // A read that is blocked leaves the cache as it was rather than replacing it with nothing.
+    if (read.blocked) return cached
+    const tasks = read.tasks.map((task) => ({ ...task, durable: true }))
     const owned = cached?.owned === true ? true : await this.takeLock(directory)
     const state = { mtimeMs: stat.mtimeMs, tasks, owned }
     this.durable.set(directory, state)

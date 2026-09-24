@@ -46,13 +46,16 @@ watch(
 </template>
 
 <style scoped>
-/* MiMo's strip: 8 round on a red-300 line over red-50, 8 by 12 of padding. */
+/*
+ * MiMo's strip: 8 round on a red-300 line over red-50, 8 by 12 of padding and
+ * no margin of its own - its fallback carries none, and no call site of its
+ * boundary passes one that does. The pane boundary draws the same strip.
+ */
 .render-error {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
-  margin: 8px;
   padding: 8px 12px;
   background: #fef2f2;
   border: 1px solid #fca5a5;
@@ -100,6 +103,10 @@ watch(
   color: #f87171;
 }
 
+:root[data-theme="dark"] .detail {
+  color: rgb(248 113 113 / 0.5);
+}
+
 :root[data-theme="dark"] .retry {
   color: #f87171;
   background: rgb(127 29 29 / 0.3);
@@ -118,6 +125,10 @@ watch(
 
   :root:not([data-theme="light"]) .label {
     color: #f87171;
+  }
+
+  :root:not([data-theme="light"]) .detail {
+    color: rgb(248 113 113 / 0.5);
   }
 
   :root:not([data-theme="light"]) .retry {

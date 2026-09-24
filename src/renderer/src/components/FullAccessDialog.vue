@@ -56,10 +56,10 @@ useEscapeLayer(() => emit("close"))
   box-sizing: border-box;
   width: min(430px, 88vw);
   padding: 22px 24px;
-  background: var(--surface-raised);
+  background: var(--surface-page);
   border: 1px solid var(--border-weak);
   border-radius: 16px;
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--shadow-pop);
   outline: none;
 }
 
@@ -85,7 +85,7 @@ h2 {
   width: 30px;
   height: 30px;
   margin-inline-end: -6px;
-  color: var(--text-weak);
+  color: var(--text-base);
   background: transparent;
   border: 0;
   border-radius: 8px;
@@ -96,10 +96,10 @@ h2 {
   background: var(--surface-hover);
 }
 
-/* MiMo's permc-desc: 14px in --color-txt (#151c13cc light, #f4f4f5 dark). */
+/* MiMo's permc-desc: 14px in --color-txt. */
 .desc {
   margin: 0 0 20px;
-  color: #151c13cc;
+  color: var(--text-body);
   font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: 1.65;
 }
@@ -145,10 +145,6 @@ footer {
   border-color: #fadbd8;
 }
 
-:root[data-theme="dark"] .desc {
-  color: #f4f4f5;
-}
-
 :root[data-theme="dark"] .ghost {
   background: #1a1a1a;
 }
@@ -169,10 +165,6 @@ footer {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .desc {
-    color: #f4f4f5;
-  }
-
   :root:not([data-theme="light"]) .ghost {
     background: #1a1a1a;
   }

@@ -18,7 +18,6 @@ import { DEFAULT_APP_ICON } from "@shared/app-icons"
 const ArtifactsView = defineAsyncComponent(() => import("./components/ArtifactsView.vue"))
 const PluginsView = defineAsyncComponent(() => import("./components/PluginsView.vue"))
 import RightPanel from "./components/RightPanel.vue"
-import CommandPalette, { type PaletteMode } from "./components/CommandPalette.vue"
 import QuestionDock from "./components/QuestionDock.vue"
 import { useQuestions } from "./stores/questions"
 import type SettingsDialogComponent from "./components/SettingsDialog.vue"
@@ -56,6 +55,7 @@ import {
   languageReady,
   loadLanguage,
   rememberLanguage,
+  refreshDateFormatters,
 } from "./lib/i18n"
 import { toggleSteps } from "./lib/steps"
 import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
@@ -64,6 +64,7 @@ import { PANEL_MIN_WIDTH, useRightPanel } from "./stores/right-panel"
 import { arbitratePanel, boundChord, clampSideWidth, panelWidthShown, sideFits, toolHints } from "./lib/right-tools"
 import { exportConversationById, exportConversationMarkdown, transcriptOf } from "./lib/convo-export"
 import { ZOOM_TOAST, dismiss, notify, notifyFailure, zoomNotice } from "./lib/toast"
+import { followZoom } from "./lib/zoom-resize"
 import { openDocument } from "./lib/office-open"
 import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
 import { folderName, projectName } from "./lib/project"
@@ -143,7 +144,6 @@ const homeDirectory = ref<string>()
 /* The folder the home screen has picked, which its bottom panel's terminal opens in. */
 const homeShellDirectory = ref<string>()
 
-
 /*
  * The info card beside a conversation (2.0, after Xiaomi MiMo's): the plan,
  * what the session produced and what it read. Open unless the reader put it
@@ -181,7 +181,6 @@ function setInfoOpen(next: boolean) {
 const INFO_INLINE_MIN = 790
 const INFO_PANEL_WIDTH = 310
 const mainWidth = ref(0)
-const viewportWide = ref(false)
 const infoFloating = computed(() => mainWidth.value > 0 && mainWidth.value < INFO_INLINE_MIN)
 const infoOverlayOpen = ref(false)
 watch(infoFloating, () => (infoOverlayOpen.value = false))
@@ -211,16 +210,20 @@ const infoShowing = computed(
 const infoInline = computed(() => infoShowing.value && !infoFloating.value)
 
 /*
- * How much of the column the card holds clear: only what keeps MiMo's 768
- * reading column (1000 on a 2000px screen) out from under a 310 card, so a wide
- * window gives up nothing at all.
+ * How much of the column the card holds clear: all of it, whenever the card is
+ * inline.
+ *
+ * MiMo holds clear only as much as keeps its reading column out from under the
+ * card - `--info-inline-inset: clamp(0px, calc(--info-content-max + 2 *
+ * --info-panel-width - 100cqw), --info-panel-width)`, which MCode copied
+ * exactly. The card is drawn over the column's end rather than beside it, so on
+ * a window with room the conversation gives up nothing and stays centred on the
+ * whole column, half the card's width right of what can actually be seen. The
+ * user read that on 2026-09-24 as "the code is off to the right", which is what
+ * it is, and chose the conversation centred in what is left at every width.
+ * A deliberate difference from MiMo; do not "fix" it back.
  */
-const infoInset = computed(() => {
-  if (!infoInline.value) return "0px"
-  const column = viewportWide.value ? 1000 : 768
-  const need = column + INFO_PANEL_WIDTH * 2 - mainWidth.value
-  return `${Math.max(0, Math.min(INFO_PANEL_WIDTH, need))}px`
-})
+const infoInset = computed(() => (infoInline.value ? `${INFO_PANEL_WIDTH}px` : "0px"))
 
 let mainObserver: ResizeObserver | undefined
 onMounted(() => {
@@ -229,7 +232,6 @@ onMounted(() => {
   mainObserver = new ResizeObserver(([entry]) => {
     if (!entry) return
     mainWidth.value = entry.contentRect.width
-    viewportWide.value = window.innerWidth >= 2000
   })
   mainObserver.observe(pane)
 })
@@ -366,7 +368,6 @@ onMounted(() => {
   onBeforeUnmount(offLink)
 })
 onBeforeUnmount(() => find.unmount())
-const paletteOpen = ref(false)
 /* MiMo's search over conversations, projects and artifacts: the side column's magnifier and Ctrl+K. */
 const searchOpen = ref(false)
 const searchOverlay = ref<InstanceType<typeof SearchOverlay>>()
@@ -381,9 +382,13 @@ const settingsOpen = ref(false)
 /** Non-default landing page for the settings dialog, when opened from a shortcut. */
 const settingsSection = ref<"general" | "keys" | "models" | "mcp" | "archive">()
 /*
- * The header, so the rename command can start the title's own editor. Renaming
- * is inline now - there is no dialog left for a flag to open.
+ * The header, so the rename command, its chord and the header menu's 重命名 can
+ * start the title's own in-place editor, as MiMo's requestRename does.
  */
+const sessionHeader = ref<InstanceType<typeof SessionHeader>>()
+function renameInHeader() {
+  sessionHeader.value?.beginEdit()
+}
 
 /*
  * The model menu's "configure custom models" lands on the models page, as MiMo's
@@ -397,11 +402,11 @@ function openSettings(section?: unknown) {
 /** Directory whose presentation is being edited, if any. */
 const editingProject = ref<string>()
 
-/* MiMo's single rename dialog, for a conversation or for a project. */
+/* MiMo's rename dialog, for a side-column row or for a project; the open conversation's header edits in place. */
 const renamingSession = ref<{ id: string; title: string }>()
 const renamingProject = ref<string>()
 
-function beginRename(sessionID = app.currentID) {
+function beginRename(sessionID: string) {
   const session = app.sessions.find((entry) => entry.id === sessionID)
   if (session) renamingSession.value = { id: session.id, title: sessionTitle(session.title) }
 }
@@ -452,7 +457,6 @@ provideRestoreDraft((message) => {
   }
   composer.value?.set(draftFromMessage(message))
 })
-const paletteMode = ref<PaletteMode>("files")
 
 /**
  * Writes out what the app has been complaining about.
@@ -606,38 +610,6 @@ async function runShellCommand(command: string) {
   }
 }
 
-/**
- * Opens the palette on one kind of thing.
- *
- * The reference offers separate pickers for files, sessions and projects; they
- * are the same list with a different filter, so they are the same surface here
- * rather than three dialogs that would drift apart.
- */
-/*
- * The project picker answers two questions: which project a new task starts
- * in, and which project a conversation moves to. Which one is being asked is
- * held in `movingSession` while the picker is up.
- */
-async function pickedProject(directory: string) {
-  const moving = movingSession.value
-  const many = movingMany.value
-  movingSession.value = undefined
-  movingMany.value = undefined
-  if (many?.length) {
-    for (const sessionID of many) await app.move(sessionID, directory)
-    selecting.value = undefined
-    return
-  }
-  if (moving) {
-    await app.move(moving, directory)
-    return
-  }
-  startIn(directory)
-}
-
-/* Set while the picker is being used to move everything that is ticked. */
-const movingMany = ref<string[]>()
-
 /** A conversation ticked or unticked in the side column's selection mode. */
 function toggleSelected(sessionID: string) {
   const current = selecting.value ?? []
@@ -653,7 +625,7 @@ function toggleSelected(sessionID: string) {
  * rules that already hold - leaving an archived session, the confirmation
  * before a delete - hold here too.
  */
-async function runBatch(action: "archive" | "move" | "delete" | "cancel" | "all" | "none", ids: string[] = []) {
+async function runBatch(action: "archive" | "delete" | "cancel" | "all" | "none", ids: string[] = []) {
   const chosen = selecting.value ?? []
   if (action === "cancel") {
     selecting.value = undefined
@@ -668,11 +640,6 @@ async function runBatch(action: "archive" | "move" | "delete" | "cancel" | "all"
   if (action === "archive") {
     await archiveSessions([...chosen])
     selecting.value = undefined
-    return
-  }
-  if (action === "move") {
-    movingMany.value = [...chosen]
-    openPalette("projects")
     return
   }
   deletingMany.value = [...chosen]
@@ -715,11 +682,6 @@ async function undoArchive(ids: readonly string[]) {
     return
   }
   for (const sessionID of still) await app.archive(sessionID, false)
-}
-
-function openPalette(mode: PaletteMode) {
-  paletteMode.value = mode
-  paletteOpen.value = true
 }
 
 /**
@@ -842,7 +804,6 @@ watch(
   },
   { immediate: true },
 )
-
 
 /*
  * The two sizes on the appearance page, carried the way MiMo carries them: a
@@ -1278,7 +1239,6 @@ function newTaskOverLayers(): boolean {
   if (asking || editingProject.value || renamingSession.value || renamingProject.value) return false
   dismissMenus()
   searchOpen.value = false
-  paletteOpen.value = false
   closeImagePreview()
   closeVideoPreview()
   if (settingsOpen.value && settingsDialog.value) {
@@ -1351,9 +1311,6 @@ const sessionMenu = ref<{ x: number; y: number; sessionID?: string; header?: boo
 const menuSession = computed(() =>
   app.sessions.find((entry) => entry.id === (sessionMenu.value?.sessionID ?? app.currentID)),
 )
-
-/* Set while the project picker is being used to move a conversation. */
-const movingSession = ref<string>()
 
 /* The project row's menu, and which project folder it is about. */
 const projectMenu = ref<{ x: number; y: number; directory: string }>()
@@ -1885,6 +1842,11 @@ async function runSessionMenu(key: string) {
   }
   if (key === "session.delete") {
     deletingSession.value = target
+    return
+  }
+  // A row's 重命名 is MiMo's dialog, over whatever is open; the header's edits the title in place.
+  if (key === "session.rename" && !header) {
+    beginRename(target)
     return
   }
   if (app.currentID !== target) {
@@ -2506,7 +2468,7 @@ const bindableCommands = computed((): AppCommand[] => {
       title: t("cmd.rename"),
       hint: "Ctrl+Alt+R",
       enabled: hasSession,
-      run: () => beginRename(),
+      run: () => renameInHeader(),
     },
     {
       id: "session.undo",
@@ -2728,19 +2690,6 @@ const bindableCommands = computed((): AppCommand[] => {
       title: t("cmd.addSelection"),
       enabled: hasSession,
       run: () => addSelection(),
-    },
-    {
-      id: "app.searchSessions",
-      group: "key.groupGeneral",
-      // No chord: MiMo's Ctrl+F is only the find bar's.
-      title: t("conv.search"),
-      run: () => openPalette("sessions"),
-    },
-    {
-      id: "app.searchProjects",
-      group: "key.groupGeneral",
-      title: t("cmd.searchProjects"),
-      run: () => openPalette("projects"),
     },
     {
       id: "session.prevUnread",
@@ -2978,7 +2927,7 @@ const bindableCommands = computed((): AppCommand[] => {
       // MiMo's 搜索: the search overlay.
       id: "app.search",
       group: "key.groupGeneral",
-      title: t("key.palette"),
+      title: t("key.label.search"),
       hint: "Ctrl+K",
       run: () => {
         searchOpen.value = true
@@ -3102,7 +3051,7 @@ const CONVERSATION_COMMANDS = new Set([
  * palette and every confirmation count without a list of them to keep.
  */
 function conversationCovered(): boolean {
-  return modalOpen.value || searchOpen.value || paletteOpen.value || dialogOpen()
+  return modalOpen.value || searchOpen.value || dialogOpen()
 }
 
 /* The box MiMo's annotations go to: the open conversation's, or the home screen's. */
@@ -3190,7 +3139,7 @@ function onKeydown(event: KeyboardEvent) {
   if (mod && event.altKey && letter === "r") {
     if (conversationCovered() || !app.currentID || isHome.value) return
     event.preventDefault()
-    beginRename()
+    renameInHeader()
     return
   }
 
@@ -3234,7 +3183,7 @@ function onKeydown(event: KeyboardEvent) {
 
   /* MiMo's terminal toggle is its `ctrl` chord: Control+` on a Mac as well. */
   if (controlHeld(event) && !event.altKey && !event.shiftKey && event.code === "Backquote") {
-    if (modalOpen.value || paletteOpen.value) return
+    if (modalOpen.value) return
     event.preventDefault()
     if (!commandDisabled("view.terminal")) terminalOpen.value = !terminalOpen.value
     return
@@ -3255,11 +3204,9 @@ function onKeydown(event: KeyboardEvent) {
 
   /*
    * A shortcut fired behind a dialog acts on a screen the user cannot see -
-   * Ctrl+N would quietly start a session under the settings window. The palette
-   * is the one exception: its own shortcut still closes it.
+   * Ctrl+N would quietly start a session under the settings window.
    */
   if (modalOpen.value) return
-  if (paletteOpen.value && event.key !== "k") return
 
   /*
    * Shift combinations first: they are separate commands, not variants, and a
@@ -3546,9 +3493,10 @@ function flushNotices() {
   }
 }
 
-/* Leaving the window sends what was held. */
+/* Leaving the window sends what was held; coming back re-reads the machine's zone (a formatter keeps the one it was built with). */
 document.addEventListener("visibilitychange", () => {
   flushNotices()
+  if (!document.hidden) refreshDateFormatters()
 })
 watch([() => app.currentID, isHome], flushNotices)
 
@@ -3732,6 +3680,7 @@ async function stepEffort(by: 1 | -1) {
 
 let offMenu: (() => void) | undefined
 let offZoom: (() => void) | undefined
+let offZoomResize: (() => void) | undefined
 let offQuitHint: (() => void) | undefined
 
 /* The platform for the zoom notice's key, before the backend has said it. */
@@ -3769,6 +3718,8 @@ onMounted(async () => {
   window.addEventListener("focus", app.bumpFsNonce)
   schemeQuery.addEventListener("change", onSchemeChange)
   offMenu = window.mcode.onMenu(runMenuCommand)
+  // Every measurement in this window is re-taken on a resize and on nothing else; see the module.
+  offZoomResize = followZoom()
   // MiMo's zoom notice after every step, and once at load when the window is not at 100%.
   offZoom = window.mcode.onZoomChanged((percent) =>
     notify(zoomNotice(percent, platformName()), { id: ZOOM_TOAST, duration: 5000 }),
@@ -3872,6 +3823,7 @@ onBeforeUnmount(() => {
   schemeQuery.removeEventListener("change", onSchemeChange)
   offMenu?.()
   offZoom?.()
+  offZoomResize?.()
   offQuitHint?.()
 })
 </script>
@@ -3940,10 +3892,12 @@ onBeforeUnmount(() => {
 
       <main ref="mainPane" class="main" :class="{ 'info-open': infoInline, 'info-shown': infoShowing, beside: panelBeside }">
         <ErrorBoundary :reset-key="`${view}:${app.currentID ?? ''}`">
-        <!-- A turn can run for minutes; the bar is the only thing that says so
-             without the user watching the transcript for movement. -->
-        <div v-if="app.busy" class="progress"><span /></div>
-
+        <!--
+          No bar across the top of the column while a turn runs. This used to
+          draw a sweeping blue 2px line there; the user looked at it on
+          2026-09-24 and had it taken out. A running turn already says so in
+          the transcript, in the composer's stop button and in the side column.
+        -->
         <!--
           Ahead of everything else: if the backend never opened there is no
           project, no session and no stream, so none of the usual places an
@@ -3985,6 +3939,7 @@ onBeforeUnmount(() => {
             before the first message used to vanish silently.
           -->
           <SessionHeader
+            ref="sessionHeader"
             :info-open="infoShowing"
             :bottom-open="terminalUp"
             :side-collapsed="!leftPanel"
@@ -3992,7 +3947,6 @@ onBeforeUnmount(() => {
             :has-content="!empty"
             :menu-open="Boolean(sessionMenu?.header)"
             @info="toggleInfo"
-            @rename="beginRename()"
             @menu="(x, y) => (sessionMenu = { x, y, header: true })"
             @bottom="terminalOpen = !terminalOpen"
           />
@@ -4148,17 +4102,6 @@ onBeforeUnmount(() => {
       />
       </ErrorBoundary>
     </div>
-
-
-
-    <CommandPalette
-      v-if="paletteOpen"
-      :mode="paletteMode"
-      :projects="openProjects"
-      @close="paletteOpen = false"
-      @file="composer?.mention($event)"
-      @project="pickedProject"
-    />
 
     <SearchOverlay
       v-if="searchOpen"
@@ -4342,35 +4285,6 @@ onBeforeUnmount(() => {
   border-color: var(--border-strong);
 }
 
-.progress {
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  z-index: 5;
-  height: 2px;
-  overflow: hidden;
-  background: transparent;
-}
-
-.progress span {
-  display: block;
-  width: 40%;
-  height: 100%;
-  background: var(--interactive);
-  border-radius: 1px;
-  animation: sweep 1.5s ease-in-out infinite;
-}
-
-@keyframes sweep {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(250%);
-  }
-}
-
 /* The window itself is the darker frame the workspace is set into. */
 .app {
   display: flex;
@@ -4545,14 +4459,29 @@ onBeforeUnmount(() => {
   inset-inline-end: v-bind(infoInset);
 }
 
+/* MiMo's card: its page ground (#fffefd, #181818 dark below) under the composer's shadow, not the dialog lift. */
 .drop-card {
   padding: 10px 18px;
   color: #ff6a2b;
-  background: var(--surface-base);
+  background: #fffefd;
   border-radius: 12px;
-  box-shadow: var(--shadow-md);
+  box-shadow:
+    0 1px 2px #0000000d,
+    0 6px 18px #0000001b;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
+}
+
+:root[data-theme="dark"] .drop-card {
+  background: #181818;
+  box-shadow: 0 1px 3px #0006;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .drop-card {
+    background: #181818;
+    box-shadow: 0 1px 3px #0006;
+  }
 }
 
 /*
@@ -4593,9 +4522,17 @@ onBeforeUnmount(() => {
   padding-inline-end: calc(24px + v-bind(infoInset));
 }
 
-/* MiMo moves the find bar clear of the card whenever the card is up: 20 plus its 310. */
-.main.info-shown ~ [data-find-bar] {
-  margin-inline-end: 310px;
+/*
+ * MiMo moves the find bar clear of the card: 20 plus its own width.
+ *
+ * Keyed on `info-open`, not `info-shown`. `info-shown` is true in both modes,
+ * and a floating card takes no width at all - so on a narrow window the bar was
+ * pushed 310 in from a pane only about 460 wide and ran out over the side
+ * column (R25-D3). The width comes from the same binding every other consumer
+ * uses, so it cannot drift from INFO_PANEL_WIDTH on its own.
+ */
+.main.info-open ~ [data-find-bar] {
+  margin-inline-end: v-bind(infoInset);
 }
 
 /* Left of the caption buttons where Windows draws them, level with the header's own row: MiMo's 24px in a 32px row 9 down. */
@@ -4626,10 +4563,25 @@ onBeforeUnmount(() => {
   color: var(--text-strong);
 }
 
-/* MiMo on Windows: every title-bar glyph 12px, in one solid colour on light and dark alike. */
+/*
+ * MiMo on Windows: every title-bar glyph 12px in its Windows title-bar colour,
+ * #2b2b2b on light and #ececec on dark, kept on hover and while pressed.
+ */
 .app[data-platform="win32"] .side-panel-toggle,
 .app[data-platform="win32"] .home-bottom:not(:disabled) {
-  color: var(--text-strong);
+  color: #2b2b2b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .app[data-platform="win32"] .side-panel-toggle,
+  :root:not([data-theme="light"]) .app[data-platform="win32"] .home-bottom:not(:disabled) {
+    color: #ececec;
+  }
+}
+
+:root[data-theme="dark"] .app[data-platform="win32"] .side-panel-toggle,
+:root[data-theme="dark"] .app[data-platform="win32"] .home-bottom:not(:disabled) {
+  color: #ececec;
 }
 
 .app[data-platform="win32"] .side-panel-toggle svg,
@@ -4645,6 +4597,10 @@ onBeforeUnmount(() => {
  * lines (#f0ebe5) instead of neutral ones. macOS keeps the neutral set, and
  * dark is untouched in every platform.
  *
+ * MiMo's block also resets the hover and selected washes, but R21-F1 measured
+ * those two off its root and they are the same #f1f0ec / #eeedec there, so
+ * repeating them here only restated the default on two platforms.
+ *
  * Written as the positive light condition rather than `:not(dark)`, and hung on
  * `.app` rather than `:root`: the palette is written inline onto <html> at boot,
  * so only a rule matching a descendant of it can win.
@@ -4652,8 +4608,6 @@ onBeforeUnmount(() => {
 :root[data-theme="light"] .app[data-platform="win32"],
 :root[data-theme="light"] .app[data-platform="linux"] {
   --surface-base: #f8f7f5;
-  --surface-hover: #f1f0ec;
-  --surface-selected: #eeedec;
   --border-weak: #f0ebe5;
 }
 
@@ -4661,8 +4615,6 @@ onBeforeUnmount(() => {
   :root:not([data-theme="dark"]) .app[data-platform="win32"],
   :root:not([data-theme="dark"]) .app[data-platform="linux"] {
     --surface-base: #f8f7f5;
-    --surface-hover: #f1f0ec;
-    --surface-selected: #eeedec;
     --border-weak: #f0ebe5;
   }
 }

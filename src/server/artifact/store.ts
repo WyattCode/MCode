@@ -50,8 +50,10 @@ import { APP_EXTENSIONS, DOC_EXTENSIONS, type ArtifactCategory } from "@shared/a
  * 1 - one row per file, naming one conversation.
  * 2 - `artifact_source` (every conversation that wrote the file), the title and
  *     its FTS5 trigram mirror, the reconcile checkpoints and the tombstones.
+ * 3 - no source outlives its conversation: the ones version 2 kept unlinked
+ *     after a delete are dropped, with any file left with none (MiMo's delete).
  */
-export const ARTIFACT_SCHEMA_VERSION = 2
+export const ARTIFACT_SCHEMA_VERSION = 3
 
 const SCHEMA_V1 = `
 CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
@@ -158,6 +160,14 @@ const RECHECK_PARALLEL = 16
 /** How many re-check answers go into one transaction. */
 const RECORD_BATCH = 200
 
+/**
+ * How long changes are gathered before the windows are told of them.
+ *
+ * A pass over a hundred conversations writes a hundred times; MiMo's page
+ * refetches on one revision, so one event for the burst is what it wants.
+ */
+const CHANGE_NOTICE_MS = 400
+
 export interface ArtifactQuery {
   query?: string
   category?: ArtifactCategory
@@ -243,6 +253,18 @@ export class ArtifactStore {
    * while it was reading.
    */
   private readonly dirty = new Map<string, number>()
+  /**
+   * How many times the store's contents have changed, and who is told of it.
+   *
+   * MiMo publishes an artifacts-changed event carrying a revision, and its page
+   * refetches whenever the revision it holds is behind - which is how the page
+   * fills in while it is open rather than only while the store is being built
+   * (S13-3). Notices are gathered over CHANGE_NOTICE_MS so a bulk pass says so
+   * once rather than a hundred times.
+   */
+  private rev = 0
+  private listener: ((revision: number) => void) | undefined
+  private notifying: ReturnType<typeof setTimeout> | undefined
 
   private constructor(
     /** The store's file, open in a worker of its own (N11-12). */
@@ -304,6 +326,7 @@ export class ArtifactStore {
         return new ArtifactStore(db, false)
       }
       if (latest < 2) await ArtifactStore.migrateToV2(db)
+      if (latest < 3) await ArtifactStore.migrateToV3(db)
       return new ArtifactStore(db, true)
     } catch (failure) {
       await db.close()
@@ -348,9 +371,52 @@ export class ArtifactStore {
     })
   }
 
+  /**
+   * Version 2 to 3: what deleted conversations left behind goes.
+   *
+   * Version 2 kept a deleted conversation's sources, unlinked, so its files
+   * stayed listed under a conversation nobody could open - and 进入对话 on
+   * them answered that it could not be found. MiMo deletes a conversation's
+   * artifacts with it; the files on disk were never touched and still are not.
+   */
+  private static migrateToV3(db: SqlDatabase): Promise<void> {
+    return db.transaction(async (tx) => {
+      await tx.run("DELETE FROM artifact_source WHERE session_id = ''")
+      await tx.run("DELETE FROM artifact WHERE id NOT IN (SELECT artifact_id FROM artifact_source)")
+      await tx.run("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)", 3, Date.now())
+    })
+  }
+
   /** True while a long pass is filling the store, so a listing may be missing what it has not reached yet. */
   get building(): boolean {
     return this.running !== undefined && this.bulk
+  }
+
+  /** What the store has been through: a window holding an older number is out of date. */
+  get revision(): number {
+    return this.rev
+  }
+
+  /** Told, at most once every CHANGE_NOTICE_MS, that the store's contents changed. */
+  onChanged(listener: (revision: number) => void): () => void {
+    this.listener = listener
+    return () => {
+      if (this.listener !== listener) return
+      this.listener = undefined
+      if (this.notifying) clearTimeout(this.notifying)
+      this.notifying = undefined
+    }
+  }
+
+  /** One write landed. The revision moves at once; the notice waits for the burst to end. */
+  private changed(): void {
+    this.rev += 1
+    if (!this.listener || this.notifying) return
+    this.notifying = setTimeout(() => {
+      this.notifying = undefined
+      this.listener?.(this.rev)
+    }, CHANGE_NOTICE_MS)
+    this.notifying.unref?.()
   }
 
   /**
@@ -363,20 +429,38 @@ export class ArtifactStore {
    */
   reconcile(sessions: readonly SessionInfo[], messagesOf: (sessionID: string) => Promise<Message[]>, options: { recheck?: boolean } = {}): Promise<void> {
     if (!this.writable) return Promise.resolve()
+    /*
+     * A request to ask the disk is remembered, not dropped. Both ways out of
+     * here hand back a pass that may have been started without it: the
+     * once-a-launch sweep runs behind the rest of housekeeping, so a window
+     * that connects first and writes one message starts a plain pass, and the
+     * sweep then returned that pass as if it had rechecked. Files deleted
+     * outside the app went on showing as available until a launch won the race.
+     */
+    if (options.recheck === true) this.recheckWanted = true
     if (this.running) return this.running
     return (async () => {
       const known = await this.known()
-      return this.running ?? this.begin(this.behind(sessions, known), messagesOf, options.recheck === true)
+      return this.running ?? this.begin(this.behind(sessions, known), messagesOf)
     })()
   }
 
+  /** A recheck asked for while a pass was in flight, honoured by the next pass that starts. */
+  private recheckWanted = false
+
   /** Starts a pass over `behind`; whether it is a long one is known before anything waits on it. */
-  private begin(behind: readonly SessionInfo[], messagesOf: (sessionID: string) => Promise<Message[]>, recheck: boolean): Promise<void> {
+  private begin(behind: readonly SessionInfo[], messagesOf: (sessionID: string) => Promise<Message[]>): Promise<void> {
     this.bulk = behind.length > INLINE_RECONCILE
-    // A long pass has added files nothing has asked the disk about yet; the tabs' counts would take them on trust.
-    const checkAll = recheck || this.bulk
     this.running = (async () => {
       await this.pass(behind, messagesOf)
+      /*
+       * Read after the pass rather than before it, so a recheck asked for
+       * while this one was running is answered by this one. A long pass has
+       * added files nothing has asked the disk about yet either; the tabs'
+       * counts would otherwise take them on trust.
+       */
+      const checkAll = this.recheckWanted || this.bulk
+      this.recheckWanted = false
       if (checkAll) await this.recheck()
     })().finally(() => {
       this.running = undefined
@@ -419,7 +503,7 @@ export class ArtifactStore {
       const known = await this.known()
       if (!this.running) {
         const behind = this.behind(sessions, known)
-        if (behind.length) void this.begin(behind, messagesOf, false).catch(() => undefined)
+        if (behind.length) void this.begin(behind, messagesOf).catch(() => undefined)
       }
       if (this.running && !this.bulk) await this.running.catch(() => undefined)
     }
@@ -467,6 +551,8 @@ export class ArtifactStore {
    */
   private async reconcileSession(session: SessionInfo, messages: readonly Message[], fingerprint: string | undefined): Promise<void> {
     const now = Date.now()
+    /* Whether this pass wrote anything, so an unchanged conversation does not tell the windows to read again. */
+    let wrote = false
     const checkpointed = await this.db.transaction(async (tx) => {
       // Checked inside the transaction, so a detach cannot land between the check and the writes.
       if (await tx.get("SELECT 1 AS x FROM artifact_purged_session WHERE session_id = ?", session.id)) return false
@@ -523,6 +609,7 @@ export class ArtifactStore {
         touched.add(row.artifact_id)
       }
       for (const id of touched) await ArtifactStore.settle(tx, id, now)
+      wrote = touched.size > 0 || stale.length > 0
       if (fingerprint === undefined) return false
       await tx.run(
         `INSERT INTO artifact_reconcile (session_id, fingerprint, updated_at) VALUES (?, ?, ?)
@@ -533,6 +620,7 @@ export class ArtifactStore {
       )
       return true
     })
+    if (wrote) this.changed()
     // A write that landed since the pass began has dropped it again, and it stays dropped.
     if (checkpointed && fingerprint !== undefined && !this.dirty.has(session.id)) this.checkpoints?.set(session.id, fingerprint)
   }
@@ -541,8 +629,7 @@ export class ArtifactStore {
    * Points a file's row at the source it is shown under, or removes a row no
    * conversation claims any more.
    *
-   * The newest conversation that still exists wins; a file only gone
-   * conversations wrote is shown under the newest of those. Which one must not
+   * The newest conversation wins. Which one must not
    * depend on the order the passes ran in, so it is decided from the sources
    * alone, with the key as the last tie-break. Always inside the caller's
    * transaction, which is why it takes the transaction's handle.
@@ -550,7 +637,7 @@ export class ArtifactStore {
   private static async settle(tx: Sql, id: number, now: number): Promise<void> {
     const best = await tx.get<SourceRow>(
       `SELECT * FROM artifact_source WHERE artifact_id = ?
-       ORDER BY (session_id <> '') DESC, produced_at DESC, source_key ASC LIMIT 1`,
+       ORDER BY produced_at DESC, source_key ASC LIMIT 1`,
       id,
     )
     if (!best) {
@@ -631,6 +718,7 @@ export class ArtifactStore {
   }
 
   private async recordBatch(answers: readonly Row[]): Promise<void> {
+    this.changed()
     await this.db.transaction(async (tx) => {
       for (const answer of answers) {
         await tx.run(
@@ -648,10 +736,6 @@ export class ArtifactStore {
   /**
    * One page of what is produced and still on disk, newest first, grouped by
    * the conversation each file is shown under (S13-3).
-   *
-   * A group whose conversation has been deleted keeps the title it had, so the
-   * files it made are still findable - which is the whole point of storing them
-   * rather than deriving them.
    *
    * The search is MiMo's: the query is trimmed, NFC-normalised and lower-cased,
    * and matched against the file's title only. Three characters or more go
@@ -741,15 +825,13 @@ export class ArtifactStore {
   }
 
   /**
-   * Removes a deleted conversation's link to what it wrote, and nothing else.
+   * Forgets what a deleted conversation wrote, as MiMo deletes a conversation's
+   * artifacts with it (the files on disk are left alone).
    *
-   * Its sources stay, unlinked but still carrying the title the conversation
-   * had: the files are still on disk, and this is the one record of where they
-   * came from. A file another existing conversation also wrote is shown under
-   * that one from now on; a file only gone conversations wrote is shown under
-   * the newest of them. The conversation is tombstoned, as MiMo's
-   * `artifact_purged_session` is, so a pass already under way cannot link it
-   * back.
+   * A file another existing conversation also wrote stays, shown under that
+   * one from now on; a file only this conversation wrote leaves the list. The
+   * conversation is tombstoned, as MiMo's `artifact_purged_session` is, so a
+   * pass already under way cannot bring it back.
    */
   async detach(sessionID: string): Promise<void> {
     if (!this.writable || !sessionID) return
@@ -760,15 +842,31 @@ export class ArtifactStore {
      * conversation nobody can read still owes a reconcile.
      */
     this.dirty.delete(sessionID)
+    this.changed()
     const now = Date.now()
     await this.db.transaction(async (tx) => {
       await tx.run("INSERT OR IGNORE INTO artifact_purged_session (session_id, purged_at) VALUES (?, ?)", sessionID, now)
       await tx.run("DELETE FROM artifact_reconcile WHERE session_id = ?", sessionID)
       this.checkpoints?.delete(sessionID)
       const touched = await tx.all<{ artifact_id: number }>("SELECT DISTINCT artifact_id FROM artifact_source WHERE session_id = ?", sessionID)
-      await tx.run("UPDATE artifact_source SET session_id = '' WHERE session_id = ?", sessionID)
+      await tx.run("DELETE FROM artifact_source WHERE session_id = ?", sessionID)
       for (const row of touched) await ArtifactStore.settle(tx, row.artifact_id, now)
     })
+  }
+
+  /**
+   * Forgets the conversations that are gone without this store having been
+   * told: deleted before it existed, deleted while a failed detach was
+   * swallowed, or removed from disk by hand. `existing` must name every
+   * conversation still there, the unreadable ones included, since a record
+   * that will not read now may be repaired and must keep its files.
+   */
+  async forgetMissing(existing: ReadonlySet<string>): Promise<number> {
+    if (!this.writable) return 0
+    const named = await this.db.all<{ session_id: string }>("SELECT DISTINCT session_id FROM artifact_source")
+    const gone = named.map((row) => row.session_id).filter((id) => id && !existing.has(id))
+    for (const id of gone) await this.detach(id)
+    return gone.length
   }
 
   /** The conversations each file's sources name, for the checks. */

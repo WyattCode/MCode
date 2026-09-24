@@ -240,11 +240,10 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* Beside the side column's bottom row, as MiMo sets its capsule: no box of its own. */
 .update-pill-row {
   display: flex;
-  justify-content: flex-end;
-  padding-inline: 8px;
-  margin-block-start: 6px;
+  flex: none;
 }
 
 /* MiMo's capsule: 24 tall, 6 round, 12px on 8px of side padding. */
@@ -304,10 +303,10 @@ onBeforeUnmount(() => {
   max-width: calc(100vw - 16px);
   padding: 0;
   overflow: hidden;
-  background: var(--surface-raised);
+  background: var(--surface-page);
   border: 0;
   border-radius: 20px;
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--shadow-composer);
 }
 
 /* MiMo's 87px hero band across the top; the art is MCode's own. */
@@ -391,17 +390,27 @@ onBeforeUnmount(() => {
   list-style: none;
 }
 
+/*
+ * MiMo's update panel writes a note in --color-txt and puts only its bullet in
+ * --color-mut; the empty line and the install hint are --color-mut whole. All
+ * three are 12px over 1.6.
+ */
 .update-bubble .ub-notes li,
 .update-bubble .ub-notes-empty,
 .update-bubble .ub-hint {
   margin: 0;
-  color: var(--text-weak);
+  color: var(--text-base);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }
 
+.update-bubble .ub-notes li {
+  color: var(--text-body);
+}
+
 .update-bubble .ub-dot {
   margin-inline-end: 6px;
+  color: var(--text-base);
 }
 
 /* The reason, then any detail on its own line. */

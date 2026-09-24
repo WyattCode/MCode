@@ -45,6 +45,13 @@ const FILES = new Set([
    */
   "head", "tail", "wc", "grep", "rg", "type", "stat", "file", "tree", "du", "ls", "dir", "less", "more", "findstr",
   "select-string", "get-item", "get-childitem", "test-path", "resolve-path", "gc", "gci", "sls",
+  /*
+   * These two were on the read-only allowlist and not here, so they were the
+   * one pair that read a file with nothing asked and nothing checked:
+   * `cut -c1-9999 <appdata>/credentials.json` returned the saved sign-ins,
+   * where `cat` of the same path is refused (R25-B1).
+   */
+  "cut", "column",
 ])
 /** PowerShell parameters that take a path next, and switches that take nothing. */
 const PATH_FLAGS = new Set(["-destination", "-literalpath", "-path"])
@@ -66,6 +73,17 @@ export interface SimpleCommand {
   source: string
   /** Files a `>`-style redirection writes to; `<` only reads and names none. */
   redirects: string[]
+  /**
+   * Read out of another command rather than written on the line - the script
+   * inside `bash -c "..."`, or the program a wrapper runs.
+   *
+   * It counts for everything that guards: what is deleted, which files are
+   * named, what is written. It must never contribute an "always", because the
+   * pattern saved for it would be the inner program's prefix - one "always" for
+   * `bash -c "npm test"` would otherwise save `npm *` and let a later bare
+   * `npm publish` through unasked (R25-B2).
+   */
+  derived?: true
 }
 
 /** MiMo's write commands: the ones whose path arguments name a file they change. */
@@ -86,8 +104,84 @@ function closing(text: string, open: number): number {
   return text.length
 }
 
+/**
+ * Commands that run another command handed to them in their own arguments.
+ *
+ * The program is not the first word on these lines, and every guard here reads
+ * the first word: `env rm -rf src`, `xargs rm -rf .` and `nohup npm publish`
+ * each showed no delete and no publish at all (R25-B2).
+ */
+const WRAPPERS = new Set([
+  "env", "xargs", "nohup", "time", "timeout", "nice", "ionice", "stdbuf", "command", "exec", "setsid", "sudo", "doas", "unbuffer",
+])
+
+/**
+ * Interpreters whose inline code is itself a command line, so it can be read as
+ * one. `node -e` and `python -c` are not here: their code is not shell, and
+ * reading it as shell would name programs nobody runs. Neither is on the
+ * read-only allowlist, so they are asked about as ordinary commands anyway.
+ */
+const SHELL_INTERPRETERS = new Set(["bash", "sh", "zsh", "dash", "fish", "pwsh", "powershell", "cmd"])
+
+/** How far one line's `bash -c "bash -c ..."` is followed. */
+const NEST_LIMIT = 4
+
+/** Leading words of a wrapper's arguments that are not the program it runs. */
+function programAfterWrapper(tokens: string[]): string[] {
+  let at = 1
+  while (at < tokens.length) {
+    const token = tokens[at] ?? ""
+    // A flag, a flag's count or duration, an `env` assignment, or xargs' `-I` placeholder.
+    if (/^-/.test(token) || /^\d+(?:\.\d+)?[smhd]?$/.test(token) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(token) || token === "{}") at++
+    else break
+  }
+  return tokens.slice(at)
+}
+
+/** The body an interpreter was handed inline, whether it is its own token or attached to the flag. */
+function inlineBody(tokens: string[]): string | undefined {
+  for (let at = 1; at < tokens.length; at++) {
+    const token = tokens[at] ?? ""
+    const lowered = token.toLowerCase()
+    if (INLINE_FLAGS.has(lowered)) return unquote(tokens[at + 1] ?? "") || undefined
+    const attached = /^-(?:e|c|p)(\S+)/.exec(token)
+    if (attached) return unquote(attached[1] ?? "") || undefined
+    const evaluated = /^--eval=(.+)/.exec(token)
+    if (evaluated) return unquote(evaluated[1] ?? "") || undefined
+  }
+  return undefined
+}
+
+/**
+ * What a simple command runs that is not the simple command itself.
+ *
+ * Every guard on this path - the delete question that is asked every time and
+ * never remembered, the refusal to write into the app's own data folder, the
+ * question about files outside the project - reads the first word of each
+ * simple command. So `rm -rf src` raised the red card and `bash -c "rm -rf
+ * src"` raised nothing at all, deleting the tree at full access or under any
+ * "always" that covered the outer line (R25-B2).
+ */
+function runsWithin(entry: SimpleCommand, powershell: boolean, depth: number): SimpleCommand[] {
+  const head = programName(entry.tokens[0] ?? "")
+  if (WRAPPERS.has(head)) {
+    const inner = programAfterWrapper(entry.tokens)
+    if (inner.length) return [{ tokens: inner, source: inner.join(" "), redirects: [], derived: true }]
+    return []
+  }
+  if (!SHELL_INTERPRETERS.has(head)) return []
+  const body = inlineBody(entry.tokens)
+  if (!body) return []
+  const asPowershell = head === "pwsh" || head === "powershell"
+  return scanCommands(body, asPowershell, depth + 1).map((found) => ({ ...found, derived: true }))
+}
+
 /** The simple commands a command line runs, substitutions included, in order. */
 export function simpleCommands(command: string, powershell: boolean): SimpleCommand[] {
+  return scanCommands(command, powershell, 0)
+}
+
+function scanCommands(command: string, powershell: boolean, depth: number): SimpleCommand[] {
   const out: SimpleCommand[] = []
   const nested: string[] = []
   let tokens: string[] = []
@@ -213,8 +307,10 @@ export function simpleCommands(command: string, powershell: boolean): SimpleComm
     inWord = true
   }
   endCommand(command.length)
-  for (const body of nested) out.push(...simpleCommands(body, powershell))
-  return out.filter((entry) => entry.tokens.length > 0)
+  for (const body of nested) out.push(...scanCommands(body, powershell, depth + 1))
+  const found = out.filter((entry) => entry.tokens.length > 0)
+  if (depth >= NEST_LIMIT) return found
+  return [...found, ...found.flatMap((entry) => runsWithin(entry, powershell, depth))]
 }
 
 /** The words of a command its "always" keeps, by MiMo's arity table; the command's own name otherwise. */
@@ -259,7 +355,19 @@ export function runsInlineCode(tokens: string[]): boolean {
 export function rememberedPattern(tokens: string[], source: string): string | undefined {
   if (runsInlineCode(tokens)) return /[*?]/.test(source) ? undefined : source.trim()
   const prefix = arityPrefix(tokens)
-  if (prefix.length === 1 && INTERPRETERS.has(programName(tokens[0] ?? "")) && tokens[1]) return `${tokens.slice(0, 2).join(" ")} *`
+  /*
+   * An interpreter keeps its script as well as its name, whatever the arity
+   * table says. The narrowing used to fire only for a command the table does
+   * not list, so `python`, whose arity is 2, took the generic branch and one
+   * "always" for `python -m pytest -q` saved `python -m *` - the second word
+   * there is a flag, not a target, so every later `python -m pip install
+   * <anything>` ran unasked (R25-B6). The first word that is not a flag is what
+   * the rule should name.
+   */
+  if (INTERPRETERS.has(programName(tokens[0] ?? "")) && tokens[1]) {
+    const named = tokens.slice(prefix.length).find((token) => !token.startsWith("-"))
+    return `${(named ? [...prefix, named] : prefix).join(" ")} *`
+  }
   return `${prefix.join(" ")} *`
 }
 
@@ -275,8 +383,43 @@ export function isDelete(tokens: string[], powershell: boolean): boolean {
   return flags.size === 0 || tokens.slice(2).some((token) => flags.has(token))
 }
 
+/** Commands whose first ordinary argument is what to look for, not where to look. */
+const PATTERN_FIRST = new Set(["grep", "egrep", "fgrep", "rg", "findstr"])
+
 function pathArgs(tokens: string[], powershell: boolean): string[] {
-  if (!powershell) return tokens.slice(1).filter((token) => !token.startsWith("-") && !(tokens[0] === "chmod" && token.startsWith("+")))
+  if (!powershell) {
+    /*
+     * A flag's value is not a file, and a pattern is not a file.
+     *
+     * Every non-flag token used to be read as a path, so `head -c 9999 notes`
+     * named a file called 9999 and `grep "/etc/passwd" notes.txt` raised an
+     * "access files outside the project → C:\etc" card for a path the command
+     * never opens (R25-B7). A card that describes something other than what
+     * will happen teaches the reader to wave cards through, and an "always"
+     * given on one is stored against a pattern that means nothing.
+     */
+    const out: string[] = []
+    let afterShortFlag = false
+    let wantsPattern = PATTERN_FIRST.has(tokens[0] ?? "")
+    for (const token of tokens.slice(1)) {
+      if (token.startsWith("-") && !(tokens[0] === "chmod" && token.startsWith("+"))) {
+        // Only a short flag takes its value as the next word; `--include=x` carries its own.
+        afterShortFlag = token.length === 2
+        continue
+      }
+      if (afterShortFlag && (/^\d+$/.test(token) || token.length === 1)) {
+        afterShortFlag = false
+        continue
+      }
+      afterShortFlag = false
+      if (wantsPattern) {
+        wantsPattern = false
+        continue
+      }
+      out.push(token)
+    }
+    return out
+  }
   const out: string[] = []
   let wantPath = false
   for (const token of tokens.slice(1)) {
@@ -445,7 +588,7 @@ export async function scanCommand(command: string, cwd: string, project: string,
   const dirs = new Set<string>()
   const files = new Set<string>()
   let tempOnly = true
-  for (const { tokens, source } of simpleCommands(command, powershell)) {
+  for (const { tokens, source, derived } of simpleCommands(command, powershell)) {
     const head = headOf(tokens, powershell)
     if (head && FILES.has(head)) {
       for (const arg of pathArgs(tokens, powershell)) {
@@ -458,7 +601,8 @@ export async function scanCommand(command: string, cwd: string, project: string,
     }
     if (!head || !CWD.has(head)) {
       patterns.add(source)
-      const remembered = rememberedPattern(tokens, source)
+      // Never from a command read out of another one: see SimpleCommand.derived.
+      const remembered = derived ? undefined : rememberedPattern(tokens, source)
       if (remembered) always.add(remembered)
     }
     if (isDelete(tokens, powershell)) {

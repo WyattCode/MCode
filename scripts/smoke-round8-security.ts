@@ -952,7 +952,14 @@ async function remainingChecks(check: Check, section: Section, root: string): Pr
   check("the window runs sandboxed", /preload: path\.join\(here, "\.\.\/preload\/index\.cjs"\),[\s\S]{0,160}sandbox: true,/.test(main))
   check("its preload is built as CommonJS, which a sandboxed page can run", /output: \{ format: "cjs", entryFileNames: "\[name\]\.cjs" \}/.test(vite))
   const built = await read("out/preload/index.cjs")
-  if (built) check("the built preload loads nothing but electron", !/^import /m.test(built) && [...built.matchAll(/require\("([^"]+)"\)/g)].every((match) => match[1] === "electron"))
+  /*
+   * Said, not skipped. `read` answers "" for a file that is not there, so on a
+   * fresh clone this check simply disappeared and the run printed one fewer ok
+   * with nothing to say why - the suite quietly covering less than it reads as
+   * covering (R25-F). The Windows lane already records a skip this way.
+   */
+  if (!built) check("(skipped: out/preload holds no build, so the built preload cannot be read here - npm run build first)", true, { skipped: "out/preload/index.cjs" })
+  else check("the built preload loads nothing but electron", !/^import /m.test(built) && [...built.matchAll(/require\("([^"]+)"\)/g)].every((match) => match[1] === "electron"))
 
   section("Round 8 (X16): MCP sign-in follows only addresses it may, and never gives way on its port")
   const server = "https://mcp.example.com/mcp"

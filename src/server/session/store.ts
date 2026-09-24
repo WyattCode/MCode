@@ -74,6 +74,18 @@ export interface SnapshotFile {
    * are bytes already and need none of this.
    */
   base64?: boolean
+  /**
+   * Why this file's contents could not be taken, when they could not.
+   *
+   * The third answer, between "here is what it held" and "it did not exist".
+   * A file that is merely locked - the routine Windows EBUSY this project waits
+   * out everywhere else - was recorded as the second, and an undo turns the
+   * second into a deletion, so pressing undo removed a file whose contents had
+   * been kept nowhere (R25-A1). Never persisted: a turn holding one of these is
+   * filed as a turn that cannot be taken back, and a restore that meets one
+   * refuses rather than going on.
+   */
+  unreadable?: string
 }
 
 /** Whether a recorded file points at the checkpoint store rather than carrying its body. */
@@ -366,12 +378,21 @@ export class SessionStore {
        * cannot go on without it.
        */
       const read = await this.storage.readOrCorrupt<SessionInfo>(this.infoKey(id))
-      if (read.value) sessions.push(read.value)
-      else if (read.corrupt !== undefined) {
+      /*
+       * Every record that is there counts as one, whichever way it failed.
+       * A record left out of both lists is one the artifact store's
+       * `forgetMissing` reads as a conversation that no longer exists, and the
+       * tombstone it writes for that is permanent - so a record held by a
+       * scanner for a moment, or one holding something that is not an object,
+       * has to land in `unreadable` rather than nowhere.
+       */
+      const problem = read.corrupt ?? read.unreadable
+      if (read.value && typeof read.value === "object") sessions.push(read.value)
+      else if (problem !== undefined || read.value !== undefined) {
         unreadable.add(id)
         if (!this.loggedUnreadable.has(id)) {
           this.loggedUnreadable.add(id)
-          console.warn(`[sessions] ${this.storage.fileOf(this.infoKey(id))} could not be read (${read.corrupt}); the conversation is kept as it is and left out of the list`)
+          console.warn(`[sessions] ${this.storage.fileOf(this.infoKey(id))} could not be read (${problem ?? "it does not hold an object"}); the conversation is kept as it is and left out of the list`)
         }
       }
     })
@@ -526,10 +547,27 @@ export class SessionStore {
      * otherwise replace it with a stack of one.
      */
     const read = await this.storage.readOrCorrupt<Partial<History>>(this.historyKey(sessionID))
-    if (read.corrupt) await this.storage.quarantine(this.historyKey(sessionID))
+    /*
+     * A document the disk would not hand over is whole, not damaged, so it is
+     * neither moved aside nor written over: this conversation offers no undo
+     * for the rest of the run rather than replacing whole turns of file
+     * contents with a stack of one. A damaged one that could not even be moved
+     * is refused for the same reason.
+     */
+    if (read.unreadable) this.historyBlocked.add(sessionID)
+    else if (read.corrupt && (await this.storage.quarantine(this.historyKey(sessionID))) === undefined) this.historyBlocked.add(sessionID)
     const stored = read.value
     // Written before rollback existed, so its documents carry neither list.
     return { undo: stored?.undo ?? [], redo: stored?.redo ?? [], reverted: stored?.reverted ?? [], floor: stored?.floor }
+  }
+
+  /** Conversations whose history document is there but could not be read, and so may not be written over. */
+  private readonly historyBlocked = new Set<string>()
+
+  /** Saves a conversation's stacks, unless reading them failed and writing would replace what is still on disk. */
+  private async writeHistory(sessionID: string, state: History): Promise<void> {
+    if (this.historyBlocked.has(sessionID)) return
+    await this.storage.write(this.historyKey(sessionID), state)
   }
 
   /** How deep each stack is, for a UI that has to know whether to offer them. */
@@ -563,7 +601,7 @@ export class SessionStore {
       const last = dropped?.messages?.[dropped.messages.length - 1]
       if (last) state.floor = last
     }
-    await this.storage.write(this.historyKey(sessionID), state)
+    await this.writeHistory(sessionID, state)
   }
 
   /** Where the file history stops, so a rollback knows what it cannot promise. */
@@ -585,7 +623,7 @@ export class SessionStore {
       const state = await this.history(sessionID)
       state.undo.pop()
       state.reverted.unshift(step)
-      await this.storage.write(this.historyKey(sessionID), state)
+      await this.writeHistory(sessionID, state)
     })
   }
 
@@ -602,7 +640,7 @@ export class SessionStore {
       const state = await this.history(sessionID)
       if (!state.redo.length) return
       state.redo = []
-      await this.storage.write(this.historyKey(sessionID), state)
+      await this.writeHistory(sessionID, state)
     })
   }
 
@@ -612,7 +650,7 @@ export class SessionStore {
       const state = await this.history(sessionID)
       const step = state.reverted.shift()
       if (step) state.undo.push(step.snapshot)
-      await this.storage.write(this.historyKey(sessionID), state)
+      await this.writeHistory(sessionID, state)
     })
   }
 
@@ -628,7 +666,7 @@ export class SessionStore {
       const state = await this.history(sessionID)
       if (!state.reverted.length) return
       state.reverted = []
-      await this.storage.write(this.historyKey(sessionID), state)
+      await this.writeHistory(sessionID, state)
     })
   }
 
@@ -658,7 +696,7 @@ export class SessionStore {
       const state = await this.history(sessionID)
       state[from].pop()
       state[to].push(replacement)
-      await this.storage.write(this.historyKey(sessionID), state)
+      await this.writeHistory(sessionID, state)
     })
   }
 
@@ -711,6 +749,21 @@ export class SessionStore {
       await this.saveMessage({ ...message, sessionID: session.id }, true)
     }
     return session
+  }
+
+  /**
+   * Every message this conversation has on disk, in order, whether or not it
+   * can be read.
+   *
+   * `messages()` skips what it cannot read so that one damaged file does not
+   * cost the whole transcript - but a caller that *deletes* a range must not
+   * inherit that skip. Deleting "from this message on" by the messages that
+   * happened to read left the unreadable one behind, and it came back into the
+   * transcript afterwards, sitting after the message the user had just edited
+   * and going to the model as history from the branch they abandoned (R25-A4).
+   */
+  async messageIDs(sessionID: string): Promise<string[]> {
+    return this.storage.list(`session/${sessionID}/message`)
   }
 
   async messages(sessionID: string): Promise<Message[]> {
