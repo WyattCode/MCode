@@ -119,6 +119,7 @@ watch(
 )
 
 let waiting = 0
+let arriving: MutationObserver | undefined
 
 /* The work area may not be on the page yet when this column is; MiMo waits a frame at a time for it, as this does. */
 function followMain() {
@@ -131,6 +132,19 @@ function followMain() {
   if (typeof ResizeObserver !== "function") return
   watching = new ResizeObserver(measure)
   watching.observe(main)
+  /*
+   * And the card coming or going, which a size observer cannot see.
+   *
+   * The info card is drawn over the work area's end rather than beside it, so
+   * it changes where the middle *is* without changing `main`'s box at all -
+   * nothing resizes, and the observer above never fires. A conversation opened
+   * at start-up raises its notice before the card has rendered, so the notice
+   * was placed as if there were no card and then stayed there (R27). This is a
+   * child list, not a subtree: the card is a child of `main`.
+   */
+  if (typeof MutationObserver !== "function") return
+  arriving = new MutationObserver(measure)
+  arriving.observe(main, { childList: true })
 }
 
 onMounted(() => {
@@ -144,6 +158,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("resize", measure)
   cancelAnimationFrame(waiting)
   watching?.disconnect()
+  arriving?.disconnect()
 })
 </script>
 
