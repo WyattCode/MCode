@@ -116,6 +116,16 @@ mac:
   # macOS ends a process that asks for the microphone without saying why.
   extendInfo:
     NSMicrophoneUsageDescription: MCode uses the microphone only while you dictate a message.
+    # An agent that reads and edits a project will sooner or later be pointed at
+    # a folder TCC guards, and a prompt with no explanation is one people deny
+    # by reflex.
+    NSDocumentsFolderUsageDescription: MCode reads and edits the projects you open from your Documents folder.
+    NSDesktopFolderUsageDescription: MCode reads and edits the projects you open from your Desktop.
+    NSDownloadsFolderUsageDescription: MCode reads and edits the projects you open from your Downloads folder.
+    NSRemovableVolumeUsageDescription: MCode reads and edits projects you open from external drives.
+    # Loopback is exempt, so this is only about a model runtime on another
+    # machine - the case where the prompt would otherwise be unexplained.
+    NSLocalNetworkUsageDescription: MCode needs this only to reach a model runtime you host on another machine on your network, such as Ollama or LM Studio. Its own connections stay on this Mac.
 
 dmg:
   # The disk image's own icon stays the .icns cut on Apple's grid.

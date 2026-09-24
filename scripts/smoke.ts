@@ -129,6 +129,7 @@ import {
   type PageKeyInput,
 } from "../src/shared/browser-page"
 import { ToolError } from "../src/server/tool/types"
+import { runFallback } from "../src/server/tool/search-run"
 import { argumentProblems, refusedArgumentsNote } from "../src/server/tool/validate"
 import { RETRY_BUDGETS, isRetryable, retryDecision } from "../src/server/session/retry"
 import { ProviderHttpError } from "../src/server/provider/types"
@@ -500,6 +501,34 @@ async function main() {
   await fs.mkdir(path.join(project, "src"), { recursive: true })
   await fs.writeFile(path.join(project, "src", "app.ts"), "// TODO: implement\nexport function run() {}\n")
   await fs.writeFile(path.join(project, "AGENTS.md"), "Use two-space indentation.\n")
+
+  /*
+   * A regex the model wrote, that will not finish.
+   *
+   * Nested quantifiers backtrack exponentially, and no timer can interrupt a
+   * match in progress - the event loop is the thing it is holding. Searching in
+   * a worker is what makes the deadline enforceable, and the backend shares its
+   * thread with the window, so the alternative is a frozen app.
+   */
+  await fs.writeFile(path.join(project, "bait.txt"), "a".repeat(60) + "!\n")
+  /*
+   * Without the worker bundle this check would run the runaway regex on this
+   * very thread and hang the test forever - the exact failure the worker
+   * exists to prevent. The npm script builds it first, so its absence is a
+   * broken run, said plainly rather than waited out.
+   */
+  const workerBundle = path.join("out", "search-worker.mjs")
+  check("the search worker bundle was built", await fs.stat(workerBundle).then(() => true, () => false), workerBundle)
+  const baitStarted = Date.now()
+  const runaway = await runFallback(
+    { kind: "grep", target: project, isFile: false, pattern: "(a+)+$" },
+    new AbortController().signal,
+    600,
+  ).then(() => undefined, (error: unknown) => error)
+  const baitElapsed = Date.now() - baitStarted
+  check("a catastrophic regex is stopped, not waited on", runaway instanceof ToolError, runaway)
+  check("and it is stopped at the deadline", baitElapsed < 5000, `${baitElapsed}ms`)
+  await fs.rm(path.join(project, "bait.txt"))
 
   // ---------------------------------------------------------------- protocol
   section("WebSocket protocol")

@@ -53,6 +53,7 @@ import { PICKER_BUSY } from "@shared/native-pick"
 import { readOnlyInstall, type InstallAnswer } from "@shared/update-reason"
 import { readSoundfont } from "./soundfont"
 import { applyZoom } from "./zoom"
+import { askForLocalNetwork } from "./local-network"
 import { APP_NAME, WINDOW_MIN, badgeCount, noticeTitle, pinnedProfile, readTaskNotice, relaunchArgs, textMenuItems, wantsNotice } from "./desktop-rules"
 import { registerOffice } from "./office"
 import { COMPOSER_INPUT_FILE, registerComposerInput } from "./composer-input"
@@ -883,6 +884,12 @@ app.whenReady().then(async () => {
    * already being recorded by the time it happens.
    */
   wireProcessRecovery()
+  /*
+   * Early, so the macOS Local Network permission is settled while the user is
+   * still setting the app up rather than on the click that connects a runtime
+   * on another machine, with the request already failing behind it.
+   */
+  askForLocalNetwork()
   // Packaged only: a development build would register the bare Electron binary.
   if (app.isPackaged) app.setAsDefaultProtocolClient(LINK_SCHEME)
 
