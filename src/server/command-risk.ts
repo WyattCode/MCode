@@ -97,9 +97,15 @@ const DANGEROUS_SHAPES: RegExp[] = [
   /\breg\s+delete\b/i,
   /\|\s*(?:sudo\s+)?(?:ba|z|da|fi)?sh\b/,
   /\|\s*(?:iex|invoke-expression|powershell|pwsh)\b/i,
-  /\b(?:ba|z|da|fi)?sh\s+-c\b/,
+  /*
+   * Any flags in front of the code flag, and the code flag inside a cluster:
+   * written as `sh\s+-c` this sent `bash -c "$(curl …)"` to review and ran
+   * `bash -lc`, `sh -ec` and `sh -e -c` with the same body unasked (R28-3).
+   */
+  /\b(?:ba|z|da|fi)?sh(?:\s+-[A-Za-z]+)*\s+-[A-Za-z]*c[A-Za-z]*\b/,
   /\b(?:ba|z|da|fi)?sh\s+<\(/,
-  /\bcmd(?:\.exe)?\s+\/c\b/i,
+  // cmd's switches come in any order: `cmd /d /c`, `cmd /q /k`.
+  /\bcmd(?:\.exe)?(?:\s+\/[A-Za-z](?::\S+)?)*\s+\/[ck]\b/i,
   /\b(?:powershell|pwsh)(?:\.exe)?\s+[^\n]*?-(?:c|command|encodedcommand)\b/i,
   /\brsync\b[^\n]*?--delete/i,
 ]

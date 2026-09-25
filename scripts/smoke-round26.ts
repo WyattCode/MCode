@@ -223,7 +223,8 @@ export async function roundTwentySixChecks(check: Check, section: (name: string)
      * vanished the moment this one remembered anything.
      */
     const permission = code(await read("src/server/permission.ts"))
-    check("the remembered approvals are written over what is on disk now, not over a start-up copy", /const read = await storage\.readOrCorrupt<Partial<StoredRules>>\(RULES_KEY\)/.test(permission) && /for \(const \[key, rules\] of mine\) projects\[key\] = rules/.test(permission))
+    // R28-4 made the write a union of only what this process changed; round 28 drives two real instances.
+    check("the remembered approvals are written over what is on disk now, not over a start-up copy", /const read = await storage\.readOrCorrupt<Partial<StoredRules>>\(RULES_KEY\)/.test(permission) && /for \(const \[key, rules\] of mine\) \{/.test(permission) && /this\.changed\.add\(key\)/.test(permission))
     check("and a project this process deliberately dropped does not come back from the file", /this\.forgotten\.add\(`session:\$\{sessionID\}`\)/.test(permission))
     check("a document that will not read is still not written over", /if \(read\.unreadable !== undefined \|\| read\.corrupt !== undefined\) return/.test(permission))
   }
@@ -248,6 +249,7 @@ export async function roundTwentySixChecks(check: Check, section: (name: string)
     )
 
     const config = code(await read("src/server/config.ts"))
-    check("a migration that this run was not in a position to make is not recorded as done", /if \(apply\(\) === false\) return/.test(config) && /if \(this\.unreadable !== undefined\) return false/.test(config))
+    // R28-5: unopenable stays unrecorded; damaged and moved aside is recorded without widening (round 28 loads it twice).
+    check("a migration that this run was not in a position to make is not recorded as done", /if \(apply\(\) === false\) return/.test(config) && /return this\.unreadable\.evidence !== undefined/.test(config))
   }
 }

@@ -655,9 +655,19 @@ export class Config {
        * what the app offers off the back of a failed read is the same hazard as
        * treating one as a first install, which the guard beside it prevents.
        */
-      if (this.unreadable !== undefined) return false
-      this.current.allowFullAccess = true
-      return true
+      if (this.unreadable === undefined) {
+        this.current.allowFullAccess = true
+        return true
+      }
+      /*
+       * Damaged and moved aside: the document written from here on is this
+       * run's, carrying the narrow answer the load chose. Left unrecorded, the
+       * next launch read that file, found this entry not done, and widened what
+       * this one had decided not to (R28-5). Recorded without applying.
+       * Unopenable is different: nothing is written this run, and the next one
+       * may read the real document, so it stays unrecorded for that run.
+       */
+      return this.unreadable.evidence !== undefined
     })
 
     if (moved) this.current.migrations = [...done]
