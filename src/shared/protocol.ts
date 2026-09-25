@@ -146,6 +146,17 @@ export interface SessionInfo {
     at: number
     trigger?: "manual" | "automatic" | "provider-overflow"
     files?: string[]
+    /**
+     * How many tokens the next request is expected to carry: the system
+     * prompt, the tools, the summary and whatever follows it.
+     *
+     * The context ring reads the last turn's reported usage, and no turn has
+     * run since the compaction - so without this it went on showing the size
+     * of the conversation that had just been replaced, until the reader said
+     * something. Scaled by the compaction request's own reported count, so it
+     * is the provider's tokenizer speaking rather than a character count.
+     */
+    estimate?: number
   }
   /**
    * Where the conversation has been rolled back to, if it has been.

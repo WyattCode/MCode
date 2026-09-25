@@ -2304,7 +2304,7 @@ const menu = ref<"model" | "access" | "plus" | "context">()
  */
 const contextUsage = computed(() => {
   if (!sessionID.value) return undefined
-  const reading = readContext(messagesHere.value, app.providers)
+  const reading = readContext(messagesHere.value, app.providers, session.value?.compacted)
   // MiMo draws no ring until a turn has spent something: an empty conversation has nothing to show.
   if (!reading) return undefined
   const current = session.value?.model
@@ -2317,6 +2317,12 @@ const contextUsage = computed(() => {
   // MiMo's figure leaves reasoning out: the prompt, cache reads and writes, and the output.
   const usage = reading.usage
   const used = usage.input + usage.cacheRead + usage.cacheWrite + usage.output
+  /*
+   * Right after a compaction the figure is the compaction's estimate of the
+   * next request, not a count a provider reported, and it says so: "≈" in
+   * front of each number, in every language, until the next turn replaces it.
+   */
+  const about = reading.estimated ? "≈" : ""
   // The cache line only when the provider reported reads from its cache.
   const cacheBase = usage.cacheRead + usage.cacheWrite + usage.input
   const cacheLine =
@@ -2324,14 +2330,14 @@ const contextUsage = computed(() => {
       ? t("composer.ctxCache", { pct: Math.round((usage.cacheRead / cacheBase) * 100) })
       : undefined
   if (!limit) {
-    return { percent: 0, shareLine: undefined, tokensLine: t("composer.ctxUsedOnly", { used: compactTokens(used) }), cacheLine }
+    return { percent: 0, shareLine: undefined, tokensLine: t("composer.ctxUsedOnly", { used: about + compactTokens(used) }), cacheLine }
   }
   const share = (used / limit) * 100
   return {
     // MiMo's ring: a whole percent, at least 1, and no arc at all past the window.
     percent: used > limit ? 0 : Math.max(1, Math.round(share)),
-    shareLine: t("composer.ctxPercent", { used: share.toFixed(1), left: Math.max(0, 100 - share).toFixed(1) }),
-    tokensLine: t("composer.ctxTokens", { used: compactTokens(used), total: compactTokens(limit) }),
+    shareLine: t("composer.ctxPercent", { used: about + share.toFixed(1), left: about + Math.max(0, 100 - share).toFixed(1) }),
+    tokensLine: t("composer.ctxTokens", { used: about + compactTokens(used), total: compactTokens(limit) }),
     cacheLine,
   }
 })

@@ -61,7 +61,8 @@ export async function roundTwentySevenChecks(check: Check, section: (name: strin
     check("a forced request says why it is being asked every time", /v-if="request\.forced" class="forced" data-perm-forced/.test(dialog))
     check("and offers no way to remember the answer", /v-if="!request\.forced"[\s\S]{0,400}?data-perm-always/.test(dialog) || /data-perm-always[\s\S]{0,200}?v-if="!request\.forced"/.test(dialog), dialog.slice(dialog.indexOf("data-perm-always") - 300, dialog.indexOf("data-perm-always") + 60))
     const permission = code(await read("src/server/permission.ts"))
-    check("a forced request is never answered by a stored rule", /if \(action === "allow" && !forced\) return/.test(permission))
+    // Since 2026-09-26 full access answers it too, by the user's choice; round 28 drives both sides of that.
+    check("a forced request is never answered by a stored rule", /if \(action === "allow" && \(!forced \|\| level === "full"\)\) return/.test(permission))
     check("nor by the level, nor by full access", /!forced/.test(permission) && /readOnlyCommand/.test(permission))
   }
 

@@ -1,4 +1,4 @@
-import type { AssistantMessage, Message, ProviderStatus, Usage } from "@shared/protocol"
+import type { AssistantMessage, Message, ProviderStatus, SessionInfo, Usage } from "@shared/protocol"
 
 /**
  * What a session has spent, and roughly on what.
@@ -63,6 +63,8 @@ export interface ContextReading {
   provider: string
   /** Likewise the model's. */
   model: string
+  /** The figure is the compaction's estimate of the next request, not a count a provider reported. */
+  estimated?: boolean
 }
 
 /**
@@ -75,9 +77,20 @@ export interface ContextReading {
 export function readContext(
   messages: readonly Message[],
   providers: readonly ProviderStatus[],
+  compacted?: SessionInfo["compacted"],
 ): ContextReading | undefined {
   const message = lastSpendingTurn(messages)
   if (!message?.usage) return undefined
+
+  /*
+   * A compaction since that turn replaced the conversation it measured. No
+   * request has gone out since, so there is no count to read - and the ring
+   * went on showing the size of what had just been thrown away until the
+   * reader said something more. The compaction left its estimate of the next
+   * request, and that stands until a turn reports a real one.
+   */
+  const reported = message.time.completed ?? message.time.created
+  const estimated = compacted?.estimate !== undefined && reported <= compacted.at ? compacted.estimate : undefined
 
   /*
    * The window belongs to the model that ran that turn, which is not
@@ -87,11 +100,14 @@ export function readContext(
   const provider = providers.find((entry) => entry.id === message.model.provider)
   const model = provider?.models.find((entry) => entry.id === message.model.model)
   const window = model?.contextWindow
-  const used = tokensOf(message.usage)
+  const usage: Usage =
+    estimated === undefined ? message.usage : { input: estimated, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }
+  const used = tokensOf(usage)
 
   return {
+    ...(estimated === undefined ? {} : { estimated: true }),
     message,
-    usage: message.usage,
+    usage,
     used,
     window,
     percent: window ? Math.round((used / window) * 100) : undefined,

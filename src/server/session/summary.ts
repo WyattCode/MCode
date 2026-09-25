@@ -173,3 +173,41 @@ export function continueNote(trigger: CompactionTrigger): string {
       : base,
   )
 }
+
+/** How much of a request these messages make, by the same four-characters-to-a-token reckoning as everything else here. */
+export function messagesTokens(messages: readonly Message[]): number {
+  let total = 0
+  for (const message of messages) {
+    if (message.role === "user") {
+      total += estimateTokens(message.text)
+      continue
+    }
+    for (const part of message.parts) {
+      if (part.type === "text" || part.type === "reasoning") total += estimateTokens(part.text)
+      else if (part.type === "tool") total += estimateTokens(JSON.stringify(part.input ?? {})) + estimateTokens(part.output)
+    }
+  }
+  return total
+}
+
+/**
+ * The size of the next request after a compaction, before it is sent.
+ *
+ * Worked out as the share the new request is of the one just sent, both by the
+ * same estimate, and applied to what the provider reported for the one just
+ * sent. The part the two share - system prompt and tools, which are most of a
+ * small conversation's request - is then counted by the provider's own
+ * tokenizer rather than by characters; only the part that changed is estimated.
+ * With nothing reported, the estimate is used as it is.
+ *
+ * @param fixed what both requests carry: the system prompt and the tools
+ * @param sent the compaction request's own messages
+ * @param next the messages the next request opens with
+ * @param reported what the provider counted for the compaction request's input
+ */
+export function nextRequestEstimate(fixed: number, sent: number, next: number, reported: number): number {
+  const before = fixed + sent
+  const after = fixed + next
+  if (reported > 0 && before > 0) return Math.max(0, Math.round((reported * after) / before))
+  return after
+}

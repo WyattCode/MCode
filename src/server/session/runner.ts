@@ -14,6 +14,7 @@ import type {
   TextPart,
   ToolPart,
   TurnAgent,
+  Usage,
   UserMessage,
 } from "@shared/protocol"
 import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises"
@@ -55,7 +56,8 @@ import { revertTurnFiles, turnFilePaths } from "./turn-revert"
 import { isOverflowByCount, isOverflowError, maxOutputTokens, underPressure } from "./overflow"
 // MiMo's pruning: what a turn re-sends of its older tool output once the prompt cache has gone cold.
 import { pruneLevelFor, prunedHistory, type PruneLevel } from "./prune"
-import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, shrinkLargeToolResults, touchedFiles, type CompactionTrigger } from "./summary"
+import { estimateTokens } from "./estimate"
+import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, messagesTokens, nextRequestEstimate, shrinkLargeToolResults, touchedFiles, type CompactionTrigger } from "./summary"
 import { memorySection, systemPrompt } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
 import { GOAL_GUARD, JUDGE_SYSTEM, MAX_GOAL_REACT, cleanGoal, goalReminder, judgeQuestion, judgeTranscript, parseVerdict, sameGoal, type GoalVerdict } from "./goal"
@@ -1468,6 +1470,9 @@ export class SessionRunner {
 
     let summary = ""
     let called = false
+    let reported: Usage | undefined
+    const system = await this.systemFor(session)
+    const offered = this.offeredTools(session)
     this.summarising.add(session.id)
     this.bus.publish({ type: "session.compacting", sessionID: session.id, active: true })
     try {
@@ -1475,9 +1480,9 @@ export class SessionRunner {
         {
           apiKey: tokens?.access ?? apiKey,
           model: session.model,
-          ...(await this.systemFor(session)),
+          ...system,
           history: [...replay, instruction],
-          tools: this.offeredTools(session),
+          tools: offered,
           // Out of band: a summary is not worth a reasoning budget either, so MiMo's cheap profile rather than the app-wide level.
           ...smallRequest(session.model.provider, session.model.model),
           variants: this.config.variants(session.model),
@@ -1501,6 +1506,7 @@ export class SessionRunner {
         },
       )
       if (outcome.toolCalls.length) called = true
+      reported = outcome.usage
       this.noteBackground(session.id, session.model, outcome.usage, "compaction")
     } catch (failure) {
       if (isOverflowError(failure, describe(failure))) throw new Error("This conversation is too large to compact")
@@ -1514,9 +1520,20 @@ export class SessionRunner {
     if (!summary) throw new Error("The model returned an empty summary")
     if (!isSummary(summary)) throw new Error("The model did not return a summary")
     const files = touchedFiles(context, session.directory)
+    const mark = { messageID: last.id, summary, at: Date.now(), trigger, ...(files.length ? { files } : {}) }
+    /*
+     * What the ring should say now, rather than after the next turn: the next
+     * request is the system prompt, the tools, the summary, and whatever
+     * arrived after the boundary (or MiMo's note to carry on, when nothing did).
+     */
+    const after = live.slice(live.findIndex((message) => message.id === last.id) + 1)
+    const fixed = estimateTokens(system.system) + estimateTokens(system.systemTail) + estimateTokens(JSON.stringify(offered))
+    const opening = estimateTokens(compactedText(mark)) + (after.length || trigger === "manual" ? messagesTokens(after) : estimateTokens(continueNote(trigger)))
+    const counted = reported ? reported.input + reported.cacheRead + reported.cacheWrite : 0
+    const estimate = nextRequestEstimate(fixed, messagesTokens([...replay, instruction]), opening, counted)
     return this.store.update(session.id, {
       // The last message the summary covers: the whole conversation as it stood.
-      compacted: { messageID: last.id, summary, at: Date.now(), trigger, ...(files.length ? { files } : {}) },
+      compacted: { ...mark, estimate },
     })
   }
 

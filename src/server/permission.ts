@@ -445,7 +445,14 @@ export class Permissions {
      */
     const risk = input.kind === "bash" ? commandRisk(input.subject) : undefined
     const forced = input.forced ?? (risk !== undefined && LOST_WORK.includes(risk))
-    if (action === "allow" && !forced) return
+    /*
+     * Except at full access. MiMo asks about a delete there too; the user chose
+     * otherwise (2026-09-26): full access is the reader saying "do not ask me",
+     * and a question at that level, deletes included, is one they have already
+     * answered. A deliberate difference from MiMo - see HANDOFF. Every other
+     * level, and "always allow commands" at any of them, still asks each time.
+     */
+    if (action === "allow" && (!forced || level === "full")) return
     // MiMo's read-only allowlist: a command made only of reading pieces runs once without a question.
     // Except one naming a file the read rules ask about (`type .env`): reading it through a shell asks too.
     if (!forced && input.kind === "bash" && readOnlyCommand(input.subject) && !namesAskingFile(input.subject)) return
@@ -623,6 +630,15 @@ export class Permissions {
       // Answered, or settled by another pass, while the level was read.
       if (this.pending.get(id) !== pending) continue
       const action = this.action(pending.request.kind, level)
+      /*
+       * A delete waiting for its answer is settled by a person, or by the
+       * reader switching this conversation to full access - never by a bucket
+       * that happens to read "allow". This pass runs on every session update,
+       * titles and usage included, so a delete raised while commands were set
+       * to "always allow" was answered "once" by the next unrelated update,
+       * with nobody having pressed anything (R28-8).
+       */
+      if (pending.request.forced && action === "allow" && level !== "full") continue
       const auto = level === "auto"
       /*
        * The middle level switched on while a question was up - MiMo's 帮我审批 -
