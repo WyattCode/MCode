@@ -337,6 +337,33 @@ async function main(): Promise<void> {
     compacted.compacted?.messageID === lastBefore.id,
   )
 
+  /*
+   * Round 27: and what the next turn actually sends.
+   *
+   * The overflow path below pins this already; the button did not, and the two
+   * reach it by different code. Measured with the real app against a recording
+   * stub, a turn after `/compact` went out with three messages - the system
+   * prompt, the summary, and the new question - and neither earlier turn in
+   * it. This is that, at the level the suite can run every time.
+   *
+   * The summary request itself is the contrast: it must have seen the whole
+   * conversation, or the summary would have nothing to summarise.
+   */
+  {
+    const summaryBody = JSON.parse(requests[requests.length - 1] ?? "{}") as { messages?: { role?: string; content?: unknown }[] }
+    const sawTheTranscript = (summaryBody.messages ?? []).some((message) => String(message.content).includes("the first question"))
+    const from = requests.length
+    const next = idle(one.id)
+    await runner.prompt({ sessionID: one.id, text: "and what did we settle on?" })
+    await next
+    const sent = requests.slice(from).map((body) => JSON.parse(body || "{}") as { messages?: { role?: string; content?: unknown }[] })
+    const turns = sent.flatMap((body) => (body.messages ?? []).filter((message) => message.role !== "system"))
+    check("the summary request had the whole conversation to work from", sawTheTranscript)
+    check("the turn after a manual compaction goes out from the summary", turns.some((message) => String(message.content).includes("## Task overview")), JSON.stringify(turns.map((message) => String(message.content).slice(0, 30))))
+    check("and the conversation it replaced is not sent again", !turns.some((message) => String(message.content).includes("the first question")), JSON.stringify(turns.map((message) => String(message.content).slice(0, 30))))
+    check("the new question is there, so this is the turn's own request", turns.some((message) => String(message.content).includes("and what did we settle on?")))
+  }
+
   // --- a restore that fails leaves the snapshot where it was ----------------
   console.log("undo")
   const two = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
