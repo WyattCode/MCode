@@ -93,8 +93,17 @@ export function sanitizeMermaidSvg(svg: string): string {
 /** A drawing's markup with its cleaned CSS as the first thing inside it. */
 function withStyle(markup: string, css: string): string {
   if (!css) return markup
-  // Written as text for the HTML parser: `<` and `&` escaped, so no rule can close the element or name an entity.
-  const text = css.replace(/&/g, "&amp;").replace(/</g, "&lt;")
+  /*
+   * Written as text for the HTML parser, every markup character escaped - the
+   * parser decodes them again inside the drawing, so the CSS arrives intact.
+   * `<` and `&` stop a rule closing the element or naming an entity. The
+   * quotes and `>` are for the insertion point: it is found by a pattern on
+   * the serialized opening tag, which is sound only while the serializer
+   * escapes `>` inside attribute values (Chromium 146 does, measured). If it
+   * ever did not, a `"` in a font name would close that attribute and start
+   * new ones; escaped, the worst case is a drawing without its colours.
+   */
+  const text = css.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;")
   return markup.replace(/<svg\b[^>]*>/i, (open) => `${open}<style>${text}</style>`)
 }
 

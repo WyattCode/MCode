@@ -154,5 +154,32 @@ export async function roundTwentyNineChecks(check: Check, section: (name: string
     } finally {
       await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined)
     }
+
+    /*
+     * The confirmation that turns full access on used to be right to say
+     * nothing about deletes: they were asked about anyway. Now they are not,
+     * so it says so - in every language, since the sentence is this app's own.
+     */
+    const i18n = await fs.readFile(path.join(process.cwd(), "src/renderer/src/lib/i18n.ts"), "utf8")
+    const bodies = [...i18n.matchAll(/"composer\.access\.confirmBody": "((?:[^"\\]|\\.)*)"/g)].map((match) => match[1] ?? "")
+    check("the full access confirmation says deletes are not asked about either", bodies.some((body) => /删除文件的命令也不会再单独询问/.test(body)) && bodies.some((body) => /delete files are not asked about/.test(body)))
+    // Every table has its own; i18ncheck fails on an English sentence left in any of them.
+    check("every language has the confirmation", bodies.length === 18, bodies.length)
+  }
+
+  // --------------------------------------------------------------- R29-3
+  section("Round 29 (3): a drawing's style is written back with every markup character escaped")
+  {
+    /*
+     * Found in the second review of round 28. The style is put back after the
+     * drawing's opening tag, found by a pattern on the serialized markup - sound
+     * only while the serializer escapes `>` inside attribute values. Chromium
+     * 146 does (measured), so this was not open; but with only `<` and `&`
+     * escaped, a serializer that did not would have let a `"` in a font name
+     * close an attribute and start new ones. All five are escaped now, and the
+     * parser decodes them again inside the drawing: re-measured, colours intact.
+     */
+    const diagram = await fs.readFile(path.join(process.cwd(), "src/renderer/src/lib/diagram.ts"), "utf8")
+    check("quotes and > are escaped as well as < and &", /\.replace\(\/>\/g, "&gt;"\)\.replace\(\/"\/g, "&quot;"\)\.replace\(\/'\/g, "&#39;"\)/.test(diagram))
   }
 }
