@@ -537,7 +537,9 @@ function refreshTray(enabled: boolean): void {
   if (process.platform === "darwin") {
     image = nativeImage.createFromPath(trayTemplateFile())
     if (image.isEmpty()) return
-    image = image.resize({ width: 16, height: 16 })
+    // The mark is wider than tall, so its height is what is fixed and the width
+    // follows.
+    image = image.resize({ height: 11 })
     image.setTemplateImage(true)
   } else {
     const file = appIconFile(trayIcon)

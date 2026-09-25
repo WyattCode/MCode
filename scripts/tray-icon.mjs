@@ -1,16 +1,17 @@
 /**
- * Draws the monochrome tray image macOS asks for, from MCode's own mark.
+ * Draws the monochrome tray image macOS asks for, from build/icon.png.
  *
  * A macOS menu bar icon is a template image: the system ignores its colour and
  * paints the alpha channel itself, dark on a light bar and light on a dark one,
  * so the artwork has to be one flat colour over transparency rather than the
  * colourway the reader picked. MiMo ships the same thing under the same name
- * (`trayTemplate.png`, `setTemplateImage(true)`); this is MCode's own ribbon M,
- * not MiMo's artwork.
+ * (`trayTemplate.png`, `setTemplateImage(true)`); this is MCode's own mark.
  *
- * The ribbon path is read out of src/shared/app-icons.ts rather than copied, so
- * the tray mark cannot drift from the one the gallery and the app icons draw.
- * Windows and Linux keep the coloured icon, as MiMo keeps its own per platform.
+ * The mark is taken from build/icon.png - the same artwork the app icon and the
+ * Dock use - rather than redrawn, so the tray cannot drift from it. On that
+ * drawing the ribbon is light over a dark tile, so its luminance becomes the
+ * alpha the menu bar paints: below the floor is background and drops out, above
+ * the ceiling is the mark, with a ramp between for the soft edges.
  *
  * Run with: node scripts/tray-icon.mjs
  */
@@ -20,52 +21,77 @@ import { fileURLToPath } from "node:url"
 import sharp from "sharp"
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..")
-const SOURCE = path.join(root, "src", "shared", "app-icons.ts")
+const SOURCE = path.join(root, "build", "icon.png")
 const OUT = path.join(root, "resources", "tray")
 
-/* The menu bar draws 16pt; the @2x file is what a Retina bar actually shows. */
+/* The mark at 11pt tall - a touch smaller than the bar's own ~13pt glyphs, which
+   is what reads as level beside them; the @2x file is what a Retina bar shows.
+   The mark is wider than tall, so its height is what the bar fixes. */
 const SIZES = [
-  { name: "trayTemplate.png", size: 16 },
-  { name: "trayTemplate@2x.png", size: 32 },
+  { name: "trayTemplate.png", height: 11 },
+  { name: "trayTemplate@2x.png", height: 22 },
 ]
 
-/** The ribbon, taken from the shared source so there is only ever one copy of it. */
-async function ribbon() {
-  const source = await fs.readFile(SOURCE, "utf8")
-  const found = /const RIBBON = "([^"]+)"/.exec(source)
-  if (!found) throw new Error("src/shared/app-icons.ts no longer declares RIBBON, which this script draws")
-  return found[1]
-}
+/* Luminance to alpha: the light ribbon is the mark, the dark ground drops out.
+   A tight ramp keeps the strokes crisp at menu-bar size, where a soft edge is
+   what turns the mark into a smudge. */
+const FLOOR = 70
+const CEIL = 110
 
-/*
- * The mark alone, with no tile behind it: a template image is judged by its
- * alpha, so a filled rectangle would paint the whole menu bar cell solid. The
- * stroke is a little heavier than the app icon's, because 16px of menu bar is
- * where a thin stroke disappears, and the 120 box is inset so the round caps
- * are not clipped by the edge.
- */
-function markup(path2, size) {
-  return Buffer.from(
-    [
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="-6 -6 132 132">`,
-      `<path d="${path2}" fill="none" stroke="#000000" stroke-width="17"`,
-      ` stroke-linecap="round" stroke-linejoin="round"/>`,
-      `</svg>`,
-    ].join(""),
-  )
+async function mask() {
+  const { data, info } = await sharp(SOURCE).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+  const { width, height, channels } = info
+  const lumAt = (i) => (data[i] * 299 + data[i + 1] * 587 + data[i + 2] * 114) / 1000
+
+  /* The mark's own bounds, so the bar cell is filled rather than a padded square. */
+  let minX = width
+  let minY = height
+  let maxX = 0
+  let maxY = 0
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (lumAt((y * width + x) * channels) > CEIL - 10) {
+        if (x < minX) minX = x
+        if (x > maxX) maxX = x
+        if (y < minY) minY = y
+        if (y > maxY) maxY = y
+      }
+    }
+  }
+  const pad = 8
+  const x0 = Math.max(0, minX - pad)
+  const y0 = Math.max(0, minY - pad)
+  const w = Math.min(width - 1, maxX + pad) - x0 + 1
+  const h = Math.min(height - 1, maxY + pad) - y0 + 1
+
+  const out = Buffer.alloc(w * h * 4)
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const lum = lumAt(((y0 + y) * width + (x0 + x)) * channels)
+      let a = Math.round(((lum - FLOOR) / (CEIL - FLOOR)) * 255)
+      a = Math.max(0, Math.min(255, a))
+      const o = (y * w + x) * 4
+      out[o] = 0
+      out[o + 1] = 0
+      out[o + 2] = 0
+      out[o + 3] = a
+    }
+  }
+  return { image: sharp(out, { raw: { width: w, height: h, channels: 4 } }), w, h }
 }
 
 async function main() {
   await fs.mkdir(OUT, { recursive: true })
-  const path2 = await ribbon()
-  for (const { name, size } of SIZES) {
-    /* density so the vector is rasterised at the target size rather than scaled up from 96dpi. */
-    const png = await sharp(markup(path2, size), { density: (72 * size) / 16 })
-      .resize(size, size, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+  const { image, w, h } = await mask()
+  console.log(`  mark ${w}x${h}`)
+  for (const { name, height } of SIZES) {
+    const png = await image
+      .clone()
+      .resize({ height, fit: "contain" })
       .png()
       .toBuffer()
     await fs.writeFile(path.join(OUT, name), png)
-    console.log(`  ${name.padEnd(22)} ${size}x${size}  ${(png.length / 1024).toFixed(1)} KB`)
+    console.log(`  ${name.padEnd(22)} h${height}  ${(png.length / 1024).toFixed(1)} KB`)
   }
 }
 
