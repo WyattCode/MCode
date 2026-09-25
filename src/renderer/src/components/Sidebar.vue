@@ -1944,7 +1944,7 @@ onBeforeUnmount(() => {
    --sidebar-brand-top - so the brand row starts 52 down.
    MiMo starts the row at x=65; MCode keeps it to the left on purpose, the 17px
    glyphs lining up with the brand and the destination icons at x=22. Only on
-   macOS does it start at 65, clear of the traffic lights. */
+   macOS does it start further in, clear of the traffic lights - see .top.mac. */
 .top {
   display: flex;
   flex-shrink: 0;
@@ -1957,7 +1957,13 @@ onBeforeUnmount(() => {
 }
 
 .top.mac {
-  padding-inline-start: 65px;
+  /*
+   * Clear of the traffic lights, which the window places at x=20 and which
+   * measure 60px, so they end at 80. macOS's own toolbars leave about a light's
+   * width and a half after them; 98 starts the row there instead of the old 65,
+   * which put the first button's box under the green light.
+   */
+  padding-inline-start: 98px;
 }
 
 .ico {
@@ -2611,7 +2617,7 @@ button.section-head:focus-visible {
 .rail-tools {
   position: fixed;
   top: 13px;
-  inset-inline-start: 75px;
+  inset-inline-start: 98px;
   z-index: 201;
   display: flex;
   align-items: center;
@@ -2622,8 +2628,9 @@ button.section-head:focus-visible {
 /*
  * Folded, the controls keep the side column's own start, as the unfolded row
  * does (`.top`, 18): the user's 2026-09-21 choice extends the left-aligned top
- * row to the folded state. Only macOS keeps MiMo's 75, clear of the traffic
- * lights.
+ * row to the folded state. Only macOS moves them in, clear of the traffic
+ * lights, to the same 98 as the unfolded row - 75 left them under the green
+ * light, whose group now ends at 80.
  */
 .app:not([data-platform="darwin"]) .rail-tools {
   inset-inline-start: 18px;
