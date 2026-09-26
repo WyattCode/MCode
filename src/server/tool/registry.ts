@@ -13,6 +13,7 @@ import { GetDesktopSettingsTool, SetDesktopSettingTool } from "./desktop-setting
 import { ContactsTool, CreateSessionTool, TalkToSessionTool, UpdateSessionTool } from "./session-chat"
 import { ListExternalSessionsTool, ReadExternalSessionTool } from "./external-session"
 import { NotebookEditTool } from "./notebook"
+import { PatchTool } from "./patch"
 import { SkillSearchTool, SkillTool } from "./skill"
 import { HistoryTool } from "./history"
 import { MemoryTool } from "./memory"
@@ -85,7 +86,27 @@ export const TOOLS: ToolDefinition[] = [
    */
   ListExternalSessionsTool,
   ReadExternalSessionTool,
+  // OpenCode v2's patch (R31-7): appended, for the same reason. Offered only to the models `usesPatch` names.
+  PatchTool,
 ]
+
+/**
+ * Whether a model edits with `patch` rather than `edit` and `write`: OpenCode
+ * v2's rule (tool/plugin/patch.ts), a GPT model other than GPT-4 and the
+ * open-weight gpt-oss - the ones trained on this envelope. MCode had matched
+ * MiMo's desktop, which never offers it; since 2026-09-27 the engine follows
+ * v2 (the user's decision).
+ */
+export function usesPatch(modelID: string): boolean {
+  const id = modelID.toLowerCase()
+  return id.includes("gpt-") && !id.includes("oss") && !id.includes("gpt-4")
+}
+
+/** A turn's tools for the model it runs on: `patch` in place of `edit` and `write` where `usesPatch` says, and not otherwise. */
+export function forModel(tools: readonly ToolDefinition[], modelID: string): ToolDefinition[] {
+  const patching = usesPatch(modelID)
+  return tools.filter((tool) => (patching ? tool.name !== "edit" && tool.name !== "write" : tool.name !== "patch"))
+}
 
 /**
  * The scheduling tools, withdrawn from the model (the user's 2026-09-21
@@ -253,7 +274,7 @@ export type ToolReach = "reads" | "reports" | "opaque"
 
 export function reachOf(name: string): ToolReach {
   // notebook_edit records its file before writing, as edit does.
-  if (name === "write" || name === "edit" || name === "notebook_edit") return "reports"
+  if (name === "write" || name === "edit" || name === "notebook_edit" || name === "patch") return "reports"
   if (READS.has(name)) return "reads"
   return "opaque"
 }

@@ -30,7 +30,7 @@ import { PermissionDenied, REVIEW_TIMEOUT_MS, VERDICT_TOOL_NAME, looksSecret, ve
 import { processAlive, type Storage } from "../storage"
 import { globalAgentsPath } from "../global-agents"
 import { discoverSkills, enabledSkills, skillReminders, withSkillReminders, type SkillInfo } from "../skill"
-import { findTool, hasOwnToolsOnly, reachOf, repairableNames, toolsForTurn, withheldByLab } from "../tool/registry"
+import { findTool, forModel, hasOwnToolsOnly, reachOf, repairableNames, toolsForTurn, withheldByLab } from "../tool/registry"
 import { normalizeToolInput, resolveToolName } from "../tool/repair"
 import { inputForTool } from "../provider/tool-schema"
 import { Questions } from "../tool/question"
@@ -313,7 +313,7 @@ const MAX_STEPS_PROMPT = [
 const SUBAGENT_WITHHELD = new Set(["actor", "contacts", "talk_to_session", "create_session", "update_session", "automation_update", "plan_exit", "question"])
 
 /** plan: the tools whose behaviour depends on whether the conversation is planning. */
-const PLAN_AWARE = new Set(["write", "edit", "notebook_edit", "plan_exit"])
+const PLAN_AWARE = new Set(["write", "edit", "notebook_edit", "patch", "plan_exit"])
 
 export class SessionRunner {
   private readonly running = new Map<string, AbortController>()
@@ -610,7 +610,8 @@ export class SessionRunner {
 
   /** The tools a conversation's request carries: its agent's, less what a subagent never gets. */
   private offeredTools(session: TurnSession): ToolDefinition[] {
-    return this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory).filter(
+    // OpenCode v2: a GPT model edits with patch, every other with edit and write (registry `usesPatch`).
+    return forModel(this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory), session.model.model).filter(
       (tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name),
     )
   }

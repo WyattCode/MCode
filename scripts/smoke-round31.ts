@@ -23,6 +23,12 @@ import { ProviderHttpError } from "../src/server/provider/types"
 import { retryKind, wakeWaiters } from "../src/server/session/retry"
 import { INTERRUPTED_NOTE } from "../src/server/session/reminders"
 import { SUMMARY_NUDGE, legacySummary, summaryPrompt } from "../src/server/session/summary"
+import { PatchTool } from "../src/server/tool/patch"
+import { TOOLS, forModel, usesPatch } from "../src/server/tool/registry"
+import type { ToolContext } from "../src/server/tool/types"
+import { turnFilePaths } from "../src/server/session/turn-revert"
+import { parseUnifiedDiff } from "../src/shared/unified-diff"
+import { sessionFiles } from "../src/shared/session-files"
 import type { Check } from "./smoke-round5"
 
 type Answer = (request: IncomingMessage, response: ServerResponse, body: string) => void
@@ -53,7 +59,7 @@ async function harness(root: string, answers: Answer[]) {
   const config = new Config(storage, bus, path.join(root, "data", "credentials.json"))
   await storage.write("config", {})
   await config.load()
-  await config.set({ customProviders: [{ id: "fake", name: "Fake", baseURL: `http://127.0.0.1:${port}/v1`, models: [{ id: "m", name: "M" }] }], directory: project })
+  await config.set({ customProviders: [{ id: "fake", name: "Fake", baseURL: `http://127.0.0.1:${port}/v1`, models: [{ id: "m", name: "M" }, { id: "gpt-5.1", name: "GPT" }] }], directory: project })
   await config.setApiKey("fake", "k")
   const permissions = new Permissions(bus, config)
   const store = new SessionStore(storage, bus)
@@ -405,6 +411,107 @@ export async function roundThirtyOneChecks(check: Check, section: (name: string)
         check("and the baseline has moved to it", state !== undefined && state.initial.project === state.current.project && state.current.project === "", state)
       } finally {
         await run.close()
+      }
+    }
+    // --------------------------------------------------------------- R31-7
+    section("Round 31 (7): OpenCode v2's patch, for the models trained on it")
+    {
+      check("a GPT model edits with patch", usesPatch("gpt-5.1") && usesPatch("openai/gpt-5-codex"))
+      check("GPT-4 and the open-weight gpt-oss do not", !usesPatch("gpt-4o") && !usesPatch("gpt-4.1") && !usesPatch("gpt-oss-120b"))
+      check("nor any other family", !usesPatch("claude-sonnet-5") && !usesPatch("deepseek-v4.1-flash") && !usesPatch("qwen38-nvfp4"))
+      const names = (model: string) => forModel(TOOLS, model).map((tool) => tool.name)
+      check("patch stands in for edit and write", names("gpt-5.1").includes("patch") && !names("gpt-5.1").includes("edit") && !names("gpt-5.1").includes("write"))
+      check("and is not offered beside them", !names("claude-sonnet-5").includes("patch") && names("claude-sonnet-5").includes("edit"))
+
+      // What a real turn on a GPT model is offered.
+      const run = await harness(path.join(root, "patch-offer"), [finish("ok")])
+      try {
+        const session = await run.store.create({ directory: run.project, model: { provider: "fake", model: "gpt-5.1" } })
+        await run.runner.prompt({ sessionID: session.id, text: "hi" })
+        await run.settled(session.id)
+        const offered = ((JSON.parse(run.bodies.at(-1) ?? "{}") as { tools?: { function?: { name?: string } }[] }).tools ?? []).map((tool) => tool.function?.name)
+        const asked = JSON.parse(run.bodies.at(-1) ?? "{}") as { model?: string }
+        check("a turn on a GPT model carries patch and not edit or write", offered.includes("patch") && !offered.includes("edit") && !offered.includes("write"), { model: asked.model, offered })
+      } finally {
+        await run.close()
+      }
+
+      // The tool itself, over a folder of its own.
+      const folder = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r31-patch-"))
+      const asked: { kind: string; preview?: string }[] = []
+      const snapped: string[] = []
+      const context = {
+        sessionID: "ses_patch",
+        messageID: "msg_patch",
+        callID: "call_patch",
+        directory: folder,
+        permissions: { ask: async (question: { kind: string; preview?: string }) => void asked.push(question) },
+        questions: { ask: async () => undefined },
+        signal: new AbortController().signal,
+        progress: () => {},
+        snapshot: async (file: string) => void snapped.push(file),
+      } as unknown as ToolContext
+      try {
+        await fs.writeFile(path.join(folder, "a.txt"), "one\r\ntwo\r\nthree\r\n", "utf8")
+        await fs.writeFile(path.join(folder, "b.txt"), "move me\n", "utf8")
+        await fs.writeFile(path.join(folder, "d.txt"), "gone soon\n", "utf8")
+        const result = await PatchTool.execute(
+          {
+            patchText: [
+              "*** Begin Patch",
+              "*** Add File: new.txt",
+              "+fresh",
+              "*** Update File: a.txt",
+              "@@ one",
+              "-two",
+              "+TWO",
+              "*** Update File: b.txt",
+              "*** Move to: sub/c.txt",
+              "-move me",
+              "+moved",
+              "*** Delete File: d.txt",
+              "*** End Patch",
+            ].join("\n"),
+          },
+          context,
+        )
+        const read = (name: string) => fs.readFile(path.join(folder, name), "utf8").catch(() => undefined)
+        check("a file is added", (await read("new.txt")) === "fresh\n")
+        check("a file is updated, keeping its CRLF line endings", (await read("a.txt")) === "one\r\nTWO\r\nthree\r\n", JSON.stringify(await read("a.txt")))
+        check("a file is moved with its change", (await read("sub/c.txt")) === "moved\n" && (await read("b.txt")) === undefined)
+        check("a file is deleted", (await read("d.txt")) === undefined)
+        check("and v2's own summary says which", result.output === "Success. Updated the following files:\nA new.txt\nM a.txt\nM sub/c.txt\nD d.txt", result.output)
+        check("the whole patch is asked about once, as an edit", asked.length === 1 && asked[0]!.kind === "edit", asked.length)
+        check("its preview shows every file", ["new.txt", "a.txt", "b.txt", "sub/c.txt", "d.txt"].every((name) => asked[0]!.preview?.includes(name)), asked[0]?.preview)
+        check("every file is recorded for undo before it is touched", ["new.txt", "a.txt", "b.txt", "sub/c.txt", "d.txt"].every((name) => snapped.includes(path.join(folder, name))), snapped)
+        const patchText = (result.metadata?.filediff as { patch?: string } | undefined)?.patch ?? ""
+        const turn = {
+          id: "m",
+          sessionID: "s",
+          role: "assistant",
+          model: { provider: "p", model: "gpt-5.1" },
+          agent: "build",
+          time: { created: 0 },
+          parts: [{ type: "tool", id: "t", callID: "c", name: "patch", status: "completed", input: {}, metadata: result.metadata, time: { created: 0, completed: 0 } }],
+        } as unknown as Message
+        const undoable = turnFilePaths(folder, [turn]).map((file) => path.relative(folder, file).replace(/\\/g, "/")).sort()
+        check("撤销 finds every file the patch changed", JSON.stringify(undoable) === JSON.stringify(["a.txt", "b.txt", "d.txt", "new.txt", "sub/c.txt"]), undoable)
+        check("the recorded diff is one section per file", parseUnifiedDiff(patchText).length === 5, parseUnifiedDiff(patchText).map((section) => section.file))
+        // A file moved away or deleted was changed as surely as one written.
+        check("and the conversation's record of changed files names them", sessionFiles([turn], folder).written.map((entry) => entry.path).sort().join() === "a.txt,b.txt,d.txt,new.txt,sub/c.txt", sessionFiles([turn], folder).written)
+
+        // A patch that does not apply to one file changes none.
+        asked.length = 0
+        const failed = await PatchTool.execute(
+          { patchText: ["*** Begin Patch", "*** Add File: never.txt", "+nope", "*** Update File: a.txt", "-not in the file", "+x", "*** End Patch"].join("\n") },
+          context,
+        ).then(() => "", (error: Error) => error.message)
+        check("a hunk that does not match is refused", failed.includes("Failed to find expected lines"), failed)
+        check("before anything is written or asked", (await read("never.txt")) === undefined && asked.length === 0)
+        const malformed = await PatchTool.execute({ patchText: "*** Add File: x.txt\n+x" }, context).then(() => "", (error: Error) => error.message)
+        check("a patch without its envelope is refused with what is missing", malformed.includes("*** Begin Patch"), malformed)
+      } finally {
+        await fs.rm(folder, { recursive: true, force: true }).catch(() => undefined)
       }
     }
   } finally {

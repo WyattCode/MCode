@@ -7723,9 +7723,9 @@ async function skillChecks(root: string) {
     "skill and skill_search are offered, appended, and change nothing",
     TOOLS[skillAt - 1]?.name === "update_session" &&
       TOOLS[skillAt + 1]?.name === "skill" &&
-      // Only tools added since (history, memory, cron, scheduled tasks, plan_exit and speak) come after them.
+      // Only tools added since (history, memory, cron, scheduled tasks, plan_exit, speak, and R31's patch) come after them.
       TOOLS.slice(skillAt + 2).every((tool) =>
-        ["history", "memory", "cron", "automation_update", "plan_exit", "speak", "list_external_sessions", "read_external_session"].includes(tool.name),
+        ["history", "memory", "cron", "automation_update", "plan_exit", "speak", "list_external_sessions", "read_external_session", "patch"].includes(tool.name),
       ) &&
       reachOf("skill") === "reads" &&
       reachOf("skill_search") === "reads",
@@ -8882,9 +8882,9 @@ async function sessionChatChecks(root: string, project: string) {
         // notebook_edit sits between the window tools and them.
         TOOLS[at - 1]?.name === "notebook_edit" &&
         TOOLS[at - 2]?.name === "set_desktop_setting" &&
-        // Only tools added since (the skill tools, then history, memory, cron, scheduled tasks, plan_exit and speak) come after them.
+        // Only tools added since (the skill tools, then history, memory, cron, scheduled tasks, plan_exit, speak, and R31's patch) come after them.
         TOOLS.slice(at + 4).every((tool) =>
-          ["skill_search", "skill", "history", "memory", "cron", "automation_update", "plan_exit", "speak", "list_external_sessions", "read_external_session"].includes(tool.name),
+          ["skill_search", "skill", "history", "memory", "cron", "automation_update", "plan_exit", "speak", "list_external_sessions", "read_external_session", "patch"].includes(tool.name),
         )
       )
     })(),

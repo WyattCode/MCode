@@ -35,7 +35,7 @@ export const ACTION_STREAK = 4
 export const BASH_RETRIES = 3
 
 /** The tools that change a file, and so produce a diff worth comparing. */
-const EDIT_TOOLS = new Set(["edit", "write", "notebook_edit"])
+const EDIT_TOOLS = new Set(["edit", "write", "notebook_edit", "patch"])
 
 /**
  * Commands run to find out whether the work is done. Their value is that a
