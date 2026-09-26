@@ -22,6 +22,7 @@ import { SessionRunner } from "../src/server/session/runner"
 import { ProviderHttpError } from "../src/server/provider/types"
 import { retryKind, wakeWaiters } from "../src/server/session/retry"
 import { INTERRUPTED_NOTE } from "../src/server/session/reminders"
+import { SUMMARY_NUDGE, legacySummary, summaryPrompt } from "../src/server/session/summary"
 import type { Check } from "./smoke-round5"
 
 type Answer = (request: IncomingMessage, response: ServerResponse, body: string) => void
@@ -158,6 +159,83 @@ export async function roundThirtyOneChecks(check: Check, section: (name: string)
         stop()
         await run.close()
       }
+    }
+    // --------------------------------------------------------------- R31-4
+    section("Round 31 (4): rolling compaction keeps the newest exchange word for word and updates its checkpoint")
+    {
+      /*
+       * A provider that answers a summary request with OpenCode v2's
+       * template and everything else with a short reply naming the turn, so
+       * each request's contents can be read back afterwards.
+       */
+      const V2_SUMMARY = "## Objective\n- keep the probe going\n\n## Work State\n### Completed\n- (none)\n\n## Next Move\n1. (none)"
+      const summaries: string[] = []
+      const answer: Answer = (_request, response, body) => {
+        const summarising = body.includes("You MUST use this format for your response")
+        const reply = summarising ? (summaries.shift() ?? V2_SUMMARY) : "answered"
+        finish(reply)(_request, response, body)
+      }
+      const run = await harness(path.join(root, "rolling"), Array.from({ length: 40 }, () => answer))
+      try {
+        const session = await run.store.create({ directory: run.project, model: { provider: "fake", model: "m" } })
+        for (const text of ["FIRST question", "SECOND question", "THIRD question"]) {
+          await run.runner.prompt({ sessionID: session.id, text })
+          await run.settled(session.id)
+        }
+        const before = run.bodies.length
+        await run.runner.compact(session.id)
+        const asked = run.bodies[before] ?? ""
+        check("the summary request carries the older exchanges", asked.includes("FIRST question") && asked.includes("SECOND question"))
+        check("but not the newest, which is kept rather than summarised", !asked.includes("THIRD question"))
+        check("and asks for a first summary, not an update", asked.includes("You MUST summarize the conversation above") && !asked.includes("Update the existing checkpoint"))
+        const mark = (await run.store.get(session.id))?.compacted
+        check("the newest exchange is stored word for word beside the summary", mark?.recent?.includes("[User]: THIRD question") === true && mark.recent.includes("[Assistant]: answered"), mark?.recent)
+        check("and the summary is v2's", mark?.summary.startsWith("## Objective") === true, mark?.summary)
+
+        await run.runner.prompt({ sessionID: session.id, text: "FOURTH question" })
+        await run.settled(session.id)
+        const next = run.bodies.at(-1) ?? ""
+        check("the next request opens with the checkpoint", next.includes("<conversation-checkpoint>") && next.includes("<recent-context>"))
+        check("which holds the newest exchange as it was said", next.includes("[User]: THIRD question"))
+        check("and none of what the summary replaced", !next.includes("FIRST question") && !next.includes("SECOND question"))
+
+        // A second compaction folds into the first rather than summarising a summary.
+        await run.runner.prompt({ sessionID: session.id, text: "FIFTH question" })
+        await run.settled(session.id)
+        const again = run.bodies.length
+        await run.runner.compact(session.id)
+        const updated = run.bodies[again] ?? ""
+        check("a second compaction asks to update the checkpoint", updated.includes("Update the existing checkpoint"))
+        check("with that checkpoint in the request, its kept exchange now among what is summarised", updated.includes("<conversation-checkpoint>") && updated.includes("THIRD question"))
+        check("and not the legacy rewrite, for a checkpoint already in v2's format", !updated.includes("earlier format"))
+      } finally {
+        await run.close()
+      }
+
+      // A reply that skips the template is reminded once, and a summary after the reminder is taken.
+      const nudged = await harness(path.join(root, "nudge"), Array.from({ length: 20 }, () => answer))
+      try {
+        const session = await nudged.store.create({ directory: nudged.project, model: { provider: "fake", model: "m" } })
+        for (const text of ["ONE", "TWO"]) {
+          await nudged.runner.prompt({ sessionID: session.id, text })
+          await nudged.settled(session.id)
+        }
+        summaries.push("Let me look at one more file first.", V2_SUMMARY)
+        const before = nudged.bodies.length
+        // Caught and reported, so a compaction that throws fails these checks instead of skipping them.
+        const refused = await nudged.runner.compact(session.id).then(() => "", (error: Error) => error.message)
+        check("the compaction is not refused", refused === "", refused)
+        const second = nudged.bodies[before + 1] ?? ""
+        check("a reply that skipped the template gets v2's reminder", second.includes(SUMMARY_NUDGE), second.slice(-400))
+        check("and the summary written after it is taken", (await nudged.store.get(session.id))?.compacted?.summary.startsWith("## Objective") === true)
+      } finally {
+        await nudged.close()
+      }
+
+      // A checkpoint in MCode's earlier format is rewritten once at v2's level of detail.
+      check("a checkpoint in MCode's earlier format is recognised", legacySummary("## Task overview\n- old"))
+      check("and the update prompt asks for it to be rewritten", summaryPrompt(true, true).includes("written with an earlier format"))
+      check("which a first summary never does", !summaryPrompt(false, true).includes("earlier format"))
     }
   } finally {
     if (titles === undefined) delete process.env.MCODE_GENERATE_TITLES

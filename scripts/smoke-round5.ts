@@ -52,7 +52,7 @@ type Reply = (response: ServerResponse, body: Record<string, any>) => void | Pro
 const frame = (data: unknown) => `data: ${JSON.stringify(data)}\n\n`
 
 /** What the fake answers a summary request with unless told otherwise: MCode's sections, in their tags. */
-const DEFAULT_SUMMARY = "<summary>\n## Task overview\n- probe task\n\n## Current state\n- probe done\n\n## Next steps\n1. finish the probe\n</summary>"
+const DEFAULT_SUMMARY = "<summary>\n## Objective\n- probe task\n\n## Work State\n- probe done\n\n## Next Move\n1. finish the probe\n</summary>"
 
 /** A streamed text answer, OpenAI chat-completions shape. */
 export const say =
@@ -116,7 +116,7 @@ export async function engine(options: { custom?: Partial<CustomProvider>; langua
         return say(titles.shift() ?? "A probe title")(response, body)
       }
       const lastMessage = (body.messages as Record<string, unknown>[] | undefined)?.at(-1)
-      if (JSON.stringify(lastMessage?.content ?? "").includes("this conversation is about to be compacted")) {
+      if (JSON.stringify(lastMessage?.content ?? "").includes("You MUST use this format for your response")) {
         summaryBodies.push(body)
         const next = summaries.shift() ?? DEFAULT_SUMMARY
         return (typeof next === "string" ? say(next) : next)(response, body)
@@ -948,17 +948,17 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       check(
         "and replays the conversation as its messages, the instruction last",
         replayed.some((message) => message.role === "user" && JSON.stringify(message.content).includes("FIRST request")) &&
-          JSON.stringify(replayed.at(-1)?.content).includes("## Task overview") &&
+          JSON.stringify(replayed.at(-1)?.content).includes("## Objective") &&
           !JSON.stringify(replayed.at(-1)?.content).includes("FIRST request"),
         replayed.map((message) => message.role),
       )
       check("with the model's usual output cap", asked?.max_tokens === 32_000, asked?.max_tokens)
       const stored = await e.store.get(manual.id)
-      check("the summary is stored with its trigger", stored?.compacted?.trigger === "manual" && stored.compacted.summary.startsWith("## Task overview"), stored?.compacted)
+      check("the summary is stored with its trigger", stored?.compacted?.trigger === "manual" && stored.compacted.summary.startsWith("## Objective"), stored?.compacted)
       await e.runner.prompt({ sessionID: manual.id, text: "THIRD request" })
       await e.idle(manual.id)
       const third = wireText(e.bodies.at(-1))
-      check("the next request opens with the tagged summary instead of the conversation", third.includes('<compacted-context trigger=\\"manual\\">') && !third.includes("FIRST request") && third.includes("THIRD request"), third.slice(0, 600))
+      check("the next request opens with the tagged summary instead of the conversation", third.includes('<conversation-checkpoint>') && !third.includes("FIRST request") && third.includes("THIRD request"), third.slice(0, 600))
       check("and a manual compaction brings no continue message", !third.includes("was just compacted"))
 
       // A reply that is not a summary, or a tool call, leaves the conversation as it was.
@@ -968,7 +968,8 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       check("a sentence is refused as a summary", refused.includes("did not return a summary") && (await e.store.get(manual.id))?.compacted?.at === before, refused)
       e.summaries.push(calls([{ name: "glob", input: { pattern: "*" } }]))
       const called = await e.runner.compact(manual.id).then(() => "", (error: Error) => error.message)
-      check("so is a tool call while summarising", called.includes("called a tool"), called)
+      // OpenCode v2 answers a tool call with one reminder first (R31-4); a reply still not a summary after it leaves the conversation as it was.
+      check("so is a tool call while summarising, after one reminder", called !== "" && (await e.store.get(manual.id))?.compacted?.at === before, called)
 
       // Automatic: a turn that ends over the line is compacted when the next one starts, and told to carry on.
       const auto = await e.store.create({ directory: e.project, model: e.model })
@@ -992,7 +993,8 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
        */
       check(
         "and its request is the summary and the question this turn is answering",
-        autoWire.includes('trigger=\\"automatic\\"') && autoWire.includes("AUTO next") && !autoWire.includes("was just compacted"),
+        // OpenCode v2's checkpoint carries no trigger for the model; the stored mark does, checked just above.
+        autoWire.includes("<conversation-checkpoint>") && autoWire.includes("AUTO next") && !autoWire.includes("was just compacted"),
         autoWire.slice(0, 600),
       )
 
@@ -1005,7 +1007,7 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       const asks = (await e.store.messages(over.id)).filter((message) => message.role === "user" && message.text === "OVERFLOW request")
       const retry = wireText(e.bodies.at(-1))
       check("a refusal for length compacts as an overflow", overAfter?.compacted?.trigger === "provider-overflow", overAfter?.compacted)
-      check("and posts the request again after the summary", asks.length === 2 && retry.includes('trigger=\\"provider-overflow\\"') && retry.includes("OVERFLOW request"), { asks: asks.length, retry: retry.slice(0, 400) })
+      check("and posts the request again after the summary", asks.length === 2 && retry.includes("<conversation-checkpoint>") && retry.includes("OVERFLOW request"), { asks: asks.length, retry: retry.slice(0, 400) })
       check("and the step runs to an answer", (await e.assistants(over.id)).at(-1)?.finish === "end_turn")
     } finally {
       await e.close()

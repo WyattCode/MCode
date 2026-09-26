@@ -57,7 +57,7 @@ import { isOverflowByCount, isOverflowError, maxOutputTokens, underPressure } fr
 // MiMo's pruning: what a turn re-sends of its older tool output once the prompt cache has gone cold.
 import { pruneLevelFor, prunedHistory, type PruneLevel } from "./prune"
 import { estimateTokens } from "./estimate"
-import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, messagesTokens, nextRequestEstimate, shrinkLargeToolResults, touchedFiles, type CompactionTrigger } from "./summary"
+import { SUMMARY_NUDGE, compactedText, continueNote, extractSummary, isCheckpoint, isSummary, legacySummary, messagesTokens, nextRequestEstimate, shrinkLargeToolResults, splitConversation, summaryPrompt, touchedFiles, type CompactionTrigger } from "./summary"
 import { memorySection, systemPrompt } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
 import { GOAL_GUARD, JUDGE_SYSTEM, MAX_GOAL_REACT, cleanGoal, goalReminder, judgeQuestion, judgeTranscript, parseVerdict, sameGoal, type GoalVerdict } from "./goal"
@@ -1444,6 +1444,17 @@ export class SessionRunner {
     // skills: what a message loaded is part of the conversation being summarised.
     const context = withSkillReminders(withAutomationNotes(withChatHeaders(seen)))
     if (!last || !context.some((message) => message.role === "user")) throw new Error("Nothing to compact yet")
+    /*
+     * OpenCode v2's rolling compaction: the newest exchanges within
+     * RECENT_KEEP tokens are kept word for word beside the summary, and only
+     * what came before them is sent to be summarised. A conversation already
+     * compacted opens with that checkpoint, and the model updates it rather
+     * than summarising a summary.
+     */
+    const split = splitConversation(context)
+    if (!split || split.older.length === 0) throw new Error("Nothing to compact yet")
+    const update = split.older.some(isCheckpoint)
+    const prompt = summaryPrompt(update, update && session.compacted !== undefined && legacySummary(session.compacted.summary))
 
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new CodedError(`No provider called ${session.model.provider} is set up`, "error.noModel")
@@ -1457,31 +1468,30 @@ export class SessionRunner {
      * the request most likely to be refused for length the largest one sent.
      */
     const replay = shrinkLargeToolResults(
-      trigger === "provider-overflow" ? withoutAttachments(context) : await withAttachmentData(context, session.directory, new Map()),
+      trigger === "provider-overflow" ? withoutAttachments(split.older) : await withAttachmentData(split.older, session.directory, new Map()),
     )
     const instruction: UserMessage = {
       id: `${session.id}:compaction`,
       sessionID: session.id,
       role: "user",
-      text: SUMMARY_INSTRUCTION,
+      text: prompt,
       attachments: [],
       time: { created: Date.now() },
     }
 
-    let summary = ""
-    let called = false
     let reported: Usage | undefined
     const system = await this.systemFor(session)
     const offered = this.offeredTools(session)
-    this.summarising.add(session.id)
-    this.bus.publish({ type: "session.compacting", sessionID: session.id, active: true })
-    try {
+    /** One summary request over this history; what it wrote, and whether it reached for a tool instead. */
+    const ask = async (history: Message[]): Promise<{ text: string; called: boolean }> => {
+      let text = ""
+      let called = false
       const outcome = await adapter.stream(
         {
           apiKey: tokens?.access ?? apiKey,
           model: session.model,
           ...system,
-          history: [...replay, instruction],
+          history,
           tools: offered,
           // Out of band: a summary is not worth a reasoning budget either, so MiMo's cheap profile rather than the app-wide level.
           ...smallRequest(session.model.provider, session.model.model),
@@ -1501,13 +1511,42 @@ export class SessionRunner {
           extra: { ...providerExtras(session.model.provider, entry?.reasoning === true, session.id), ...smallRequest(session.model.provider, session.model.model).extra },
         },
         (event) => {
-          if (event.type === "text.delta") summary += event.text
+          if (event.type === "text.delta") text += event.text
           if (event.type === "tool") called = true
         },
       )
       if (outcome.toolCalls.length) called = true
-      reported = outcome.usage
+      // The first request's count is the one the ring's estimate scales from; a nudge re-sends the same history.
+      reported ??= outcome.usage
       this.noteBackground(session.id, session.model, outcome.usage, "compaction")
+      return { text, called }
+    }
+
+    let summary = ""
+    this.summarising.add(session.id)
+    this.bus.publish({ type: "session.compacting", sessionID: session.id, active: true })
+    try {
+      const first = await ask([...replay, instruction])
+      summary = first.called ? "" : extractSummary(first.text)
+      /*
+       * OpenCode v2 gives a reply that skipped the template one reminder
+       * before it counts as a failure: a model that carried on with the task,
+       * or answered in prose, usually writes the summary when told plainly.
+       */
+      if (!summary || !isSummary(summary)) {
+        const nudge: UserMessage = { ...instruction, id: `${session.id}:compaction-nudge`, text: SUMMARY_NUDGE }
+        const reply: AssistantMessage = {
+          id: `${session.id}:compaction-reply`,
+          sessionID: session.id,
+          role: "assistant",
+          model: session.model,
+          parts: first.text ? [{ type: "text", id: Identifier.part(), text: first.text }] : [],
+          time: { created: Date.now(), completed: Date.now() },
+        } as AssistantMessage
+        const second = await ask([...replay, instruction, reply, nudge])
+        if (second.called) throw new Error("The model called a tool instead of writing a summary")
+        summary = extractSummary(second.text)
+      }
     } catch (failure) {
       if (isOverflowError(failure, describe(failure))) throw new Error("This conversation is too large to compact")
       throw failure
@@ -1515,12 +1554,10 @@ export class SessionRunner {
       this.summarising.delete(session.id)
       this.bus.publish({ type: "session.compacting", sessionID: session.id, active: false })
     }
-    if (called) throw new Error("The model called a tool instead of writing a summary")
-    summary = extractSummary(summary)
     if (!summary) throw new Error("The model returned an empty summary")
     if (!isSummary(summary)) throw new Error("The model did not return a summary")
     const files = touchedFiles(context, session.directory)
-    const mark = { messageID: last.id, summary, at: Date.now(), trigger, ...(files.length ? { files } : {}) }
+    const mark = { messageID: last.id, summary, ...(split.recent ? { recent: split.recent } : {}), at: Date.now(), trigger, ...(files.length ? { files } : {}) }
     /*
      * What the ring should say now, rather than after the next turn: the next
      * request is the system prompt, the tools, the summary, and whatever

@@ -2789,7 +2789,7 @@ async function main() {
         "a summary with translated headings is one",
         isSummary("## 目标\n- 审计两个新功能\n\n## 工作状态\n- 已完成构建\n\n## 下一步\n1. 修复枚举"),
       )
-      check("the sections as written are one", isSummary("## Task overview\n- audit\n\n## Next steps\n1. (none)"))
+      check("the sections as written are one", isSummary("## Objective\n- audit\n\n## Next Move\n1. (none)"))
     }
 
     /*

@@ -909,7 +909,7 @@ export async function roundSevenModelChecks(check: Check, section: (name: string
       const asked = JSON.stringify(e.summaryBodies.at(-1) ?? {})
       check("the summary request no longer replays the whole result", !asked.includes("q".repeat(5_000)), asked.length)
       check("it carries the shrink note instead", asked.includes("left this bash result out of the compaction"))
-      check("and still asks for the summary", asked.includes("about to be compacted"))
+      check("and still asks for the summary", asked.includes("You MUST use this format for your response"))
     } finally {
       await e.close()
     }

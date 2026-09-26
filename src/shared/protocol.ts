@@ -147,6 +147,12 @@ export interface SessionInfo {
     trigger?: "manual" | "automatic" | "provider-overflow"
     files?: string[]
     /**
+     * The newest part of the conversation the summary covers, kept word for
+     * word beside it (OpenCode v2's rolling compaction): a summary is weakest
+     * at exactly what was just said.
+     */
+    recent?: string
+    /**
      * How many tokens the next request is expected to carry: the system
      * prompt, the tools, the summary and whatever follows it.
      *
