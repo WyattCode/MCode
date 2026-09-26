@@ -232,6 +232,41 @@ export async function roundThirtyOneChecks(check: Check, section: (name: string)
         await nudged.close()
       }
 
+      /*
+       * A summary request too long for the model is squeezed, not given up
+       * on. The provider here refuses any summary request that still carries
+       * the oldest exchange, as a real one refuses one over its window; MCode
+       * used to stop at the first refusal.
+       */
+      const squeeze: Answer = (request, response, body) => {
+        const summarising = body.includes("You MUST use this format for your response")
+        if (summarising && body.includes("OLDEST exchange")) {
+          response.writeHead(400, { "content-type": "application/json" })
+          response.end(JSON.stringify({ error: { message: "This model's maximum context length is 1000 tokens. However, your messages resulted in 2400 tokens." } }))
+          return
+        }
+        finish(summarising ? V2_SUMMARY : "answered")(request, response, body)
+      }
+      const tight = await harness(path.join(root, "squeeze"), Array.from({ length: 40 }, () => squeeze))
+      try {
+        const session = await tight.store.create({ directory: tight.project, model: { provider: "fake", model: "m" } })
+        const filler = " and some more words to give it weight".repeat(40)
+        for (const text of [`OLDEST exchange${filler}`, `SECOND exchange${filler}`, `THIRD exchange${filler}`, `FOURTH exchange${filler}`, "NEWEST exchange"]) {
+          await tight.runner.prompt({ sessionID: session.id, text })
+          await tight.settled(session.id)
+        }
+        const before = tight.bodies.length
+        const refused = await tight.runner.compact(session.id).then(() => "", (error: Error) => error.message)
+        check("a summary request refused for length is squeezed and sent again, not given up on", refused === "" && (await tight.store.get(session.id))?.compacted !== undefined, refused)
+        const attempts = tight.bodies.slice(before).filter((body) => body.includes("You MUST use this format for your response"))
+        const accepted = attempts.at(-1) ?? ""
+        check("the first attempt went whole, since it was estimated to fit", attempts.length >= 2 && !attempts[0]!.includes("older exchange"), attempts.length)
+        check("the one taken dropped the oldest exchange and says how many went", !accepted.includes("OLDEST exchange") && /\[\d+ older exchanges? omitted\]/.test(accepted), accepted.slice(-600))
+        check("and kept the newer ones, as a transcript", accepted.includes("[User]: FOURTH exchange"))
+      } finally {
+        await tight.close()
+      }
+
       // A checkpoint in MCode's earlier format is rewritten once at v2's level of detail.
       check("a checkpoint in MCode's earlier format is recognised", legacySummary("## Task overview\n- old"))
       check("and the update prompt asks for it to be rewritten", summaryPrompt(true, true).includes("written with an earlier format"))

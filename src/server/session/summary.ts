@@ -274,8 +274,12 @@ function cutOutput(value: string): string {
   return kept.length === value.length ? value : `${kept}\n[truncated]`
 }
 
-/** One message as the kept record shows it (v2's `messageToText`). Empty for what it leaves out. */
-export function messageToText(message: Message): string {
+/**
+ * One message as the kept record shows it (v2's `messageToText`). Empty for what it leaves out.
+ *
+ * @param thinking whether the model's reasoning is written too; a summary request squeezed to fit leaves it out (v2's `flattenMessage`)
+ */
+export function messageToText(message: Message, thinking = true): string {
   if (isCheckpoint(message)) return ""
   if (message.role === "user") {
     const files = message.attachments.map((file) => `[Attached ${file.mime}: ${path.basename(file.path) || "inline attachment"}]`)
@@ -284,7 +288,7 @@ export function messageToText(message: Message): string {
   return message.parts
     .flatMap((part) => {
       if (part.type === "text") return part.text ? [`[Assistant]: ${part.text}`] : []
-      if (part.type === "reasoning") return part.text ? [`[Assistant reasoning]: ${part.text}`] : []
+      if (part.type === "reasoning") return thinking && part.text ? [`[Assistant reasoning]: ${part.text}`] : []
       const call = `[Assistant tool call]: ${part.name}(${JSON.stringify(part.input ?? {})})`
       if (part.status === "completed") return [call, `[Tool result]: ${cutOutput(part.output ?? "")}`]
       if (part.status === "error") return [call, `[Tool error]: ${part.error ?? ""}`]
@@ -390,4 +394,46 @@ export function nextRequestEstimate(fixed: number, sent: number, next: number, r
   const after = fixed + next
   if (reported > 0 && before > 0) return Math.max(0, Math.round((reported * after) / before))
   return after
+}
+
+/** After each "too long" refusal, the next summary request aims at this share of the first refused one (v2's `SHRINK_STEPS`). */
+export const SHRINK_STEPS = [0.7, 0.5, 0.35] as const
+
+/** The window assumed for a summary request when the model's is not known (v2's `UNKNOWN_WINDOW`). */
+export const UNKNOWN_WINDOW = 200_000
+
+/**
+ * The summary request squeezed to fit `room` tokens of messages (v2's
+ * `flattenAndDropOldest`).
+ *
+ * A checkpoint in front stays as it is. The conversation after it becomes one
+ * text message - no reasoning, no media, long tool results cut - and when even
+ * that does not fit, whole exchanges go, oldest first, with a line saying how
+ * many. Undefined when not even the newest exchange fits, which is the only
+ * point at which a compaction now gives up for length.
+ */
+export function flattenOldest(messages: readonly Message[], room: number, sessionID: string): Message[] | undefined {
+  const lead = messages.filter(isCheckpoint)
+  const exchanges: string[] = []
+  for (const message of messages) {
+    if (isCheckpoint(message)) continue
+    const text = messageToText(message, false)
+    if (!text) continue
+    if (message.role === "user" || exchanges.length === 0) exchanges.push(text)
+    else exchanges[exchanges.length - 1] += `\n${text}`
+  }
+  const note = (omitted: number) => (omitted ? `[${omitted} older ${omitted === 1 ? "exchange" : "exchanges"} omitted]\n\n` : "")
+  // Room for the longest possible note is set aside before choosing what to keep.
+  const budget = room - messagesTokens(lead) - estimateTokens(note(exchanges.length))
+  const kept = exchanges.slice(oldestToDrop(exchanges, (text) => estimateTokens(text) + 1, budget))
+  if (kept.length === 0) return undefined
+  const transcript: Message = {
+    id: `${sessionID}:compaction-transcript`,
+    sessionID,
+    role: "user",
+    text: note(exchanges.length - kept.length) + kept.join("\n\n"),
+    attachments: [],
+    time: { created: Date.now() },
+  }
+  return [...lead, transcript]
 }

@@ -53,11 +53,11 @@ import { emptyUsage } from "./store"
 import type { Recording } from "./snapshot"
 import { Snapshots, keepSnapshotFile, snapshotBytes, withProjectLock } from "./snapshot"
 import { revertTurnFiles, turnFilePaths } from "./turn-revert"
-import { isOverflowByCount, isOverflowError, maxOutputTokens, underPressure } from "./overflow"
+import { COMPACTION_TRIGGER_RATIO, isOverflowByCount, isOverflowError, maxOutputTokens, underPressure, usableContext } from "./overflow"
 // MiMo's pruning: what a turn re-sends of its older tool output once the prompt cache has gone cold.
 import { pruneLevelFor, prunedHistory, type PruneLevel } from "./prune"
 import { estimateTokens } from "./estimate"
-import { SUMMARY_NUDGE, compactedText, continueNote, extractSummary, isCheckpoint, isSummary, legacySummary, messagesTokens, nextRequestEstimate, shrinkLargeToolResults, splitConversation, summaryPrompt, touchedFiles, type CompactionTrigger } from "./summary"
+import { SHRINK_STEPS, SUMMARY_NUDGE, UNKNOWN_WINDOW, compactedText, continueNote, extractSummary, flattenOldest, isCheckpoint, isSummary, legacySummary, messagesTokens, nextRequestEstimate, shrinkLargeToolResults, splitConversation, summaryPrompt, touchedFiles, type CompactionTrigger } from "./summary"
 import { memorySection, systemPrompt } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
 import { GOAL_GUARD, JUDGE_SYSTEM, MAX_GOAL_REACT, cleanGoal, goalReminder, judgeQuestion, judgeTranscript, parseVerdict, sameGoal, type GoalVerdict } from "./goal"
@@ -1523,33 +1523,66 @@ export class SessionRunner {
     }
 
     let summary = ""
+    /*
+     * OpenCode v2's delivery: a summary request estimated too large for the
+     * model is squeezed - the conversation after any checkpoint becomes one
+     * text message, and whole exchanges go, oldest first - rather than sent to
+     * be refused. Estimates can be wrong, so until the provider refuses, a
+     * request that cannot be squeezed is sent as it is; after a refusal the
+     * next attempts aim at 70%, 50% and 35% of the first refused request, and
+     * only a refusal after those gives up. MCode gave up at the first.
+     *
+     * One adaptation: v2 scales the whole request, and its system prompt is a
+     * dozen lines. MCode's prompt and tool schemas run to tens of thousands of
+     * tokens, which cannot shrink, so 70% of the whole left no room for the
+     * conversation at all and the first squeeze gave up - measured. The steps
+     * scale the conversation part only.
+     */
+    const fixed = estimateTokens(system.system) + estimateTokens(system.systemTail) + estimateTokens(JSON.stringify(offered))
+    const usable = usableContext(entry) || Math.floor(UNKNOWN_WINDOW * COMPACTION_TRIGGER_RATIO)
+    let room = usable - estimateTokens(prompt) - estimateTokens(SUMMARY_NUDGE) - fixed
+    let refused: number | undefined
+    let sent: Message[] = replay
     this.summarising.add(session.id)
     this.bus.publish({ type: "session.compacting", sessionID: session.id, active: true })
     try {
-      const first = await ask([...replay, instruction])
-      summary = first.called ? "" : extractSummary(first.text)
-      /*
-       * OpenCode v2 gives a reply that skipped the template one reminder
-       * before it counts as a failure: a model that carried on with the task,
-       * or answered in prose, usually writes the summary when told plainly.
-       */
-      if (!summary || !isSummary(summary)) {
-        const nudge: UserMessage = { ...instruction, id: `${session.id}:compaction-nudge`, text: SUMMARY_NUDGE }
-        const reply: AssistantMessage = {
-          id: `${session.id}:compaction-reply`,
-          sessionID: session.id,
-          role: "assistant",
-          model: session.model,
-          parts: first.text ? [{ type: "text", id: Identifier.part(), text: first.text }] : [],
-          time: { created: Date.now(), completed: Date.now() },
-        } as AssistantMessage
-        const second = await ask([...replay, instruction, reply, nudge])
-        if (second.called) throw new Error("The model called a tool instead of writing a summary")
-        summary = extractSummary(second.text)
+      for (let rejections = 0; ; ) {
+        const history = messagesTokens(replay) <= room ? replay : (flattenOldest(replay, room, session.id) ?? (rejections > 0 ? undefined : replay))
+        if (!history) throw new Error("This conversation is too large to compact")
+        sent = history
+        try {
+          const first = await ask([...history, instruction])
+          summary = first.called ? "" : extractSummary(first.text)
+          /*
+           * OpenCode v2 gives a reply that skipped the template one reminder
+           * before it counts as a failure: a model that carried on with the
+           * task, or answered in prose, usually writes the summary when told
+           * plainly.
+           */
+          if (!summary || !isSummary(summary)) {
+            const nudge: UserMessage = { ...instruction, id: `${session.id}:compaction-nudge`, text: SUMMARY_NUDGE }
+            const reply: AssistantMessage = {
+              id: `${session.id}:compaction-reply`,
+              sessionID: session.id,
+              role: "assistant",
+              model: session.model,
+              parts: first.text ? [{ type: "text", id: Identifier.part(), text: first.text }] : [],
+              time: { created: Date.now(), completed: Date.now() },
+            } as AssistantMessage
+            const second = await ask([...history, instruction, reply, nudge])
+            if (second.called) throw new Error("The model called a tool instead of writing a summary")
+            summary = extractSummary(second.text)
+          }
+          break
+        } catch (failure) {
+          if (!isOverflowError(failure, describe(failure))) throw failure
+          const step = SHRINK_STEPS[rejections]
+          if (step === undefined) throw new Error("This conversation is too large to compact")
+          refused ??= messagesTokens(history)
+          room = Math.floor(refused * step)
+          rejections += 1
+        }
       }
-    } catch (failure) {
-      if (isOverflowError(failure, describe(failure))) throw new Error("This conversation is too large to compact")
-      throw failure
     } finally {
       this.summarising.delete(session.id)
       this.bus.publish({ type: "session.compacting", sessionID: session.id, active: false })
@@ -1564,10 +1597,9 @@ export class SessionRunner {
      * arrived after the boundary (or MiMo's note to carry on, when nothing did).
      */
     const after = live.slice(live.findIndex((message) => message.id === last.id) + 1)
-    const fixed = estimateTokens(system.system) + estimateTokens(system.systemTail) + estimateTokens(JSON.stringify(offered))
     const opening = estimateTokens(compactedText(mark)) + (after.length || trigger === "manual" ? messagesTokens(after) : estimateTokens(continueNote(trigger)))
     const counted = reported ? reported.input + reported.cacheRead + reported.cacheWrite : 0
-    const estimate = nextRequestEstimate(fixed, messagesTokens([...replay, instruction]), opening, counted)
+    const estimate = nextRequestEstimate(fixed, messagesTokens([...sent, instruction]), opening, counted)
     return this.store.update(session.id, {
       // The last message the summary covers: the whole conversation as it stood.
       compacted: { ...mark, estimate },
