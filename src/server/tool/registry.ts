@@ -14,6 +14,7 @@ import { ContactsTool, CreateSessionTool, TalkToSessionTool, UpdateSessionTool }
 import { ListExternalSessionsTool, ReadExternalSessionTool } from "./external-session"
 import { NotebookEditTool } from "./notebook"
 import { PatchTool } from "./patch"
+import { WebSearchTool } from "./websearch"
 import { SkillSearchTool, SkillTool } from "./skill"
 import { HistoryTool } from "./history"
 import { MemoryTool } from "./memory"
@@ -88,6 +89,8 @@ export const TOOLS: ToolDefinition[] = [
   ReadExternalSessionTool,
   // OpenCode v2's patch (R31-7): appended, for the same reason. Offered only to the models `usesPatch` names.
   PatchTool,
+  // OpenCode v2's websearch (R31-9): appended, for the same reason. Not offered once the user turned it off.
+  WebSearchTool,
 ]
 
 /**
@@ -173,9 +176,10 @@ export function hasOwnToolsOnly(agent: string): boolean {
  * Windows PowerShell 5.1, which has no such operator. `shell` is already part
  * of the prompt prefix key, so a changed setting rebuilds the prefix anyway.
  */
-export function toolsForTurn(agent: string, options: { voiceFeedback: boolean; shell?: string; sessionChat?: boolean }): ToolDefinition[] {
+export function toolsForTurn(agent: string, options: { voiceFeedback: boolean; shell?: string; sessionChat?: boolean; webSearch?: boolean }): ToolDefinition[] {
   return toolsFor(agent)
     .filter((tool) => tool.name !== "speak" || options.voiceFeedback)
+    .filter((tool) => tool.name !== "websearch" || options.webSearch !== false)
     .filter((tool) => !withheldByLab(tool.name, options))
     .map((tool) => (tool.name === "bash" ? { ...tool, description: bashDescription(options.shell) } : tool))
 }
@@ -223,6 +227,7 @@ const READS = new Set([
   "grep",
   "task",
   "webfetch",
+  "websearch",
   "question",
   "invalid",
   "actor",

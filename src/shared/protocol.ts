@@ -946,6 +946,12 @@ export interface QuestionPrompt {
    * the path alone is what its window reads back out.
    */
   plan?: string
+  /**
+   * websearch: which of the web search tool's two questions this is - whether
+   * to search at all, or with which service. The window says it in the user's
+   * own language, as it does plan_exit's.
+   */
+  websearch?: "consent" | "provider"
 }
 
 /**
@@ -1494,6 +1500,10 @@ export interface McpToolInfo {
   description?: string
 }
 
+/** The web search services, as OpenCode v2 names them (server/websearch.ts). */
+export type WebSearchProviderID = "exa" | "firecrawl" | "parallel" | "tavily" | "tinyfish"
+export type WebSearchSelection = "auto" | WebSearchProviderID | false
+
 export interface AppConfig {
   /**
    * Which build's idea of this document it is.
@@ -1506,6 +1516,12 @@ export interface AppConfig {
    */
   schemaVersion?: number
   model: ModelRef
+  /**
+   * OpenCode v2's web search (R31-9): which service searches ("auto" rotates
+   * through them), or false when the user turned it off. Absent until the
+   * first search asks.
+   */
+  websearch?: WebSearchSelection
   /** New conversations start on Smart rather than on `model`. */
   smart?: boolean
   /** Smart's fast model, for easy everyday requests; empty follows `model`. */

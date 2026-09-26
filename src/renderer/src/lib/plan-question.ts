@@ -18,15 +18,37 @@ export function planOf(prompt: QuestionPrompt | undefined): string | undefined {
   return file || undefined
 }
 
-/** The sentence the card shows: the window's own for a plan question, the model's otherwise. */
-export function planQuestionText(prompt: QuestionPrompt): string {
-  const plan = planOf(prompt)
-  return plan ? t("question.planQuestion", { path: plan }) : prompt.question
+/*
+ * websearch: the web search tool's two questions are the window's too - whether
+ * to search at all, and with which service (OpenCode v2's form). The options
+ * carry fixed English labels (server tool/websearch.ts), read back here; a
+ * service's option is its name, which stays as it is.
+ */
+const WEB_SEARCH_OPTIONS: Record<string, { label: string; description: string }> = {
+  Allow: { label: "question.webSearchAllow", description: "question.webSearchAllowDesc" },
+  "Choose another provider": { label: "question.webSearchChoose", description: "question.webSearchChooseDesc" },
+  "Disable web search": { label: "question.webSearchDisable", description: "question.webSearchDisableDesc" },
 }
 
-/** The card's heading: MiMo's word for a plan question. */
+/** The services the consent question names, as the tool listed them after "via". */
+function webSearchProviders(prompt: QuestionPrompt): string {
+  const allow = prompt.options.find((option) => option.label === "Allow")?.description ?? ""
+  return allow.replace(/^Allow search via /, "")
+}
+
+/** The sentence the card shows: the window's own for a plan or web search question, the model's otherwise. */
+export function planQuestionText(prompt: QuestionPrompt): string {
+  const plan = planOf(prompt)
+  if (plan) return t("question.planQuestion", { path: plan })
+  if (prompt.websearch === "consent") return t("question.webSearchConsent")
+  if (prompt.websearch === "provider") return t("question.webSearchProvider")
+  return prompt.question
+}
+
+/** The card's heading: MiMo's word for a plan question, the window's for a web search one. */
 export function planHeader(prompt: QuestionPrompt): string {
-  return planOf(prompt) ? t("question.planHeader") : prompt.header
+  if (planOf(prompt)) return t("question.planHeader")
+  return prompt.websearch ? t("question.webSearchHeader") : prompt.header
 }
 
 /** Which of plan_exit's two answers a label is; anything the user typed is neither. */
@@ -37,6 +59,7 @@ function answerOf(label: string): "yes" | "no" | undefined {
 
 /** An option's label in the window's language; typed text is left as it was written. */
 export function planOptionLabel(prompt: QuestionPrompt, label: string): string {
+  if (prompt.websearch === "consent") return WEB_SEARCH_OPTIONS[label.trim()] ? t(WEB_SEARCH_OPTIONS[label.trim()]!.label) : label
   if (!planOf(prompt)) return label
   const answer = answerOf(label)
   return answer === "yes" ? t("question.planOptYes") : answer === "no" ? t("question.planOptNo") : label
@@ -44,6 +67,10 @@ export function planOptionLabel(prompt: QuestionPrompt, label: string): string {
 
 /** An option's explanation, in the window's language. */
 export function planOptionDescription(prompt: QuestionPrompt, option: { label: string; description?: string }): string {
+  if (prompt.websearch === "consent") {
+    const known = WEB_SEARCH_OPTIONS[option.label.trim()]
+    return known ? t(known.description, { providers: webSearchProviders(prompt) }) : (option.description ?? "")
+  }
   if (!planOf(prompt)) return option.description ?? ""
   const answer = answerOf(option.label)
   return answer === "yes" ? t("question.planOptYesDesc") : answer === "no" ? t("question.planOptNoDesc") : (option.description ?? "")

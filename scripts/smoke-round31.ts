@@ -12,7 +12,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
-import type { AppConfig, AssistantMessage, McpServerConfig, Message } from "../src/shared/protocol"
+import type { AppConfig, AssistantMessage, McpServerConfig, Message, QuestionPrompt, WebSearchProviderID, WebSearchSelection } from "../src/shared/protocol"
 import { McpServers } from "../src/server/mcp"
 import { Storage } from "../src/server/storage"
 import { Config } from "../src/server/config"
@@ -25,7 +25,12 @@ import { retryKind, wakeWaiters } from "../src/server/session/retry"
 import { INTERRUPTED_NOTE } from "../src/server/session/reminders"
 import { SUMMARY_NUDGE, legacySummary, summaryPrompt } from "../src/server/session/summary"
 import { PatchTool } from "../src/server/tool/patch"
-import { TOOLS, forModel, usesPatch } from "../src/server/tool/registry"
+import { TOOLS, forModel, reachOf, toolsForTurn, usesPatch } from "../src/server/tool/registry"
+import { NO_RESULTS, WEB_SEARCH_ENDPOINTS, WEB_SEARCH_PROVIDERS, WebSearchHttpError, cooldownMillis, resetWebSearch, searchWeb, webSearchText } from "../src/server/websearch"
+import { WEB_SEARCH_ALLOW, WEB_SEARCH_CHOOSE, WEB_SEARCH_DISABLE, WebSearchTool } from "../src/server/tool/websearch"
+import { language } from "../src/renderer/src/lib/i18n"
+import { planHeader, planOptionDescription, planOptionLabel, planQuestionText } from "../src/renderer/src/lib/plan-question"
+import { toolVerb } from "../src/renderer/src/lib/tool-meta"
 import type { ToolContext } from "../src/server/tool/types"
 import { turnFilePaths } from "../src/server/session/turn-revert"
 import { parseUnifiedDiff } from "../src/shared/unified-diff"
@@ -75,7 +80,7 @@ async function harness(root: string, answers: Answer[]) {
       setTimeout(look, 25)
     })
   const close = () => new Promise<void>((resolve) => provider.close(() => resolve()))
-  return { bus, store, runner, project, bodies, settled, close }
+  return { bus, store, runner, project, bodies, settled, close, config }
 }
 
 /** Streams these words, then cuts the connection as a dropped link would. */
@@ -583,6 +588,277 @@ export async function roundThirtyOneChecks(check: Check, section: (name: string)
         check("and an unknown server is refused before anything is asked", nowhere.includes('"gone" is not connected') && !asked.some((entry) => entry.scope === "mcp:gone"), nowhere)
       } finally {
         await mcp.close()
+      }
+    }
+    section("Round 31 (9): OpenCode v2's web search, asked once and kept")
+    {
+      // The five services' own keys are set aside for this section, so nothing the user set reaches the stand-in.
+      const KEY_NAMES = WEB_SEARCH_PROVIDERS.map((provider) => provider.env)
+      const savedKeys = Object.fromEntries(KEY_NAMES.map((name) => [name, process.env[name]]))
+      for (const name of KEY_NAMES) delete process.env[name]
+      const savedEndpoints = { ...WEB_SEARCH_ENDPOINTS }
+      type Seen = { service: string; headers: Record<string, string | string[] | undefined>; query: string; body: Record<string, unknown> }
+      const seen: Seen[] = []
+      // A status the stand-in answers with next, per service; 200 otherwise.
+      const refuse: Record<string, { status: number; retryAfter?: string }[]> = {}
+      const standIn = createServer((request, response) => {
+        let raw = ""
+        request.on("data", (chunk) => (raw += chunk))
+        request.on("end", () => {
+          const url = new URL(request.url ?? "/", "http://x")
+          const service = url.pathname.slice(1)
+          seen.push({ service, headers: request.headers, query: url.search, body: JSON.parse(raw || "{}") as Record<string, unknown> })
+          const refusal = refuse[service]?.shift()
+          if (refusal) {
+            response.writeHead(refusal.status, refusal.retryAfter ? { "retry-after": refusal.retryAfter } : {})
+            return void response.end("{}")
+          }
+          const rpc = (result: unknown, sse = false) => {
+            const payload = JSON.stringify({ jsonrpc: "2.0", id: 1, result })
+            response.writeHead(200, { "content-type": sse ? "text/event-stream" : "application/json" })
+            response.end(sse ? `event: message\ndata: ${payload}\n\n` : payload)
+          }
+          if (service === "exa")
+            rpc(
+              {
+                content: [
+                  {
+                    type: "text",
+                    text: "Title: Exa one\nURL: https://exa.example/1\nPublished: 2026-09-01T00:00:00.000Z\nText: first body\n\n---\n\nTitle: N/A\nURL: https://exa.example/2\nPublished: N/A\nHighlights:\nsecond body",
+                  },
+                ],
+              },
+              true,
+            )
+          else if (service === "firecrawl") rpc({ content: [{ type: "text", text: JSON.stringify({ success: true, data: { web: [{ url: "https://fc.example/", title: "FC", description: "fc body" }] } }) }] })
+          else if (service === "parallel")
+            rpc({ content: [{ type: "text", text: "" }], structuredContent: { search_id: "s", session_id: "x", results: [{ url: "https://pl.example/", title: "PL", publish_date: "2026-01-02", excerpts: ["a", "b"] }] } })
+          else if (service === "tinyfish") rpc({ content: [{ type: "text", text: JSON.stringify({ results: [{ url: "https://tf.example/", title: "TF", snippet: "tf body" }] }) }] })
+          else if (service === "tavily") {
+            response.writeHead(200, { "content-type": "application/json" })
+            response.end(JSON.stringify({ results: [{ url: "https://tv.example/", title: "TV", content: "tv body" }] }))
+          } else {
+            response.writeHead(404)
+            response.end()
+          }
+        })
+      })
+      await new Promise<void>((resolve) => standIn.listen(0, "127.0.0.1", () => resolve()))
+      const base = `http://127.0.0.1:${(standIn.address() as { port: number }).port}`
+      for (const provider of WEB_SEARCH_PROVIDERS) WEB_SEARCH_ENDPOINTS[provider.id] = `${base}/${provider.id}`
+      try {
+        const signal = new AbortController().signal
+        const named = (id: WebSearchProviderID, env: Record<string, string> = {}) => searchWeb("mcode", { selection: id, sessionID: "s", signal, env })
+        resetWebSearch()
+
+        // Each service is asked the way v2 asks it, and read back into the same shape.
+        const exa = await named("exa")
+        const exaCall = seen.at(-1)!
+        check(
+          "Exa is called as an MCP tool, answered as server-sent events",
+          exaCall.body.method === "tools/call" && (exaCall.body.params as { name?: string }).name === "web_search_exa" && exa.results.length === 2,
+          { exaCall, exa },
+        )
+        check(
+          "its blocks keep their title, date and text; N/A is left out",
+          exa.results[0]?.title === "Exa one" &&
+            exa.results[0]?.published === Date.parse("2026-09-01T00:00:00.000Z") &&
+            exa.results[0]?.content === "first body" &&
+            exa.results[1]?.title === undefined &&
+            exa.results[1]?.content === "second body",
+          exa.results,
+        )
+        check("without a key, nothing names one", exaCall.query === "")
+        await named("exa", { EXA_API_KEY: "exa-test-key" })
+        check("with one, Exa takes it in the address", seen.at(-1)!.query === "?exaApiKey=exa-test-key")
+        const tavily = await named("tavily")
+        check(
+          "Tavily is asked keyless unless it has a key",
+          seen.at(-1)!.headers["x-tavily-access-mode"] === "keyless" && !seen.at(-1)!.headers.authorization && tavily.results[0]?.content === "tv body",
+          seen.at(-1)!.headers,
+        )
+        await named("tavily", { TAVILY_API_KEY: "tv-test-key" })
+        check("and by bearer when it does", seen.at(-1)!.headers.authorization === "Bearer tv-test-key" && !seen.at(-1)!.headers["x-tavily-access-mode"])
+        await named("tinyfish", { TINYFISH_API_KEY: "tf-test-key" })
+        check("TinyFish takes its key in its own header", seen.at(-1)!.headers["x-api-key"] === "tf-test-key")
+        const firecrawl = await named("firecrawl")
+        const parallel = await named("parallel")
+        check(
+          "Firecrawl and Parallel are read too",
+          firecrawl.results[0]?.title === "FC" && parallel.results[0]?.content === "a\n\nb" && parallel.results[0]?.published === Date.parse("2026-01-02"),
+          { firecrawl, parallel },
+        )
+        const text = webSearchText(exa.results)
+        check(
+          "results reach the model as v2 writes them",
+          text.startsWith("## [Exa one](https://exa.example/1)\nPublished: 2026-09-01T00:00:00.000Z\n\nfirst body\n\n## [https://exa.example/2](https://exa.example/2)"),
+          text,
+        )
+        check("and no results say so", webSearchText([]) === NO_RESULTS)
+
+        // "auto": the conversation keeps its service; a 429 sets it aside as long as it asked.
+        resetWebSearch()
+        let clock = 1_000_000
+        // The service that answered, or what was thrown - so a search that fails is a failed check, not the end of the round.
+        const auto = (sessionID: string) =>
+          searchWeb("mcode", { selection: "auto", sessionID, signal, env: {}, now: () => clock, random: () => 0 }).then(
+            (found) => found.provider as string,
+            (error: unknown) => `threw ${String(error)}`,
+          )
+        const first = await auto("a")
+        const again = await auto("a")
+        check("an automatic search keeps the conversation's service", first === "exa" && again === "exa", [first, again])
+        refuse.exa = [{ status: 429, retryAfter: "30" }]
+        const moved = await auto("a")
+        check("a 429 moves it to another service", moved !== "exa" && !moved.startsWith("threw"), moved)
+        const stays = await auto("a")
+        check("which it keeps while the first is set aside", stays === moved && !stays.startsWith("threw"), stays)
+        clock += 31_000
+        const other = await auto("b")
+        check("the set-aside service comes back once its time is up", other === "exa", other)
+        resetWebSearch()
+        for (const provider of WEB_SEARCH_PROVIDERS) refuse[provider.id] = [{ status: 429 }]
+        const exhausted = await searchWeb("mcode", { selection: "auto", sessionID: "c", signal, env: {}, now: () => clock, random: () => 0 }).then(
+          () => undefined,
+          (error: unknown) => error,
+        )
+        check("when every service refuses, the last refusal is reported", exhausted instanceof WebSearchHttpError && exhausted.status === 429, String(exhausted))
+        check("after asking each service once", WEB_SEARCH_PROVIDERS.every((provider) => refuse[provider.id]?.length === 0))
+        refuse.tavily = [{ status: 401 }]
+        const unauthorised = await named("tavily").then(
+          () => undefined,
+          (error: unknown) => error,
+        )
+        check("a named service's refusal is not passed to another", unauthorised instanceof WebSearchHttpError && unauthorised.status === 401)
+        check(
+          "cooldowns are read in seconds or as a date",
+          cooldownMillis("5", 0) === 5000 && cooldownMillis(new Date(60_000).toUTCString(), 0) === 60_000 && cooldownMillis("soon", 0) === 60_000,
+        )
+
+        // The tool: asked once, kept, and turned off for good.
+        resetWebSearch()
+        let stored: WebSearchSelection | undefined
+        const questions: unknown[][] = []
+        const permissionAsks: { kind?: string; subject?: string }[] = []
+        let answer: string[][] = []
+        const toolContext = (subagent = false) =>
+          ({
+            sessionID: "ses_ws",
+            messageID: "msg_ws",
+            callID: `call_${questions.length}_${permissionAsks.length}`,
+            directory: root,
+            subagent,
+            signal,
+            permissions: { ask: async (input: { kind?: string; subject?: string }) => void permissionAsks.push(input) },
+            questions: {
+              ask: async (input: { questions: unknown[] }) => {
+                questions.push(input.questions)
+                await new Promise((resolve) => setTimeout(resolve, 20))
+                return [answer.shift() ?? []]
+              },
+            },
+            webSearch: { selection: () => stored, select: async (value: WebSearchSelection) => void (stored = value) },
+            progress: () => {},
+            snapshot: async () => {},
+          }) as unknown as ToolContext
+        const search = (query: string, subagent = false) =>
+          WebSearchTool.execute({ query }, toolContext(subagent)).then(
+            (result) => result,
+            (error: Error) => error,
+          )
+
+        const early = await search("from a subagent", true)
+        check("a subagent cannot ask, so it is refused until the user has chosen", early instanceof Error && early.message.includes("main conversation") && questions.length === 0, String(early))
+        answer = [["Allow"]]
+        const [one, two] = await Promise.all([search("first"), search("second")])
+        check("the first search asks once, even when two run together", questions.length === 1 && !(one instanceof Error) && !(two instanceof Error), { questions: questions.length, one, two })
+        check("allowing keeps automatic search in the settings", stored === "auto")
+        const consent = questions[0]?.[0] as QuestionPrompt | undefined
+        check(
+          "the question is tagged for the window to word",
+          consent?.websearch === "consent" && JSON.stringify(consent.options.map((option) => option.label)) === JSON.stringify([WEB_SEARCH_ALLOW, WEB_SEARCH_CHOOSE, WEB_SEARCH_DISABLE]),
+          consent,
+        )
+        check("with nothing to type in", consent?.custom === false, consent)
+        await search("third")
+        check("and is not asked again", questions.length === 1)
+        check(
+          "each search is asked about in the network bucket, naming the query",
+          permissionAsks.length === 3 && permissionAsks.every((entry) => entry.kind === "webfetch") && permissionAsks.at(-1)?.subject === "third",
+          permissionAsks,
+        )
+        const result = (await search("fourth")) as { output: string; title?: string; metadata?: { provider?: string } }
+        check("the result is the service's findings, titled with the query", result.title === "fourth" && result.output.startsWith("## [") && typeof result.metadata?.provider === "string", result)
+
+        stored = undefined
+        questions.length = 0
+        answer = [["Choose another provider"], ["Tavily"]]
+        const picked = (await search("picked")) as { metadata?: { provider?: string } }
+        const second = questions[1]?.[0] as QuestionPrompt | undefined
+        check(
+          "choosing asks which service, by name",
+          questions.length === 2 && second?.websearch === "provider" && second.options.map((option) => option.label).join() === "Exa,Firecrawl,Parallel,Tavily,TinyFish",
+          second,
+        )
+        check("and searches with that one from then on", stored === "tavily" && picked.metadata?.provider === "tavily", { stored, picked })
+
+        stored = undefined
+        questions.length = 0
+        answer = [[]]
+        const dismissed = await search("dismissed")
+        check("a question left unanswered searches nothing and keeps nothing", dismissed instanceof Error && stored === undefined, String(dismissed))
+        answer = [["Disable web search"]]
+        const off = await search("off")
+        check("turning it off is kept, and the model is told not to search", off instanceof Error && off.message.includes("turned web search off") && stored === false, String(off))
+        refuse.tavily = [{ status: 401 }]
+        stored = "tavily"
+        const denied = await search("denied")
+        check("a refusal is named as v2 names it", denied instanceof Error && denied.message === "Web search authentication failed (HTTP 401) [Tavily]", String(denied))
+
+        // Offered last, and not at all once turned off.
+        check("websearch is the last tool, so every cached order stays", TOOLS.at(-1)?.name === "websearch")
+        const offered = (webSearch?: boolean) => toolsForTurn("build", { voiceFeedback: false, webSearch }).map((tool) => tool.name)
+        check("it is offered until the user turns it off", offered(undefined).includes("websearch") && offered(true).includes("websearch") && !offered(false).includes("websearch"))
+        check("it counts as a tool that only reads", reachOf("websearch") === "reads")
+        const run = await harness(path.join(root, "websearch-offer"), [finish("ok"), finish("ok")])
+        try {
+          const offeredNow = async () => {
+            const session = await run.store.create({ directory: run.project, model: { provider: "fake", model: "m" } })
+            await run.runner.prompt({ sessionID: session.id, text: "hi" })
+            await run.settled(session.id)
+            return ((JSON.parse(run.bodies.at(-1) ?? "{}") as { tools?: { function?: { name?: string } }[] }).tools ?? []).map((tool) => tool.function?.name)
+          }
+          check("a turn carries it", (await offeredNow()).includes("websearch"))
+          await run.config.set({ websearch: false })
+          check("and a turn after it was turned off does not", !(await offeredNow()).includes("websearch"))
+        } finally {
+          await run.close()
+        }
+
+        // The window says both questions in the user's language.
+        const before = language.value
+        language.value = "zh-CN"
+        try {
+          check("the consent question is the window's own", planQuestionText(consent!) === "允许 MCode 联网搜索最新信息吗？" && planHeader(consent!) === "网络搜索", planQuestionText(consent!))
+          check("its options too", planOptionLabel(consent!, "Allow") === "允许" && planOptionLabel(consent!, "Disable web search") === "关闭网络搜索")
+          check(
+            "naming the services",
+            planOptionDescription(consent!, consent!.options[0]!) === "搜索词会发送给 Exa, Firecrawl, Parallel, Tavily, TinyFish",
+            planOptionDescription(consent!, consent!.options[0]!),
+          )
+          check("the service question is too, and its names stay", planQuestionText(second!) === "选择用于网络搜索的服务。" && planOptionLabel(second!, "Tavily") === "Tavily")
+          check("the row says what it did", toolVerb("websearch", "completed") === "已搜索网络" && toolVerb("websearch", "running") === "正在搜索网络")
+        } finally {
+          language.value = before
+        }
+      } finally {
+        Object.assign(WEB_SEARCH_ENDPOINTS, savedEndpoints)
+        for (const [name, value] of Object.entries(savedKeys)) {
+          if (value === undefined) delete process.env[name]
+          else process.env[name] = value
+        }
+        resetWebSearch()
+        await new Promise<void>((resolve) => standIn.close(() => resolve()))
       }
     }
   } finally {

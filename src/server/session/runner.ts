@@ -603,7 +603,7 @@ export class SessionRunner {
     // bash's description is written for the shell the settings name (R16-C2).
     // session chat: the lab's switch takes its tools away from the next turn.
     const settings = this.config.get()
-    const own = toolsForTurn(agent, { voiceFeedback: settings.voiceFeedback !== false, shell: settings.shell, sessionChat: settings.sessionChat })
+    const own = toolsForTurn(agent, { voiceFeedback: settings.voiceFeedback !== false, shell: settings.shell, sessionChat: settings.sessionChat, webSearch: settings.websearch !== false })
     if (hasOwnToolsOnly(agent)) return own
     return [...own, ...(this.mcp?.tools(directory) ?? [])]
   }
@@ -3747,6 +3747,11 @@ export class SessionRunner {
         signal: input.signal,
         snapshot: (target) => this.record(owner, target),
         shell: this.config.get().shell,
+        // websearch: the user's choice of service, asked once and kept in the settings.
+        webSearch: {
+          selection: () => this.config.get().websearch,
+          select: async (selection) => void (await this.config.set({ websearch: selection })),
+        },
         toolOutputs: this.toolOutputs,
         subagent: this.workers.has(input.session.id),
         // session chat: a conversation's own calls only; a subagent has no contacts.
