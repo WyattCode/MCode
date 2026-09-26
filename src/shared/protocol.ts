@@ -154,6 +154,15 @@ export interface SessionInfo {
    * and a claim whose process is still alive is a turn running over there.
    */
   claim?: { at: number; resumes: number; pid?: number }
+  /**
+   * The conversation's instruction values (OpenCode v2's instruction state):
+   * `initial` is what the system prompt is built from, fixed so the provider's
+   * cached prefix survives the conversation; `current` is what the model was
+   * last told. A change - a skill added, AGENTS.md edited - is told as a
+   * reminder on the message it happened before, and `initial` moves to
+   * `current` only when a compaction starts the prompt over anyway.
+   */
+  instructions?: { initial: Record<string, string>; current: Record<string, string> }
   compacted?: {
     messageID: string
     summary: string

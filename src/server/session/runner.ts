@@ -58,7 +58,7 @@ import { COMPACTION_TRIGGER_RATIO, isOverflowByCount, isOverflowError, maxOutput
 import { pruneLevelFor, prunedHistory, type PruneLevel } from "./prune"
 import { estimateTokens } from "./estimate"
 import { SHRINK_STEPS, SUMMARY_NUDGE, UNKNOWN_WINDOW, compactedText, continueNote, extractSummary, flattenOldest, isCheckpoint, isSummary, legacySummary, messagesTokens, nextRequestEstimate, shrinkLargeToolResults, splitConversation, summaryPrompt, touchedFiles, type CompactionTrigger } from "./summary"
-import { memorySection, systemPrompt } from "./prompt"
+import { fetchInstruction, instructionUpdate, instructionValues, memorySection, systemPromptFrom, type InstructionValues } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
 import { GOAL_GUARD, JUDGE_SYSTEM, MAX_GOAL_REACT, cleanGoal, goalReminder, judgeQuestion, judgeTranscript, parseVerdict, sameGoal, type GoalVerdict } from "./goal"
 import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf, subagentAgent } from "./plan"
@@ -80,7 +80,7 @@ import { BackgroundUsage, type BackgroundUse } from "./background-usage"
 import { UsageDays } from "./usage-days"
 import type { Usage as TurnUsage } from "@shared/protocol"
 import { ABORTED_TOOL } from "../provider/history"
-import { INTERRUPTED_FINISH, INTERRUPTED_NOTE, LENGTH_NOTE, LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, recallHint, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
+import { INTERRUPTED_FINISH, INTERRUPTED_NOTE, LENGTH_NOTE, LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, recallHint, reminder, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
 import { LoopMonitor, TEXT_LOOP_BUFFER, applyCrops, describeLoop, detectStreak, stepDigest, textLoopNoteFor, type LoopIncident } from "./loop-health"
 import { interruptedTurn } from "@shared/resume"
 // session chat
@@ -1177,7 +1177,8 @@ export class SessionRunner {
       }
     }
     await this.store.dropReverted(session.id)
-    const updated = await this.store.update(session.id, { revert: undefined })
+    // The deleted messages may carry reminders of instruction changes; the next turn sets a fresh baseline, as v2's committed revert does.
+    const updated = await this.store.update(session.id, { revert: undefined, instructions: undefined })
     this.bus.publish({ type: "session.reverted", sessionID: session.id })
     return updated
   }
@@ -1216,6 +1217,8 @@ export class SessionRunner {
     if (session.compacted && !kept.has(session.compacted.messageID)) {
       session = await this.store.update(sessionID, { compacted: undefined })
     }
+    // And the reminders of instruction changes the deleted messages carried: the next turn sets a fresh baseline.
+    if (session.instructions) session = await this.store.update(sessionID, { instructions: undefined })
     return session
   }
 
@@ -1400,27 +1403,32 @@ export class SessionRunner {
   private async systemFor(session: TurnSession): Promise<{ system: string; systemTail?: string }> {
     const config = this.config.get()
     const skills = await this.skillsFor(session.directory)
+    /*
+     * OpenCode v2's instruction deltas. What the instructions say now is read
+     * on every turn - an AGENTS.md edited mid-conversation used to go unseen
+     * until the app restarted, since only the names of the settings were
+     * watched - but the prompt is built from the conversation's baseline, and
+     * a change is told to the model at the point it happened instead of
+     * rewriting the prefix the provider has cached.
+     */
+    const values = await instructionValues({
+      directory: session.directory,
+      agent: session.agent,
+      instructions: config.instructions,
+      globalAgentsFile: this.globalAgents,
+      instructionFiles: config.instructionFiles,
+      skills,
+      skillsFolder: path.join(this.dataRoot, "skills"),
+      fetchInstruction: (url) => this.fetchInstructionCached(url),
+    })
+    const initial = await this.syncInstructions(session.id, values)
     const key = JSON.stringify([
       session.agent,
-      config.instructions ?? "",
-      config.instructionFiles ?? [],
+      initial,
       this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory).map((tool) => tool.name),
-      // skills: a skill added or removed changes the list the prompt carries.
-      skills.map((skill) => skill.name),
     ])
     const frozen = this.prefixes.get(session.id)
-    const base =
-      frozen?.key === key
-        ? frozen.system
-        : await systemPrompt({
-            directory: session.directory,
-            agent: session.agent,
-            instructions: config.instructions,
-            globalAgentsFile: this.globalAgents,
-            instructionFiles: config.instructionFiles,
-            skills,
-            skillsFolder: path.join(this.dataRoot, "skills"),
-          })
+    const base = frozen?.key === key ? frozen.system : systemPromptFrom(session.agent, initial)
     this.prefixes.set(session.id, { key, system: base })
     // subagents: a subagent is told what it is, after what its agent would be told anyway.
     const outputSchema = session.subagent?.outputSchema
@@ -1627,9 +1635,17 @@ export class SessionRunner {
     const opening = estimateTokens(compactedText(mark)) + (after.length || trigger === "manual" ? messagesTokens(after) : estimateTokens(continueNote(trigger)))
     const counted = reported ? reported.input + reported.cacheRead + reported.cacheWrite : 0
     const estimate = nextRequestEstimate(fixed, messagesTokens([...sent, instruction]), opening, counted)
+    /*
+     * OpenCode v2 starts a new instruction epoch at a compaction: the prompt
+     * is starting over anyway, so its baseline becomes what the model was
+     * last told, and the reminders of changes it replaces go with the
+     * conversation they were attached to.
+     */
+    const told = (await this.store.get(session.id))?.instructions
     return this.store.update(session.id, {
       // The last message the summary covers: the whole conversation as it stood.
       compacted: { ...mark, estimate },
+      ...(told ? { instructions: { initial: told.current, current: told.current } } : {}),
     })
   }
 
@@ -2450,6 +2466,47 @@ export class SessionRunner {
       this.running.delete(sessionID)
       throw failure
     }
+  }
+
+  /**
+   * Keeps a conversation's instruction state and returns the values its
+   * system prompt is built from.
+   *
+   * The first read sets the baseline. A later read that differs from what the
+   * model was last told becomes a reminder on the newest user message - the
+   * message this turn answers, so the change sits where it happened in the
+   * conversation and is kept with it - and `current` moves on. Read from the
+   * store each time: a turn builds its prompt more than once, and a copy of
+   * the conversation from the turn's start would tell the same change twice.
+   */
+  private async syncInstructions(sessionID: string, values: InstructionValues): Promise<InstructionValues> {
+    const stored = (await this.store.get(sessionID))?.instructions
+    if (!stored) {
+      await this.store.update(sessionID, { instructions: { initial: values, current: values } }).catch(() => undefined)
+      return values
+    }
+    const initial = { standing: "", project: "", skills: "", ...stored.initial } as InstructionValues
+    const told = { standing: "", project: "", skills: "", ...stored.current } as InstructionValues
+    const update = instructionUpdate(told, values)
+    if (!update) return initial
+    const messages = await this.store.messages(sessionID).catch((): Message[] => [])
+    const asked = messages.findLast((message): message is UserMessage => message.role === "user")
+    if (asked) {
+      asked.reminders = [...(asked.reminders ?? []), reminder(update)]
+      await this.store.saveMessage(asked)
+    }
+    await this.store.update(sessionID, { instructions: { initial: stored.initial, current: values } }).catch(() => undefined)
+    return initial
+  }
+
+  /** Web instruction files, fetched at most once every few minutes: they are read on every turn now, and each fetch may wait five seconds. */
+  private readonly fetchedInstructions = new Map<string, { at: number; text: Promise<string> }>()
+  private fetchInstructionCached(url: string): Promise<string> {
+    const held = this.fetchedInstructions.get(url)
+    if (held && Date.now() - held.at < 5 * 60_000) return held.text
+    const text = fetchInstruction(url)
+    this.fetchedInstructions.set(url, { at: Date.now(), text })
+    return text
   }
 
   /** The app is closing: turns still running keep their claims, so the next start carries them on. */

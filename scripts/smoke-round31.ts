@@ -359,6 +359,54 @@ export async function roundThirtyOneChecks(check: Check, section: (name: string)
         await quit.close()
       }
     }
+    // --------------------------------------------------------------- R31-6
+    section("Round 31 (6): an instruction change is told as a change, and the cached prompt stays")
+    {
+      const V2_SUMMARY = "## Objective\n- follow the rules\n\n## Next Move\n1. (none)"
+      const answer: Answer = (request, response, body) =>
+        finish(body.includes("You MUST use this format for your response") ? V2_SUMMARY : "answered")(request, response, body)
+      const run = await harness(path.join(root, "instructions"), Array.from({ length: 30 }, () => answer))
+      try {
+        const agents = path.join(run.project, "AGENTS.md")
+        await fs.writeFile(agents, "RULE ONE: write tests first.\n", "utf8")
+        const session = await run.store.create({ directory: run.project, model: { provider: "fake", model: "m" } })
+        const turn = async (text: string) => {
+          await run.runner.prompt({ sessionID: session.id, text })
+          await run.settled(session.id)
+          const body = JSON.parse(run.bodies.at(-1) ?? "{}") as { messages?: { role?: string; content?: unknown }[] }
+          const messages = body.messages ?? []
+          const system = messages.filter((message) => message.role === "system").map((message) => JSON.stringify(message.content)).join("\n")
+          const last = JSON.stringify(messages.filter((message) => message.role === "user").at(-1)?.content ?? "")
+          return { system, last }
+        }
+        const first = await turn("first")
+        check("the first turn's prompt carries the project's instructions", first.system.includes("RULE ONE"))
+        check("and tells of no change", !first.last.includes("instruction files have changed"))
+
+        await fs.writeFile(agents, "RULE TWO: never skip review.\n", "utf8")
+        const second = await turn("second")
+        check("an edited AGENTS.md reaches the model now, not after a restart", second.last.includes("RULE TWO"), second.last.slice(0, 300))
+        check("told as a change, at the message it happened before", second.last.includes("The project's instruction files have changed"))
+        check("while the system prompt keeps its baseline, so the provider's cache is not started over", second.system.includes("RULE ONE") && !second.system.includes("RULE TWO"))
+
+        const third = await turn("third")
+        const reminded = (await run.store.messages(session.id)).filter((message) => message.role === "user" && (message.reminders ?? []).some((line) => line.includes("instruction files have changed")))
+        check("nothing changed since: no second telling", reminded.length === 1 && !third.last.includes("have changed"), reminded.length)
+
+        await fs.rm(agents)
+        const fourth = await turn("fourth")
+        check("instructions removed are said to no longer apply", fourth.last.includes("no longer apply"), fourth.last.slice(0, 300))
+
+        // A compaction starts the prompt over, and its baseline with it.
+        await run.runner.compact(session.id)
+        const fifth = await turn("fifth")
+        check("after a compaction the prompt is built from what the model was last told", !fifth.system.includes("RULE ONE") && !fifth.system.includes("RULE TWO"), fifth.system.slice(0, 200))
+        const state = (await run.store.get(session.id))?.instructions
+        check("and the baseline has moved to it", state !== undefined && state.initial.project === state.current.project && state.current.project === "", state)
+      } finally {
+        await run.close()
+      }
+    }
   } finally {
     if (titles === undefined) delete process.env.MCODE_GENERATE_TITLES
     else process.env.MCODE_GENERATE_TITLES = titles
