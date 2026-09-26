@@ -189,7 +189,25 @@ export function withSameStepsNote(history: Message[]): Message[] {
 }
 
 /** MiMo's continuation limits, per turn. */
-export const CONTINUATION_LIMITS = { length: 3, textTool: 2, empty: 2 } as const
+/*
+ * `interrupted` matches the stream retry budget: each continuation after a cut
+ * stream stands where one retry of that kind would have (RETRY_BUDGETS.stream).
+ */
+export const CONTINUATION_LIMITS = { length: 3, textTool: 2, empty: 2, interrupted: 5 } as const
+
+/**
+ * The finish a step reports when its stream broke after the reply had begun.
+ *
+ * OpenCode v2 (session/runner/llm.ts, MIT): an incomplete stream after durable
+ * output keeps what was written and continues it, where a stream that broke
+ * before saying anything is simply sent again. MCode used to throw the words
+ * away and ask for the whole reply once more - paying for every token twice,
+ * and on a long answer over a flaky link never finishing at all.
+ */
+export const INTERRUPTED_FINISH = "stream_interrupted"
+
+/** OpenCode v2's own sentence for it (CONTINUE_AFTER_INCOMPLETE_STREAM). */
+export const INTERRUPTED_NOTE = "The previous response was interrupted. Continue from where you left off without repeating completed content."
 
 export const LENGTH_NOTE =
   "Your previous reply was cut off because it reached the output limit. Continue from exactly where it stopped - do not repeat or summarise what you already wrote."
@@ -221,9 +239,15 @@ export function continuationFor(
   stop: string,
   finishReason: string | undefined,
   modelID: string,
-  counts: { length: number; textTool: number; empty: number },
+  counts: { length: number; textTool: number; empty: number; interrupted: number },
   said = "",
 ): Continuation {
+  if (finishReason === INTERRUPTED_FINISH) {
+    // Still breaking after as many continuations as retries: the link is the problem, and the reader is told so.
+    if (counts.interrupted >= CONTINUATION_LIMITS.interrupted) return { error: { message: "The reply kept being interrupted and was not finished.", code: "error.network" } }
+    counts.interrupted += 1
+    return { note: INTERRUPTED_NOTE }
+  }
   if (message.parts.some((part) => part.type === "tool")) return {}
   const text = message.parts
     .filter((part) => part.type === "text")

@@ -80,7 +80,7 @@ import { BackgroundUsage, type BackgroundUse } from "./background-usage"
 import { UsageDays } from "./usage-days"
 import type { Usage as TurnUsage } from "@shared/protocol"
 import { ABORTED_TOOL } from "../provider/history"
-import { LENGTH_NOTE, LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, recallHint, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
+import { INTERRUPTED_FINISH, INTERRUPTED_NOTE, LENGTH_NOTE, LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, recallHint, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
 import { LoopMonitor, TEXT_LOOP_BUFFER, applyCrops, describeLoop, detectStreak, stepDigest, textLoopNoteFor, type LoopIncident } from "./loop-health"
 import { interruptedTurn } from "@shared/resume"
 // session chat
@@ -2500,7 +2500,7 @@ export class SessionRunner {
     const limit = config.maxSteps && config.maxSteps > 0 ? config.maxSteps : undefined
     /* MiMo's continuations this turn: notes kept in the request after the reply they answer, and how many of each were used. */
     const notes = new Map<string, string[]>()
-    const continued = { length: 0, textTool: 0, empty: 0 }
+    const continued = { length: 0, textTool: 0, empty: 0, interrupted: 0 }
     /* MiMo's n-gram check: how many times this turn has been told to stop repeating itself. */
     let repeated = 0
     /*
@@ -2632,7 +2632,7 @@ export class SessionRunner {
          * step of the turn told the model a finished reply had been cut off;
          * it goes back on below only if this step is cut again.
          */
-        const kept = (notes.get(assistant.id) ?? []).filter((note) => note !== LENGTH_NOTE)
+        const kept = (notes.get(assistant.id) ?? []).filter((note) => note !== LENGTH_NOTE && note !== INTERRUPTED_NOTE)
         if (kept.length) notes.set(assistant.id, kept)
         else notes.delete(assistant.id)
       }
@@ -2904,7 +2904,7 @@ export class SessionRunner {
         await this.store.saveMessage(assistant)
         if ((next.note || repeatNote) && !lastStep) {
           // The rest of a sentence the limit cut belongs to the reply that started it.
-          if (next.note === LENGTH_NOTE) continuing = assistant
+          if (next.note === LENGTH_NOTE || next.note === INTERRUPTED_NOTE) continuing = assistant
           if (overflowing) {
             const compacted = await this.compactForOverflow(session, controller.signal)
             if (compacted) {
@@ -3228,7 +3228,36 @@ export class SessionRunner {
            */
           const decision = retryDecision(err, attempt, Date.now() - firstFailure, Math.random(), streamed ? "stream" : "request")
           if (!decision) throw err
+          /*
+           * OpenCode v2's continuation: a stream that broke after the reply had
+           * begun keeps its words and is continued, rather than thrown away and
+           * asked for from the start. Only the words: a tool call cut part-way
+           * cannot be finished by another request, so a step that had begun one
+           * is sent again whole, as before; and this attempt's thinking goes,
+           * since a block cut before its signature cannot be sent back.
+           */
+          const fresh = assistant.parts.filter((part) => !base.includes(part))
+          const grew = (carried !== undefined && carried.text.length > carriedAt) || fresh.some((part) => part.type === "text" && part.text.trim() !== "")
+          const resume = streamed && grew && !cut && !fresh.some((part) => part.type === "tool")
           streamed = false
+          if (resume) {
+            assistant.parts = assistant.parts.filter((part) => base.includes(part) || part.type === "text")
+            taken = false
+            blocks.clear()
+            dirty = false
+            const retry = { attempt, message: describe(err), next: Date.now() + decision.wait, kind: decision.kind, max: decision.max }
+            if (decision.kind === "rate_limit") noteRateLimit(assistant.model.provider, retry.next)
+            this.retrying.set(assistant.sessionID, { messageID: assistant.id, ...retry })
+            this.bus.publish({ type: "message.updated", message: { ...structuredClone(assistant), retry } })
+            try {
+              if (!(await waitFor(decision.wait, request.signal))) throw new DOMException("Aborted", "AbortError")
+            } finally {
+              this.retrying.delete(assistant.sessionID)
+            }
+            // The step ends here; the turn continues it in this same reply with the note asking for the rest.
+            outcome = { stop: "end_turn", toolCalls: [], usage: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }, finishReason: INTERRUPTED_FINISH }
+            continue
+          }
           /*
            * Tried again from the start, as MiMo's engine does: what the failed
            * attempt managed to stream is dropped, because the next one streams
