@@ -191,6 +191,13 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       )
       await migrateCheckpoints(storage, runner.checkpoints, config)
       /*
+       * Turns the app was cut off in the middle of - a crash, a kill, a quit -
+       * carry on, as OpenCode v2's server does at boot. After the checkpoint
+       * migration, which the carried-on turn's undo records rely on.
+       */
+      const carried = await runner.resumeClaimed()
+      if (carried.length) console.info(`[restart] carried on ${carried.length} turn(s) the app was cut off in`)
+      /*
        * Conversations whose record would not read still own their stores
        * (L12-11) - and the list is read from disk again first.
        *
@@ -445,6 +452,8 @@ export async function startBackend(dataDirectory: string, options: BackendOption
     port,
     secret,
     async close() {
+      // First: a turn the quit cuts off keeps its claim, so the next start carries it on.
+      runner.closeTurns()
       // The model's own commands go with the terminals: both are children this
       // process started, and neither has a window left to stop it.
       stopBashCommands()

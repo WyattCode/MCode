@@ -140,6 +140,20 @@ export interface SessionInfo {
    * off, MiMo's label, and `files` the files the summarised part worked on,
    * each with what happened to it, which the next request lists.
    */
+  /**
+   * A turn is running, or was when the app last went away (OpenCode v2's
+   * write-ahead execution claim).
+   *
+   * Written when a turn starts and cleared when it ends for any reason of its
+   * own - an answer, a failure, Stop. A quit or a crash clears nothing, so a
+   * claim still here at start-up is a turn the app was cut off in the middle
+   * of, and it is carried on. `resumes` counts how many times this one turn
+   * has been carried on that way; only a turn that ends resets it, so a turn
+   * that brings the app down every time cannot loop across restarts. `pid`
+   * is the process that wrote it: two instances may share one data folder,
+   * and a claim whose process is still alive is a turn running over there.
+   */
+  claim?: { at: number; resumes: number; pid?: number }
   compacted?: {
     messageID: string
     summary: string

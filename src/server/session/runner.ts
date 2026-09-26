@@ -27,7 +27,7 @@ import type { Bus } from "../bus"
 import type { Config } from "../config"
 import type { Permissions } from "../permission"
 import { PermissionDenied, REVIEW_TIMEOUT_MS, VERDICT_TOOL_NAME, looksSecret, verdictApproves } from "../permission"
-import type { Storage } from "../storage"
+import { processAlive, type Storage } from "../storage"
 import { globalAgentsPath } from "../global-agents"
 import { discoverSkills, enabledSkills, skillReminders, withSkillReminders, type SkillInfo } from "../skill"
 import { findTool, hasOwnToolsOnly, reachOf, repairableNames, toolsForTurn, withheldByLab } from "../tool/registry"
@@ -102,6 +102,19 @@ type McpAccess = Pick<McpServers, "ready" | "tools" | "names">
  */
 const RESUME_PROMPT =
   "The previous turn stopped before it was finished. Carry on with the task from where it stopped: do not redo work that is already done, and do not start over."
+
+/*
+ * What a turn the app was cut off in the middle of is told when it is carried
+ * on at the next start: OpenCode v2's CONTINUE_AFTER_SERVER_RESTART (MIT),
+ * with "app" for "server" - in MCode it is the app that went away.
+ */
+const RESTART_PROMPT = "The app restarted while you were working. Continue from where you left off without repeating completed work."
+
+/** How many times one turn is carried on after the app went away before it is left for the reader (v2's `DEFAULT_MAX_ATTEMPTS`). */
+export const MAX_RESTART_RESUMES = 10
+
+/** Why a turn carries on without a new message: the reader's 继续, or the app coming back after it went away mid-turn. */
+type Resumed = false | "user" | "restart"
 
 /*
  * subagents: what a subagent is told about its place, in MCode's own words,
@@ -350,6 +363,20 @@ export class SessionRunner {
    * next one.
    */
   private readonly steering = new Map<string, Steering>()
+
+  /** Turns being carried on after the app went away, and how many times each has been: written into the claim as the turn starts. */
+  private readonly restartResumes = new Map<string, number>()
+
+  /**
+   * Set as the app closes. A turn cut off by the quit keeps its claim, so the
+   * next start carries it on; one that ends for a reason of its own releases
+   * it. Without this the shutdown's own killing of commands ended turns that
+   * then looked finished.
+   */
+  private closing = false
+
+  /** Whether a process is alive; replaced by checks, which cannot rely on the machine's process table. */
+  alive?: (pid: number) => boolean
   /** subagents: the subagents a running turn is waiting on (run), so Stop reaches them. Background ones are not here. */
   private readonly children = new Map<string, Set<string>>()
   /** subagents: every subagent taking a turn, by its own session id. An idle one has no entry. */
@@ -2399,7 +2426,7 @@ export class SessionRunner {
    * conversation is rolled back: the new turn would be written after messages
    * that are hidden and about to be dropped.
    */
-  async resumeTurn(sessionID: string): Promise<string> {
+  async resumeTurn(sessionID: string, how: Exclude<Resumed, false> = "user"): Promise<string> {
     if (this.running.has(sessionID)) throw new Error("This session is already working on something")
     const controller = new AbortController()
     this.running.set(sessionID, controller)
@@ -2417,7 +2444,7 @@ export class SessionRunner {
       this.turn(sessionID).messages = [messageID]
       this.turn(sessionID).directory = session.directory
       this.turn(sessionID).watching = this.snapshots.begin(session.directory)
-      this.launch(sessionID, this.config.apiKey(session.model.provider) ?? "", controller, true)
+      this.launch(sessionID, this.config.apiKey(session.model.provider) ?? "", controller, how)
       return messageID
     } catch (failure) {
       this.running.delete(sessionID)
@@ -2425,8 +2452,69 @@ export class SessionRunner {
     }
   }
 
+  /** The app is closing: turns still running keep their claims, so the next start carries them on. */
+  closeTurns(): void {
+    this.closing = true
+  }
+
+  /**
+   * Carries on every turn the app was cut off in the middle of (OpenCode v2's
+   * SessionRestart): a claim still on a conversation at start-up means a turn
+   * was running when the app went away - a crash, a kill, or a quit - and
+   * nothing released it.
+   *
+   * Only top-level conversations: a subagent's parent decides what happens to
+   * it, and start-up already marks those that were working as failed. The
+   * count is written before the turn starts, so a turn that brings the app
+   * down again is counted by the next start; past MAX_RESTART_RESUMES it is
+   * left for the reader to carry on with 继续 or not. Like v2's, this is at
+   * least once: a command that was running when the app died may have done
+   * its work, and the model is told only that it was cut off.
+   *
+   * @returns the conversations carried on
+   */
+  async resumeClaimed(): Promise<string[]> {
+    const carried: string[] = []
+    for (const session of await this.store.list().catch((): SessionInfo[] => [])) {
+      const claim = session.claim
+      if (!claim) continue
+      /*
+       * Two instances may share one data folder. A claim written by a process
+       * that is still alive is a turn running over there right now, and
+       * carrying it on here would run it twice; it is left alone. A dead
+       * process's id may have been handed to another program since, which
+       * only ever errs towards leaving a turn for the reader.
+       */
+      if (claim.pid !== undefined && claim.pid !== process.pid && (this.alive ?? processAlive)(claim.pid)) continue
+      const release = () => this.store.update(session.id, { claim: undefined }).catch(() => undefined)
+      if (session.parentID || session.subagent || this.running.has(session.id) || session.revert) {
+        await release()
+        continue
+      }
+      if (claim.resumes >= MAX_RESTART_RESUMES) {
+        console.warn(`[restart] ${session.id} was cut off ${claim.resumes} times in a row; left for the reader to carry on`)
+        await release()
+        continue
+      }
+      if (!interruptedTurn(await this.store.messages(session.id).catch((): Message[] => []))) {
+        await release()
+        continue
+      }
+      this.restartResumes.set(session.id, claim.resumes + 1)
+      try {
+        await this.resumeTurn(session.id, "restart")
+        carried.push(session.id)
+      } catch (failure) {
+        this.restartResumes.delete(session.id)
+        console.warn(`[restart] could not carry on ${session.id}: ${describe(failure)}`)
+        await release()
+      }
+    }
+    return carried
+  }
+
   /** Runs a claimed session's turn and releases it afterwards. */
-  private launch(sessionID: string, apiKey: string, controller: AbortController, resumed = false, lead?: Lead): void {
+  private launch(sessionID: string, apiKey: string, controller: AbortController, resumed: Resumed = false, lead?: Lead): void {
     this.steering.set(sessionID, { waiting: [], written: Promise.resolve() })
 
     // Deliberately not awaited: the caller gets the message id immediately and
@@ -2453,6 +2541,8 @@ export class SessionRunner {
             error: `Could not record this turn for undo: ${(cause as Error).message}`,
           })
         }
+        // The turn ended for a reason of its own: nothing to carry on at the next start. A turn cut off by the quit keeps its claim.
+        if (!this.closing) await this.store.update(sessionID, { claim: undefined }).catch(() => undefined)
         this.running.delete(sessionID)
         this.retrying.delete(sessionID)
         this.workingIn.delete(sessionID)
@@ -2481,7 +2571,16 @@ export class SessionRunner {
       })
   }
 
-  private async run(sessionID: string, apiKey: string, controller: AbortController, resumed = false, lead?: Lead): Promise<void> {
+  private async run(sessionID: string, apiKey: string, controller: AbortController, resumed: Resumed = false, lead?: Lead): Promise<void> {
+    /*
+     * OpenCode v2's write-ahead claim, before anything else the turn does: a
+     * quit or a crash from here on leaves it behind, and the next start
+     * carries the turn on. The count of such carryings-on is kept across them
+     * and reset only by a turn that ends.
+     */
+    const resumes = this.restartResumes.get(sessionID) ?? 0
+    this.restartResumes.delete(sessionID)
+    await this.store.update(sessionID, { claim: { at: Date.now(), resumes, pid: process.pid } }).catch(() => undefined)
     const own = await this.store.require(sessionID)
     // plan: the conversation's own mode as the turn begins; approving a plan changes it mid-turn.
     const planning = own.agent === "plan"
@@ -2755,7 +2854,7 @@ export class SessionRunner {
                   id: `${assistant.id}:resume`,
                   sessionID,
                   role: "user" as const,
-                  text: RESUME_PROMPT,
+                  text: resumed === "restart" ? RESTART_PROMPT : RESUME_PROMPT,
                   attachments: [],
                   time: { created: Date.now() },
                 },

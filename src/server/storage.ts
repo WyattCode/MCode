@@ -274,7 +274,7 @@ export const TEMP_NAME = /\.(\d+)\.\d+\.tmp$/
 const TEMP_KEEP_MS = 60 * 60 * 1000
 
 /** Whether a process id is still running, for a temp that may still be being written. */
-function processAlive(pid: number): boolean {
+export function processAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false
   try {
     process.kill(pid, 0)

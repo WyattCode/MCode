@@ -272,6 +272,93 @@ export async function roundThirtyOneChecks(check: Check, section: (name: string)
       check("and the update prompt asks for it to be rewritten", summaryPrompt(true, true).includes("written with an earlier format"))
       check("which a first summary never does", !summaryPrompt(false, true).includes("earlier format"))
     }
+    // --------------------------------------------------------------- R31-5
+    section("Round 31 (5): a turn the app was cut off in carries on at the next start")
+    {
+      const run = await harness(path.join(root, "restart"), Array.from({ length: 30 }, () => finish("carried on")))
+      try {
+        const model = { provider: "fake", model: "m" }
+        const dead = 999_999_999
+        run.runner.alive = (pid) => pid === process.pid
+        // A turn that ends clears its claim.
+        const plain = await run.store.create({ directory: run.project, model })
+        await run.runner.prompt({ sessionID: plain.id, text: "an ordinary question" })
+        await run.settled(plain.id)
+        check("a turn that ends leaves no claim behind", (await run.store.get(plain.id))?.claim === undefined, (await run.store.get(plain.id))?.claim)
+
+        /*
+         * The app went away mid-turn: the user's question is on disk, the reply
+         * never finished, and the claim the turn wrote is still there.
+         */
+        const cutOff = async (claim: { at: number; resumes: number; pid?: number }, extra: Partial<Parameters<typeof run.store.update>[1]> = {}) => {
+          const session = await run.store.create({ directory: run.project, model })
+          await run.store.saveMessage({ id: `msg_${session.id}_q`, sessionID: session.id, role: "user", text: `CUT OFF question ${session.id}`, attachments: [], time: { created: Date.now() } })
+          await run.store.update(session.id, { claim, ...extra })
+          return session.id
+        }
+        const crashed = await cutOff({ at: Date.now() - 1000, resumes: 0, pid: dead })
+        const other = await cutOff({ at: Date.now() - 1000, resumes: 0, pid: 424_242 })
+        const tired = await cutOff({ at: Date.now() - 1000, resumes: 10, pid: dead })
+        const child = await cutOff({ at: Date.now() - 1000, resumes: 0, pid: dead }, { parentID: plain.id })
+        run.runner.alive = (pid) => pid === process.pid || pid === 424_242
+        const before = run.bodies.length
+        const carried = await run.runner.resumeClaimed()
+        await run.settled(crashed)
+        check("the cut-off turn is carried on", carried.includes(crashed), carried)
+        const sent = run.bodies.slice(before).find((body) => body.includes(`CUT OFF question ${crashed}`)) ?? ""
+        check("told the app restarted, in OpenCode v2's words", sent.includes("The app restarted while you were working"), sent.slice(-500))
+        const replies = (await run.store.messages(crashed)).filter((message) => message.role === "assistant")
+        check("and it runs to an answer", textOf(replies.at(-1)) === "carried on", replies.map(textOf))
+        check("which releases its claim", (await run.store.get(crashed))?.claim === undefined)
+        check("a claim whose process is still alive is another instance's turn, left alone", !carried.includes(other) && (await run.store.get(other))?.claim !== undefined)
+        check("a turn cut off ten times in a row is left for the reader", !carried.includes(tired) && (await run.store.get(tired))?.claim === undefined)
+        check("a subagent's claim is its parent's business, released and not carried on", !carried.includes(child) && (await run.store.get(child))?.claim === undefined)
+
+        // The count goes up with each carrying-on, so a turn that keeps bringing the app down stops.
+        const again = await cutOff({ at: Date.now(), resumes: 3, pid: dead })
+        const bodies = run.bodies.length
+        let seen: number | undefined
+        const stop = run.bus.subscribe((event) => {
+          if (event.type === "session.updated" && event.session.id === again && event.session.claim) seen ??= event.session.claim.resumes
+        })
+        await run.runner.resumeClaimed()
+        await run.settled(again)
+        stop()
+        check("carrying a turn on counts it, before the turn runs", seen === 4 && run.bodies.length > bodies, seen)
+      } finally {
+        await run.close()
+      }
+
+      /*
+       * The quit: a turn the app is closing under keeps its claim, where one
+       * the reader stops releases it.
+       */
+      const hang: Answer = (_request, response) => {
+        response.writeHead(200, { "content-type": "text/event-stream" })
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "working" } }] })}\n\n`)
+      }
+      const quit = await harness(path.join(root, "quit"), [hang, hang])
+      try {
+        const model = { provider: "fake", model: "m" }
+        const stopped = await quit.store.create({ directory: quit.project, model })
+        await quit.runner.prompt({ sessionID: stopped.id, text: "stop me" })
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        check("a running turn holds a claim, with its process", (await quit.store.get(stopped.id))?.claim?.pid === process.pid, (await quit.store.get(stopped.id))?.claim)
+        await quit.runner.abort(stopped.id)
+        await quit.settled(stopped.id)
+        check("Stop releases it: the reader ended that turn", (await quit.store.get(stopped.id))?.claim === undefined)
+
+        const closing = await quit.store.create({ directory: quit.project, model })
+        await quit.runner.prompt({ sessionID: closing.id, text: "the app closes on me" })
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        quit.runner.closeTurns()
+        await quit.runner.abort(closing.id)
+        await quit.settled(closing.id)
+        check("a turn the quit cuts off keeps it, for the next start", (await quit.store.get(closing.id))?.claim !== undefined)
+      } finally {
+        await quit.close()
+      }
+    }
   } finally {
     if (titles === undefined) delete process.env.MCODE_GENERATE_TITLES
     else process.env.MCODE_GENERATE_TITLES = titles
