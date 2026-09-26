@@ -24,6 +24,7 @@ import { ProviderHttpError } from "../src/server/provider/types"
 import { retryKind, wakeWaiters } from "../src/server/session/retry"
 import { INTERRUPTED_NOTE } from "../src/server/session/reminders"
 import { SUMMARY_NUDGE, legacySummary, summaryPrompt } from "../src/server/session/summary"
+import { systemPromptFrom } from "../src/server/session/prompt"
 import { PatchTool } from "../src/server/tool/patch"
 import { TOOLS, forModel, reachOf, toolsForTurn, usesPatch } from "../src/server/tool/registry"
 import { NO_RESULTS, WEB_SEARCH_ENDPOINTS, WEB_SEARCH_PROVIDERS, WebSearchHttpError, cooldownMillis, resetWebSearch, searchWeb, webSearchText } from "../src/server/websearch"
@@ -860,6 +861,13 @@ export async function roundThirtyOneChecks(check: Check, section: (name: string)
         resetWebSearch()
         await new Promise<void>((resolve) => standIn.close(() => resolve()))
       }
+    }
+
+    section("Round 31 (10): OpenCode v2's system prompt, where MCode's lacked it")
+    {
+      // The rest of v2's harness prompt MCode's already says; its per-family prompts replace the identity, so they are not taken.
+      const prompt = systemPromptFrom("build", { standing: "", project: "", skills: "" })
+      check("shell chains are not padded with separator lines", prompt.includes('Do not pad such a chain with separator lines like `echo "===="`'))
     }
   } finally {
     if (titles === undefined) delete process.env.MCODE_GENERATE_TITLES
