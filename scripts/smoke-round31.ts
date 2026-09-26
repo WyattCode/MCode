@@ -12,7 +12,8 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
-import type { AssistantMessage, Message } from "../src/shared/protocol"
+import type { AppConfig, AssistantMessage, McpServerConfig, Message } from "../src/shared/protocol"
+import { McpServers } from "../src/server/mcp"
 import { Storage } from "../src/server/storage"
 import { Config } from "../src/server/config"
 import { Bus } from "../src/server/bus"
@@ -512,6 +513,76 @@ export async function roundThirtyOneChecks(check: Check, section: (name: string)
         check("a patch without its envelope is refused with what is missing", malformed.includes("*** Begin Patch"), malformed)
       } finally {
         await fs.rm(folder, { recursive: true, force: true }).catch(() => undefined)
+      }
+    }
+
+    section("Round 31 (8): an MCP server's resources can be listed and read")
+    {
+      const home = path.join(root, "mcp-home")
+      const project = path.join(root, "mcp-project")
+      await fs.mkdir(project, { recursive: true })
+      const serversFor = (mcpServers: Record<string, McpServerConfig>) => {
+        const bus = new Bus()
+        const value = { mcpServers, directory: project }
+        const config = { get: () => value as unknown as AppConfig, set: async () => value as unknown as AppConfig }
+        return new McpServers(bus, config as never, undefined, home)
+      }
+      const fixture = (name: string) => ({ type: "local" as const, command: ["node", path.join(process.cwd(), "scripts/fixtures", name)] })
+      const asked: { kind?: string; scope?: string; title?: string }[] = []
+      const context = {
+        sessionID: "ses_r31_mcp",
+        messageID: "msg_r31_mcp",
+        callID: "call_r31_mcp",
+        directory: project,
+        permissions: { ask: async (input: { kind?: string; scope?: string; title?: string }) => void asked.push(input), action: () => "ask" },
+        signal: new AbortController().signal,
+        progress: () => {},
+        snapshot: async () => {},
+      } as unknown as ToolContext
+
+      // A server that has no resources adds nothing: the request's tools stay as they were.
+      const plain = serversFor({ plain: fixture("mcp-server.cjs") })
+      try {
+        await plain.start()
+        const names = plain.tools(project).map((tool) => tool.name)
+        check("without a server that has resources, neither tool is offered", names.length > 0 && !names.includes("list_mcp_resources") && !names.includes("read_mcp_resource"), names)
+      } finally {
+        await plain.close()
+      }
+
+      const mcp = serversFor({ plain: fixture("mcp-server.cjs"), res: fixture("mcp-resource-server.cjs") })
+      try {
+        await mcp.start()
+        const tools = mcp.tools(project)
+        const names = tools.map((tool) => tool.name)
+        const tool = (name: string) => tools.find((entry) => entry.name === name)!
+        check("with one, both are offered", names.includes("list_mcp_resources") && names.includes("read_mcp_resource"), names)
+        check("after every server's own tools, so their cached order is untouched", names.slice(-2).join() === "list_mcp_resources,read_mcp_resource", names)
+
+        const listed = await tool("list_mcp_resources").execute({}, context)
+        check("listing follows the server's pages to the end", ["note://readme", "note://two", "img://dot", "doc://spec", "bin://archive"].every((uri) => listed.output.includes(uri)), listed.output)
+        check("and names its templates", listed.output.includes("template record://{id}"), listed.output)
+        check("a title and description are shown with the URI", listed.output.includes("note://readme - Read me (text/plain): What this fixture is"), listed.output)
+        check("only servers that have resources are listed", listed.output.includes("## res") && !listed.output.includes("## plain"), listed.output)
+        check("it is asked about under the server's own MCP approval", asked.length === 1 && asked[0]?.kind === "mcp" && asked[0]?.scope === "mcp:res", asked)
+        const unknown = await tool("list_mcp_resources").execute({ server: "plain" }, context).then(() => "", (error: Error) => error.message)
+        check("a server without resources is named in the refusal", unknown === 'MCP server "plain" is not connected or does not expose resources', unknown)
+
+        const read = (uri: string) => tool("read_mcp_resource").execute({ server: "res", uri }, context)
+        check("a text resource is read as its text", (await read("note://readme")).output === "The fixture's readme.")
+        check("several parts are joined", (await read("note://two")).output === "first part\n\nsecond part")
+        const picture = await read("img://dot")
+        check("a picture is handed to the model as itself", picture.attachments?.length === 1 && picture.attachments[0]?.mime === "image/png" && picture.attachments[0]?.path === "img://dot", picture.attachments)
+        const pdf = await read("doc://spec")
+        check("so is a PDF", pdf.attachments?.[0]?.mime === "application/pdf", pdf.attachments)
+        const archive = await read("bin://archive")
+        check("other bytes are described, not dumped", !archive.attachments && archive.output.startsWith("[application/zip resource left out:"), archive)
+        const missing = await read("note://nowhere").then(() => "", (error: Error) => error.message)
+        check("a URI the server does not have says which, and why", missing.startsWith("Unable to read MCP resource res:note://nowhere:") && missing.includes("Resource not found"), missing)
+        const nowhere = await tool("read_mcp_resource").execute({ server: "gone", uri: "x://y" }, context).then(() => "", (error: Error) => error.message)
+        check("and an unknown server is refused before anything is asked", nowhere.includes('"gone" is not connected') && !asked.some((entry) => entry.scope === "mcp:gone"), nowhere)
+      } finally {
+        await mcp.close()
       }
     }
   } finally {
