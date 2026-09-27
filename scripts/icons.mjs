@@ -204,6 +204,13 @@ const SMALL_SIZES = 40
 const SMALL_SCALE = 1.1
 
 /*
+ * The notification area's tile, on its own: the user asked for a wider rim of
+ * white there than the taskbar's, so the mark is only a hair larger than it
+ * was painted. The taskbar and title bar keep SMALL_SCALE.
+ */
+const TRAY_SCALE = 1.03
+
+/*
  * Every size Windows draws an icon at between 100% and 300% scaling - 20 and
  * 40 are 125% and 250% of 16 and 32. Given only 16, 24 and 32, a 125% screen
  * stretches the 16 to 20 and the result is soft; given the exact size it draws
@@ -417,10 +424,11 @@ async function main() {
      * size, in one .ico it chooses from. Main used to hand it the 512 tile cut
      * to a single 16, which a 125% or 150% screen then stretched back up.
      */
-    const smallTile = await rounded(await square(await enlarged(mark, SMALL_SCALE), way), mask)
+    const trayTile = await rounded(await square(await enlarged(mark, TRAY_SCALE), way), mask)
     await fs.mkdir(TRAY, { recursive: true })
-    await fs.writeFile(path.join(TRAY, `${way.id}.ico`), await pngToIco(await Promise.all(TRAY_SIZES.map((size) => crisp(smallTile, size)))))
+    await fs.writeFile(path.join(TRAY, `${way.id}.ico`), await pngToIco(await Promise.all(TRAY_SIZES.map((size) => crisp(trayTile, size)))))
     if (way.id !== "classic") continue
+    const smallTile = await rounded(await square(await enlarged(mark, SMALL_SCALE), way), mask)
 
     // Unmasked, for anywhere the system applies its own shape.
     await fs.writeFile(path.join(OUT, "icon-square.png"), flat)

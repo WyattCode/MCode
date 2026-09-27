@@ -26,7 +26,7 @@ async function pixel(file: string | Buffer, x: number, y: number): Promise<numbe
 }
 
 /** The share of the image's width the dark paint of the mark spans. */
-async function markWidth(file: string): Promise<number> {
+async function markWidth(file: string | Buffer): Promise<number> {
   const { data, info } = await sharp(file).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
   let min = info.width
   let max = -1
@@ -168,6 +168,35 @@ export async function roundThirtyThreeChecks(check: Check, section: (name: strin
       const ico = await fs.readFile(file).catch(() => undefined)
       const sizes = ico ? Array.from({ length: ico.readUInt16LE(4) }, (_, n) => ico[6 + n * 16] || 256).sort((a, b) => a - b) : []
       check(`${icon.name}'s tray icon is drawn for each size 100% to 400% scaling asks`, sizes.join(",") === "16,20,24,32,40,48,64", sizes)
+    }
+    // The tray's mark is only a hair over the painted size - the user wanted a wider rim there than the taskbar's.
+    {
+      const ico = await fs.readFile(at("resources", "tray", "classic.ico"))
+      let rgba: Buffer | undefined
+      for (let n = 0; n < ico.readUInt16LE(4); n++) {
+        if (ico[6 + n * 16] !== 64) continue
+        const body = ico.subarray(ico.readUInt32LE(6 + n * 16 + 12), ico.readUInt32LE(6 + n * 16 + 12) + ico.readUInt32LE(6 + n * 16 + 8))
+        if (body.readUInt32BE(0) === 0x89504e47) rgba = await sharp(body).ensureAlpha().raw().toBuffer()
+        else {
+          // A 32-bit BMP entry: BGRA rows, bottom up, after its header.
+          const header = body.readUInt32LE(0)
+          rgba = Buffer.alloc(64 * 64 * 4)
+          for (let y = 0; y < 64; y++) {
+            for (let x = 0; x < 64; x++) {
+              const s = header + ((63 - y) * 64 + x) * 4
+              const d = (y * 64 + x) * 4
+              rgba[d] = body[s + 2]!
+              rgba[d + 1] = body[s + 1]!
+              rgba[d + 2] = body[s]!
+              rgba[d + 3] = body[s + 3]!
+            }
+          }
+        }
+      }
+      // Measured at 64, where a few percent is more than one pixel: the taskbar's 10% would read about 1.1 here.
+      const trayWidth = rgba ? await markWidth(await sharp(rgba, { raw: { width: 64, height: 64, channels: 4 } }).png().toBuffer()) : 0
+      const painted = await markWidth(at("build", "icons", "64x64.png"))
+      check("the tray's mark is only a hair over the painted size, less than the taskbar's", trayWidth >= painted * 0.99 && trayWidth < painted * 1.07, { trayWidth, painted, ratio: trayWidth / painted })
     }
     const main = await fs.readFile(at("src", "main", "index.ts"), "utf8")
     const tray = main.slice(main.indexOf("let image: Electron.NativeImage"), main.indexOf("const open = () =>"))
