@@ -63,7 +63,7 @@ export async function roundThirtyThreeChecks(check: Check, section: (name: strin
     const ico = await fs.readFile(at("build", "icon.ico"))
     const count = ico.readUInt16LE(4)
     const sizes = Array.from({ length: count }, (_, n) => ico[6 + n * 16] || 256).sort((a, b) => a - b)
-    check("the .ico carries 16 to 256", sizes.join(",") === "16,24,32,48,64,128,256", sizes)
+    check("the .ico carries every size Windows draws, 20 and 40 among them", sizes.join(",") === "16,20,24,32,40,48,64,128,256", sizes)
     const tile = await pixel(at("build", "icon.png"), 512, 60)
     check("the tile is the light one the painting was made on", tile[3] === 255 && tile[0]! > 235 && tile[2]! > 235, tile)
     const small = await markWidth(at("build", "icons", "32x32.png"))
@@ -131,7 +131,48 @@ export async function roundThirtyThreeChecks(check: Check, section: (name: strin
     check("the light theme's letters are graphite and the dark theme's silver", lightInk >= 0 && lightInk < 90 && darkInk > 170, { lightInk, darkInk })
     const script = await fs.readFile(at("scripts", "wordmark.mjs"), "utf8")
     check("the script refuses to draw in a fallback face", /No Such Face Anywhere/.test(script) && /if \(!\(await faceInstalled\(\)\)\) throw/.test(script))
+    // The space between the M and the C: the empty columns in the band of rows the M fills.
+    {
+      const { data, info } = await sharp(light).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+      const painted = (x: number) => {
+        for (let y = 0; y < info.height; y++) if (data[(y * info.width + x) * 4 + 3]! > 40) return true
+        return false
+      }
+      let x = 0
+      while (x < info.width && !painted(x)) x++
+      while (x < info.width && painted(x)) x++
+      const gapStart = x
+      while (x < info.width && !painted(x)) x++
+      const gap = x - gapStart
+      let top = info.height
+      let bottom = 0
+      for (let column = 0; column < gapStart; column++) {
+        for (let y = 0; y < info.height; y++) {
+          if (data[(y * info.width + column) * 4 + 3]! > 40) {
+            top = Math.min(top, y)
+            bottom = Math.max(bottom, y)
+          }
+        }
+      }
+      const share = gap / (bottom - top + 1)
+      check("the M and the C stand about a sixth of the M's height apart", share > 0.14 && share < 0.19, { gap, markHeight: bottom - top + 1, share })
+    }
     check("the old ribbon sources are gone", !(await exists(at("resources", "wordmark-source.png"))) && !(await exists(at("resources", "wordmark-light-source.png"))))
+  }
+
+  section("Round 33: the Windows tray, sharp at every scaling")
+  {
+    for (const icon of APP_ICONS) {
+      const file = at("resources", "tray", `${icon.id}.ico`)
+      const ico = await fs.readFile(file).catch(() => undefined)
+      const sizes = ico ? Array.from({ length: ico.readUInt16LE(4) }, (_, n) => ico[6 + n * 16] || 256).sort((a, b) => a - b) : []
+      check(`${icon.name}'s tray icon is drawn for each size 100% to 400% scaling asks`, sizes.join(",") === "16,20,24,32,40,48,64", sizes)
+    }
+    const main = await fs.readFile(at("src", "main", "index.ts"), "utf8")
+    const tray = main.slice(main.indexOf("let image: Electron.NativeImage"), main.indexOf("const open = () =>"))
+    check("Windows is handed that .ico whole, not the 512 tile cut to one size", /process\.platform === "win32" && trayIcoFile\(trayIcon\)/.test(tray) && /nativeImage\.createFromPath\(trayIcoFile\(trayIcon\)!\)/.test(tray), tray.slice(0, 600))
+    const mac = tray.slice(tray.indexOf('if (process.platform === "darwin")'), tray.indexOf("} else if"))
+    check("the macOS template is not resized, so its @2x survives", /trayTemplateFile\(\)/.test(mac) && !/\.resize\(/.test(mac), mac)
   }
 
   section("Round 33: the menu bar mark")

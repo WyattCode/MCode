@@ -471,6 +471,13 @@ function trayTemplateFile(): string {
     : path.join(here, "../../resources/tray/trayTemplate.png")
 }
 
+/** Windows' tray icon for a colourway: its multi-size .ico, or nothing if it has none. */
+function trayIcoFile(id: string): string | undefined {
+  if (!/^[a-z][a-z0-9-]{0,30}$/.test(id)) return undefined
+  const file = app.isPackaged ? path.join(process.resourcesPath, "tray", id + ".ico") : path.join(here, "../../resources/tray", id + ".ico")
+  return existsSync(file) ? file : undefined
+}
+
 /**
  * The file an id names, or nothing if it names none. The Dock takes the macOS
  * cut (`app-icons-mac`, on Apple's icon grid, drawn by scripts/icons.mjs), as
@@ -534,10 +541,20 @@ function refreshTray(enabled: boolean): void {
    */
   let image: Electron.NativeImage
   if (process.platform === "darwin") {
+    // Not resized: the file is already 16, and resizing would throw away the @2x beside it that a Retina bar draws.
     image = nativeImage.createFromPath(trayTemplateFile())
     if (image.isEmpty()) return
-    image = image.resize({ width: 16, height: 16 })
     image.setTemplateImage(true)
+  } else if (process.platform === "win32" && trayIcoFile(trayIcon)) {
+    /*
+     * The colourway's own tray .ico, every size from 16 to 64 drawn for that
+     * size (scripts/icons.mjs), and Windows picks the one its scaling needs.
+     * Cutting the 512 tile to a single 16 here left a 125% or 150% screen to
+     * stretch it back up - the soft, small icon the user compared with another
+     * app's crisp one.
+     */
+    image = nativeImage.createFromPath(trayIcoFile(trayIcon)!)
+    if (image.isEmpty()) return
   } else {
     const file = appIconFile(trayIcon)
     if (!file) return

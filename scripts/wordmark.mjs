@@ -3,7 +3,8 @@
  *
  * The wordmark is the folded M standing in for the letter M, followed by
  * "Code" in Segoe UI Bold: the M exactly as tall as the capital C and sitting
- * on the same line, a tenth of its height apart. It exists in two colourways
+ * on the same line, 16% of its height apart (a tenth read as crowded -
+ * the user's call). It exists in two colourways
  * rather than being tinted - graphite glyphs for the light theme, the mark's
  * silver cut (its Icon Composer dark appearance) with silver glyphs for the
  * dark one - and both are laid on one shared canvas, so the mark does not move
@@ -33,6 +34,9 @@ const TARGETS = [
   { mark: "build/icon-mark.png", glyphs: GLYPHS.light, out: "wordmark-light.png", label: "light theme" },
   { mark: "build/icon.icon/Assets/mark-dark.png", glyphs: GLYPHS.dark, out: "wordmark-dark.png", label: "dark theme" },
 ]
+
+/* The space between the M and the C, as a share of the M's height. */
+export const GAP = 0.16
 
 /* Big enough that the trim and the M's resize lose nothing before the final scale. */
 const SIZE = 1000
@@ -72,7 +76,7 @@ async function wordmark(target) {
   const markHeight = cap.height
   const markWidth = Math.round((meta.width * markHeight) / meta.height)
   const markImage = await mark.resize(markWidth, markHeight, { kernel: "lanczos3" }).png().toBuffer()
-  const gap = Math.round(markHeight * 0.1)
+  const gap = Math.round(markHeight * GAP)
   const capBottom = cap.top + cap.height - word.top
   const markTop = Math.max(0, capBottom - markHeight)
   const width = markWidth + gap + word.width

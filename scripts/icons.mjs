@@ -192,14 +192,35 @@ function ground(tile) {
 }
 
 /*
- * Windows' small sizes - title bar, taskbar, file lists at 16 to 32 pixels -
- * take the mark 15% larger on the same tile. At the painted proportion it is
- * 71% of the tile's width, which reads well from 48 up and leaves a speck at
- * 16. Its corners stay inside the rounded tile at this size. macOS draws its
- * small sizes from the grid itself and keeps the painted proportion.
+ * Windows' small sizes - title bar, taskbar, tray, file lists at 16 to 40
+ * pixels - take the mark 25% larger on the same tile. At the painted
+ * proportion it is 71% of the tile's width, which reads well from 48 up and
+ * leaves a faint speck at 16 to 24 (the user compared it with another app's
+ * tray icon, which fills its cell). At 1.25 its corners still sit inside the
+ * rounded tile. macOS draws its small sizes from the grid itself and keeps the
+ * painted proportion.
  */
-const SMALL_SIZES = 32
-const SMALL_SCALE = 1.15
+const SMALL_SIZES = 40
+const SMALL_SCALE = 1.25
+
+/*
+ * Every size Windows draws an icon at between 100% and 300% scaling - 20 and
+ * 40 are 125% and 250% of 16 and 32. Given only 16, 24 and 32, a 125% screen
+ * stretches the 16 to 20 and the result is soft; given the exact size it draws
+ * it pixel for pixel.
+ */
+const ICO_SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256]
+const TRAY_SIZES = [16, 20, 24, 32, 40, 48, 64]
+
+/**
+ * A tile brought down to one small size: straight from the 1024 master with
+ * Lanczos, then a light unsharp mask at the sizes where the gradient's edges
+ * would otherwise go soft.
+ */
+async function crisp(tile, size) {
+  const image = sharp(tile).resize(size, size, { kernel: "lanczos3" })
+  return (size <= 32 ? image.sharpen({ sigma: 0.5, m1: 0.8, m2: 1.6 }) : image).png({ compressionLevel: 9 }).toBuffer()
+}
 
 /** The mark grown about the canvas centre, still on a 1024 canvas. */
 async function enlarged(mark, factor) {
@@ -391,15 +412,22 @@ async function main() {
     const tile = await rounded(flat, mask)
     await fs.writeFile(path.join(APP_ICONS, `${way.id}.png`), await png(tile, 512))
     await fs.writeFile(path.join(APP_ICONS_MAC, `${way.id}.png`), await macCut(tile, 512))
+    /*
+     * Windows' notification area: every size it may draw, each made for that
+     * size, in one .ico it chooses from. Main used to hand it the 512 tile cut
+     * to a single 16, which a 125% or 150% screen then stretched back up.
+     */
+    const smallTile = await rounded(await square(await enlarged(mark, SMALL_SCALE), way), mask)
+    await fs.mkdir(TRAY, { recursive: true })
+    await fs.writeFile(path.join(TRAY, `${way.id}.ico`), await pngToIco(await Promise.all(TRAY_SIZES.map((size) => crisp(smallTile, size)))))
     if (way.id !== "classic") continue
 
     // Unmasked, for anywhere the system applies its own shape.
     await fs.writeFile(path.join(OUT, "icon-square.png"), flat)
     await fs.writeFile(path.join(OUT, "icon.png"), tile)
-    const small = await rounded(await square(await enlarged(mark, SMALL_SCALE), way), mask)
-    const sized = (size) => png(size <= SMALL_SIZES ? small : tile, size)
+    const sized = (size) => (size <= SMALL_SIZES ? crisp(smallTile, size) : png(tile, size))
     for (const size of [16, 24, 32, 48, 64, 128, 256, 512, 1024]) await fs.writeFile(path.join(ICONSET, `${size}x${size}.png`), await sized(size))
-    await fs.writeFile(path.join(OUT, "icon.ico"), await pngToIco(await Promise.all([16, 24, 32, 48, 64, 128, 256].map(sized))))
+    await fs.writeFile(path.join(OUT, "icon.ico"), await pngToIco(await Promise.all(ICO_SIZES.map(sized))))
     await fs.writeFile(path.join(OUT, "icon.icns"), await buildIcns(await macCut(tile, MASTER)))
   }
   await fs.writeFile(path.join(OUT, "icon-mark.png"), mark)
@@ -412,7 +440,7 @@ async function main() {
   }
   console.log(`  icon.icon/        Icon Composer package`)
   console.log(`  app-icons, app-icons-mac   ${COLOURWAYS.length} colourways`)
-  console.log(`  tray/             menu bar template`)
+  console.log(`  tray/             menu bar template, and a Windows tray .ico per colourway`)
 }
 
 main().catch((err) => {
