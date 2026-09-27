@@ -63,7 +63,8 @@ for (let run = 1; run <= runs; run++) {
     const measured = fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, "utf8")) : { notes: ["the agent wrote nothing"] }
     const check = spawnSync(spec.verify[0], spec.verify.slice(1), { cwd: dir, encoding: "utf8", windowsHide: true, timeout: 60_000 })
     const touched = (spec.unchanged ?? []).filter((file) => git(dir, "diff", "--quiet", "HEAD", "--", file).status !== 0)
-    const passed = check.status === 0 && touched.length === 0
+    const astray = (measured.notes ?? []).some((note) => note.startsWith("ran outside"))
+    const passed = check.status === 0 && touched.length === 0 && !astray
     results.push({ task, run, passed, touched, check: (check.stdout + check.stderr).trim().split(/\r?\n/).slice(-3).join(" | "), wall: Math.round((Date.now() - began) / 1000), ...measured })
     console.log(`${passed ? "PASS" : "FAIL"}  ${measured.seconds ?? "?"}s  ${measured.steps ?? "?"} steps  ${measured.toolCalls ?? "?"} tools`)
   }

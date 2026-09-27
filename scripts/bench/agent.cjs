@@ -69,6 +69,8 @@ function measure() {
   const first = messages.find((message) => message.role === "user")?.time?.created ?? 0
   const last = Math.max(0, ...replies.map((message) => message.time?.completed ?? message.time?.created ?? 0))
   const sum = (key) => replies.reduce((total, message) => total + (message.usage?.[key] ?? 0), 0)
+  const directories = fresh.map((id) => JSON.parse(fs.readFileSync(path.join(SESSIONS, id, "info.json"), "utf8")).directory)
+  if (directories.some((directory) => path.resolve(directory) !== path.resolve(TASK_DIR))) result.notes.push("ran outside the task folder: " + directories.join(", "))
   return {
     sessions: fresh.length,
     steps: replies.length,
@@ -112,7 +114,14 @@ app.whenReady().then(async () => {
     }
     const centre = async (selector) =>
       JSON.parse(await js(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return "null"; const r = el.getBoundingClientRect(); return JSON.stringify([r.x + r.width / 2, r.y + r.height / 2]) })()`))
-    window.webContents.send("menu:new-session")
+    /*
+     * A new task in the task's folder, from its project row. The menu's new
+     * task would open in the folder of whatever conversation the app came
+     * back to, which is the last one the profile used.
+     */
+    const createIn = `button.ico.inline[aria-label*=${JSON.stringify(path.basename(TASK_DIR))}]`
+    const created = await js(`(() => { const button = document.querySelector(${JSON.stringify(createIn)}); if (!button) return false; button.click(); return true })()`)
+    if (!created) throw new Error("no project row for the task folder")
     await wait(1500)
     const box = await centre("textarea")
     if (!box) throw new Error("no composer")
