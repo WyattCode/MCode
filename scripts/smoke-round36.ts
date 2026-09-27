@@ -130,6 +130,9 @@ export async function roundThirtySixChecks(check: Check, section: (name: string)
         ],
       })
       check("typing, choosing and ticking fill the form, and saving says so", /已保存：小王，English，深色/.test(form.output), form.output)
+      // A native select's list is drawn by the browser, outside the page: clicking one is refused with the way to choose instead.
+      const native = await run({ action: "do", steps: [{ action: "click", ref: refOf(settings.output, "语言") }, { action: "press", key: "ArrowUp" }] })
+      check("a click on a native select is refused, naming select and its options, and no key follows it", /1\. click \[\d+\] failed: .*native select; choose with select \{ref, value\}.*中文, English, 日本語/.test(native.output) && /remaining 1 step/.test(native.output) && /value="English"/.test(native.output + form.output), native.output)
 
       const dialog = await run({ action: "do", steps: [{ action: "click", ref: refOf(settings.output, "删除账户") }] })
       check("a modal dialog: only what is inside it is listed", /modal dialog is open/.test(dialog.output) && /"确定删除"/.test(dialog.output) && !/"保存"/.test(dialog.output), dialog.output)

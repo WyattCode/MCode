@@ -226,6 +226,13 @@ export class AppDriver {
       case "click":
       case "double_click": {
         const at = await this.locate(step.ref)
+        /*
+         * A native select opens a list the browser draws itself, outside the
+         * page: nothing in it can be read, and it swallows the keys that
+         * follow. A model that clicked one and then pressed arrows has
+         * changed the value without seeing it.
+         */
+        if (at.tag === "SELECT") throw new StepError(`[${step.ref}] is a native select; choose with select {ref, value} instead. Its options: ${(at.options ?? []).join(", ")}`)
         const count = step.action === "double_click" ? 2 : 1
         await this.mouse("mouseMoved", at.x, at.y, 0)
         for (let click = 1; click <= count; click++) {
@@ -338,9 +345,9 @@ export class AppDriver {
     await this.call(WATCH).catch(() => undefined)
   }
 
-  private async locate(ref: number | undefined): Promise<{ x: number; y: number; covered: string; disabled: boolean }> {
+  private async locate(ref: number | undefined): Promise<{ x: number; y: number; covered: string; disabled: boolean; tag: string; options?: string[] }> {
     const id = requireRef({ ref } as Step)
-    const at = await this.call<{ error?: string; x: number; y: number; covered: string; disabled: boolean }>(LOCATE, id)
+    const at = await this.call<{ error?: string; x: number; y: number; covered: string; disabled: boolean; tag: string; options?: string[] }>(LOCATE, id)
     if (at.error) throw new StepError(`[${id}] ${REF_ERRORS[at.error] ?? at.error}`)
     return at
   }

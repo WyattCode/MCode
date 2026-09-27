@@ -158,7 +158,8 @@ export const LOCATE = String.raw`(function (ref) {
     covered = (top.getAttribute("aria-label") || top.innerText || top.tagName || "").replace(/\s+/g, " ").trim().slice(0, 60);
   }
   var disabled = Boolean(el.disabled || el.getAttribute("aria-disabled") === "true");
-  return { x: x, y: y, covered: covered, disabled: disabled, tag: el.tagName };
+  var options = el.tagName === "SELECT" ? Array.prototype.map.call(el.options, function (o) { return o.text.trim(); }).slice(0, 30) : undefined;
+  return { x: x, y: y, covered: covered, disabled: disabled, tag: el.tagName, options: options };
 })`
 
 /** Gives an element the keyboard, with its contents selected when they are to be replaced. */
