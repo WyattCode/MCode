@@ -1,0 +1,5 @@
+{
+  "prompt": "这是一个 Windows 桌面小程序（app.ps1，用 powershell -NoProfile -STA -ExecutionPolicy Bypass -File app.ps1 运行）。把它打开，每个标签页里的按钮和功能都实际点一遍测试，找出表现不对的地方并修好，修完再打开实际点一遍确认没问题。不要改 check.ps1。",
+  "verify": ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "check.ps1"],
+  "unchanged": ["check.ps1"]
+}
