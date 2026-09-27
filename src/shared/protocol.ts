@@ -1330,6 +1330,13 @@ export interface McpServerConfig {
    * allowed, true or "allow" never asks. Written by hand into the config file.
    */
   tools?: Record<string, boolean | "allow" | "ask" | "deny">
+  /**
+   * OpenCode v2's Code Mode (R31-11), off unless set: the server's tools are
+   * not offered one by one but called from a script the model passes to one
+   * `execute` tool, run in a QuickJS sandbox. Each call inside is asked about
+   * as a direct call would be.
+   */
+  codemode?: boolean
 }
 
 export interface McpOAuthConfig {

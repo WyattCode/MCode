@@ -13,7 +13,11 @@ import os from "node:os"
 import path from "node:path"
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import type { AppConfig, AssistantMessage, McpServerConfig, Message, QuestionPrompt, UserMessage, WebSearchProviderID, WebSearchSelection } from "../src/shared/protocol"
-import { McpServers } from "../src/server/mcp"
+import { McpServers, codeModeTitle } from "../src/server/mcp"
+import { checkEntry } from "../src/server/mcp-sources"
+import { renderCatalog, searchCatalog, summarize, type CatalogTool } from "../src/server/codemode/catalog"
+import { runScript } from "../src/server/codemode/sandbox"
+import { jsonSchemaToTypeScript, toolExpression } from "../src/server/codemode/schema-ts"
 import { Storage } from "../src/server/storage"
 import { Config } from "../src/server/config"
 import { Bus } from "../src/server/bus"
@@ -31,7 +35,7 @@ import { NO_RESULTS, WEB_SEARCH_ENDPOINTS, WEB_SEARCH_PROVIDERS, WebSearchHttpEr
 import { WEB_SEARCH_ALLOW, WEB_SEARCH_CHOOSE, WEB_SEARCH_DISABLE, WebSearchTool } from "../src/server/tool/websearch"
 import { language } from "../src/renderer/src/lib/i18n"
 import { planHeader, planOptionDescription, planOptionLabel, planQuestionText } from "../src/renderer/src/lib/plan-question"
-import { toolVerb } from "../src/renderer/src/lib/tool-meta"
+import { stepTitle, toolVerb } from "../src/renderer/src/lib/tool-meta"
 import type { ToolContext } from "../src/server/tool/types"
 import { turnFilePaths } from "../src/server/session/turn-revert"
 import { parseUnifiedDiff } from "../src/shared/unified-diff"
@@ -987,6 +991,123 @@ export async function roundThirtyOneChecks(check: Check, section: (name: string)
       // The rest of v2's harness prompt MCode's already says; its per-family prompts replace the identity, so they are not taken.
       const prompt = systemPromptFrom("build", { standing: "", project: "", skills: "" })
       check("shell chains are not padded with separator lines", prompt.includes('Do not pad such a chain with separator lines like `echo "===="`'))
+    }
+
+    section("Round 31 (11): Code Mode - a server's tools called from a sandboxed script")
+    {
+      const home = path.join(root, "cm-home")
+      const project = path.join(root, "cm-project")
+      await fs.mkdir(project, { recursive: true })
+      const serversFor = (mcpServers: Record<string, McpServerConfig>) => {
+        const value = { mcpServers, directory: project }
+        const config = { get: () => value as unknown as AppConfig, set: async () => value as unknown as AppConfig }
+        return new McpServers(new Bus(), config as never, undefined, home)
+      }
+      const fixture = { type: "local" as const, command: ["node", path.join(process.cwd(), "scripts/fixtures/mcp-server.cjs")] }
+      const asked: { kind?: string; scope?: string; title?: string }[] = []
+      const context = (signal = new AbortController().signal) =>
+        ({
+          sessionID: "ses_r31_cm",
+          messageID: "msg_r31_cm",
+          callID: "call_r31_cm",
+          directory: project,
+          permissions: { ask: async (input: { kind?: string; scope?: string; title?: string }) => void asked.push(input), action: () => "ask" },
+          signal,
+          progress: () => {},
+          snapshot: async () => {},
+        }) as unknown as ToolContext
+
+      const off = serversFor({ plain: fixture })
+      try {
+        await off.start()
+        const names = off.tools(project).map((tool) => tool.name)
+        check("Code Mode is off unless a server turns it on", names.includes("plain_add") && !names.includes("execute"), names)
+      } finally {
+        await off.close()
+      }
+
+      const mcp = serversFor({ plain: fixture, calc: { ...fixture, codemode: true } })
+      try {
+        await mcp.start()
+        const tools = mcp.tools(project)
+        const names = tools.map((tool) => tool.name)
+        check("its tools leave the list, and one execute tool is offered last", !names.some((name) => name.startsWith("calc_")) && names.includes("plain_add") && names.at(-1) === "execute", names)
+        const execute = tools.find((tool) => tool.name === "execute")!
+        check(
+          "the catalog is on its description, with v2's signatures",
+          execute.description.includes("# Code Mode") && execute.description.includes("- calc (2 tools)") && execute.description.includes("tools.calc.add({") && execute.description.includes("// Adds two numbers.") && execute.description.includes("The catalog is complete"),
+          execute.description,
+        )
+        const run = (code: string, signal?: AbortSignal) =>
+          execute.execute({ code }, context(signal)).then(
+            (result) => result,
+            (error: Error) => ({ output: `THREW ${error.message}`, metadata: undefined, title: undefined }),
+          )
+
+        const composed = await run(`const [sum, said] = await Promise.all([tools.calc.add({ a: 2, b: 3 }), tools.calc.echo({ text: "hi" })])\nconsole.log("sum was", sum)\nreturn { sum: Number(sum) * 10, said }`)
+        check("a script calls tools together and composes their results", composed.output.startsWith('{\n  "sum": 50,\n  "said": "hi"\n}'), composed.output)
+        check("what it logged comes back after the result", composed.output.includes("Logs:\nsum was 5"), composed.output)
+        const recorded = (composed.metadata as { toolCalls?: { tool: string; status: string }[] } | undefined)?.toolCalls ?? []
+        check("the step is titled by the tools the script called, not by its source", composed.title === "calc.add, calc.echo" && codeModeTitle(["a.x", "a.y", "a.x", "b.z", "c.w"]) === "a.x, a.y, b.z +1", composed.title)
+        check(
+          "and the window shows that title",
+          stepTitle({ type: "tool", name: "execute", input: { code: "return 1" }, title: "calc.add", status: "completed" } as never) === "calc.add",
+        )
+        check("each call is recorded", recorded.map((call) => `${call.tool}:${call.status}`).sort().join() === "calc.add:completed,calc.echo:completed", recorded)
+        check("and each is asked about under the server's approval, as a direct call is", asked.length === 2 && asked.every((entry) => entry.kind === "mcp" && entry.scope === "mcp:calc"), asked)
+
+        const sealed = await run(`return [typeof require, typeof process, typeof fetch, typeof setTimeout, typeof XMLHttpRequest, typeof tools.plain]`)
+        check("the sandbox reaches no module, process, network or timer, nor a server left out of it", sealed.output.replace(/\s/g, "") === '["undefined","undefined","undefined","undefined","undefined","undefined"]', sealed.output)
+        const thrown = await run(`throw new Error("boom")`)
+        check("an error is the result, marked as one", thrown.output.startsWith("Error: boom") && (thrown.metadata as { error?: boolean } | undefined)?.error === true, thrown)
+        const found = await run(`return search({ query: "echo" }).items[0].path`)
+        check("search works inside a script, without await", found.output === "tools.calc.echo", found.output)
+        const plain = await run(`return 1 + 1`)
+        check("a plain value comes back as JSON", plain.output === "2", plain.output)
+      } finally {
+        await mcp.close()
+      }
+
+      // The sandbox's limits, on their own.
+      const host = { tools: new Set(["s\u0000t"]), search: () => ({}), call: async () => new Promise<unknown>(() => undefined) }
+      const spin = await runScript("while (true) {}", host, { limits: { timeoutMs: 200 } })
+      check("a script that never stops is stopped at its time limit", !spin.ok && spin.error.includes("time limit"), spin)
+      const waiting = await runScript("return await tools.s.t({})", host, { limits: { timeoutMs: 300 } })
+      check("so is one waiting on a call that never answers", !waiting.ok && waiting.error.includes("time limit"), waiting)
+      const counted = await runScript("for (let i = 0; i < 3; i++) await tools.s.t({})", { ...host, call: async () => "ok" }, { limits: { maxToolCalls: 2 } })
+      check("calls past the limit are refused", !counted.ok && counted.error.includes("at most 2 calls"), counted)
+      const controller = new AbortController()
+      setTimeout(() => controller.abort(), 100)
+      const stopped = await runScript("return await tools.s.t({})", host, { signal: controller.signal })
+      check("Stop ends a running script", !stopped.ok && stopped.error === "The script was stopped.", stopped)
+      const syntax = await runScript("return (", host)
+      check("a script that does not parse says so", !syntax.ok && syntax.error.includes("SyntaxError"), syntax)
+      // A short limit: were the bridge reachable, the call below would wait on the host for ever.
+      const unknown = await runScript('return await globalThis.__mcode_call?.("s", "t", "{}") ?? "gone"', host, { limits: { timeoutMs: 1000 } })
+      check("the host's own bridge is not left where a script can reach it", unknown.ok && unknown.value === "gone", unknown)
+
+      // A catalog too large for its budget points at search.
+      const many: CatalogTool[] = Array.from({ length: 60 }, (_, at) => ({
+        segments: ["big", `tool_${String(at).padStart(2, "0")}`],
+        description: `Does thing number ${at} with a fairly long description that takes room`,
+        inputSchema: { type: "object", properties: { id: { type: "string", description: "Which one" } }, required: ["id"] },
+      }))
+      const summary = summarize(many)
+      check("past about 2,000 tokens the catalog is partial", summary.shown > 0 && summary.shown < 60 && summary.total === 60, [summary.shown, summary.total])
+      const rendered = renderCatalog(summary)
+      check("and says to search, with search's signature", rendered.includes("The catalog is partial") && rendered.includes("- search(input?:") && rendered.includes(`- big (60 tools, ${summary.shown} shown)`), rendered.slice(0, 600))
+      const hit = searchCatalog(many, { query: "tool_42" })
+      check("search finds a tool by name first", hit.items[0]?.path === "tools.big.tool_42", hit.items.slice(0, 2))
+      const page = searchCatalog(many, { namespace: "big", limit: 5 })
+      check("and pages through a namespace", page.items.length === 5 && page.remaining === 55 && page.next?.offset === 5, [page.items.length, page.remaining, page.next])
+      check(
+        "schemas render as TypeScript",
+        jsonSchemaToTypeScript({ type: "object", properties: { mode: { enum: ["a", "b"] }, tags: { type: "array", items: { type: "string" } }, "odd-key": { anyOf: [{ type: "string" }, { type: "null" }] } }, required: ["mode"] }) ===
+          '{ mode: "a" | "b"; tags?: Array<string>; "odd-key"?: string | null }',
+        jsonSchemaToTypeScript({ type: "object", properties: { mode: { enum: ["a", "b"] }, tags: { type: "array", items: { type: "string" } }, "odd-key": { anyOf: [{ type: "string" }, { type: "null" }] } }, required: ["mode"] }),
+      )
+      check("names that are not identifiers are bracketed", toolExpression(["my-server", "resolve-id"]) === 'tools["my-server"]["resolve-id"]')
+      check("codemode must be true or false in the config", "invalid" in checkEntry({ type: "local", command: ["x"], codemode: "yes" }) && "config" in checkEntry({ type: "local", command: ["x"], codemode: true }))
     }
   } finally {
     if (titles === undefined) delete process.env.MCODE_GENERATE_TITLES

@@ -88,6 +88,7 @@ export function checkEntry(value: unknown): { config: McpServerConfig } | { skip
   if (entry.timeout !== undefined && !(typeof entry.timeout === "number" && Number.isInteger(entry.timeout) && entry.timeout > 0)) {
     return { invalid: "timeout must be a positive whole number of milliseconds" }
   }
+  if (entry.codemode !== undefined && typeof entry.codemode !== "boolean") return { invalid: "codemode must be true or false" }
   if (entry.type === "local") {
     if (typeof entry.command === "string") return { invalid: "command must be a list: the program, then each argument" }
     if (!Array.isArray(entry.command) || !entry.command.length || !entry.command.every((part) => typeof part === "string")) {

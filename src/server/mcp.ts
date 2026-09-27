@@ -26,6 +26,8 @@ import { browserTarget } from "./open-url"
 import { terminate, windowsLaunch } from "./mcp-launch"
 import { probeTools, stopProbes, type ProbeResult } from "./mcp-probe"
 import { wildcardMatch } from "./permission"
+import { renderCatalog, searchCatalog, summarize, type CatalogTool } from "./codemode/catalog"
+import { formatScriptResult, runScript } from "./codemode/sandbox"
 
 /**
  * Talks to Model Context Protocol servers, and offers their tools to the agent.
@@ -1092,6 +1094,31 @@ function madeFrom(entry: ResolvedServer): string {
   return JSON.stringify({ config: entry.config ?? null, invalid: entry.invalid ?? null })
 }
 
+/** A Code Mode step's title: the tools its script called, the first three and how many more. */
+export function codeModeTitle(tools: readonly string[]): string {
+  const names = [...new Set(tools)]
+  return names.slice(0, 3).join(", ") + (names.length > 3 ? ` +${names.length - 3}` : "")
+}
+
+/** A server's tool that Code Mode reaches from a script rather than offering directly. */
+interface ScriptedTool {
+  server: string
+  connection: Connection
+  tool: McpTool
+  rule: ReturnType<typeof toolRule>
+}
+
+/** v2's invariant description of `execute` (core/src/codemode/tool.ts), less `fetch`, which MCode's sandbox does not offer. */
+const CODE_MODE_DESCRIPTION = [
+  "Run JavaScript in a confined Code Mode runtime to script tool calls and compose their results.",
+  "Imports, the network, direct filesystem access and timers are unavailable; all external access goes through `tools`.",
+  "Within `{ code }`, the only callable tools are those listed in the Code Mode catalog below or returned by the `search` function. Inside `{ code }`, ignore tools shown outside the Code Mode catalog. They are not available in the Code Mode runtime.",
+  'Call tools through `tools` using only exact paths and signatures from the catalog. Do not infer or normalize tool names; preserve bracket notation such as `tools.<namespace>["tool-name"](input)`.',
+  "Each tool resolves to its text output; use JSON.parse when that text is JSON.",
+  "End with an explicit `return`; without one the result is null.",
+  "Await every call whose completion matters; pending calls are interrupted when execution ends. Run independent calls concurrently with `Promise.all`.",
+].join("\n")
+
 export class McpServers {
   private readonly groups = new Map<string, Group>()
   /*
@@ -1510,12 +1537,18 @@ export class McpServers {
    */
   tools(directory?: string): ToolDefinition[] {
     const out: ToolDefinition[] = []
+    // OpenCode v2's Code Mode: the tools of servers it is switched on for, called from a script instead.
+    const scripted: ScriptedTool[] = []
     for (const [name, connection] of this.group(directory)?.connections ?? []) {
       if (connection.status !== "connected") continue
       for (const tool of connection.tools) {
         const rule = toolRule(connection.config.tools, tool.name)
         // A tool its server's rules refuse is never offered, as MiMo leaves a denied tool out.
         if (rule === "deny") continue
+        if (connection.config.codemode === true) {
+          scripted.push({ server: name, connection, tool, rule })
+          continue
+        }
         out.push({
           name: mcpToolName(name, tool.name),
           description: tool.description ?? "",
@@ -1525,31 +1558,113 @@ export class McpServers {
           permission: "mcp",
           server: name,
           execute: async (input, context) => {
-            // A tool its rules allow is not asked about, unless MCP calls are refused altogether.
-            if (rule !== "allow" || context.permissions.action("mcp") === "deny") {
-              await context.permissions.ask({
-                sessionID: context.sessionID,
-                messageID: context.messageID,
-                callID: context.callID,
-                kind: "mcp",
-                directory: context.directory,
-                title: `${name}: ${tool.name}`,
-                subject: JSON.stringify(input),
-                preview: JSON.stringify(input, null, 2),
-                scope: `mcp:${name}`,
-                // A tool its rules ask about asks even where MCP calls run without asking.
-                ...(rule === "ask" ? { patternAsks: true } : {}),
-              })
-            }
-            // Counted as this conversation's for as long as it runs, so a sampling request is asked in the right place.
-            const { output, attachments } = await connection.callingFrom(context.sessionID, () => connection.call(tool.name, input, context.signal))
+            const { output, attachments } = await this.callTool(name, connection, tool, rule, input, context)
             // MiMo hands a server's pictures and sounds to the model on the result itself.
             return { output, title: `${name}: ${tool.name}`, ...(attachments.length ? { attachments } : {}) }
           },
         })
       }
     }
-    return [...out, ...this.resourceTools(directory)]
+    // After every server's own tools and the resource tools, so the order the cached prefix was built on stays.
+    return [...out, ...this.resourceTools(directory), ...(scripted.length ? [this.codeModeTool(scripted)] : [])]
+  }
+
+  /**
+   * One call to a server's tool, as the model makes it directly or from a
+   * Code Mode script: asked about under the server's approval as its rules
+   * say, and counted as the conversation's while it runs.
+   */
+  private async callTool(
+    name: string,
+    connection: Connection,
+    tool: McpTool,
+    rule: ReturnType<typeof toolRule>,
+    input: Record<string, unknown>,
+    context: ToolContext,
+  ): Promise<{ output: string; attachments: Attachment[] }> {
+    // A tool its rules allow is not asked about, unless MCP calls are refused altogether.
+    if (rule !== "allow" || context.permissions.action("mcp") === "deny") {
+      await context.permissions.ask({
+        sessionID: context.sessionID,
+        messageID: context.messageID,
+        callID: context.callID,
+        kind: "mcp",
+        directory: context.directory,
+        title: `${name}: ${tool.name}`,
+        subject: JSON.stringify(input),
+        preview: JSON.stringify(input, null, 2),
+        scope: `mcp:${name}`,
+        // A tool its rules ask about asks even where MCP calls run without asking.
+        ...(rule === "ask" ? { patternAsks: true } : {}),
+      })
+    }
+    // Counted as this conversation's for as long as it runs, so a sampling request is asked in the right place.
+    return connection.callingFrom(context.sessionID, () => connection.call(tool.name, input, context.signal))
+  }
+
+  /**
+   * OpenCode v2's Code Mode (core/src/codemode/tool.ts, MIT): one `execute`
+   * tool whose script calls the tools of the servers it is switched on for,
+   * run in a QuickJS sandbox (codemode/sandbox.ts). The catalog rides on its
+   * description, where v2 puts it in the instructions: the description is
+   * part of the tool list either way, and changes only when those servers'
+   * tools do.
+   */
+  private codeModeTool(scripted: ScriptedTool[]): ToolDefinition {
+    const catalog: CatalogTool[] = scripted.map((entry) => ({ segments: [entry.server, entry.tool.name], description: entry.tool.description ?? "", inputSchema: entry.tool.inputSchema }))
+    const byKey = new Map(scripted.map((entry) => [`${entry.server}\u0000${entry.tool.name}`, entry]))
+    return {
+      name: "execute",
+      description: [CODE_MODE_DESCRIPTION, renderCatalog(summarize(catalog))].join("\n\n"),
+      parameters: {
+        type: "object",
+        properties: { code: { type: "string", description: "JavaScript to run. End it with `return <value>`; the value, or the error thrown, is the result." } },
+        required: ["code"],
+        additionalProperties: false,
+      },
+      permission: "mcp",
+      execute: async (input, context) => {
+        const code = typeof input.code === "string" ? input.code : ""
+        if (!code.trim()) throw new ToolError("code is required")
+        const calls: { tool: string; status: "running" | "completed" | "error" }[] = []
+        const attachments: Attachment[] = []
+        const report = () => context.progress(calls.map((call) => `${call.status === "running" ? "…" : call.status === "completed" ? "✓" : "✗"} ${call.tool}`).join("\n"))
+        const result = await runScript(
+          code,
+          {
+            tools: new Set(byKey.keys()),
+            search: (query) => searchCatalog(catalog, (query ?? {}) as Record<string, unknown>),
+            call: async ([server, name], args) => {
+              const entry = byKey.get(`${server}\u0000${name}`)!
+              const row = { tool: `${server}.${name}`, status: "running" as "running" | "completed" | "error" }
+              calls.push(row)
+              report()
+              try {
+                const { output, attachments: files } = await this.callTool(server, entry.connection, entry.tool, entry.rule, (args && typeof args === "object" ? args : {}) as Record<string, unknown>, context)
+                attachments.push(...files)
+                row.status = "completed"
+                return output
+              } catch (error) {
+                row.status = "error"
+                throw error
+              } finally {
+                report()
+              }
+            },
+          },
+          { signal: context.signal },
+        )
+        const output = formatScriptResult(result)
+        if (!result.ok && context.signal.aborted) throw new ToolError(output)
+        return {
+          output,
+          // The tools the script reached, which is what the row is about; the code itself is in the call.
+          title: codeModeTitle(calls.map((call) => call.tool)),
+          metadata: { toolCalls: calls, ...(result.ok ? {} : { error: true }) },
+          ...(attachments.length ? { attachments } : {}),
+        }
+      },
+    }
   }
 
   /**
