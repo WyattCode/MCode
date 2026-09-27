@@ -114,7 +114,8 @@ export async function roundThirtyThreeChecks(check: Check, section: (name: strin
     const [lightMeta, darkMeta] = await Promise.all([sharp(light).metadata(), sharp(dark).metadata()])
     check("both themes share one canvas, so a theme change does not move it", lightMeta.width === darkMeta.width && lightMeta.height === darkMeta.height, { light: [lightMeta.width, lightMeta.height], dark: [darkMeta.width, darkMeta.height] })
     const ratio = (lightMeta.width ?? 0) / (lightMeta.height ?? 1)
-    check("it is the M-and-Code line, not the old ribbon artwork's proportions", ratio > 3.9 && ratio < 4.7, ratio)
+    // Montserrat's wide round letters: Segoe UI's narrower "Code" came out near 4.44.
+    check("it is the M-and-Code line in Montserrat's proportions", ratio > 4.6 && ratio < 5, ratio)
     /** The mean colour of a strip's painted pixels: the C, a little past the M. */
     const ink = async (file: string) => {
       const { data, info } = await sharp(file).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
@@ -129,9 +130,11 @@ export async function roundThirtyThreeChecks(check: Check, section: (name: strin
       return count ? sum / count : -1
     }
     const [lightInk, darkInk] = await Promise.all([ink(light), ink(dark)])
-    check("the light theme's letters are graphite and the dark theme's silver", lightInk >= 0 && lightInk < 90 && darkInk > 170, { lightInk, darkInk })
-    const script = await fs.readFile(at("scripts", "wordmark.mjs"), "utf8")
-    check("the script refuses to draw in a fallback face", /No Such Face Anywhere/.test(script) && /if \(!\(await faceInstalled\(\)\)\) throw/.test(script))
+    // Flat ink, not the old gradient glyphs: near-black by day, off-white by night.
+    check("the light theme's letters are flat near-black and the dark theme's flat off-white", lightInk >= 0 && lightInk < 35 && darkInk > 230, { lightInk, darkInk })
+    const renderer = await fs.readFile(at("scripts", "wordmark-render.cjs"), "utf8")
+    check("the face ships with the script, with its licence", (await exists(at("scripts", "fonts", "montserrat-latin-700-normal.woff2"))) && (await exists(at("scripts", "fonts", "Montserrat-OFL.txt"))) && /montserrat-latin-700-normal\.woff2/.test(renderer))
+    check("the renderer refuses to draw in a fallback face", /document\.fonts\.load\("700 /.test(renderer) && /if \(!loaded\) throw/.test(renderer))
     // The space between the M and the C: the empty columns in the band of rows the M fills.
     {
       const { data, info } = await sharp(light).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
