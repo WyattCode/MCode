@@ -67,7 +67,7 @@ for (let run = 1; run <= runs; run++) {
     const astray = (measured.notes ?? []).some((note) => note.startsWith("ran outside"))
     const passed = check.status === 0 && touched.length === 0 && !astray
     results.push({ task, run, passed, touched, check: (check.stdout + check.stderr).trim().split(/\r?\n/).slice(-3).join(" | "), wall: Math.round((Date.now() - began) / 1000), ...measured })
-    console.log(`${passed ? "PASS" : "FAIL"}  ${measured.seconds ?? "?"}s  ${measured.steps ?? "?"} steps  ${measured.toolCalls ?? "?"} tools`)
+    console.log(`${passed ? "PASS" : "FAIL"}  ${measured.seconds ?? "?"}s  ${measured.steps ?? "?"} steps  ${measured.toolCalls ?? "?"} tools${measured.asked ? `  ${measured.asked} asked` : ""}`)
   }
 }
 

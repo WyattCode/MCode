@@ -38,6 +38,18 @@ const CONFIG = path.join(PROFILE, "storage", "config.json")
 const config = JSON.parse(fs.readFileSync(CONFIG, "utf8"))
 config.directory = TASK_DIR
 config.projects = [TASK_DIR, ...(config.projects ?? []).filter((entry) => entry !== TASK_DIR)].slice(0, 20)
+/*
+ * Full access the way the settings switch sets it (renderer lib/confirm-queue
+ * `accessPatch`): every bucket not denied allows, and the map it replaced is
+ * kept. The level word alone is not full access - with a bucket still asking,
+ * the default reads as "ask", every edit waits on a card, and a run measures
+ * that wait instead of the model.
+ */
+const map = config.permissions ?? {}
+if (Object.values(map).some((action) => action === "ask")) {
+  config.accessBefore = { ...map }
+  config.permissions = Object.fromEntries(Object.entries(map).map(([kind, action]) => [kind, action === "deny" ? "deny" : "allow"]))
+}
 config.allowFullAccess = true
 config.accessLevel = "full"
 config.mcpServers = {}
@@ -76,6 +88,8 @@ function measure() {
     steps: replies.length,
     toolCalls: tools.length,
     toolErrors: tools.filter((part) => part.status === "error").length,
+    // Calls that waited on an approval card: at full access there should be none.
+    asked: tools.filter((part) => (part.metadata?.permissions ?? []).length > 0).length,
     tools: tools.map((part) => part.name),
     seconds: first && last ? Math.round((last - first) / 100) / 10 : 0,
     promptTokens: sum("input") + sum("cacheRead") + sum("cacheWrite"),
