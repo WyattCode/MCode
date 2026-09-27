@@ -72,12 +72,41 @@ Before asking the user something they may already have told you, search with the
  * either (the user's 2026-09-20 decision).
  */
 export async function systemPrompt(context: PromptContext): Promise<string> {
+  return systemPromptFrom(context.agent, await instructionValues(context), context.memory)
+}
+
+/**
+ * The parts of the system prompt that can change while a conversation runs,
+ * each as the text its section carries (empty when there is none).
+ *
+ * OpenCode v2 reads its instruction sources separately so that a change can
+ * be told to the model as a change, rather than silently rewriting the prompt
+ * the provider has cached (see `instructionUpdate`).
+ */
+export type InstructionValues = Record<InstructionKey, string>
+export type InstructionKey = "standing" | "project" | "skills"
+
+export async function instructionValues(context: PromptContext): Promise<InstructionValues> {
+  const project = await projectInstructions(context.directory, context.instructionFiles ?? [], {
+    home: context.home,
+    fetch: context.fetchInstruction,
+    globalAgentsFile: context.globalAgentsFile,
+  })
+  return {
+    standing: (context.instructions ?? "").trim(),
+    project: project ?? "",
+    skills: context.skills ? skillsSection(context.skills, context.skillsFolder) : "",
+  }
+}
+
+/** The system prompt assembled from its instruction values, which may be a conversation's baseline rather than what is on disk now. */
+export function systemPromptFrom(agent: string, values: InstructionValues, memory?: PromptContext["memory"]): string {
   /*
    * The one agent prompt every model reads in every mode (session/prompts.ts).
    * It is the first section, so the cached prefix opens with the same bytes
    * whatever the model.
    */
-  const sections = [agentPrompt(context.agent)]
+  const sections = [agentPrompt(agent)]
 
   /*
    * Before the project's own files, and said to be the reader's rather than
@@ -85,29 +114,57 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
    * disagrees with it - a repository with its own commit style, say - should
    * win inside that repository.
    */
-  const standing = (context.instructions ?? "").trim()
-  if (standing) {
+  if (values.standing) {
     sections.push(
-      `## Standing instructions\n\nThese are the user's own, and apply to every project they work in.\n\n${standing}`,
+      `## Standing instructions\n\nThese are the user's own, and apply to every project they work in.\n\n${values.standing}`,
     )
   }
-
-  const instructions = await projectInstructions(context.directory, context.instructionFiles ?? [], {
-    home: context.home,
-    fetch: context.fetchInstruction,
-    globalAgentsFile: context.globalAgentsFile,
-  })
-  if (instructions) {
+  if (values.project) {
     sections.push(
-      `## Instructions\n\nThese come from the project's instruction files, then the user's global one, then any the settings name. They take precedence over the general guidance above, and the project's own win where the global one disagrees.\n\n${instructions}`,
+      `## Instructions\n\nThese come from the project's instruction files, then the user's global one, then any the settings name. They take precedence over the general guidance above, and the project's own win where the global one disagrees.\n\n${values.project}`,
     )
   }
-
-  if (context.skills) sections.push(skillsSection(context.skills, context.skillsFolder))
+  if (values.skills) sections.push(values.skills)
 
   // memory: names this conversation's own notes file, so last - where a request carries it, outside the cached prefix.
-  if (context.memory) sections.push(memorySection(context.memory))
+  if (memory) sections.push(memorySection(memory))
   return sections.join("\n\n")
+}
+
+/**
+ * What the model is told when instruction values changed since the
+ * conversation's baseline (OpenCode v2's `renderUpdate`: each source says it
+ * was added, changed or removed, in its own words). Undefined when nothing
+ * did. The system prompt keeps the baseline, so the provider's cached prefix
+ * survives, and the model learns of the change at the point in the
+ * conversation it happened.
+ */
+export function instructionUpdate(previous: InstructionValues, current: InstructionValues): string | undefined {
+  const said: string[] = []
+  const tell = (key: InstructionKey, added: string, changed: string, removed: string) => {
+    if (previous[key] === current[key]) return
+    if (!current[key]) said.push(removed)
+    else said.push(`${previous[key] ? changed : added}\n\n${current[key]}`)
+  }
+  tell(
+    "standing",
+    "The user has added standing instructions, which apply to every project. They read:",
+    "The user's standing instructions have changed. They now read:",
+    "The user's standing instructions have been removed and no longer apply.",
+  )
+  tell(
+    "project",
+    "Instruction files now apply to this project. They read:",
+    "The project's instruction files have changed. Follow them as they now read, in place of what the system prompt shows:",
+    "The project's instruction files are gone; the instructions they gave no longer apply.",
+  )
+  tell(
+    "skills",
+    "Skills are now available in this conversation:",
+    "The skills available have changed. The list now reads:",
+    "No skills are available in this conversation any more.",
+  )
+  return said.length ? said.join("\n\n") : undefined
 }
 
 /**

@@ -104,7 +104,7 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
     const placeholder = /const placeholder = computed\(\(\) => \{([\s\S]*?)\n\}\)/.exec(composer)?.[1] ?? ""
     const order = ["composer.shellPlaceholder", "composer.compacting", "composer.sending", "composer.reviewRestricted", "composer.placeholder\""].map((key) => placeholder.indexOf(key))
     check("R18-U9: compacting, then sending, then the rest - MiMo's order", order.every((at, index) => at >= 0 && (index === 0 || at > order[index - 1])), order)
-    const submit = composer.slice(composer.indexOf("async function submit()"), composer.indexOf("/*\n * MiMo's /compact from the box"))
+    const submit = composer.slice(composer.indexOf("async function submit("), composer.indexOf("/*\n * MiMo's /compact from the box"))
     const on = submit.indexOf("sending.value = true")
     const cleared = submit.indexOf('text.value = ""\n  attachments.value = []')
     check("R18-U9: sending starts once the draft has left the box", on > cleared && cleared > 0)

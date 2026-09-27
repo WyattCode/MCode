@@ -588,7 +588,8 @@ export const useApp = defineStore("app", () => {
         {
           const message = event.message
           // cron, automation: a scheduled prompt starts a turn nobody sent from this window; it shows working, is timed and notifies like one.
-          if (message.role === "user" && !message.steered && !running.value.has(message.sessionID) && (message.inbox?.automationID || isScheduledPrompt(message.text))) {
+          // OpenCode v2's queue: the next waiting message starts a turn this window did not send, the same way.
+          if (message.role === "user" && !message.steered && !running.value.has(message.sessionID) && (message.queued || message.inbox?.automationID || isScheduledPrompt(message.text))) {
             running.value = new Set(running.value).add(message.sessionID)
             turnStarted.set(message.sessionID, Date.now())
           }
@@ -1611,6 +1612,8 @@ export const useApp = defineStore("app", () => {
     command?: { agent?: import("@shared/protocol").TurnAgent; model?: import("@shared/protocol").ModelRef },
     /* 追求目标: this message is the goal the conversation is judged against from now on. */
     goal?: string,
+    /* OpenCode v2: while a turn runs, wait for it to end rather than joining it. */
+    delivery?: "queue",
   ): Promise<boolean> {
     const target = to ?? currentID.value
     // An attachment, or a place pointed at, with no words is still something to answer.
@@ -1656,6 +1659,7 @@ export const useApp = defineStore("app", () => {
         ...(command?.agent ? { agent: command.agent } : {}),
         ...(command?.model ? { model: command.model } : {}),
         ...(goal ? { goal } : {}),
+        ...(delivery && joined ? { delivery } : {}),
       })
       // MiMo's officeWatch: the documents its annotations sit on glow while the run works, a steer joining the glow.
       if (annotations.length) watchAnnotatedSend(target, annotations, text)
@@ -1674,6 +1678,41 @@ export const useApp = defineStore("app", () => {
       const reason = err instanceof Error ? err.message : String(err)
       if (onSide) setSideError(target, reason)
       else notifyFailure(t("common.requestFailed"), reason)
+      return false
+    }
+  }
+
+  /**
+   * OpenCode v2's queue: a waiting message sent now - into the running turn,
+   * or as a turn of its own when nothing runs - or taken back. Either is
+   * refused when the message has already gone, and said as a failed request.
+   */
+  async function sendQueued(sessionID: string, id: string): Promise<void> {
+    const joined = running.value.has(sessionID)
+    if (!joined) {
+      running.value = new Set(running.value).add(sessionID)
+      turnStarted.set(sessionID, Date.now())
+    }
+    try {
+      await api().request({ type: "session.queue.send", sessionID, id })
+    } catch (err) {
+      if (!joined) {
+        const next = new Set(running.value)
+        next.delete(sessionID)
+        running.value = next
+        turnStarted.delete(sessionID)
+      }
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  /** True when it was taken off the queue; false when it had already gone, or the request failed (said as a notice). */
+  async function removeQueued(sessionID: string, id: string): Promise<boolean> {
+    try {
+      await api().request({ type: "session.queue.remove", sessionID, id })
+      return true
+    } catch (err) {
+      notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
       return false
     }
   }
@@ -2335,6 +2374,8 @@ export const useApp = defineStore("app", () => {
     sideErrorOf,
     sideSessionOf,
     sideBusyOf,
+    sendQueued,
+    removeQueued,
     sideStreamingOf,
     openSide,
     loadSide,

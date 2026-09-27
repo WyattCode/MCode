@@ -5,7 +5,7 @@ import { applyPatch, checkoutFile, isTracked, repositoryRoot } from "../git"
 import { createdFile, parseUnifiedDiff, recountedSection, sectionPatch, type DiffSection } from "@shared/unified-diff"
 
 /** The tools whose calls change files and record the diff of what they did. */
-const EDITING = new Set(["edit", "write", "notebook_edit"])
+const EDITING = new Set(["edit", "write", "notebook_edit", "patch"])
 
 interface FileHistory {
   /** Where the file is on disk. */

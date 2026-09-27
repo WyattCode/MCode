@@ -35,6 +35,19 @@ export interface SessionGoal {
   done?: { status: "complete" | "blocked"; reason: string; at: number }
 }
 
+/** A message waiting for the running turn to end (SessionInfo.queued): what `session.prompt` was sent, less the conversation. */
+export interface QueuedPrompt {
+  id: string
+  text: string
+  attachments?: Attachment[]
+  annotations?: Annotation[]
+  fileNotices?: FileNotice[]
+  agent?: TurnAgent
+  model?: ModelRef
+  goal?: string
+  time: number
+}
+
 export interface SessionInfo {
   id: string
   title: string
@@ -140,12 +153,59 @@ export interface SessionInfo {
    * off, MiMo's label, and `files` the files the summarised part worked on,
    * each with what happened to it, which the next request lists.
    */
+  /**
+   * A turn is running, or was when the app last went away (OpenCode v2's
+   * write-ahead execution claim).
+   *
+   * Written when a turn starts and cleared when it ends for any reason of its
+   * own - an answer, a failure, Stop. A quit or a crash clears nothing, so a
+   * claim still here at start-up is a turn the app was cut off in the middle
+   * of, and it is carried on. `resumes` counts how many times this one turn
+   * has been carried on that way; only a turn that ends resets it, so a turn
+   * that brings the app down every time cannot loop across restarts. `pid`
+   * is the process that wrote it: two instances may share one data folder,
+   * and a claim whose process is still alive is a turn running over there.
+   */
+  claim?: { at: number; resumes: number; pid?: number }
+  /**
+   * OpenCode v2's queued follow-ups (R31-3): messages sent while a turn ran,
+   * to be sent as turns of their own once it ends, oldest first. Kept here so
+   * a reload or a restart does not lose them. A turn ended by Stop or by a
+   * failure leaves them parked for the user.
+   */
+  queued?: QueuedPrompt[]
+  /**
+   * The conversation's instruction values (OpenCode v2's instruction state):
+   * `initial` is what the system prompt is built from, fixed so the provider's
+   * cached prefix survives the conversation; `current` is what the model was
+   * last told. A change - a skill added, AGENTS.md edited - is told as a
+   * reminder on the message it happened before, and `initial` moves to
+   * `current` only when a compaction starts the prompt over anyway.
+   */
+  instructions?: { initial: Record<string, string>; current: Record<string, string> }
   compacted?: {
     messageID: string
     summary: string
     at: number
     trigger?: "manual" | "automatic" | "provider-overflow"
     files?: string[]
+    /**
+     * The newest part of the conversation the summary covers, kept word for
+     * word beside it (OpenCode v2's rolling compaction): a summary is weakest
+     * at exactly what was just said.
+     */
+    recent?: string
+    /**
+     * How many tokens the next request is expected to carry: the system
+     * prompt, the tools, the summary and whatever follows it.
+     *
+     * The context ring reads the last turn's reported usage, and no turn has
+     * run since the compaction - so without this it went on showing the size
+     * of the conversation that had just been replaced, until the reader said
+     * something. Scaled by the compaction request's own reported count, so it
+     * is the provider's tokenizer speaking rather than a character count.
+     */
+    estimate?: number
   }
   /**
    * Where the conversation has been rolled back to, if it has been.
@@ -358,6 +418,8 @@ export interface UserMessage {
    * taken it is a question like any other and opens the next turn (26.914).
    */
   steered?: boolean
+  /** Sent from the queue (SessionInfo.queued) when the turn before it ended, not typed into an idle conversation. */
+  queued?: boolean
   /**
    * plan: written by the app rather than typed - the word that the user
    * approved a plan, put where the user's next message would be. The model
@@ -906,6 +968,12 @@ export interface QuestionPrompt {
    * the path alone is what its window reads back out.
    */
   plan?: string
+  /**
+   * websearch: which of the web search tool's two questions this is - whether
+   * to search at all, or with which service. The window says it in the user's
+   * own language, as it does plan_exit's.
+   */
+  websearch?: "consent" | "provider"
 }
 
 /**
@@ -1262,6 +1330,13 @@ export interface McpServerConfig {
    * allowed, true or "allow" never asks. Written by hand into the config file.
    */
   tools?: Record<string, boolean | "allow" | "ask" | "deny">
+  /**
+   * OpenCode v2's Code Mode (R31-11), off unless set: the server's tools are
+   * not offered one by one but called from a script the model passes to one
+   * `execute` tool, run in a QuickJS sandbox. Each call inside is asked about
+   * as a direct call would be.
+   */
+  codemode?: boolean
 }
 
 export interface McpOAuthConfig {
@@ -1454,6 +1529,10 @@ export interface McpToolInfo {
   description?: string
 }
 
+/** The web search services, as OpenCode v2 names them (server/websearch.ts). */
+export type WebSearchProviderID = "exa" | "firecrawl" | "parallel" | "tavily" | "tinyfish"
+export type WebSearchSelection = "auto" | WebSearchProviderID | false
+
 export interface AppConfig {
   /**
    * Which build's idea of this document it is.
@@ -1466,6 +1545,12 @@ export interface AppConfig {
    */
   schemaVersion?: number
   model: ModelRef
+  /**
+   * OpenCode v2's web search (R31-9): which service searches ("auto" rotates
+   * through them), or false when the user turned it off. Absent until the
+   * first search asks.
+   */
+  websearch?: WebSearchSelection
   /** New conversations start on Smart rather than on `model`. */
   smart?: boolean
   /** Smart's fast model, for easy everyday requests; empty follows `model`. */
@@ -2023,8 +2108,17 @@ export type Request =
       model?: ModelRef
       /* 追求目标: this message is the conversation's goal from now on, set before it is written. */
       goal?: string
+      /*
+       * While a turn runs: "steer" (MiMo's, and the default) joins it, "queue"
+       * waits for it to end and is sent as a turn of its own (OpenCode v2).
+       * Ignored when nothing is running.
+       */
+      delivery?: "steer" | "queue"
     }
   | { type: "session.abort"; sessionID: string }
+  /* A queued follow-up taken back, or sent now: into the running turn if there is one, as a new turn if not. */
+  | { type: "session.queue.remove"; sessionID: string; id: string }
+  | { type: "session.queue.send"; sessionID: string; id: string }
   /*
    * subagents: a slash command marked `subtask`. `text` is the line as typed,
    * kept as the user's message; `prompt` is its filled-in template, which a
@@ -2365,6 +2459,8 @@ export interface ResponseMap {
   "session.model": { session: SessionInfo }
   "session.smart": { session: SessionInfo }
   "session.prompt": { messageID: string }
+  "session.queue.remove": Record<string, never>
+  "session.queue.send": { messageID: string }
   "session.abort": Record<string, never>
   "session.subtask": { messageID: string }
   "permission.respond": Record<string, never>

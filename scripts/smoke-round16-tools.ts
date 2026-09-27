@@ -97,7 +97,7 @@ export async function roundSixteenToolChecks(check: Check, section: (name: strin
     const shown = trimDiff(patch)
     check("the shown diff starts its lines at the left", shown.split("\n").some((line) => /^[-+] {0,1}\S/.test(line)), shown)
     check("and the file header is left alone", shown.includes("--- a/deep.ts") && shown.includes("+++ b/deep.ts"), shown)
-    check("and so are the hunk headers", shown.includes("@@ -1,4 +1,4 @@"), shown)
+    check("and so are the hunk headers", shown.includes("@@ -1,3 +1,3 @@"), shown)
     check("the same lines, only moved left", shown.split("\n").length === patch.split("\n").length)
     check("nothing is trimmed when one line already sits at the left", trimDiff(unifiedDiff("f.ts", "a\n  b\n", "a\n  c\n")) === unifiedDiff("f.ts", "a\n  b\n", "a\n  c\n"))
     check(
@@ -155,7 +155,7 @@ export async function roundSixteenToolChecks(check: Check, section: (name: strin
     const countsOf = (result: { metadata?: Record<string, unknown> }) => result.metadata?.filediff as FileDiff | undefined
 
     const made = await WriteTool.execute({ file_path: "fresh.ts", content: "one\ntwo\nthree\n" }, context)
-    check("a new file counts every line as added and none removed", countsOf(made)?.additions === 4 && countsOf(made)?.deletions === 0, countsOf(made))
+    check("a new file counts every line as added and none removed", countsOf(made)?.additions === 3 && countsOf(made)?.deletions === 0, countsOf(made))
     check("and names the file it changed", countsOf(made)?.file === "fresh.ts", countsOf(made))
 
     const swapped = await EditTool.execute({ file_path: "fresh.ts", old_string: "two", new_string: "TWO" }, context)
@@ -311,7 +311,8 @@ export async function roundSixteenToolChecks(check: Check, section: (name: strin
   // ---------------------------------------------------------------- R16-C7
   section("Round 16 (C7): nothing branches on a tool this app does not have")
   {
-    for (const name of ["patch", "apply_patch", "todowrite", "multiedit"]) {
+    // `patch` came back in R31-7 (OpenCode v2's, offered to GPT models); round 31 section 7 checks it.
+    for (const name of ["apply_patch", "todowrite", "multiedit"]) {
       check(`${name} is not a tool here`, findTool(name) === undefined)
     }
     const part = (name: string, metadata: Record<string, unknown>, input: Record<string, unknown> = {}) => ({
@@ -332,7 +333,7 @@ export async function roundSixteenToolChecks(check: Check, section: (name: strin
       agent: "build" as const,
       time: { created: 0 },
       parts: [
-        part("patch", { diff: unifiedDiff("from-patch.txt", "", "new\n") }),
+        part("multiedit", { diff: unifiedDiff("from-multiedit.txt", "", "new\n") }),
         part("apply_patch", { files: ["from-apply-patch.txt"] }),
         part("edit", { diff: unifiedDiff("real.txt", "a\n", "b\n") }, { file_path: "made.txt" }),
       ],

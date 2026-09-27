@@ -441,6 +441,10 @@ import { roundTwentyThreeChecks } from "./smoke-round23"
 import { roundTwentyFourChecks } from "./smoke-round24"
 import { roundTwentyFiveChecks } from "./smoke-round25"
 import { roundTwentySixChecks } from "./smoke-round26"
+import { roundTwentySevenChecks } from "./smoke-round27"
+import { roundTwentyEightChecks } from "./smoke-round28"
+import { roundTwentyNineChecks } from "./smoke-round29"
+import { roundThirtyOneChecks } from "./smoke-round31"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -2785,7 +2789,7 @@ async function main() {
         "a summary with translated headings is one",
         isSummary("## 目标\n- 审计两个新功能\n\n## 工作状态\n- 已完成构建\n\n## 下一步\n1. 修复枚举"),
       )
-      check("the sections as written are one", isSummary("## Task overview\n- audit\n\n## Next steps\n1. (none)"))
+      check("the sections as written are one", isSummary("## Objective\n- audit\n\n## Next Move\n1. (none)"))
     }
 
     /*
@@ -7168,6 +7172,10 @@ async function main() {
   await roundTwentyFourChecks(check, section)
   await roundTwentyFiveChecks(check, section)
   await roundTwentySixChecks(check, section)
+  await roundTwentySevenChecks(check, section)
+  await roundTwentyEightChecks(check, section)
+  await roundTwentyNineChecks(check, section)
+  await roundThirtyOneChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
@@ -7715,9 +7723,9 @@ async function skillChecks(root: string) {
     "skill and skill_search are offered, appended, and change nothing",
     TOOLS[skillAt - 1]?.name === "update_session" &&
       TOOLS[skillAt + 1]?.name === "skill" &&
-      // Only tools added since (history, memory, cron, scheduled tasks, plan_exit and speak) come after them.
+      // Only tools added since (history, memory, cron, scheduled tasks, plan_exit, speak, and R31's patch and websearch) come after them.
       TOOLS.slice(skillAt + 2).every((tool) =>
-        ["history", "memory", "cron", "automation_update", "plan_exit", "speak", "list_external_sessions", "read_external_session"].includes(tool.name),
+        ["history", "memory", "cron", "automation_update", "plan_exit", "speak", "list_external_sessions", "read_external_session", "patch", "websearch"].includes(tool.name),
       ) &&
       reachOf("skill") === "reads" &&
       reachOf("skill_search") === "reads",
@@ -8874,9 +8882,9 @@ async function sessionChatChecks(root: string, project: string) {
         // notebook_edit sits between the window tools and them.
         TOOLS[at - 1]?.name === "notebook_edit" &&
         TOOLS[at - 2]?.name === "set_desktop_setting" &&
-        // Only tools added since (the skill tools, then history, memory, cron, scheduled tasks, plan_exit and speak) come after them.
+        // Only tools added since (the skill tools, then history, memory, cron, scheduled tasks, plan_exit, speak, and R31's patch and websearch) come after them.
         TOOLS.slice(at + 4).every((tool) =>
-          ["skill_search", "skill", "history", "memory", "cron", "automation_update", "plan_exit", "speak", "list_external_sessions", "read_external_session"].includes(tool.name),
+          ["skill_search", "skill", "history", "memory", "cron", "automation_update", "plan_exit", "speak", "list_external_sessions", "read_external_session", "patch", "websearch"].includes(tool.name),
         )
       )
     })(),

@@ -387,6 +387,7 @@ export class Permissions {
     const saved = this.rules.get(key) ?? []
     for (const pattern of always) if (!saved.some((rule) => rule.kind === kind && rule.pattern === pattern)) saved.push({ kind, pattern })
     this.rules.set(key, saved)
+    this.changed.add(key)
     // Written as it is granted, so tomorrow morning does not ask it again.
     void this.persist()
     for (const [id, pending] of [...this.pending]) {
@@ -444,7 +445,14 @@ export class Permissions {
      */
     const risk = input.kind === "bash" ? commandRisk(input.subject) : undefined
     const forced = input.forced ?? (risk !== undefined && LOST_WORK.includes(risk))
-    if (action === "allow" && !forced) return
+    /*
+     * Except at full access. MiMo asks about a delete there too; the user chose
+     * otherwise (2026-09-26): full access is the reader saying "do not ask me",
+     * and a question at that level, deletes included, is one they have already
+     * answered. A deliberate difference from MiMo - see HANDOFF. Every other
+     * level, and "always allow commands" at any of them, still asks each time.
+     */
+    if (action === "allow" && (!forced || level === "full")) return
     // MiMo's read-only allowlist: a command made only of reading pieces runs once without a question.
     // Except one naming a file the read rules ask about (`type .env`): reading it through a shell asks too.
     if (!forced && input.kind === "bash" && readOnlyCommand(input.subject) && !namesAskingFile(input.subject)) return
@@ -622,6 +630,15 @@ export class Permissions {
       // Answered, or settled by another pass, while the level was read.
       if (this.pending.get(id) !== pending) continue
       const action = this.action(pending.request.kind, level)
+      /*
+       * A delete waiting for its answer is settled by a person, or by the
+       * reader switching this conversation to full access - never by a bucket
+       * that happens to read "allow". This pass runs on every session update,
+       * titles and usage included, so a delete raised while commands were set
+       * to "always allow" was answered "once" by the next unrelated update,
+       * with nobody having pressed anything (R28-8).
+       */
+      if (pending.request.forced && action === "allow" && level !== "full") continue
       const auto = level === "auto"
       /*
        * The middle level switched on while a question was up - MiMo's 帮我审批 -
@@ -705,16 +722,21 @@ export class Permissions {
    * data directory is a supported case, and this is this machine's only record
    * of what it has allowed.
    *
-   * So the file is re-read inside the write queue, and this process's own rules
-   * are laid over it. Last writer still wins for one project's list - the two
-   * cannot be merged rule by rule without knowing which was removed and which
-   * was never there - but a project this process has said nothing about keeps
-   * whatever the other one saved. The same shape the MCP sign-in store uses.
+   * So the file is re-read inside the write queue, and only what this process
+   * has itself changed is laid over it. R26 laid *every* project it had loaded
+   * over the file, which undid its own point twice (R28-4): a conversation the
+   * other window deleted came straight back from this one's start-up copy, and
+   * an approval the other window added to a project this one then added to was
+   * lost, because this one's list replaced the file's.
+   *
+   * A project's rules are only ever added to - there is no way to take one
+   * rule back, only to drop a conversation's whole set - so the two lists are
+   * merged by union, and a dropped conversation is dropped from the file.
    */
   private persist(): Promise<void> {
     const storage = this.store
     if (!storage || this.fromNewerVersion || this.blocked) return this.writing
-    const mine = new Map(this.rules)
+    const mine = new Map([...this.changed].flatMap((key) => (this.rules.has(key) ? [[key, [...this.rules.get(key)!]] as const] : [])))
     // Serialised, so two approvals answered at once cannot land in the wrong order.
     this.writing = this.writing
       .catch(() => undefined)
@@ -731,11 +753,13 @@ export class Permissions {
         for (const [key, rules] of Object.entries(read.value?.projects ?? {})) {
           if (Array.isArray(rules)) projects[key] = rules as Rule[]
         }
-        for (const [key, rules] of mine) projects[key] = rules
-        // A project this process has emptied is emptied on disk too, rather than coming back from the file.
-        for (const key of Object.keys(projects)) {
-          if (!mine.has(key) && this.forgotten.has(key)) delete projects[key]
+        for (const [key, rules] of mine) {
+          const merged = [...(projects[key] ?? [])]
+          for (const rule of rules) if (!merged.some((kept) => kept.kind === rule.kind && kept.pattern === rule.pattern)) merged.push(rule)
+          projects[key] = merged
         }
+        // A conversation this process has dropped is dropped on disk too, rather than coming back from the file.
+        for (const key of this.forgotten) delete projects[key]
         await storage.write(RULES_KEY, { schemaVersion: RULES_SCHEMA_VERSION, projects })
       })
       .catch(() => undefined)
@@ -751,6 +775,9 @@ export class Permissions {
    * never touched looks like.
    */
   private readonly forgotten = new Set<string>()
+
+  /** Projects whose rules this process has added to since it started: the only ones it writes. */
+  private readonly changed = new Set<string>()
 
   /**
    * Settles the last write, for a caller that has to know the rules have
@@ -773,6 +800,7 @@ export class Permissions {
     if (!this.rules.delete(`session:${sessionID}`)) return
     // Remembered as deliberately dropped, or the re-read in `persist` would bring it back.
     this.forgotten.add(`session:${sessionID}`)
+    this.changed.delete(`session:${sessionID}`)
     await this.persist()
   }
 

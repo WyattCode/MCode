@@ -13,7 +13,7 @@ const HINT_MAX_CHARS = 2000
 /** Edits to one file wait for each other, as MiMo's engine holds a lock per file. */
 const locks = new Map<string, Promise<unknown>>()
 
-async function locked<T>(file: string, work: () => Promise<T>): Promise<T> {
+export async function locked<T>(file: string, work: () => Promise<T>): Promise<T> {
   const key = process.platform === "win32" ? path.resolve(file).toLowerCase() : path.resolve(file)
   const before = locks.get(key) ?? Promise.resolve()
   const run = before.then(work)
@@ -202,7 +202,7 @@ function replaceIn(original: string, change: Change, ending: "\r\n" | "\n", disp
  * to approve a "new" file - approving one used to end in a crash, or in a file
  * that could be written but not read being overwritten unseen.
  */
-async function currentText(target: string, display: string): Promise<string | undefined> {
+export async function currentText(target: string, display: string): Promise<string | undefined> {
   try {
     if ((await fs.stat(target)).isDirectory()) throw new ToolError(`${display} is a folder, not a file`)
     return await fs.readFile(target, "utf8")

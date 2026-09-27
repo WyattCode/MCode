@@ -486,6 +486,24 @@ async function setMcpEnabled(name: string, enabled: boolean) {
   void refreshMcp()
 }
 
+/*
+ * OpenCode v2's Code Mode, per server (R31-11): its tools are called from a
+ * script the model writes rather than one by one. MiMo has no such switch, so
+ * it sits inside the server's tools panel, not on the list MiMo draws.
+ */
+const codeModeOf = (name: string) => app.config?.mcpServers?.[name]?.codemode === true
+
+async function setMcpCodeMode(name: string, on: boolean) {
+  const entry = app.config?.mcpServers?.[name]
+  if (!entry) return
+  const { codemode: _dropped, ...rest } = entry
+  try {
+    await app.patchConfig({ mcpServers: { ...(app.config?.mcpServers ?? {}), [name]: on ? { ...entry, codemode: true } : rest } }, { quiet: true })
+  } catch (err) {
+    notifyFailure(t("set.mcp.toggleFailed"), reasonText(err))
+  }
+}
+
 /* MiMo's 授权 on a remote server that answered 401: the browser sign-in, then the row reconnects. */
 async function authorizeMcp(name: string) {
   if (mcpAuthorizing.value) return
@@ -2475,6 +2493,23 @@ onBeforeUnmount(() => {
                 </div>
               </div>
               <div v-if="mcpToolsOpen === row.name" class="mcp-tools-panel" :data-mcp-tools-panel="row.name">
+                <div class="mcp-codemode" :data-mcp-codemode-row="row.name">
+                  <div class="mcp-codemode-text">
+                    <div class="mcp-codemode-title">{{ t("set.mcp.codemode") }}</div>
+                    <div class="mcp-codemode-desc">{{ t("set.mcp.codemodeDesc") }}</div>
+                  </div>
+                  <button
+                    class="switch"
+                    :class="{ on: codeModeOf(row.name) }"
+                    role="switch"
+                    :aria-checked="codeModeOf(row.name)"
+                    :aria-label="t('set.mcp.codemode')"
+                    :data-mcp-codemode="row.name"
+                    @click="setMcpCodeMode(row.name, !codeModeOf(row.name))"
+                  >
+                    <span class="knob" />
+                  </button>
+                </div>
                 <template v-for="view in [mcpToolsView(row.name)]" :key="row.name">
                   <div v-if="view.kind === 'loading'" class="mcp-tools-hint" data-mcp-tools-loading>{{ t("set.mcp.toolsLoading") }}</div>
                   <div v-else-if="view.kind === 'error'" class="mcp-tools-hint err" data-mcp-tools-error>
@@ -3536,6 +3571,33 @@ h3 {
 .mcp-tools-panel {
   margin-top: -6px;
   padding: 4px 16px 14px;
+}
+
+/* Code Mode's switch, above the tools it governs: the panel's own type, and a rule under it. */
+.mcp-codemode {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-weak);
+}
+
+.mcp-codemode-text {
+  min-width: 0;
+}
+
+.mcp-codemode-title {
+  color: var(--text-strong);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+.mcp-codemode-desc {
+  margin-top: 2px;
+  color: var(--text-base);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  line-height: 1.45;
 }
 
 .mcp-tools-hint {

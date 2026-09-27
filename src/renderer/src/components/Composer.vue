@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { applyVoiceResult, dropVoice, editCue, isClearCommand, micFailure, nextVoiceBox, precheckFailure, recorder, reportVoiceStatus, transcribeFailure, voiceOwner, voiceRun, voiceState, voiceStatus, type Recording, type VoiceCue, type VoiceFailure, type VoiceState } from "../lib/voice"
 import type { Ref } from "vue"
-import type { Attachment, CommandInfo, DirEntry, Effort, FileHit, Message, ModelInfo, SessionInfo } from "@shared/protocol"
+import type { Attachment, CommandInfo, DirEntry, Effort, FileHit, Message, ModelInfo, QueuedPrompt, SessionInfo } from "@shared/protocol"
 import { interruptedTurn } from "@shared/resume"
 import { textualName } from "@shared/attachment-kind"
 import { commandTitle } from "../lib/skill-display"
@@ -44,6 +44,7 @@ import { useEscapeLayerWhile } from "../lib/escape-layer"
 import FullAccessDialog from "./FullAccessDialog.vue"
 import ContextRing from "./ContextRing.vue"
 import GoalBar from "./GoalBar.vue"
+import QueueBar from "./QueueBar.vue"
 import { readContext } from "./session-context"
 import { compactTokens, t, language } from "../lib/i18n"
 
@@ -1224,7 +1225,8 @@ let probingAudio = false
 /* From the draft leaving the box until the message is taken or handed back: the new conversation, the mentioned files, the send itself. */
 const sending = ref(false)
 
-async function submit() {
+/** `delivery` "queue": OpenCode v2's 排队 - while a turn runs, wait for it to end instead of joining it. */
+async function submit(delivery?: "queue") {
   const value = text.value.trim()
   // MiMo's restricted conversation takes nothing at all: the review that took its turn said it may not be continued.
   if (restrictedHere.value) return
@@ -1379,7 +1381,7 @@ async function submit() {
       ? false
       : subtask
         ? await app.subtask(value, subtask)
-        : await app.send(withSkills(body, chips), [...sent, ...named, ...commandFiles], target, pointed, filled.command, goalOnSend)
+        : await app.send(withSkills(body, chips), [...sent, ...named, ...commandFiles], target, pointed, filled.command, goalOnSend, delivery)
     if (!accepted && parkIn) clearPark(parkIn)
     if (!accepted) {
       text.value = value
@@ -2093,6 +2095,26 @@ function sendsMessage(event: KeyboardEvent): boolean {
   return !event.shiftKey && !event.metaKey && !event.ctrlKey
 }
 
+/**
+ * OpenCode v2's 排队 key: Alt+Enter while a turn runs, as long as sending is not
+ * bound to it. Otherwise Alt+Enter sends, as MiMo's does.
+ */
+function queuesMessage(event: KeyboardEvent): boolean {
+  if (event.key !== "Enter" || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false
+  return busyHere.value && mode.value !== "shell" && sendChord.value.toLowerCase() !== "alt+enter"
+}
+
+/** 撤回 from the queue: the message back in the box to be changed, ahead of anything already typed. */
+function restoreQueued(item: QueuedPrompt) {
+  const draft = text.value.trim()
+  text.value = draft ? `${item.text}\n${draft}` : item.text
+  attachments.value = [...(item.attachments ?? []), ...attachments.value]
+  void nextTick(() => {
+    resize()
+    input.value?.focus()
+  })
+}
+
 /** Ctrl+Enter breaks the line only while no Enter combination is bound to sending. */
 function breaksLine(event: KeyboardEvent): boolean {
   if (event.key !== "Enter" || event.shiftKey || event.altKey || sendChord.value) return false
@@ -2208,6 +2230,13 @@ function onKeydown(event: KeyboardEvent) {
     }
   }
 
+  if (queuesMessage(event)) {
+    handled(event)
+    if (event.repeat) return
+    void submit("queue")
+    return
+  }
+
   // Enter sends; Shift+Enter is a newline. This is a chat surface, not an editor.
   if (sendsMessage(event)) {
     handled(event)
@@ -2304,7 +2333,7 @@ const menu = ref<"model" | "access" | "plus" | "context">()
  */
 const contextUsage = computed(() => {
   if (!sessionID.value) return undefined
-  const reading = readContext(messagesHere.value, app.providers)
+  const reading = readContext(messagesHere.value, app.providers, session.value?.compacted)
   // MiMo draws no ring until a turn has spent something: an empty conversation has nothing to show.
   if (!reading) return undefined
   const current = session.value?.model
@@ -2317,6 +2346,12 @@ const contextUsage = computed(() => {
   // MiMo's figure leaves reasoning out: the prompt, cache reads and writes, and the output.
   const usage = reading.usage
   const used = usage.input + usage.cacheRead + usage.cacheWrite + usage.output
+  /*
+   * Right after a compaction the figure is the compaction's estimate of the
+   * next request, not a count a provider reported, and it says so: "≈" in
+   * front of each number, in every language, until the next turn replaces it.
+   */
+  const about = reading.estimated ? "≈" : ""
   // The cache line only when the provider reported reads from its cache.
   const cacheBase = usage.cacheRead + usage.cacheWrite + usage.input
   const cacheLine =
@@ -2324,14 +2359,14 @@ const contextUsage = computed(() => {
       ? t("composer.ctxCache", { pct: Math.round((usage.cacheRead / cacheBase) * 100) })
       : undefined
   if (!limit) {
-    return { percent: 0, shareLine: undefined, tokensLine: t("composer.ctxUsedOnly", { used: compactTokens(used) }), cacheLine }
+    return { percent: 0, shareLine: undefined, tokensLine: t("composer.ctxUsedOnly", { used: about + compactTokens(used) }), cacheLine }
   }
   const share = (used / limit) * 100
   return {
     // MiMo's ring: a whole percent, at least 1, and no arc at all past the window.
     percent: used > limit ? 0 : Math.max(1, Math.round(share)),
-    shareLine: t("composer.ctxPercent", { used: share.toFixed(1), left: Math.max(0, 100 - share).toFixed(1) }),
-    tokensLine: t("composer.ctxTokens", { used: compactTokens(used), total: compactTokens(limit) }),
+    shareLine: t("composer.ctxPercent", { used: about + share.toFixed(1), left: about + Math.max(0, 100 - share).toFixed(1) }),
+    tokensLine: t("composer.ctxTokens", { used: about + compactTokens(used), total: compactTokens(limit) }),
     cacheLine,
   }
 })
@@ -3100,6 +3135,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
         never follows the composer to the next conversation.
       -->
       <GoalBar v-if="!side && sessionID" :key="sessionID" :session-i-d="sessionID" />
+      <!-- OpenCode v2's queued follow-ups, where the goal bar sits. -->
+      <QueueBar v-if="sessionID" :key="`queue:${sessionID}`" :session-i-d="sessionID" @edit="restoreQueued" />
       <!-- MiMo's cue drawer: tucked behind the box's top edge, it slides up with the command a recording was heard as. -->
       <div class="voice-cues" :class="{ on: cueOn }" data-voice-cues>
         <div class="voice-drawer" role="status">
@@ -3810,6 +3847,22 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             </svg>
           </button>
 
+          <!-- OpenCode v2's 排队: while a turn runs and there is something to send, wait for the turn to end instead of joining it. -->
+          <button
+            v-if="!compactingHere && !(resumable && mode !== 'shell') && busyHere && hasContent && mode !== 'shell'"
+            class="queue-send"
+            type="button"
+            data-queue-button
+            :disabled="restrictedHere"
+            :aria-label="t('composer.queue.button')"
+            v-tip="{ label: t('composer.queue.button'), hint: sendChord.toLowerCase() === 'alt+enter' ? undefined : 'Alt+Enter', placement: 'top' }"
+            @click="submit('queue')"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="2" />
+              <path d="M12 7.5V12l3 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
           <!--
             MiMo's one button: a spinner while the conversation is compacted,
             stop while a turn runs with nothing waiting, 继续 when the last turn
@@ -5674,6 +5727,40 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   color: #fff;
   background: #151c13;
   border-radius: 50%;
+}
+
+/* OpenCode v2's 排队, beside send: the same round 30px, outlined rather than filled, so send stays the main action. */
+.queue-send {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  color: var(--text-strong);
+  background: transparent;
+  border: 1px solid var(--border-weak);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background-color 0.12s;
+}
+
+.queue-send:hover:not(:disabled) {
+  background: var(--surface-selected);
+}
+
+.queue-send:active:not(:disabled) {
+  scale: 0.96;
+}
+
+.queue-send:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.queue-send:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: 2px;
 }
 
 @media (prefers-color-scheme: dark) {

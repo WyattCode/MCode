@@ -87,7 +87,7 @@ async function harness(root: string, options: { context?: number } = {}) {
         reply = verdicts.shift() ?? { text: JSON.stringify({ ok: true, reason: "done" }) }
       } else if (last.includes(SUMMARY_INSTRUCTION.slice(0, 40))) {
         summaries.push(seen)
-        reply = { text: "## Task overview\nWriting a long answer.\n\n## Current state\nPart of it is written." }
+        reply = { text: "## Objective\nWriting a long answer.\n\n## Work State\nPart of it is written." }
       } else {
         turns.push(seen)
         reply = parent.shift() ?? { text: "parent done" }

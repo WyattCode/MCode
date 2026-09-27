@@ -14,6 +14,7 @@ import type {
   TextPart,
   ToolPart,
   TurnAgent,
+  Usage,
   UserMessage,
 } from "@shared/protocol"
 import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises"
@@ -26,10 +27,10 @@ import type { Bus } from "../bus"
 import type { Config } from "../config"
 import type { Permissions } from "../permission"
 import { PermissionDenied, REVIEW_TIMEOUT_MS, VERDICT_TOOL_NAME, looksSecret, verdictApproves } from "../permission"
-import type { Storage } from "../storage"
+import { processAlive, type Storage } from "../storage"
 import { globalAgentsPath } from "../global-agents"
 import { discoverSkills, enabledSkills, skillReminders, withSkillReminders, type SkillInfo } from "../skill"
-import { findTool, hasOwnToolsOnly, reachOf, repairableNames, toolsForTurn, withheldByLab } from "../tool/registry"
+import { findTool, forModel, hasOwnToolsOnly, reachOf, repairableNames, toolsForTurn, withheldByLab } from "../tool/registry"
 import { normalizeToolInput, resolveToolName } from "../tool/repair"
 import { inputForTool } from "../provider/tool-schema"
 import { Questions } from "../tool/question"
@@ -52,11 +53,12 @@ import { emptyUsage } from "./store"
 import type { Recording } from "./snapshot"
 import { Snapshots, keepSnapshotFile, snapshotBytes, withProjectLock } from "./snapshot"
 import { revertTurnFiles, turnFilePaths } from "./turn-revert"
-import { isOverflowByCount, isOverflowError, maxOutputTokens, underPressure } from "./overflow"
+import { COMPACTION_TRIGGER_RATIO, isOverflowByCount, isOverflowError, maxOutputTokens, underPressure, usableContext } from "./overflow"
 // MiMo's pruning: what a turn re-sends of its older tool output once the prompt cache has gone cold.
 import { pruneLevelFor, prunedHistory, type PruneLevel } from "./prune"
-import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, shrinkLargeToolResults, touchedFiles, type CompactionTrigger } from "./summary"
-import { memorySection, systemPrompt } from "./prompt"
+import { estimateTokens } from "./estimate"
+import { SHRINK_STEPS, SUMMARY_NUDGE, UNKNOWN_WINDOW, compactedText, continueNote, extractSummary, flattenOldest, isCheckpoint, isSummary, legacySummary, messagesTokens, nextRequestEstimate, shrinkLargeToolResults, splitConversation, summaryPrompt, touchedFiles, type CompactionTrigger } from "./summary"
+import { fetchInstruction, instructionUpdate, instructionValues, memorySection, systemPromptFrom, type InstructionValues } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
 import { GOAL_GUARD, JUDGE_SYSTEM, MAX_GOAL_REACT, cleanGoal, goalReminder, judgeQuestion, judgeTranscript, parseVerdict, sameGoal, type GoalVerdict } from "./goal"
 import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf, subagentAgent } from "./plan"
@@ -70,7 +72,7 @@ import { attachmentNote, runtimeContext, sessionNote } from "./context"
 import { settleAttachments, withAttachmentData, type AttachmentCache } from "./attachments"
 import type { ModelEntry } from "../provider/catalog"
 import { forWire } from "../provider/wire-ids"
-import type { ModelModalities, SessionGoal } from "@shared/protocol"
+import type { ModelModalities, QueuedPrompt, SessionGoal } from "@shared/protocol"
 import { costOf } from "./usage"
 // The day on this machine's calendar, which is what the runtime context tells the model.
 import { localDay } from "../usage-summary"
@@ -78,7 +80,7 @@ import { BackgroundUsage, type BackgroundUse } from "./background-usage"
 import { UsageDays } from "./usage-days"
 import type { Usage as TurnUsage } from "@shared/protocol"
 import { ABORTED_TOOL } from "../provider/history"
-import { LENGTH_NOTE, LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, recallHint, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
+import { INTERRUPTED_FINISH, INTERRUPTED_NOTE, LENGTH_NOTE, LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, recallHint, reminder, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
 import { LoopMonitor, TEXT_LOOP_BUFFER, applyCrops, describeLoop, detectStreak, stepDigest, textLoopNoteFor, type LoopIncident } from "./loop-health"
 import { interruptedTurn } from "@shared/resume"
 // session chat
@@ -100,6 +102,19 @@ type McpAccess = Pick<McpServers, "ready" | "tools" | "names">
  */
 const RESUME_PROMPT =
   "The previous turn stopped before it was finished. Carry on with the task from where it stopped: do not redo work that is already done, and do not start over."
+
+/*
+ * What a turn the app was cut off in the middle of is told when it is carried
+ * on at the next start: OpenCode v2's CONTINUE_AFTER_SERVER_RESTART (MIT),
+ * with "app" for "server" - in MCode it is the app that went away.
+ */
+const RESTART_PROMPT = "The app restarted while you were working. Continue from where you left off without repeating completed work."
+
+/** How many times one turn is carried on after the app went away before it is left for the reader (v2's `DEFAULT_MAX_ATTEMPTS`). */
+export const MAX_RESTART_RESUMES = 10
+
+/** Why a turn carries on without a new message: the reader's 继续, or the app coming back after it went away mid-turn. */
+type Resumed = false | "user" | "restart"
 
 /*
  * subagents: what a subagent is told about its place, in MCode's own words,
@@ -167,6 +182,10 @@ type PromptInput = {
   model?: SessionInfo["model"]
   /* 追求目标: this message sets the conversation's goal - the composer sends it while the switch is on. */
   goal?: string
+  /* OpenCode v2's delivery: while a turn runs, "queue" waits for it to end instead of joining it. */
+  delivery?: "steer" | "queue"
+  /* Set when the queue sends it, so the window knows a turn it did not send has started. */
+  fromQueue?: boolean
 }
 
 /**
@@ -298,7 +317,7 @@ const MAX_STEPS_PROMPT = [
 const SUBAGENT_WITHHELD = new Set(["actor", "contacts", "talk_to_session", "create_session", "update_session", "automation_update", "plan_exit", "question"])
 
 /** plan: the tools whose behaviour depends on whether the conversation is planning. */
-const PLAN_AWARE = new Set(["write", "edit", "notebook_edit", "plan_exit"])
+const PLAN_AWARE = new Set(["write", "edit", "notebook_edit", "patch", "plan_exit"])
 
 export class SessionRunner {
   private readonly running = new Map<string, AbortController>()
@@ -348,6 +367,22 @@ export class SessionRunner {
    * next one.
    */
   private readonly steering = new Map<string, Steering>()
+
+  /** Turns being carried on after the app went away, and how many times each has been: written into the claim as the turn starts. */
+  private readonly restartResumes = new Map<string, number>()
+
+  /**
+   * Set as the app closes. A turn cut off by the quit keeps its claim, so the
+   * next start carries it on; one that ends for a reason of its own releases
+   * it. Without this the shutdown's own killing of commands ended turns that
+   * then looked finished.
+   */
+  private closing = false
+  /** OpenCode v2 queue: each conversation's edits, chained so none is lost to another running beside it. */
+  private readonly queueEdits = new Map<string, Promise<void>>()
+
+  /** Whether a process is alive; replaced by checks, which cannot rely on the machine's process table. */
+  alive?: (pid: number) => boolean
   /** subagents: the subagents a running turn is waiting on (run), so Stop reaches them. Background ones are not here. */
   private readonly children = new Map<string, Set<string>>()
   /** subagents: every subagent taking a turn, by its own session id. An idle one has no entry. */
@@ -574,14 +609,15 @@ export class SessionRunner {
     // bash's description is written for the shell the settings name (R16-C2).
     // session chat: the lab's switch takes its tools away from the next turn.
     const settings = this.config.get()
-    const own = toolsForTurn(agent, { voiceFeedback: settings.voiceFeedback !== false, shell: settings.shell, sessionChat: settings.sessionChat })
+    const own = toolsForTurn(agent, { voiceFeedback: settings.voiceFeedback !== false, shell: settings.shell, sessionChat: settings.sessionChat, webSearch: settings.websearch !== false })
     if (hasOwnToolsOnly(agent)) return own
     return [...own, ...(this.mcp?.tools(directory) ?? [])]
   }
 
   /** The tools a conversation's request carries: its agent's, less what a subagent never gets. */
   private offeredTools(session: TurnSession): ToolDefinition[] {
-    return this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory).filter(
+    // OpenCode v2: a GPT model edits with patch, every other with edit and write (registry `usesPatch`).
+    return forModel(this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory), session.model.model).filter(
       (tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name),
     )
   }
@@ -1148,7 +1184,8 @@ export class SessionRunner {
       }
     }
     await this.store.dropReverted(session.id)
-    const updated = await this.store.update(session.id, { revert: undefined })
+    // The deleted messages may carry reminders of instruction changes; the next turn sets a fresh baseline, as v2's committed revert does.
+    const updated = await this.store.update(session.id, { revert: undefined, instructions: undefined })
     this.bus.publish({ type: "session.reverted", sessionID: session.id })
     return updated
   }
@@ -1187,6 +1224,8 @@ export class SessionRunner {
     if (session.compacted && !kept.has(session.compacted.messageID)) {
       session = await this.store.update(sessionID, { compacted: undefined })
     }
+    // And the reminders of instruction changes the deleted messages carried: the next turn sets a fresh baseline.
+    if (session.instructions) session = await this.store.update(sessionID, { instructions: undefined })
     return session
   }
 
@@ -1371,27 +1410,32 @@ export class SessionRunner {
   private async systemFor(session: TurnSession): Promise<{ system: string; systemTail?: string }> {
     const config = this.config.get()
     const skills = await this.skillsFor(session.directory)
+    /*
+     * OpenCode v2's instruction deltas. What the instructions say now is read
+     * on every turn - an AGENTS.md edited mid-conversation used to go unseen
+     * until the app restarted, since only the names of the settings were
+     * watched - but the prompt is built from the conversation's baseline, and
+     * a change is told to the model at the point it happened instead of
+     * rewriting the prefix the provider has cached.
+     */
+    const values = await instructionValues({
+      directory: session.directory,
+      agent: session.agent,
+      instructions: config.instructions,
+      globalAgentsFile: this.globalAgents,
+      instructionFiles: config.instructionFiles,
+      skills,
+      skillsFolder: path.join(this.dataRoot, "skills"),
+      fetchInstruction: (url) => this.fetchInstructionCached(url),
+    })
+    const initial = await this.syncInstructions(session.id, values)
     const key = JSON.stringify([
       session.agent,
-      config.instructions ?? "",
-      config.instructionFiles ?? [],
+      initial,
       this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory).map((tool) => tool.name),
-      // skills: a skill added or removed changes the list the prompt carries.
-      skills.map((skill) => skill.name),
     ])
     const frozen = this.prefixes.get(session.id)
-    const base =
-      frozen?.key === key
-        ? frozen.system
-        : await systemPrompt({
-            directory: session.directory,
-            agent: session.agent,
-            instructions: config.instructions,
-            globalAgentsFile: this.globalAgents,
-            instructionFiles: config.instructionFiles,
-            skills,
-            skillsFolder: path.join(this.dataRoot, "skills"),
-          })
+    const base = frozen?.key === key ? frozen.system : systemPromptFrom(session.agent, initial)
     this.prefixes.set(session.id, { key, system: base })
     // subagents: a subagent is told what it is, after what its agent would be told anyway.
     const outputSchema = session.subagent?.outputSchema
@@ -1442,6 +1486,17 @@ export class SessionRunner {
     // skills: what a message loaded is part of the conversation being summarised.
     const context = withSkillReminders(withAutomationNotes(withChatHeaders(seen)))
     if (!last || !context.some((message) => message.role === "user")) throw new Error("Nothing to compact yet")
+    /*
+     * OpenCode v2's rolling compaction: the newest exchanges within
+     * RECENT_KEEP tokens are kept word for word beside the summary, and only
+     * what came before them is sent to be summarised. A conversation already
+     * compacted opens with that checkpoint, and the model updates it rather
+     * than summarising a summary.
+     */
+    const split = splitConversation(context)
+    if (!split || split.older.length === 0) throw new Error("Nothing to compact yet")
+    const update = split.older.some(isCheckpoint)
+    const prompt = summaryPrompt(update, update && session.compacted !== undefined && legacySummary(session.compacted.summary))
 
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new CodedError(`No provider called ${session.model.provider} is set up`, "error.noModel")
@@ -1455,29 +1510,31 @@ export class SessionRunner {
      * the request most likely to be refused for length the largest one sent.
      */
     const replay = shrinkLargeToolResults(
-      trigger === "provider-overflow" ? withoutAttachments(context) : await withAttachmentData(context, session.directory, new Map()),
+      trigger === "provider-overflow" ? withoutAttachments(split.older) : await withAttachmentData(split.older, session.directory, new Map()),
     )
     const instruction: UserMessage = {
       id: `${session.id}:compaction`,
       sessionID: session.id,
       role: "user",
-      text: SUMMARY_INSTRUCTION,
+      text: prompt,
       attachments: [],
       time: { created: Date.now() },
     }
 
-    let summary = ""
-    let called = false
-    this.summarising.add(session.id)
-    this.bus.publish({ type: "session.compacting", sessionID: session.id, active: true })
-    try {
+    let reported: Usage | undefined
+    const system = await this.systemFor(session)
+    const offered = this.offeredTools(session)
+    /** One summary request over this history; what it wrote, and whether it reached for a tool instead. */
+    const ask = async (history: Message[]): Promise<{ text: string; called: boolean }> => {
+      let text = ""
+      let called = false
       const outcome = await adapter.stream(
         {
           apiKey: tokens?.access ?? apiKey,
           model: session.model,
-          ...(await this.systemFor(session)),
-          history: [...replay, instruction],
-          tools: this.offeredTools(session),
+          ...system,
+          history,
+          tools: offered,
           // Out of band: a summary is not worth a reasoning budget either, so MiMo's cheap profile rather than the app-wide level.
           ...smallRequest(session.model.provider, session.model.model),
           variants: this.config.variants(session.model),
@@ -1496,27 +1553,106 @@ export class SessionRunner {
           extra: { ...providerExtras(session.model.provider, entry?.reasoning === true, session.id), ...smallRequest(session.model.provider, session.model.model).extra },
         },
         (event) => {
-          if (event.type === "text.delta") summary += event.text
+          if (event.type === "text.delta") text += event.text
           if (event.type === "tool") called = true
         },
       )
       if (outcome.toolCalls.length) called = true
+      // The first request's count is the one the ring's estimate scales from; a nudge re-sends the same history.
+      reported ??= outcome.usage
       this.noteBackground(session.id, session.model, outcome.usage, "compaction")
-    } catch (failure) {
-      if (isOverflowError(failure, describe(failure))) throw new Error("This conversation is too large to compact")
-      throw failure
+      return { text, called }
+    }
+
+    let summary = ""
+    /*
+     * OpenCode v2's delivery: a summary request estimated too large for the
+     * model is squeezed - the conversation after any checkpoint becomes one
+     * text message, and whole exchanges go, oldest first - rather than sent to
+     * be refused. Estimates can be wrong, so until the provider refuses, a
+     * request that cannot be squeezed is sent as it is; after a refusal the
+     * next attempts aim at 70%, 50% and 35% of the first refused request, and
+     * only a refusal after those gives up. MCode gave up at the first.
+     *
+     * One adaptation: v2 scales the whole request, and its system prompt is a
+     * dozen lines. MCode's prompt and tool schemas run to tens of thousands of
+     * tokens, which cannot shrink, so 70% of the whole left no room for the
+     * conversation at all and the first squeeze gave up - measured. The steps
+     * scale the conversation part only.
+     */
+    const fixed = estimateTokens(system.system) + estimateTokens(system.systemTail) + estimateTokens(JSON.stringify(offered))
+    const usable = usableContext(entry) || Math.floor(UNKNOWN_WINDOW * COMPACTION_TRIGGER_RATIO)
+    let room = usable - estimateTokens(prompt) - estimateTokens(SUMMARY_NUDGE) - fixed
+    let refused: number | undefined
+    let sent: Message[] = replay
+    this.summarising.add(session.id)
+    this.bus.publish({ type: "session.compacting", sessionID: session.id, active: true })
+    try {
+      for (let rejections = 0; ; ) {
+        const history = messagesTokens(replay) <= room ? replay : (flattenOldest(replay, room, session.id) ?? (rejections > 0 ? undefined : replay))
+        if (!history) throw new Error("This conversation is too large to compact")
+        sent = history
+        try {
+          const first = await ask([...history, instruction])
+          summary = first.called ? "" : extractSummary(first.text)
+          /*
+           * OpenCode v2 gives a reply that skipped the template one reminder
+           * before it counts as a failure: a model that carried on with the
+           * task, or answered in prose, usually writes the summary when told
+           * plainly.
+           */
+          if (!summary || !isSummary(summary)) {
+            const nudge: UserMessage = { ...instruction, id: `${session.id}:compaction-nudge`, text: SUMMARY_NUDGE }
+            const reply: AssistantMessage = {
+              id: `${session.id}:compaction-reply`,
+              sessionID: session.id,
+              role: "assistant",
+              model: session.model,
+              parts: first.text ? [{ type: "text", id: Identifier.part(), text: first.text }] : [],
+              time: { created: Date.now(), completed: Date.now() },
+            } as AssistantMessage
+            const second = await ask([...history, instruction, reply, nudge])
+            if (second.called) throw new Error("The model called a tool instead of writing a summary")
+            summary = extractSummary(second.text)
+          }
+          break
+        } catch (failure) {
+          if (!isOverflowError(failure, describe(failure))) throw failure
+          const step = SHRINK_STEPS[rejections]
+          if (step === undefined) throw new Error("This conversation is too large to compact")
+          refused ??= messagesTokens(history)
+          room = Math.floor(refused * step)
+          rejections += 1
+        }
+      }
     } finally {
       this.summarising.delete(session.id)
       this.bus.publish({ type: "session.compacting", sessionID: session.id, active: false })
     }
-    if (called) throw new Error("The model called a tool instead of writing a summary")
-    summary = extractSummary(summary)
     if (!summary) throw new Error("The model returned an empty summary")
     if (!isSummary(summary)) throw new Error("The model did not return a summary")
     const files = touchedFiles(context, session.directory)
+    const mark = { messageID: last.id, summary, ...(split.recent ? { recent: split.recent } : {}), at: Date.now(), trigger, ...(files.length ? { files } : {}) }
+    /*
+     * What the ring should say now, rather than after the next turn: the next
+     * request is the system prompt, the tools, the summary, and whatever
+     * arrived after the boundary (or MiMo's note to carry on, when nothing did).
+     */
+    const after = live.slice(live.findIndex((message) => message.id === last.id) + 1)
+    const opening = estimateTokens(compactedText(mark)) + (after.length || trigger === "manual" ? messagesTokens(after) : estimateTokens(continueNote(trigger)))
+    const counted = reported ? reported.input + reported.cacheRead + reported.cacheWrite : 0
+    const estimate = nextRequestEstimate(fixed, messagesTokens([...sent, instruction]), opening, counted)
+    /*
+     * OpenCode v2 starts a new instruction epoch at a compaction: the prompt
+     * is starting over anyway, so its baseline becomes what the model was
+     * last told, and the reminders of changes it replaces go with the
+     * conversation they were attached to.
+     */
+    const told = (await this.store.get(session.id))?.instructions
     return this.store.update(session.id, {
       // The last message the summary covers: the whole conversation as it stood.
-      compacted: { messageID: last.id, summary, at: Date.now(), trigger, ...(files.length ? { files } : {}) },
+      compacted: { ...mark, estimate },
+      ...(told ? { instructions: { initial: told.current, current: told.current } } : {}),
     })
   }
 
@@ -1588,6 +1724,8 @@ export class SessionRunner {
      * is simply mid-answer.
      */
     const open = this.steering.get(input.sessionID)
+    // OpenCode v2's queue: kept until the running turn ends, then sent as a turn of its own.
+    if (input.delivery === "queue" && (open || this.running.has(input.sessionID))) return this.enqueue(input)
     if (open) return this.join(open, input)
 
     if (this.running.has(input.sessionID)) throw new CodedError("This session is already working on something", "error.sessionBusy")
@@ -1941,6 +2079,7 @@ export class SessionRunner {
       ...(input.inbox ? { inbox: input.inbox } : {}),
       // 追求目标: the transcript marks the message that set the goal.
       ...(goal ? { setsGoal: true } : {}),
+      ...(input.fromQueue ? { queued: true } : {}),
       // skills
       ...(reminders.length ? { reminders } : {}),
       ...(context.length ? { context } : {}),
@@ -2313,7 +2452,7 @@ export class SessionRunner {
    * conversation is rolled back: the new turn would be written after messages
    * that are hidden and about to be dropped.
    */
-  async resumeTurn(sessionID: string): Promise<string> {
+  async resumeTurn(sessionID: string, how: Exclude<Resumed, false> = "user"): Promise<string> {
     if (this.running.has(sessionID)) throw new Error("This session is already working on something")
     const controller = new AbortController()
     this.running.set(sessionID, controller)
@@ -2331,7 +2470,7 @@ export class SessionRunner {
       this.turn(sessionID).messages = [messageID]
       this.turn(sessionID).directory = session.directory
       this.turn(sessionID).watching = this.snapshots.begin(session.directory)
-      this.launch(sessionID, this.config.apiKey(session.model.provider) ?? "", controller, true)
+      this.launch(sessionID, this.config.apiKey(session.model.provider) ?? "", controller, how)
       return messageID
     } catch (failure) {
       this.running.delete(sessionID)
@@ -2339,14 +2478,118 @@ export class SessionRunner {
     }
   }
 
+  /**
+   * Keeps a conversation's instruction state and returns the values its
+   * system prompt is built from.
+   *
+   * The first read sets the baseline. A later read that differs from what the
+   * model was last told becomes a reminder on the newest user message - the
+   * message this turn answers, so the change sits where it happened in the
+   * conversation and is kept with it - and `current` moves on. Read from the
+   * store each time: a turn builds its prompt more than once, and a copy of
+   * the conversation from the turn's start would tell the same change twice.
+   */
+  private async syncInstructions(sessionID: string, values: InstructionValues): Promise<InstructionValues> {
+    const stored = (await this.store.get(sessionID))?.instructions
+    if (!stored) {
+      await this.store.update(sessionID, { instructions: { initial: values, current: values } }).catch(() => undefined)
+      return values
+    }
+    const initial = { standing: "", project: "", skills: "", ...stored.initial } as InstructionValues
+    const told = { standing: "", project: "", skills: "", ...stored.current } as InstructionValues
+    const update = instructionUpdate(told, values)
+    if (!update) return initial
+    const messages = await this.store.messages(sessionID).catch((): Message[] => [])
+    const asked = messages.findLast((message): message is UserMessage => message.role === "user")
+    if (asked) {
+      asked.reminders = [...(asked.reminders ?? []), reminder(update)]
+      await this.store.saveMessage(asked)
+    }
+    await this.store.update(sessionID, { instructions: { initial: stored.initial, current: values } }).catch(() => undefined)
+    return initial
+  }
+
+  /** Web instruction files, fetched at most once every few minutes: they are read on every turn now, and each fetch may wait five seconds. */
+  private readonly fetchedInstructions = new Map<string, { at: number; text: Promise<string> }>()
+  private fetchInstructionCached(url: string): Promise<string> {
+    const held = this.fetchedInstructions.get(url)
+    if (held && Date.now() - held.at < 5 * 60_000) return held.text
+    const text = fetchInstruction(url)
+    this.fetchedInstructions.set(url, { at: Date.now(), text })
+    return text
+  }
+
+  /** The app is closing: turns still running keep their claims, so the next start carries them on. */
+  closeTurns(): void {
+    this.closing = true
+  }
+
+  /**
+   * Carries on every turn the app was cut off in the middle of (OpenCode v2's
+   * SessionRestart): a claim still on a conversation at start-up means a turn
+   * was running when the app went away - a crash, a kill, or a quit - and
+   * nothing released it.
+   *
+   * Only top-level conversations: a subagent's parent decides what happens to
+   * it, and start-up already marks those that were working as failed. The
+   * count is written before the turn starts, so a turn that brings the app
+   * down again is counted by the next start; past MAX_RESTART_RESUMES it is
+   * left for the reader to carry on with 继续 or not. Like v2's, this is at
+   * least once: a command that was running when the app died may have done
+   * its work, and the model is told only that it was cut off.
+   *
+   * @returns the conversations carried on
+   */
+  async resumeClaimed(): Promise<string[]> {
+    const carried: string[] = []
+    for (const session of await this.store.list().catch((): SessionInfo[] => [])) {
+      const claim = session.claim
+      if (!claim) continue
+      /*
+       * Two instances may share one data folder. A claim written by a process
+       * that is still alive is a turn running over there right now, and
+       * carrying it on here would run it twice; it is left alone. A dead
+       * process's id may have been handed to another program since, which
+       * only ever errs towards leaving a turn for the reader.
+       */
+      if (claim.pid !== undefined && claim.pid !== process.pid && (this.alive ?? processAlive)(claim.pid)) continue
+      const release = () => this.store.update(session.id, { claim: undefined }).catch(() => undefined)
+      if (session.parentID || session.subagent || this.running.has(session.id) || session.revert) {
+        await release()
+        continue
+      }
+      if (claim.resumes >= MAX_RESTART_RESUMES) {
+        console.warn(`[restart] ${session.id} was cut off ${claim.resumes} times in a row; left for the reader to carry on`)
+        await release()
+        continue
+      }
+      if (!interruptedTurn(await this.store.messages(session.id).catch((): Message[] => []))) {
+        await release()
+        continue
+      }
+      this.restartResumes.set(session.id, claim.resumes + 1)
+      try {
+        await this.resumeTurn(session.id, "restart")
+        carried.push(session.id)
+      } catch (failure) {
+        this.restartResumes.delete(session.id)
+        console.warn(`[restart] could not carry on ${session.id}: ${describe(failure)}`)
+        await release()
+      }
+    }
+    return carried
+  }
+
   /** Runs a claimed session's turn and releases it afterwards. */
-  private launch(sessionID: string, apiKey: string, controller: AbortController, resumed = false, lead?: Lead): void {
+  private launch(sessionID: string, apiKey: string, controller: AbortController, resumed: Resumed = false, lead?: Lead): void {
     this.steering.set(sessionID, { waiting: [], written: Promise.resolve() })
 
     // Deliberately not awaited: the caller gets the message id immediately and
     // follows the turn through events.
+    let failed = false
     void this.run(sessionID, apiKey, controller, resumed, lead)
       .catch((err) => {
+        failed = true
         // A failure recorded on the message is already in front of the user.
         if (err instanceof Shown) return
         const code = codeOf(err)
@@ -2367,6 +2610,8 @@ export class SessionRunner {
             error: `Could not record this turn for undo: ${(cause as Error).message}`,
           })
         }
+        // The turn ended for a reason of its own: nothing to carry on at the next start. A turn cut off by the quit keeps its claim.
+        if (!this.closing) await this.store.update(sessionID, { claim: undefined }).catch(() => undefined)
         this.running.delete(sessionID)
         this.retrying.delete(sessionID)
         this.workingIn.delete(sessionID)
@@ -2392,10 +2637,124 @@ export class SessionRunner {
           return
         }
         this.bus.publish({ type: "session.idle", sessionID })
+        // OpenCode v2: the next queued message once a turn ends of its own accord; after Stop or a failure they wait for the user.
+        if (!controller.signal.aborted && !failed && !this.closing) void this.sendQueued(sessionID)
       })
   }
 
-  private async run(sessionID: string, apiKey: string, controller: AbortController, resumed = false, lead?: Lead): Promise<void> {
+  /**
+   * Changes a conversation's queue, one change at a time: two messages queued
+   * a moment apart must both be kept, and a read-change-write pair running
+   * beside another would drop one of them.
+   */
+  private queueEdit(sessionID: string, change: (queued: QueuedPrompt[]) => QueuedPrompt[]): Promise<{ before: QueuedPrompt[]; after: QueuedPrompt[] }> {
+    const edited = (this.queueEdits.get(sessionID) ?? Promise.resolve()).then(async () => {
+      const before = (await this.store.require(sessionID)).queued ?? []
+      const after = change(before)
+      await this.store.update(sessionID, { queued: after.length ? after : undefined })
+      return { before, after }
+    })
+    this.queueEdits.set(
+      sessionID,
+      edited.then(
+        () => undefined,
+        () => undefined,
+      ),
+    )
+    return edited
+  }
+
+  /** A message for after the running turn: kept on the conversation, and its id handed back. */
+  private async enqueue(input: PromptInput): Promise<string> {
+    const item: QueuedPrompt = {
+      id: Identifier.message(),
+      text: input.text,
+      ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+      ...(input.annotations?.length ? { annotations: input.annotations } : {}),
+      ...(input.fileNotices?.length ? { fileNotices: input.fileNotices } : {}),
+      ...(input.agent ? { agent: input.agent } : {}),
+      ...(input.model ? { model: input.model } : {}),
+      ...(input.goal ? { goal: input.goal } : {}),
+      time: Date.now(),
+    }
+    await this.queueEdit(input.sessionID, (queued) => [...queued, item])
+    return item.id
+  }
+
+  private promptOf(sessionID: string, item: QueuedPrompt): PromptInput {
+    return {
+      sessionID,
+      text: item.text,
+      attachments: item.attachments,
+      annotations: item.annotations,
+      fileNotices: item.fileNotices,
+      agent: item.agent,
+      model: item.model,
+      goal: item.goal,
+    }
+  }
+
+  /** Takes a queued message back without sending it. */
+  async removeQueued(sessionID: string, id: string): Promise<void> {
+    const { before } = await this.queueEdit(sessionID, (queued) => queued.filter((item) => item.id !== id))
+    if (!before.some((item) => item.id === id)) throw new CodedError("That message is no longer queued", "error.queueGone")
+  }
+
+  /** 立即发送: a queued message into the running turn, or as a turn of its own if none is running. */
+  async sendQueuedNow(sessionID: string, id: string): Promise<string> {
+    // The same refusal `session.prompt` gives: a review-restricted conversation takes nothing more.
+    if ((await this.store.get(sessionID))?.reviewRestricted) throw new CodedError("this conversation can't be continued - start a new one", "composer.reviewRestricted")
+    let item: QueuedPrompt | undefined
+    await this.queueEdit(sessionID, (queued) => {
+      item = queued.find((entry) => entry.id === id)
+      return queued.filter((entry) => entry.id !== id)
+    })
+    const taken = item
+    if (!taken) throw new CodedError("That message is no longer queued", "error.queueGone")
+    try {
+      return await this.prompt(this.promptOf(sessionID, taken))
+    } catch (failure) {
+      // Not sent, so not lost: back where it was, at the front.
+      await this.queueEdit(sessionID, (queued) => [taken, ...queued]).catch(() => undefined)
+      throw failure
+    }
+  }
+
+  /**
+   * The oldest queued message, sent as a new turn. A send that is refused - a
+   * provider gone, a rollback in the way - puts it back and leaves the rest
+   * waiting, said as the turn's own error would be.
+   */
+  private async sendQueued(sessionID: string): Promise<void> {
+    if (this.running.has(sessionID) || this.steering.has(sessionID)) return
+    // A conversation a review restricted during the turn takes nothing more; what was queued stays for the reader to take back.
+    if ((await this.store.get(sessionID).catch(() => undefined))?.reviewRestricted) return
+    let item: QueuedPrompt | undefined
+    await this.queueEdit(sessionID, (queued) => {
+      item = queued[0]
+      return queued.slice(1)
+    }).catch(() => undefined)
+    const taken = item
+    if (!taken) return
+    try {
+      await this.prompt({ ...this.promptOf(sessionID, taken), fromQueue: true })
+    } catch (failure) {
+      await this.queueEdit(sessionID, (queued) => [taken, ...queued]).catch(() => undefined)
+      const code = codeOf(failure)
+      this.bus.publish({ type: "session.error", sessionID, error: describe(failure), ...(code ? { errorCode: code, errorParams: paramsOf(failure) } : {}) })
+    }
+  }
+
+  private async run(sessionID: string, apiKey: string, controller: AbortController, resumed: Resumed = false, lead?: Lead): Promise<void> {
+    /*
+     * OpenCode v2's write-ahead claim, before anything else the turn does: a
+     * quit or a crash from here on leaves it behind, and the next start
+     * carries the turn on. The count of such carryings-on is kept across them
+     * and reset only by a turn that ends.
+     */
+    const resumes = this.restartResumes.get(sessionID) ?? 0
+    this.restartResumes.delete(sessionID)
+    await this.store.update(sessionID, { claim: { at: Date.now(), resumes, pid: process.pid } }).catch(() => undefined)
     const own = await this.store.require(sessionID)
     // plan: the conversation's own mode as the turn begins; approving a plan changes it mid-turn.
     const planning = own.agent === "plan"
@@ -2483,7 +2842,7 @@ export class SessionRunner {
     const limit = config.maxSteps && config.maxSteps > 0 ? config.maxSteps : undefined
     /* MiMo's continuations this turn: notes kept in the request after the reply they answer, and how many of each were used. */
     const notes = new Map<string, string[]>()
-    const continued = { length: 0, textTool: 0, empty: 0 }
+    const continued = { length: 0, textTool: 0, empty: 0, interrupted: 0 }
     /* MiMo's n-gram check: how many times this turn has been told to stop repeating itself. */
     let repeated = 0
     /*
@@ -2615,7 +2974,7 @@ export class SessionRunner {
          * step of the turn told the model a finished reply had been cut off;
          * it goes back on below only if this step is cut again.
          */
-        const kept = (notes.get(assistant.id) ?? []).filter((note) => note !== LENGTH_NOTE)
+        const kept = (notes.get(assistant.id) ?? []).filter((note) => note !== LENGTH_NOTE && note !== INTERRUPTED_NOTE)
         if (kept.length) notes.set(assistant.id, kept)
         else notes.delete(assistant.id)
       }
@@ -2669,7 +3028,7 @@ export class SessionRunner {
                   id: `${assistant.id}:resume`,
                   sessionID,
                   role: "user" as const,
-                  text: RESUME_PROMPT,
+                  text: resumed === "restart" ? RESTART_PROMPT : RESUME_PROMPT,
                   attachments: [],
                   time: { created: Date.now() },
                 },
@@ -2887,7 +3246,7 @@ export class SessionRunner {
         await this.store.saveMessage(assistant)
         if ((next.note || repeatNote) && !lastStep) {
           // The rest of a sentence the limit cut belongs to the reply that started it.
-          if (next.note === LENGTH_NOTE) continuing = assistant
+          if (next.note === LENGTH_NOTE || next.note === INTERRUPTED_NOTE) continuing = assistant
           if (overflowing) {
             const compacted = await this.compactForOverflow(session, controller.signal)
             if (compacted) {
@@ -3211,7 +3570,36 @@ export class SessionRunner {
            */
           const decision = retryDecision(err, attempt, Date.now() - firstFailure, Math.random(), streamed ? "stream" : "request")
           if (!decision) throw err
+          /*
+           * OpenCode v2's continuation: a stream that broke after the reply had
+           * begun keeps its words and is continued, rather than thrown away and
+           * asked for from the start. Only the words: a tool call cut part-way
+           * cannot be finished by another request, so a step that had begun one
+           * is sent again whole, as before; and this attempt's thinking goes,
+           * since a block cut before its signature cannot be sent back.
+           */
+          const fresh = assistant.parts.filter((part) => !base.includes(part))
+          const grew = (carried !== undefined && carried.text.length > carriedAt) || fresh.some((part) => part.type === "text" && part.text.trim() !== "")
+          const resume = streamed && grew && !cut && !fresh.some((part) => part.type === "tool")
           streamed = false
+          if (resume) {
+            assistant.parts = assistant.parts.filter((part) => base.includes(part) || part.type === "text")
+            taken = false
+            blocks.clear()
+            dirty = false
+            const retry = { attempt, message: describe(err), next: Date.now() + decision.wait, kind: decision.kind, max: decision.max }
+            if (decision.kind === "rate_limit") noteRateLimit(assistant.model.provider, retry.next)
+            this.retrying.set(assistant.sessionID, { messageID: assistant.id, ...retry })
+            this.bus.publish({ type: "message.updated", message: { ...structuredClone(assistant), retry } })
+            try {
+              if (!(await waitFor(decision.wait, request.signal))) throw new DOMException("Aborted", "AbortError")
+            } finally {
+              this.retrying.delete(assistant.sessionID)
+            }
+            // The step ends here; the turn continues it in this same reply with the note asking for the rest.
+            outcome = { stop: "end_turn", toolCalls: [], usage: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }, finishReason: INTERRUPTED_FINISH }
+            continue
+          }
           /*
            * Tried again from the start, as MiMo's engine does: what the failed
            * attempt managed to stream is dropped, because the next one streams
@@ -3475,6 +3863,11 @@ export class SessionRunner {
         signal: input.signal,
         snapshot: (target) => this.record(owner, target),
         shell: this.config.get().shell,
+        // websearch: the user's choice of service, asked once and kept in the settings.
+        webSearch: {
+          selection: () => this.config.get().websearch,
+          select: async (selection) => void (await this.config.set({ websearch: selection })),
+        },
         toolOutputs: this.toolOutputs,
         subagent: this.workers.has(input.session.id),
         // session chat: a conversation's own calls only; a subagent has no contacts.

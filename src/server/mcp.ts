@@ -20,12 +20,14 @@ import {
 } from "./mcp-oauth"
 import type { Attachment, McpServerConfig, McpServerState, McpStatus } from "@shared/protocol"
 import { redactCommand, redactString } from "@shared/mcp-redact"
-import { ToolError, type ToolDefinition } from "./tool/types"
+import { ToolError, type ToolContext, type ToolDefinition } from "./tool/types"
 import { resolveServers, type ResolvedServer } from "./mcp-sources"
 import { browserTarget } from "./open-url"
 import { terminate, windowsLaunch } from "./mcp-launch"
 import { probeTools, stopProbes, type ProbeResult } from "./mcp-probe"
 import { wildcardMatch } from "./permission"
+import { renderCatalog, searchCatalog, summarize, type CatalogTool } from "./codemode/catalog"
+import { formatScriptResult, runScript } from "./codemode/sandbox"
 
 /**
  * Talks to Model Context Protocol servers, and offers their tools to the agent.
@@ -96,6 +98,32 @@ export type McpSampler = (input: {
  * `$1`, `$2` … in place of each declared argument and lets the command runner
  * substitute the words that were typed.
  */
+/** A document, record or other piece of data an MCP server exposes (the protocol's `Resource`). */
+export interface McpResource {
+  uri: string
+  name?: string
+  title?: string
+  description?: string
+  mimeType?: string
+}
+
+/** A resource addressed by parameters, such as a record's id (the protocol's `ResourceTemplate`). */
+export interface McpResourceTemplate {
+  uriTemplate: string
+  name?: string
+  title?: string
+  description?: string
+  mimeType?: string
+}
+
+/** One part of a read resource: text, or base64 bytes. */
+export interface McpResourceContent {
+  uri?: string
+  mimeType?: string
+  text?: string
+  blob?: string
+}
+
 export interface McpPrompt {
   name: string
   description?: string
@@ -608,6 +636,44 @@ class Connection {
     return { output: output || "(no output)", attachments }
   }
 
+  /** Whether this server said it has resources to offer. */
+  offersResources(): boolean {
+    return this.status === "connected" && Boolean(this.capabilities.resources)
+  }
+
+  /**
+   * The resources and templates this server offers, every page of each
+   * (OpenCode v2's `list_mcp_resources`). Nothing from a server that never
+   * claimed to have any.
+   */
+  async resources(): Promise<{ resources: McpResource[]; templates: McpResourceTemplate[] }> {
+    if (!this.offersResources()) return { resources: [], templates: [] }
+    const pages = async <T>(method: string, field: string): Promise<T[]> => {
+      const out: T[] = []
+      let cursor: string | undefined
+      // A server that hands back the same cursor forever is not followed past a sensible length.
+      for (let page = 0; page < 50; page++) {
+        const listed = (await this.request(method, cursor ? { cursor } : {})) as Record<string, unknown> & { nextCursor?: unknown }
+        const entries = listed?.[field]
+        if (Array.isArray(entries)) out.push(...(entries as T[]))
+        cursor = typeof listed?.nextCursor === "string" && listed.nextCursor ? listed.nextCursor : undefined
+        if (!cursor) break
+      }
+      return out
+    }
+    const resources = await pages<McpResource>("resources/list", "resources")
+    // Templates are optional in the protocol: a server without them answers with an error, which is no templates.
+    const templates = await pages<McpResourceTemplate>("resources/templates/list", "resourceTemplates").catch((): McpResourceTemplate[] => [])
+    return { resources, templates }
+  }
+
+  /** One resource's contents, as the server sends them. */
+  async readResource(uri: string, signal?: AbortSignal): Promise<McpResourceContent[]> {
+    const timeout = this.config.timeout ?? this.hooks.callTimeout?.() ?? CALL_TIMEOUT
+    const read = (await this.request("resources/read", { uri }, { timeout, signal })) as { contents?: McpResourceContent[] }
+    return Array.isArray(read?.contents) ? read.contents : []
+  }
+
   /** The prompts this server offers, or nothing if it never claimed to have any. */
   async prompts(): Promise<McpPrompt[]> {
     if (this.status !== "connected" || !this.capabilities.prompts) return []
@@ -1028,6 +1094,31 @@ function madeFrom(entry: ResolvedServer): string {
   return JSON.stringify({ config: entry.config ?? null, invalid: entry.invalid ?? null })
 }
 
+/** A Code Mode step's title: the tools its script called, the first three and how many more. */
+export function codeModeTitle(tools: readonly string[]): string {
+  const names = [...new Set(tools)]
+  return names.slice(0, 3).join(", ") + (names.length > 3 ? ` +${names.length - 3}` : "")
+}
+
+/** A server's tool that Code Mode reaches from a script rather than offering directly. */
+interface ScriptedTool {
+  server: string
+  connection: Connection
+  tool: McpTool
+  rule: ReturnType<typeof toolRule>
+}
+
+/** v2's invariant description of `execute` (core/src/codemode/tool.ts), less `fetch`, which MCode's sandbox does not offer. */
+const CODE_MODE_DESCRIPTION = [
+  "Run JavaScript in a confined Code Mode runtime to script tool calls and compose their results.",
+  "Imports, the network, direct filesystem access and timers are unavailable; all external access goes through `tools`.",
+  "Within `{ code }`, the only callable tools are those listed in the Code Mode catalog below or returned by the `search` function. Inside `{ code }`, ignore tools shown outside the Code Mode catalog. They are not available in the Code Mode runtime.",
+  'Call tools through `tools` using only exact paths and signatures from the catalog. Do not infer or normalize tool names; preserve bracket notation such as `tools.<namespace>["tool-name"](input)`.',
+  "Each tool resolves to its text output; use JSON.parse when that text is JSON.",
+  "End with an explicit `return`; without one the result is null.",
+  "Await every call whose completion matters; pending calls are interrupted when execution ends. Run independent calls concurrently with `Promise.all`.",
+].join("\n")
+
 export class McpServers {
   private readonly groups = new Map<string, Group>()
   /*
@@ -1446,12 +1537,18 @@ export class McpServers {
    */
   tools(directory?: string): ToolDefinition[] {
     const out: ToolDefinition[] = []
+    // OpenCode v2's Code Mode: the tools of servers it is switched on for, called from a script instead.
+    const scripted: ScriptedTool[] = []
     for (const [name, connection] of this.group(directory)?.connections ?? []) {
       if (connection.status !== "connected") continue
       for (const tool of connection.tools) {
         const rule = toolRule(connection.config.tools, tool.name)
         // A tool its server's rules refuse is never offered, as MiMo leaves a denied tool out.
         if (rule === "deny") continue
+        if (connection.config.codemode === true) {
+          scripted.push({ server: name, connection, tool, rule })
+          continue
+        }
         out.push({
           name: mcpToolName(name, tool.name),
           description: tool.description ?? "",
@@ -1461,31 +1558,213 @@ export class McpServers {
           permission: "mcp",
           server: name,
           execute: async (input, context) => {
-            // A tool its rules allow is not asked about, unless MCP calls are refused altogether.
-            if (rule !== "allow" || context.permissions.action("mcp") === "deny") {
-              await context.permissions.ask({
-                sessionID: context.sessionID,
-                messageID: context.messageID,
-                callID: context.callID,
-                kind: "mcp",
-                directory: context.directory,
-                title: `${name}: ${tool.name}`,
-                subject: JSON.stringify(input),
-                preview: JSON.stringify(input, null, 2),
-                scope: `mcp:${name}`,
-                // A tool its rules ask about asks even where MCP calls run without asking.
-                ...(rule === "ask" ? { patternAsks: true } : {}),
-              })
-            }
-            // Counted as this conversation's for as long as it runs, so a sampling request is asked in the right place.
-            const { output, attachments } = await connection.callingFrom(context.sessionID, () => connection.call(tool.name, input, context.signal))
+            const { output, attachments } = await this.callTool(name, connection, tool, rule, input, context)
             // MiMo hands a server's pictures and sounds to the model on the result itself.
             return { output, title: `${name}: ${tool.name}`, ...(attachments.length ? { attachments } : {}) }
           },
         })
       }
     }
-    return out
+    // After every server's own tools and the resource tools, so the order the cached prefix was built on stays.
+    return [...out, ...this.resourceTools(directory), ...(scripted.length ? [this.codeModeTool(scripted)] : [])]
+  }
+
+  /**
+   * One call to a server's tool, as the model makes it directly or from a
+   * Code Mode script: asked about under the server's approval as its rules
+   * say, and counted as the conversation's while it runs.
+   */
+  private async callTool(
+    name: string,
+    connection: Connection,
+    tool: McpTool,
+    rule: ReturnType<typeof toolRule>,
+    input: Record<string, unknown>,
+    context: ToolContext,
+  ): Promise<{ output: string; attachments: Attachment[] }> {
+    // A tool its rules allow is not asked about, unless MCP calls are refused altogether.
+    if (rule !== "allow" || context.permissions.action("mcp") === "deny") {
+      await context.permissions.ask({
+        sessionID: context.sessionID,
+        messageID: context.messageID,
+        callID: context.callID,
+        kind: "mcp",
+        directory: context.directory,
+        title: `${name}: ${tool.name}`,
+        subject: JSON.stringify(input),
+        preview: JSON.stringify(input, null, 2),
+        scope: `mcp:${name}`,
+        // A tool its rules ask about asks even where MCP calls run without asking.
+        ...(rule === "ask" ? { patternAsks: true } : {}),
+      })
+    }
+    // Counted as this conversation's for as long as it runs, so a sampling request is asked in the right place.
+    return connection.callingFrom(context.sessionID, () => connection.call(tool.name, input, context.signal))
+  }
+
+  /**
+   * OpenCode v2's Code Mode (core/src/codemode/tool.ts, MIT): one `execute`
+   * tool whose script calls the tools of the servers it is switched on for,
+   * run in a QuickJS sandbox (codemode/sandbox.ts). The catalog rides on its
+   * description, where v2 puts it in the instructions: the description is
+   * part of the tool list either way, and changes only when those servers'
+   * tools do.
+   */
+  private codeModeTool(scripted: ScriptedTool[]): ToolDefinition {
+    const catalog: CatalogTool[] = scripted.map((entry) => ({ segments: [entry.server, entry.tool.name], description: entry.tool.description ?? "", inputSchema: entry.tool.inputSchema }))
+    const byKey = new Map(scripted.map((entry) => [`${entry.server}\u0000${entry.tool.name}`, entry]))
+    return {
+      name: "execute",
+      description: [CODE_MODE_DESCRIPTION, renderCatalog(summarize(catalog))].join("\n\n"),
+      parameters: {
+        type: "object",
+        properties: { code: { type: "string", description: "JavaScript to run. End it with `return <value>`; the value, or the error thrown, is the result." } },
+        required: ["code"],
+        additionalProperties: false,
+      },
+      permission: "mcp",
+      execute: async (input, context) => {
+        const code = typeof input.code === "string" ? input.code : ""
+        if (!code.trim()) throw new ToolError("code is required")
+        const calls: { tool: string; status: "running" | "completed" | "error" }[] = []
+        const attachments: Attachment[] = []
+        const report = () => context.progress(calls.map((call) => `${call.status === "running" ? "…" : call.status === "completed" ? "✓" : "✗"} ${call.tool}`).join("\n"))
+        const result = await runScript(
+          code,
+          {
+            tools: new Set(byKey.keys()),
+            search: (query) => searchCatalog(catalog, (query ?? {}) as Record<string, unknown>),
+            call: async ([server, name], args) => {
+              const entry = byKey.get(`${server}\u0000${name}`)!
+              const row = { tool: `${server}.${name}`, status: "running" as "running" | "completed" | "error" }
+              calls.push(row)
+              report()
+              try {
+                const { output, attachments: files } = await this.callTool(server, entry.connection, entry.tool, entry.rule, (args && typeof args === "object" ? args : {}) as Record<string, unknown>, context)
+                attachments.push(...files)
+                row.status = "completed"
+                return output
+              } catch (error) {
+                row.status = "error"
+                throw error
+              } finally {
+                report()
+              }
+            },
+          },
+          { signal: context.signal },
+        )
+        const output = formatScriptResult(result)
+        if (!result.ok && context.signal.aborted) throw new ToolError(output)
+        return {
+          output,
+          // The tools the script reached, which is what the row is about; the code itself is in the call.
+          title: codeModeTitle(calls.map((call) => call.tool)),
+          metadata: { toolCalls: calls, ...(result.ok ? {} : { error: true }) },
+          ...(attachments.length ? { attachments } : {}),
+        }
+      },
+    }
+  }
+
+  /**
+   * OpenCode v2's two resource tools (tool/plugin/mcp-resource.ts, MIT):
+   * documents, records and other data a server exposes that are not files on
+   * this disk. Offered only while some connected server says it has resources,
+   * so a conversation without one is sent the same tools as before; and after
+   * every server's own tools, so their cached order is untouched.
+   */
+  private resourceTools(directory?: string): ToolDefinition[] {
+    const connections = [...(this.group(directory)?.connections ?? [])].filter(([, connection]) => connection.offersResources())
+    if (connections.length === 0) return []
+    const byName = new Map(connections)
+    // Asked per server, under the scope its tools are approved in, as v2 asks.
+    const ask = async (context: ToolContext, server: string, title: string, subject: string) =>
+      context.permissions.ask({
+        sessionID: context.sessionID,
+        messageID: context.messageID,
+        callID: context.callID,
+        kind: "mcp",
+        directory: context.directory,
+        title,
+        subject,
+        preview: subject,
+        scope: `mcp:${server}`,
+      })
+    return [
+      {
+        name: "list_mcp_resources",
+        description:
+          "List documents, records, and other data exposed by MCP servers. Use this when the user refers to something that is not a local file, such as a URI with a custom scheme, then load a match with read_mcp_resource. Each entry names the server to read it from. Templates are resources addressed by a parameter such as a record ID; fill in the uriTemplate placeholders before reading.",
+        parameters: {
+          type: "object",
+          properties: { server: { type: "string", description: "MCP server name as configured. Omit to list every server." } },
+          additionalProperties: false,
+        },
+        permission: "mcp",
+        execute: async (input, context) => {
+          const named = typeof input.server === "string" && input.server.trim() ? input.server.trim() : undefined
+          if (named && !byName.has(named)) throw new ToolError(`MCP server "${named}" is not connected or does not expose resources`)
+          const servers = named ? [named] : [...byName.keys()]
+          const sections: string[] = []
+          for (const server of servers) {
+            await ask(context, server, `${server}: list resources`, server)
+            const { resources, templates } = await byName.get(server)!.resources()
+            const lines = [
+              ...resources.map((entry) => `- ${entry.uri}${entry.title ?? entry.name ? ` - ${entry.title ?? entry.name}` : ""}${entry.mimeType ? ` (${entry.mimeType})` : ""}${entry.description ? `: ${entry.description}` : ""}`),
+              ...templates.map((entry) => `- template ${entry.uriTemplate}${entry.title ?? entry.name ? ` - ${entry.title ?? entry.name}` : ""}${entry.description ? `: ${entry.description}` : ""}`),
+            ]
+            sections.push([`## ${server}`, ...(lines.length ? lines : ["(no resources)"])].join("\n"))
+          }
+          return { output: sections.join("\n\n"), title: named ? `${named}: resources` : "MCP resources" }
+        },
+      },
+      {
+        name: "read_mcp_resource",
+        description:
+          "Read one MCP resource by server and URI. Not for local files. Always return the full contents rather than slicing or filtering them; oversized output is truncated automatically and the full content is saved to a file you can read. Images and PDFs are shown to you directly.",
+        parameters: {
+          type: "object",
+          properties: {
+            server: { type: "string", description: "The server field of the discovered resource." },
+            uri: { type: "string", description: "Exact resource URI from discovery, an expanded uriTemplate, or the user." },
+          },
+          required: ["server", "uri"],
+          additionalProperties: false,
+        },
+        permission: "mcp",
+        execute: async (input, context) => {
+          const server = String(input.server ?? "").trim()
+          const uri = String(input.uri ?? "").trim()
+          const connection = byName.get(server)
+          if (!connection) throw new ToolError(`MCP server "${server}" is not connected or does not expose resources`)
+          if (!uri) throw new ToolError("uri is required")
+          await ask(context, server, `${server}: read resource`, `${server}:${uri}`)
+          let contents: McpResourceContent[]
+          try {
+            contents = await connection.callingFrom(context.sessionID, () => connection.readResource(uri, context.signal))
+          } catch (error) {
+            throw new ToolError(`Unable to read MCP resource ${server}:${uri}: ${error instanceof Error ? error.message : String(error)}`)
+          }
+          const text: string[] = []
+          const attachments: Attachment[] = []
+          for (const part of contents) {
+            if (typeof part.text === "string") text.push(part.text)
+            else if (typeof part.blob === "string") {
+              const mime = part.mimeType ?? "application/octet-stream"
+              // Pictures and PDFs go to the model as themselves; other bytes are named rather than dumped.
+              if (mime.startsWith("image/") || mime === "application/pdf") attachments.push({ path: part.uri || mcpAttachmentName("resource", mime, attachments.length + 1), mime, data: part.blob })
+              else text.push(`[${mime} resource left out: ${Math.floor((part.blob.length * 3) / 4)} bytes of binary data]`)
+            }
+          }
+          return {
+            output: text.join("\n\n") || (attachments.length ? "(the resource is attached)" : "(the resource is empty)"),
+            title: `${server}: ${uri}`,
+            ...(attachments.length ? { attachments } : {}),
+          }
+        },
+      },
+    ]
   }
 
   /** Every server stopped; settles once the local ones have exited. */

@@ -469,7 +469,14 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     await storage.write("session/a/info", { id: "a" })
     await fs.writeFile(path.join(temp, "session", "a", "info.json.4242.7.tmp"), "half", "utf8")
     await fs.writeFile(path.join(temp, "session", "a", `info.json.${process.pid}.9.tmp`), "mine", "utf8")
-    const swept = await storage.sweepTemps()
+    /*
+     * "4242 is dead" is the case under test, so it is said rather than asked of
+     * the machine. Windows ignores a process id's two low bits, so asking about
+     * 4242 asks about 4240 - which on the machine this ran on in 2026-09 was a
+     * live process, and the fresh file was then rightly kept as a live writer's.
+     * Real temp names carry real ids, which are multiples of four.
+     */
+    const swept = await storage.sweepTemps({ alive: (pid) => pid === process.pid })
     const left = await fs.readdir(path.join(temp, "session", "a"))
     check("a temp file another run left is swept, one of this run's and the document itself are not", swept === 1 && left.includes("info.json") && left.includes(`info.json.${process.pid}.9.tmp`) && !left.includes("info.json.4242.7.tmp"), left)
     await storage.write("session/a/info", { id: "a", fast: true }, { durable: false })

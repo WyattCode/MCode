@@ -189,11 +189,30 @@ function aborted(err: unknown): boolean {
   return false
 }
 
-/** What kind of failure this is, or undefined for one that will not go away by waiting. MiMo's order. */
+/**
+ * What kind of failure this is, or undefined for one that will not go away by waiting.
+ *
+ * The provider has the last word where it gives one. OpenCode v2 reads
+ * `x-should-retry` before any classification, as Anthropic's own SDK does: a
+ * gateway that knows its 503 is a hard outage says "false" and the turn stops
+ * at once instead of waiting out fifteen minutes of backoff, and one that
+ * knows its 400 was a transient routing fault says "true". A cancelled request
+ * and a context overflow are still never retried - the first was asked for,
+ * the second is recovered by compacting, not by waiting.
+ */
 export function retryKind(err: unknown): RetryKind | undefined {
   if (!err || typeof err !== "object") return undefined
+  if (aborted(err) || isOverflowError(err, textOf(err))) return undefined
+  const says = headerOf(err, "x-should-retry")?.trim().toLowerCase()
+  if (says === "false") return undefined
+  const kind = classify(err)
+  if (says === "true") return kind ?? "unknown"
+  return kind
+}
+
+/** MiMo's order, for a failure the provider did not rule on. */
+function classify(err: object): RetryKind | undefined {
   const text = textOf(err)
-  if (aborted(err) || isOverflowError(err, text)) return undefined
   const status = statusOf(err)
   const wire = wireOf(err)
   if (status === 401 || status === 403 || status === 402 || status === 501 || status === 505) return undefined

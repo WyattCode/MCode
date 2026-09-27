@@ -135,16 +135,65 @@ const SHELL_INTERPRETERS = new Set(["bash", "sh", "zsh", "dash", "fish", "pwsh",
 /** How far one line's `bash -c "bash -c ..."` is followed. */
 const NEST_LIMIT = 4
 
+/** The shell's reserved words that can stand in front of a command without being it. */
+const SHELL_KEYWORDS = new Set(["if", "then", "else", "elif", "do", "while", "until", "!"])
+
+/**
+ * A wrapper's flags that take the next word as their value.
+ *
+ * Without this `sudo -u bob rm -rf src` skipped `-u` and took `bob` for the
+ * program, so the line named `bob` and showed no delete (R28-2). Only flags
+ * whose value is a separate word are listed; `--user=bob` carries its own.
+ */
+const WRAPPER_VALUE_FLAGS = new Map<string, Set<string>>([
+  ["sudo", new Set(["-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T", "--user", "--group", "--host", "--prompt", "--chdir", "--role", "--type", "--other-user", "--close-from", "--command-timeout"])],
+  ["doas", new Set(["-u", "-C"])],
+  ["env", new Set(["-u", "-C", "--unset", "--chdir"])],
+  ["timeout", new Set(["-s", "-k", "--signal", "--kill-after"])],
+  ["nice", new Set(["-n", "--adjustment"])],
+  ["ionice", new Set(["-c", "-n", "-p", "-P", "-u", "--class", "--classdata", "--pid", "--pgid", "--uid"])],
+  ["xargs", new Set(["-I", "-n", "-P", "-L", "-s", "-d", "-E", "-a", "--max-args", "--max-procs", "--max-lines", "--max-chars", "--delimiter", "--eof", "--arg-file"])],
+  ["stdbuf", new Set(["-i", "-o", "-e"])],
+  ["exec", new Set(["-a"])],
+  ["time", new Set(["-f", "-o", "--format", "--output"])],
+])
+
 /** Leading words of a wrapper's arguments that are not the program it runs. */
 function programAfterWrapper(tokens: string[]): string[] {
+  const takesValue = WRAPPER_VALUE_FLAGS.get(programName(tokens[0] ?? ""))
   let at = 1
   while (at < tokens.length) {
     const token = tokens[at] ?? ""
+    if (takesValue?.has(token)) {
+      at += 2
+      continue
+    }
     // A flag, a flag's count or duration, an `env` assignment, or xargs' `-I` placeholder.
     if (/^-/.test(token) || /^\d+(?:\.\d+)?[smhd]?$/.test(token) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(token) || token === "{}") at++
     else break
   }
   return tokens.slice(at)
+}
+
+/**
+ * The commands `find` runs for each file it finds: whatever follows `-exec`,
+ * `-execdir`, `-ok` or `-okdir`, up to the `;` or `+` that ends it.
+ * `find . -name "*.log" -exec rm {} +` named `find` and showed no delete
+ * (R28-2).
+ */
+function findActions(tokens: string[]): string[][] {
+  const out: string[][] = []
+  for (let at = 1; at < tokens.length; at++) {
+    if (!/^-(?:exec|execdir|ok|okdir)$/.test(tokens[at] ?? "")) continue
+    const action: string[] = []
+    for (at++; at < tokens.length; at++) {
+      const token = tokens[at] ?? ""
+      if (token === "+" || token === "\\;" || token === "';'" || token === '";"' || token === "\\") break
+      action.push(token)
+    }
+    if (action.length) out.push(action)
+  }
+  return out
 }
 
 /**
@@ -187,17 +236,22 @@ function inlineBody(tokens: string[], posh: boolean): string | undefined {
       if (/^-(?:c|co|com|comm|comma|comman|command)$/i.test(token)) return unquote(tokens[at + 1] ?? "") || undefined
       continue
     }
-    const lowered = token.toLowerCase()
-    if (INLINE_FLAGS.has(lowered)) return unquote(tokens[at + 1] ?? "") || undefined
-    const evaluated = /^--eval=(.+)/.exec(token)
-    if (evaluated) return unquote(evaluated[1] ?? "") || undefined
-    // A cluster of short flags: `-lc`, `-xc`. Long options are not clusters.
+    // cmd's own two: /c runs and ends, /k runs and stays.
+    if (/^\/[ck]$/i.test(token)) return unquote(tokens[at + 1] ?? "") || undefined
+    /*
+     * Only a shell reaches here, and a shell's code flag is `c` alone. This
+     * used to share the interpreters' table, where `-e` and `-p` are node's
+     * and perl's code flags - but to bash they are errexit and privileged
+     * mode, so `sh -e -c "rm -rf src"`, the form scripts write most, answered
+     * "-c" as the code, read nothing behind it, and deleted with no question
+     * asked (R28-1).
+     */
+    // A cluster of short flags: `-c`, `-lc`, `-ec`. Long options are not clusters.
     const cluster = /^-([A-Za-z]+)(.*)$/.exec(token)
     if (!cluster || token.startsWith("--")) continue
     const letters = cluster[1] ?? ""
     const rest = cluster[2] ?? ""
-    // `c` is the shell's code flag; `e` and `p` are node's and perl's.
-    if (!/[cep]/.test(letters)) continue
+    if (!letters.includes("c")) continue
     if (rest) return unquote(rest) || undefined
     return unquote(tokens[at + 1] ?? "") || undefined
   }
@@ -216,7 +270,22 @@ function inlineBody(tokens: string[], posh: boolean): string | undefined {
  */
 function runsWithin(entry: SimpleCommand, powershell: boolean, depth: number): SimpleCommand[] {
   if (depth >= NEST_LIMIT) return []
-  const head = programName(entry.tokens[0] ?? "")
+  const head = programName((entry.tokens[0] ?? "").replace(/["']/g, ""))
+  if (head === "find") {
+    return findActions(entry.tokens).flatMap((tokens) => {
+      const action: SimpleCommand = { tokens, source: tokens.join(" "), redirects: [], derived: true }
+      return [action, ...runsWithin(action, powershell, depth + 1)]
+    })
+  }
+  // `env -S "rm -rf src"` splits its string into the command it runs, as eval does.
+  if (head === "env") {
+    const split = entry.tokens.findIndex((token) => token === "-S" || token === "--split-string" || token.startsWith("--split-string="))
+    if (split > 0) {
+      const token = entry.tokens[split]!
+      const body = unquote(token.includes("=") ? token.slice(token.indexOf("=") + 1) : (entry.tokens[split + 1] ?? "")).trim()
+      if (body) return scanCommands(body, powershell, depth + 1).map((found) => ({ ...found, derived: true }))
+    }
+  }
   if (WRAPPERS.has(head)) {
     const inner = programAfterWrapper(entry.tokens)
     if (!inner.length) return []
@@ -263,10 +332,19 @@ function scanCommands(command: string, powershell: boolean, depth: number): Simp
   }
   const endCommand = (end: number) => {
     endWord()
+    /*
+     * `then rm -rf src` runs rm: the shell's own words in front of a command
+     * are not the command. Read as the program, `if true; then rm -rf src; fi`
+     * named a program called `then` and showed no delete (R28-2).
+     */
+    if (!powershell) while (tokens.length && SHELL_KEYWORDS.has(tokens[0]!)) tokens.shift()
     // `FOO=1 git status` runs git; assignments in front are not the command, and a line of only them runs nothing.
     const first = powershell ? 0 : tokens.findIndex((token) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(token))
     const words = first === -1 ? [] : tokens.slice(first)
-    if (words.length) out.push({ tokens: words, source: command.slice(start, end).trim(), redirects })
+    // What the dialog shows and a rule is matched against starts where the command does, too.
+    const source = command.slice(start, end).trim()
+    const shown = powershell ? source : source.replace(/^(?:(?:if|then|else|elif|do|while|until|!)\s+)+/, "")
+    if (words.length) out.push({ tokens: words, source: shown, redirects })
     tokens = []
     redirects = []
     start = -1
@@ -451,12 +529,28 @@ export function rememberedPattern(tokens: string[], source: string): string | un
   return `${prefix.join(" ")} *`
 }
 
-const headOf = (tokens: string[], powershell: boolean) => (powershell ? tokens[0]?.toLowerCase() : tokens[0])
+/*
+ * The program a line runs, as every table here names it.
+ *
+ * The first word as written was compared directly, so `/bin/rm -rf src`,
+ * `\rm -rf src` (bash's way past an alias) and `"rm" -rf src` each named a
+ * program called something other than `rm` - and showed no delete at all
+ * (R28-2). The shell strips the quotes and follows the path; so does this.
+ */
+function headOf(tokens: string[], powershell: boolean): string | undefined {
+  const first = tokens[0]
+  if (first === undefined) return undefined
+  const word = (first.replace(/["']/g, "").split(/[\\/]/).pop() ?? "").replace(/\.exe$/i, "")
+  if (!word) return undefined
+  return powershell ? word.toLowerCase() : word
+}
 
 export function isDelete(tokens: string[], powershell: boolean): boolean {
   const head = headOf(tokens, powershell)
   if (!head) return false
   if (DELETE_COMMANDS.has(head)) return true
+  // `find . -delete` removes every file it matches.
+  if (head === "find") return tokens.includes("-delete")
   if (head !== "git" || tokens.length < 2) return false
   const flags = GIT_DESTRUCTIVE.get(tokens[1])
   if (!flags) return false

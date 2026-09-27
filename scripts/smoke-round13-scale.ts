@@ -49,12 +49,23 @@ function sameSummary(a: UsageSummary, b: UsageSummary): boolean {
   return alike(a, b)
 }
 
-/** Rebuilds the new text from the old one and a diff, or undefined when the diff does not fit the old text. */
+/**
+ * Rebuilds the new text from the old one and a diff, or undefined when the
+ * diff does not fit the old text.
+ *
+ * Works in whole texts rather than in lines, because since R27-3 the diff does
+ * too: the terminating newline is not a line, it is said with git's
+ * `\ No newline at end of file` on whichever side is missing it.
+ */
 function applyDiff(before: string, diff: string): string | undefined {
+  const terminated = before.endsWith("\n")
   const old = before === "" ? [] : before.split("\n")
+  if (terminated) old.pop()
   const out: string[] = []
   let at = 0
   const lines = diff.split("\n").slice(2)
+  /* The new side's terminator, as the marker reports it. */
+  let newNoEOL = false
   for (let index = 0; index < lines.length; ) {
     const head = /^@@ -(\d+),(\d+) \+(\d+),(\d+) @@$/.exec(lines[index++])
     if (!head) return undefined
@@ -63,6 +74,11 @@ function applyDiff(before: string, diff: string): string | undefined {
     while (index < lines.length && !lines[index].startsWith("@@")) {
       const line = lines[index++]
       const body = line.slice(1)
+      if (line.startsWith("\\")) {
+        const previous = lines[index - 2]?.[0]
+        if (previous === "+" || previous === " ") newNoEOL = true
+        continue
+      }
       if (line[0] === " " || line[0] === "-") {
         if (old[at] !== body) return undefined
         at++
@@ -70,30 +86,38 @@ function applyDiff(before: string, diff: string): string | undefined {
       if (line[0] === " " || line[0] === "+") out.push(body)
     }
   }
+  /* A change that never reached the end leaves the terminator as it found it. */
+  const reachedEnd = at >= old.length
   while (at < old.length) out.push(old[at++])
-  return out.join("\n")
+  const ends = reachedEnd ? !newNoEOL : terminated
+  return out.length === 0 ? "" : out.join("\n") + (ends ? "\n" : "")
 }
 
 export async function roundThirteenScaleChecks(check: Check, section: (name: string) => void): Promise<void> {
   // ------------------------------------------------------------------ S13-1
   section("Round 13 (S13-1): a diff of a very large file stays quick and small")
   {
-    // What the line-by-line table this replaced printed for the same edits, byte for byte.
+    /*
+     * What git itself prints for the same edits, compared line for line. These
+     * were the older table's output until R27-3 took the phantom line off the
+     * end - the empty element splitting on the newline leaves behind - so each
+     * one is now exactly what `git diff -U3` gives.
+     */
     const golden: [string, string, string][] = [
-      ["one\ntwo\nthree\n", "one\nTWO\nthree\n", "--- a/f.txt\n+++ b/f.txt\n@@ -1,4 +1,4 @@\n one\n-two\n+TWO\n three\n "],
-      ["", "brand new\n", "--- a/f.txt\n+++ b/f.txt\n@@ -1,0 +1,2 @@\n+brand new\n+"],
+      ["one\ntwo\nthree\n", "one\nTWO\nthree\n", "--- a/f.txt\n+++ b/f.txt\n@@ -1,3 +1,3 @@\n one\n-two\n+TWO\n three"],
+      ["", "brand new\n", "--- a/f.txt\n+++ b/f.txt\n@@ -1,0 +1,1 @@\n+brand new"],
       [
         "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\n",
         "a\nb\nX\nc\nd\ne\nf\ng\nh\ni\nj\nk\nm\nZ\n",
-        "--- a/f.txt\n+++ b/f.txt\n@@ -1,5 +1,6 @@\n a\n b\n+X\n c\n d\n e\n@@ -9,6 +10,6 @@\n i\n j\n k\n-l\n m\n+Z\n ",
+        "--- a/f.txt\n+++ b/f.txt\n@@ -1,5 +1,6 @@\n a\n b\n+X\n c\n d\n e\n@@ -9,5 +10,5 @@\n i\n j\n k\n-l\n m\n+Z",
       ],
       [
         "function f() {\n  return 1\n}\n\nfunction g() {\n  return 2\n}\n",
         "function f() {\n  return 10\n}\n\nfunction h() {\n  return 3\n}\n\nfunction g() {\n  return 2\n}\n",
         "--- a/f.txt\n+++ b/f.txt\n@@ -1,7 +1,11 @@\n function f() {\n-  return 1\n+  return 10\n }\n \n+function h() {\n+  return 3\n+}\n+\n function g() {\n   return 2\n }",
       ],
-      ["keep\nremove me\nkeep too\n", "keep\nkeep too\n", "--- a/f.txt\n+++ b/f.txt\n@@ -1,4 +1,3 @@\n keep\n-remove me\n keep too\n "],
-      ["x\ny\n", "", "--- a/f.txt\n+++ b/f.txt\n@@ -1,3 +1,0 @@\n-x\n-y\n-"],
+      ["keep\nremove me\nkeep too\n", "keep\nkeep too\n", "--- a/f.txt\n+++ b/f.txt\n@@ -1,3 +1,2 @@\n keep\n-remove me\n keep too"],
+      ["x\ny\n", "", "--- a/f.txt\n+++ b/f.txt\n@@ -1,2 +1,0 @@\n-x\n-y"],
     ]
     const drifted = golden.filter(([before, after, expected]) => unifiedDiff("f.txt", before, after) !== expected)
     check("ordinary edits print exactly what they printed before", drifted.length === 0, drifted.map(([a, b]) => unifiedDiff("f.txt", a, b)))
@@ -150,7 +174,8 @@ export async function roundThirteenScaleChecks(check: Check, section: (name: str
       const started = performance.now()
       const diff = unifiedDiff("f.ts", before.join("\n"), after.join("\n"))
       const took = performance.now() - started
-      const body = diff.split("\n").slice(3)
+      // Neither side is terminated here, so each carries git's marker where it ends - not a body line.
+      const body = diff.split("\n").slice(3).filter((line) => !line.startsWith("\\"))
       const firstAdd = body.findIndex((line) => line.startsWith("+"))
       check(
         `a rewrite of 70000 lines (past ${DIFF_EDIT_LIMIT} edits) is one replaced block, in well under a second`,
@@ -162,7 +187,12 @@ export async function roundThirteenScaleChecks(check: Check, section: (name: str
       const framed = ["top", ...before.slice(0, 5000), "bottom"]
       const reframed = ["top", ...before.slice(0, 5000).map((line) => `${line}?`), "bottom"]
       const diff2 = unifiedDiff("f.ts", framed.join("\n"), reframed.join("\n"))
-      check("the lines around a replaced block stay as context", diff2.split("\n")[2] === "@@ -1,5002 +1,5002 @@" && diff2.split("\n")[3] === " top" && diff2.endsWith("\n bottom"), diff2.split("\n").slice(0, 4))
+      // Both sides end on that same unterminated " bottom", so git's marker follows it.
+      check(
+        "the lines around a replaced block stay as context",
+        diff2.split("\n")[2] === "@@ -1,5002 +1,5002 @@" && diff2.split("\n")[3] === " top" && diff2.endsWith("\n bottom\n\\ No newline at end of file"),
+        diff2.split("\n").slice(0, 4),
+      )
     }
   }
 

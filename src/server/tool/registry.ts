@@ -13,6 +13,8 @@ import { GetDesktopSettingsTool, SetDesktopSettingTool } from "./desktop-setting
 import { ContactsTool, CreateSessionTool, TalkToSessionTool, UpdateSessionTool } from "./session-chat"
 import { ListExternalSessionsTool, ReadExternalSessionTool } from "./external-session"
 import { NotebookEditTool } from "./notebook"
+import { PatchTool } from "./patch"
+import { WebSearchTool } from "./websearch"
 import { SkillSearchTool, SkillTool } from "./skill"
 import { HistoryTool } from "./history"
 import { MemoryTool } from "./memory"
@@ -85,7 +87,29 @@ export const TOOLS: ToolDefinition[] = [
    */
   ListExternalSessionsTool,
   ReadExternalSessionTool,
+  // OpenCode v2's patch (R31-7): appended, for the same reason. Offered only to the models `usesPatch` names.
+  PatchTool,
+  // OpenCode v2's websearch (R31-9): appended, for the same reason. Not offered once the user turned it off.
+  WebSearchTool,
 ]
+
+/**
+ * Whether a model edits with `patch` rather than `edit` and `write`: OpenCode
+ * v2's rule (tool/plugin/patch.ts), a GPT model other than GPT-4 and the
+ * open-weight gpt-oss - the ones trained on this envelope. MCode had matched
+ * MiMo's desktop, which never offers it; since 2026-09-27 the engine follows
+ * v2 (the user's decision).
+ */
+export function usesPatch(modelID: string): boolean {
+  const id = modelID.toLowerCase()
+  return id.includes("gpt-") && !id.includes("oss") && !id.includes("gpt-4")
+}
+
+/** A turn's tools for the model it runs on: `patch` in place of `edit` and `write` where `usesPatch` says, and not otherwise. */
+export function forModel(tools: readonly ToolDefinition[], modelID: string): ToolDefinition[] {
+  const patching = usesPatch(modelID)
+  return tools.filter((tool) => (patching ? tool.name !== "edit" && tool.name !== "write" : tool.name !== "patch"))
+}
 
 /**
  * The scheduling tools, withdrawn from the model (the user's 2026-09-21
@@ -152,9 +176,10 @@ export function hasOwnToolsOnly(agent: string): boolean {
  * Windows PowerShell 5.1, which has no such operator. `shell` is already part
  * of the prompt prefix key, so a changed setting rebuilds the prefix anyway.
  */
-export function toolsForTurn(agent: string, options: { voiceFeedback: boolean; shell?: string; sessionChat?: boolean }): ToolDefinition[] {
+export function toolsForTurn(agent: string, options: { voiceFeedback: boolean; shell?: string; sessionChat?: boolean; webSearch?: boolean }): ToolDefinition[] {
   return toolsFor(agent)
     .filter((tool) => tool.name !== "speak" || options.voiceFeedback)
+    .filter((tool) => tool.name !== "websearch" || options.webSearch !== false)
     .filter((tool) => !withheldByLab(tool.name, options))
     .map((tool) => (tool.name === "bash" ? { ...tool, description: bashDescription(options.shell) } : tool))
 }
@@ -202,6 +227,7 @@ const READS = new Set([
   "grep",
   "task",
   "webfetch",
+  "websearch",
   "question",
   "invalid",
   "actor",
@@ -253,7 +279,7 @@ export type ToolReach = "reads" | "reports" | "opaque"
 
 export function reachOf(name: string): ToolReach {
   // notebook_edit records its file before writing, as edit does.
-  if (name === "write" || name === "edit" || name === "notebook_edit") return "reports"
+  if (name === "write" || name === "edit" || name === "notebook_edit" || name === "patch") return "reports"
   if (READS.has(name)) return "reads"
   return "opaque"
 }

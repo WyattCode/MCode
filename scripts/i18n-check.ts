@@ -306,6 +306,34 @@ for (const name of names) {
 }
 
 /*
+ * Round 28: a sentence left in English is a defect, not a count.
+ *
+ * The count above was printed and never failed, and R25 shipped a new notice -
+ * a dragged web address that could not be attached - with the English sentence
+ * pasted into fifteen tables. A German or Japanese reader got a line in
+ * English at exactly the moment something had gone wrong.
+ *
+ * Short labels legitimately match English (a product name, "MCP", "OK"), so
+ * only a sentence counts: four words of three letters or more. The keys below
+ * are the reference's own - MiMo 26.920 ships each of them in English in every
+ * language (read from its composer chunks, 2026-09-25) - and this app mirrors
+ * the reference's strings, so they stay as the reference has them.
+ */
+const REFERENCE_ENGLISH = new Set([
+  "composer.compact.args", "composer.compact.timeout", "menu.projectAppearance", "side.chatLink.jump",
+  "toolLabel.subagentAction.status.error", "toolLabel.subagentAction.status.rejected", "toolLabel.subagentAction.wait.error",
+  "toolLabel.subagentAction.wait.rejected", "toolLabel.subagentAction.models.error", "toolLabel.subagentAction.models.rejected",
+  "composer.audioFormatUnsupported", "notify.confirm", "set.keywords.mcp",
+])
+for (const name of names) {
+  if (name === "en") continue
+  const left = Object.keys(english).filter(
+    (key) => !REFERENCE_ENGLISH.has(key) && tables[name][key] === english[key] && /[a-z]{3,} [a-z]{3,} [a-z]{3,} [a-z]{3,}/.test(english[key]),
+  )
+  if (left.length) problems.push(`${name}: ${left.length} sentence(s) still in English: ${left.slice(0, 6).join(", ")}`)
+}
+
+/*
  * Against the reference's own strings.
  *
  * 219 of these keys have a known counterpart in OpenCode's shipped locale

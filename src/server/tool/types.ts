@@ -3,7 +3,7 @@ import type { Questions } from "./question"
 import type { SessionChat } from "../session/chat"
 import type { ToolOutputs } from "./truncate"
 import type { SkillInfo } from "../skill"
-import type { Attachment, ModelModalities, TaskItem } from "@shared/protocol"
+import type { Attachment, ModelModalities, TaskItem, WebSearchSelection } from "@shared/protocol"
 
 export interface ToolContext {
   sessionID: string
@@ -41,6 +41,11 @@ export interface ToolContext {
    * instead of once per call.
    */
   shell?: string
+  /**
+   * websearch: the user's choice of search service, and where it is kept.
+   * Undefined until the first search asks; false when search was turned off.
+   */
+  webSearch?: { selection(): WebSearchSelection | undefined; select(selection: WebSearchSelection): Promise<void> }
   /**
    * subagents: the actor tool's actions, bound to this call's conversation.
    * Absent inside a subagent, which cannot start or manage subagents of its own.
