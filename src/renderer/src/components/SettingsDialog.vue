@@ -17,13 +17,12 @@ import ConfirmDialog from "./ConfirmDialog.vue"
 import LanguageMenu from "./LanguageMenu.vue"
 import VoiceUsageDialog from "./VoiceUsageDialog.vue"
 import ThirdPartyDialog from "./ThirdPartyDialog.vue"
-import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
+import { APP_ICONS, DEFAULT_APP_ICON } from "@shared/app-icons"
 import type { AgentsFileState, AppPath, AppPaths, SkillPathSource, UsageSummary } from "@shared/protocol"
 import { skillPathCompat } from "@shared/protocol"
 import type { McpImportItem, McpImportSource, McpServerConfig, McpStatus, McpToolInfo } from "@shared/protocol"
 import { MCP_STATUS_TONE, isMcpStatus, mcpNeedsSignIn, mcpStatusLabel } from "../lib/mcp-status"
 import { homePath } from "../lib/home-path"
-import classicIcon from "@resources/app-icons/classic.png"
 import { chordOf, composing, formatChord, isBindable, recordingChord } from "../lib/keys"
 import { layerOpen } from "../lib/escape-layer"
 import { pageRows } from "../lib/shortcut-page"
@@ -915,16 +914,13 @@ async function toggleHardwareAcceleration() {
 }
 
 /*
- * The gallery's tiles. The drawn ones come from the same string their PNGs are
- * rasterised from; the original comes from its own file, because it is a
- * painted mark rather than these paths and a redrawing of it would be a
- * different icon wearing its name.
+ * The gallery's tiles: each colourway's own file, the one the window and the
+ * taskbar are handed, so the tile pressed is the icon received. Every one is
+ * generated from the painted mark by scripts/icons.mjs.
  */
-const iconTiles = APP_ICONS.map((spec) => ({
-  spec,
-  svg: spec.original ? "" : appIconSvg(spec, 60),
-  image: spec.original ? classicIcon : "",
-}))
+const ICON_FILES = import.meta.glob<string>("@resources/app-icons/*.png", { eager: true, query: "?url", import: "default" })
+const iconFile = (id: string) => Object.entries(ICON_FILES).find(([file]) => file.endsWith(`/${id}.png`))?.[1] ?? ""
+const iconTiles = APP_ICONS.map((spec) => ({ spec, image: iconFile(spec.id) }))
 
 /* The segments each of the two appearance choices offers, in the order shown. */
 const MOTION_MODES = ["system", "on", "off"] as const
@@ -2030,8 +2026,8 @@ onBeforeUnmount(() => {
 
           <!--
             MiMo's 应用图标: a section heading and the grid, which is itself a card.
-            The tiles are drawn from the same string the icon files are rasterised
-            from, so the tile a reader presses is the icon they get.
+            The tiles are the icon files themselves, so the tile a reader presses
+            is the icon they get.
           -->
           <h3 data-app-icon-head>{{ t("set.appIcon") }}</h3>
           <div class="card gallery" role="radiogroup" :aria-label="t('set.appIcon')">
@@ -2045,8 +2041,7 @@ onBeforeUnmount(() => {
               :aria-label="tile.spec.name"
               @click="chooseAppIcon(tile.spec.id)"
             >
-              <img v-if="tile.image" class="tile-art" :src="tile.image" width="60" height="60" alt="" />
-              <span v-else class="tile-art" v-html="tile.svg" />
+              <img class="tile-art" :src="tile.image" width="60" height="60" alt="" />
               <span class="tile-name">{{ tile.spec.name }}</span>
             </button>
           </div>
@@ -4494,12 +4489,6 @@ h3 {
   object-fit: cover;
   line-height: 0;
   transition: box-shadow 0.12s ease;
-}
-
-.tile-art :deep(svg) {
-  display: block;
-  width: 100%;
-  height: 100%;
 }
 
 .tile:hover .tile-art {

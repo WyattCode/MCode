@@ -13,7 +13,7 @@
 - **分支**：`v2.0`，跟踪 `origin/v2.0`（私有仓库 `WyattCode/MCode`）。`main` 停在 https://github.com/WyattCode/MCode/pull/8 的合并提交 `5d941a80`（0.5.3，第二十七轮到第三十二轮）；`v2.0` 在那之后只多了交接文档的更新。开拉取请求、合进 `main`、发版都要**先问用户一声**（用户定的规矩：推分支直接做，对外、不好撤回的先问）。合并和发版用的 `gh pr merge`、`gh release create` 由用户在 `.claude/settings.local.json` 里放行（2026-09-27）。
 - **拉取请求**：#4、#5、#6、#7、#8 已合并（合并提交，标题照「MCode 2.0：0.5.3（#8）」的格式）。#3（`macos-hardening-v2`）已关闭：它声称的 16 条修复逐条对照过当前代码，5 条已被后来的工作修掉（含全部 3 条安全项）、2 条在本平台仍然存在并已修（0.4.6）、7 条只在 macOS 上能观察到，结论写在 #3 的关闭评论里。
 - **发布**：https://github.com/WyattCode/MCode/releases/tag/v0.5.3（预发布版，2026-09-27，附安装程序、blockmap、`latest.yml`）；之前是 v0.4.7、v0.4.5、v0.3.8。自动更新地址仍是占位的 `updates.invalid`，所以**发布不会触发任何自动更新**，装新版只能手动下载。
-- **验证状态**：typecheck、build 和十二项专项检查（含 sandboxcheck）全绿，smoke **7405 条全过**（2026-09-27，第三十二轮之后补跑确认）。
+- **验证状态**：typecheck、build 和十二项专项检查（含 sandboxcheck）全绿，smoke **7437 条全过**（2026-09-27，第三十三轮）。
 - **已知差异**：对照 26.920 没有已知的、未决的界面差异。仍然不同的三类——用户定的刻意差异（见下）；依赖小米账号或小米服务的功能；需要 Linux / macOS 真机才能核对的细节。
 - **真实模型**：第二十七轮起用局域网模型真用过——撤销、删除提问、手动压缩都端到端验证过（见那一节）；第三十一轮的排队、联网搜索、代码模式也在真模型上跑通了（见第三十二轮末尾）；用户自己也在日常用（第二十九轮的两个问题就是用出来的）。
 
@@ -23,7 +23,7 @@
 npm run dev          # 开发版（先结束残留的 node_modules/electron/dist/electron.exe）
 npm run typecheck
 npm run build
-npm run smoke        # 当前 7405 条（2026-09-27）
+npm run smoke        # 当前 7437 条（2026-09-27）
 npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 ```
 
@@ -195,6 +195,22 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 更早的下一步建议留作记录，见文末「附录 C」。
 
 ## 逐轮记录（新到旧）
+
+### 第三十三轮：新图标（2026-09-27）
+
+用户给了新的标志（石墨与银色的折叠 M，画在白底上），要求参照 macOS 27 的规范，全面更新 Windows 与 macOS 的图标。
+
+**规范**：macOS 26 起图标用 Liquid Glass，1024 画布、系统统一的圆角方块（不照这个形状的会被放进灰色底框）；Icon Composer 的 `.icon` 包让系统画出玻璃效果和深色、着色外观。macOS 27 沿用这套，只是更锐利、去掉了随倾斜变化的高光、多了可选的折射。Apple 的网格没变：1024 里圆角方块 824，下方带阴影。
+
+**做法**：所有图标都由 `scripts/icons.mjs` 从一张原图 `resources/icon-source.png` 生成，彼此不会走样：
+- **抠图**：从四边泛洪找出白底，标志本身整块保留（银色折面是最亮的部分，但离白色很远，不会被当成背景）；只有边缘一圈按白底反混出透明度。Lanczos 缩放在硬边外留下的几个百分点的透明度清零（否则托盘图标会出一排杂点，也会让裁剪框偏大、图标不居中）。结果存为 `build/icon-mark.png`。
+- **Classic（默认）**：原画不改，放在白色圆角方块上，带 Apple 浅色底那种从上到下的轻微渐变。其余六款（Graphite、Paper、Indigo、Moss、Clay、Brass）是同一幅画按亮度重新上色：深色底上主体变成浅色墨，折面变成中间调。配色表在 `icons.mjs` 的 `COLOURWAYS`；`src/shared/app-icons.ts` 只剩 id 和名字，旧的小写 m 路径绘制删了。设置页图库直接显示这些生成的 PNG。
+- **Windows / Linux**：`build/icon.ico`（16–256）、`build/icon.png`、`build/icons/`。白色方块在深色任务栏上也看得清（只放深色标志会看不见）。32px 及以下把标志放大 15%，否则 16px 只剩一个小点。
+- **macOS**：`build/icon.icns` 和 `resources/app-icons-mac` 仍是 Apple 网格上的 824 方块加阴影；新增 `build/icon.icon`（Icon Composer 包：底色是填充，标志一层，开玻璃但不半透明；深色外观换成 Graphite 的底和浅色标志，着色外观交给系统）。结构用参考仓库里 Apple 格式的 JSON Schema 校验通过（只在临时目录里用，没放进仓库）。
+- **菜单栏**：`resources/tray/trayTemplate*.png` 由标志的轮廓生成，折面留成半透明，16 点下仍能看出折痕。旧的 `scripts/tray-icon.mjs` 删了。
+- **`electron-builder.yml`**：`mac.icon` 改为 `build/icon.icon`；dmg 仍用 `.icns`。**这意味着 macOS 打包需要装了 Xcode 26 或更新版本的 Mac**：electron-builder 用 `actool` 把 `.icon` 编成 `Assets.car`，并从它生成给旧版 macOS 的 `.icns`。这台 Windows 机器上不能打 macOS 包，所以 `.icon` 在 Mac 上的实际渲染还没看过。
+
+**验证**：`scripts/smoke-round33.ts` 32 条（折面不透明、主体仍是深色、ico 七个尺寸、小尺寸放大、`.icon` 结构与深色外观、每款配色两个平台都有、托盘是黑色加半透明折面并居中），每条都故意改坏验证过能失败；这一轮第一次证伪时发现「托盘全实心」没被抓到（边缘抗锯齿本来就有半透明），改成检查形状内部的像素。真窗口里看过设置页图库（浅色、深色）和选 Indigo 后窗口图标跟着换。smoke 7437，十二项专项检查全过。
 
 ### 第三十二轮：二次复核第三十一轮（2026-09-27）
 
@@ -1159,7 +1175,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
   - M10-4 / M10-5 / M10-6：`electron-builder.yml` 顶层 `protocols`（mac 的 CFBundleURLTypes、Linux .desktop 的 MimeType）、`package.json` `desktopName: mcode.desktop` + `linux.syncDesktopName`、`build/entitlements.mac.plist`（默认三项 + audio-input）与 `NSMicrophoneUsageDescription`。smoke 用 app-builder-lib 自己的校验和 .desktop 生成核对；未在 Mac/Linux 上打包。
   - M10-9 / M10-10：兜底 shell 合到 `server/shell-path.ts` 的 `platformShell`（mac zsh，Linux PATH 上的 bash 否则 /bin/sh），终端也用它（`$SHELL` 照 MiMo 原样取，含 fish）；系统提示词的 `Shell:` 报 bash 工具实际选中的 shell（含设置里的）。
   - M10-11 `main/linux-ime.ts`：Linux 上照 MiMo 从 GTK/QT/XMODIFIERS 或 `~/.xinputrc` 的 run_im 识别 fcitx，只补缺的三个变量。M10-12 只加了 `disable-dev-shm-usage`；`no-zygote` 在沙箱开启时 Chromium 会拒绝启动，**等 Linux 实机确认**再定。M10-28 Linux 加 `enable-speech-dispatcher`（未实机）。
-  - M10-13：`node scripts/icons.mjs --mac`（完整运行也会做）从 MCode 自己的圆角图生成 macOS 版——824/1024 居中、带柔和阴影（量得 MiMo 的 mac 图可见区域 91–932 × 99–940，约留 9%；MCode 版 87–936 × 97–946），写入 `build/icon.icns` 和 `resources/app-icons-mac/`（只进 mac 包，Dock 用它）。Windows/Linux 的图标不变。未实机看 Dock。
+  - M10-13（第三十三轮起 `--mac` 参数已去掉，完整运行一次生成全部）：`node scripts/icons.mjs --mac`（完整运行也会做）从 MCode 自己的圆角图生成 macOS 版——824/1024 居中、带柔和阴影（量得 MiMo 的 mac 图可见区域 91–932 × 99–940，约留 9%；MCode 版 87–936 × 97–946），写入 `build/icon.icns` 和 `resources/app-icons-mac/`（只进 mac 包，Dock 用它）。Windows/Linux 的图标不变。未实机看 Dock。
   - M10-14 / M10-15：mac 的窗口菜单用 minimize / zoom 角色（Cmd+M）；应用菜单的设置 / 新任务 / 打开文件夹 / 关闭按当前改绑取快捷键（`main/menu-keys.ts`），快捷键页录制期间不带快捷键（渲染层 `mcode:menu-keys`）。Windows 上仍只显示不注册。菜单与网页谁先收到按键**未实机**。
   - M10-16 / M10-17 / M10-19：mac 打开目标照 MiMo（终端 + 19 个，五个应用目录、多包名候选，TextMate / Antigravity 删除），Linux 列表照 MiMo 为空，Windows 的 Sublime Text 按 `subl` / `sublime_text` 查找；文件卡「打开方式」改为按文档类型列文档应用（`mcode:doc-apps`，仅 mac），**Windows 上现在只剩「文件资源管理器」「下载副本」**（与 MiMo 一致，已在本机验证）。新增 10 个应用名文案键（18 张表），删除 textmate / antigravity 两个键。
   - M10-18：图片预览右上角工具组照 MiMo 放在窗口按钮对侧：Windows/Linux 距左 44，mac 距右 44（本机与假 darwin 都验证）。
