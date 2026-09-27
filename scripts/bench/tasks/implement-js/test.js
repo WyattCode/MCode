@@ -1,0 +1,13 @@
+const assert = require("node:assert")
+const { slugify } = require("./src/slugify")
+
+assert.strictEqual(slugify("Hello World"), "hello-world")
+assert.strictEqual(slugify("  Leading and trailing  "), "leading-and-trailing")
+assert.strictEqual(slugify("Multiple   spaces\tand\ttabs"), "multiple-spaces-and-tabs")
+assert.strictEqual(slugify("Punctuation, removed! Right?"), "punctuation-removed-right")
+assert.strictEqual(slugify("Crème Brûlée à la mode"), "creme-brulee-a-la-mode")
+assert.strictEqual(slugify("already-a-slug"), "already-a-slug")
+assert.strictEqual(slugify("dashes -- collapse --- too"), "dashes-collapse-too")
+assert.strictEqual(slugify("C++ & Rust"), "c-rust")
+assert.strictEqual(slugify(""), "")
+console.log("all tests passed")

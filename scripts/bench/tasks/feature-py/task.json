@@ -1,0 +1,11 @@
+{
+  "prompt": "给 inventory.py 加一个 --low-stock N 选项：只列出数量小于 N 的物品，按数量从少到多排序，格式和现在一样（name: qty）。不带这个选项时行为不变。改完用 python inventory.py stock.csv --low-stock 5 自己验证一下。",
+  "verify": [
+    "python",
+    "check.py"
+  ],
+  "unchanged": [
+    "check.py",
+    "stock.csv"
+  ]
+}
