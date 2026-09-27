@@ -1,6 +1,6 @@
 import os from "node:os"
 import path from "node:path"
-import type { ToolDefinition, ToolContext } from "./types"
+import type { ToolDefinition, ToolContext, ToolResult } from "./types"
 import { ToolError } from "./types"
 import { resolvePath } from "./fs-util"
 import { AppDriver, WAIT_CAP_MS, type Step } from "../appdrive/driver"
@@ -96,54 +96,73 @@ export const AppTool: ToolDefinition = {
     required: ["action"],
     additionalProperties: false,
   },
-  async execute(input, context) {
-    const action = String(input.action)
-    if (action === "open") return open(String(input.url ?? ""), context)
-    if (action === "attach") return attach(Number(input.port), typeof input.target === "string" ? input.target : undefined, context)
-    const driver = drivers.get(context.sessionID)
-    if (action === "close") {
-      if (!driver) return { output: "Nothing was open.", title: "close" }
-      drivers.delete(context.sessionID)
-      await driver.close()
-      return { output: `Closed ${driver.label}.`, title: "close" }
-    }
-    if (!driver || !driver.alive) {
-      drivers.delete(context.sessionID)
-      throw new ToolError(driver ? "The app's window was closed. Open or attach again." : "Nothing is open yet. Use open with a URL, or attach to an app's DevTools port, first.")
-    }
-    switch (action) {
-      case "snapshot":
-        return { output: await driver.snapshot(input.full === true), title: "snapshot" }
-      case "do": {
-        const steps = stepsOf(input.steps)
-        const { output, done } = await driver.run(steps, context.signal)
-        return { output, title: `${done}/${steps.length}`, metadata: { steps: steps.length, done } }
-      }
-      case "tabs": {
-        const target = typeof input.target === "string" ? input.target.trim() : ""
-        const pages = await driver.pages()
-        if (target) {
-          const page = pages.find((entry) => entry.id === target) ?? pages.find((entry) => entry.title.includes(target) || entry.url.includes(target))
-          if (!page) throw new ToolError(`No window or tab matches "${target}".`)
-          await driver.use(page.id)
-          return { output: await driver.snapshot(true), title: page.title || page.url }
-        }
-        return { output: pages.map((page) => `${page.current ? "* " : "  "}${page.id}  ${page.title || "(untitled)"} - ${page.url}`).join("\n") || "No windows.", title: "tabs" }
-      }
-      case "screenshot": {
-        const file = typeof input.path === "string" && input.path.trim() ? await resolvePath(context, input.path, "write") : path.join(os.tmpdir(), "mcode-app-shots", `${Date.now()}.png`)
-        await driver.screenshot(file)
-        return { output: `Saved the window as ${file}`, title: path.basename(file), metadata: { path: file } }
-      }
-      case "eval": {
-        const expression = String(input.expression ?? "").trim()
-        if (!expression) throw new ToolError("eval needs an expression")
-        return { output: await driver.evaluate(expression), title: "eval" }
-      }
-      default:
-        throw new ToolError(`Unknown action "${action}". Use open, attach, snapshot, do, tabs, screenshot, eval or close.`)
-    }
+  /*
+   * One conversation's calls run one after another. Calls in one step run
+   * together (the runner's Promise.all), and two batches of clicks
+   * interleaved on one page would each read the other's changes.
+   */
+  execute(input, context) {
+    const before = queues.get(context.sessionID) ?? Promise.resolve()
+    const run = before.then(() => perform(input, context))
+    const settled = run.catch(() => undefined)
+    queues.set(context.sessionID, settled)
+    void settled.then(() => {
+      if (queues.get(context.sessionID) === settled) queues.delete(context.sessionID)
+    })
+    return run
   },
+}
+
+/** Each conversation's calls still to finish, chained. */
+const queues = new Map<string, Promise<unknown>>()
+
+async function perform(input: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
+  const action = String(input.action)
+  if (action === "open") return open(String(input.url ?? ""), context)
+  if (action === "attach") return attach(Number(input.port), typeof input.target === "string" ? input.target : undefined, context)
+  const driver = drivers.get(context.sessionID)
+  if (action === "close") {
+    if (!driver) return { output: "Nothing was open.", title: "close" }
+    drivers.delete(context.sessionID)
+    await driver.close()
+    return { output: `Closed ${driver.label}.`, title: "close" }
+  }
+  if (!driver || !driver.alive) {
+    drivers.delete(context.sessionID)
+    throw new ToolError(driver ? "The app's window was closed. Open or attach again." : "Nothing is open yet. Use open with a URL, or attach to an app's DevTools port, first.")
+  }
+  switch (action) {
+    case "snapshot":
+      return { output: await driver.snapshot(input.full === true), title: "snapshot" }
+    case "do": {
+      const steps = stepsOf(input.steps)
+      const { output, done } = await driver.run(steps, context.signal)
+      return { output, title: `${done}/${steps.length}`, metadata: { steps: steps.length, done } }
+    }
+    case "tabs": {
+      const target = typeof input.target === "string" ? input.target.trim() : ""
+      const pages = await driver.pages()
+      if (target) {
+        const page = pages.find((entry) => entry.id === target) ?? pages.find((entry) => entry.title.includes(target) || entry.url.includes(target))
+        if (!page) throw new ToolError(`No window or tab matches "${target}".`)
+        await driver.use(page.id)
+        return { output: await driver.snapshot(true), title: page.title || page.url }
+      }
+      return { output: pages.map((page) => `${page.current ? "* " : "  "}${page.id}  ${page.title || "(untitled)"} - ${page.url}`).join("\n") || "No windows.", title: "tabs" }
+    }
+    case "screenshot": {
+      const file = typeof input.path === "string" && input.path.trim() ? await resolvePath(context, input.path, "write") : path.join(os.tmpdir(), "mcode-app-shots", `${Date.now()}.png`)
+      await driver.screenshot(file)
+      return { output: `Saved the window as ${file}`, title: path.basename(file), metadata: { path: file } }
+    }
+    case "eval": {
+      const expression = String(input.expression ?? "").trim()
+      if (!expression) throw new ToolError("eval needs an expression")
+      return { output: await driver.evaluate(expression), title: "eval" }
+    }
+    default:
+      throw new ToolError(`Unknown action "${action}". Use open, attach, snapshot, do, tabs, screenshot, eval or close.`)
+  }
 }
 
 async function open(url: string, context: ToolContext) {

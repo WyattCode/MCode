@@ -4,10 +4,13 @@
  * may lean on an import or on the bundler.
  *
  * State lives on `window.__mcodeApp`: every element the snapshot lists gets a
- * number that stays the same for as long as the element exists (a WeakMap, so
- * the page's own garbage collection is untouched), and nothing is written into
- * the page's DOM - an attribute there could trip the app's own observers or
- * snapshot tests.
+ * number that stays the same for as long as the element exists, and every
+ * number stays usable after that element drops out of a listing - a button on
+ * a tab that is hidden now is clicked by its old number once a step shows the
+ * tab again, which is what makes a batch of steps possible. Both directions are
+ * weak (a WeakMap, WeakRefs), so the page's own garbage collection is
+ * untouched, and nothing is written into the page's DOM - an attribute there
+ * could trip the app's own observers or snapshot tests.
  */
 
 /**
@@ -20,8 +23,8 @@
  * reach, and it keeps the list short.
  */
 export const SNAPSHOT = String.raw`(function (limit) {
-  var S = window.__mcodeApp || (window.__mcodeApp = { next: 1, ids: new WeakMap(), els: new Map() });
-  S.els = new Map();
+  var S = window.__mcodeApp || (window.__mcodeApp = { next: 1, ids: new WeakMap() });
+  if (!S.known) S.known = new Map();
   var WIDGET = "a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=checkbox],[role=radio],[role=switch],[role=option],[role=combobox],[role=textbox],[role=searchbox],[role=slider],[role=spinbutton],[role=treeitem],[contenteditable=''],[contenteditable=true],[tabindex]:not([tabindex='-1']),[onclick]";
   function shown(el) {
     if (el.checkVisibility && !el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return false;
@@ -115,8 +118,7 @@ export const SNAPSHOT = String.raw`(function (limit) {
   for (var j = 0; j < list.length && lines.length < limit; j++) {
     var node = list[j];
     var id = S.ids.get(node);
-    if (!id) { id = S.next++; S.ids.set(node, id); }
-    S.els.set(id, node);
+    if (!id) { id = S.next++; S.ids.set(node, id); S.known.set(id, new WeakRef(node)); }
     var role = roleOf(node);
     var states = statesOf(node, role);
     lines.push("[" + id + "] " + role + " " + JSON.stringify(nameOf(node)) + (states.length ? " " + states.join(" ") : ""));
@@ -141,9 +143,10 @@ export const SNAPSHOT = String.raw`(function (limit) {
  */
 export const LOCATE = String.raw`(function (ref) {
   var S = window.__mcodeApp;
-  var el = S && S.els.get(ref);
-  if (!el) return { error: "unknown" };
-  if (!el.isConnected) return { error: "gone" };
+  var held = S && S.known && S.known.get(ref);
+  var el = held && held.deref();
+  if (!held) return { error: "unknown" };
+  if (!el || !el.isConnected) return { error: "gone" };
   el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
   var r = el.getBoundingClientRect();
   if (r.width < 1 || r.height < 1) return { error: "hidden" };
@@ -161,7 +164,8 @@ export const LOCATE = String.raw`(function (ref) {
 /** Gives an element the keyboard, with its contents selected when they are to be replaced. */
 export const FOCUS = String.raw`(function (ref, clear) {
   var S = window.__mcodeApp;
-  var el = S && S.els.get(ref);
+  var held = S && S.known && S.known.get(ref);
+  var el = held && held.deref();
   if (!el || !el.isConnected) return { error: "gone" };
   el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
   el.focus();
@@ -175,7 +179,8 @@ export const FOCUS = String.raw`(function (ref, clear) {
 /** Chooses an option of a native select by its value or its visible text, and tells the page, as a person's choice would. */
 export const CHOOSE = String.raw`(function (ref, wanted) {
   var S = window.__mcodeApp;
-  var el = S && S.els.get(ref);
+  var held = S && S.known && S.known.get(ref);
+  var el = held && held.deref();
   if (!el || !el.isConnected) return { error: "gone" };
   if (el.tagName !== "SELECT") return { error: "not-select" };
   var options = Array.prototype.slice.call(el.options);
@@ -194,7 +199,7 @@ export const CHOOSE = String.raw`(function (ref, wanted) {
  * that is in the background, and an app under test usually is.
  */
 export const WATCH = String.raw`(function () {
-  var S = window.__mcodeApp || (window.__mcodeApp = { next: 1, ids: new WeakMap(), els: new Map() });
+  var S = window.__mcodeApp || (window.__mcodeApp = { next: 1, ids: new WeakMap() });
   S.changed = performance.now();
   if (!S.observer) {
     S.observer = new MutationObserver(function () { S.changed = performance.now(); });

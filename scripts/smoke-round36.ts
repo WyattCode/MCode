@@ -139,6 +139,10 @@ export async function roundThirtySixChecks(check: Check, section: (name: string)
 
       const value = await run({ action: "eval", expression: "document.getElementById('value').textContent" })
       check("eval reads the page's state directly", value.output === '"2"', value.output)
+      // Two calls in one step: the runner starts them together, and the second must still see the first's clicks.
+      const [batch, counted] = await Promise.all([run({ action: "do", steps: [{ action: "click", ref: counterTab }, { action: "click", ref: plus }, { action: "click", ref: plus }, { action: "click", ref: plus }, { action: "wait", ms: 300 }] }), run({ action: "eval", expression: "document.getElementById('value').textContent" })])
+      check("one conversation's calls run one after another, even when started together", counted.output === '"5"', { counted: counted.output, batch: batch.output })
+      check("a button hidden at the last look is clicked by its old number once the batch shows its tab", /^1\. click \[\d+\]\n2\. click \[\d+\]\n/.test(batch.output) && !/failed/.test(batch.output), batch.output)
       const tabs = await run({ action: "tabs" })
       check("tabs lists the window it is on", /^\* \S+\s+演示应用/.test(tabs.output), tabs.output)
       const shot = await run({ action: "screenshot" })

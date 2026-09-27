@@ -105,7 +105,12 @@ export class AppDriver {
       throw new Error(`The app on port ${port} has no open window yet.`)
     }
     const wanted = match ? pages.find((page) => page.id === match || page.title.includes(match) || page.url.includes(match)) : pages[0]
-    await driver.use((wanted ?? pages[0]!).id)
+    if (!wanted) {
+      // Asked for a particular window and it is not there (yet): say which there are, rather than acting on another.
+      driver.cdp.close()
+      throw new Error(`No window of the app on port ${port} matches "${match}". Its windows: ${pages.map((page) => `"${page.title || page.url}"`).join(", ")}`)
+    }
+    await driver.use(wanted.id)
     return driver
   }
 
