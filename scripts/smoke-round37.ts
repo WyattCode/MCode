@@ -15,6 +15,7 @@ import { spawn, spawnSync } from "node:child_process"
 import type { Check } from "./smoke-round5"
 import { AppTool, closeAllApps } from "../src/server/tool/app"
 import { sendKeys } from "../src/server/appdrive/windows"
+import { BashTool } from "../src/server/tool/bash"
 import type { ToolContext } from "../src/server/tool/types"
 
 const root = process.cwd()
@@ -63,6 +64,22 @@ export async function roundThirtySevenChecks(check: Check, section: (name: strin
       refused = (error as Error).message
     }
     check("a key it cannot press is refused, saying which it can", /Control, Alt or Shift/.test(refused), refused)
+  }
+
+  section("Round 37: a shell command that leaves something running in the background finishes")
+  {
+    // What a model did in a real run: `app.ps1 &`. The background process holds the output open for as long as it lives.
+    const script = path.join(os.tmpdir(), `mcode-r37-linger-${process.pid}.cjs`)
+    fs.writeFileSync(script, "require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 8000)'], { stdio: 'inherit', detached: true, windowsHide: true }).unref()\nconsole.log('started')\n")
+    const context = contextFor("r37-bash", [])
+    const began = Date.now()
+    const lingering = await BashTool.execute({ command: `node "${script}"`, timeout: 30_000 }, context)
+    const took = Date.now() - began
+    check("the command is done when its shell is, not when what it started ends", took < 5_000 && /started/.test(lingering.output), { took, output: lingering.output })
+    check("and the model is told something it started is still running, and how to start a window program instead", /still running and was left running/.test(lingering.output) && /launch/.test(lingering.output), lingering.output)
+    const plain = await BashTool.execute({ command: 'node -e "console.log(42)"', timeout: 30_000 }, context)
+    check("an ordinary command says nothing of the kind", /42/.test(plain.output) && !/still running/.test(plain.output), plain.output)
+    fs.rmSync(script, { force: true })
   }
 
   section("Round 37: the app tool starting and operating a native Windows app")

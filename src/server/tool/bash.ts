@@ -35,6 +35,15 @@ export const PREVIEW_CHARS = 30_000
 export const PROGRESS_EVERY_MS = 100
 /** How long a stopped command is given to close its pipes before the result is put together without them. */
 const CLOSE_GRACE_MS = 3_000
+/**
+ * How long the output is waited for once the shell itself has exited. A
+ * process the command put in the background (`app &`, `npm run dev &`) keeps
+ * the output pipes open for as long as it runs, so waiting for them to close
+ * would wait for that process - a window program, a dev server - to end, and
+ * the command would be stopped at its timeout instead. Past this the command
+ * is done and what it started is left running, as in a terminal.
+ */
+export const EXIT_DRAIN_MS = 500
 /** The longest delay a timer takes; anything larger would fire at once. */
 const LONGEST_TIMER = 2 ** 31 - 1
 
@@ -645,7 +654,7 @@ export const BashTool: ToolDefinition = {
         progressTimer = undefined
       }
 
-      const finish = async (code: number | null, expired: boolean) => {
+      const finish = async (code: number | null, expired: boolean, lingering = false) => {
         seal()
         const file = saved ? await saved : undefined
         while (flushing) await flushing
@@ -666,6 +675,9 @@ export const BashTool: ToolDefinition = {
          */
         if (expired) {
           output += `\n\n(The command was stopped when it ran past its ${timeout} ms timeout. If it needs longer and is not waiting for input, run it again with a larger timeout.)`
+        }
+        if (lingering) {
+          output += "\n\n(The command has finished; a process it started in the background is still running and was left running. To try a window program, start it with the app tool's launch instead.)"
         }
         // A merge or rebase this left stopped on conflicts: the note says to back out and hand the conflict over.
         output += await mergeConflictNotice(cwd, command, output)
@@ -732,6 +744,23 @@ export const BashTool: ToolDefinition = {
         clearTimeout(timer)
         context.signal.removeEventListener("abort", onAbort)
         void finish(code, false)
+      })
+
+      /*
+       * The shell has exited. Its output normally closes a moment later; when
+       * it does not, something it started still holds the pipes, and the
+       * command is finished without waiting for that. What the background
+       * process prints afterwards is still read (and dropped), so a full pipe
+       * never stalls it.
+       */
+      child.on("exit", (code) => {
+        setTimeout(() => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          context.signal.removeEventListener("abort", onAbort)
+          void finish(code, false, true)
+        }, EXIT_DRAIN_MS)
       })
     })
   },
