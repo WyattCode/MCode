@@ -427,13 +427,20 @@ async function main() {
     const trayTile = await rounded(await square(await enlarged(mark, TRAY_SCALE), way), mask)
     await fs.mkdir(TRAY, { recursive: true })
     await fs.writeFile(path.join(TRAY, `${way.id}.ico`), await pngToIco(await Promise.all(TRAY_SIZES.map((size) => crisp(trayTile, size)))))
-    if (way.id !== "classic") continue
+    /*
+     * The window's own icon on Windows - title bar, taskbar, Alt+Tab - for
+     * this colourway: every size, the small ones with the larger mark. Main
+     * hands the window this rather than the 512 PNG, which Windows would
+     * otherwise shrink to 16 or 24 itself, softly (R34).
+     */
     const smallTile = await rounded(await square(await enlarged(mark, SMALL_SCALE), way), mask)
+    const sized = (size) => (size <= SMALL_SIZES ? crisp(smallTile, size) : png(tile, size))
+    await fs.writeFile(path.join(APP_ICONS, `${way.id}.ico`), await pngToIco(await Promise.all(ICO_SIZES.map(sized))))
+    if (way.id !== "classic") continue
 
     // Unmasked, for anywhere the system applies its own shape.
     await fs.writeFile(path.join(OUT, "icon-square.png"), flat)
     await fs.writeFile(path.join(OUT, "icon.png"), tile)
-    const sized = (size) => (size <= SMALL_SIZES ? crisp(smallTile, size) : png(tile, size))
     for (const size of [16, 24, 32, 48, 64, 128, 256, 512, 1024]) await fs.writeFile(path.join(ICONSET, `${size}x${size}.png`), await sized(size))
     await fs.writeFile(path.join(OUT, "icon.ico"), await pngToIco(await Promise.all(ICO_SIZES.map(sized))))
     await fs.writeFile(path.join(OUT, "icon.icns"), await buildIcns(await macCut(tile, MASTER)))

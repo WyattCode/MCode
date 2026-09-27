@@ -161,6 +161,19 @@ export async function roundThirtyThreeChecks(check: Check, section: (name: strin
     check("the old ribbon sources are gone", !(await exists(at("resources", "wordmark-source.png"))) && !(await exists(at("resources", "wordmark-light-source.png"))))
   }
 
+  section("Round 34: the window's own icon on Windows, and the Dock on macOS")
+  {
+    for (const icon of APP_ICONS) {
+      const ico = await fs.readFile(at("resources", "app-icons", `${icon.id}.ico`)).catch(() => undefined)
+      const sizes = ico ? Array.from({ length: ico.readUInt16LE(4) }, (_, n) => ico[6 + n * 16] || 256).sort((a, b) => a - b) : []
+      check(`${icon.name}'s window icon carries every size the taskbar and title bar draw`, sizes.join(",") === "16,20,24,32,40,48,64,128,256", sizes)
+    }
+    const main = await fs.readFile(at("src", "main", "index.ts"), "utf8")
+    const handler = main.slice(main.indexOf('ipcMain.handle("mcode:app-icon"'), main.indexOf('ipcMain.handle("mcode:app-icon"') + 2400)
+    check("Windows sets the colourway's .ico on the window, not the 512 PNG", /process\.platform === "win32" \? windowIcoFile\(id\)/.test(handler) && /window\.setIcon\(windowImage\.isEmpty\(\) \? image : windowImage\)/.test(handler), handler.slice(0, 300))
+    check("macOS leaves the Dock to the bundle's Liquid Glass icon until a colourway is chosen", /if \(id === DEFAULT_APP_ICON && !dockCustomised\) return \{ ok: true \}/.test(handler) && /dockCustomised = true/.test(handler))
+  }
+
   section("Round 33: the Windows tray, sharp at every scaling")
   {
     for (const icon of APP_ICONS) {

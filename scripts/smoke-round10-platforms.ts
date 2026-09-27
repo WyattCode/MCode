@@ -594,6 +594,7 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
     const written = await linuxIconSync(image.host)("/icons/brass.png")
     check("M10-20: an AppImage's entry icon is replaced and the entry touched", written.changed && withEntry.get("/data/icons/mcode.png")?.toString() === "new-icon" && image.touched.join() === "/data/applications/mcode.desktop", written)
     const main = await fs.readFile(path.join(root, "src/main/index.ts"), "utf8")
-    check("M10-20: choosing an icon on Linux syncs the launcher", /window\.setIcon\(image\)\s*\n\s*void syncLinuxIcon\(file\)/.test(main))
+    // R34: Windows' window takes the colourway's .ico; on Linux it is still the PNG, and the launcher follows it.
+    check("M10-20: choosing an icon on Linux syncs the launcher", /window\.setIcon\([^\n]*\)\s*\n\s*void syncLinuxIcon\(file\)/.test(main))
   }
 }
