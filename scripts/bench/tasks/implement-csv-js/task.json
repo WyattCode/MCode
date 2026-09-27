@@ -1,0 +1,5 @@
+{
+  "prompt": "实现 src/csv.js 里的 parseCSV 和 toCSV（照 RFC 4180 的规矩），让 node test.js 全部通过。不要改 test.js。",
+  "verify": ["node", "test.js"],
+  "unchanged": ["test.js"]
+}

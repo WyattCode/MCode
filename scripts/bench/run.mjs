@@ -45,13 +45,14 @@ const results = []
 for (let run = 1; run <= runs; run++) {
   for (const task of tasks) {
     const spec = JSON.parse(fs.readFileSync(path.join(tasksDir, task, "task.json"), "utf8"))
-    const dir = path.join(work, `${task}-${run}`)
+    // A name no earlier run used: the app finds the folder's project row by its name.
+    const dir = path.join(work, `${task}-${run}-${Date.now().toString(36)}`)
     fs.cpSync(path.join(tasksDir, task), dir, { recursive: true })
     fs.rmSync(path.join(dir, "task.json"))
     git(dir, "init", "-q")
     git(dir, "add", "-A")
     git(dir, "-c", "user.email=bench@example.com", "-c", "user.name=bench", "commit", "-q", "-m", "start")
-    const out = path.join(work, `${task}-${run}.json`)
+    const out = `${dir}.json`
     process.stdout.write(`${task} #${run} ... `)
     const began = Date.now()
     spawnSync(electron, [path.join(here, "agent.cjs")], {

@@ -1,0 +1,5 @@
+{
+  "prompt": "这是一个排班小工具，node test.js 有好几处测试失败。把错误都找出来修好，让所有测试通过。不要改 test.js。",
+  "verify": ["node", "test.js"],
+  "unchanged": ["test.js"]
+}

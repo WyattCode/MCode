@@ -117,8 +117,13 @@ app.whenReady().then(async () => {
     /*
      * A new task in the task's folder, from its project row. The menu's new
      * task would open in the folder of whatever conversation the app came
-     * back to, which is the last one the profile used.
+     * back to, which is the last one the profile used. The side column pages
+     * its projects by last use, so the folder is first marked used - the row's
+     * own button does the same before it starts the task - to bring its row
+     * onto the first page.
      */
+    await js(`document.querySelector("#app").__vue_app__.config.globalProperties.$pinia._s.get("app").addProject(${JSON.stringify(TASK_DIR)}, { used: true, silent: true })`)
+    await wait(800)
     const createIn = `button.ico.inline[aria-label*=${JSON.stringify(path.basename(TASK_DIR))}]`
     const created = await js(`(() => { const button = document.querySelector(${JSON.stringify(createIn)}); if (!button) return false; button.click(); return true })()`)
     if (!created) throw new Error("no project row for the task folder")

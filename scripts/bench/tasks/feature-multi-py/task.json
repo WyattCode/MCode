@@ -1,0 +1,5 @@
+{
+  "prompt": "给这个待办命令行（python -m todo）加优先级：\n1. add 支持 --priority high|normal|low，默认 normal；\n2. list 先按优先级（high、normal、low）再按 id 排序，每行格式改成 `[ ] 3 (high) 买牛奶`，normal 也要显示；\n3. data.json 里的旧条目没有 priority 字段，按 normal 处理，不要去改 data.json；\n4. --priority 给了不认识的值时，stderr 输出提示并以退出码 2 退出，不写入任何东西。\n改完自己跑一下验证。",
+  "verify": ["python", "check.py"],
+  "unchanged": ["check.py", "data.json"]
+}
