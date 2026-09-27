@@ -3,8 +3,8 @@
  *
  * The wordmark is the folded M standing in for the letter M, followed by
  * "Code" in Segoe UI Bold: the M exactly as tall as the capital C and sitting
- * on the same line, 16% of its height apart (a tenth read as crowded -
- * the user's call). It exists in two colourways
+ * on the same line, 22% of its height apart (a tenth, then 16%, read as
+ * crowded - the user's call). It exists in two colourways
  * rather than being tinted - graphite glyphs for the light theme, the mark's
  * silver cut (its Icon Composer dark appearance) with silver glyphs for the
  * dark one - and both are laid on one shared canvas, so the mark does not move
@@ -36,7 +36,7 @@ const TARGETS = [
 ]
 
 /* The space between the M and the C, as a share of the M's height. */
-export const GAP = 0.16
+export const GAP = 0.22
 
 /* Big enough that the trim and the M's resize lose nothing before the final scale. */
 const SIZE = 1000

@@ -68,7 +68,8 @@ export async function roundThirtyThreeChecks(check: Check, section: (name: strin
     check("the tile is the light one the painting was made on", tile[3] === 255 && tile[0]! > 235 && tile[2]! > 235, tile)
     const small = await markWidth(at("build", "icons", "32x32.png"))
     const large = await markWidth(at("build", "icons", "64x64.png"))
-    check("at 32 pixels and below the mark is drawn larger on the tile", small > large * 1.08, { small, large })
+    // Larger, but not to the edge: the user found 25% larger too tight a rim.
+    check("at 32 pixels and below the mark is drawn a little larger on the tile", small > large * 1.04 && small < large * 1.2, { small, large })
   }
 
   section("Round 33: macOS 26 and 27")
@@ -155,7 +156,7 @@ export async function roundThirtyThreeChecks(check: Check, section: (name: strin
         }
       }
       const share = gap / (bottom - top + 1)
-      check("the M and the C stand about a sixth of the M's height apart", share > 0.14 && share < 0.19, { gap, markHeight: bottom - top + 1, share })
+      check("the M and the C stand about a fifth of the M's height apart", share > 0.2 && share < 0.25, { gap, markHeight: bottom - top + 1, share })
     }
     check("the old ribbon sources are gone", !(await exists(at("resources", "wordmark-source.png"))) && !(await exists(at("resources", "wordmark-light-source.png"))))
   }

@@ -193,15 +193,15 @@ function ground(tile) {
 
 /*
  * Windows' small sizes - title bar, taskbar, tray, file lists at 16 to 40
- * pixels - take the mark 25% larger on the same tile. At the painted
- * proportion it is 71% of the tile's width, which reads well from 48 up and
- * leaves a faint speck at 16 to 24 (the user compared it with another app's
- * tray icon, which fills its cell). At 1.25 its corners still sit inside the
- * rounded tile. macOS draws its small sizes from the grid itself and keeps the
- * painted proportion.
+ * pixels - take the mark 10% larger on the same tile. At the painted
+ * proportion it is 71% of the tile's width, which read as a faint speck at 16
+ * to 24; at 25% larger it filled the tile with too thin a rim of white (both
+ * the user's verdicts, on the tray). 10% leaves about a ninth of the tile
+ * clear on each side. macOS draws its small sizes from the grid itself and
+ * keeps the painted proportion.
  */
 const SMALL_SIZES = 40
-const SMALL_SCALE = 1.25
+const SMALL_SCALE = 1.1
 
 /*
  * Every size Windows draws an icon at between 100% and 300% scaling - 20 and
