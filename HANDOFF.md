@@ -13,7 +13,7 @@
 - **分支**：`v2.0`，跟踪 `origin/v2.0`（私有仓库 `WyattCode/MCode`）。`main` 停在 https://github.com/WyattCode/MCode/pull/8 的合并提交 `5d941a80`（0.5.3，第二十七轮到第三十二轮）；`v2.0` 在那之后只多了交接文档的更新。开拉取请求、合进 `main`、发版都要**先问用户一声**（用户定的规矩：推分支直接做，对外、不好撤回的先问）。合并和发版用的 `gh pr merge`、`gh release create` 由用户在 `.claude/settings.local.json` 里放行（2026-09-27）。
 - **拉取请求**：#4、#5、#6、#7、#8 已合并（合并提交，标题照「MCode 2.0：0.5.3（#8）」的格式）。#3（`macos-hardening-v2`）已关闭：它声称的 16 条修复逐条对照过当前代码，5 条已被后来的工作修掉（含全部 3 条安全项）、2 条在本平台仍然存在并已修（0.4.6）、7 条只在 macOS 上能观察到，结论写在 #3 的关闭评论里。
 - **发布**：https://github.com/WyattCode/MCode/releases/tag/v0.5.3（预发布版，2026-09-27，附安装程序、blockmap、`latest.yml`）；之前是 v0.4.7、v0.4.5、v0.3.8。自动更新地址仍是占位的 `updates.invalid`，所以**发布不会触发任何自动更新**，装新版只能手动下载。
-- **验证状态**：typecheck、build 和十二项专项检查（含 sandboxcheck）全绿，smoke **7437 条全过**（2026-09-27，第三十三轮）。
+- **验证状态**：typecheck、build 和十二项专项检查（含 sandboxcheck）全绿，smoke **7442 条全过**（2026-09-27，第三十三轮）。
 - **已知差异**：对照 26.920 没有已知的、未决的界面差异。仍然不同的三类——用户定的刻意差异（见下）；依赖小米账号或小米服务的功能；需要 Linux / macOS 真机才能核对的细节。
 - **真实模型**：第二十七轮起用局域网模型真用过——撤销、删除提问、手动压缩都端到端验证过（见那一节）；第三十一轮的排队、联网搜索、代码模式也在真模型上跑通了（见第三十二轮末尾）；用户自己也在日常用（第二十九轮的两个问题就是用出来的）。
 
@@ -23,7 +23,7 @@
 npm run dev          # 开发版（先结束残留的 node_modules/electron/dist/electron.exe）
 npm run typecheck
 npm run build
-npm run smoke        # 当前 7437 条（2026-09-27）
+npm run smoke        # 当前 7442 条（2026-09-27）
 npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 ```
 
@@ -210,7 +210,9 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - **菜单栏**：`resources/tray/trayTemplate*.png` 由标志的轮廓生成，折面留成半透明，16 点下仍能看出折痕。旧的 `scripts/tray-icon.mjs` 删了。
 - **`electron-builder.yml`**：`mac.icon` 改为 `build/icon.icon`；dmg 仍用 `.icns`。**这意味着 macOS 打包需要装了 Xcode 26 或更新版本的 Mac**：electron-builder 用 `actool` 把 `.icon` 编成 `Assets.car`，并从它生成给旧版 macOS 的 `.icns`。这台 Windows 机器上不能打 macOS 包，所以 `.icon` 在 Mac 上的实际渲染还没看过。
 
-**验证**：`scripts/smoke-round33.ts` 32 条（折面不透明、主体仍是深色、ico 七个尺寸、小尺寸放大、`.icon` 结构与深色外观、每款配色两个平台都有、托盘是黑色加半透明折面并居中），每条都故意改坏验证过能失败；这一轮第一次证伪时发现「托盘全实心」没被抓到（边缘抗锯齿本来就有半透明），改成检查形状内部的像素。真窗口里看过设置页图库（浅色、深色）和选 Indigo 后窗口图标跟着换。smoke 7437，十二项专项检查全过。
+**字标**（用户看了两版后选 B）：首页、对话页和出错页的「MCode」字标改成新折叠 M 加 Segoe UI 粗体的「Code」——M 与大写 C 同高、同一条基线、间距为 M 高度的 10%；浅色主题是石墨色字，深色主题用标志的银色版（`.icon` 的深色外观那张）配银色字，两张同一块画布，切换主题不跳。由 `scripts/wordmark.mjs` 生成（先跑 `icons.mjs`），旧的丝带风格源图 `resources/wordmark-*.png` 删了。Segoe UI 随 Windows 提供；在没有它的机器上脚本会拒绝生成（拿同一个词和一个不存在的字体名各渲染一次，图一样就说明字体没找到——只比宽高比分不出来，退回字体的比例几乎一样）。Bahnschrift 版（A）没采用。另外，fontconfig 找不到「Segoe UI Variable」，会退回等宽字体，所以没法用它。
+
+**验证**：`scripts/smoke-round33.ts` 37 条（折面不透明、主体仍是深色、ico 七个尺寸、小尺寸放大、`.icon` 结构与深色外观、每款配色两个平台都有、托盘是黑色加半透明折面并居中），每条都故意改坏验证过能失败；这一轮第一次证伪时发现「托盘全实心」没被抓到（边缘抗锯齿本来就有半透明），改成检查形状内部的像素。真窗口里看过设置页图库（浅色、深色）、选 Indigo 后窗口图标跟着换、首页字标（浅色、深色）。smoke 7442，十二项专项检查全过。
 
 ### 第三十二轮：二次复核第三十一轮（2026-09-27）
 

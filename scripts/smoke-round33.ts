@@ -106,6 +106,34 @@ export async function roundThirtyThreeChecks(check: Check, section: (name: strin
     check("the colourways are different pictures, not copies of Classic", !classic.equals(graphite))
   }
 
+  section("Round 33: the wordmark, the new M then Code")
+  {
+    const light = at("src", "renderer", "src", "assets", "wordmark-light.png")
+    const dark = at("src", "renderer", "src", "assets", "wordmark-dark.png")
+    const [lightMeta, darkMeta] = await Promise.all([sharp(light).metadata(), sharp(dark).metadata()])
+    check("both themes share one canvas, so a theme change does not move it", lightMeta.width === darkMeta.width && lightMeta.height === darkMeta.height, { light: [lightMeta.width, lightMeta.height], dark: [darkMeta.width, darkMeta.height] })
+    const ratio = (lightMeta.width ?? 0) / (lightMeta.height ?? 1)
+    check("it is the M-and-Code line, not the old ribbon artwork's proportions", ratio > 3.9 && ratio < 4.7, ratio)
+    /** The mean colour of a strip's painted pixels: the C, a little past the M. */
+    const ink = async (file: string) => {
+      const { data, info } = await sharp(file).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+      let sum = 0
+      let count = 0
+      for (let y = 0; y < info.height; y++) {
+        for (let x = Math.round(info.width * 0.36); x < Math.round(info.width * 0.52); x++) {
+          const i = (y * info.width + x) * 4
+          if (data[i + 3]! > 250) (sum += data[i]!), count++
+        }
+      }
+      return count ? sum / count : -1
+    }
+    const [lightInk, darkInk] = await Promise.all([ink(light), ink(dark)])
+    check("the light theme's letters are graphite and the dark theme's silver", lightInk >= 0 && lightInk < 90 && darkInk > 170, { lightInk, darkInk })
+    const script = await fs.readFile(at("scripts", "wordmark.mjs"), "utf8")
+    check("the script refuses to draw in a fallback face", /No Such Face Anywhere/.test(script) && /if \(!\(await faceInstalled\(\)\)\) throw/.test(script))
+    check("the old ribbon sources are gone", !(await exists(at("resources", "wordmark-source.png"))) && !(await exists(at("resources", "wordmark-light-source.png"))))
+  }
+
   section("Round 33: the menu bar mark")
   {
     for (const [name, size] of [
