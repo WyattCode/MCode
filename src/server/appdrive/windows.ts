@@ -21,6 +21,8 @@ const SNAPSHOT_LIMIT = 250
 /** How long the window has to stay the same after a step before the next one runs, and the longest that is waited. */
 const QUIET_MS = 150
 const SETTLE_CAP_MS = 2_500
+/** How recently a program must have started for its window to be named when a window is not found. */
+const RECENT_SECONDS = 900
 /** How long a launched program has to put up a window. */
 const LAUNCH_WAIT_MS = 20_000
 
@@ -144,9 +146,13 @@ export class WindowsDriver extends SteppingDriver {
       const found = await host.call<{ title: string }>("attach", { match })
       return new WindowsDriver(host, found.title)
     } catch (error) {
-      const windows = await host.call<{ title: string; process: string }[]>("windows").catch(() => [])
+      // Only programs started in the last few minutes are named: the app being built is one of them, and the rest of the desktop is not the model's to read.
+      const windows = await host.call<{ title: string; process: string }[]>("windows", { recent: RECENT_SECONDS }).catch(() => [])
       host.stop()
-      throw new Error(`${messageOf(error) === "no-window" ? `No open window matches "${match}".` : messageOf(error)} Open windows: ${windows.map((window) => `"${window.title}" (${window.process})`).join(", ") || "none"}`)
+      const recent = windows.map((window) => `"${window.title}" (${window.process})`).join(", ")
+      throw new Error(
+        `${messageOf(error) === "no-window" ? `No open window matches "${match}".` : messageOf(error)} ${recent ? `Windows of programs started in the last ${RECENT_SECONDS / 60} minutes: ${recent}.` : `No program started in the last ${RECENT_SECONDS / 60} minutes has a window open.`} To start one, use launch.`,
+      )
     }
   }
 
@@ -175,9 +181,9 @@ export class WindowsDriver extends SteppingDriver {
     return this.host.alive
   }
 
-  /** Every open window on the desktop, so the model can move to a dialog or another window of the app. */
+  /** The attached program's own windows - a second window, a tool window - so the model can move between them. */
   async pages(): Promise<PageInfo[]> {
-    const windows = await this.host.call<{ id: string; title: string; process: string; current: boolean }[]>("windows")
+    const windows = await this.host.call<{ id: string; title: string; process: string; current: boolean }[]>("windows", { own: true })
     return windows.map((window) => ({ id: window.id, title: window.title, url: `window://${window.process}`, current: window.current }))
   }
 

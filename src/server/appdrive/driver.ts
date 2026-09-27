@@ -24,6 +24,8 @@ export const SNAPSHOT_LIMIT = 250
 const QUIET_MS = 120
 /** The longest one action waits for the page to go quiet. */
 const SETTLE_CAP_MS = 2_500
+/** The longest a screenshot is waited for. */
+const SCREENSHOT_TIMEOUT_MS = 10_000
 /** How many of the page's errors and warnings are reported at once. */
 const LOG_LIMIT = 20
 
@@ -101,8 +103,18 @@ export class AppDriver extends SteppingDriver {
     await this.send("Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => undefined)
   }
 
+  /**
+   * A browser draws no new frame for a window nobody can see - minimised, or
+   * behind others with the system saving work - and a capture then waits for
+   * one forever. The tab is brought forward first, and the wait is bounded.
+   */
   async screenshot(file: string): Promise<void> {
-    const { data } = await this.send<{ data: string }>("Page.captureScreenshot", { format: "png" })
+    await this.send("Page.bringToFront").catch(() => undefined)
+    const { data } = await this.cdp
+      .send<{ data: string }>("Page.captureScreenshot", { format: "png" }, this.page?.sessionId, SCREENSHOT_TIMEOUT_MS)
+      .catch(() => {
+        throw new StepError(`the window could not be captured within ${SCREENSHOT_TIMEOUT_MS / 1000}s; it may be minimised or hidden. Snapshots and steps still work without a picture.`)
+      })
     await fsp.mkdir(path.dirname(file), { recursive: true })
     await fsp.writeFile(file, Buffer.from(data, "base64"))
   }

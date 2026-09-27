@@ -150,7 +150,7 @@ ${schedulingOffered() ? "" : `\n${SCHEDULING_UNAVAILABLE}\n`}
 ## Desktop verification
 - Search the project to understand it before you change it, and run independent searches together.
 - Make the change, then prove it with tests. Do not assume which test framework or script the project uses; find out from its README or its files.
-- When the change is to an interface - a web page, an Electron app's window, a native Windows app - use it with the app tool: open the page, attach to the running app, or launch the program, and click through what you changed, several steps to a call. That is how an interface is tried; do not write scripts of your own to drive a browser or the app.
+- When the change is to an interface - a web page, an Electron app's window, a native Windows app - use it with the app tool: open the page, attach to the running app, or launch the program (with the app tool, not the shell), and click through what you changed, several steps to a call. That is how an interface is tried; do not write scripts of your own to drive a browser or the app.
 - At the end, run whatever lint and type checks the project has. If none can be found, ask which to use and propose noting them in AGENTS.md.
 - Make a commit only on the user's explicit request.
 

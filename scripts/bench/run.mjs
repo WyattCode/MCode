@@ -63,6 +63,11 @@ for (let run = 1; run <= runs; run++) {
     })
     const measured = fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, "utf8")) : { notes: ["the agent wrote nothing"] }
     const check = spawnSync(spec.verify[0], spec.verify.slice(1), { cwd: dir, encoding: "utf8", windowsHide: true, timeout: 60_000 })
+    // Anything the run left running from its folder - a window it started with the shell - ends here, so the next run cannot find it.
+    if (process.platform === "win32") {
+      const folder = path.basename(dir).replace(/'/g, "''")
+      spawnSync("powershell.exe", ["-NoProfile", "-Command", `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${folder}*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`], { windowsHide: true, timeout: 30_000 })
+    }
     const touched = (spec.unchanged ?? []).filter((file) => git(dir, "diff", "--quiet", "HEAD", "--", file).status !== 0)
     const astray = (measured.notes ?? []).some((note) => note.startsWith("ran outside"))
     const passed = check.status === 0 && touched.length === 0 && !astray

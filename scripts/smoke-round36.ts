@@ -156,10 +156,16 @@ export async function roundThirtySixChecks(check: Check, section: (name: string)
       check("a button hidden at the last look is clicked by its old number once the batch shows its tab", /^1\. click \[\d+\] -> [^\n]*\n2\. click \[\d+\] -> shows: 当前计数：3\n/.test(batch.output) && !/failed/.test(batch.output), batch.output)
       const tabs = await run({ action: "tabs" })
       check("tabs lists the window it is on", /^\* \S+\s+演示应用/.test(tabs.output), tabs.output)
-      const shot = await run({ action: "screenshot" })
+      // A browser window nobody can see draws no frame; the tool then says so within its bound rather than hanging.
+      const shotStarted = Date.now()
+      const shot = await run({ action: "screenshot" }).catch((error: Error) => ({ output: error.message, metadata: {} as Record<string, unknown> }))
       const file = String(shot.metadata?.path ?? "")
-      check("a screenshot is a PNG file", fs.existsSync(file) && fs.readFileSync(file).subarray(1, 4).toString() === "PNG", file)
-      fs.rmSync(file, { force: true })
+      check(
+        "a screenshot is a PNG file, or a bounded, plain refusal when the window cannot be seen",
+        (fs.existsSync(file) && fs.readFileSync(file).subarray(1, 4).toString() === "PNG") || (/could not be captured within 10s/.test(shot.output) && Date.now() - shotStarted < 15_000),
+        shot.output,
+      )
+      if (file) fs.rmSync(file, { force: true })
 
       const badStep = await run({ action: "do", steps: [{ action: "fly" }] }).then(() => "", (error: Error) => error.message)
       check("a step it does not know is refused before anything runs", /unknown action "fly"/.test(badStep), badStep)

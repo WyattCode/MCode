@@ -74,7 +74,7 @@ public static class McodeUia {
 
   static object Dispatch(Dictionary<string, object> request) {
     switch (Text(request, "op")) {
-      case "windows": return Windows();
+      case "windows": return Windows(Number(request, "recent"), request.ContainsKey("own") && Convert.ToBoolean(request["own"]));
       case "attach": return Attach(Text(request, "match"), Number(request, "pid"));
       case "snapshot": return Snapshot(Math.Max(1, Number(request, "limit")));
       case "act": return Act(Text(request, "action"), Number(request, "ref"), Text(request, "text"), Text(request, "key"), Text(request, "value"), Number(request, "dy"));
@@ -87,14 +87,20 @@ public static class McodeUia {
 
   // ------------------------------------------------------------ windows
 
-  static object Windows() {
+  /// Top-level windows: only the attached program's (own), or only those of programs started in the last RECENT seconds - never the whole desktop, whose titles are the user's business.
+  static object Windows(int recent, bool own) {
     var list = new List<object>();
     foreach (AutomationElement top in AutomationElement.RootElement.FindAll(TreeScope.Children, Condition.TrueCondition)) {
       try {
         var current = top.Current;
-        if (string.IsNullOrWhiteSpace(current.Name) || current.IsOffscreen) continue;
+        if (string.IsNullOrWhiteSpace(current.Name)) continue;
+        if (own && current.ProcessId != windowPid) continue;
         string process = "";
-        try { process = Process.GetProcessById(current.ProcessId).ProcessName; } catch { }
+        try {
+          var program = Process.GetProcessById(current.ProcessId);
+          process = program.ProcessName;
+          if (!own && (DateTime.Now - program.StartTime).TotalSeconds > recent) continue;
+        } catch { if (!own) continue; }
         list.Add(new Dictionary<string, object> { { "id", current.NativeWindowHandle.ToString() }, { "title", current.Name }, { "process", process }, { "pid", current.ProcessId }, { "current", window != null && SameElement(top, window) } });
       } catch { }
     }
@@ -121,6 +127,9 @@ public static class McodeUia {
       } catch { }
     }
     if (found == null) throw new Exception("no-window");
+    // A minimised window lists nothing: it is restored first, as a person would before using it.
+    var handle = new IntPtr(found.Current.NativeWindowHandle);
+    if (IsIconic(handle)) { ShowWindow(handle, 9); Thread.Sleep(300); }
     window = found;
     windowPid = found.Current.ProcessId;
     ids.Clear();
@@ -182,6 +191,9 @@ public static class McodeUia {
   static object Snapshot(int limit) {
     if (window == null) throw new Exception("not-attached");
     if (!Alive(window)) throw new Exception("window-closed");
+    // Minimised since the last look - by the user, or by the app - it would list nothing; it is put back first.
+    var handle = new IntPtr(window.Current.NativeWindowHandle);
+    if (IsIconic(handle)) { ShowWindow(handle, 9); Thread.Sleep(300); }
     var modal = Modal();
     var scope = modal ?? window;
     var seen = new Seen { Limit = limit };
@@ -331,10 +343,20 @@ public static class McodeUia {
     if (count == 1) {
       if (element.TryGetCurrentPattern(InvokePattern.Pattern, out pattern)) {
         var invoke = (InvokePattern)pattern;
-        // Invoking a button that opens a modal dialog does not return until the dialog closes, so it runs aside and is waited for briefly.
+        /*
+         * Invoke returns when the app has finished handling the click, so it
+         * is waited for - a slow handler reported as done would be read before
+         * it changed anything. It runs aside because a button that opens a
+         * modal dialog does not return until the dialog closes: once a dialog
+         * is up, the click has done what it will do for now.
+         */
         var thread = new Thread(() => { try { invoke.Invoke(); } catch { } }) { IsBackground = true };
         thread.Start();
-        thread.Join(1500);
+        var clock = Stopwatch.StartNew();
+        while (!thread.Join(100)) {
+          if (clock.ElapsedMilliseconds > 300 && Modal() != null) return "";
+          if (clock.ElapsedMilliseconds > 10000) return "the app is still busy with this click after 10s";
+        }
         return "";
       }
       if (element.TryGetCurrentPattern(SelectionItemPattern.Pattern, out pattern)) { ((SelectionItemPattern)pattern).Select(); return ""; }

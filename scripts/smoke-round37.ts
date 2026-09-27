@@ -11,7 +11,7 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { spawn } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import type { Check } from "./smoke-round5"
 import { AppTool, closeAllApps } from "../src/server/tool/app"
 import { sendKeys } from "../src/server/appdrive/windows"
@@ -129,7 +129,8 @@ export async function roundThirtySevenChecks(check: Check, section: (name: strin
       check("a screenshot of the window is a PNG", fs.existsSync(file) && fs.readFileSync(file).subarray(1, 4).toString() === "PNG", file)
       fs.rmSync(file, { force: true })
       const tabs = await run({ action: "tabs" })
-      check("tabs lists the desktop's windows, marking the one in use", /^\* \S+\s+Win Demo - window:\/\/powershell/m.test(tabs.output), tabs.output)
+      check("tabs lists the app's own windows, marking the one in use", /^\* \S+\s+Win Demo - window:\/\/powershell/m.test(tabs.output), tabs.output)
+      check("and nothing else on the desktop", tabs.output.split("\n").every((line) => /window:\/\/powershell$/.test(line)), tabs.output)
 
       const closed = await run({ action: "close" })
       check("close ends the program it started", /Closed Win Demo/.test(closed.output))
@@ -163,8 +164,23 @@ export async function roundThirtySevenChecks(check: Check, section: (name: strin
       await AppTool.execute({ action: "close" }, context)
       await new Promise((resolve) => setTimeout(resolve, 500))
       check("closing only lets go: the app keeps running", running(child.pid) && child.exitCode === null)
+
+      // Minimised, a window lists nothing; taking it over restores it first.
+      const handle = (await AppTool.execute({ action: "window", target: "Win Demo" }, context).then(() => AppTool.execute({ action: "tabs" }, context))).output.match(/^\* (\S+)/m)?.[1]
+      await AppTool.execute({ action: "close" }, context)
+      spawnSync("powershell.exe", ["-NoProfile", "-Command", `Add-Type -Namespace W -Name U -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr h, int c);'; [W.U]::ShowWindow([System.IntPtr]${handle}, 6) | Out-Null`], { windowsHide: true })
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      const restored = await AppTool.execute({ action: "window", target: "Win Demo" }, context)
+      check("a minimised window is restored when taken over, and lists what it holds", Boolean(handle) && /\[\d+\] tab "Count"/.test(restored.output), { handle, output: restored.output })
+      // And one minimised while it is in use - by the user, or by the app - is put back before the next look.
+      spawnSync("powershell.exe", ["-NoProfile", "-Command", `Add-Type -Namespace W -Name U -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr h, int c);'; [W.U]::ShowWindow([System.IntPtr]${handle}, 6) | Out-Null`], { windowsHide: true })
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      const looked = await AppTool.execute({ action: "snapshot", full: true }, context)
+      check("a window minimised while in use is put back before the next look", /\[\d+\] tab "Count"/.test(looked.output), looked.output)
+      await AppTool.execute({ action: "close" }, context)
       const none = await AppTool.execute({ action: "window", target: "No Such Window Anywhere" }, context).then(() => "", (error: Error) => error.message)
-      check("a window that is not open is refused, naming the ones that are", /No open window matches "No Such Window Anywhere"\. Open windows: .*"Win Demo" \(powershell\)/.test(none), none)
+      check("a window that is not open is refused, naming the recently started programs' windows", /No open window matches "No Such Window Anywhere"\. Windows of programs started in the last 15 minutes: .*"Win Demo" \(powershell\).*To start one, use launch/.test(none), none)
+      check("and never the rest of the desktop - programs running since before, such as Explorer", !/\(explorer\)/i.test(none), none)
     } finally {
       await closeAllApps()
       child.kill()
