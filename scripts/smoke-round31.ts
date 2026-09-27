@@ -12,7 +12,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
-import type { AppConfig, AssistantMessage, McpServerConfig, Message, QuestionPrompt, WebSearchProviderID, WebSearchSelection } from "../src/shared/protocol"
+import type { AppConfig, AssistantMessage, McpServerConfig, Message, QuestionPrompt, UserMessage, WebSearchProviderID, WebSearchSelection } from "../src/shared/protocol"
 import { McpServers } from "../src/server/mcp"
 import { Storage } from "../src/server/storage"
 import { Config } from "../src/server/config"
@@ -171,6 +171,125 @@ export async function roundThirtyOneChecks(check: Check, section: (name: string)
       } finally {
         stop()
         await run.close()
+      }
+    }
+    // --------------------------------------------------------------- R31-3
+    section("Round 31 (3): a queued message waits for the turn, then goes as a turn of its own")
+    {
+      // An answer that starts, then waits to be let go: the turn is running for as long as the test needs.
+      const gate = () => {
+        let open: () => void = () => undefined
+        const opened = new Promise<void>((resolve) => (open = resolve))
+        const answer: Answer = (_request, response) => {
+          response.writeHead(200, { "content-type": "text/event-stream" })
+          response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "working" } }] })}\n\n`)
+          void opened.then(() => {
+            if (response.writableEnded || response.destroyed) return
+            response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 5, completion_tokens: 3 } })}\n\n`)
+            response.write("data: [DONE]\n\n")
+            response.end()
+          })
+        }
+        return { answer, open: () => open() }
+      }
+      const refused: Answer = (_request, response) => {
+        response.writeHead(400, { "content-type": "application/json" })
+        response.end(JSON.stringify({ error: { message: "bad request", type: "invalid_request_error" } }))
+      }
+      // The words of the newest user message a request carried.
+      const lastUser = (body: string | undefined): string => {
+        const messages = (JSON.parse(body ?? "{}") as { messages?: { role: string; content: unknown }[] }).messages ?? []
+        const content = messages.filter((message) => message.role === "user").at(-1)?.content
+        const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((part: { text?: string }) => part.text ?? "").join("") : ""
+        return text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim()
+      }
+      const until = async (test: () => boolean | Promise<boolean>, ms = 10_000) => {
+        const deadline = Date.now() + ms
+        while (Date.now() < deadline) {
+          if (await test()) return true
+          await new Promise((resolve) => setTimeout(resolve, 25))
+        }
+        return false
+      }
+
+      const first = gate()
+      const run = await harness(path.join(root, "queue"), [first.answer])
+      try {
+        const session = await run.store.create({ directory: run.project, model: { provider: "fake", model: "m" } })
+        await run.runner.prompt({ sessionID: session.id, text: "first task" })
+        await until(() => run.bodies.length === 1)
+        const [a, b] = await Promise.all([
+          run.runner.prompt({ sessionID: session.id, text: "queued one", delivery: "queue" }),
+          run.runner.prompt({ sessionID: session.id, text: "queued two", delivery: "queue" }),
+        ])
+        const waiting = (await run.store.require(session.id)).queued ?? []
+        check("two queued at once are both kept, in order", waiting.map((item) => item.text).join() === "queued one,queued two" && waiting[0]?.id === a && waiting[1]?.id === b, waiting)
+        check("and neither reaches the transcript or the model while the turn runs", !(await run.store.messages(session.id)).some((message) => message.role === "user" && message.text.startsWith("queued")) && run.bodies.length === 1)
+        first.open()
+        await until(() => run.bodies.length >= 3)
+        await run.settled(session.id)
+        check("when the turn ends, each goes out as a turn of its own, oldest first", run.bodies.length === 3 && lastUser(run.bodies[1]) === "queued one" && lastUser(run.bodies[2]) === "queued two", run.bodies.map(lastUser))
+        const users = (await run.store.messages(session.id)).filter((message): message is UserMessage => message.role === "user")
+        check("marked as sent from the queue, not steered into the turn", users.filter((message) => message.queued).map((message) => message.text).join() === "queued one,queued two" && users.every((message) => !message.steered), users.map((message) => [message.text, message.queued, message.steered]))
+        check("and the queue is empty afterwards", (await run.store.require(session.id)).queued === undefined)
+
+        // Queued while idle: nothing to wait for.
+        const before = run.bodies.length
+        await run.runner.prompt({ sessionID: session.id, text: "idle queue", delivery: "queue" })
+        await run.settled(session.id)
+        check("queued with nothing running, it is simply sent", run.bodies.length === before + 1 && lastUser(run.bodies.at(-1)) === "idle queue")
+      } finally {
+        await run.close()
+      }
+
+      // Stop leaves the queue for the user; 立即发送 and 删除 act on it.
+      const held = gate()
+      const stopped = await harness(path.join(root, "queue-stop"), [held.answer])
+      try {
+        const session = await stopped.store.create({ directory: stopped.project, model: { provider: "fake", model: "m" } })
+        await stopped.runner.prompt({ sessionID: session.id, text: "long task" })
+        await until(() => stopped.bodies.length === 1)
+        const kept = await stopped.runner.prompt({ sessionID: session.id, text: "after stop", delivery: "queue" })
+        const dropped = await stopped.runner.prompt({ sessionID: session.id, text: "never mind", delivery: "queue" })
+        stopped.runner.abort(session.id)
+        await stopped.settled(session.id)
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        check("after Stop nothing queued is sent", stopped.bodies.length === 1 && ((await stopped.store.require(session.id)).queued ?? []).length === 2, stopped.bodies.length)
+        await stopped.runner.removeQueued(session.id, dropped)
+        check("删除 takes one back", ((await stopped.store.require(session.id)).queued ?? []).map((item) => item.text).join() === "after stop")
+        const gone = await stopped.runner.removeQueued(session.id, dropped).then(
+          () => "",
+          (error: Error & { code?: string }) => error.code ?? error.message,
+        )
+        check("one already gone is said to be", gone === "error.queueGone", gone)
+        await stopped.runner.sendQueuedNow(session.id, kept)
+        await stopped.settled(session.id)
+        check("立即发送 with nothing running starts its turn", stopped.bodies.length === 2 && lastUser(stopped.bodies[1]) === "after stop" && (await stopped.store.require(session.id)).queued === undefined)
+      } finally {
+        stopped.runner.abort("none")
+        await stopped.close()
+      }
+
+      // 立即发送 while a turn runs joins it; a failed turn leaves the rest waiting.
+      const joining = gate()
+      const steer = await harness(path.join(root, "queue-steer"), [joining.answer, refused])
+      try {
+        const session = await steer.store.create({ directory: steer.project, model: { provider: "fake", model: "m" } })
+        await steer.runner.prompt({ sessionID: session.id, text: "task" })
+        await until(() => steer.bodies.length === 1)
+        const now = await steer.runner.prompt({ sessionID: session.id, text: "join now", delivery: "queue" })
+        await steer.runner.sendQueuedNow(session.id, now)
+        const joined = (await steer.store.messages(session.id)).find((message) => message.role === "user" && message.text === "join now") as UserMessage | undefined
+        check("立即发送 during a turn joins it, as a steer", joined?.steered === true && !joined.queued, joined)
+        await steer.runner.prompt({ sessionID: session.id, text: "left waiting", delivery: "queue" })
+        joining.open()
+        await until(() => steer.bodies.length >= 2)
+        await steer.settled(session.id)
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        const after = (await steer.store.require(session.id)).queued ?? []
+        check("a turn that fails leaves the queue waiting", after.map((item) => item.text).join() === "left waiting" && steer.bodies.length === 2, { after, bodies: steer.bodies.length })
+      } finally {
+        await steer.close()
       }
     }
     // --------------------------------------------------------------- R31-4

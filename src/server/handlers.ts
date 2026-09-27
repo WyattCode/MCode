@@ -681,9 +681,18 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         // What a slash command named, for the turn this starts.
         agent: request.agent,
         model: request.model,
+        // OpenCode v2: while a turn runs, a queued message waits for it to end.
+        delivery: request.delivery,
       })
       return { messageID } satisfies Handled<"session.prompt">
     }
+
+    case "session.queue.remove":
+      await runtime.runner.removeQueued(request.sessionID, request.id)
+      return {} satisfies Handled<"session.queue.remove">
+
+    case "session.queue.send":
+      return { messageID: await runtime.runner.sendQueuedNow(request.sessionID, request.id) } satisfies Handled<"session.queue.send">
 
     /* subagents: a `subtask` slash command, run as a subagent in this conversation's turn. */
     case "session.subtask":

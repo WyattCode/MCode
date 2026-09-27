@@ -72,7 +72,7 @@ import { attachmentNote, runtimeContext, sessionNote } from "./context"
 import { settleAttachments, withAttachmentData, type AttachmentCache } from "./attachments"
 import type { ModelEntry } from "../provider/catalog"
 import { forWire } from "../provider/wire-ids"
-import type { ModelModalities, SessionGoal } from "@shared/protocol"
+import type { ModelModalities, QueuedPrompt, SessionGoal } from "@shared/protocol"
 import { costOf } from "./usage"
 // The day on this machine's calendar, which is what the runtime context tells the model.
 import { localDay } from "../usage-summary"
@@ -182,6 +182,10 @@ type PromptInput = {
   model?: SessionInfo["model"]
   /* 追求目标: this message sets the conversation's goal - the composer sends it while the switch is on. */
   goal?: string
+  /* OpenCode v2's delivery: while a turn runs, "queue" waits for it to end instead of joining it. */
+  delivery?: "steer" | "queue"
+  /* Set when the queue sends it, so the window knows a turn it did not send has started. */
+  fromQueue?: boolean
 }
 
 /**
@@ -374,6 +378,8 @@ export class SessionRunner {
    * then looked finished.
    */
   private closing = false
+  /** OpenCode v2 queue: each conversation's edits, chained so none is lost to another running beside it. */
+  private readonly queueEdits = new Map<string, Promise<void>>()
 
   /** Whether a process is alive; replaced by checks, which cannot rely on the machine's process table. */
   alive?: (pid: number) => boolean
@@ -1718,6 +1724,8 @@ export class SessionRunner {
      * is simply mid-answer.
      */
     const open = this.steering.get(input.sessionID)
+    // OpenCode v2's queue: kept until the running turn ends, then sent as a turn of its own.
+    if (input.delivery === "queue" && (open || this.running.has(input.sessionID))) return this.enqueue(input)
     if (open) return this.join(open, input)
 
     if (this.running.has(input.sessionID)) throw new CodedError("This session is already working on something", "error.sessionBusy")
@@ -2071,6 +2079,7 @@ export class SessionRunner {
       ...(input.inbox ? { inbox: input.inbox } : {}),
       // 追求目标: the transcript marks the message that set the goal.
       ...(goal ? { setsGoal: true } : {}),
+      ...(input.fromQueue ? { queued: true } : {}),
       // skills
       ...(reminders.length ? { reminders } : {}),
       ...(context.length ? { context } : {}),
@@ -2577,8 +2586,10 @@ export class SessionRunner {
 
     // Deliberately not awaited: the caller gets the message id immediately and
     // follows the turn through events.
+    let failed = false
     void this.run(sessionID, apiKey, controller, resumed, lead)
       .catch((err) => {
+        failed = true
         // A failure recorded on the message is already in front of the user.
         if (err instanceof Shown) return
         const code = codeOf(err)
@@ -2626,7 +2637,108 @@ export class SessionRunner {
           return
         }
         this.bus.publish({ type: "session.idle", sessionID })
+        // OpenCode v2: the next queued message once a turn ends of its own accord; after Stop or a failure they wait for the user.
+        if (!controller.signal.aborted && !failed && !this.closing) void this.sendQueued(sessionID)
       })
+  }
+
+  /**
+   * Changes a conversation's queue, one change at a time: two messages queued
+   * a moment apart must both be kept, and a read-change-write pair running
+   * beside another would drop one of them.
+   */
+  private queueEdit(sessionID: string, change: (queued: QueuedPrompt[]) => QueuedPrompt[]): Promise<{ before: QueuedPrompt[]; after: QueuedPrompt[] }> {
+    const edited = (this.queueEdits.get(sessionID) ?? Promise.resolve()).then(async () => {
+      const before = (await this.store.require(sessionID)).queued ?? []
+      const after = change(before)
+      await this.store.update(sessionID, { queued: after.length ? after : undefined })
+      return { before, after }
+    })
+    this.queueEdits.set(
+      sessionID,
+      edited.then(
+        () => undefined,
+        () => undefined,
+      ),
+    )
+    return edited
+  }
+
+  /** A message for after the running turn: kept on the conversation, and its id handed back. */
+  private async enqueue(input: PromptInput): Promise<string> {
+    const item: QueuedPrompt = {
+      id: Identifier.message(),
+      text: input.text,
+      ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+      ...(input.annotations?.length ? { annotations: input.annotations } : {}),
+      ...(input.fileNotices?.length ? { fileNotices: input.fileNotices } : {}),
+      ...(input.agent ? { agent: input.agent } : {}),
+      ...(input.model ? { model: input.model } : {}),
+      ...(input.goal ? { goal: input.goal } : {}),
+      time: Date.now(),
+    }
+    await this.queueEdit(input.sessionID, (queued) => [...queued, item])
+    return item.id
+  }
+
+  private promptOf(sessionID: string, item: QueuedPrompt): PromptInput {
+    return {
+      sessionID,
+      text: item.text,
+      attachments: item.attachments,
+      annotations: item.annotations,
+      fileNotices: item.fileNotices,
+      agent: item.agent,
+      model: item.model,
+      goal: item.goal,
+    }
+  }
+
+  /** Takes a queued message back without sending it. */
+  async removeQueued(sessionID: string, id: string): Promise<void> {
+    const { before } = await this.queueEdit(sessionID, (queued) => queued.filter((item) => item.id !== id))
+    if (!before.some((item) => item.id === id)) throw new CodedError("That message is no longer queued", "error.queueGone")
+  }
+
+  /** 立即发送: a queued message into the running turn, or as a turn of its own if none is running. */
+  async sendQueuedNow(sessionID: string, id: string): Promise<string> {
+    let item: QueuedPrompt | undefined
+    await this.queueEdit(sessionID, (queued) => {
+      item = queued.find((entry) => entry.id === id)
+      return queued.filter((entry) => entry.id !== id)
+    })
+    const taken = item
+    if (!taken) throw new CodedError("That message is no longer queued", "error.queueGone")
+    try {
+      return await this.prompt(this.promptOf(sessionID, taken))
+    } catch (failure) {
+      // Not sent, so not lost: back where it was, at the front.
+      await this.queueEdit(sessionID, (queued) => [taken, ...queued]).catch(() => undefined)
+      throw failure
+    }
+  }
+
+  /**
+   * The oldest queued message, sent as a new turn. A send that is refused - a
+   * provider gone, a rollback in the way - puts it back and leaves the rest
+   * waiting, said as the turn's own error would be.
+   */
+  private async sendQueued(sessionID: string): Promise<void> {
+    if (this.running.has(sessionID) || this.steering.has(sessionID)) return
+    let item: QueuedPrompt | undefined
+    await this.queueEdit(sessionID, (queued) => {
+      item = queued[0]
+      return queued.slice(1)
+    }).catch(() => undefined)
+    const taken = item
+    if (!taken) return
+    try {
+      await this.prompt({ ...this.promptOf(sessionID, taken), fromQueue: true })
+    } catch (failure) {
+      await this.queueEdit(sessionID, (queued) => [taken, ...queued]).catch(() => undefined)
+      const code = codeOf(failure)
+      this.bus.publish({ type: "session.error", sessionID, error: describe(failure), ...(code ? { errorCode: code, errorParams: paramsOf(failure) } : {}) })
+    }
   }
 
   private async run(sessionID: string, apiKey: string, controller: AbortController, resumed: Resumed = false, lead?: Lead): Promise<void> {

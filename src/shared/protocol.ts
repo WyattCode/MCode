@@ -35,6 +35,19 @@ export interface SessionGoal {
   done?: { status: "complete" | "blocked"; reason: string; at: number }
 }
 
+/** A message waiting for the running turn to end (SessionInfo.queued): what `session.prompt` was sent, less the conversation. */
+export interface QueuedPrompt {
+  id: string
+  text: string
+  attachments?: Attachment[]
+  annotations?: Annotation[]
+  fileNotices?: FileNotice[]
+  agent?: TurnAgent
+  model?: ModelRef
+  goal?: string
+  time: number
+}
+
 export interface SessionInfo {
   id: string
   title: string
@@ -154,6 +167,13 @@ export interface SessionInfo {
    * and a claim whose process is still alive is a turn running over there.
    */
   claim?: { at: number; resumes: number; pid?: number }
+  /**
+   * OpenCode v2's queued follow-ups (R31-3): messages sent while a turn ran,
+   * to be sent as turns of their own once it ends, oldest first. Kept here so
+   * a reload or a restart does not lose them. A turn ended by Stop or by a
+   * failure leaves them parked for the user.
+   */
+  queued?: QueuedPrompt[]
   /**
    * The conversation's instruction values (OpenCode v2's instruction state):
    * `initial` is what the system prompt is built from, fixed so the provider's
@@ -398,6 +418,8 @@ export interface UserMessage {
    * taken it is a question like any other and opens the next turn (26.914).
    */
   steered?: boolean
+  /** Sent from the queue (SessionInfo.queued) when the turn before it ended, not typed into an idle conversation. */
+  queued?: boolean
   /**
    * plan: written by the app rather than typed - the word that the user
    * approved a plan, put where the user's next message would be. The model
@@ -2079,8 +2101,17 @@ export type Request =
       model?: ModelRef
       /* 追求目标: this message is the conversation's goal from now on, set before it is written. */
       goal?: string
+      /*
+       * While a turn runs: "steer" (MiMo's, and the default) joins it, "queue"
+       * waits for it to end and is sent as a turn of its own (OpenCode v2).
+       * Ignored when nothing is running.
+       */
+      delivery?: "steer" | "queue"
     }
   | { type: "session.abort"; sessionID: string }
+  /* A queued follow-up taken back, or sent now: into the running turn if there is one, as a new turn if not. */
+  | { type: "session.queue.remove"; sessionID: string; id: string }
+  | { type: "session.queue.send"; sessionID: string; id: string }
   /*
    * subagents: a slash command marked `subtask`. `text` is the line as typed,
    * kept as the user's message; `prompt` is its filled-in template, which a
@@ -2421,6 +2452,8 @@ export interface ResponseMap {
   "session.model": { session: SessionInfo }
   "session.smart": { session: SessionInfo }
   "session.prompt": { messageID: string }
+  "session.queue.remove": Record<string, never>
+  "session.queue.send": { messageID: string }
   "session.abort": Record<string, never>
   "session.subtask": { messageID: string }
   "permission.respond": Record<string, never>
