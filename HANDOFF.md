@@ -9,7 +9,7 @@
 - **这是什么**：在界面和功能上 1:1 复刻小米 MiMo 桌面端的 Electron 应用，MCode 保留自己的名字、图标和字标。技术栈 Electron 41.7.2 + Vue 3 + Pinia + electron-vite，后端是同一进程里的 Node 服务。
 - **对照基准**：界面照 MiMo **26.920**（第十八轮起）。只读它的行为和尺寸，**不复制**它的代码、文案、图标、插画和品牌。逐项对照清单（含百分比）：https://claude.ai/code/artifact/f149a5d1-857e-4bae-80be-ca03265d9f83
 - **引擎跟随 OpenCode v2**（第三十一轮起，用户 2026-09-27 定的）：内核和 Agent 编程能力照 OpenCode 的 `v2` 分支逐项移植进 MCode 自己的引擎（v2 还没正式发布，所以是搬能力，不是换引擎）；界面和其余部分保留 MCode 自己的设计。只搬比 MCode 现有做法好的，MCode 更强的地方保留（见第三十一轮）。OpenCode 是 MIT 许可，移植的代码在注释里注明出处。
-- **版本**：0.5.3（第三十二轮复核后打的包），`dist\MCode-0.5.3-x64.exe` 已静默装到 `D:\Apps\MCode` 并启动验证过；安装包里的 QuickJS 从 `app.asar` 实际加载运行过（0.5.2 时）。
+- **版本**：0.5.5（第三十三轮，新图标和新字标），`dist\MCode-0.5.5-x64.exe`，还没装；装在 `D:\Apps\MCode` 的是 0.5.3。安装包里的 QuickJS 从 `app.asar` 实际加载运行过（0.5.2 时）。
 - **分支**：`v2.0`，跟踪 `origin/v2.0`（私有仓库 `WyattCode/MCode`）。`main` 停在 https://github.com/WyattCode/MCode/pull/8 的合并提交 `5d941a80`（0.5.3，第二十七轮到第三十二轮）；`v2.0` 在那之后只多了交接文档的更新。开拉取请求、合进 `main`、发版都要**先问用户一声**（用户定的规矩：推分支直接做，对外、不好撤回的先问）。合并和发版用的 `gh pr merge`、`gh release create` 由用户在 `.claude/settings.local.json` 里放行（2026-09-27）。
 - **拉取请求**：#4、#5、#6、#7、#8 已合并（合并提交，标题照「MCode 2.0：0.5.3（#8）」的格式）。#3（`macos-hardening-v2`）已关闭：它声称的 16 条修复逐条对照过当前代码，5 条已被后来的工作修掉（含全部 3 条安全项）、2 条在本平台仍然存在并已修（0.4.6）、7 条只在 macOS 上能观察到，结论写在 #3 的关闭评论里。
 - **发布**：https://github.com/WyattCode/MCode/releases/tag/v0.5.3（预发布版，2026-09-27，附安装程序、blockmap、`latest.yml`）；之前是 v0.4.7、v0.4.5、v0.3.8。自动更新地址仍是占位的 `updates.invalid`，所以**发布不会触发任何自动更新**，装新版只能手动下载。
