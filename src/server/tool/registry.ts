@@ -22,6 +22,7 @@ import { CronTool } from "./cron"
 import { AutomationUpdateTool } from "./automation"
 import { PlanExitTool } from "./plan-exit"
 import { SpeakTool } from "./speak"
+import { AppTool } from "./app"
 
 /**
  * The tool surface offered to the model.
@@ -91,6 +92,8 @@ export const TOOLS: ToolDefinition[] = [
   PatchTool,
   // OpenCode v2's websearch (R31-9): appended, for the same reason. Not offered once the user turned it off.
   WebSearchTool,
+  // MCode's own app tool (R36): appended, for the same reason. Operates the app being built through its DevTools port.
+  AppTool,
 ]
 
 /**

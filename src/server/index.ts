@@ -34,6 +34,7 @@ import { protectAppData } from "./tool/app-data"
 import { frameForWindow } from "./config-view"
 import { newSocketSecret, refusalOf, SOCKET_PROTOCOL } from "./socket-guard"
 import { ModelCatalog, shippedCatalog } from "./provider/models-dev"
+import { closeAllApps } from "./tool/app"
 
 export interface Runtime {
   storage: Storage
@@ -462,6 +463,8 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       clearTimeout(packFirst)
       if (packEvery) clearInterval(packEvery)
       await shells.closeAll()
+      // The browsers the app tool opened close with the app; apps it attached to are only let go.
+      await closeAllApps()
       await mcp.close()
       await scheduler.stop()
       await automations.stop()

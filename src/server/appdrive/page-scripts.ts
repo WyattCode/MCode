@@ -1,0 +1,215 @@
+/**
+ * The scripts the app tool runs inside a page, kept as plain source text: they
+ * run in the page's own JavaScript world, not this process's, so nothing here
+ * may lean on an import or on the bundler.
+ *
+ * State lives on `window.__mcodeApp`: every element the snapshot lists gets a
+ * number that stays the same for as long as the element exists (a WeakMap, so
+ * the page's own garbage collection is untouched), and nothing is written into
+ * the page's DOM - an attribute there could trip the app's own observers or
+ * snapshot tests.
+ */
+
+/**
+ * Lists what a person could act on, and what the page says.
+ *
+ * Interactive means a native control, an ARIA widget role, something focusable,
+ * or - for the many apps that make buttons out of divs - the outermost element
+ * with a pointer cursor. While a modal dialog is open only what is inside it is
+ * listed, as a screen reader would present it: that is all a person could
+ * reach, and it keeps the list short.
+ */
+export const SNAPSHOT = String.raw`(function (limit) {
+  var S = window.__mcodeApp || (window.__mcodeApp = { next: 1, ids: new WeakMap(), els: new Map() });
+  S.els = new Map();
+  var WIDGET = "a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=checkbox],[role=radio],[role=switch],[role=option],[role=combobox],[role=textbox],[role=searchbox],[role=slider],[role=spinbutton],[role=treeitem],[contenteditable=''],[contenteditable=true],[tabindex]:not([tabindex='-1']),[onclick]";
+  function shown(el) {
+    if (el.checkVisibility && !el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return false;
+    var r = el.getBoundingClientRect();
+    return r.width >= 1 && r.height >= 1;
+  }
+  function squash(text, max) {
+    text = String(text || "").replace(/\s+/g, " ").trim();
+    return text.length > max ? text.slice(0, max - 1) + "…" : text;
+  }
+  function roleOf(el) {
+    var role = el.getAttribute("role");
+    if (role) return role.split(" ")[0];
+    var tag = el.tagName;
+    if (tag === "A") return "link";
+    if (tag === "BUTTON" || tag === "SUMMARY") return "button";
+    if (tag === "SELECT") return el.multiple ? "listbox" : "combobox";
+    if (tag === "TEXTAREA") return "textbox";
+    if (tag === "INPUT") {
+      var type = (el.type || "text").toLowerCase();
+      if (type === "checkbox" || type === "radio") return type;
+      if (type === "range") return "slider";
+      if (type === "button" || type === "submit" || type === "reset" || type === "image") return "button";
+      if (type === "file") return "file";
+      return "textbox";
+    }
+    if (el.isContentEditable) return "textbox";
+    return "clickable";
+  }
+  function labelled(el) {
+    var ids = (el.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean);
+    return ids.map(function (id) { var node = document.getElementById(id); return node ? node.innerText || node.textContent : ""; }).join(" ");
+  }
+  function nameOf(el) {
+    var name = el.getAttribute("aria-label") || labelled(el);
+    if (!name && el.labels && el.labels.length) {
+      name = Array.prototype.map.call(el.labels, function (label) {
+        var copy = label.cloneNode(true);
+        Array.prototype.forEach.call(copy.querySelectorAll("select,input,textarea,button"), function (inner) { inner.remove(); });
+        return copy.textContent;
+      }).join(" ");
+    }
+    if (!name && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) {
+      var type = (el.type || "").toLowerCase();
+      name = type === "button" || type === "submit" || type === "reset" ? el.value : el.placeholder;
+    }
+    if (!name && el.tagName !== "SELECT") name = el.innerText;
+    if (!name) {
+      var img = el.querySelector && el.querySelector("img[alt],svg[aria-label],[title]");
+      if (img) name = img.getAttribute("alt") || img.getAttribute("aria-label") || img.getAttribute("title");
+    }
+    if (!name) name = el.getAttribute("title") || el.getAttribute("name") || el.id || "";
+    return squash(name, 80);
+  }
+  function statesOf(el, role) {
+    var out = [];
+    if (el.disabled || el.getAttribute("aria-disabled") === "true") out.push("disabled");
+    if (el.checked || el.getAttribute("aria-checked") === "true") out.push("checked");
+    if (el.getAttribute("aria-selected") === "true" || (el.tagName === "OPTION" && el.selected)) out.push("selected");
+    var expanded = el.getAttribute("aria-expanded");
+    if (expanded === "true") out.push("expanded");
+    if (expanded === "false") out.push("collapsed");
+    if (el.getAttribute("aria-pressed") === "true") out.push("pressed");
+    var current = el.getAttribute("aria-current");
+    if (current && current !== "false") out.push("current");
+    if (document.activeElement === el && role === "textbox") out.push("focused");
+    if (role === "textbox" && !el.isContentEditable) out.push("value=" + JSON.stringify(squash(el.value, 40)));
+    if (role === "textbox" && el.isContentEditable) out.push("value=" + JSON.stringify(squash(el.innerText, 40)));
+    if (el.tagName === "SELECT") out.push("value=" + JSON.stringify(squash(el.selectedOptions && el.selectedOptions[0] ? el.selectedOptions[0].text : "", 40)));
+    if (role === "slider" && el.value !== undefined) out.push("value=" + el.value);
+    var r = el.getBoundingClientRect();
+    if (r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) out.push("offscreen");
+    return out;
+  }
+  var dialogs = Array.prototype.filter.call(document.querySelectorAll("dialog[open],[role=dialog],[role=alertdialog]"), function (d) {
+    return shown(d) && (d.matches(":modal") || d.getAttribute("aria-modal") === "true");
+  });
+  var scope = dialogs.length ? dialogs[dialogs.length - 1] : document.body || document.documentElement;
+  var found = new Set(Array.prototype.filter.call(scope.querySelectorAll(WIDGET), shown));
+  var all = scope.querySelectorAll("*");
+  for (var i = 0; i < all.length && i < 6000; i++) {
+    var el = all[i];
+    if (found.has(el) || !el.parentElement) continue;
+    var style = getComputedStyle(el);
+    if (style.cursor !== "pointer" || getComputedStyle(el.parentElement).cursor === "pointer") continue;
+    if (el.closest(WIDGET) || el.querySelector(WIDGET) || !shown(el)) continue;
+    found.add(el);
+  }
+  var list = Array.from(found).sort(function (a, b) { return a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1; });
+  var lines = [];
+  for (var j = 0; j < list.length && lines.length < limit; j++) {
+    var node = list[j];
+    var id = S.ids.get(node);
+    if (!id) { id = S.next++; S.ids.set(node, id); }
+    S.els.set(id, node);
+    var role = roleOf(node);
+    var states = statesOf(node, role);
+    lines.push("[" + id + "] " + role + " " + JSON.stringify(nameOf(node)) + (states.length ? " " + states.join(" ") : ""));
+  }
+  var text = [];
+  var seen = new Set();
+  var budget = 3000;
+  String(scope.innerText || "").split(/\n+/).forEach(function (line) {
+    line = squash(line, 160);
+    if (!line || seen.has(line) || budget <= 0) return;
+    seen.add(line);
+    budget -= line.length;
+    text.push(line);
+  });
+  return { title: document.title, url: location.href, modal: dialogs.length > 0 ? nameOf(scope) || "dialog" : "", elements: lines, more: Math.max(0, list.length - lines.length), text: text };
+})`
+
+/**
+ * Brings an element into view and says where its middle is, and what - if
+ * anything - is drawn over that point, so a click that would land on an
+ * overlay is reported instead of silently hitting the wrong thing.
+ */
+export const LOCATE = String.raw`(function (ref) {
+  var S = window.__mcodeApp;
+  var el = S && S.els.get(ref);
+  if (!el) return { error: "unknown" };
+  if (!el.isConnected) return { error: "gone" };
+  el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+  var r = el.getBoundingClientRect();
+  if (r.width < 1 || r.height < 1) return { error: "hidden" };
+  var x = r.left + r.width / 2;
+  var y = r.top + r.height / 2;
+  var top = document.elementFromPoint(x, y);
+  var covered = "";
+  if (top && top !== el && !el.contains(top) && !top.contains(el)) {
+    covered = (top.getAttribute("aria-label") || top.innerText || top.tagName || "").replace(/\s+/g, " ").trim().slice(0, 60);
+  }
+  var disabled = Boolean(el.disabled || el.getAttribute("aria-disabled") === "true");
+  return { x: x, y: y, covered: covered, disabled: disabled, tag: el.tagName };
+})`
+
+/** Gives an element the keyboard, with its contents selected when they are to be replaced. */
+export const FOCUS = String.raw`(function (ref, clear) {
+  var S = window.__mcodeApp;
+  var el = S && S.els.get(ref);
+  if (!el || !el.isConnected) return { error: "gone" };
+  el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+  el.focus();
+  if (clear) {
+    if (typeof el.select === "function") el.select();
+    else if (el.isContentEditable) document.execCommand("selectAll");
+  }
+  return { focused: document.activeElement === el || el.contains(document.activeElement) };
+})`
+
+/** Chooses an option of a native select by its value or its visible text, and tells the page, as a person's choice would. */
+export const CHOOSE = String.raw`(function (ref, wanted) {
+  var S = window.__mcodeApp;
+  var el = S && S.els.get(ref);
+  if (!el || !el.isConnected) return { error: "gone" };
+  if (el.tagName !== "SELECT") return { error: "not-select" };
+  var options = Array.prototype.slice.call(el.options);
+  var match = options.find(function (o) { return o.value === wanted; }) || options.find(function (o) { return o.text.trim() === wanted; }) || options.find(function (o) { return o.text.toLowerCase().indexOf(String(wanted).toLowerCase()) >= 0; });
+  if (!match) return { error: "no-option", options: options.map(function (o) { return o.text.trim(); }).slice(0, 30) };
+  el.value = match.value;
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+  return { chosen: match.text.trim() };
+})`
+
+/**
+ * Starts recording when the page last changed. The waiting itself is done
+ * from this process (driver.ts `settle`), by reading `quietFor` - never with
+ * the page's own timers, which Chromium slows to once a second in a window
+ * that is in the background, and an app under test usually is.
+ */
+export const WATCH = String.raw`(function () {
+  var S = window.__mcodeApp || (window.__mcodeApp = { next: 1, ids: new WeakMap(), els: new Map() });
+  S.changed = performance.now();
+  if (!S.observer) {
+    S.observer = new MutationObserver(function () { S.changed = performance.now(); });
+    S.observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+  }
+  return true;
+})`
+
+/** How long the page has gone without a change, and whether it has finished loading. */
+export const QUIET_FOR = String.raw`(function () {
+  var S = window.__mcodeApp;
+  return { quiet: S && S.changed !== undefined ? performance.now() - S.changed : 0, loaded: document.readyState === "complete", watched: Boolean(S && S.observer) };
+})`
+
+/** Whether the page's text now includes (or no longer includes) something. */
+export const HAS_TEXT = String.raw`(function (wanted) {
+  return String(document.body ? document.body.innerText : "").indexOf(wanted) >= 0;
+})`

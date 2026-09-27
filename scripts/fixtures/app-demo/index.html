@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>演示应用</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; }
+  [role=tablist] { display: flex; gap: 8px; margin-bottom: 16px; }
+  [role=tab] { padding: 6px 12px; border: 1px solid #ccc; background: #fff; cursor: pointer; }
+  [role=tab][aria-selected=true] { background: #222; color: #fff; }
+  [role=tabpanel][hidden] { display: none; }
+  .fake-button { display: inline-block; padding: 6px 12px; background: #eef; cursor: pointer; }
+  dialog::backdrop { background: rgba(0, 0, 0, 0.3); }
+</style>
+</head>
+<body>
+<h1>演示应用</h1>
+<div role="tablist">
+  <button role="tab" id="tab-home" aria-selected="true" aria-controls="home">首页</button>
+  <button role="tab" id="tab-count" aria-selected="false" aria-controls="count">计数</button>
+  <button role="tab" id="tab-settings" aria-selected="false" aria-controls="settings">设置</button>
+</div>
+
+<section role="tabpanel" id="home">
+  <p>欢迎使用演示应用。</p>
+  <div class="fake-button" id="greet">打个招呼</div>
+  <p id="greeting"></p>
+</section>
+
+<section role="tabpanel" id="count" hidden>
+  <p>当前计数：<span id="value">0</span></p>
+  <button id="plus">加一</button>
+  <button id="minus">减一</button>
+  <button id="reset">清零</button>
+</section>
+
+<section role="tabpanel" id="settings" hidden>
+  <p><label><input type="checkbox" id="dark"> 深色模式</label></p>
+  <p><label>语言 <select id="lang"><option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option></select></label></p>
+  <p><label>昵称 <input id="nick" placeholder="你的名字"></label></p>
+  <button id="save">保存</button>
+  <p id="saved"></p>
+  <button id="remove">删除账户</button>
+  <button id="broken">检查更新</button>
+</section>
+
+<dialog id="confirm">
+  <p>确定要删除账户吗？</p>
+  <button id="cancel">取消</button>
+  <button id="ok">确定删除</button>
+</dialog>
+<p id="status"></p>
+
+<script src="app.js"></script>
+</body>
+</html>
