@@ -4,6 +4,8 @@ import type { ToolDefinition, ToolContext, ToolResult } from "./types"
 import { ToolError } from "./types"
 import { resolvePath } from "./fs-util"
 import { AppDriver, WAIT_CAP_MS, type Step } from "../appdrive/driver"
+import { WindowsDriver } from "../appdrive/windows"
+import type { SteppingDriver } from "../appdrive/stepping"
 
 /**
  * Operating the app being built, as a person would - MCode's own tool, not
@@ -12,13 +14,14 @@ import { AppDriver, WAIT_CAP_MS, type Step } from "../appdrive/driver"
  *
  * The window is read as a numbered list of what can be acted on plus what it
  * says, so a model that reads no pictures can drive it; a batch of steps runs
- * in one call, each waiting only until the page goes quiet. Web pages open in
- * a browser of the tool's own; an Electron app is reached through the DevTools
- * port it was started with. Windows' native apps and phones are later rounds.
+ * in one call, each waiting only until the window goes quiet. Web pages open
+ * in a browser of the tool's own; an Electron app is reached through the
+ * DevTools port it was started with; a native Windows app through UI
+ * Automation. Phones are a later round.
  */
 
 /** One driver per conversation: the app it has open, kept between calls. */
-const drivers = new Map<string, AppDriver>()
+const drivers = new Map<string, SteppingDriver>()
 
 /** Ends every app session: the browsers this tool started close, attached apps are only let go. Called when the backend stops. */
 export async function closeAllApps(): Promise<void> {
@@ -40,13 +43,15 @@ export const AppTool: ToolDefinition = {
     "",
     "Actions",
     "- open {url}: open a page (http, https, file, localhost) in a browser window of this tool's own.",
+    "- window {target}: (Windows) take over a native app's window that is already open - WinForms, WPF, Win32, Qt - by part of its title or its program's name.",
+    "- launch {program, args?, target?}: (Windows) start a native program and take over the window it shows; close ends it again.",
     "- attach {port, target?}: connect to an Electron app or a Chromium started with --remote-debugging-port=<port>. Start it yourself first, in the background (electron-vite: `npx electron-vite dev --remoteDebuggingPort 9222`; plain Electron: `npx electron . --remote-debugging-port=9222`; a built app: `app.exe --remote-debugging-port=9222`). target picks a window by title or address.",
     "- snapshot {full?}: read the window again. After the first read only the changes are shown, unless full is true.",
     "- do {steps}: run several steps in one call - this is the fast way to work. They run in order, each waiting by itself until the page settles, and stop at the first that fails. The answer gives every step its own effect - the text it put on the page, a dialog it opened, or \"no visible change\" - and then everything that changed.",
     "- tabs {target?}: list the app's windows and tabs, or switch to the one target names.",
     "- screenshot {path?}: save a PNG - to show the user, or for a model that reads images.",
-    "- eval {expression}: run JavaScript in the page and get its value back.",
-    "- close: close the browser this tool opened. An attached app is only disconnected, never closed.",
+    "- eval {expression}: run JavaScript in the page and get its value back (web pages and Electron only).",
+    "- close: close the browser or program this tool opened. An app it attached to is only let go, never closed.",
     "",
     "Steps (each {action, ...})",
     "- click / double_click / hover {ref}",
@@ -66,10 +71,12 @@ export const AppTool: ToolDefinition = {
   parameters: {
     type: "object",
     properties: {
-      action: { type: "string", enum: ["open", "attach", "snapshot", "do", "tabs", "screenshot", "eval", "close"] },
+      action: { type: "string", enum: ["open", "window", "launch", "attach", "snapshot", "do", "tabs", "screenshot", "eval", "close"] },
       url: { type: "string", description: "open: the page to open" },
       port: { type: "integer", description: "attach: the app's DevTools port" },
-      target: { type: "string", description: "attach, tabs: a window or tab, by part of its title or address, or its id" },
+      target: { type: "string", description: "window, launch, attach, tabs: a window or tab, by part of its title, its address or program name, or its id" },
+      program: { type: "string", description: "launch: the program to start - a path to an .exe, or a command on PATH" },
+      args: { type: "array", items: { type: "string" }, description: "launch: its arguments" },
       steps: {
         type: "array",
         description: "do: the steps, in order",
@@ -120,6 +127,8 @@ async function perform(input: Record<string, unknown>, context: ToolContext): Pr
   const action = String(input.action)
   if (action === "open") return open(String(input.url ?? ""), context)
   if (action === "attach") return attach(Number(input.port), typeof input.target === "string" ? input.target : undefined, context)
+  if (action === "window") return nativeWindow(typeof input.target === "string" ? input.target.trim() : "", context)
+  if (action === "launch") return launch(input, context)
   const driver = drivers.get(context.sessionID)
   if (action === "close") {
     if (!driver) return { output: "Nothing was open.", title: "close" }
@@ -129,7 +138,7 @@ async function perform(input: Record<string, unknown>, context: ToolContext): Pr
   }
   if (!driver || !driver.alive) {
     drivers.delete(context.sessionID)
-    throw new ToolError(driver ? "The app's window was closed. Open or attach again." : "Nothing is open yet. Use open with a URL, or attach to an app's DevTools port, first.")
+    throw new ToolError(driver ? "The app's window was closed. Open or attach again." : "Nothing is open yet. Use open with a URL, window or launch for a native app, or attach to an app's DevTools port, first.")
   }
   switch (action) {
     case "snapshot":
@@ -161,7 +170,7 @@ async function perform(input: Record<string, unknown>, context: ToolContext): Pr
       return { output: await driver.evaluate(expression), title: "eval" }
     }
     default:
-      throw new ToolError(`Unknown action "${action}". Use open, attach, snapshot, do, tabs, screenshot, eval or close.`)
+      throw new ToolError(`Unknown action "${action}". Use open, window, launch, attach, snapshot, do, tabs, screenshot, eval or close.`)
   }
 }
 
@@ -177,13 +186,7 @@ async function open(url: string, context: ToolContext) {
     title: "Open a page to operate it",
     subject: `open ${address}`,
   })
-  const previous = drivers.get(context.sessionID)
-  drivers.delete(context.sessionID)
-  if (previous) await previous.close().catch(() => undefined)
-  const driver = await AppDriver.open(address).catch((error: unknown) => {
-    throw new ToolError(error instanceof Error ? error.message : String(error))
-  })
-  drivers.set(context.sessionID, driver)
+  const driver = await replace(context, () => AppDriver.open(address))
   return { output: await driver.snapshot(true), title: address, metadata: { url: address } }
 }
 
@@ -198,14 +201,61 @@ async function attach(port: number, target: string | undefined, context: ToolCon
     title: "Connect to an app to operate it",
     subject: `attach 127.0.0.1:${port}`,
   })
+  const driver = await replace(context, () => AppDriver.attach(port, target))
+  return { output: await driver.snapshot(true), title: `127.0.0.1:${port}`, metadata: { port } }
+}
+
+/** The conversation's app from now on: whatever it had open before is let go (or closed, if this tool opened it). */
+async function replace(context: ToolContext, start: () => Promise<SteppingDriver>): Promise<SteppingDriver> {
   const previous = drivers.get(context.sessionID)
   drivers.delete(context.sessionID)
   if (previous) await previous.close().catch(() => undefined)
-  const driver = await AppDriver.attach(port, target).catch((error: unknown) => {
+  const driver = await start().catch((error: unknown) => {
     throw new ToolError(error instanceof Error ? error.message : String(error))
   })
   drivers.set(context.sessionID, driver)
-  return { output: await driver.snapshot(true), title: `127.0.0.1:${port}`, metadata: { port } }
+  return driver
+}
+
+function windowsOnly(action: string): void {
+  if (process.platform !== "win32") throw new ToolError(`${action} drives native Windows windows and works on Windows only; on this system use open for web pages or attach for an Electron app.`)
+}
+
+async function nativeWindow(target: string, context: ToolContext) {
+  windowsOnly("window")
+  if (!target) throw new ToolError("window needs a target: part of the window's title, or its program's name")
+  await context.permissions.ask({
+    sessionID: context.sessionID,
+    messageID: context.messageID,
+    callID: context.callID,
+    kind: "bash",
+    directory: context.directory,
+    title: "Operate a window",
+    subject: `window ${target}`,
+  })
+  const driver = await replace(context, () => WindowsDriver.attach(target))
+  return { output: await driver.snapshot(true), title: driver.label, metadata: { window: driver.label } }
+}
+
+async function launch(input: Record<string, unknown>, context: ToolContext) {
+  windowsOnly("launch")
+  const program = typeof input.program === "string" ? input.program.trim() : ""
+  if (!program) throw new ToolError("launch needs a program: the path to an .exe, or a command on PATH")
+  const args = Array.isArray(input.args) ? input.args.map(String) : []
+  const target = typeof input.target === "string" && input.target.trim() ? input.target.trim() : undefined
+  // A relative path is the project's; a bare name is looked up on PATH by the system.
+  const executable = /[\\/]/.test(program) && !path.isAbsolute(program) ? path.resolve(context.directory, program) : program
+  await context.permissions.ask({
+    sessionID: context.sessionID,
+    messageID: context.messageID,
+    callID: context.callID,
+    kind: "bash",
+    directory: context.directory,
+    title: "Start a program to operate it",
+    subject: [executable, ...args].join(" "),
+  })
+  const driver = await replace(context, () => WindowsDriver.launch(executable, args, context.directory, target))
+  return { output: await driver.snapshot(true), title: driver.label, metadata: { window: driver.label } }
 }
 
 function stepsOf(value: unknown): Step[] {

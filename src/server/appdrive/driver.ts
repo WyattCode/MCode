@@ -14,6 +14,9 @@ import path from "node:path"
 import { Cdp, browserSocketURL, type CdpEvent } from "./cdp"
 import { closeBrowser, findBrowser, launchBrowser, type LaunchedBrowser } from "./browser"
 import { CHOOSE, FOCUS, HAS_TEXT, LOCATE, QUIET_FOR, SNAPSHOT, WATCH } from "./page-scripts"
+import { REF_ERRORS, StepError, SteppingDriver, WAIT_CAP_MS, requireRef, sleep, splitCombo, type PageInfo, type Snapshot, type Step } from "./stepping"
+
+export { WAIT_CAP_MS, formatSnapshot, stepEffect, type PageInfo, type Snapshot, type Step } from "./stepping"
 
 /** How many elements one snapshot lists; a page with more says how many it left out. */
 export const SNAPSHOT_LIMIT = 250
@@ -21,53 +24,11 @@ export const SNAPSHOT_LIMIT = 250
 const QUIET_MS = 120
 /** The longest one action waits for the page to go quiet. */
 const SETTLE_CAP_MS = 2_500
-/** The longest a `wait` step may ask for. */
-export const WAIT_CAP_MS = 15_000
 /** How many of the page's errors and warnings are reported at once. */
 const LOG_LIMIT = 20
 
-export interface Snapshot {
-  title: string
-  url: string
-  modal: string
-  elements: string[]
-  more: number
-  text: string[]
-}
-
-export interface Step {
-  action: "click" | "double_click" | "type" | "press" | "select" | "hover" | "scroll" | "wait" | "goto" | "back" | "reload"
-  ref?: number
-  text?: string
-  key?: string
-  value?: string
-  url?: string
-  ms?: number
-  submit?: boolean
-  clear?: boolean
-  dy?: number
-}
-
-export interface PageInfo {
-  id: string
-  title: string
-  url: string
-  current: boolean
-}
-
-/** Where an element's reference went: every failure the model can act on, in its words. */
-const REF_ERRORS: Record<string, string> = {
-  unknown: "is not in the last snapshot; take a new one",
-  gone: "is no longer on the page; take a new snapshot",
-  hidden: "is on the page but not visible",
-  "not-select": "is not a native select; click it and then click the option instead",
-}
-
-class StepError extends Error {}
-
-export class AppDriver {
+export class AppDriver extends SteppingDriver {
   private page?: { targetId: string; sessionId: string }
-  private last?: Snapshot
   private logs: string[] = []
   private stopListening: () => void
 
@@ -76,6 +37,7 @@ export class AppDriver {
     readonly label: string,
     private readonly owned?: LaunchedBrowser,
   ) {
+    super()
     this.stopListening = cdp.on((event) => this.observe(event))
   }
 
@@ -139,56 +101,6 @@ export class AppDriver {
     await this.send("Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => undefined)
   }
 
-  /**
-   * What the page offers and says. After the first time, only what changed
-   * since the last look is shown unless `full` is asked for - or the page is a
-   * different one, or so much changed that a diff would be longer than the page.
-   */
-  async snapshot(full = false): Promise<string> {
-    const now = await this.read()
-    const before = this.last
-    this.last = now
-    return formatSnapshot(now, full ? undefined : before) + this.drainLogs()
-  }
-
-  /** Runs the steps in order, stopping at the first that fails, then shows what changed. */
-  async run(steps: Step[], signal?: AbortSignal): Promise<{ output: string; done: number }> {
-    if (!this.last) this.last = await this.read()
-    const report: string[] = []
-    let done = 0
-    let failure = ""
-    // What the page looked like before each step, so every step can say what it did by itself.
-    let previous: Snapshot | undefined = this.last
-    for (const [index, step] of steps.entries()) {
-      if (signal?.aborted) {
-        failure = "Stopped."
-        break
-      }
-      try {
-        await this.watch()
-        const logged = this.logs.length
-        const note = await this.step(step)
-        const after = await this.read().catch(() => undefined)
-        // A wait changes nothing by itself; what it waited for is its note.
-        const effect = previous && after && step.action !== "wait" ? stepEffect(previous, after) : ""
-        const complained = this.logs.length > logged ? "the page reported an error (below)" : ""
-        previous = after
-        const said = [note, effect, complained].filter(Boolean).join("; ")
-        report.push(`${index + 1}. ${describeStep(step)}${said ? ` -> ${said}` : ""}`)
-        done += 1
-      } catch (error) {
-        failure = `${index + 1}. ${describeStep(step)} failed: ${error instanceof Error ? error.message : String(error)}`
-        break
-      }
-    }
-    const now = await this.read().catch(() => undefined)
-    const before = this.last
-    if (now) this.last = now
-    const lines = [...report]
-    if (failure) lines.push(failure, steps.length - done - 1 > 0 ? `The remaining ${steps.length - done - 1} step(s) were not run.` : "")
-    return { output: [lines.filter(Boolean).join("\n"), now ? formatSnapshot(now, before) : "The page could not be read after these steps.", this.drainLogs().trim()].filter(Boolean).join("\n\n"), done }
-  }
-
   async screenshot(file: string): Promise<void> {
     const { data } = await this.send<{ data: string }>("Page.captureScreenshot", { format: "png" })
     await fsp.mkdir(path.dirname(file), { recursive: true })
@@ -221,7 +133,7 @@ export class AppDriver {
 
   // ------------------------------------------------------------------ steps
 
-  private async step(step: Step): Promise<string> {
+  protected async step(step: Step): Promise<string> {
     switch (step.action) {
       case "click":
       case "double_click": {
@@ -341,7 +253,7 @@ export class AppDriver {
   }
 
   /** Starts the change recorder before an action, so the quiet spell is measured from the action itself. */
-  private async watch(): Promise<void> {
+  protected async prepare(): Promise<void> {
     await this.call(WATCH).catch(() => undefined)
   }
 
@@ -357,10 +269,10 @@ export class AppDriver {
   }
 
   private async key(combo: string): Promise<void> {
-    const parts = combo.split("+").map((part) => part.trim()).filter(Boolean)
-    const name = parts.pop() ?? ""
+    const split = splitCombo(combo)
+    const name = split.name
     let modifiers = 0
-    for (const part of parts) modifiers |= MODIFIERS[part.toLowerCase()] ?? 0
+    for (const part of split.modifiers) modifiers |= MODIFIERS[part.toLowerCase()] ?? 0
     const key = keyOf(name)
     // Text is only typed when no command modifier is held, as a real keyboard does: Control+a selects, it does not type "a".
     const text = modifiers & ~8 ? undefined : key.text
@@ -387,7 +299,7 @@ export class AppDriver {
     return result.result.value as T
   }
 
-  private async read(): Promise<Snapshot> {
+  protected async read(): Promise<Snapshot> {
     return this.call<Snapshot>(SNAPSHOT, SNAPSHOT_LIMIT)
   }
 
@@ -416,119 +328,17 @@ export class AppDriver {
     if (this.logs.length < LOG_LIMIT * 2) this.logs.push(line)
   }
 
-  private drainLogs(): string {
+  protected logCount(): number {
+    return this.logs.length
+  }
+
+  protected drainLogs(): string {
     if (!this.logs.length) return ""
     const shown = this.logs.slice(0, LOG_LIMIT)
     const more = this.logs.length - shown.length
     this.logs = []
     return `\n\nThe page reported:\n${shown.map((line) => `- ${line}`).join("\n")}${more > 0 ? `\n- (${more} more)` : ""}`
   }
-}
-
-// -------------------------------------------------------------------- format
-
-/** A snapshot as the model reads it: the whole of it, or what changed since `before`. */
-export function formatSnapshot(now: Snapshot, before?: Snapshot): string {
-  const head = [`${now.title || "(untitled)"} - ${now.url}`, now.modal ? `A modal dialog is open ("${now.modal}"); only what is inside it is listed.` : ""].filter(Boolean)
-  const whole = () =>
-    [
-      ...head,
-      "",
-      now.elements.length ? now.elements.join("\n") : "(nothing to act on)",
-      now.more ? `(${now.more} more elements not listed; scroll or act on what is here first)` : "",
-      "",
-      "Text on the page:",
-      now.text.join("\n") || "(none)",
-    ]
-      .filter((line, index, all) => line !== "" || all[index - 1] !== "")
-      .join("\n")
-  if (!before || before.url !== now.url || before.modal !== now.modal) return whole()
-  const elements = diff(before.elements, now.elements)
-  const text = diff(before.text, now.text)
-  const changes = elements.added.length + elements.removed.length + text.added.length + text.removed.length
-  if (changes === 0) return [...head, "Nothing on the page changed."].join("\n")
-  if (changes > (now.elements.length + now.text.length) * 0.6) return whole()
-  const block = (title: string, lines: string[]) => (lines.length ? [`${title}:`, ...lines] : [])
-  const refOf = (line: string) => line.match(/^\[(\d+)\]/)?.[1]
-  const removedRefs = new Set(elements.removed.map(refOf))
-  const addedRefs = new Set(elements.added.map(refOf))
-  return [
-    ...head,
-    "What changed (earlier references still hold):",
-    ...block("Changed", elements.added.filter((line) => removedRefs.has(refOf(line)))),
-    ...block("Now shown", elements.added.filter((line) => !removedRefs.has(refOf(line)))),
-    ...block("Gone", elements.removed.filter((line) => !addedRefs.has(refOf(line)))),
-    ...block("New text", text.added),
-    ...block("Text gone", text.removed),
-  ].join("\n")
-}
-
-/** How much of one step's effect is spelled out; the full account comes once, after the batch. */
-const EFFECT_LINES = 3
-const EFFECT_LINE_MAX = 80
-
-/**
- * What one step changed, in a line: where the page went, a dialog coming or
- * going, the text it put on the page, and how many elements changed. "no
- * visible change" is said out loud, because a button that does nothing is
- * exactly what a test is looking for.
- */
-export function stepEffect(before: Snapshot, after: Snapshot): string {
-  const parts: string[] = []
-  if (before.url !== after.url) parts.push(`now at ${after.url}`)
-  if (!before.modal && after.modal) parts.push(`a dialog opened ("${after.modal.slice(0, EFFECT_LINE_MAX)}")`)
-  if (before.modal && !after.modal) parts.push("the dialog closed")
-  // A dialog coming or going changes what is listed wholesale; the listing after the batch shows the result.
-  if (before.modal !== after.modal) return parts.join("; ")
-  const text = diff(before.text, after.text)
-  if (text.added.length) {
-    const shown = text.added.slice(0, EFFECT_LINES).map((line) => (line.length > EFFECT_LINE_MAX ? `${line.slice(0, EFFECT_LINE_MAX - 1)}…` : line))
-    parts.push(`shows: ${shown.join(" | ")}${text.added.length > EFFECT_LINES ? ` (+${text.added.length - EFFECT_LINES} more lines)` : ""}`)
-  } else if (text.removed.length) parts.push(`${text.removed.length} line(s) of text gone`)
-  const elements = diff(before.elements, after.elements)
-  const refOf = (line: string) => line.match(/^\[(\d+)\]/)?.[1]
-  const removedRefs = new Set(elements.removed.map(refOf))
-  const changed = elements.added.filter((line) => removedRefs.has(refOf(line))).length
-  const shownNew = elements.added.length - changed
-  const gone = elements.removed.length - changed
-  const counts = [shownNew ? `${shownNew} element(s) appeared` : "", gone ? `${gone} gone` : "", changed ? `${changed} changed state` : ""].filter(Boolean)
-  if (counts.length) parts.push(counts.join(", "))
-  return parts.length ? parts.join("; ") : "no visible change"
-}
-
-function diff(before: string[], now: string[]): { added: string[]; removed: string[] } {
-  const had = new Set(before)
-  const has = new Set(now)
-  return { added: now.filter((line) => !had.has(line)), removed: before.filter((line) => !has.has(line)) }
-}
-
-export function describeStep(step: Step): string {
-  switch (step.action) {
-    case "click":
-    case "double_click":
-    case "hover":
-      return `${step.action} [${step.ref}]`
-    case "type":
-      return `type ${JSON.stringify(String(step.text ?? "").slice(0, 40))} into [${step.ref}]${step.submit ? " and press Enter" : ""}`
-    case "press":
-      return `press ${step.key}`
-    case "select":
-      return `select ${JSON.stringify(step.value ?? step.text)} in [${step.ref}]`
-    case "scroll":
-      return step.ref !== undefined ? `scroll to [${step.ref}]` : `scroll by ${step.dy ?? 600}`
-    case "wait":
-      return step.text ? `wait for ${JSON.stringify(step.text)}` : `wait ${step.ms ?? 500}ms`
-    case "goto":
-      return `go to ${step.url}`
-    default:
-      return step.action
-  }
-}
-
-function requireRef(step: Step): number {
-  const ref = Number(step.ref)
-  if (!Number.isInteger(ref) || ref <= 0) throw new StepError(`${step.action} needs the number of an element from the snapshot`)
-  return ref
 }
 
 const MODIFIERS: Record<string, number> = { alt: 1, control: 2, ctrl: 2, meta: 4, cmd: 4, command: 4, shift: 8 }
@@ -564,6 +374,3 @@ function keyOf(name: string): { key: string; code: string; keyCode: number; text
   throw new StepError(`unknown key "${name}"`)
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
