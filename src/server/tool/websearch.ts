@@ -59,12 +59,14 @@ function providerQuestions(): QuestionPrompt[] {
 async function chosen(context: ToolContext): Promise<WebSearchSelection> {
   const access = context.webSearch
   if (!access) throw new ToolError("Web search is not available here")
+  // A value this build does not know - a service name typed by hand into config.json - is asked about again rather than failing every search.
+  const known = (value: WebSearchSelection | undefined) => value === false || value === "auto" || (typeof value === "string" && webSearchProvider(value) !== undefined)
   const stored = access.selection()
-  if (stored !== undefined) return stored
+  if (known(stored)) return stored as WebSearchSelection
   // A subagent cannot put a question in front of the user; the conversation that started it can.
   if (context.subagent) throw new ToolError("Web search has not been allowed yet. Only the main conversation can ask the user; say that you need it.")
   const turn = choosing.then(async () => {
-    if (access.selection() !== undefined) return
+    if (known(access.selection())) return
     const ask = (questions: QuestionPrompt[]) =>
       context.questions
         .ask({ sessionID: context.sessionID, questions, tool: { messageID: context.messageID, callID: context.callID }, signal: context.signal })
@@ -88,7 +90,8 @@ async function chosen(context: ToolContext): Promise<WebSearchSelection> {
     if (error instanceof ToolError) throw error
     throw new ToolError("Web search cancelled")
   }
-  return access.selection() ?? false
+  const now = access.selection()
+  return known(now) ? (now as WebSearchSelection) : false
 }
 
 export const WebSearchTool: ToolDefinition = {

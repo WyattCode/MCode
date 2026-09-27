@@ -2702,6 +2702,8 @@ export class SessionRunner {
 
   /** 立即发送: a queued message into the running turn, or as a turn of its own if none is running. */
   async sendQueuedNow(sessionID: string, id: string): Promise<string> {
+    // The same refusal `session.prompt` gives: a review-restricted conversation takes nothing more.
+    if ((await this.store.get(sessionID))?.reviewRestricted) throw new CodedError("this conversation can't be continued - start a new one", "composer.reviewRestricted")
     let item: QueuedPrompt | undefined
     await this.queueEdit(sessionID, (queued) => {
       item = queued.find((entry) => entry.id === id)
@@ -2725,6 +2727,8 @@ export class SessionRunner {
    */
   private async sendQueued(sessionID: string): Promise<void> {
     if (this.running.has(sessionID) || this.steering.has(sessionID)) return
+    // A conversation a review restricted during the turn takes nothing more; what was queued stays for the reader to take back.
+    if ((await this.store.get(sessionID).catch(() => undefined))?.reviewRestricted) return
     let item: QueuedPrompt | undefined
     await this.queueEdit(sessionID, (queued) => {
       item = queued[0]

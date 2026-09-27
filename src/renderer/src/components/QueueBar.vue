@@ -30,10 +30,9 @@ function line(item: QueuedPrompt): string {
   return t("composer.queue.attachments", { count: item.attachments?.length ?? 0 })
 }
 
-/** 撤回: back into the box to be changed, and off the queue. */
+/** 撤回: off the queue and back into the box to be changed - only if it was still waiting, or it would be sent and typed twice. */
 async function edit(item: QueuedPrompt) {
-  await app.removeQueued(props.sessionID, item.id)
-  emit("edit", item)
+  if (await app.removeQueued(props.sessionID, item.id)) emit("edit", item)
 }
 </script>
 

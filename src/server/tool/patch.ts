@@ -81,7 +81,9 @@ export const PatchTool: ToolDefinition = {
       const target = await resolvePath(context, hunk.path, "write")
       const display = relative(context.directory, target)
       guardPlanWrite(context, target, display)
-      const moveTarget = hunk.type === "update" && hunk.movePath ? await resolvePath(context, hunk.movePath, "write") : undefined
+      const movedTo = hunk.type === "update" && hunk.movePath ? await resolvePath(context, hunk.movePath, "write") : undefined
+      // A move onto itself is an update in place.
+      const moveTarget = movedTo === target ? undefined : movedTo
       const moveDisplay = moveTarget ? relative(context.directory, moveTarget) : undefined
       if (moveTarget) guardPlanWrite(context, moveTarget, moveDisplay!)
       resolved.push({ hunk, target, display, moveTarget, moveDisplay })
@@ -90,17 +92,36 @@ export const PatchTool: ToolDefinition = {
     const paths = [...new Set(resolved.flatMap((entry) => [entry.target, ...(entry.moveTarget ? [entry.moveTarget] : [])]))]
     return lockAll(paths, async () => {
       /* What each file will hold, worked out in full before anything is asked or written. */
-      const changes: { kind: "add" | "update" | "delete"; target: string; display: string; content: string; before: string; after: string; moveTarget?: string; moveDisplay?: string }[] = []
-      const pending = new Map<string, string>()
+      const changes: {
+        kind: "add" | "update" | "delete"
+        target: string
+        display: string
+        content: string
+        before: string
+        after: string
+        moveTarget?: string
+        moveDisplay?: string
+        /** What the file moved onto held, when it was already there. */
+        moveBefore?: string
+      }[] = []
+      /*
+       * What an earlier section of this patch left at a path: its text, or
+       * null where it deleted or moved the file away - which the disk does not
+       * know yet, and which a later section must not read past.
+       */
+      const pending = new Map<string, string | null>()
+      const holding = async (target: string, display: string) => (pending.has(target) ? (pending.get(target) ?? undefined) : await currentText(target, display))
+      // As a diff reads it: no byte-order mark, LF line ends.
+      const plain = (text: string) => (text.startsWith("﻿") ? text.slice(1) : text).replace(/\r\n/g, "\n")
       for (const { hunk, target, display, moveTarget, moveDisplay } of resolved) {
         if (hunk.type === "add") {
           const content = hunk.contents === "" || hunk.contents.endsWith("\n") ? hunk.contents : `${hunk.contents}\n`
-          const before = pending.get(target) ?? (await currentText(target, display)) ?? ""
-          changes.push({ kind: "add", target, display, content, before: before.replace(/\r\n/g, "\n"), after: content })
+          const before = (await holding(target, display)) ?? ""
+          changes.push({ kind: "add", target, display, content, before: plain(before), after: content })
           pending.set(target, content)
           continue
         }
-        const existing = pending.get(target) ?? (await currentText(target, display))
+        const existing = await holding(target, display)
         if (existing === undefined) {
           throw new ToolError(`patch verification failed: ${hunk.type === "delete" ? `Failed to delete ${display}` : `Failed to read file to update ${display}`}: file does not exist`)
         }
@@ -109,7 +130,7 @@ export const PatchTool: ToolDefinition = {
         const before = body.replace(/\r\n/g, "\n")
         if (hunk.type === "delete") {
           changes.push({ kind: "delete", target, display, content: "", before, after: "" })
-          pending.delete(target)
+          pending.set(target, null)
           continue
         }
         let after: string
@@ -120,21 +141,24 @@ export const PatchTool: ToolDefinition = {
         }
         // The file's own line endings and byte-order mark, not the patch's.
         const content = (bom ? "﻿" : "") + (body.includes("\r\n") ? after.replace(/\n/g, "\r\n") : after)
-        changes.push({ kind: "update", target, display, content, before, after, moveTarget, moveDisplay })
+        // A move onto a file that is already there replaces it, so its section starts from what it held.
+        const moveBefore = moveTarget ? plain((await holding(moveTarget, moveDisplay!)) ?? "") : undefined
+        changes.push({ kind: "update", target, display, content, before, after, moveTarget, moveDisplay, moveBefore })
         if (moveTarget) {
-          pending.delete(target)
+          pending.set(target, null)
           pending.set(moveTarget, content)
         } else pending.set(target, content)
       }
 
       /*
        * One diff for the whole patch, a section per file. A move is the old
-       * file emptied and the new one written, so taking the turn back puts
-       * each where it was.
+       * file emptied and the new one written over whatever was there, so
+       * taking the turn back puts each where it was - the file moved onto
+       * included, which undo would otherwise delete as one the turn created.
        */
       const sections = changes.flatMap((change) =>
         change.moveTarget
-          ? [unifiedDiff(change.display, change.before, ""), unifiedDiff(change.moveDisplay!, "", change.after)]
+          ? [unifiedDiff(change.display, change.before, ""), unifiedDiff(change.moveDisplay!, change.moveBefore ?? "", change.after)]
           : [unifiedDiff(change.display, change.before, change.after)],
       )
       const named = [...new Set(changes.flatMap((change) => [change.display, ...(change.moveDisplay ? [change.moveDisplay] : [])]))]

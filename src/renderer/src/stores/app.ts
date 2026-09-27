@@ -1706,11 +1706,14 @@ export const useApp = defineStore("app", () => {
     }
   }
 
-  async function removeQueued(sessionID: string, id: string): Promise<void> {
+  /** True when it was taken off the queue; false when it had already gone, or the request failed (said as a notice). */
+  async function removeQueued(sessionID: string, id: string): Promise<boolean> {
     try {
       await api().request({ type: "session.queue.remove", sessionID, id })
+      return true
     } catch (err) {
       notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+      return false
     }
   }
 

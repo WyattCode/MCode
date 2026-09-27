@@ -274,6 +274,28 @@ export async function roundThirtyOneChecks(check: Check, section: (name: string)
         await stopped.close()
       }
 
+      // R32: a conversation a review restricted during the turn takes nothing from its queue.
+      const locking = gate()
+      const locked = await harness(path.join(root, "queue-locked"), [locking.answer])
+      try {
+        const session = await locked.store.create({ directory: locked.project, model: { provider: "fake", model: "m" } })
+        await locked.runner.prompt({ sessionID: session.id, text: "task" })
+        await until(() => locked.bodies.length === 1)
+        const waiting = await locked.runner.prompt({ sessionID: session.id, text: "after the review", delivery: "queue" })
+        await locked.store.update(session.id, { reviewRestricted: true })
+        locking.open()
+        await locked.settled(session.id)
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        check("a restricted conversation sends nothing it had queued", locked.bodies.length === 1 && ((await locked.store.require(session.id)).queued ?? []).length === 1, locked.bodies.length)
+        const refusedNow = await locked.runner.sendQueuedNow(session.id, waiting).then(
+          () => "",
+          (error: Error & { code?: string }) => error.code ?? error.message,
+        )
+        check("and 立即发送 is refused there as a typed message is", refusedNow === "composer.reviewRestricted" && ((await locked.store.require(session.id)).queued ?? []).length === 1, refusedNow)
+      } finally {
+        await locked.close()
+      }
+
       // 立即发送 while a turn runs joins it; a failed turn leaves the rest waiting.
       const joining = gate()
       const steer = await harness(path.join(root, "queue-steer"), [joining.answer, refused])
@@ -630,6 +652,20 @@ export async function roundThirtyOneChecks(check: Check, section: (name: string)
         // A file moved away or deleted was changed as surely as one written.
         check("and the conversation's record of changed files names them", sessionFiles([turn], folder).written.map((entry) => entry.path).sort().join() === "a.txt,b.txt,d.txt,new.txt,sub/c.txt", sessionFiles([turn], folder).written)
 
+        // R32: a move onto a file already there replaces it, and the recorded change says what it held - undo deletes a file recorded as created.
+        await fs.writeFile(path.join(folder, "keep.txt"), "kept\n")
+        await fs.writeFile(path.join(folder, "mover.txt"), "moving\n")
+        const onto = await PatchTool.execute({ patchText: ["*** Begin Patch", "*** Update File: mover.txt", "*** Move to: keep.txt", "@@", "-moving", "+moved", "*** End Patch"].join("\n") }, context)
+        const ontoDiff = String((onto.metadata as { diff?: string } | undefined)?.diff ?? "")
+        check("a move onto an existing file records what that file held", ontoDiff.includes("-kept") && (await read("keep.txt")) === "moved\n" && (await read("mover.txt")) === undefined, ontoDiff)
+        // R32: a file deleted and added again in one patch is recorded from nothing, not twice from what the disk still held.
+        await fs.writeFile(path.join(folder, "again.txt"), "old\n")
+        const again = await PatchTool.execute({ patchText: ["*** Begin Patch", "*** Delete File: again.txt", "*** Add File: again.txt", "+fresh", "*** End Patch"].join("\n") }, context)
+        const againDiff = String((again.metadata as { diff?: string } | undefined)?.diff ?? "")
+        check("a file deleted then added in one patch is recorded as gone, then new", (againDiff.match(/^-old$/gm) ?? []).length === 1 && (await read("again.txt")) === "fresh\n", againDiff)
+        const self = await PatchTool.execute({ patchText: ["*** Begin Patch", "*** Update File: again.txt", "*** Move to: again.txt", "@@", "-fresh", "+same place", "*** End Patch"].join("\n") }, context)
+        check("a move onto itself is an edit in place", (await read("again.txt")) === "same place\n" && !String((self.metadata as { diff?: string } | undefined)?.diff ?? "").includes("+++ /dev/null"), self.metadata)
+
         // A patch that does not apply to one file changes none.
         asked.length = 0
         const failed = await PatchTool.execute(
@@ -938,6 +974,12 @@ export async function roundThirtyOneChecks(check: Check, section: (name: string)
         stored = "tavily"
         const denied = await search("denied")
         check("a refusal is named as v2 names it", denied instanceof Error && denied.message === "Web search authentication failed (HTTP 401) [Tavily]", String(denied))
+        // R32: a service name typed by hand that this build does not know is asked about again, not failed on every search.
+        stored = "google" as WebSearchSelection
+        questions.length = 0
+        answer = [["Allow"]]
+        const retold = await search("unknown value")
+        check("a setting naming an unknown service is asked about again", questions.length === 1 && stored === "auto" && !(retold instanceof Error), { questions: questions.length, stored, retold: String(retold) })
 
         // Offered last, and not at all once turned off.
         check("websearch is the last tool, so every cached order stays", TOOLS.at(-1)?.name === "websearch")
