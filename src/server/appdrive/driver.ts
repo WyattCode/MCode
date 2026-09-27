@@ -157,6 +157,8 @@ export class AppDriver {
     const report: string[] = []
     let done = 0
     let failure = ""
+    // What the page looked like before each step, so every step can say what it did by itself.
+    let previous: Snapshot | undefined = this.last
     for (const [index, step] of steps.entries()) {
       if (signal?.aborted) {
         failure = "Stopped."
@@ -164,8 +166,15 @@ export class AppDriver {
       }
       try {
         await this.watch()
+        const logged = this.logs.length
         const note = await this.step(step)
-        report.push(`${index + 1}. ${describeStep(step)}${note ? ` - ${note}` : ""}`)
+        const after = await this.read().catch(() => undefined)
+        // A wait changes nothing by itself; what it waited for is its note.
+        const effect = previous && after && step.action !== "wait" ? stepEffect(previous, after) : ""
+        const complained = this.logs.length > logged ? "the page reported an error (below)" : ""
+        previous = after
+        const said = [note, effect, complained].filter(Boolean).join("; ")
+        report.push(`${index + 1}. ${describeStep(step)}${said ? ` -> ${said}` : ""}`)
         done += 1
       } catch (error) {
         failure = `${index + 1}. ${describeStep(step)} failed: ${error instanceof Error ? error.message : String(error)}`
@@ -445,6 +454,39 @@ export function formatSnapshot(now: Snapshot, before?: Snapshot): string {
     ...block("New text", text.added),
     ...block("Text gone", text.removed),
   ].join("\n")
+}
+
+/** How much of one step's effect is spelled out; the full account comes once, after the batch. */
+const EFFECT_LINES = 3
+const EFFECT_LINE_MAX = 80
+
+/**
+ * What one step changed, in a line: where the page went, a dialog coming or
+ * going, the text it put on the page, and how many elements changed. "no
+ * visible change" is said out loud, because a button that does nothing is
+ * exactly what a test is looking for.
+ */
+export function stepEffect(before: Snapshot, after: Snapshot): string {
+  const parts: string[] = []
+  if (before.url !== after.url) parts.push(`now at ${after.url}`)
+  if (!before.modal && after.modal) parts.push(`a dialog opened ("${after.modal.slice(0, EFFECT_LINE_MAX)}")`)
+  if (before.modal && !after.modal) parts.push("the dialog closed")
+  // A dialog coming or going changes what is listed wholesale; the listing after the batch shows the result.
+  if (before.modal !== after.modal) return parts.join("; ")
+  const text = diff(before.text, after.text)
+  if (text.added.length) {
+    const shown = text.added.slice(0, EFFECT_LINES).map((line) => (line.length > EFFECT_LINE_MAX ? `${line.slice(0, EFFECT_LINE_MAX - 1)}…` : line))
+    parts.push(`shows: ${shown.join(" | ")}${text.added.length > EFFECT_LINES ? ` (+${text.added.length - EFFECT_LINES} more lines)` : ""}`)
+  } else if (text.removed.length) parts.push(`${text.removed.length} line(s) of text gone`)
+  const elements = diff(before.elements, after.elements)
+  const refOf = (line: string) => line.match(/^\[(\d+)\]/)?.[1]
+  const removedRefs = new Set(elements.removed.map(refOf))
+  const changed = elements.added.filter((line) => removedRefs.has(refOf(line))).length
+  const shownNew = elements.added.length - changed
+  const gone = elements.removed.length - changed
+  const counts = [shownNew ? `${shownNew} element(s) appeared` : "", gone ? `${gone} gone` : "", changed ? `${changed} changed state` : ""].filter(Boolean)
+  if (counts.length) parts.push(counts.join(", "))
+  return parts.length ? parts.join("; ") : "no visible change"
 }
 
 function diff(before: string[], now: string[]): { added: string[]; removed: string[] } {

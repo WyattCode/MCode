@@ -111,6 +111,11 @@ export async function roundThirtySixChecks(check: Check, section: (name: string)
       const took = Date.now() - started
       check("four clicks in one call land, and the answer shows the new count", /当前计数：2/.test(clicked.output) && clicked.title === "4/4", clicked.output)
       check("and take less than two seconds together - no fixed sleeps", took < 2_000, { took })
+      check(
+        "every step says what it did by itself, so one call can test several buttons",
+        /1\. click \[\d+\] -> shows: 当前计数：1\n2\. click \[\d+\] -> shows: 当前计数：2\n3\. click \[\d+\] -> shows: 当前计数：3\n4\. click \[\d+\] -> shows: 当前计数：2\n/.test(clicked.output),
+        clicked.output,
+      )
       check("the answer is what changed, not the page again", /What changed/.test(clicked.output) && !/\[\d+\] tab "设置"/.test(clicked.output), clicked.output)
 
       const settings = await run({ action: "do", steps: [{ action: "click", ref: refOf(opened.output, "设置") }] })
@@ -129,9 +134,12 @@ export async function roundThirtySixChecks(check: Check, section: (name: string)
       const dialog = await run({ action: "do", steps: [{ action: "click", ref: refOf(settings.output, "删除账户") }] })
       check("a modal dialog: only what is inside it is listed", /modal dialog is open/.test(dialog.output) && /"确定删除"/.test(dialog.output) && !/"保存"/.test(dialog.output), dialog.output)
       const confirmed = await run({ action: "do", steps: [{ action: "click", ref: refOf(dialog.output, "确定删除") }, { action: "wait", text: "账户已删除" }] })
-      check("confirming closes it, and wait sees the result appear", /wait for "账户已删除" - it appeared/.test(confirmed.output), confirmed.output)
+      check("confirming closes it, and wait sees the result appear", /^1\. click \[\d+\] -> the dialog closed\n2\. wait for "账户已删除" -> it appeared\n/.test(confirmed.output), confirmed.output)
 
       const broken = await run({ action: "do", steps: [{ action: "click", ref: refOf(settings.output, "检查更新") }, { action: "wait", ms: 300 }] })
+      check("the step that made the page complain is named", /1\. click \[\d+\] -> [^\n]*the page reported an error/.test(broken.output), broken.output)
+      const idle = await run({ action: "do", steps: [{ action: "click", ref: refOf(settings.output, "设置") }] })
+      check("a click that changes nothing says so, out loud", /1\. click \[\d+\] -> no visible change/.test(idle.output), idle.output)
       check("the page's own errors come back with the answer", /console\.error: 检查更新失败/.test(broken.output) && /uncaught: .*update check crashed/.test(broken.output), broken.output)
 
       const failing = await run({ action: "do", steps: [{ action: "click", ref: 99_999 }, { action: "click", ref: homeTab }] })
@@ -142,7 +150,7 @@ export async function roundThirtySixChecks(check: Check, section: (name: string)
       // Two calls in one step: the runner starts them together, and the second must still see the first's clicks.
       const [batch, counted] = await Promise.all([run({ action: "do", steps: [{ action: "click", ref: counterTab }, { action: "click", ref: plus }, { action: "click", ref: plus }, { action: "click", ref: plus }, { action: "wait", ms: 300 }] }), run({ action: "eval", expression: "document.getElementById('value').textContent" })])
       check("one conversation's calls run one after another, even when started together", counted.output === '"5"', { counted: counted.output, batch: batch.output })
-      check("a button hidden at the last look is clicked by its old number once the batch shows its tab", /^1\. click \[\d+\]\n2\. click \[\d+\]\n/.test(batch.output) && !/failed/.test(batch.output), batch.output)
+      check("a button hidden at the last look is clicked by its old number once the batch shows its tab", /^1\. click \[\d+\] -> [^\n]*\n2\. click \[\d+\] -> shows: 当前计数：3\n/.test(batch.output) && !/failed/.test(batch.output), batch.output)
       const tabs = await run({ action: "tabs" })
       check("tabs lists the window it is on", /^\* \S+\s+演示应用/.test(tabs.output), tabs.output)
       const shot = await run({ action: "screenshot" })
