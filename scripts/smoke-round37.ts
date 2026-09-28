@@ -98,6 +98,40 @@ export async function roundThirtySevenChecks(check: Check, section: (name: strin
     fs.rmSync(script, { force: true })
   }
 
+  section("Round 37: a shell command sitting on a window it opened is answered at once")
+  if (process.platform === "win32") {
+    const context = contextFor("r37-bash-window", [])
+    // What models kept doing in real runs: starting the window program through the shell.
+    let began = Date.now()
+    const started = await BashTool.execute({ command: `powershell.exe ${demoArgs.map((arg) => `"${arg}"`).join(" ")}`, timeout: 60_000 }, context)
+    check(
+      "a command that opened a window is answered within seconds, naming it and the tool to operate it with",
+      Date.now() - began < 12_000 && /opened the window "Win Demo"/.test(started.output) && /window \{target: "Win Demo"\}/.test(started.output),
+      { took: Date.now() - began, output: started.output },
+    )
+    const taken = await AppTool.execute({ action: "window", target: "Win Demo" }, context).catch((error: Error) => ({ output: error.message }))
+    check("and the program was left running, for the app tool to take over", /\[\d+\] tab "Count"/.test(taken.output), taken.output)
+    await AppTool.execute({ action: "close" }, context)
+
+    // A dialog a command put up is not left on the user's screen waiting for someone to answer it.
+    began = Date.now()
+    const asked = await BashTool.execute({ command: `powershell.exe -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; [void][System.Windows.Forms.MessageBox]::Show('probe', 'MCode check')"`, timeout: 60_000 }, context)
+    check("a message box a command shows is reported the same way", Date.now() - began < 12_000 && /opened the window "MCode check"/.test(asked.output), asked.output)
+    const box = await AppTool.execute({ action: "window", target: "MCode check" }, context).catch((error: Error) => ({ output: error.message }))
+    const ok = box.output.match(/\[(\d+)\] button "(?:OK|确定)"/)?.[1]
+    const answered = ok ? await AppTool.execute({ action: "do", steps: [{ action: "click", ref: Number(ok) }] }, context) : { output: box.output }
+    check("and the model can answer it with the app tool", Boolean(ok) && /1\. click \[\d+\]/.test(answered.output) && !/failed/.test(answered.output), answered.output)
+    await closeAllApps()
+    spawnSync("taskkill", ["/FI", "WINDOWTITLE eq Win Demo", "/T", "/F"], { windowsHide: true })
+
+    // A long command with no window is not cut short.
+    began = Date.now()
+    const slow = await BashTool.execute({ command: 'node -e "setTimeout(() => console.log(\'done\'), 6000)"', timeout: 60_000 }, context)
+    check("a long command that opens no window runs to its end", Date.now() - began >= 5_500 && /done/.test(slow.output) && !/opened the window/.test(slow.output), { took: Date.now() - began, output: slow.output })
+  } else {
+    check("(skipped: windows are looked for on Windows only)", true)
+  }
+
   section("Round 37: the app tool starting and operating a native Windows app")
   if (process.platform !== "win32") {
     check("(skipped: native windows are driven on Windows only)", true)

@@ -35,6 +35,7 @@ import { frameForWindow } from "./config-view"
 import { newSocketSecret, refusalOf, SOCKET_PROTOCOL } from "./socket-guard"
 import { ModelCatalog, shippedCatalog } from "./provider/models-dev"
 import { closeAllApps } from "./tool/app"
+import { stopLookout } from "./appdrive/windows"
 
 export interface Runtime {
   storage: Storage
@@ -465,6 +466,8 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       await shells.closeAll()
       // The browsers the app tool opened close with the app; apps it attached to are only let go.
       await closeAllApps()
+      // And the one that watches shell commands for windows they opened.
+      await stopLookout()
       await mcp.close()
       await scheduler.stop()
       await automations.stop()

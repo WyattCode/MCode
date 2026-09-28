@@ -130,6 +130,35 @@ class Host {
   }
 }
 
+/** A host kept for looking only - which windows a shell command has opened - started the first time it is needed. */
+let lookout: Promise<Host> | undefined
+
+/**
+ * The titled windows open by a process and everything it started. For the
+ * bash tool: a command that opened a window sits there until the window is
+ * closed, which a model waiting on it cannot see.
+ */
+export async function windowsOfTree(pid: number): Promise<{ pid: number; title: string }[]> {
+  if (process.platform !== "win32") return []
+  lookout ??= Host.start().catch((error) => {
+    lookout = undefined
+    throw error
+  })
+  const host = await lookout
+  if (!host.alive) {
+    lookout = undefined
+    return []
+  }
+  return host.call<{ pid: number; title: string }[]>("tree-windows", { pid }, 15_000)
+}
+
+/** Stops the lookout host with the backend. */
+export async function stopLookout(): Promise<void> {
+  const host = await lookout?.catch(() => undefined)
+  lookout = undefined
+  host?.stop()
+}
+
 export class WindowsDriver extends SteppingDriver {
   private constructor(
     private readonly host: Host,

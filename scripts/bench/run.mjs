@@ -67,6 +67,9 @@ for (let run = 1; run <= runs; run++) {
     if (process.platform === "win32") {
       const folder = path.basename(dir).replace(/'/g, "''")
       spawnSync("powershell.exe", ["-NoProfile", "-Command", `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${folder}*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`], { windowsHide: true, timeout: 30_000 })
+      // And the forms a model put up from the shell during this run (a message box to test something), which name no folder.
+      const since = new Date(began).toISOString()
+      spawnSync("powershell.exe", ["-NoProfile", "-Command", `Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CreationDate -ge [datetime]'${since}' -and $_.CommandLine -like '*System.Windows.Forms*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`], { windowsHide: true, timeout: 30_000 })
     }
     const touched = (spec.unchanged ?? []).filter((file) => git(dir, "diff", "--quiet", "HEAD", "--", file).status !== 0)
     const astray = (measured.notes ?? []).some((note) => note.startsWith("ran outside"))

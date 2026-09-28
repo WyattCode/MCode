@@ -20,7 +20,7 @@ export const WINDOWS_HOST = String.raw`
 $ErrorActionPreference = "Stop"
 [Console]::InputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
-$assemblies = @("UIAutomationClient", "UIAutomationTypes", "System.Windows.Forms", "System.Web.Extensions", "System.Drawing", "WindowsBase")
+$assemblies = @("UIAutomationClient", "UIAutomationTypes", "System.Windows.Forms", "System.Web.Extensions", "System.Drawing", "WindowsBase", "System.Management")
 foreach ($name in $assemblies) { Add-Type -AssemblyName $name }
 $source = @'
 using System;
@@ -65,6 +65,10 @@ public static class McodeUia {
   [DllImport("user32.dll")] static extern IntPtr GetParent(IntPtr handle);
   [DllImport("user32.dll")] static extern int GetDlgCtrlID(IntPtr handle);
   [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+  delegate bool EnumWindowsProc(IntPtr handle, IntPtr data);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr data);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr handle);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr handle, StringBuilder text, int size);
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr handle);
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr handle, out uint processId);
@@ -121,6 +125,7 @@ public static class McodeUia {
       case "screenshot": return Screenshot(Text(request, "file"));
       case "alive": return window != null && Alive(window);
       case "front": return GetForegroundWindow().ToInt64();
+      case "tree-windows": return TreeWindows(Number(request, "pid"));
       case "restore-front": {
         long handle = Convert.ToInt64(request["handle"]);
         if (handle != 0 && window != null && ProcessOf(GetForegroundWindow()) == (uint)windowPid) SetForegroundWindow(new IntPtr(handle));
@@ -131,6 +136,40 @@ public static class McodeUia {
   }
 
   // ------------------------------------------------------------ windows
+
+  /// The visible, titled top-level windows of a process and of everything it started, for a shell command that may be sitting on one.
+  static object TreeWindows(int root) {
+    var children = new Dictionary<int, List<int>>();
+    using (var search = new System.Management.ManagementObjectSearcher("SELECT ProcessId, ParentProcessId FROM Win32_Process")) {
+      foreach (System.Management.ManagementObject process in search.Get()) {
+        int id = Convert.ToInt32(process["ProcessId"]), parent = Convert.ToInt32(process["ParentProcessId"]);
+        List<int> list;
+        if (!children.TryGetValue(parent, out list)) children[parent] = list = new List<int>();
+        list.Add(id);
+      }
+    }
+    var tree = new HashSet<int>();
+    var pending = new Stack<int>();
+    pending.Push(root);
+    while (pending.Count > 0 && tree.Count < 500) {
+      int id = pending.Pop();
+      if (!tree.Add(id)) continue;
+      List<int> list;
+      if (children.TryGetValue(id, out list)) foreach (var child in list) pending.Push(child);
+    }
+    var found = new List<object>();
+    EnumWindows((handle, data) => {
+      if (!IsWindowVisible(handle)) return true;
+      uint process;
+      GetWindowThreadProcessId(handle, out process);
+      if (!tree.Contains((int)process)) return true;
+      var title = new StringBuilder(256);
+      GetWindowText(handle, title, title.Capacity);
+      if (title.Length > 0) found.Add(new Dictionary<string, object> { { "pid", (int)process }, { "title", title.ToString() } });
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
 
   /// Top-level windows: only the attached program's (own), or only those of programs started in the last RECENT seconds - never the whole desktop, whose titles are the user's business.
   static object Windows(int recent, bool own) {

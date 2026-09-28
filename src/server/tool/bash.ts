@@ -12,6 +12,7 @@ import { repositoryRoot, tryGit } from "../git"
 import { gitBash, platformShell, which, windowsPath } from "../shell-path"
 import { mergeConflictNotice } from "./merge-conflict"
 import { killTree } from "../kill-tree"
+import { windowsOfTree } from "../appdrive/windows"
 
 const DEFAULT_TIMEOUT = 120_000
 
@@ -44,6 +45,15 @@ const CLOSE_GRACE_MS = 3_000
  * is done and what it started is left running, as in a terminal.
  */
 export const EXIT_DRAIN_MS = 500
+/**
+ * On Windows, how long a command runs before the tool starts looking for a
+ * window it opened, and how often it looks. A command that starts a desktop
+ * program, or shows a message box, waits for that window to close - for the
+ * rest of its timeout, with a model that cannot see the window. Once one is
+ * seen the command is answered and left running.
+ */
+export const WINDOW_LOOK_AFTER_MS = 3_000
+export const WINDOW_LOOK_EVERY_MS = 2_000
 /** The longest delay a timer takes; anything larger would fire at once. */
 const LONGEST_TIMER = 2 ** 31 - 1
 
@@ -654,7 +664,7 @@ export const BashTool: ToolDefinition = {
         progressTimer = undefined
       }
 
-      const finish = async (code: number | null, expired: boolean, lingering = false) => {
+      const finish = async (code: number | null, expired: boolean, lingering = false, windows: string[] = []) => {
         seal()
         const file = saved ? await saved : undefined
         while (flushing) await flushing
@@ -675,6 +685,10 @@ export const BashTool: ToolDefinition = {
          */
         if (expired) {
           output += `\n\n(The command was stopped when it ran past its ${timeout} ms timeout. If it needs longer and is not waiting for input, run it again with a larger timeout.)`
+        }
+        if (windows.length) {
+          const named = windows.slice(0, 3).map((title) => `"${title}"`).join(", ")
+          output += `\n\n(The command is still running: it opened ${windows.length === 1 ? "the window" : "the windows"} ${named} and is waiting on ${windows.length === 1 ? "it" : "them"}. It was left running. Operate or close ${windows.length === 1 ? "it" : "them"} with the app tool - window {target: ${JSON.stringify(windows[0])}} - instead of waiting here; to start a desktop program, use the app tool's launch.)`
         }
         if (lingering) {
           output += "\n\n(The command has finished; a process it started in the background is still running and was left running. To try a window program, start it with the app tool's launch instead.)"
@@ -727,6 +741,29 @@ export const BashTool: ToolDefinition = {
         })
       }
       context.signal.addEventListener("abort", onAbort, { once: true })
+
+      /*
+       * A command sitting on a window it opened: answered at once with what
+       * the window is called, and left running - the window is the model's to
+       * operate or close with the app tool, and the user's screen is not left
+       * waiting on a dialog nobody is watching.
+       */
+      let looking: ReturnType<typeof setTimeout> | undefined
+      const look = async () => {
+        if (settled || child.pid === undefined) return
+        const windows = await windowsOfTree(child.pid).catch(() => [])
+        if (settled) return
+        if (!windows.length) {
+          looking = setTimeout(() => void look(), WINDOW_LOOK_EVERY_MS)
+          return
+        }
+        settled = true
+        clearTimeout(timer)
+        context.signal.removeEventListener("abort", onAbort)
+        void finish(null, false, false, windows.map((window) => window.title))
+      }
+      if (process.platform === "win32") looking = setTimeout(() => void look(), WINDOW_LOOK_AFTER_MS)
+      child.once("close", () => clearTimeout(looking))
 
       child.on("error", (err) => {
         if (settled) return
