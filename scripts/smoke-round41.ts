@@ -56,6 +56,19 @@ export async function roundFortyOneChecks(check: Check, section: (name: string) 
     check("so do the 项目 and 最近 headings", /border-radius: \d+px;/.test(head), head)
   }
 
+  section("Round 41: no dropdown is drawn by the system")
+  {
+    // The custom provider's protocol was the last native <select>: its list came up in Windows' blue and grey, square (user, 2026-09-29).
+    const components = path.join(root, "src", "renderer", "src", "components")
+    const native = fs.readdirSync(components).filter((name) => name.endsWith(".vue") && /<select[\s>]/.test(fs.readFileSync(path.join(components, name), "utf8").split("<template>")[1] ?? ""))
+    check("no component draws a native <select>", native.length === 0, native)
+    const form = fs.readFileSync(path.join(components, "CustomProviderForm.vue"), "utf8")
+    check("the protocol is picked from the in-app menu, named by its label", /<SelectMenu\s+id="cp-protocol"/.test(form) && /<label class="cp-label" for="cp-protocol">/.test(form), form.match(/<SelectMenu[^>]*>/)?.[0])
+    const menu = fs.readFileSync(path.join(components, "SelectMenu.vue"), "utf8")
+    // Inside a <form>, a button with no type submits it.
+    check("its trigger does not submit the form it sits in", /<button :id="id" type="button" class="trigger"/.test(menu))
+  }
+
   section("Round 41: web components and frames, second look")
   if (!findBrowser()) {
     check("(skipped: no Chrome or Edge on this machine)", true)

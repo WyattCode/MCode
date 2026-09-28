@@ -33,6 +33,10 @@ const props = defineProps<{
   options: SelectOption[]
   /** Widen when the labels are long; the trigger sizes to this. */
   width?: number
+  /** Put on the trigger, so a form's <label for> names it and clicking the label focuses it. */
+  id?: string
+  /** A form field's list is at least as wide as the field, as a shadcn Select's content is. */
+  matchWidth?: boolean
 }>()
 
 const emit = defineEmits<{ "update:modelValue": [value: string] }>()
@@ -194,7 +198,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="root" class="select" :style="{ width: width ? `${width}px` : undefined }">
-    <button class="trigger" :class="{ open }" @click="toggle">
+    <button :id="id" type="button" class="trigger" :class="{ open }" @click="toggle">
       <slot name="icon" />
       <template v-if="chosen?.icon !== undefined">
         <img v-if="chosen.icon" class="opt-icon" :src="chosen.icon" alt="" data-select-icon />
@@ -215,6 +219,8 @@ onBeforeUnmount(() => {
           left: `${box.left}px`,
           top: `${box.top}px`,
           maxHeight: `${box.maxHeight}px`,
+          minWidth: matchWidth ? `${box.width}px` : undefined,
+          maxWidth: matchWidth ? 'none' : undefined,
         }"
       >
         <template v-for="(option, index) in options" :key="option.value">
