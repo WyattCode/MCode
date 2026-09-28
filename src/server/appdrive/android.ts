@@ -247,13 +247,14 @@ interface Listed {
  * emulator: 2-20 ms against 2,000).
  */
 class Reader {
-  private waiting?: { resolve: (xml: string) => void; reject: (error: Error) => void }
+  private waiting?: { expects: string; resolve: (xml: string) => void; reject: (error: Error) => void }
   private ended = false
 
   private constructor(private readonly child: ChildProcess) {
     readline.createInterface({ input: child.stdout! }).on("line", (line) => {
       // A dump's XML, or a set-text answer; the readiness line is taken by start().
       if (line.startsWith("<?xml") || line.startsWith('{"ok"')) {
+        if (this.waiting && !line.startsWith(this.waiting.expects)) return
         const waiting = this.waiting
         this.waiting = undefined
         waiting?.resolve(line)
@@ -316,6 +317,7 @@ class Reader {
         reject(new Error("the screen reader on the device did not answer"))
       }, timeoutMs)
       this.waiting = {
+        expects: line === "dump" ? "<?xml" : '{"ok"',
         resolve: (xml) => {
           clearTimeout(timer)
           resolve(xml)
@@ -519,8 +521,10 @@ export class AndroidDriver extends SteppingDriver {
         const target = this.at(step)
         const text = String(step.text ?? "")
         await this.shell(["input", "tap", String(target.center.x), String(target.center.y)])
-        // The field's text set through the accessibility service: any language, and the whole of it at once.
-        if (this.reader?.alive && (await this.reader.setText(target.center.x, target.center.y, text))) {
+        // The field's text set through the accessibility service: any language, and the whole of it at once. It replaces
+        // the text, so to add to it the old text goes first - except in a password field, which reports only dots.
+        const kept = step.clear === false ? (target.node.attrs.text ?? "") : ""
+        if (this.reader?.alive && !(kept && target.node.attrs.password === "true") && (await this.reader.setText(target.center.x, target.center.y, kept + text))) {
           if (step.submit) await this.shell(["input", "keyevent", "66"])
           await sleep(SETTLE_MS)
           return ""

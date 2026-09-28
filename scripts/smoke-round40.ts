@@ -27,6 +27,7 @@ import { toolsForTurn } from "../src/server/tool/registry"
 import { findBrowser } from "../src/server/appdrive/browser"
 import { connectedDevices, findAdb, listDevices, reconnectEmulators } from "../src/server/appdrive/android"
 import type { ToolContext } from "../src/server/tool/types"
+import { installDemo } from "./smoke-round41-install"
 
 const root = process.cwd()
 
@@ -126,7 +127,7 @@ export async function roundFortyChecks(check: Check, section: (name: string) => 
     }
     const apk = path.join(os.tmpdir(), `mcode-r40-demo-${process.pid}.apk`)
     execFileSync(process.execPath, [path.join(root, "scripts", "android-demo.mjs"), path.join(root, "scripts", "fixtures", "android-demo"), apk], { stdio: "ignore" })
-    execFileSync(adb, ["-s", devices[0]!.serial, "install", "-r", apk], { stdio: "ignore" })
+    installDemo(adb, devices[0]!.serial, apk)
     fs.rmSync(apk, { force: true })
     const context = contextFor("r40-android", os.tmpdir())
     try {

@@ -76,7 +76,7 @@ export async function roundTwentyVisualFiveChecks(check: Check, section: (name: 
     check("the row is a 46px cell with a 28px avatar, then the label", /<span class="account-cell">\s*<span class="avatar" aria-hidden="true">\s*<svg width="15" height="15"/.test(foot) && /<span class="account-label">\{\{ t\("side\.thisDevice"\) \}\}<\/span>/.test(foot))
     check("the row itself opens the menu, as a menu", /class="account"\s*data-account-menu\s*:aria-expanded="Boolean\(footMenu\)"\s*aria-haspopup="menu"\s*@click="openFootMenu"/.test(foot))
     check("the 深色 / theme-cycle row and its code are gone", !/cycleTheme|themeLabel|SCHEMES|class="row theme"/.test(side))
-    check("the menu keeps what MCode can honour: 设置 with its shortcut, MiMo's 248 wide", /key: "settings",[\s\S]{0,80}hint: "Ctrl\+,"/.test(script) && /:items="footMenuItems"\s*above\s*:end="footMenu\.end"\s*:min-width="248"/.test(template))
+    check("the menu keeps what MCode can honour: 设置 with its shortcut, MiMo's 248 wide at most (round 41: never past the column)", /key: "settings",[\s\S]{0,80}hint: "Ctrl\+,"/.test(script) && /FOOT_MENU_WIDTH = 248/.test(script) && /:items="footMenuItems"\s*above\s*:end="footMenu\.end"\s*:min-width="footMenu\.width"/.test(template))
     const menu = code(await read("src/renderer/src/components/ContextMenu.vue"))
     check("a menu placed by its end or bottom measures its layout size, not the 96% it opens at", /const rect = \{ width: panel\.offsetWidth, height: panel\.offsetHeight \}/.test(menu))
     check("the menu lines up with the row's start, its right edge right to left", /const end = getComputedStyle\(row\)\.direction === "rtl"/.test(script) && /x: Math\.round\(end \? from\.right : from\.left\)/.test(script))

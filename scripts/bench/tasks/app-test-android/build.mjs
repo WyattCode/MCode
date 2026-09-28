@@ -57,7 +57,7 @@ try {
   if (!fs.existsSync(keystore)) {
     run(bin("keytool"), ["-genkeypair", "-keystore", keystore, "-storepass", "android", "-keypass", "android", "-alias", "mcode", "-keyalg", "RSA", "-keysize", "2048", "-validity", "10000", "-dname", "CN=Debug"])
   }
-  run(bin("java"), ["-jar", path.join(tools, "lib", "apksigner.jar"), "sign", "--ks", keystore, "--ks-pass", "pass:android", "--key-pass", "pass:android", "--out", output, aligned])
+  run(bin("java"), ["-jar", path.join(tools, "lib", "apksigner.jar"), "sign", "--v4-signing-enabled", "false", "--ks", keystore, "--ks-pass", "pass:android", "--key-pass", "pass:android", "--out", output, aligned])
   console.log(`built ${output}`)
 } finally {
   fs.rmSync(work, { recursive: true, force: true })
@@ -70,6 +70,10 @@ if (process.argv.includes("--install")) {
   if (!listed().length) for (const port of [16384, 7555, 5555, 62001]) if (/connected to/.test(spawnSync(adb, ["connect", `127.0.0.1:${port}`], { encoding: "utf8" }).stdout) && listed().length) break
   const device = listed()[0]
   if (!device) throw new Error("No Android device is connected")
-  execFileSync(adb, ["-s", device, "install", "-r", output], { stdio: "inherit" })
+  // Signed with a key made anew (the temp folder was cleaned), it cannot update the copy signed with the old one: that goes first.
+  if (spawnSync(adb, ["-s", device, "install", "-r", output], { stdio: "inherit" }).status !== 0) {
+    spawnSync(adb, ["-s", device, "uninstall", "dev.mcode.demo"], { stdio: "ignore" })
+    execFileSync(adb, ["-s", device, "install", output], { stdio: "inherit" })
+  }
   console.log(`installed on ${device}`)
 }

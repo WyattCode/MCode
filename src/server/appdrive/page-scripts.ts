@@ -28,6 +28,12 @@ export const SNAPSHOT = String.raw`(function (limit, base) {
   // A page loaded anew starts its state over; its numbers go on from the driver's, so an old number never lands on a new element.
   if (S.next < base) S.next = base;
   if (!S.doc) S.doc = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  function rootText(r) {
+    // A frame's body, or a shadow root's rendered children: innerText of a style, script or hidden element is its raw source.
+    if (r.body) return String(r.body.innerText || "");
+    return Array.prototype.filter.call(r.children, function (child) { return child.checkVisibility ? child.checkVisibility() : !/^(STYLE|SCRIPT|TEMPLATE|LINK)$/.test(child.tagName); }).map(function (child) { return child.innerText || ""; }).join("\n");
+  }
+  S.rootText = rootText;
   var WIDGET = "a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=checkbox],[role=radio],[role=switch],[role=option],[role=combobox],[role=textbox],[role=searchbox],[role=slider],[role=spinbutton],[role=treeitem],[contenteditable=''],[contenteditable=true],[tabindex]:not([tabindex='-1']),[onclick]";
   function shown(el) {
     if (el.checkVisibility && !el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return false;
@@ -125,7 +131,8 @@ export const SNAPSHOT = String.raw`(function (limit, base) {
       if (shown(el)) list.push(el);
       return;
     }
-    if (!el.parentElement) return;
+    // Reading styles is the costly part: the pointer-cursor search covers the first 6000 elements, the widgets all of them.
+    if (!el.parentElement || visited > 6000) return;
     var view = el.ownerDocument.defaultView || window;
     if (view.getComputedStyle(el).cursor !== "pointer" || view.getComputedStyle(el.parentElement).cursor === "pointer") return;
     if (el.closest(WIDGET) || el.querySelector(WIDGET) || !shown(el)) return;
@@ -134,11 +141,12 @@ export const SNAPSHOT = String.raw`(function (limit, base) {
   function walk(parent) {
     var kids = parent.children || [];
     for (var i = 0; i < kids.length; i++) {
-      if (visited++ > 8000) return;
+      if (visited++ > 60000) return;
       var el = kids[i];
       consider(el);
       if (el.shadowRoot) { shadows.push(el.shadowRoot); walk(el.shadowRoot); }
       if (el.tagName === "IFRAME" || el.tagName === "FRAME") {
+        if (!shown(el)) continue;
         var inner = null;
         try { inner = el.contentDocument; } catch (e) { inner = null; }
         if (inner && inner.body) { frameDocs.push(inner); walk(inner.body); }
@@ -162,8 +170,9 @@ export const SNAPSHOT = String.raw`(function (limit, base) {
   var seen = new Set();
   var budget = 3000;
   // innerText stops at a shadow root and at a frame: their words are gathered from each in turn.
-  var shadowText = shadows.map(function (shadow) { return Array.prototype.map.call(shadow.children, function (child) { return child.innerText || ""; }).join("\n"); });
-  var pages = [String(scope.innerText || "")].concat(shadowText, frameDocs.map(function (d) { return String(d.body.innerText || ""); }));
+  S.roots = shadows.concat(frameDocs);
+  if (S.observer) S.roots.forEach(function (r) { S.observer.observe(r, S.watching); });
+  var pages = [String(scope.innerText || "")].concat(S.roots.map(rootText));
   pages.join("\n").split(/\n+/).forEach(function (line) {
     line = squash(line, 160);
     if (!line || seen.has(line) || budget <= 0) return;
@@ -237,7 +246,7 @@ export const FOCUS = String.raw`(function (ref, clear) {
   el.focus();
   if (clear) {
     if (typeof el.select === "function") el.select();
-    else if (el.isContentEditable) document.execCommand("selectAll");
+    else if (el.isContentEditable) el.ownerDocument.execCommand("selectAll");
   }
   var home = el.getRootNode();
   return { focused: home.activeElement === el || el.contains(home.activeElement) };
@@ -271,7 +280,10 @@ export const WATCH = String.raw`(function () {
   if (!S.observer) {
     S.observer = new MutationObserver(function () { S.changed = performance.now(); });
     // Everything but style: an animation driven from script rewrites style every frame, and would keep every step waiting its full cap.
-    S.observer.observe(document, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["class", "hidden", "disabled", "open", "value", "checked", "selected", "src", "href", "role", "aria-hidden", "aria-expanded", "aria-selected", "aria-checked", "aria-pressed", "aria-disabled", "aria-busy", "aria-current"] });
+    S.watching = { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["class", "hidden", "disabled", "open", "value", "checked", "selected", "src", "href", "role", "aria-hidden", "aria-expanded", "aria-selected", "aria-checked", "aria-pressed", "aria-disabled", "aria-busy", "aria-current"] };
+    S.observer.observe(document, S.watching);
+    // A document observer sees nothing inside a shadow root or a frame; those the last snapshot found are watched too (SNAPSHOT adds later ones).
+    (S.roots || []).forEach(function (r) { if (r.isConnected !== false) S.observer.observe(r, S.watching); });
   }
   return true;
 })`
@@ -284,5 +296,8 @@ export const QUIET_FOR = String.raw`(function () {
 
 /** Whether the page's text now includes (or no longer includes) something. */
 export const HAS_TEXT = String.raw`(function (wanted) {
-  return String(document.body ? document.body.innerText : "").indexOf(wanted) >= 0;
+  var S = window.__mcodeApp;
+  var pages = [String(document.body ? document.body.innerText : "")];
+  if (S && S.roots && S.rootText) S.roots.forEach(function (r) { try { pages.push(S.rootText(r)); } catch (e) {} });
+  return pages.join("\n").indexOf(wanted) >= 0;
 })`

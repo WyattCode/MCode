@@ -68,14 +68,15 @@ try {
   // 3. The dex into the apk (aapt adds a file by the name it is given, so it is added from inside the folder).
   execFileSync(exe("aapt"), ["add", base, "classes.dex"], { cwd: work, stdio: ["ignore", "pipe", "inherit"] })
 
-  // 4. Aligned, then signed with a debug key kept beside the SDK's own habit, in the user's .android folder's place: the temp folder.
+  // 4. Aligned, then signed with a debug key of MCode's own in the temp folder - never the user's ~/.android one. A key made
+  //    anew (the temp folder was cleaned) cannot update an app signed with the old one; whoever installs uninstalls first then.
   const aligned = path.join(work, "aligned.apk")
   run(exe("zipalign"), ["-p", "-f", "4", base, aligned])
   const keystore = path.join(os.tmpdir(), "mcode-debug.keystore")
   if (!fs.existsSync(keystore)) {
     run(bin("keytool"), ["-genkeypair", "-keystore", keystore, "-storepass", "android", "-keypass", "android", "-alias", "mcode", "-keyalg", "RSA", "-keysize", "2048", "-validity", "10000", "-dname", "CN=MCode Debug"])
   }
-  run(bin("java"), ["-jar", path.join(tools, "lib", "apksigner.jar"), "sign", "--ks", keystore, "--ks-pass", "pass:android", "--key-pass", "pass:android", "--out", output, aligned])
+  run(bin("java"), ["-jar", path.join(tools, "lib", "apksigner.jar"), "sign", "--v4-signing-enabled", "false", "--ks", keystore, "--ks-pass", "pass:android", "--key-pass", "pass:android", "--out", output, aligned])
   console.log(`built ${output} (${fs.statSync(output).size} bytes)`)
 } finally {
   fs.rmSync(work, { recursive: true, force: true })
