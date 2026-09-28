@@ -1,0 +1,5 @@
+{
+  "prompt": "这是一个安卓小应用（包名 dev.mcode.demo，源码在 src/）。用 node build.mjs --install 构建并安装到已连接的模拟器，然后打开它，把每个按钮和功能都实际点一遍测试（昵称可以填中文），找出表现不对的地方并修好，重新构建安装后再实际点一遍确认。不要改 check.mjs。",
+  "verify": ["node", "check.mjs"],
+  "unchanged": ["check.mjs"]
+}

@@ -853,7 +853,10 @@ function pickPriorityMenu(key: string) {
  * sign-out rows have nothing to stand for; MiMo 26.920 has no quit row here
  * either (the menu bar and the tray quit).
  */
-const footMenu = ref<{ x: number; y: number; end: boolean }>()
+const footMenu = ref<{ x: number; y: number; end: boolean; width: number }>()
+
+/** MiMo's account menu is 248 wide; MCode's column is narrower, so the menu is never wider than the row's own strip. */
+const FOOT_MENU_WIDTH = 248
 
 const footMenuItems = computed<MenuItem[]>(() => [
   {
@@ -867,13 +870,16 @@ const footMenuItems = computed<MenuItem[]>(() => [
 /**
  * Opens above the row, since the row sits at the bottom of the window: y is the
  * menu's bottom edge. It lines up with the row's start, as MiMo's does - the
- * right edge when the interface runs right to left.
+ * right edge when the interface runs right to left - and spans at most the
+ * strip the row sits in (the column less its 8px margins), so it never reaches
+ * over the column's edge, however narrow the column is dragged.
  */
 function openFootMenu(event: MouseEvent) {
   const row = event.currentTarget as HTMLElement
   const from = row.getBoundingClientRect()
   const end = getComputedStyle(row).direction === "rtl"
-  footMenu.value = { x: Math.round(end ? from.right : from.left), y: Math.round(from.top - 4), end }
+  const strip = (row.closest(".foot") ?? row).getBoundingClientRect()
+  footMenu.value = { x: Math.round(end ? from.right : from.left), y: Math.round(from.top - 4), end, width: Math.floor(Math.min(FOOT_MENU_WIDTH, strip.width)) }
 }
 
 function pickFootMenu(key: string) {
@@ -1812,7 +1818,7 @@ onBeforeUnmount(() => {
       :items="footMenuItems"
       above
       :end="footMenu.end"
-      :min-width="248"
+      :min-width="footMenu.width"
       @pick="pickFootMenu"
       @close="footMenu = undefined"
     />

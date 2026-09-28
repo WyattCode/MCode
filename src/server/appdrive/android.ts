@@ -65,6 +65,50 @@ export interface Device {
   model: string
 }
 
+/**
+ * Where the common Android emulators listen for adb on this machine: MuMu
+ * (16384, and 7555 in older versions), LDPlayer and BlueStacks (5555), Nox
+ * (62001). An emulator's adb connection drops when another adb - its own
+ * bundled one, say - restarts the server, and then adb lists nothing although
+ * the emulator is running; connecting to these local ports finds it again.
+ */
+const EMULATOR_PORTS = [16384, 7555, 5555, 62001]
+
+export async function reconnectEmulators(adb: string): Promise<void> {
+  // One at a time, stopping at the first that answers: an emulator can listen on several of these, and each would list it again.
+  for (const port of EMULATOR_PORTS) {
+    const said = (await run(adb, ["connect", `127.0.0.1:${port}`], 4_000).catch(() => Buffer.from(""))).toString("utf8")
+    if (/connected to/i.test(said) && !/cannot/i.test(said)) return
+  }
+}
+
+/**
+ * The devices ready to use, each once. One emulator reached through two
+ * ports is listed by adb twice; its serial number (ro.serialno), or where an
+ * emulator leaves that empty its Android ID, says it is the same device, where
+ * the model name could not - two phones of one model are two devices.
+ */
+export async function connectedDevices(adb: string): Promise<Device[]> {
+  const ready = (await listDevices(adb)).filter((device) => device.state === "device")
+  if (ready.length < 2) return ready
+  // The serial number where the device has one; emulators often leave it empty, and then the Android ID, which is per device too.
+  const identities = await Promise.all(
+    ready.map((device) =>
+      run(adb, ["-s", device.serial, "shell", "getprop ro.serialno; settings get secure android_id"], 5_000).then(
+        (out) => out.toString("utf8").split(/\r?\n/).map((line) => line.trim()).find((line) => line && line !== "null") ?? device.serial,
+        () => device.serial,
+      ),
+    ),
+  )
+  const seen = new Set<string>()
+  return ready.filter((device, index) => {
+    const identity = identities[index] || device.serial
+    if (seen.has(identity)) return false
+    seen.add(identity)
+    return true
+  })
+}
+
 /** The devices adb can see, with their model names. */
 export async function listDevices(adb: string): Promise<Device[]> {
   const out = (await run(adb, ["devices", "-l"])).toString("utf8")
@@ -203,12 +247,14 @@ interface Listed {
  * emulator: 2-20 ms against 2,000).
  */
 class Reader {
-  private waiting?: { resolve: (xml: string) => void; reject: (error: Error) => void }
+  private waiting?: { expects: string; resolve: (xml: string) => void; reject: (error: Error) => void }
   private ended = false
 
   private constructor(private readonly child: ChildProcess) {
     readline.createInterface({ input: child.stdout! }).on("line", (line) => {
-      if (line.startsWith("<?xml")) {
+      // A dump's XML, or a set-text answer; the readiness line is taken by start().
+      if (line.startsWith("<?xml") || line.startsWith('{"ok"')) {
+        if (this.waiting && !line.startsWith(this.waiting.expects)) return
         const waiting = this.waiting
         this.waiting = undefined
         waiting?.resolve(line)
@@ -254,6 +300,16 @@ class Reader {
   }
 
   dump(timeoutMs = 10_000): Promise<string> {
+    return this.request("dump", timeoutMs)
+  }
+
+  /** Puts text into the editable field at a point, through the accessibility service: any language, unlike adb's input. */
+  async setText(x: number, y: number, text: string): Promise<boolean> {
+    const answer = await this.request(`settext ${x} ${y} ${Buffer.from(text, "utf8").toString("base64")}`, 10_000).catch(() => "")
+    return answer.includes('"ok":true')
+  }
+
+  private request(line: string, timeoutMs: number): Promise<string> {
     if (this.ended) return Promise.reject(new Error("the screen reader on the device stopped"))
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -261,6 +317,7 @@ class Reader {
         reject(new Error("the screen reader on the device did not answer"))
       }, timeoutMs)
       this.waiting = {
+        expects: line === "dump" ? "<?xml" : '{"ok"',
         resolve: (xml) => {
           clearTimeout(timer)
           resolve(xml)
@@ -270,7 +327,7 @@ class Reader {
           reject(error)
         },
       }
-      this.child.stdin!.write("dump\n")
+      this.child.stdin!.write(`${line}\n`)
     })
   }
 
@@ -310,7 +367,11 @@ export class AndroidDriver extends SteppingDriver {
   static async connect(target: string | undefined, packageName: string | undefined): Promise<AndroidDriver> {
     const adb = findAdb()
     if (!adb) throw new Error("adb was not found. Install Android SDK platform-tools, or set ANDROID_HOME to the SDK.")
-    const devices = (await listDevices(adb)).filter((device) => device.state === "device")
+    let devices = await connectedDevices(adb)
+    if (!devices.length) {
+      await reconnectEmulators(adb)
+      devices = await connectedDevices(adb)
+    }
     if (!devices.length) throw new Error("No Android device is connected. Start an emulator or connect a phone with USB debugging on (adb devices lists none); an emulator on a port may need `adb connect 127.0.0.1:<port>` first.")
     const wanted = target ? devices.find((device) => device.serial === target || device.model.toLowerCase().includes(target.toLowerCase())) : devices.length === 1 ? devices[0] : undefined
     if (!wanted) throw new Error(`${target ? `No device matches "${target}".` : "More than one device is connected; name one with target."} Devices: ${devices.map((device) => `${device.serial}${device.model ? ` (${device.model})` : ""}`).join(", ")}`)
@@ -413,9 +474,9 @@ export class AndroidDriver extends SteppingDriver {
           if (node.attrs.selected === "true") states.push("selected")
           if (role === "textbox") {
             if (node.attrs.focused === "true") states.push("focused")
-            states.push(`value=${JSON.stringify(squash(node.attrs.password === "true" ? "•••" : (node.attrs.text ?? ""), 40))}`)
+            states.push(`value=${JSON.stringify(squash(node.attrs.password === "true" && node.attrs.text ? "•••" : (node.attrs.text ?? ""), 40))}`)
           }
-          listed.push({ key, center: { x: Math.round((box.x1 + box.x2) / 2), y: Math.round((box.y1 + box.y2) / 2) }, line: `[${number}] ${role} ${JSON.stringify(role === "textbox" ? squash(node.attrs["content-desc"] || node.attrs["resource-id"]?.split("/").pop() || node.attrs.text || "") : nameOf(node, ancestors))}${states.length ? ` ${states.join(" ")}` : ""}`, node })
+          listed.push({ key, center: { x: Math.round((box.x1 + box.x2) / 2), y: Math.round((box.y1 + box.y2) / 2) }, line: `[${number}] ${role} ${JSON.stringify(role === "textbox" ? squash(node.attrs["content-desc"] || node.attrs.hint || node.attrs["resource-id"]?.split("/").pop() || "") : nameOf(node, ancestors))}${states.length ? ` ${states.join(" ")}` : ""}`, node })
         }
       }
       const said = node.attrs.text || node.attrs["content-desc"]
@@ -459,9 +520,17 @@ export class AndroidDriver extends SteppingDriver {
       case "type": {
         const target = this.at(step)
         const text = String(step.text ?? "")
-        // adb's input types what a hardware keyboard could: ASCII. Anything else needs an input method on the device.
-        if (/[^\x20-\x7e]/.test(text)) throw new StepError("adb can only type plain ASCII text into Android; for other characters, paste through the app, or install ADBKeyBoard on the device")
         await this.shell(["input", "tap", String(target.center.x), String(target.center.y)])
+        // The field's text set through the accessibility service: any language, and the whole of it at once. It replaces
+        // the text, so to add to it the old text goes first - except in a password field, which reports only dots.
+        const kept = step.clear === false ? (target.node.attrs.text ?? "") : ""
+        if (this.reader?.alive && !(kept && target.node.attrs.password === "true") && (await this.reader.setText(target.center.x, target.center.y, kept + text))) {
+          if (step.submit) await this.shell(["input", "keyevent", "66"])
+          await sleep(SETTLE_MS)
+          return ""
+        }
+        // Without the reader, adb's input types what a hardware keyboard could: ASCII only.
+        if (/[^\x20-\x7e]/.test(text)) throw new StepError("this field could not take text through the accessibility service, and adb's own input types only plain ASCII")
         const existing = (target.node.attrs.text ?? "").length
         if (step.clear !== false && existing) await this.shell(["input", "keyevent", "123", ...Array.from({ length: Math.min(existing, 200) }, () => "67")])
         if (text) await this.shell(["input", "text", adbText(text)])

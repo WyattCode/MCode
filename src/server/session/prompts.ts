@@ -211,12 +211,45 @@ Finding an address does not give you a file. Download each picture yourself (\`c
 
 The deck must point only at local files that are really there - no web addresses.`
 
+/**
+ * Whether this process runs the lean coding prompt and tool list - an
+ * experiment (round 40), switched on by MCODE_LEAN=1 and measured with
+ * scripts/bench against the full one before anything is decided. It leaves
+ * out what a coding turn does not use: how to draw diagrams and widgets, make
+ * slide decks and web page designs, and hand over pictures and office files -
+ * all of which the matching skills carry anyway.
+ */
+export function leanMode(): boolean {
+  return process.env.MCODE_LEAN === "1"
+}
+
+/** The sections a lean prompt leaves out, each from its heading up to the next kept one. */
+const LEAN_CUTS: [string, string][] = [
+  ["## Visual explanations", "## Asking clarifying questions"],
+  ["### Images and video", "### Web pages"],
+  ["### Office documents and PDF", "## Tools on this machine"],
+  ["## Web page work", ""],
+]
+
+const LEAN_POINTER = "For diagrams, slide decks, documents, spreadsheets, PDFs, pictures and a web page's design, load the matching skill first (visualizer, pptx, docx, xlsx, pdf) and follow it."
+
+function lean(text: string): string {
+  let out = text
+  for (const [from, to] of LEAN_CUTS) {
+    const start = out.indexOf(from)
+    if (start < 0) continue
+    const end = to ? out.indexOf(to, start) : out.length
+    out = out.slice(0, start) + out.slice(end < 0 ? out.length : end)
+  }
+  return `${out.trimEnd()}\n\n${LEAN_POINTER}`
+}
+
 /** The agent prompt every model reads, in every mode. */
 export function agentPrompt(agent?: string): string {
   // MiMo's consolidation agents carry their own prompt in place of the general one.
   if (agent === "dream") return DREAM
   if (agent === "distill") return DISTILL
-  return [CORE, desktop()].join("\n\n")
+  return [CORE, leanMode() ? lean(desktop()) : desktop()].join("\n\n")
 }
 
 /**

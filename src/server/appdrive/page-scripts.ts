@@ -28,6 +28,12 @@ export const SNAPSHOT = String.raw`(function (limit, base) {
   // A page loaded anew starts its state over; its numbers go on from the driver's, so an old number never lands on a new element.
   if (S.next < base) S.next = base;
   if (!S.doc) S.doc = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  function rootText(r) {
+    // A frame's body, or a shadow root's rendered children: innerText of a style, script or hidden element is its raw source.
+    if (r.body) return String(r.body.innerText || "");
+    return Array.prototype.filter.call(r.children, function (child) { return child.checkVisibility ? child.checkVisibility() : !/^(STYLE|SCRIPT|TEMPLATE|LINK)$/.test(child.tagName); }).map(function (child) { return child.innerText || ""; }).join("\n");
+  }
+  S.rootText = rootText;
   var WIDGET = "a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=checkbox],[role=radio],[role=switch],[role=option],[role=combobox],[role=textbox],[role=searchbox],[role=slider],[role=spinbutton],[role=treeitem],[contenteditable=''],[contenteditable=true],[tabindex]:not([tabindex='-1']),[onclick]";
   function shown(el) {
     if (el.checkVisibility && !el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return false;
@@ -59,7 +65,8 @@ export const SNAPSHOT = String.raw`(function (limit, base) {
   }
   function labelled(el) {
     var ids = (el.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean);
-    return ids.map(function (id) { var node = document.getElementById(id); return node ? node.innerText || node.textContent : ""; }).join(" ");
+    var home = el.getRootNode();
+    return ids.map(function (id) { var node = home.getElementById ? home.getElementById(id) : document.getElementById(id); return node ? node.innerText || node.textContent : ""; }).join(" ");
   }
   function nameOf(el) {
     var name = el.getAttribute("aria-label") || labelled(el);
@@ -93,30 +100,63 @@ export const SNAPSHOT = String.raw`(function (limit, base) {
     if (el.getAttribute("aria-pressed") === "true") out.push("pressed");
     var current = el.getAttribute("aria-current");
     if (current && current !== "false") out.push("current");
-    if (document.activeElement === el && role === "textbox") out.push("focused");
+    if (el.getRootNode().activeElement === el && role === "textbox") out.push("focused");
     if (role === "textbox" && !el.isContentEditable) out.push("value=" + JSON.stringify(squash(el.value, 40)));
     if (role === "textbox" && el.isContentEditable) out.push("value=" + JSON.stringify(squash(el.innerText, 40)));
     if (el.tagName === "SELECT") out.push("value=" + JSON.stringify(squash(el.selectedOptions && el.selectedOptions[0] ? el.selectedOptions[0].text : "", 40)));
     if (role === "slider" && el.value !== undefined) out.push("value=" + el.value);
     var r = el.getBoundingClientRect();
-    if (r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) out.push("offscreen");
+    var view = el.ownerDocument.defaultView || window;
+    if (r.bottom < 0 || r.top > view.innerHeight || r.right < 0 || r.left > view.innerWidth) out.push("offscreen");
     return out;
   }
   var dialogs = Array.prototype.filter.call(document.querySelectorAll("dialog[open],[role=dialog],[role=alertdialog]"), function (d) {
     return shown(d) && (d.matches(":modal") || d.getAttribute("aria-modal") === "true");
   });
   var scope = dialogs.length ? dialogs[dialogs.length - 1] : document.body || document.documentElement;
-  var found = new Set(Array.prototype.filter.call(scope.querySelectorAll(WIDGET), shown));
-  var all = scope.querySelectorAll("*");
-  for (var i = 0; i < all.length && i < 6000; i++) {
-    var el = all[i];
-    if (found.has(el) || !el.parentElement) continue;
-    var style = getComputedStyle(el);
-    if (style.cursor !== "pointer" || getComputedStyle(el.parentElement).cursor === "pointer") continue;
-    if (el.closest(WIDGET) || el.querySelector(WIDGET) || !shown(el)) continue;
-    found.add(el);
+  /*
+   * Walked in document order rather than queried: a query stops at a shadow
+   * root and at a frame, and web components and embedded pages hide most of
+   * a modern app's controls behind one or the other. Open shadow roots and
+   * frames from the same site are walked into; a frame from another site
+   * cannot be read from here, and is counted so the model is told.
+   */
+  var list = [];
+  var frameDocs = [];
+  var shadows = [];
+  var foreign = 0;
+  var visited = 0;
+  function consider(el) {
+    if (el.matches(WIDGET)) {
+      if (shown(el)) list.push(el);
+      return;
+    }
+    // Reading styles is the costly part: the pointer-cursor search covers the first 6000 elements, the widgets all of them.
+    if (!el.parentElement || visited > 6000) return;
+    var view = el.ownerDocument.defaultView || window;
+    if (view.getComputedStyle(el).cursor !== "pointer" || view.getComputedStyle(el.parentElement).cursor === "pointer") return;
+    if (el.closest(WIDGET) || el.querySelector(WIDGET) || !shown(el)) return;
+    list.push(el);
   }
-  var list = Array.from(found).sort(function (a, b) { return a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1; });
+  function walk(parent) {
+    var kids = parent.children || [];
+    for (var i = 0; i < kids.length; i++) {
+      if (visited++ > 60000) return;
+      var el = kids[i];
+      consider(el);
+      if (el.shadowRoot) { shadows.push(el.shadowRoot); walk(el.shadowRoot); }
+      if (el.tagName === "IFRAME" || el.tagName === "FRAME") {
+        if (!shown(el)) continue;
+        var inner = null;
+        try { inner = el.contentDocument; } catch (e) { inner = null; }
+        if (inner && inner.body) { frameDocs.push(inner); walk(inner.body); }
+        else foreign++;
+        continue;
+      }
+      walk(el);
+    }
+  }
+  walk(scope);
   var lines = [];
   for (var j = 0; j < list.length && lines.length < limit; j++) {
     var node = list[j];
@@ -129,14 +169,18 @@ export const SNAPSHOT = String.raw`(function (limit, base) {
   var text = [];
   var seen = new Set();
   var budget = 3000;
-  String(scope.innerText || "").split(/\n+/).forEach(function (line) {
+  // innerText stops at a shadow root and at a frame: their words are gathered from each in turn.
+  S.roots = shadows.concat(frameDocs);
+  if (S.observer) S.roots.forEach(function (r) { S.observer.observe(r, S.watching); });
+  var pages = [String(scope.innerText || "")].concat(S.roots.map(rootText));
+  pages.join("\n").split(/\n+/).forEach(function (line) {
     line = squash(line, 160);
     if (!line || seen.has(line) || budget <= 0) return;
     seen.add(line);
     budget -= line.length;
     text.push(line);
   });
-  return { title: document.title, url: location.href, doc: S.doc, modal: dialogs.length > 0 ? nameOf(scope) || "dialog" : "", elements: lines, more: Math.max(0, list.length - lines.length), text: text };
+  return { title: document.title, url: location.href, doc: S.doc, modal: dialogs.length > 0 ? nameOf(scope) || "dialog" : "", elements: lines, more: Math.max(0, list.length - lines.length), text: text, foreignFrames: foreign };
 })`
 
 /**
@@ -153,11 +197,38 @@ export const LOCATE = String.raw`(function (ref) {
   el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
   var r = el.getBoundingClientRect();
   if (r.width < 1 || r.height < 1) return { error: "hidden" };
+  // A frame's element is placed by its frame, and every frame above it, in the page's own coordinates.
   var x = r.left + r.width / 2;
   var y = r.top + r.height / 2;
+  for (var view = el.ownerDocument.defaultView; view && view.frameElement; view = view.parent) {
+    var frame = view.frameElement.getBoundingClientRect();
+    x += frame.left + view.frameElement.clientLeft;
+    y += frame.top + view.frameElement.clientTop;
+  }
+  // What is really at that point: through open shadow roots and same-site frames, not stopping at their hosts.
   var top = document.elementFromPoint(x, y);
+  var ox = 0, oy = 0;
+  for (var depth = 0; depth < 30 && top; depth++) {
+    var next = null;
+    if (top.shadowRoot) next = top.shadowRoot.elementFromPoint(x - ox, y - oy);
+    else if (top.tagName === "IFRAME" || top.tagName === "FRAME") {
+      try {
+        var box = top.getBoundingClientRect();
+        if (top.contentDocument) { ox += box.left + top.clientLeft; oy += box.top + top.clientTop; next = top.contentDocument.elementFromPoint(x - ox, y - oy); }
+      } catch (e) { next = null; }
+    }
+    if (!next || next === top) break;
+    top = next;
+  }
+  function inside(inner, outer) {
+    // Up through parents, from a shadow root to its host, and from a frame's document to the frame.
+    for (var node = inner; node; node = node.parentNode || node.host || (node.defaultView && node.defaultView.frameElement) || null) {
+      if (node === outer) return true;
+    }
+    return false;
+  }
   var covered = "";
-  if (top && top !== el && !el.contains(top) && !top.contains(el)) {
+  if (top && !inside(top, el) && !inside(el, top)) {
     covered = (top.getAttribute("aria-label") || top.innerText || top.tagName || "").replace(/\s+/g, " ").trim().slice(0, 60);
   }
   var disabled = Boolean(el.disabled || el.getAttribute("aria-disabled") === "true");
@@ -175,9 +246,10 @@ export const FOCUS = String.raw`(function (ref, clear) {
   el.focus();
   if (clear) {
     if (typeof el.select === "function") el.select();
-    else if (el.isContentEditable) document.execCommand("selectAll");
+    else if (el.isContentEditable) el.ownerDocument.execCommand("selectAll");
   }
-  return { focused: document.activeElement === el || el.contains(document.activeElement) };
+  var home = el.getRootNode();
+  return { focused: home.activeElement === el || el.contains(home.activeElement) };
 })`
 
 /** Chooses an option of a native select by its value or its visible text, and tells the page, as a person's choice would. */
@@ -208,7 +280,10 @@ export const WATCH = String.raw`(function () {
   if (!S.observer) {
     S.observer = new MutationObserver(function () { S.changed = performance.now(); });
     // Everything but style: an animation driven from script rewrites style every frame, and would keep every step waiting its full cap.
-    S.observer.observe(document, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["class", "hidden", "disabled", "open", "value", "checked", "selected", "src", "href", "role", "aria-hidden", "aria-expanded", "aria-selected", "aria-checked", "aria-pressed", "aria-disabled", "aria-busy", "aria-current"] });
+    S.watching = { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["class", "hidden", "disabled", "open", "value", "checked", "selected", "src", "href", "role", "aria-hidden", "aria-expanded", "aria-selected", "aria-checked", "aria-pressed", "aria-disabled", "aria-busy", "aria-current"] };
+    S.observer.observe(document, S.watching);
+    // A document observer sees nothing inside a shadow root or a frame; those the last snapshot found are watched too (SNAPSHOT adds later ones).
+    (S.roots || []).forEach(function (r) { if (r.isConnected !== false) S.observer.observe(r, S.watching); });
   }
   return true;
 })`
@@ -221,5 +296,8 @@ export const QUIET_FOR = String.raw`(function () {
 
 /** Whether the page's text now includes (or no longer includes) something. */
 export const HAS_TEXT = String.raw`(function (wanted) {
-  return String(document.body ? document.body.innerText : "").indexOf(wanted) >= 0;
+  var S = window.__mcodeApp;
+  var pages = [String(document.body ? document.body.innerText : "")];
+  if (S && S.roots && S.rootText) S.roots.forEach(function (r) { try { pages.push(S.rootText(r)); } catch (e) {} });
+  return pages.join("\n").indexOf(wanted) >= 0;
 })`
