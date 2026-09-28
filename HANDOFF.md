@@ -4,16 +4,16 @@
 
 **这份文档怎么读**：前六节是接手就要知道的（现状、怎么跑、代码在哪、坑、刻意的差异、下一步）；第七节起是逐轮记录，按轮次从新到旧，查某个决定为什么是现在这样时再翻。最后是附录：早期的对照清单和待办。
 
-## 当前状态（2026-09-27）
+## 当前状态（2026-09-29）
 
 - **这是什么**：在界面和功能上 1:1 复刻小米 MiMo 桌面端的 Electron 应用，MCode 保留自己的名字、图标和字标。技术栈 Electron 41.7.2 + Vue 3 + Pinia + electron-vite，后端是同一进程里的 Node 服务。
 - **对照基准**：界面照 MiMo **26.920**（第十八轮起）。只读它的行为和尺寸，**不复制**它的代码、文案、图标、插画和品牌。逐项对照清单（含百分比）：https://claude.ai/code/artifact/f149a5d1-857e-4bae-80be-ca03265d9f83
 - **引擎跟随 OpenCode v2**（第三十一轮起，用户 2026-09-27 定的）：内核和 Agent 编程能力照 OpenCode 的 `v2` 分支逐项移植进 MCode 自己的引擎（v2 还没正式发布，所以是搬能力，不是换引擎）；界面和其余部分保留 MCode 自己的设计。只搬比 MCode 现有做法好的，MCode 更强的地方保留（见第三十一轮）。OpenCode 是 MIT 许可，移植的代码在注释里注明出处。
-- **版本**：0.6.4（本机安装版，含第四十、四十一轮；最新发布版仍是 0.6.3）。已静默装到 `D:\Apps\MCode` 并启动，安装包里确认带上了第四十一轮的修复。
-- **分支**：`v2.0`，跟踪 `origin/v2.0`（私有仓库 `WyattCode/MCode`）。`main` 停在 https://github.com/WyattCode/MCode/pull/9 的合并提交 `cf381b79`（0.6.3，第三十三轮到第三十九轮）；`v2.0` 在那之后只多了交接文档的更新。开拉取请求、合进 `main`、发版都要**先问用户一声**（用户定的规矩：推分支直接做，对外、不好撤回的先问）。合并和发版用的 `gh pr merge`、`gh release create` 由用户在 `.claude/settings.local.json` 里放行（2026-09-27）。
-- **拉取请求**：#4、#5、#6、#7、#8、#9 已合并（合并提交，标题照「MCode 2.0：0.6.3（#9）」的格式）。#3（`macos-hardening-v2`）已关闭：它声称的 16 条修复逐条对照过当前代码，5 条已被后来的工作修掉（含全部 3 条安全项）、2 条在本平台仍然存在并已修（0.4.6）、7 条只在 macOS 上能观察到，结论写在 #3 的关闭评论里。
-- **发布**：https://github.com/WyattCode/MCode/releases/tag/v0.6.3（预发布版，2026-09-28，附安装程序、blockmap、`latest.yml`）；之前是 v0.5.3、v0.4.7、v0.4.5、v0.3.8。自动更新地址仍是占位的 `updates.invalid`，所以**发布不会触发任何自动更新**，装新版只能手动下载。
-- **验证状态**：build 和十二项专项检查（含 sandboxcheck）全绿，smoke **7463 条全过**（2026-09-27，第三十五轮）。
+- **版本**：本机装的是 0.6.6（0.6.4 之后多了第四十一轮的整行焦点框和窗口接管修复，未发布）；最新发布版是 0.6.4（https://github.com/WyattCode/MCode/releases/tag/v0.6.4，含第四十、四十一轮）。0.6.6 已静默装到 `D:\Apps\MCode` 并启动（装前征得用户同意关掉了正在运行的旧版），安装包里确认带上了这两处修复。
+- **分支**：`v2.0`，跟踪 `origin/v2.0`（私有仓库 `WyattCode/MCode`）。`main` 停在 https://github.com/WyattCode/MCode/pull/10 的合并提交 `cc272fa1`（0.6.4，第四十、四十一轮）；`v2.0` 在那之后只多了交接文档的更新。开拉取请求、合进 `main`、发版都要**先问用户一声**（用户定的规矩：推分支直接做，对外、不好撤回的先问）。合并和发版用的 `gh pr merge`、`gh release create` 由用户在 `.claude/settings.local.json` 里放行（2026-09-27）。
+- **拉取请求**：#4 到 #10 已合并（合并提交，标题照 #10「MCode 2.0：0.6.4 —— …，第四十到四十一轮」的格式）。#3（`macos-hardening-v2`）已关闭：它声称的 16 条修复逐条对照过当前代码，5 条已被后来的工作修掉（含全部 3 条安全项）、2 条在本平台仍然存在并已修（0.4.6）、7 条只在 macOS 上能观察到，结论写在 #3 的关闭评论里。
+- **发布**：https://github.com/WyattCode/MCode/releases/tag/v0.6.4（2026-09-29，附安装程序、blockmap、`latest.yml`；和 v0.6.3 不同，这一版**没有**勾选「预发布」）；之前是 v0.6.3、v0.5.3、v0.4.7、v0.4.5、v0.3.8。自动更新地址仍是占位的 `updates.invalid`，所以**发布不会触发任何自动更新**，装新版只能手动下载。
+- **验证状态**：build、typecheck 和十二项专项检查（含 sandboxcheck）全绿，smoke **7604 条全过**（2026-09-29，第四十一轮；接了安卓设备时会多跑十几条设备检查）。
 - **已知差异**：对照 26.920 没有已知的、未决的界面差异。仍然不同的三类——用户定的刻意差异（见下）；依赖小米账号或小米服务的功能；需要 Linux / macOS 真机才能核对的细节。
 - **真实模型**：第二十七轮起用局域网模型真用过——撤销、删除提问、手动压缩都端到端验证过（见那一节）；第三十一轮的排队、联网搜索、代码模式也在真模型上跑通了（见第三十二轮末尾）；用户自己也在日常用（第二十九轮的两个问题就是用出来的）。
 
@@ -23,7 +23,7 @@
 npm run dev          # 开发版（先结束残留的 node_modules/electron/dist/electron.exe）
 npm run typecheck
 npm run build
-npm run smoke        # 当前 7462 条（2026-09-27）
+npm run smoke        # 当前 7604 条（2026-09-29，不接安卓设备时）
 npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 ```
 
@@ -47,13 +47,14 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 代码在哪
 
-482 个 `.ts` / `.vue` 源文件，131 个脚本（2026-09-27）。
+492 个 `.ts` / `.vue` 源文件，174 个脚本（2026-09-29）。
 
 - `src/main/` —— Electron 主进程：窗口与标题栏、托盘与菜单、自动更新、原生对话框、剪贴板与图片、浏览器页面（`browser-page.ts`）、Office 文档、崩溃转储、原子写（`atomic-write.ts`）。
 - `src/preload/` —— 渲染进程能调用的那一层。
 - `src/server/` —— 后端，和主进程同进程但逻辑独立，通过 WebSocket 和窗口说话（`index.ts` 起服务）：
   - `session/` —— **对话的心脏**。`runner.ts` 是回合循环（请求、工具调用、压缩、续写、重试、取消），`store.ts` 是持久化，`loop-health.ts` 是死循环检测，`prune.ts` / `summary.ts` 是上下文压缩。
   - `tool/` —— 模型能调用的工具（read / write / edit / bash / grep / glob / task / actor / question …）和它们的校验。第三十一轮加了 `patch.ts` + `patch-format.ts`（GPT 模型用的多文件补丁）和 `websearch.ts`。
+  - `appdrive/` —— `app` 工具背后的「像人一样操作应用」（第三十六到四十一轮）：`stepping.ts` 是共同的一步步执行和效果汇报；`driver.ts` + `page-scripts.ts` + `cdp.ts` + `browser.ts` 管网页和 Electron（CDP，读 DOM，不截图）；`windows.ts` + `windows-host.ts` 管 Windows 原生程序（PowerShell 里的 C# UI Automation，**不动鼠标、不抢前台**）；`android.ts` + `android-agent.ts` 管安卓（adb，加上推到设备上的读取程序 McodeAgent，源码在 `scripts/android-agent/`，用 `scripts/android-agent.mjs` 重新生成 dex）。工具本身在 `tool/app.ts`。
   - `websearch.ts` —— 联网搜索的五家服务（Exa、Firecrawl、Parallel、Tavily、TinyFish），都可免密钥使用。
   - `codemode/` —— 代码模式：`sandbox.ts`（QuickJS 沙箱）、`catalog.ts`（工具目录与 `search`）、`schema-ts.ts`（JSON Schema → TypeScript 签名）。接入点在 `mcp.ts` 的 `codeModeTool`。
   - `provider/` —— 各家模型协议的适配（`anthropic.ts`、`openai.ts`、`tool-schema.ts` 按模型家族改写工具 schema）。
@@ -62,7 +63,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
   - `config.ts`、`permission.ts` —— 设置和记住的授权，两者都有「读不到就整轮不写」的保护。
 - `src/renderer/src/` —— 界面：`App.vue`（窗口骨架、快捷键、主题）、`components/`（对话流、输入框、侧栏、设置、右侧面板、各类查看器；排队栏是 `QueueBar.vue`）、`stores/`（Pinia）、`lib/`（`i18n.ts` 里 18 张语言表，构建时按语言拆包）、`styles/`（`tokens.css` 由 `themecheck` 生成，不要手改）。
 - `src/shared/` —— 两端共用的类型和纯函数，`protocol.ts` 是前后端的契约。
-- `scripts/` —— 检查脚本。`smoke.ts` 是入口，按轮次分到 `smoke-roundN*.ts`；新加一轮就写一个文件并在 `smoke.ts` 里 import + 调用。
+- `scripts/` —— 检查脚本。`smoke.ts` 是入口，按轮次分到 `smoke-roundN*.ts`；新加一轮就写一个文件并在 `smoke.ts` 里 import + 调用。`scripts/bench/` 是编码能力考题（`run.mjs` 跑、`tasks/` 里一题一个文件夹，用局域网模型的一次性配置）；`scripts/fixtures/` 是操作应用检查用的演示应用（网页、WinForms、安卓）。
 
 ## 约定与坑
 
@@ -110,6 +111,15 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - **探针的输出目录每次新建，不要先删**（第三十一轮）：上一次运行留下的 Electron 配置里有只读文件，`rmSync` 报 EPERM，探针在加载时就死掉，读到的是上一次的结果。现在用 `run-<时间戳>` 子目录。探针改了 `USERPROFILE` 时还要 `app.setPath("appData", …)`，否则 Electron 报「Failed to get 'appData' path」。
 - **沙箱的「死循环中断」证明不了「能失败」**（第三十一轮）：去掉 QuickJS 的中断处理后，`while (true) {}` 会卡死整个 Node 进程，同进程的检查没法给它设时限，只能以「卡住」作为失败信号。其余沙箱检查都给了短时限，出问题时报失败而不是卡住。
 - **窗口被挡住时 `isVisible()` 仍然说 true**（第二十八轮）：页面其实是 `visibilityState: hidden`，rAF 完全不跑，`focus()`、`moveTop()` 都叫不醒。于是所有 Vue `<Transition>` 停在第一帧（信息卡卡在 `info-card-enter-from`、透明度 0），截图会拍到半透明的卡片。DOM 里留着过渡的状态类名就是信号；测任何带动画的东西前先读 `visibilityState` 并试一帧 rAF。
+
+- **操作应用的几条坑**（第三十六到四十一轮）：
+  - 被测程序**不能抢用户的鼠标和前台**（用户定的，和 WorkBuddy 一致）。Windows 端禁止 `SetCursorPos`、`mouse_event`、`SendKeys`、`SetFocus`；`SetForegroundWindow` 只用于把前台还给用户。第三十七轮有静态检查钉住。
+  - 页面自己的定时器在后台窗口里会被降到一秒一次，所以「页面安静了没有」要从外面轮询（`QUIET_FOR`），不能在页面里 `setTimeout` 等。
+  - MutationObserver 挂在 `document` 上看不见 shadow root 和 iframe 里的变化，这些根要单独挂（第四十一轮）。元素不渲染时，`innerText` 返回的是原始源码，组件里的 `<style>` 会被当成文字读出来。
+  - Chrome 把每个 `file://` 页面都当成独立的来源，所以本地文件里的 iframe 一律算跨站；检查要用本地 http 服务提供页面。
+  - MuMu 自带的 adb 和 SDK 的 adb 会互相顶掉服务进程，之后 adb 看不到任何设备；`reconnectEmulators` 会重新连回来。MuMu 的 `ro.serialno` 是空的，去重改用 `android_id`。
+  - 演示应用的调试签名密钥在临时目录（`mcode-debug.keystore`），被清理后会重新生成，安卓就会拒绝覆盖安装（INSTALL_FAILED_UPDATE_INCOMPATIBLE）。检查和考题遇到这种情况会先卸载演示应用再装（第四十一轮）。
+  - 用 MuMu 测试前要征得用户同意，测完用 `MuMuManager.exe control -v 0 shutdown` 关掉；它会弹「安装」一类的对话框，不要点。
 
 ## 与 MiMo 故意不同的地方（用户定的，不要改回去）
 
@@ -196,10 +206,10 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 7. **编码能力计划**（第三十五轮，用户定「能力第一」）：
    1. ~~跑基线~~：2026-09-28 已跑（见第三十五轮）；「只查不改」提醒已加，12 次实测中没有触发过，效果待遇到打转时再看。
-   2. 做精简编码模式，再量一次。
-   3. 做 Windows UI 自动化，再量一次。
-   4. 用户若给出拿来和 WorkBuddy 比的真实任务，也加进 `scripts/bench/tasks/`。
-   5. **操作应用**（第三十六轮起）：网页、Electron（第三十六轮）、Windows 原生应用（第三十七轮）和安卓（第三十八轮）都已做，都在 `app` 工具里。iOS 需要 Mac。安卓还缺考题和中文输入。
+   2. ~~做精简编码模式，再量一次~~：第四十轮量过，正确率一样，token 少 2%–45%，但速度没有稳定提升，所以只留作开关 `MCODE_LEAN=1`，默认关闭。换成按 token 收费的云端模型时可以再量一次。
+   3. ~~做 Windows UI 自动化，再量一次~~：第三十七轮完成，`app-test-win` 3/3。
+   4. **和 WorkBuddy 正面比**：还没比过。用户 2026-09-28 说两边用的都是同一个本地模型，所以比的只是软件本身。等用户给一道题，先在 WorkBuddy 里跑一遍记下秒数，再在 MCode 里跑同一道；这道题也加进 `scripts/bench/tasks/`。
+   5. **操作应用**（第三十六到四十一轮）：网页、Electron、Windows 原生应用、安卓都已做，都在 `app` 工具里；安卓考题和任意语言输入在第四十轮补上了。还没做的：跨站 iframe（要用 CDP 单独连那个框架的目标）、关闭状态的 shadow root（读不到）、iOS（需要 Mac）。
 
 更早的下一步建议留作记录，见文末「附录 C」。
 
@@ -219,6 +229,10 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - **安卓 `clear:false` 会覆盖原有内容**：写入文字是整段替换，所以要追加时先把旧内容拼在前面。密码框读不到原文，这种情况改走 adb 的输入。
 - **读取程序的答复可能对错请求**：一个请求超时后，它迟到的答复可能被下一个不同类型的请求收到（比如 dump 收到了 settext 的答复）。现在每个请求会注明自己等的是哪种答复，对不上的丢掉。
 - **演示应用在签名密钥换了之后装不上**：调试密钥放在临时目录，被清理后会重新生成，而安卓拒绝用新签名覆盖旧签名的应用。已实测复现（INSTALL_FAILED_UPDATE_INCOMPATIBLE）。现在检查和考题的构建脚本在更新被拒时，会先卸载这个演示应用再安装；考题构建脚本已实测能恢复。签名时也不再额外生成 `.idsig` 文件。
+
+- **项目行和两个分区标题的键盘焦点框是方的**（用户截图，第四十一轮发版之后）：焦点框落在行里的按钮上，而这个按钮自己没有圆角。先让按钮跟随行的圆角，用户又截图指出任务行的框只套住文字那一截：任务行的按钮从 46 开始，项目行的按钮到行内小图标前就停了，框和行的背景对不上。现在框画在整行上（`.row:has(> .row-open:focus-visible)`，按钮自己不再画），和「新建任务」一样；「项目」「最近」两个标题用 4 的圆角（加在标题本身上，themecheck 不允许焦点状态改变形状）。在一次性配置里加了三个项目后，用 Tab 走遍整个窗口：所有带焦点框的控件都是圆角，只剩输入框没有焦点框（它有自己的焦点样式）。检查 2 条，改坏验证过。
+
+- **窗口列表里有、按标题却接管不了**（跑检查时反复出现）：列出窗口时不看可见性，按标题接管时却跳过 UI 自动化说「不在屏幕上」（IsOffscreen）的窗口，而这个标记对普通打开的窗口也会出现。最典型的情况是窗口位置在所有显示器之外，比如拔掉第二块屏幕之后。于是模型看到的提示自相矛盾：「找不到 Win Demo，最近打开的窗口有：Win Demo」。现在按窗口自己的可见性（`IsWindowVisible`）来判断，没找到时再找两次，每次间隔 300 毫秒。检查的做法是把演示窗口移到屏幕外再接管；旧代码报出的正是那句矛盾的话，新代码通过。
 
 **验证**：新增 `smoke-round41.ts` 共 9 条，其中网页 7 条、安卓 2 条（安卓部分需要设备）；`smoke-round20-v5` 的菜单那条改成检查宽度上限。改坏验证过，每一处修复撤掉后都有对应的检查失败：不观察 shadow root 和框架（2 条）、不过滤未渲染的子元素（2 条）、给隐藏框架计数（1 条）、遍历上限退回 8000（1 条）、等待文字只查顶层（1 条）、不拼接旧内容（1 条）。安卓那 2 条和第四十轮的安卓检查都在 MuMu 上跑过，跑完已关掉模拟器。
 
@@ -273,7 +287,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - 找 adb 的顺序：`MCODE_ADB`、PATH、`ANDROID_HOME` 和 `ANDROID_SDK_ROOT`、`%LOCALAPPDATA%\Android\Sdk`，以及常见的几个 SDK 目录。这台机器的 SDK 在 `D:\Android\sdk`，不在 PATH 里。
 - 新动作 `android {target?, package?}`：target 按序列号或型号选设备（只有一台时可以省略）；给了 package，就用 `monkey` 启动那个应用，等它到前台。关闭时 `am force-stop` 自己启动的应用，设备本身不动。
 - 读界面：解析 uiautomator 的 XML，转成和网页、原生应用一样的编号清单。可点击、可勾选的元素列出来；元素内部的文字算作它的名字，不再重复列进页面文字；开关、复选框本身没有文字时，往上三层找所在行的标题。编号按节点在树里的位置加类名加 resource-id 记住。
-- 操作：`input tap`（点击）、`input text`（只支持 ASCII，空格写成 %s，shell 特殊字符要转义；中文需要设备上装 ADBKeyBoard，目前遇到会报错说明）、`input keyevent`（Back、Home、Enter 等；组合键会拒绝）、`input swipe`（滚动）、选下拉框（先点开，再点选项）、截图（`exec-out screencap`）。
+- 操作：`input tap`（点击）、`input text`（只支持 ASCII，空格写成 %s，shell 特殊字符要转义；中文需要设备上装 ADBKeyBoard，目前遇到会报错说明；**第四十轮起不再需要**，改为由设备上的读取程序直接写入文字）、`input keyevent`（Back、Home、Enter 等；组合键会拒绝）、`input swipe`（滚动）、选下拉框（先点开，再点选项）、截图（`exec-out screencap`）。
 - **速度**：`uiautomator dump` 每次都要在设备上冷启动，读一次约 2 秒，点一下再返回要 7.5 秒。现在设备上跑一个常驻的小程序 McodeAgent（`scripts/android-agent/McodeAgent.java`）：它借用系统 uiautomator.jar 里的 UiAutomationShellWrapper 连接一次无障碍服务，之后每收到一行 `dump`，就回一行和 uiautomator 格式相同的 XML，所以解析代码不用改。读一次只要 2 到 20 毫秒；等界面安静用 `waitForIdle(150, 2000)`，避免读到加载到一半的画面。
   - 小程序由 `scripts/android-agent.mjs` 编译：javac 以 release 8 编译，再用 java 直接运行 d8.jar，不走 .bat，因为 JDK 路径里有空格。编好的 dex 以 base64 写进 `src/server/appdrive/android-agent.ts`，随 MCode 发布，用户不需要装 JDK。改 Java 源码后要重跑这个脚本。
   - 推到设备上的文件名带内容哈希，已经推过就不重推。小程序启动失败，就退回 `uiautomator dump`。

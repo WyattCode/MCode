@@ -2297,6 +2297,23 @@ onBeforeUnmount(() => {
   padding-block: 6px;
 }
 
+/*
+ * A row's own button takes the keyboard, but the ring goes round the whole row,
+ * as it does round 新建任务 (user, 2026-09-29): a task's button starts 46 in and
+ * a project's stops before its inline buttons, so a ring on the button sat off
+ * the row's highlight - and was square, the button having no corners of its own.
+ */
+.row:has(> .row-open:focus-visible),
+.row:has(> .project-toggle:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.row > .row-open:focus-visible,
+.row > .project-toggle:focus-visible {
+  outline: none;
+}
+
 .row.project {
   gap: 0;
   padding-inline: 0 9px;
@@ -2350,6 +2367,8 @@ onBeforeUnmount(() => {
   font-weight: 500;
   /* Normal, as MiMo's heading is: 15 tall, where the inherited 24 made it 24. */
   line-height: normal;
+  /* Its keyboard ring rounds like every other ring in the column (user, 2026-09-29: no square rings); nothing else shows it. */
+  border-radius: 4px;
 }
 
 /* MiMo's section toggle keyboard ring: 1px in its muted text colour, 2px out. */

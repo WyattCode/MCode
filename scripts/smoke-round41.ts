@@ -14,13 +14,19 @@
  * - Android: typing with clear:false adds to the field instead of replacing
  *   it (checked on a device, as round 40's Android checks are).
  *
+ * - A window off every screen (IsOffscreen to automation) was named in the
+ *   list of windows but refused when taken over by that name; now the
+ *   window's own visibility decides, and a missed window is looked for again.
+ * - Keyboard rings that were square: a project's and a task's row button, and
+ *   the 项目 / 最近 headings (the user's screenshot, 2026-09-29).
+ *
  * smoke.ts calls `roundFortyOneChecks` with its own check and section.
  */
 import fs from "node:fs"
 import http from "node:http"
 import os from "node:os"
 import path from "node:path"
-import { execFileSync, spawnSync } from "node:child_process"
+import { execFileSync, spawn, spawnSync } from "node:child_process"
 import type { Check } from "./smoke-round5"
 import { AppTool, closeAllApps } from "../src/server/tool/app"
 import { findBrowser } from "../src/server/appdrive/browser"
@@ -37,6 +43,19 @@ function contextFor(sessionID: string, directory: string): ToolContext {
 const refOf = (output: string, test: RegExp) => Number(output.split("\n").find((line) => test.test(line))?.match(/^\[(\d+)\]/)?.[1])
 
 export async function roundFortyOneChecks(check: Check, section: (name: string) => void): Promise<void> {
+  section("Round 41: every keyboard ring in the side column is rounded")
+  {
+    // Measured in a throwaway window by tabbing through the column: these were the only square rings (user, 2026-09-29).
+    const side = fs.readFileSync(path.join(root, "src", "renderer", "src", "components", "Sidebar.vue"), "utf8")
+    // The ring goes round the whole row, not the button inside it: a task's button starts 46 in (the user's second screenshot).
+    const ring = side.match(/\.row:has\(> \.row-open:focus-visible\),\s*\.row:has\(> \.project-toggle:focus-visible\) \{([^}]*)\}/)?.[1] ?? ""
+    const quiet = side.match(/\.row > \.row-open:focus-visible,\s*\.row > \.project-toggle:focus-visible \{([^}]*)\}/)?.[1] ?? ""
+    check("a project's and a task's ring goes round the whole row, not the button inside it", /outline: 2px solid var\(--ring\);/.test(ring) && /outline: none;/.test(quiet), { ring, quiet })
+    // On the heading itself, not its focus rule: a focus state must not reshape what it marks (themecheck).
+    const head = side.match(/^\.section-head \{([^}]*)\}/m)?.[1] ?? ""
+    check("so do the 项目 and 最近 headings", /border-radius: \d+px;/.test(head), head)
+  }
+
   section("Round 41: web components and frames, second look")
   if (!findBrowser()) {
     check("(skipped: no Chrome or Edge on this machine)", true)
@@ -87,6 +106,34 @@ export async function roundFortyOneChecks(check: Check, section: (name: string) 
       await closeAllApps()
       server.close()
       fs.rmSync(work, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 })
+    }
+  }
+
+  section("Round 41: a window moved off the screen can still be taken over")
+  if (process.platform !== "win32") {
+    check("(skipped: Windows only)", true)
+  } else {
+    // A plain open window whose place is off every monitor (a second screen unplugged) is IsOffscreen to automation.
+    // The list of windows named it, and taking it over by that very name was refused: the two disagreed on what is open.
+    const child = spawn("powershell.exe", ["-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", path.join(root, "scripts", "fixtures", "win-demo.ps1")], { stdio: "ignore" })
+    const context = contextFor("r41-offscreen", os.tmpdir())
+    try {
+      let handle: string | undefined
+      for (let attempt = 0; attempt < 40 && !handle; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 250))
+        handle = await AppTool.execute({ action: "window", target: "Win Demo" }, context)
+          .then(() => AppTool.execute({ action: "tabs" }, context))
+          .then((tabs) => tabs.output.match(/^\* (\S+)/m)?.[1], () => undefined)
+      }
+      await AppTool.execute({ action: "close" }, context)
+      // SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE: moved, and nothing else.
+      spawnSync("powershell.exe", ["-NoProfile", "-Command", `Add-Type -Namespace W -Name P -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetWindowPos(System.IntPtr h, System.IntPtr a, int x, int y, int cx, int cy, uint f);'; [W.P]::SetWindowPos([System.IntPtr]${handle}, [System.IntPtr]::Zero, 30000, 30000, 0, 0, 0x15) | Out-Null`], { windowsHide: true })
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      const taken = await AppTool.execute({ action: "window", target: "Win Demo" }, context).then((result) => result.output, (error: Error) => error.message)
+      check("a window off every screen is taken over by its title, as the list of windows names it", Boolean(handle) && !/No open window matches/.test(taken), { handle, taken })
+    } finally {
+      await closeAllApps()
+      child.kill()
     }
   }
 
