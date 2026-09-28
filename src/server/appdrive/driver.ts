@@ -91,25 +91,23 @@ export class AppDriver extends SteppingDriver {
       .map((target) => ({ id: target.targetId, title: target.title, url: target.url, current: target.targetId === this.page?.targetId }))
   }
 
-  /** Makes a window or tab the one every later action works on. */
+  /** Makes a window or tab the one every later action works on - inside the tool only: the user's foreground window stays theirs. */
   async use(targetId: string): Promise<void> {
     if (this.page?.targetId === targetId) return
     const { sessionId } = await this.cdp.send<{ sessionId: string }>("Target.attachToTarget", { targetId, flatten: true })
     this.page = { targetId, sessionId }
     this.last = undefined
     await Promise.all([this.send("Runtime.enable"), this.send("Page.enable"), this.send("Log.enable").catch(() => undefined)])
-    await this.cdp.send("Target.activateTarget", { targetId }).catch(() => undefined)
     // Focus-dependent UI - menus that close on blur, focus rings - behaves as it would for a person at the window.
     await this.send("Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => undefined)
   }
 
   /**
-   * A browser draws no new frame for a window nobody can see - minimised, or
-   * behind others with the system saving work - and a capture then waits for
-   * one forever. The tab is brought forward first, and the wait is bounded.
+   * A browser draws no new frame for a minimised window, and a capture then
+   * waits for one forever, so the wait is bounded. The window is not brought
+   * forward to help: the user may be working in front of it.
    */
   async screenshot(file: string): Promise<void> {
-    await this.send("Page.bringToFront").catch(() => undefined)
     const { data } = await this.cdp
       .send<{ data: string }>("Page.captureScreenshot", { format: "png" }, this.page?.sessionId, SCREENSHOT_TIMEOUT_MS)
       .catch(() => {

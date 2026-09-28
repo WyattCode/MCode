@@ -14,6 +14,7 @@ import os from "node:os"
 import path from "node:path"
 import net from "node:net"
 import { spawn } from "node:child_process"
+import { desktopState } from "./smoke-round37"
 import { pathToFileURL } from "node:url"
 import type { Check } from "./smoke-round5"
 import { AppTool, closeAllApps } from "../src/server/tool/app"
@@ -134,6 +135,16 @@ export async function roundThirtySixChecks(check: Check, section: (name: string)
       const native = await run({ action: "do", steps: [{ action: "click", ref: refOf(settings.output, "语言") }, { action: "press", key: "ArrowUp" }] })
       check("a click on a native select is refused, naming select and its options, and no key follows it", /1\. click \[\d+\] failed: .*native select; choose with select \{ref, value\}.*中文, English, 日本語/.test(native.output) && /remaining 1 step/.test(native.output) && /value="English"/.test(native.output + form.output), native.output)
 
+      // The user keeps working while a page is driven: its browser window must not come to the front.
+      if (process.platform === "win32") {
+        const work = spawn("powershell.exe", ["-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", path.join(root, "scripts", "fixtures", "user-work.ps1")], { stdio: "ignore" })
+        for (let attempt = 0; attempt < 40 && !/User Work$/.test(desktopState()); attempt++) await new Promise((resolve) => setTimeout(resolve, 150))
+        const beforeState = desktopState()
+        await run({ action: "do", steps: [{ action: "click", ref: refOf(opened.output, "计数") }, { action: "hover", ref: plus }, { action: "type", ref: refOf(settings.output, "昵称"), text: "x" }, { action: "press", key: "Tab" }, { action: "click", ref: refOf(opened.output, "设置") }] })
+        const afterState = desktopState()
+        work.kill()
+        check("driving the page never brings its browser window to the front", !/演示应用/.test(beforeState) && !/演示应用/.test(afterState), { beforeState, afterState })
+      }
       const dialog = await run({ action: "do", steps: [{ action: "click", ref: refOf(settings.output, "删除账户") }] })
       check("a modal dialog: only what is inside it is listed", /modal dialog is open/.test(dialog.output) && /"确定删除"/.test(dialog.output) && !/"保存"/.test(dialog.output), dialog.output)
       const confirmed = await run({ action: "do", steps: [{ action: "click", ref: refOf(dialog.output, "确定删除") }, { action: "wait", text: "账户已删除" }] })

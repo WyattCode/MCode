@@ -72,6 +72,8 @@ $save.Add_Click({
   $name = if ($nick.Text.Trim()) { $nick.Text.Trim() } else { "(no name)" }
   $saved.Text = "Saved: $name, $($lang.SelectedItem), $theme"
 })
+# Enter in the nickname box saves, so a check can see a key reach the app.
+$nick.Add_KeyDown({ if ($_.KeyCode -eq "Return") { $save.PerformClick(); $_.SuppressKeyPress = $true } })
 $remove = New-Object System.Windows.Forms.Button
 $remove.Text = "Delete account"; $remove.Left = 110; $remove.Top = 124; $remove.Width = 120
 $status = New-Object System.Windows.Forms.Label

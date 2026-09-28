@@ -14,7 +14,7 @@ import path from "node:path"
 import { spawn, spawnSync } from "node:child_process"
 import type { Check } from "./smoke-round5"
 import { AppTool, closeAllApps } from "../src/server/tool/app"
-import { sendKeys } from "../src/server/appdrive/windows"
+import { nativeKey } from "../src/server/appdrive/windows"
 import { BashTool } from "../src/server/tool/bash"
 import type { ToolContext } from "../src/server/tool/types"
 
@@ -41,6 +41,21 @@ function refOf(output: string, name: string): number {
   return match ? Number(match[1]) : NaN
 }
 
+/** The foreground window, its title, and where the pointer is: what the user would notice being taken. */
+export function desktopState(): string {
+  if (process.platform !== "win32") return "n/a"
+  const script = [
+    "Add-Type -Namespace D -Name S -MemberDefinition '[DllImport(\"user32.dll\")] public static extern System.IntPtr GetForegroundWindow(); [DllImport(\"user32.dll\")] public static extern bool GetCursorPos(out System.Drawing.Point p); [DllImport(\"user32.dll\", CharSet = CharSet.Unicode)] public static extern int GetWindowText(System.IntPtr h, System.Text.StringBuilder b, int n);' -ReferencedAssemblies System.Drawing",
+    "$p = New-Object System.Drawing.Point",
+    "[void][D.S]::GetCursorPos([ref]$p)",
+    "$h = [D.S]::GetForegroundWindow()",
+    "$b = New-Object System.Text.StringBuilder 200",
+    "[void][D.S]::GetWindowText($h, $b, 200)",
+    "Write-Output ('' + $h + ' ' + $p.X + ',' + $p.Y + ' ' + $b)",
+  ].join("; ")
+  return spawnSync("powershell.exe", ["-NoProfile", "-Command", script], { encoding: "utf8", windowsHide: true }).stdout.trim()
+}
+
 function running(pid: number | undefined): boolean {
   if (!pid) return false
   try {
@@ -52,14 +67,15 @@ function running(pid: number | undefined): boolean {
 }
 
 export async function roundThirtySevenChecks(check: Check, section: (name: string) => void): Promise<void> {
-  section("Round 37: keys for a native window, in SendKeys' notation")
+  section("Round 37: keys for a native window, as the messages posted to it")
   {
-    check("named keys", sendKeys("Enter") === "{ENTER}" && sendKeys("Escape") === "{ESC}" && sendKeys("ArrowDown") === "{DOWN}" && sendKeys("F5") === "{F5}")
-    check("modifiers", sendKeys("Control+a") === "^a" && sendKeys("Alt+F4") === "%{F4}" && sendKeys("Control+Shift+s") === "^+s")
-    check("a character SendKeys reads specially is escaped, the plus key included", sendKeys("+") === "{+}" && sendKeys("Control++") === "^{+}" && sendKeys("%") === "{%}")
+    const key = (combo: string) => JSON.stringify(nativeKey(combo))
+    check("named keys, with the character each types", key("Enter") === JSON.stringify({ vk: 13, text: "\r", mods: "" }) && key("ArrowDown") === JSON.stringify({ vk: 40, text: "", mods: "" }) && key("F5") === JSON.stringify({ vk: 116, text: "", mods: "" }))
+    check("modifiers", key("Control+a") === JSON.stringify({ vk: 65, text: "a", mods: "ctrl" }) && key("Alt+F4") === JSON.stringify({ vk: 115, text: "", mods: "alt" }) && key("Control+Shift+s") === JSON.stringify({ vk: 83, text: "s", mods: "ctrl,shift" }))
+    check("punctuation is left to the keyboard layout, the plus key included", key("+") === JSON.stringify({ vk: 0, text: "+", mods: "" }) && key("Control++") === JSON.stringify({ vk: 0, text: "+", mods: "ctrl" }))
     let refused = ""
     try {
-      sendKeys("Meta+r")
+      nativeKey("Meta+r")
     } catch (error) {
       refused = (error as Error).message
     }
@@ -130,6 +146,38 @@ export async function roundThirtySevenChecks(check: Check, section: (name: strin
         ],
       })
       check("typing, choosing and ticking fill the form, and saving says so", /Saved: Wang, Japanese, dark/.test(form.output), form.output)
+
+      /*
+       * The user keeps working while this runs: nothing may move their pointer
+       * or take their foreground window. A stand-in for their work is put in
+       * front first - the demo is in front since it was just launched, and a
+       * window cannot be seen to take what it already has.
+       */
+      const work = spawn("powershell.exe", ["-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", path.join(root, "scripts", "fixtures", "user-work.ps1")], { stdio: "ignore" })
+      for (let attempt = 0; attempt < 40 && !/User Work$/.test(desktopState()); attempt++) await new Promise((resolve) => setTimeout(resolve, 150))
+      const beforeState = desktopState()
+      const keyed = await run({
+        action: "do",
+        steps: [
+          { action: "type", ref: refOf(settings.output, "Nickname"), text: "Li", submit: true },
+          { action: "hover", ref: refOf(settings.output, "Save") },
+          { action: "scroll", dy: 300 },
+          { action: "press", key: "Tab" },
+          { action: "click", ref: refOf(settings.output, "Dark mode") },
+          { action: "click", ref: refOf(settings.output, "Dark mode") },
+        ],
+      })
+      const afterState = desktopState()
+      work.kill()
+      check("Enter typed into a field reaches the app, posted to it rather than typed on the keyboard", /Saved: Li, Japanese, dark/.test(keyed.output), keyed.output)
+      // The user may switch windows themselves meanwhile; what may never happen is the app being driven coming to the front.
+      check("and none of it brings the app being driven to the front", !/Win Demo$/.test(beforeState) && !/Win Demo$/.test(afterState), { beforeState, afterState })
+      // The pointer and keyboard cannot be watched while the user is using them, so what could take them must not be in the host at all.
+      const host = fs.readFileSync(path.join(root, "src", "server", "appdrive", "windows-host.ts"), "utf8")
+      check("the host has no way to move the pointer or type on the keyboard", !/SetCursorPos|mouse_event|SendInput|keybd_event|SendKeys|SetActiveWindow|\.SetFocus\(/.test(host), host.match(/SetCursorPos|mouse_event|SendInput|keybd_event|SendKeys|SetActiveWindow|\.SetFocus\(/)?.[0])
+      // Its one use of the foreground is to give it back: only to the window noted before, and only when the app has taken it.
+      const calls = [...host.matchAll(/SetForegroundWindow\((.*)\);/g)].map((match) => match[1]).filter((argument) => argument !== "IntPtr handle")
+      check("and it brings a window forward only to give the user's back", calls.length === 2 && calls.every((argument) => argument === "userFront" || argument === "new IntPtr(handle)"), calls)
 
       const dialog = await run({ action: "do", steps: [{ action: "click", ref: refOf(settings.output, "Delete account") }] })
       check("a message box the app shows takes the listing, as a modal dialog", /a dialog opened \("Confirm"\)/.test(dialog.output) && /modal dialog is open/.test(dialog.output) && !/"Save"/.test(dialog.output), dialog.output)

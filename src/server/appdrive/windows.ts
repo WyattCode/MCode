@@ -158,18 +158,27 @@ export class WindowsDriver extends SteppingDriver {
 
   /** Starts a program and attaches to the first window it shows; `match` picks one by title when it shows several. */
   static async launch(executable: string, args: string[], cwd: string, match?: string): Promise<WindowsDriver> {
+    // The host first, to note which window the user has in front: a program's first window takes the front, and is given it back once it is up.
+    const host = await Host.start()
+    const front = await host.call<number>("front").catch(() => 0)
     const child = spawn(executable, args, { cwd, stdio: "ignore", detached: false, windowsHide: false })
     const started = await new Promise<Error | undefined>((resolve) => {
       child.once("error", resolve)
       child.once("spawn", () => resolve(undefined))
     })
-    if (started) throw new Error(`${executable} could not be started: ${started.message}`)
-    const host = await Host.start()
+    if (started) {
+      host.stop()
+      throw new Error(`${executable} could not be started: ${started.message}`)
+    }
     const until = Date.now() + LAUNCH_WAIT_MS
     while (Date.now() < until) {
       if (child.exitCode !== null && !match) break
       const found = await host.call<{ title: string }>("attach", { match: match ?? "", pid: match ? 0 : child.pid }).catch(() => undefined)
-      if (found) return new WindowsDriver(host, found.title, child)
+      if (found) {
+        await sleep(300)
+        await host.call("restore-front", { handle: front }).catch(() => undefined)
+        return new WindowsDriver(host, found.title, child)
+      }
       await sleep(250)
     }
     host.stop()
@@ -224,15 +233,16 @@ export class WindowsDriver extends SteppingDriver {
       case "hover":
         return this.act(step.action, { ref: requireRef(step) })
       case "type": {
-        const note = await this.act("type", { ref: requireRef(step), text: String(step.text ?? "") })
-        if (step.submit) await this.act("press", { key: "{ENTER}" })
+        const ref = requireRef(step)
+        const note = await this.act("type", { ref, text: String(step.text ?? "") })
+        if (step.submit) await this.act("press", { ref, ...nativeKey("Enter") })
         return note
       }
       case "select":
         return this.act("select", { ref: requireRef(step), value: String(step.value ?? step.text ?? "") })
       case "press":
         if (!step.key) throw new StepError("press needs a key, such as Enter or Control+a")
-        return this.act("press", { key: sendKeys(step.key) })
+        return this.act("press", nativeKey(step.key))
       case "scroll":
         return this.act("scroll", step.ref !== undefined ? { ref: requireRef(step) } : { dy: step.dy ?? 600 })
       case "wait": {
@@ -274,39 +284,50 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-const SEND_KEYS_NAMES: Record<string, string> = {
-  enter: "{ENTER}",
-  tab: "{TAB}",
-  escape: "{ESC}",
-  esc: "{ESC}",
-  backspace: "{BACKSPACE}",
-  delete: "{DELETE}",
-  space: " ",
-  arrowup: "{UP}",
-  arrowdown: "{DOWN}",
-  arrowleft: "{LEFT}",
-  arrowright: "{RIGHT}",
-  home: "{HOME}",
-  end: "{END}",
-  pageup: "{PGUP}",
-  pagedown: "{PGDN}",
-  insert: "{INSERT}",
+/** Named keys as Windows virtual-key codes, with the character each types when it types one. */
+const NATIVE_KEYS: Record<string, { vk: number; text?: string }> = {
+  enter: { vk: 13, text: "\r" },
+  tab: { vk: 9, text: "\t" },
+  escape: { vk: 27, text: "\u001b" },
+  esc: { vk: 27, text: "\u001b" },
+  backspace: { vk: 8, text: "\b" },
+  delete: { vk: 46 },
+  space: { vk: 32, text: " " },
+  arrowup: { vk: 38 },
+  arrowdown: { vk: 40 },
+  arrowleft: { vk: 37 },
+  arrowright: { vk: 39 },
+  home: { vk: 36 },
+  end: { vk: 35 },
+  pageup: { vk: 33 },
+  pagedown: { vk: 34 },
+  insert: { vk: 45 },
 }
 
-const SEND_KEYS_MODIFIERS: Record<string, string> = { control: "^", ctrl: "^", alt: "%", shift: "+" }
+const NATIVE_MODIFIERS: Record<string, string> = { control: "ctrl", ctrl: "ctrl", alt: "alt", shift: "shift" }
 
-/** A key the way the app tool names it - Enter, Control+a, Alt+F4 - in the notation Windows' SendKeys reads. */
-export function sendKeys(combo: string): string {
+/**
+ * A key the way the app tool names it - Enter, Control+a, Alt+F4 - as what is
+ * posted to the window: its virtual-key code, the character it types, and the
+ * modifiers held. Posted, not typed on the real keyboard, so the user keeps it.
+ */
+export function nativeKey(combo: string): { vk: number; text: string; mods: string } {
   const { modifiers, name } = splitCombo(combo)
-  let prefix = ""
+  const mods: string[] = []
   for (const part of modifiers) {
-    const modifier = SEND_KEYS_MODIFIERS[part.toLowerCase()]
+    const modifier = NATIVE_MODIFIERS[part.toLowerCase()]
     if (!modifier) throw new StepError(`the ${part} key cannot be pressed in a native window; use Control, Alt or Shift`)
-    prefix += modifier
+    mods.push(modifier)
   }
-  const named = SEND_KEYS_NAMES[name.toLowerCase()]
-  if (named) return prefix + named
-  if (/^f([1-9]|1[0-6])$/i.test(name)) return `${prefix}{${name.toUpperCase()}}`
-  if (name.length === 1) return prefix + ("+^%~(){}[]".includes(name) ? `{${name}}` : prefix ? name.toLowerCase() : name)
+  const named = NATIVE_KEYS[name.toLowerCase()]
+  if (named) return { vk: named.vk, text: named.text ?? "", mods: mods.join(",") }
+  const f = /^f([1-9]|1[0-2])$/i.exec(name)
+  if (f) return { vk: 111 + Number(f[1]), text: "", mods: mods.join(",") }
+  if (name.length === 1) {
+    const upper = name.toUpperCase()
+    // Letters and digits have their own codes; anything else is looked up in the keyboard layout by the host.
+    const vk = /[A-Z0-9]/.test(upper) ? upper.charCodeAt(0) : 0
+    return { vk, text: name, mods: mods.join(",") }
+  }
   throw new StepError(`unknown key "${name}"`)
 }

@@ -42,13 +42,52 @@ public static class McodeUia {
   static int next = 1;
   static JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
 
-  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr handle);
+  /*
+   * Nothing here takes the user's mouse, keyboard or foreground window: the
+   * user keeps working while the app is driven. Controls are operated through
+   * what they offer (UI Automation patterns); where one offers nothing, the
+   * mouse or key message is posted to the control's own window, which does
+   * not move the pointer or bring anything forward.
+   */
   [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr handle, int command);
   [DllImport("user32.dll")] static extern bool IsIconic(IntPtr handle);
-  [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
-  [DllImport("user32.dll")] static extern void mouse_event(uint flags, int dx, int dy, int data, UIntPtr extra);
+  [DllImport("user32.dll")] static extern bool PostMessage(IntPtr handle, uint message, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessage(IntPtr handle, uint message, IntPtr wParam, string lParam);
+  [DllImport("user32.dll")] static extern bool ScreenToClient(IntPtr handle, ref POINT point);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr handle, IntPtr processId);
+  [DllImport("user32.dll")] static extern bool GetGUIThreadInfo(uint thread, ref GUITHREADINFO info);
+  [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr handle, IntPtr hdc, uint flags);
+  [DllImport("user32.dll")] static extern uint MapVirtualKey(uint code, uint mapType);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern short VkKeyScan(char character);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr handle, StringBuilder name, int size);
+  [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr handle, uint message, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessage(IntPtr handle, uint message, IntPtr wParam, StringBuilder lParam);
+  [DllImport("user32.dll")] static extern IntPtr GetParent(IntPtr handle);
+  [DllImport("user32.dll")] static extern int GetDlgCtrlID(IntPtr handle);
+  [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr handle);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr handle, out uint processId);
 
-  const uint LEFTDOWN = 0x02, LEFTUP = 0x04, WHEEL = 0x0800;
+  /*
+   * UI Automation reports where controls are in real pixels. A process that
+   * does not say it knows about display scaling has its own coordinates scaled
+   * by Windows, and a click placed from one onto the other lands beside its
+   * control - on a 150% display, on the next tab along.
+   */
+  static McodeUia() { SetProcessDPIAware(); }
+
+  [StructLayout(LayoutKind.Sequential)] struct POINT { public int X; public int Y; }
+  [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+  [StructLayout(LayoutKind.Sequential)] struct GUITHREADINFO { public int cbSize; public int flags; public IntPtr hwndActive; public IntPtr hwndFocus; public IntPtr hwndCapture; public IntPtr hwndMenuOwner; public IntPtr hwndMoveSize; public IntPtr hwndCaret; public RECT rcCaret; }
+
+  const uint WM_SETTEXT = 0x000C, WM_KEYDOWN = 0x0100, WM_KEYUP = 0x0101, WM_CHAR = 0x0102, WM_SYSKEYDOWN = 0x0104, WM_SYSKEYUP = 0x0105;
+  const uint WM_COMMAND = 0x0111, CB_GETCOUNT = 0x0146, CB_GETLBTEXT = 0x0148, CB_GETLBTEXTLEN = 0x0149, CB_SETCURSEL = 0x014E, CBN_SELCHANGE = 1;
+  const uint WM_MOUSEMOVE = 0x0200, WM_LBUTTONDOWN = 0x0201, WM_LBUTTONUP = 0x0202, WM_LBUTTONDBLCLK = 0x0203, WM_MOUSEWHEEL = 0x020A;
+  /// Shown in its last size and place, without being made the active window.
+  const int SW_SHOWNOACTIVATE = 4;
+  /// Where the last text was typed, which is where a key pressed next goes.
+  static IntPtr typedInto = IntPtr.Zero;
 
   public static string Handle(string line) {
     object id = null;
@@ -77,10 +116,16 @@ public static class McodeUia {
       case "windows": return Windows(Number(request, "recent"), request.ContainsKey("own") && Convert.ToBoolean(request["own"]));
       case "attach": return Attach(Text(request, "match"), Number(request, "pid"));
       case "snapshot": return Snapshot(Math.Max(1, Number(request, "limit")));
-      case "act": return Act(Text(request, "action"), Number(request, "ref"), Text(request, "text"), Text(request, "key"), Text(request, "value"), Number(request, "dy"));
+      case "act": return Act(Text(request, "action"), Number(request, "ref"), Text(request, "text"), Number(request, "vk"), Text(request, "mods"), Text(request, "value"), Number(request, "dy"));
       case "settle": return Settle(Number(request, "quiet"), Number(request, "cap"));
       case "screenshot": return Screenshot(Text(request, "file"));
       case "alive": return window != null && Alive(window);
+      case "front": return GetForegroundWindow().ToInt64();
+      case "restore-front": {
+        long handle = Convert.ToInt64(request["handle"]);
+        if (handle != 0 && window != null && ProcessOf(GetForegroundWindow()) == (uint)windowPid) SetForegroundWindow(new IntPtr(handle));
+        return true;
+      }
       default: throw new Exception("unknown op");
     }
   }
@@ -129,7 +174,7 @@ public static class McodeUia {
     if (found == null) throw new Exception("no-window");
     // A minimised window lists nothing: it is restored first, as a person would before using it.
     var handle = new IntPtr(found.Current.NativeWindowHandle);
-    if (IsIconic(handle)) { ShowWindow(handle, 9); Thread.Sleep(300); }
+    if (IsIconic(handle)) { ShowWindow(handle, SW_SHOWNOACTIVATE); Thread.Sleep(300); }
     window = found;
     windowPid = found.Current.ProcessId;
     ids.Clear();
@@ -193,7 +238,7 @@ public static class McodeUia {
     if (!Alive(window)) throw new Exception("window-closed");
     // Minimised since the last look - by the user, or by the app - it would list nothing; it is put back first.
     var handle = new IntPtr(window.Current.NativeWindowHandle);
-    if (IsIconic(handle)) { ShowWindow(handle, 9); Thread.Sleep(300); }
+    if (IsIconic(handle)) { ShowWindow(handle, SW_SHOWNOACTIVATE); Thread.Sleep(300); }
     var modal = Modal();
     var scope = modal ?? window;
     var seen = new Seen { Limit = limit };
@@ -308,33 +353,179 @@ public static class McodeUia {
     return element;
   }
 
-  static object Act(string action, int number, string text, string key, string value, int dy) {
+  /*
+   * The user's foreground window, as it was before an action. Operating a
+   * control through UI Automation lets the app activate itself - measured on
+   * WinForms, a tab selected, a box ticked or a button invoked brings its
+   * window to the front - and an app started from the foreground app (MCode,
+   * while the user talks to it) is allowed to. So the window in front before
+   * the action is put back in front after it, if the app took its place.
+   */
+  static IntPtr userFront = IntPtr.Zero;
+
+  static uint ProcessOf(IntPtr handle) {
+    uint process;
+    GetWindowThreadProcessId(handle, out process);
+    return process;
+  }
+
+  static void NoteFront() {
+    var front = GetForegroundWindow();
+    userFront = front != IntPtr.Zero && ProcessOf(front) != (uint)windowPid ? front : IntPtr.Zero;
+  }
+
+  static object GiveBack() {
+    if (userFront == IntPtr.Zero || window == null) return false;
+    var front = GetForegroundWindow();
+    if (front == userFront || ProcessOf(front) != (uint)windowPid) return false;
+    SetForegroundWindow(userFront);
+    return true;
+  }
+
+  static object Act(string action, int number, string text, int vk, string mods, string value, int dy) {
     if (window == null) throw new Exception("not-attached");
+    NoteFront();
+    try { return Perform(action, number, text, vk, mods, value, dy); } finally { GiveBack(); }
+  }
+
+  static object Perform(string action, int number, string text, int vk, string mods, string value, int dy) {
     switch (action) {
       case "click": return Click(Element(number), 1);
       case "double_click": return Click(Element(number), 2);
-      case "hover": { var at = Middle(Element(number)); SetCursorPos(at.X, at.Y); return ""; }
+      case "hover": PostMouse(Element(number), WM_MOUSEMOVE, 0); return "";
       case "type": return Type(Element(number), text);
-      case "press": Front(); System.Windows.Forms.SendKeys.SendWait(key); return "";
+      case "press": return Press(number > 0 ? NearestHandle(Element(number)) : KeyTarget(), vk, text, mods ?? "");
       case "select": return Choose(Element(number), value);
-      case "scroll": {
-        if (number > 0) {
-          object pattern;
-          var element = Element(number);
-          if (element.TryGetCurrentPattern(ScrollItemPattern.Pattern, out pattern)) ((ScrollItemPattern)pattern).ScrollIntoView();
-          return "";
-        }
-        var middle = Middle(window);
-        Front();
-        SetCursorPos(middle.X, middle.Y);
-        mouse_event(WHEEL, 0, 0, -(dy == 0 ? 600 : dy) / 5, UIntPtr.Zero);
-        return "";
-      }
+      case "scroll": return Scroll(number, dy == 0 ? 600 : dy);
       default: throw new Exception("unknown action");
     }
   }
 
-  /// A person's click, done the way the control itself offers: invoked, selected or toggled; the mouse only for what offers none of those.
+  /// The control's own window, or the nearest one above it: WPF and other windowless controls live inside their host's.
+  static IntPtr NearestHandle(AutomationElement element) {
+    var walker = TreeWalker.RawViewWalker;
+    var at = element;
+    for (int depth = 0; at != null && depth < 50; depth++) {
+      try {
+        int handle = at.Current.NativeWindowHandle;
+        if (handle != 0) return new IntPtr(handle);
+        at = walker.GetParent(at);
+      } catch { break; }
+    }
+    return new IntPtr(window.Current.NativeWindowHandle);
+  }
+
+  /// Where a key goes when no element is named: the last field typed into, else the control that has focus inside the app, else its window.
+  static IntPtr KeyTarget() {
+    if (typedInto != IntPtr.Zero) return typedInto;
+    var top = new IntPtr(window.Current.NativeWindowHandle);
+    var info = new GUITHREADINFO();
+    info.cbSize = Marshal.SizeOf(info);
+    if (GetGUIThreadInfo(GetWindowThreadProcessId(top, IntPtr.Zero), ref info) && info.hwndFocus != IntPtr.Zero) return info.hwndFocus;
+    return top;
+  }
+
+  static IntPtr Where(int x, int y) { return new IntPtr((y << 16) | (x & 0xFFFF)); }
+
+  /// A click or a move posted to the control's window at its middle - the pointer itself stays where the user left it.
+  static void PostMouse(AutomationElement element, uint message, int count) {
+    var at = Middle(element);
+    var handle = NearestHandle(element);
+    var point = new POINT { X = at.X, Y = at.Y };
+    ScreenToClient(handle, ref point);
+    var where = Where(point.X, point.Y);
+    PostMessage(handle, WM_MOUSEMOVE, IntPtr.Zero, where);
+    for (int i = 0; i < count; i++) {
+      PostMessage(handle, i == 1 ? WM_LBUTTONDBLCLK : WM_LBUTTONDOWN, new IntPtr(1), where);
+      PostMessage(handle, WM_LBUTTONUP, IntPtr.Zero, where);
+    }
+  }
+
+  static IntPtr KeyParam(int vk, bool up) {
+    uint scan = MapVirtualKey((uint)vk, 0);
+    uint bits = 1u | (scan << 16) | (up ? 0xC0000000u : 0u);
+    return new IntPtr(unchecked((int)bits));
+  }
+
+  /// A key posted to a window, with its character when it types one: the app reads it as a key press, and the user's own typing goes on elsewhere.
+  static object Press(IntPtr target, int vk, string text, string mods) {
+    bool ctrl = mods.Contains("ctrl"), alt = mods.Contains("alt"), shift = mods.Contains("shift");
+    if (vk == 0 && !string.IsNullOrEmpty(text)) vk = VkKeyScan(text[0]) & 0xFF;
+    uint down = alt ? WM_SYSKEYDOWN : WM_KEYDOWN, up = alt ? WM_SYSKEYUP : WM_KEYUP;
+    if (ctrl) PostMessage(target, WM_KEYDOWN, new IntPtr(0x11), KeyParam(0x11, false));
+    if (shift) PostMessage(target, WM_KEYDOWN, new IntPtr(0x10), KeyParam(0x10, false));
+    if (alt) PostMessage(target, WM_SYSKEYDOWN, new IntPtr(0x12), KeyParam(0x12, false));
+    PostMessage(target, down, new IntPtr(vk), KeyParam(vk, false));
+    if (!string.IsNullOrEmpty(text) && !ctrl && !alt) foreach (char c in text) PostMessage(target, WM_CHAR, new IntPtr(c), KeyParam(vk, false));
+    PostMessage(target, up, new IntPtr(vk), KeyParam(vk, true));
+    if (alt) PostMessage(target, WM_SYSKEYUP, new IntPtr(0x12), KeyParam(0x12, true));
+    if (shift) PostMessage(target, WM_KEYUP, new IntPtr(0x10), KeyParam(0x10, true));
+    if (ctrl) PostMessage(target, WM_KEYUP, new IntPtr(0x11), KeyParam(0x11, true));
+    // Posted keys do not change what the keyboard reports as held, so a shortcut only works in apps that read the message itself.
+    return ctrl || alt ? "sent to the window without taking the keyboard; if nothing happened, the app reads held keys from the keyboard, so use a button or menu item instead" : "";
+  }
+
+  /// Scrolls without the wheel: the element into view, or the window's first scrollable part by pages.
+  static object Scroll(int number, int dy) {
+    object pattern;
+    if (number > 0) {
+      var element = Element(number);
+      if (element.TryGetCurrentPattern(ScrollItemPattern.Pattern, out pattern)) ((ScrollItemPattern)pattern).ScrollIntoView();
+      return "";
+    }
+    var scrollable = window.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.IsScrollPatternAvailableProperty, true));
+    if (scrollable != null && scrollable.TryGetCurrentPattern(ScrollPattern.Pattern, out pattern)) {
+      ((ScrollPattern)pattern).ScrollVertical(dy > 0 ? ScrollAmount.LargeIncrement : ScrollAmount.LargeDecrement);
+      return "";
+    }
+    var top = new IntPtr(window.Current.NativeWindowHandle);
+    var middle = Middle(window);
+    PostMessage(top, WM_MOUSEWHEEL, new IntPtr((-(dy / 5) * 120 / 120) << 16), Where(middle.X, middle.Y));
+    return "";
+  }
+
+  static string ClassOf(IntPtr handle) {
+    var name = new StringBuilder(256);
+    GetClassName(handle, name, name.Capacity);
+    return name.ToString();
+  }
+
+  /*
+   * Whether a control lives in a window of its own that takes Win32 messages -
+   * Win32 and WinForms controls do. Text and a combo box's choice are set that
+   * way, which does not activate the app. Clicks are not: some common controls
+   * place a click by where the real pointer last was, not by the message.
+   * WPF, Qt, Chromium and XAML draw their controls inside one window and are
+   * left to the patterns.
+   */
+  static bool TakesMessages(AutomationElement element) {
+    string name = ClassOf(NearestHandle(element));
+    if (name.Length == 0) return false;
+    foreach (var drawn in new[] { "HwndWrapper", "Qt", "Chrome_", "Windows.UI.", "DirectUI", "ApplicationFrame", "Mozilla", "SunAwt", "GlassWnd" }) {
+      if (name.StartsWith(drawn, StringComparison.OrdinalIgnoreCase)) return false;
+    }
+    return true;
+  }
+
+  /*
+   * Runs something the app handles before it answers, waiting until it has:
+   * a slow handler reported as done would be read before it changed anything.
+   * It runs aside because a click that opens a modal dialog does not return
+   * until the dialog closes: once a dialog is up, the click has done what it
+   * will do for now.
+   */
+  static string Aside(Action action) {
+    var thread = new Thread(() => { try { action(); } catch { } }) { IsBackground = true };
+    thread.Start();
+    var clock = Stopwatch.StartNew();
+    while (!thread.Join(100)) {
+      if (clock.ElapsedMilliseconds > 300 && Modal() != null) return "";
+      if (clock.ElapsedMilliseconds > 10000) return "the app is still busy with this click after 10s";
+    }
+    return "";
+  }
+
+  /// A person's click, the way the control itself offers: invoked, selected or toggled; posted mouse messages for what offers none of those.
   static object Click(AutomationElement element, int count) {
     var current = element.Current;
     if (!current.IsEnabled) return "it is disabled";
@@ -343,21 +534,7 @@ public static class McodeUia {
     if (count == 1) {
       if (element.TryGetCurrentPattern(InvokePattern.Pattern, out pattern)) {
         var invoke = (InvokePattern)pattern;
-        /*
-         * Invoke returns when the app has finished handling the click, so it
-         * is waited for - a slow handler reported as done would be read before
-         * it changed anything. It runs aside because a button that opens a
-         * modal dialog does not return until the dialog closes: once a dialog
-         * is up, the click has done what it will do for now.
-         */
-        var thread = new Thread(() => { try { invoke.Invoke(); } catch { } }) { IsBackground = true };
-        thread.Start();
-        var clock = Stopwatch.StartNew();
-        while (!thread.Join(100)) {
-          if (clock.ElapsedMilliseconds > 300 && Modal() != null) return "";
-          if (clock.ElapsedMilliseconds > 10000) return "the app is still busy with this click after 10s";
-        }
-        return "";
+        return Aside(() => invoke.Invoke());
       }
       if (element.TryGetCurrentPattern(SelectionItemPattern.Pattern, out pattern)) { ((SelectionItemPattern)pattern).Select(); return ""; }
       if (element.TryGetCurrentPattern(TogglePattern.Pattern, out pattern)) { ((TogglePattern)pattern).Toggle(); return ""; }
@@ -367,39 +544,48 @@ public static class McodeUia {
         return "";
       }
     }
-    var at = Middle(element);
-    Front();
-    SetCursorPos(at.X, at.Y);
-    for (int i = 0; i < count; i++) {
-      mouse_event(LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
-      mouse_event(LEFTUP, 0, 0, 0, UIntPtr.Zero);
-    }
-    return "clicked with the mouse";
+    PostMouse(element, WM_LBUTTONDOWN, count);
+    return "";
   }
 
   static object Type(AutomationElement element, string text) {
     object pattern;
+    typedInto = NearestHandle(element);
+    // A field with a window of its own takes its text as a message, which changes it without activating the app.
+    if (element.Current.NativeWindowHandle != 0 && TakesMessages(element)) {
+      SendMessage(typedInto, WM_SETTEXT, IntPtr.Zero, text);
+      return "";
+    }
     if (element.TryGetCurrentPattern(ValuePattern.Pattern, out pattern) && !((ValuePattern)pattern).Current.IsReadOnly) {
       ((ValuePattern)pattern).SetValue(text);
       return "";
     }
-    Front();
-    element.SetFocus();
-    System.Windows.Forms.SendKeys.SendWait("^a");
-    System.Windows.Forms.SendKeys.SendWait(Escape(text));
-    return "typed with the keyboard";
+    foreach (char c in text) PostMessage(typedInto, WM_CHAR, new IntPtr(c), new IntPtr(1));
+    return "typed into the window as characters";
   }
 
-  static string Escape(string text) {
-    var built = new StringBuilder();
-    foreach (char c in text) {
-      if ("+^%~(){}[]".IndexOf(c) >= 0) built.Append('{').Append(c).Append('}');
-      else built.Append(c);
+  /// A Win32 or WinForms combo box: its items read and one chosen through its own messages, and its parent told, as the app hears a person's choice.
+  static object ChooseByMessage(AutomationElement element, string wanted) {
+    var handle = new IntPtr(element.Current.NativeWindowHandle);
+    int count = SendMessage(handle, CB_GETCOUNT, IntPtr.Zero, IntPtr.Zero).ToInt32();
+    var names = new List<string>();
+    for (int i = 0; i < count && i < 500; i++) {
+      int length = SendMessage(handle, CB_GETLBTEXTLEN, new IntPtr(i), IntPtr.Zero).ToInt32();
+      var text = new StringBuilder(Math.Max(0, length) + 1);
+      if (length > 0) SendMessage(handle, CB_GETLBTEXT, new IntPtr(i), text);
+      names.Add(text.ToString());
     }
-    return built.ToString();
+    int index = names.FindIndex(name => string.Equals(name, wanted, StringComparison.OrdinalIgnoreCase));
+    if (index < 0) index = names.FindIndex(name => name.IndexOf(wanted, StringComparison.OrdinalIgnoreCase) >= 0);
+    if (index < 0) throw new Exception("no-option:" + string.Join("|", names.Take(30)));
+    SendMessage(handle, CB_SETCURSEL, new IntPtr(index), IntPtr.Zero);
+    int id = GetDlgCtrlID(handle);
+    SendMessage(GetParent(handle), WM_COMMAND, new IntPtr((int)(CBN_SELCHANGE << 16) | (id & 0xFFFF)), handle);
+    return "chose " + json.Serialize(names[index]);
   }
 
   static object Choose(AutomationElement element, string wanted) {
+    if (element.Current.NativeWindowHandle != 0 && TakesMessages(element) && ClassOf(new IntPtr(element.Current.NativeWindowHandle)).IndexOf("COMBOBOX", StringComparison.OrdinalIgnoreCase) >= 0) return ChooseByMessage(element, wanted);
     object pattern;
     var names = new List<string>();
     bool opened = false;
@@ -436,14 +622,6 @@ public static class McodeUia {
     return new System.Drawing.Point((int)(box.Left + box.Width / 2), (int)(box.Top + box.Height / 2));
   }
 
-  /// The window the keyboard and the mouse go to: restored if minimised, and brought forward.
-  static void Front() {
-    var handle = new IntPtr(window.Current.NativeWindowHandle);
-    if (IsIconic(handle)) ShowWindow(handle, 9);
-    SetForegroundWindow(handle);
-    Thread.Sleep(50);
-  }
-
   // ------------------------------------------------------------ waiting
 
   /// Waits until the window stops changing: the same listing twice, QUIET ms apart, or CAP ms gone by.
@@ -457,6 +635,7 @@ public static class McodeUia {
       if (now != last) { last = now; stableSince = clock.ElapsedMilliseconds; continue; }
       if (clock.ElapsedMilliseconds - stableSince >= quiet) break;
     }
+    GiveBack();
     return clock.ElapsedMilliseconds;
   }
 
@@ -469,11 +648,18 @@ public static class McodeUia {
 
   // ------------------------------------------------------------ pictures
 
+  /// The window as it draws itself (PrintWindow), not the screen where it is: what covers it - another app, the user's own work - is never in the picture.
   static object Screenshot(string file) {
     var box = window.Current.BoundingRectangle;
     if (box.IsEmpty) throw new Exception("hidden");
+    var handle = new IntPtr(window.Current.NativeWindowHandle);
     using (var bitmap = new System.Drawing.Bitmap((int)box.Width, (int)box.Height)) {
-      using (var graphics = System.Drawing.Graphics.FromImage(bitmap)) graphics.CopyFromScreen((int)box.Left, (int)box.Top, 0, 0, bitmap.Size);
+      using (var graphics = System.Drawing.Graphics.FromImage(bitmap)) {
+        var hdc = graphics.GetHdc();
+        bool drawn = PrintWindow(handle, hdc, 2);
+        graphics.ReleaseHdc(hdc);
+        if (!drawn) throw new Exception("the window could not draw itself for a picture");
+      }
       bitmap.Save(file, System.Drawing.Imaging.ImageFormat.Png);
     }
     return file;
