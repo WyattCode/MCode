@@ -1,0 +1,10 @@
+{
+  "prompt": "把函数 calcTotal 改名为 computeTotal，项目里所有用到它的地方（包括导出、导入、调用和注释）都要跟着改。改完运行 node index.js 确认输出不变。",
+  "verify": [
+    "node",
+    "check.js"
+  ],
+  "unchanged": [
+    "check.js"
+  ]
+}

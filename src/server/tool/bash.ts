@@ -12,6 +12,7 @@ import { repositoryRoot, tryGit } from "../git"
 import { gitBash, platformShell, which, windowsPath } from "../shell-path"
 import { mergeConflictNotice } from "./merge-conflict"
 import { killTree } from "../kill-tree"
+import { windowsOfTree } from "../appdrive/windows"
 
 const DEFAULT_TIMEOUT = 120_000
 
@@ -35,6 +36,24 @@ export const PREVIEW_CHARS = 30_000
 export const PROGRESS_EVERY_MS = 100
 /** How long a stopped command is given to close its pipes before the result is put together without them. */
 const CLOSE_GRACE_MS = 3_000
+/**
+ * How long the output is waited for once the shell itself has exited. A
+ * process the command put in the background (`app &`, `npm run dev &`) keeps
+ * the output pipes open for as long as it runs, so waiting for them to close
+ * would wait for that process - a window program, a dev server - to end, and
+ * the command would be stopped at its timeout instead. Past this the command
+ * is done and what it started is left running, as in a terminal.
+ */
+export const EXIT_DRAIN_MS = 500
+/**
+ * On Windows, how long a command runs before the tool starts looking for a
+ * window it opened, and how often it looks. A command that starts a desktop
+ * program, or shows a message box, waits for that window to close - for the
+ * rest of its timeout, with a model that cannot see the window. Once one is
+ * seen the command is answered and left running.
+ */
+export const WINDOW_LOOK_AFTER_MS = 3_000
+export const WINDOW_LOOK_EVERY_MS = 2_000
 /** The longest delay a timer takes; anything larger would fire at once. */
 const LONGEST_TIMER = 2 ** 31 - 1
 
@@ -645,7 +664,7 @@ export const BashTool: ToolDefinition = {
         progressTimer = undefined
       }
 
-      const finish = async (code: number | null, expired: boolean) => {
+      const finish = async (code: number | null, expired: boolean, lingering = false, windows: string[] = []) => {
         seal()
         const file = saved ? await saved : undefined
         while (flushing) await flushing
@@ -666,6 +685,13 @@ export const BashTool: ToolDefinition = {
          */
         if (expired) {
           output += `\n\n(The command was stopped when it ran past its ${timeout} ms timeout. If it needs longer and is not waiting for input, run it again with a larger timeout.)`
+        }
+        if (windows.length) {
+          const named = windows.slice(0, 3).map((title) => `"${title}"`).join(", ")
+          output += `\n\n(The command is still running: it opened ${windows.length === 1 ? "the window" : "the windows"} ${named} and is waiting on ${windows.length === 1 ? "it" : "them"}. It was left running. Operate or close ${windows.length === 1 ? "it" : "them"} with the app tool - window {target: ${JSON.stringify(windows[0])}} - instead of waiting here; to start a desktop program, use the app tool's launch.)`
+        }
+        if (lingering) {
+          output += "\n\n(The command has finished; a process it started in the background is still running and was left running. To try a window program, start it with the app tool's launch instead.)"
         }
         // A merge or rebase this left stopped on conflicts: the note says to back out and hand the conflict over.
         output += await mergeConflictNotice(cwd, command, output)
@@ -716,6 +742,29 @@ export const BashTool: ToolDefinition = {
       }
       context.signal.addEventListener("abort", onAbort, { once: true })
 
+      /*
+       * A command sitting on a window it opened: answered at once with what
+       * the window is called, and left running - the window is the model's to
+       * operate or close with the app tool, and the user's screen is not left
+       * waiting on a dialog nobody is watching.
+       */
+      let looking: ReturnType<typeof setTimeout> | undefined
+      const look = async () => {
+        if (settled || child.pid === undefined) return
+        const windows = await windowsOfTree(child.pid).catch(() => [])
+        if (settled) return
+        if (!windows.length) {
+          looking = setTimeout(() => void look(), WINDOW_LOOK_EVERY_MS)
+          return
+        }
+        settled = true
+        clearTimeout(timer)
+        context.signal.removeEventListener("abort", onAbort)
+        void finish(null, false, false, windows.map((window) => window.title))
+      }
+      if (process.platform === "win32") looking = setTimeout(() => void look(), WINDOW_LOOK_AFTER_MS)
+      child.once("close", () => clearTimeout(looking))
+
       child.on("error", (err) => {
         if (settled) return
         settled = true
@@ -732,6 +781,23 @@ export const BashTool: ToolDefinition = {
         clearTimeout(timer)
         context.signal.removeEventListener("abort", onAbort)
         void finish(code, false)
+      })
+
+      /*
+       * The shell has exited. Its output normally closes a moment later; when
+       * it does not, something it started still holds the pipes, and the
+       * command is finished without waiting for that. What the background
+       * process prints afterwards is still read (and dropped), so a full pipe
+       * never stalls it.
+       */
+      child.on("exit", (code) => {
+        setTimeout(() => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          context.signal.removeEventListener("abort", onAbort)
+          void finish(code, false, true)
+        }, EXIT_DRAIN_MS)
       })
     })
   },

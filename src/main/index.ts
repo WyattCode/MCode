@@ -471,6 +471,28 @@ function trayTemplateFile(): string {
     : path.join(here, "../../resources/tray/trayTemplate.png")
 }
 
+/** Windows' window icon for a colourway - title bar, taskbar, Alt+Tab - as its multi-size .ico, or nothing if it has none. */
+function windowIcoFile(id: string): string | undefined {
+  if (!/^[a-z][a-z0-9-]{0,30}$/.test(id)) return undefined
+  const file = app.isPackaged ? path.join(process.resourcesPath, "app-icons", id + ".ico") : path.join(here, "../../resources/app-icons", id + ".ico")
+  return existsSync(file) ? file : undefined
+}
+
+/**
+ * macOS: whether this run has put a colourway's picture on the Dock. Until it
+ * has, the bundle's own icon stays - on macOS 26 and later the Icon Composer
+ * package, drawn with Liquid Glass and its dark appearance - which a flat PNG
+ * handed to the Dock would cover.
+ */
+let dockCustomised = false
+
+/** Windows' tray icon for a colourway: its multi-size .ico, or nothing if it has none. */
+function trayIcoFile(id: string): string | undefined {
+  if (!/^[a-z][a-z0-9-]{0,30}$/.test(id)) return undefined
+  const file = app.isPackaged ? path.join(process.resourcesPath, "tray", id + ".ico") : path.join(here, "../../resources/tray", id + ".ico")
+  return existsSync(file) ? file : undefined
+}
+
 /**
  * The file an id names, or nothing if it names none. The Dock takes the macOS
  * cut (`app-icons-mac`, on Apple's icon grid, drawn by scripts/icons.mjs), as
@@ -534,10 +556,20 @@ function refreshTray(enabled: boolean): void {
    */
   let image: Electron.NativeImage
   if (process.platform === "darwin") {
+    // Not resized: the file is already 16, and resizing would throw away the @2x beside it that a Retina bar draws.
     image = nativeImage.createFromPath(trayTemplateFile())
     if (image.isEmpty()) return
-    image = image.resize({ width: 16, height: 16 })
     image.setTemplateImage(true)
+  } else if (process.platform === "win32" && trayIcoFile(trayIcon)) {
+    /*
+     * The colourway's own tray .ico, every size from 16 to 64 drawn for that
+     * size (scripts/icons.mjs), and Windows picks the one its scaling needs.
+     * Cutting the 512 tile to a single 16 here left a 125% or 150% screen to
+     * stretch it back up - the soft, small icon the user compared with another
+     * app's crisp one.
+     */
+    image = nativeImage.createFromPath(trayIcoFile(trayIcon)!)
+    if (image.isEmpty()) return
   } else {
     const file = appIconFile(trayIcon)
     if (!file) return
@@ -1614,10 +1646,25 @@ app.whenReady().then(async () => {
      * window has no icon of its own, and its menu bar tray is left as it was.
      */
     if (process.platform === "darwin") {
+      /*
+       * The default is the bundle's own icon, so the window's ask at load
+       * leaves the Dock alone. Choosing a colourway sets its cut; going back to
+       * the default after that sets the default's cut, until the next start
+       * shows the bundle's icon again.
+       */
+      if (id === DEFAULT_APP_ICON && !dockCustomised) return { ok: true }
       app.dock?.setIcon(image)
+      dockCustomised = true
       return { ok: true }
     }
-    window.setIcon(image)
+    /*
+     * Windows takes the colourway's .ico, every size drawn for its size, so the
+     * taskbar and title bar pick the one they draw; the 512 PNG this used to
+     * set left Windows to shrink it to 16 or 24 itself, softly (R34).
+     */
+    const ico = process.platform === "win32" ? windowIcoFile(id) : undefined
+    const windowImage = ico ? nativeImage.createFromPath(ico) : image
+    window.setIcon(windowImage.isEmpty() ? image : windowImage)
     void syncLinuxIcon(file).then((result) => {
       if (result.changed || !result.ok) console.info(`[linux-app-icon-sync] ${result.reason}`)
     })

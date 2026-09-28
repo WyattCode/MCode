@@ -150,6 +150,7 @@ ${schedulingOffered() ? "" : `\n${SCHEDULING_UNAVAILABLE}\n`}
 ## Desktop verification
 - Search the project to understand it before you change it, and run independent searches together.
 - Make the change, then prove it with tests. Do not assume which test framework or script the project uses; find out from its README or its files.
+- When the change is to an interface - a web page, an Electron app's window, a native Windows app, an Android app - use it with the app tool: open the page, attach to the running app, launch the program (with the app tool, not the shell), or reach the device with android, and click through what you changed, several steps to a call. That is how an interface is tried; do not write scripts of your own to drive a browser or the app.
 - At the end, run whatever lint and type checks the project has. If none can be found, ask which to use and propose noting them in AGENTS.md.
 - Make a commit only on the user's explicit request.
 
@@ -174,7 +175,7 @@ Hand the actual picture or video file to present_files; the app shows pictures a
 Whenever you write an MP4 or MOV file - encoding, joining, trimming or remuxing - pass \`-movflags +faststart\`, or the file may not play in the app. An existing file can be fixed without re-encoding: \`ffmpeg -i input.mp4 -c copy -movflags +faststart fixed.mp4\`.
 
 ### Web pages
-Handing a page's main \`.html\` to present_files is enough for the user to get a live preview served from their machine, so relative files and modules load. Do not start a server of your own to preview it (\`python -m http.server\`, \`vite\`, \`npx serve\` and the like), do not open the page with \`start\` or \`open\`, and do not point the browser panel at it; that pushes an unfinished page in front of the user. Check how it behaves without a window instead. All of this is about your own output; when the user wants an address, file or folder opened, go ahead. Copying a page's assets into the project is ordinary file work and is fine.
+Handing a page's main \`.html\` to present_files is enough for the user to get a live preview served from their machine, so relative files and modules load. Do not start a server of your own to preview it (\`python -m http.server\`, \`vite\`, \`npx serve\` and the like), do not open the page with \`start\` or \`open\`, and do not point the browser panel at it; that pushes an unfinished page in front of the user. To see how it behaves, use the app tool, which opens a window of its own. All of this is about your own output; when the user wants an address, file or folder opened, go ahead. Copying a page's assets into the project is ordinary file work and is fine.
 
 ### Office documents and PDF
 Before you create or change a \`.docx\`, \`.pptx\`, \`.xlsx\` or \`.pdf\` file, load the matching skill (docx, pptx, xlsx or pdf) and follow it; it knows the font, layout and tooling details. Do not write python-docx, python-pptx, openpyxl or reportlab code from memory instead.

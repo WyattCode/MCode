@@ -98,7 +98,12 @@ mac:
   # macOS has no automatic updates (M10-8).
   target:
     - dmg
-  icon: build/icon.icns
+  # macOS 26 and 27's Icon Composer package (scripts/icons.mjs): the system
+  # draws it with Liquid Glass and gives it dark and tinted appearances.
+  # electron-builder compiles it into Assets.car, and the .icns older macOS
+  # falls back to, with Xcode 26's actool - so a macOS build needs a Mac with
+  # Xcode 26 or later installed.
+  icon: build/icon.icon
   category: public.app-category.developer-tools
   # The Dock's cut of each colourway (scripts/icons.mjs), on Apple's icon grid.
   extraResources:
@@ -113,6 +118,7 @@ mac:
     NSMicrophoneUsageDescription: MCode uses the microphone only while you dictate a message.
 
 dmg:
+  # The disk image's own icon stays the .icns cut on Apple's grid.
   icon: build/icon.icns
 
 linux:

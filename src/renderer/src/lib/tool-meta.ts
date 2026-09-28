@@ -46,7 +46,7 @@ export const OUTPUT_CAP = 3000
 // session chat: `contacts` is the one of its four tools MiMo's step tables name.
 // memory: named in MiMo's tables; history, cron and automation_update are not, and read through the fallbacks.
 // speak: MCode's own tool for the voice feedback MiMo does in the cloud, so its words are this app's.
-const LABELLED = new Set(["read", "edit", "write", "bash", "grep", "glob", "list", "webfetch", "websearch", "todowrite", "invalid", "actor", "pdf_locate", "present_files", "contacts", "skill", "skill_search", "memory", "speak", "execute"])
+const LABELLED = new Set(["read", "edit", "write", "bash", "grep", "glob", "list", "webfetch", "websearch", "todowrite", "invalid", "actor", "pdf_locate", "present_files", "contacts", "skill", "skill_search", "memory", "speak", "execute", "app"])
 const SPEAKS_AS: Record<string, string> = { apply_patch: "edit", patch: "edit", exec_command: "bash" }
 
 /** The tools this app ships, whose titles are their own rather than their input. */
@@ -72,6 +72,8 @@ const BUILT_IN = new Set([
   "skill",
   "skill_search",
   "speak",
+  // MCode's own app tool: its title is the page or window it acted on, or how many steps ran.
+  "app",
 ])
 
 /** MiMo's title for a locate step: the start of the quoted passage. */
@@ -149,6 +151,7 @@ const ICONS: Record<string, StepIconName> = {
   webfetch: "globe",
   execute: "bash",
   websearch: "globe",
+  app: "browser",
   todowrite: "todo",
   invalid: "invalid",
   question: "question",
@@ -215,6 +218,8 @@ export function stepTitle(part: ToolPart): string {
     // Code Mode: the tools its script called, as the server titles it; never the script's source.
     case "execute":
       return part.title || ""
+    case "app":
+      return part.title || text(input.url) || ""
     case "invalid":
       return text(input.tool)
     case "list":

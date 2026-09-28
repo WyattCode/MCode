@@ -1,0 +1,10 @@
+{
+  "prompt": "实现 src/slugify.js 里的 slugify 函数，让 test.js 的所有测试通过（node test.js）。不要改 test.js。",
+  "verify": [
+    "node",
+    "test.js"
+  ],
+  "unchanged": [
+    "test.js"
+  ]
+}

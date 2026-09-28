@@ -533,7 +533,7 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
     const builder = await fs.readFile(path.join(root, "electron-builder.yml"), "utf8")
     check("M10-13: only the macOS package carries the cuts", /\nmac:\n[\s\S]*?extraResources:\s*\n\s*- from: resources\/app-icons-mac\s*\n\s*to: app-icons-mac/.test(builder) && builder.indexOf("resources/app-icons-mac") > builder.indexOf("\nmac:"))
     const script = await fs.readFile(path.join(root, "scripts", "icons.mjs"), "utf8")
-    check("M10-13: the icon script draws the cut from MCode's own icon", /writeMac\(await fs\.readFile\(path\.join\(OUT, "icon\.png"\)\)\)/.test(script) && /buildIcns\(await macCut\(rounded, MASTER\)\)/.test(script))
+    check("M10-13: the icon script draws the cut from MCode's own icon", /await fs\.writeFile\(path\.join\(OUT, "icon\.icns"\), await buildIcns\(await macCut\(tile, MASTER\)\)\)/.test(script) && /path\.join\(APP_ICONS_MAC, `\$\{way\.id\}\.png`\), await macCut\(tile, 512\)/.test(script))
   }
 
   section("Round 10 (platforms): M10-20 the Linux launcher follows the chosen icon")
@@ -594,6 +594,7 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
     const written = await linuxIconSync(image.host)("/icons/brass.png")
     check("M10-20: an AppImage's entry icon is replaced and the entry touched", written.changed && withEntry.get("/data/icons/mcode.png")?.toString() === "new-icon" && image.touched.join() === "/data/applications/mcode.desktop", written)
     const main = await fs.readFile(path.join(root, "src/main/index.ts"), "utf8")
-    check("M10-20: choosing an icon on Linux syncs the launcher", /window\.setIcon\(image\)\s*\n\s*void syncLinuxIcon\(file\)/.test(main))
+    // R34: Windows' window takes the colourway's .ico; on Linux it is still the PNG, and the launcher follows it.
+    check("M10-20: choosing an icon on Linux syncs the launcher", /window\.setIcon\([^\n]*\)\s*\n\s*void syncLinuxIcon\(file\)/.test(main))
   }
 }

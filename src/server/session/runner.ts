@@ -81,7 +81,7 @@ import { UsageDays } from "./usage-days"
 import type { Usage as TurnUsage } from "@shared/protocol"
 import { ABORTED_TOOL } from "../provider/history"
 import { INTERRUPTED_FINISH, INTERRUPTED_NOTE, LENGTH_NOTE, LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, recallHint, reminder, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
-import { LoopMonitor, TEXT_LOOP_BUFFER, applyCrops, describeLoop, detectStreak, stepDigest, textLoopNoteFor, type LoopIncident } from "./loop-health"
+import { LoopMonitor, TEXT_LOOP_BUFFER, WanderWatch, applyCrops, describeLoop, detectStreak, stepDigest, textLoopNoteFor, type LoopIncident } from "./loop-health"
 import { interruptedTurn } from "@shared/resume"
 // session chat
 import { CHAT_WAIT_MS, SessionChat, withChatHeaders } from "./chat"
@@ -3309,6 +3309,9 @@ export class SessionRunner {
           calls.run(() => this.runTool({ part, assistant, session: { id: sessionID, directory: session.directory, model: session.model }, signal: controller.signal })),
         ),
       )
+      // A turn that has been probing for a long while without changing the project is told to stop and think (loop-health.ts).
+      const wandering = this.loopWatch(sessionID).wander.note()
+      if (wandering) notes.set(assistant.id, [...(notes.get(assistant.id) ?? []), wandering])
 
       assistant.time.completed = Date.now()
       /*
@@ -3978,12 +3981,12 @@ export class SessionRunner {
    * about before the next call runs, as MiMo's processor checks each call as
    * it finishes. Started afresh with every turn.
    */
-  private readonly loopWatches = new Map<string, { monitor: LoopMonitor; incident?: LoopIncident }>()
+  private readonly loopWatches = new Map<string, { monitor: LoopMonitor; wander: WanderWatch; incident?: LoopIncident }>()
 
-  private loopWatch(sessionID: string): { monitor: LoopMonitor; incident?: LoopIncident } {
+  private loopWatch(sessionID: string): { monitor: LoopMonitor; wander: WanderWatch; incident?: LoopIncident } {
     const known = this.loopWatches.get(sessionID)
     if (known) return known
-    const made = { monitor: new LoopMonitor() }
+    const made = { monitor: new LoopMonitor(), wander: new WanderWatch() }
     this.loopWatches.set(sessionID, made)
     return made
   }
@@ -3992,6 +3995,7 @@ export class SessionRunner {
   private settleForLoops(sessionID: string, part: ToolPart, signal: AbortSignal): void {
     if (signal.aborted) return
     const watch = this.loopWatch(sessionID)
+    watch.wander.consume(part)
     const incident = watch.monitor.consume(part)
     if (incident) watch.incident = incident
   }

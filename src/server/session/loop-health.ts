@@ -3,7 +3,8 @@ import type { AssistantMessage, AssistantPart, MessageCrop, ToolPart } from "@sh
 /**
  * Whether a turn is getting anywhere, and what to do when it plainly is not.
  *
- * Three detectors, all MiMo's, all here because they read the same turn:
+ * Four detectors, all here because they read the same turn - the first three
+ * MiMo's, the last MCode's own:
  *
  * 1. `LoopMonitor` - the four kinds of stuck action. MCode used to notice only
  *    the first: three calls in a row with byte-identical arguments. That never
@@ -18,6 +19,8 @@ import type { AssistantMessage, AssistantPart, MessageCrop, ToolPart } from "@sh
  *    "stop repeating" into a request that is three quarters made of the
  *    repetition rarely helps. MiMo takes the repeated span out of the request
  *    instead and remembers that it did.
+ * 4. `WanderWatch` - a turn that keeps probing and never changes the project,
+ *    which none of the three can see because nothing in it repeats or fails.
  *
  * Every threshold below is the one MiMo's engine uses, named where it is
  * declared so the value can be checked against it rather than guessed at.
@@ -254,6 +257,65 @@ export class LoopMonitor {
 function lookKind(tool: string): string {
   if (tool === "read" || tool === "glob" || tool === "grep") return "search"
   return tool
+}
+
+// ------------------------------------------------------------------ wandering
+
+/** How many settled calls in a row may pass without changing a file the project already had. */
+export const WANDER_CALLS = 20
+/** How many times a turn is told; the second time it is told to hand over. */
+export const WANDER_RECOVERIES = 2
+
+const WANDER_NOTE = [
+  `You have made ${WANDER_CALLS} tool calls since you last changed a file the project already had. Every command may have succeeded, but the work has not moved: this is what being stuck on a wrong idea looks like.`,
+  "Before you run anything else, stop and write down, briefly: exactly what is failing and what it expects; what the code involved does, read line by line; and the simplest explanation that fits all of it.",
+  "A plain misunderstanding of how the language or a library behaves is far more likely than a broken runtime, compiler or machine - check that first.",
+  "Then act on the most likely explanation. Throwaway probe scripts do not count as progress.",
+].join(" ")
+
+const WANDER_HANDOVER = [
+  `Another ${WANDER_CALLS} calls have gone by without changing a file the project already had. This line of investigation is not working.`,
+  "Stop investigating. Tell the user what you have established, what you suspect and why, and what you would need from them, and end your turn.",
+].join(" ")
+
+/**
+ * A turn that keeps looking and never changes anything.
+ *
+ * Not one of MiMo's detectors: its four watch for a call repeated or failing,
+ * and a model that has talked itself into a wrong theory does neither - it runs
+ * a different, successful probe every step, one benchmark run 177 of them over
+ * eight minutes. What such a turn never does is change a file the project
+ * already had, so that is what is counted. Files the turn created itself - the
+ * probes - do not reset the count, and neither do edits to them.
+ *
+ * It asks nobody anything: the note goes to the model, in the request after
+ * the step that crossed the line, as the text-loop notes do.
+ */
+export class WanderWatch {
+  private since = 0
+  private told = 0
+  private made = new Set<string>()
+
+  consume(part: ToolPart): void {
+    if (part.status === "pending" || part.status === "running") return
+    const file = pathOf(part)
+    if (EDIT_TOOLS.has(part.name) && part.status === "completed" && file) {
+      if (part.metadata?.created === true) this.made.add(file)
+      else if (!this.made.has(file)) {
+        this.since = 0
+        return
+      }
+    }
+    this.since += 1
+  }
+
+  /** What to tell the model now, if anything; each note starts the count again. */
+  note(): string | undefined {
+    if (this.told >= WANDER_RECOVERIES || this.since < WANDER_CALLS) return undefined
+    this.since = 0
+    this.told += 1
+    return this.told === 1 ? WANDER_NOTE : WANDER_HANDOVER
+  }
 }
 
 // ---------------------------------------------------------------- text loops

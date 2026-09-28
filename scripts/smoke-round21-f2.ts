@@ -70,7 +70,10 @@ export async function roundTwentyOneLaneFTwoChecks(check: Check, section: (name:
     check("the thumb is 60 square on a 14px corner under an inset hairline", /width: 60px;/.test(art) && /height: 60px;/.test(art) && /border-radius: 14px;/.test(art) && /box-shadow: inset 0 0 0 1px #00000014;/.test(art), art)
     check("and it keeps that 60 for a rasterised artwork too", /object-fit: cover;/.test(art) && !/^img\.tile-art/m.test(style))
     check("hover rings it, the chosen one is ringed twice", /0 0 0 2px #f1f0ec/.test(style) && /0 0 0 2px #fffefd, 0 0 0 4px #151c13/.test(style))
-    check("its drawn artwork is rasterised at the thumb's own size", /appIconSvg\(spec, 60\)/.test(settings) && /width="60" height="60"/.test(template))
+    // Since the new mark (2026-09-27) every tile is the colourway's own generated file, shown at the thumb's size.
+    // Read raw: the glob's own "/*.png" would be taken for the start of a comment by code() above.
+    const raw = await read("src/renderer/src/components/SettingsDialog.vue")
+    check("each tile is its colourway's own file, at the thumb's own size", /import\.meta\.glob<string>\("@resources\/app-icons\/\*\.png"/.test(raw) && /<img class="tile-art" :src="tile\.image" width="60" height="60"/.test(template))
   }
 
   // ------------------------------------------------------------------ F2-3

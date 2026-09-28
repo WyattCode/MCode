@@ -1,0 +1,10 @@
+{
+  "prompt": "运行 test.js（node test.js），测试没通过。找出 src/cart.js 里的错误并修好，让所有测试通过。不要改 test.js。",
+  "verify": [
+    "node",
+    "test.js"
+  ],
+  "unchanged": [
+    "test.js"
+  ]
+}
