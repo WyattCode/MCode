@@ -2295,8 +2295,23 @@ onBeforeUnmount(() => {
 .row.project > .project-toggle {
   min-height: 34px;
   padding-block: 6px;
-  /* The button inside the row takes the keyboard ring; it rounds as the row does, not square. */
-  border-radius: inherit;
+}
+
+/*
+ * A row's own button takes the keyboard, but the ring goes round the whole row,
+ * as it does round 新建任务 (user, 2026-09-29): a task's button starts 46 in and
+ * a project's stops before its inline buttons, so a ring on the button sat off
+ * the row's highlight - and was square, the button having no corners of its own.
+ */
+.row:has(> .row-open:focus-visible),
+.row:has(> .project-toggle:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.row > .row-open:focus-visible,
+.row > .project-toggle:focus-visible {
+  outline: none;
 }
 
 .row.project {

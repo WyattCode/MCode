@@ -207,13 +207,25 @@ public static class McodeUia {
   }
 
   static object Attach(string match, int pid) {
+    // A window that is there but was missed - the desktop's tree read mid-change, or on a busy machine - is looked for twice more.
+    for (int attempt = 0; ; attempt++) {
+      var found = FindTop(match, pid);
+      if (found != null) return Take(found);
+      if (attempt >= 2) throw new Exception("no-window");
+      Thread.Sleep(300);
+    }
+  }
+
+  static AutomationElement FindTop(string match, int pid) {
     AutomationElement found = null;
     var candidates = new List<AutomationElement>();
     foreach (AutomationElement top in AutomationElement.RootElement.FindAll(TreeScope.Children, Condition.TrueCondition)) candidates.Add(top);
     foreach (var top in candidates) {
       try {
         var current = top.Current;
-        if (current.IsOffscreen && !IsIconic(new IntPtr(current.NativeWindowHandle))) continue;
+        // Hidden windows are passed over. The window's own visibility, as the listing sees it: automation's IsOffscreen
+        // is sometimes true of a plain open window, which then showed in the list of windows and could not be taken.
+        if (!IsWindowVisible(new IntPtr(current.NativeWindowHandle))) continue;
         if (pid > 0 && current.ProcessId != pid) continue;
         if (!string.IsNullOrEmpty(match)) {
           string process = "";
@@ -225,7 +237,10 @@ public static class McodeUia {
         break;
       } catch { }
     }
-    if (found == null) throw new Exception("no-window");
+    return found;
+  }
+
+  static object Take(AutomationElement found) {
     // A minimised window lists nothing: it is restored first, as a person would before using it.
     var handle = new IntPtr(found.Current.NativeWindowHandle);
     if (IsIconic(handle)) { ShowWindow(handle, SW_SHOWNOACTIVATE); Thread.Sleep(300); }
