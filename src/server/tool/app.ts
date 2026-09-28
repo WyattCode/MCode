@@ -5,6 +5,7 @@ import { ToolError } from "./types"
 import { resolvePath } from "./fs-util"
 import { AppDriver, WAIT_CAP_MS, type Step } from "../appdrive/driver"
 import { WindowsDriver } from "../appdrive/windows"
+import { AndroidDriver } from "../appdrive/android"
 import type { SteppingDriver } from "../appdrive/stepping"
 
 /**
@@ -17,7 +18,7 @@ import type { SteppingDriver } from "../appdrive/stepping"
  * in one call, each waiting only until the window goes quiet. Web pages open
  * in a browser of the tool's own; an Electron app is reached through the
  * DevTools port it was started with; a native Windows app through UI
- * Automation. Phones are a later round.
+ * Automation; an Android app on a phone or emulator through adb.
  */
 
 /** One driver per conversation: the app it has open, kept between calls. */
@@ -45,6 +46,7 @@ export const AppTool: ToolDefinition = {
     "- open {url}: open a page (http, https, file, localhost) in a browser window of this tool's own.",
     "- window {target}: (Windows) take over a native app's window that is already open - WinForms, WPF, Win32, Qt - by part of its title or its program's name.",
     "- launch {program, args?, target?}: (Windows) start a native program and take over the window it shows; close ends it again. Start desktop programs this way, not with bash: a command that runs a window never finishes, and bash stops it when it times out.",
+    "- android {target?, package?}: an Android phone or emulator through adb - target picks the device by serial or model when there are several; package (such as com.example.app) starts that app. Install a build first with adb install.",
     "- attach {port, target?}: connect to an Electron app or a Chromium started with --remote-debugging-port=<port>. Start it yourself first, in the background (electron-vite: `npx electron-vite dev --remoteDebuggingPort 9222`; plain Electron: `npx electron . --remote-debugging-port=9222`; a built app: `app.exe --remote-debugging-port=9222`). target picks a window by title or address.",
     "- snapshot {full?}: read the window again. After the first read only the changes are shown, unless full is true.",
     "- do {steps}: run several steps in one call - this is the fast way to work. They run in order, each waiting by itself until the page settles, and stop at the first that fails. The answer gives every step its own effect - the text it put on the page, a dialog it opened, or \"no visible change\" - and then everything that changed.",
@@ -71,11 +73,12 @@ export const AppTool: ToolDefinition = {
   parameters: {
     type: "object",
     properties: {
-      action: { type: "string", enum: ["open", "window", "launch", "attach", "snapshot", "do", "tabs", "screenshot", "eval", "close"] },
+      action: { type: "string", enum: ["open", "window", "launch", "android", "attach", "snapshot", "do", "tabs", "screenshot", "eval", "close"] },
       url: { type: "string", description: "open: the page to open" },
       port: { type: "integer", description: "attach: the app's DevTools port" },
       target: { type: "string", description: "window, launch, attach, tabs: a window or tab, by part of its title, its address or program name, or its id" },
       program: { type: "string", description: "launch: the program to start - a path to an .exe, or a command on PATH" },
+      package: { type: "string", description: "android: the app to start, by package name" },
       args: { type: "array", items: { type: "string" }, description: "launch: its arguments" },
       steps: {
         type: "array",
@@ -129,6 +132,7 @@ async function perform(input: Record<string, unknown>, context: ToolContext): Pr
   if (action === "attach") return attach(Number(input.port), typeof input.target === "string" ? input.target : undefined, context)
   if (action === "window") return nativeWindow(typeof input.target === "string" ? input.target.trim() : "", context)
   if (action === "launch") return launch(input, context)
+  if (action === "android") return android(input, context)
   const driver = drivers.get(context.sessionID)
   if (action === "close") {
     if (!driver) return { output: "Nothing was open.", title: "close" }
@@ -138,7 +142,7 @@ async function perform(input: Record<string, unknown>, context: ToolContext): Pr
   }
   if (!driver || !driver.alive) {
     drivers.delete(context.sessionID)
-    throw new ToolError(driver ? "The app's window was closed. Open or attach again." : "Nothing is open yet. Use open with a URL, window or launch for a native app, or attach to an app's DevTools port, first.")
+    throw new ToolError(driver ? "The app's window was closed. Open or attach again." : "Nothing is open yet. Use open with a URL, window or launch for a native app, android for a device, or attach to an app's DevTools port, first.")
   }
   switch (action) {
     case "snapshot":
@@ -170,7 +174,7 @@ async function perform(input: Record<string, unknown>, context: ToolContext): Pr
       return { output: await driver.evaluate(expression), title: "eval" }
     }
     default:
-      throw new ToolError(`Unknown action "${action}". Use open, window, launch, attach, snapshot, do, tabs, screenshot, eval or close.`)
+      throw new ToolError(`Unknown action "${action}". Use open, window, launch, android, attach, snapshot, do, tabs, screenshot, eval or close.`)
   }
 }
 
@@ -256,6 +260,22 @@ async function launch(input: Record<string, unknown>, context: ToolContext) {
   })
   const driver = await replace(context, () => WindowsDriver.launch(executable, args, context.directory, target))
   return { output: await driver.snapshot(true), title: driver.label, metadata: { window: driver.label } }
+}
+
+async function android(input: Record<string, unknown>, context: ToolContext) {
+  const target = typeof input.target === "string" && input.target.trim() ? input.target.trim() : undefined
+  const packageName = typeof input.package === "string" && input.package.trim() ? input.package.trim() : undefined
+  await context.permissions.ask({
+    sessionID: context.sessionID,
+    messageID: context.messageID,
+    callID: context.callID,
+    kind: "bash",
+    directory: context.directory,
+    title: "Operate an Android device",
+    subject: `android ${[target, packageName].filter(Boolean).join(" ") || "device"}`,
+  })
+  const driver = await replace(context, () => AndroidDriver.connect(target, packageName))
+  return { output: await driver.snapshot(true), title: packageName ?? driver.label, metadata: { device: driver.label } }
 }
 
 function stepsOf(value: unknown): Step[] {

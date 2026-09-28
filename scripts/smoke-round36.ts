@@ -93,7 +93,7 @@ export async function roundThirtySixChecks(check: Check, section: (name: string)
     const run = (input: Record<string, unknown>) => AppTool.execute(input, context)
     try {
       const refused = await run({ action: "snapshot" }).then(() => "", (error: Error) => error.message)
-      check("nothing open yet: it says what to do first", /open with a URL, window or launch for a native app, or attach/.test(refused), refused)
+      check("nothing open yet: it says what to do first", /open with a URL, window or launch for a native app, android for a device, or attach/.test(refused), refused)
 
       const opened = await run({ action: "open", url: pathToFileURL(page).href })
       check("open asks once, like a command, naming the page", asked.length === 1 && asked[0]!.startsWith("open file:///"), asked)

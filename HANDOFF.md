@@ -199,11 +199,36 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
    2. 做精简编码模式，再量一次。
    3. 做 Windows UI 自动化，再量一次。
    4. 用户若给出拿来和 WorkBuddy 比的真实任务，也加进 `scripts/bench/tasks/`。
-   5. **操作应用**（第三十六轮起）：网页、Electron（第三十六轮）和 Windows 原生应用（第三十七轮）已做，都在 `app` 工具里。下一步做安卓（adb）；iOS 需要 Mac。
+   5. **操作应用**（第三十六轮起）：网页、Electron（第三十六轮）、Windows 原生应用（第三十七轮）和安卓（第三十八轮）都已做，都在 `app` 工具里。iOS 需要 Mac。安卓还缺考题和中文输入。
 
 更早的下一步建议留作记录，见文末「附录 C」。
 
 ## 逐轮记录（新到旧）
+
+### 第三十八轮：`app` 工具支持安卓（2026-09-28）
+
+**怎么做的**（`src/server/appdrive/android.ts`）：
+- 用 adb 操作手机或模拟器，全在设备上进行，完全不碰用户电脑的鼠标和键盘。
+- 找 adb 的顺序：`MCODE_ADB`、PATH、`ANDROID_HOME` 和 `ANDROID_SDK_ROOT`、`%LOCALAPPDATA%\Android\Sdk`，以及常见的几个 SDK 目录。这台机器的 SDK 在 `D:\Android\sdk`，不在 PATH 里。
+- 新动作 `android {target?, package?}`：target 按序列号或型号选设备（只有一台时可以省略）；给了 package，就用 `monkey` 启动那个应用，等它到前台。关闭时 `am force-stop` 自己启动的应用，设备本身不动。
+- 读界面：解析 uiautomator 的 XML，转成和网页、原生应用一样的编号清单。可点击、可勾选的元素列出来；元素内部的文字算作它的名字，不再重复列进页面文字；开关、复选框本身没有文字时，往上三层找所在行的标题。编号按节点在树里的位置加类名加 resource-id 记住。
+- 操作：`input tap`（点击）、`input text`（只支持 ASCII，空格写成 %s，shell 特殊字符要转义；中文需要设备上装 ADBKeyBoard，目前遇到会报错说明）、`input keyevent`（Back、Home、Enter 等；组合键会拒绝）、`input swipe`（滚动）、选下拉框（先点开，再点选项）、截图（`exec-out screencap`）。
+- **速度**：`uiautomator dump` 每次都要在设备上冷启动，读一次约 2 秒，点一下再返回要 7.5 秒。现在设备上跑一个常驻的小程序 McodeAgent（`scripts/android-agent/McodeAgent.java`）：它借用系统 uiautomator.jar 里的 UiAutomationShellWrapper 连接一次无障碍服务，之后每收到一行 `dump`，就回一行和 uiautomator 格式相同的 XML，所以解析代码不用改。读一次只要 2 到 20 毫秒；等界面安静用 `waitForIdle(150, 2000)`，避免读到加载到一半的画面。
+  - 小程序由 `scripts/android-agent.mjs` 编译：javac 以 release 8 编译，再用 java 直接运行 d8.jar，不走 .bat，因为 JDK 路径里有空格。编好的 dex 以 base64 写进 `src/server/appdrive/android-agent.ts`，随 MCode 发布，用户不需要装 JDK。改 Java 源码后要重跑这个脚本。
+  - 推到设备上的文件名带内容哈希，已经推过就不重推。小程序启动失败，就退回 `uiautomator dump`。
+  - 实测（MuMu 模拟器，安卓 15）：打开「设置」从 4.8 秒降到约 1 秒，点一下再返回从 7.5 秒降到 0.56 秒。
+- **实测环境**：MuMu 12，用 `D:\Apps\MuMuPlayer
+x_main\MuMuManager.exe control -v 0 launch` 启动，`info -v 0` 查到的 adb 端口是 16384，再 `adb connect 127.0.0.1:16384`。用户同意用它来测，测完关掉。
+
+**验证**：`smoke-round38.ts` 共 14 条。
+- 不需要设备的：XML 解析和实体解码、节点位置、adb 的文本和按键写法、组合键被拒绝、随包发布的 dex 格式正确。
+- adb 正好看到一台设备时才跑的：用「设置」应用验证启动、询问权限、列清单、点击和返回的逐步效果、5 秒内完成、开关取行标题当名字、`eval` 被拒绝、截图、关闭时停掉自己启动的应用。
+- 改坏验证过：不用常驻读取器（点一下再返回 7.3 秒，超时失败）；开关不取行标题。
+
+**还没做**：
+- 安卓考题。要让模型改代码、编译 APK、安装、测试，需要 Gradle 工程，这台机器上的局域网模型还没法完整走完这个流程。
+- 中文输入。
+- iOS 需要 Mac。
 
 ### 第三十七轮：`app` 工具支持 Windows 原生应用（2026-09-28）
 

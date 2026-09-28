@@ -449,6 +449,7 @@ import { roundThirtyThreeChecks } from "./smoke-round33"
 import { roundThirtyFiveChecks } from "./smoke-round35"
 import { roundThirtySixChecks } from "./smoke-round36"
 import { roundThirtySevenChecks } from "./smoke-round37"
+import { roundThirtyEightChecks } from "./smoke-round38"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7184,6 +7185,7 @@ async function main() {
   await roundThirtyFiveChecks(check, section)
   await roundThirtySixChecks(check, section)
   await roundThirtySevenChecks(check, section)
+  await roundThirtyEightChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
