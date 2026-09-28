@@ -67,6 +67,11 @@ export async function roundFortyOneChecks(check: Check, section: (name: string) 
     const menu = fs.readFileSync(path.join(components, "SelectMenu.vue"), "utf8")
     // Inside a <form>, a button with no type submits it.
     check("its trigger does not submit the form it sits in", /<button :id="id" type="button" class="trigger"/.test(menu))
+    // Second look, in Arabic: the value sat 8 from the field's start edge, not 12, and "/chat/completions" drew its slash at the far end.
+    const trigger = form.match(/\.cp \.cp-select :deep\(\.trigger\) \{([^}]*)\}/)?.[1] ?? ""
+    check("the picker's value starts 12 in on either writing direction", /padding-inline: 12px 8px;/.test(trigger) && !/padding: 0 8px 0 12px/.test(trigger), trigger)
+    const bidi = (rule: RegExp) => /unicode-bidi: plaintext;/.test(menu.match(rule)?.[1] ?? "")
+    check("a value and a listed option take their direction from their own text", bidi(/^\.label \{([^}]*)\}/m) && bidi(/^\.select-pop \.item-label \{([^}]*)\}/m))
   }
 
   section("Round 41: web components and frames, second look")

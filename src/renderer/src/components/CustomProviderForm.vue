@@ -913,7 +913,8 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
   justify-content: space-between;
   width: 100%;
   height: calc(36px * var(--ui-font-scale, 1));
-  padding: 0 8px 0 12px;
+  padding-block: 0;
+  padding-inline: 12px 8px;
   color: var(--text-strong);
   background: transparent;
   border: 1px solid #e3e3e0;

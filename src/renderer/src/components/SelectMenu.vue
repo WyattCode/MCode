@@ -295,8 +295,14 @@ onBeforeUnmount(() => {
   outline-color: var(--ring);
 }
 
+/*
+ * Each value takes its direction from its own text, as dir="auto" would: in
+ * Arabic, "/chat/completions" laid out right-to-left drew its slash at the far
+ * end. An Arabic label still reads right-to-left.
+ */
 .label {
   overflow: hidden;
+  unicode-bidi: plaintext;
   font-weight: 530;
   line-height: calc(16px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
@@ -373,6 +379,7 @@ onBeforeUnmount(() => {
 
 .select-pop .item-label {
   overflow: hidden;
+  unicode-bidi: plaintext;
   text-overflow: ellipsis;
 }
 
