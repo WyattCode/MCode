@@ -12,7 +12,7 @@ import os from "node:os"
 import { execFile } from "node:child_process"
 import type { Check } from "./smoke-round5"
 import { AppTool, closeAllApps } from "../src/server/tool/app"
-import { adbText, androidKey, findAdb, listDevices, parseHierarchy } from "../src/server/appdrive/android"
+import { adbText, androidKey, connectedDevices, findAdb, parseHierarchy } from "../src/server/appdrive/android"
 import { AGENT_DEX } from "../src/server/appdrive/android-agent"
 import type { ToolContext } from "../src/server/tool/types"
 
@@ -55,7 +55,7 @@ export async function roundThirtyEightChecks(check: Check, section: (name: strin
   section("Round 38: the app tool driving the Settings app on an Android device")
   {
     const adb = findAdb()
-    const devices = adb ? (await listDevices(adb).catch(() => [])).filter((device) => device.state === "device") : []
+    const devices = adb ? await connectedDevices(adb).catch(() => []) : []
     if (!adb || devices.length !== 1) {
       check(`(skipped: ${!adb ? "no adb on this machine" : devices.length ? "more than one device connected" : "no Android device connected"})`, true)
       return

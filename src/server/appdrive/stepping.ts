@@ -18,6 +18,8 @@ export interface Snapshot {
   elements: string[]
   more: number
   text: string[]
+  /** Frames from other sites on the page: their contents cannot be read from the page, and the model is told so. */
+  foreignFrames?: number
 }
 
 export interface Step {
@@ -139,6 +141,7 @@ export function formatSnapshot(now: Snapshot, before?: Snapshot): string {
       "",
       now.elements.length ? now.elements.join("\n") : "(nothing to act on)",
       now.more ? `(${now.more} more elements not listed; scroll or act on what is here first)` : "",
+      now.foreignFrames ? `(${now.foreignFrames} embedded frame(s) from another site are not listed; open the frame's own address to work in it)` : "",
       "",
       "Text on the page:",
       now.text.join("\n") || "(none)",
