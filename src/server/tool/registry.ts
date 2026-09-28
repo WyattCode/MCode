@@ -181,6 +181,8 @@ export function hasOwnToolsOnly(agent: string): boolean {
  */
 export function toolsForTurn(agent: string, options: { voiceFeedback: boolean; shell?: string; sessionChat?: boolean; webSearch?: boolean }): ToolDefinition[] {
   return toolsFor(agent)
+    // The lean experiment (prompts.ts leanMode): tools a coding turn does not reach for - talking to other conversations, the window's own settings, PDFs, the history search.
+    .filter((tool) => process.env.MCODE_LEAN !== "1" || !LEAN_LEAVES_OUT.has(tool.name))
     .filter((tool) => tool.name !== "speak" || options.voiceFeedback)
     .filter((tool) => tool.name !== "websearch" || options.webSearch !== false)
     .filter((tool) => !withheldByLab(tool.name, options))
@@ -194,6 +196,9 @@ export function toolsForTurn(agent: string, options: { voiceFeedback: boolean; s
  * reading other coding tools' saved sessions. The skill goes with them.
  */
 export const SESSION_CHAT_TOOLS = new Set(["contacts", "talk_to_session", "create_session", "update_session", "list_external_sessions", "read_external_session"])
+
+/** What the lean experiment leaves out of a turn's tools. */
+const LEAN_LEAVES_OUT = new Set([...SESSION_CHAT_TOOLS, "get_desktop_settings", "set_desktop_setting", "pdf_locate", "history"])
 
 /** Whether a switch in the lab keeps this tool from the model: neither offered nor run. */
 export function withheldByLab(name: string, settings: { sessionChat?: boolean }): boolean {

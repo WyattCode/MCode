@@ -9,6 +9,9 @@
  *   ASCII only); an empty field's hint no longer reads as its value. Checked
  *   against scripts/fixtures/android-demo, built on the spot with
  *   scripts/android-demo.mjs, when adb sees one device and a JDK is there.
+ * - The lean coding experiment (MCODE_LEAN=1, off by default): measured with
+ *   scripts/bench as no more accurate and not reliably faster, so it stays a
+ *   switch; checked to change nothing when off, and to keep what coding needs.
  *
  * smoke.ts calls `roundFortyChecks` with its own check and section.
  */
@@ -19,6 +22,8 @@ import path from "node:path"
 import { execFileSync, spawnSync } from "node:child_process"
 import type { Check } from "./smoke-round5"
 import { AppTool, closeAllApps } from "../src/server/tool/app"
+import { agentPrompt } from "../src/server/session/prompts"
+import { toolsForTurn } from "../src/server/tool/registry"
 import { findBrowser } from "../src/server/appdrive/browser"
 import { connectedDevices, findAdb, listDevices, reconnectEmulators } from "../src/server/appdrive/android"
 import type { ToolContext } from "../src/server/tool/types"
@@ -32,6 +37,28 @@ function contextFor(sessionID: string, directory: string): ToolContext {
 const refOf = (output: string, test: RegExp) => Number(output.split("\n").find((line) => test.test(line))?.match(/^\[(\d+)\]/)?.[1])
 
 export async function roundFortyChecks(check: Check, section: (name: string) => void): Promise<void> {
+  section("Round 40: the lean coding experiment changes nothing unless it is switched on")
+  {
+    const before = process.env.MCODE_LEAN
+    delete process.env.MCODE_LEAN
+    const fullPrompt = agentPrompt("build")
+    const fullTools = toolsForTurn("build", { voiceFeedback: false }).map((tool) => tool.name)
+    process.env.MCODE_LEAN = "1"
+    const leanPrompt = agentPrompt("build")
+    const leanTools = toolsForTurn("build", { voiceFeedback: false }).map((tool) => tool.name)
+    if (before === undefined) delete process.env.MCODE_LEAN
+    else process.env.MCODE_LEAN = before
+    check("off, the prompt keeps every section", /## Visual explanations/.test(fullPrompt) && /### Slide decks/.test(fullPrompt) && !/load the matching skill first \(visualizer/.test(fullPrompt))
+    check("off, every tool is offered", ["talk_to_session", "history", "pdf_locate", "get_desktop_settings"].every((name) => fullTools.includes(name)))
+    check(
+      "on, the drawing, deck, web design and media sections go, and a line says which skills carry them",
+      !/## Visual explanations|### Slide decks|## Web page work|### Images and video|### Office documents and PDF/.test(leanPrompt) && /load the matching skill first \(visualizer, pptx, docx, xlsx, pdf\)/.test(leanPrompt) && leanPrompt.length < fullPrompt.length * 0.75,
+      { full: fullPrompt.length, lean: leanPrompt.length },
+    )
+    check("on, what a coding turn needs is all still there, the app tool pointer for pages among it", ["## Task management", "## Desktop verification", "### present_files", "### Web pages", "## Tools on this machine"].every((heading) => leanPrompt.includes(heading)))
+    check("on, the tools a coding turn does not reach for are left out, and the rest kept", !leanTools.some((name) => ["talk_to_session", "contacts", "history", "pdf_locate", "get_desktop_settings", "set_desktop_setting"].includes(name)) && ["read", "edit", "bash", "app", "task"].every((name) => leanTools.includes(name)), leanTools)
+  }
+
   section("Round 40: controls inside web components and frames are listed and reached")
   if (!findBrowser()) {
     check("(skipped: no Chrome or Edge on this machine)", true)
