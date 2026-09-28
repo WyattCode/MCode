@@ -41,13 +41,15 @@ const verb = computed(() => {
  */
 const chip = computed(() => {
   const { request } = props
+  // The app tool asks in the command bucket about things that are not commands; its own words say what.
+  if (request.titleCode?.startsWith("perm.app.")) return t(request.titleCode)
   if (isBash.value) return request.title && request.title !== "Run command" ? request.title : ""
   if (VERBS[request.kind]) return ""
   return request.titleCode ? t(request.titleCode) : request.title
 })
 
 /** The command or subject in full, capped so a runaway argument cannot flood the dock. */
-const full = computed(() => (isBash.value ? `$ ${props.request.subject}` : props.request.subject).slice(0, 3000))
+const full = computed(() => (isBash.value && !props.request.titleCode?.startsWith("perm.app.") ? `$ ${props.request.subject}` : props.request.subject).slice(0, 3000))
 
 /*
  * One line at most, at most 120 characters of it. Anything longer, or anything

@@ -22,9 +22,12 @@
  * listed, as a screen reader would present it: that is all a person could
  * reach, and it keeps the list short.
  */
-export const SNAPSHOT = String.raw`(function (limit) {
+export const SNAPSHOT = String.raw`(function (limit, base) {
   var S = window.__mcodeApp || (window.__mcodeApp = { next: 1, ids: new WeakMap() });
   if (!S.known) S.known = new Map();
+  // A page loaded anew starts its state over; its numbers go on from the driver's, so an old number never lands on a new element.
+  if (S.next < base) S.next = base;
+  if (!S.doc) S.doc = Math.random().toString(36).slice(2) + Date.now().toString(36);
   var WIDGET = "a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=checkbox],[role=radio],[role=switch],[role=option],[role=combobox],[role=textbox],[role=searchbox],[role=slider],[role=spinbutton],[role=treeitem],[contenteditable=''],[contenteditable=true],[tabindex]:not([tabindex='-1']),[onclick]";
   function shown(el) {
     if (el.checkVisibility && !el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return false;
@@ -133,7 +136,7 @@ export const SNAPSHOT = String.raw`(function (limit) {
     budget -= line.length;
     text.push(line);
   });
-  return { title: document.title, url: location.href, modal: dialogs.length > 0 ? nameOf(scope) || "dialog" : "", elements: lines, more: Math.max(0, list.length - lines.length), text: text };
+  return { title: document.title, url: location.href, doc: S.doc, modal: dialogs.length > 0 ? nameOf(scope) || "dialog" : "", elements: lines, more: Math.max(0, list.length - lines.length), text: text };
 })`
 
 /**
@@ -204,7 +207,8 @@ export const WATCH = String.raw`(function () {
   S.changed = performance.now();
   if (!S.observer) {
     S.observer = new MutationObserver(function () { S.changed = performance.now(); });
-    S.observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+    // Everything but style: an animation driven from script rewrites style every frame, and would keep every step waiting its full cap.
+    S.observer.observe(document, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["class", "hidden", "disabled", "open", "value", "checked", "selected", "src", "href", "role", "aria-hidden", "aria-expanded", "aria-selected", "aria-checked", "aria-pressed", "aria-disabled", "aria-busy", "aria-current"] });
   }
   return true;
 })`

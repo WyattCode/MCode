@@ -32,6 +32,8 @@ const LOG_LIMIT = 20
 export class AppDriver extends SteppingDriver {
   private page?: { targetId: string; sessionId: string }
   private logs: string[] = []
+  /** The highest number any listing has used: a page loaded anew numbers on from here. */
+  private highest = 0
   private stopListening: () => void
 
   private constructor(
@@ -310,7 +312,9 @@ export class AppDriver extends SteppingDriver {
   }
 
   protected async read(): Promise<Snapshot> {
-    return this.call<Snapshot>(SNAPSHOT, SNAPSHOT_LIMIT)
+    const now = await this.call<Snapshot>(SNAPSHOT, SNAPSHOT_LIMIT, this.highest + 1)
+    for (const line of now.elements) this.highest = Math.max(this.highest, Number(/^\[(\d+)\]/.exec(line)?.[1] ?? 0))
+    return now
   }
 
   /** The page's own complaints - console errors and warnings, uncaught exceptions, failed loads - kept for the next answer. */

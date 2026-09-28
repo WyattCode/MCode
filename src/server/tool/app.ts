@@ -6,7 +6,7 @@ import { resolvePath } from "./fs-util"
 import { AppDriver, WAIT_CAP_MS, type Step } from "../appdrive/driver"
 import { WindowsDriver } from "../appdrive/windows"
 import { AndroidDriver } from "../appdrive/android"
-import type { SteppingDriver } from "../appdrive/stepping"
+import { describeStep, type SteppingDriver } from "../appdrive/stepping"
 
 /**
  * Operating the app being built, as a person would - MCode's own tool, not
@@ -24,6 +24,13 @@ import type { SteppingDriver } from "../appdrive/stepping"
 /** One driver per conversation: the app it has open, kept between calls. */
 const drivers = new Map<string, SteppingDriver>()
 
+/** Ends one conversation's app, as closing it would: called when the conversation is deleted. */
+export async function closeAppOf(sessionID: string): Promise<void> {
+  const driver = drivers.get(sessionID)
+  drivers.delete(sessionID)
+  await driver?.close().catch(() => undefined)
+}
+
 /** Ends every app session: the browsers this tool started close, attached apps are only let go. Called when the backend stops. */
 export async function closeAllApps(): Promise<void> {
   const open = [...drivers.values()]
@@ -40,7 +47,7 @@ export const STEP_LIMIT = 40
 export const AppTool: ToolDefinition = {
   name: "app",
   description: [
-    "Operate a web page or an Electron app's window the way a person would - click, type, choose, press keys - to try out what you built. The window is read as a numbered list of what can be acted on, plus its text; no screenshots are needed.",
+    "Operate an app the way a person would - click, type, choose, press keys - to try out what you built: a web page, an Electron app, a native Windows program, or an Android app. The window is read as a numbered list of what can be acted on, plus its text; no screenshots are needed.",
     "",
     "Actions",
     "- open {url}: open a page (http, https, file, localhost) in a browser window of this tool's own.",
@@ -150,7 +157,7 @@ async function perform(input: Record<string, unknown>, context: ToolContext): Pr
     case "do": {
       const steps = stepsOf(input.steps)
       const { output, done } = await driver.run(steps, context.signal)
-      return { output, title: `${done}/${steps.length}`, metadata: { steps: steps.length, done } }
+      return { output, title: stepsTitle(steps, done), metadata: { steps: steps.length, done } }
     }
     case "tabs": {
       const target = typeof input.target === "string" ? input.target.trim() : ""
@@ -178,33 +185,50 @@ async function perform(input: Record<string, unknown>, context: ToolContext): Pr
   }
 }
 
-async function open(url: string, context: ToolContext) {
-  if (!/^(https?|file):\/\//i.test(url) && !/^localhost(:\d+)?(\/|$)/i.test(url)) throw new ToolError("open needs a full address, such as http://localhost:5173 or file:///C:/site/index.html")
-  const address = /^localhost/i.test(url) ? `http://${url}` : url
+/**
+ * The tool's question before it opens, attaches to or starts anything.
+ *
+ * It asks in the command bucket, and a bare question there is remembered by
+ * "always" as the whole bucket - "always open this page" would have let every
+ * shell command through. So each question names its own patterns, under an
+ * "app:" prefix no command can match: "always" covers the same kind of action
+ * (for launch, the same program) and nothing else. The card shows the target
+ * itself; the question's title says what is being done with it.
+ */
+async function askToOperate(context: ToolContext, what: "open" | "attach" | "window" | "launch" | "android", target: string, always: string): Promise<void> {
   await context.permissions.ask({
     sessionID: context.sessionID,
     messageID: context.messageID,
     callID: context.callID,
     kind: "bash",
     directory: context.directory,
-    title: "Open a page to operate it",
-    subject: `open ${address}`,
+    title: ASK_TITLES[what],
+    titleCode: `perm.app.${what}`,
+    subject: target,
+    patterns: [`app: ${what} ${target}`],
+    always: [`app: ${what} ${always}`],
   })
+}
+
+const ASK_TITLES = {
+  open: "Open a page to operate it",
+  attach: "Connect to an app to operate it",
+  window: "Operate a window",
+  launch: "Start a program to operate it",
+  android: "Operate an Android device",
+} as const
+
+async function open(url: string, context: ToolContext) {
+  if (!/^(https?|file):\/\//i.test(url) && !/^localhost(:\d+)?(\/|$)/i.test(url)) throw new ToolError("open needs a full address, such as http://localhost:5173 or file:///C:/site/index.html")
+  const address = /^localhost/i.test(url) ? `http://${url}` : url
+  await askToOperate(context, "open", address, "*")
   const driver = await replace(context, () => AppDriver.open(address))
-  return { output: await driver.snapshot(true), title: address, metadata: { url: address } }
+  return { output: await driver.snapshot(true), title: readable(address), metadata: { url: address } }
 }
 
 async function attach(port: number, target: string | undefined, context: ToolContext) {
   if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new ToolError("attach needs the port the app was started with, as in --remote-debugging-port=9222")
-  await context.permissions.ask({
-    sessionID: context.sessionID,
-    messageID: context.messageID,
-    callID: context.callID,
-    kind: "bash",
-    directory: context.directory,
-    title: "Connect to an app to operate it",
-    subject: `attach 127.0.0.1:${port}`,
-  })
+  await askToOperate(context, "attach", `127.0.0.1:${port}`, "*")
   const driver = await replace(context, () => AppDriver.attach(port, target))
   return { output: await driver.snapshot(true), title: `127.0.0.1:${port}`, metadata: { port } }
 }
@@ -228,15 +252,7 @@ function windowsOnly(action: string): void {
 async function nativeWindow(target: string, context: ToolContext) {
   windowsOnly("window")
   if (!target) throw new ToolError("window needs a target: part of the window's title, or its program's name")
-  await context.permissions.ask({
-    sessionID: context.sessionID,
-    messageID: context.messageID,
-    callID: context.callID,
-    kind: "bash",
-    directory: context.directory,
-    title: "Operate a window",
-    subject: `window ${target}`,
-  })
+  await askToOperate(context, "window", target, "*")
   const driver = await replace(context, () => WindowsDriver.attach(target))
   return { output: await driver.snapshot(true), title: driver.label, metadata: { window: driver.label } }
 }
@@ -249,15 +265,8 @@ async function launch(input: Record<string, unknown>, context: ToolContext) {
   const target = typeof input.target === "string" && input.target.trim() ? input.target.trim() : undefined
   // A relative path is the project's; a bare name is looked up on PATH by the system.
   const executable = /[\\/]/.test(program) && !path.isAbsolute(program) ? path.resolve(context.directory, program) : program
-  await context.permissions.ask({
-    sessionID: context.sessionID,
-    messageID: context.messageID,
-    callID: context.callID,
-    kind: "bash",
-    directory: context.directory,
-    title: "Start a program to operate it",
-    subject: [executable, ...args].join(" "),
-  })
+  // "Always" here covers this program, with any arguments - not every program.
+  await askToOperate(context, "launch", [executable, ...args].join(" "), `${executable} *`)
   const driver = await replace(context, () => WindowsDriver.launch(executable, args, context.directory, target))
   return { output: await driver.snapshot(true), title: driver.label, metadata: { window: driver.label } }
 }
@@ -265,17 +274,32 @@ async function launch(input: Record<string, unknown>, context: ToolContext) {
 async function android(input: Record<string, unknown>, context: ToolContext) {
   const target = typeof input.target === "string" && input.target.trim() ? input.target.trim() : undefined
   const packageName = typeof input.package === "string" && input.package.trim() ? input.package.trim() : undefined
-  await context.permissions.ask({
-    sessionID: context.sessionID,
-    messageID: context.messageID,
-    callID: context.callID,
-    kind: "bash",
-    directory: context.directory,
-    title: "Operate an Android device",
-    subject: `android ${[target, packageName].filter(Boolean).join(" ") || "device"}`,
-  })
+  await askToOperate(context, "android", [target, packageName].filter(Boolean).join(" ") || "device", "*")
   const driver = await replace(context, () => AndroidDriver.connect(target, packageName))
   return { output: await driver.snapshot(true), title: packageName ?? driver.label, metadata: { device: driver.label } }
+}
+
+/** The longest title a row shows for a batch; the steps themselves are in its output. */
+const STEPS_TITLE_MAX = 90
+
+/**
+ * What a batch did, as its row's title: the steps themselves, as the model
+ * wrote them, and where it stopped if it did not finish - "3/3" told the
+ * reader nothing about what was clicked.
+ */
+export function stepsTitle(steps: Step[], done: number): string {
+  const said = steps.map(describeStep).join(" · ")
+  const title = said.length > STEPS_TITLE_MAX ? `${said.slice(0, STEPS_TITLE_MAX - 1)}…` : said
+  return done < steps.length ? `${title} (stopped at ${done + 1}/${steps.length})` : title
+}
+
+/** An address as a person reads it: a file's path and spaces instead of %20. */
+function readable(address: string): string {
+  try {
+    return decodeURI(address)
+  } catch {
+    return address
+  }
 }
 
 function stepsOf(value: unknown): Step[] {

@@ -257,7 +257,7 @@ export async function roundThirtySevenChecks(check: Check, section: (name: strin
         })
       }
       check("window takes over an open window by its title", Boolean(taken) && /\[\d+\] tab "Count"/.test(taken?.output ?? ""), taken?.output ?? last)
-      check("and every call asks, naming it", asked.length >= 1 && asked.every((subject) => subject === "window Win Demo"), asked)
+      check("and every call asks, naming it", asked.length >= 1 && asked.every((subject) => subject === "Win Demo"), asked)
       const clicked = await AppTool.execute({ action: "do", steps: [{ action: "click", ref: refOf(taken?.output ?? "", "Say hello") }] }, context)
       check("a click there works the same way", /shows: Hello there/.test(clicked.output), clicked.output)
       await AppTool.execute({ action: "close" }, context)

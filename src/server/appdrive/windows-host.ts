@@ -139,10 +139,19 @@ public static class McodeUia {
 
   /// The visible, titled top-level windows of a process and of everything it started, for a shell command that may be sitting on one.
   static object TreeWindows(int root) {
+    /*
+     * Windows reuses process ids, and a process keeps the id of a parent long
+     * gone: an older program - the user's own - can name the shell's id as its
+     * parent. Only a process started after its parent is its child, so only
+     * those are followed; otherwise the user's window would be taken for the
+     * command's, and its title handed to the model.
+     */
     var children = new Dictionary<int, List<int>>();
-    using (var search = new System.Management.ManagementObjectSearcher("SELECT ProcessId, ParentProcessId FROM Win32_Process")) {
+    var born = new Dictionary<int, string>();
+    using (var search = new System.Management.ManagementObjectSearcher("SELECT ProcessId, ParentProcessId, CreationDate FROM Win32_Process")) {
       foreach (System.Management.ManagementObject process in search.Get()) {
         int id = Convert.ToInt32(process["ProcessId"]), parent = Convert.ToInt32(process["ParentProcessId"]);
+        born[id] = Convert.ToString(process["CreationDate"]) ?? "";
         List<int> list;
         if (!children.TryGetValue(parent, out list)) children[parent] = list = new List<int>();
         list.Add(id);
@@ -155,7 +164,13 @@ public static class McodeUia {
       int id = pending.Pop();
       if (!tree.Add(id)) continue;
       List<int> list;
-      if (children.TryGetValue(id, out list)) foreach (var child in list) pending.Push(child);
+      string parentBorn;
+      born.TryGetValue(id, out parentBorn);
+      // CIM datetimes (yyyymmddHHMMSS.mmmmmm+UUU) compare as text in time order.
+      if (children.TryGetValue(id, out list)) foreach (var child in list) {
+        string childBorn;
+        if (born.TryGetValue(child, out childBorn) && string.CompareOrdinal(childBorn, parentBorn ?? "") >= 0) pending.Push(child);
+      }
     }
     var found = new List<object>();
     EnumWindows((handle, data) => {
@@ -216,6 +231,8 @@ public static class McodeUia {
     if (IsIconic(handle)) { ShowWindow(handle, SW_SHOWNOACTIVATE); Thread.Sleep(300); }
     window = found;
     windowPid = found.Current.ProcessId;
+    // Keys pressed from now on belong to this window, not to a field of the last one.
+    typedInto = IntPtr.Zero;
     ids.Clear();
     known.Clear();
     next = 1;
@@ -692,6 +709,8 @@ public static class McodeUia {
     var box = window.Current.BoundingRectangle;
     if (box.IsEmpty) throw new Exception("hidden");
     var handle = new IntPtr(window.Current.NativeWindowHandle);
+    // A minimised window draws nothing; it is shown first, without being activated.
+    if (IsIconic(handle)) { ShowWindow(handle, SW_SHOWNOACTIVATE); Thread.Sleep(300); box = window.Current.BoundingRectangle; }
     using (var bitmap = new System.Drawing.Bitmap((int)box.Width, (int)box.Height)) {
       using (var graphics = System.Drawing.Graphics.FromImage(bitmap)) {
         var hdc = graphics.GetHdc();

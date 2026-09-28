@@ -96,7 +96,8 @@ export async function roundThirtySixChecks(check: Check, section: (name: string)
       check("nothing open yet: it says what to do first", /open with a URL, window or launch for a native app, android for a device, or attach/.test(refused), refused)
 
       const opened = await run({ action: "open", url: pathToFileURL(page).href })
-      check("open asks once, like a command, naming the page", asked.length === 1 && asked[0]!.startsWith("open file:///"), asked)
+      check("the row names the page as a person reads it, not percent-encoded", opened.title === decodeURI(pathToFileURL(page).href), opened.title)
+      check("open asks once, like a command, naming the page", asked.length === 1 && asked[0]!.startsWith("file:///"), asked)
       check("and lists the tabs and the div that is a button", /\[\d+\] tab "首页" selected/.test(opened.output) && /\[\d+\] clickable "打个招呼"/.test(opened.output), opened.output)
       const counterTab = refOf(opened.output, "计数")
       const homeTab = refOf(opened.output, "首页")
@@ -110,7 +111,7 @@ export async function roundThirtySixChecks(check: Check, section: (name: string)
       const started = Date.now()
       const clicked = await run({ action: "do", steps: [{ action: "click", ref: plus }, { action: "click", ref: plus }, { action: "click", ref: plus }, { action: "click", ref: minus }] })
       const took = Date.now() - started
-      check("four clicks in one call land, and the answer shows the new count", /当前计数：2/.test(clicked.output) && clicked.title === "4/4", clicked.output)
+      check("four clicks in one call land, and the answer shows the new count", /当前计数：2/.test(clicked.output) && clicked.title === `click [${plus}] · click [${plus}] · click [${plus}] · click [${minus}]`, { title: clicked.title, output: clicked.output })
       check("and take less than two seconds together - no fixed sleeps", took < 2_000, { took })
       check(
         "every step says what it did by itself, so one call can test several buttons",
@@ -157,7 +158,7 @@ export async function roundThirtySixChecks(check: Check, section: (name: string)
       check("the page's own errors come back with the answer", /console\.error: 检查更新失败/.test(broken.output) && /uncaught: .*update check crashed/.test(broken.output), broken.output)
 
       const failing = await run({ action: "do", steps: [{ action: "click", ref: 99_999 }, { action: "click", ref: homeTab }] })
-      check("a number not on the page fails that step, says why, and runs nothing after it", /1\. click \[99999\] failed: .*take a new one/.test(failing.output) && /remaining 1 step/.test(failing.output) && failing.title === "0/2", failing.output)
+      check("a number not on the page fails that step, says why, and runs nothing after it", /1\. click \[99999\] failed: .*take a new one/.test(failing.output) && /remaining 1 step/.test(failing.output) && failing.title === `click [99999] · click [${homeTab}] (stopped at 1/2)`, { title: failing.title, output: failing.output })
 
       const value = await run({ action: "eval", expression: "document.getElementById('value').textContent" })
       check("eval reads the page's state directly", value.output === '"2"', value.output)
@@ -209,7 +210,7 @@ export async function roundThirtySixChecks(check: Check, section: (name: string)
       }
       check("attach reaches the app's window by its title", Boolean(attached) && /\[\d+\] tab "计数"/.test(attached?.output ?? ""), attached?.output ?? last)
       // The loop above retries while Electron starts, and each try is its own call with its own question.
-      check("and every call asks, naming the port", asked.length >= 1 && asked.every((subject) => subject === `attach 127.0.0.1:${port}`), asked)
+      check("and every call asks, naming the port", asked.length >= 1 && asked.every((subject) => subject === `127.0.0.1:${port}`), asked)
       const clicked = await AppTool.execute({ action: "do", steps: [{ action: "click", ref: refOf(attached?.output ?? "", "计数") }] }, context)
       check("a click in the Electron window works the same way", /当前计数：0/.test(clicked.output), clicked.output)
       check("Electron's %c-styled warnings arrive as plain words", !/%c/.test(attached?.output ?? ""), attached?.output)

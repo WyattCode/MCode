@@ -12,6 +12,8 @@ export const WAIT_CAP_MS = 15_000
 export interface Snapshot {
   title: string
   url: string
+  /** Which load of the page this is, where the reader can tell: a reload at the same address is a new document with new numbers. */
+  doc?: string
   modal: string
   elements: string[]
   more: number
@@ -143,7 +145,8 @@ export function formatSnapshot(now: Snapshot, before?: Snapshot): string {
     ]
       .filter((line, index, all) => line !== "" || all[index - 1] !== "")
       .join("\n")
-  if (!before || before.url !== now.url || before.modal !== now.modal) return whole()
+  if (before && before.doc !== now.doc && before.url === now.url) return `The page was loaded again; its elements have new numbers.\n${whole()}`
+  if (!before || before.url !== now.url || before.modal !== now.modal || before.doc !== now.doc) return whole()
   const elements = diff(before.elements, now.elements)
   const text = diff(before.text, now.text)
   const changes = elements.added.length + elements.removed.length + text.added.length + text.removed.length
@@ -176,6 +179,7 @@ const EFFECT_LINE_MAX = 80
 export function stepEffect(before: Snapshot, after: Snapshot): string {
   const parts: string[] = []
   if (before.url !== after.url) parts.push(`now at ${after.url}`)
+  else if (before.doc !== after.doc) parts.push("the page reloaded")
   if (!before.modal && after.modal) parts.push(`a dialog opened ("${after.modal.slice(0, EFFECT_LINE_MAX)}")`)
   if (before.modal && !after.modal) parts.push("the dialog closed")
   // A dialog coming or going changes what is listed wholesale; the listing after the batch shows the result.

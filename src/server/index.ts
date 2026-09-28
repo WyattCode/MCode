@@ -34,7 +34,7 @@ import { protectAppData } from "./tool/app-data"
 import { frameForWindow } from "./config-view"
 import { newSocketSecret, refusalOf, SOCKET_PROTOCOL } from "./socket-guard"
 import { ModelCatalog, shippedCatalog } from "./provider/models-dev"
-import { closeAllApps } from "./tool/app"
+import { closeAllApps, closeAppOf } from "./tool/app"
 import { stopLookout } from "./appdrive/windows"
 
 export interface Runtime {
@@ -368,6 +368,11 @@ export async function startBackend(dataDirectory: string, options: BackendOption
    * and any other client see.
    */
   const watching = new Map<WebSocket, Set<string>>()
+
+  // A deleted conversation's app goes with it: the browser or program the app tool opened for it closes, an attached app is let go.
+  bus.subscribe((event) => {
+    if (event.type === "session.deleted") void closeAppOf(event.sessionID)
+  })
 
   bus.subscribe((event) => {
     // Settings leave with their secrets masked (config-view.ts).
