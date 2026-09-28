@@ -2295,6 +2295,8 @@ onBeforeUnmount(() => {
 .row.project > .project-toggle {
   min-height: 34px;
   padding-block: 6px;
+  /* The button inside the row takes the keyboard ring; it rounds as the row does, not square. */
+  border-radius: inherit;
 }
 
 .row.project {
@@ -2350,6 +2352,8 @@ onBeforeUnmount(() => {
   font-weight: 500;
   /* Normal, as MiMo's heading is: 15 tall, where the inherited 24 made it 24. */
   line-height: normal;
+  /* Its keyboard ring rounds like every other ring in the column (user, 2026-09-29: no square rings); nothing else shows it. */
+  border-radius: 4px;
 }
 
 /* MiMo's section toggle keyboard ring: 1px in its muted text colour, 2px out. */

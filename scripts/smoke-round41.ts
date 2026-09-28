@@ -14,6 +14,9 @@
  * - Android: typing with clear:false adds to the field instead of replacing
  *   it (checked on a device, as round 40's Android checks are).
  *
+ * - Keyboard rings that were square: a project's and a task's row button, and
+ *   the 项目 / 最近 headings (the user's screenshot, 2026-09-29).
+ *
  * smoke.ts calls `roundFortyOneChecks` with its own check and section.
  */
 import fs from "node:fs"
@@ -37,6 +40,17 @@ function contextFor(sessionID: string, directory: string): ToolContext {
 const refOf = (output: string, test: RegExp) => Number(output.split("\n").find((line) => test.test(line))?.match(/^\[(\d+)\]/)?.[1])
 
 export async function roundFortyOneChecks(check: Check, section: (name: string) => void): Promise<void> {
+  section("Round 41: every keyboard ring in the side column is rounded")
+  {
+    // Measured in a throwaway window by tabbing through the column: these were the only square rings (user, 2026-09-29).
+    const side = fs.readFileSync(path.join(root, "src", "renderer", "src", "components", "Sidebar.vue"), "utf8")
+    const rule = side.match(/\.row\.task > \.row-open,\s*\.row\.project > \.project-toggle \{([^}]*)\}/)?.[1] ?? ""
+    check("a project's and a task's button round their ring as their row does", /border-radius: inherit;/.test(rule), rule)
+    // On the heading itself, not its focus rule: a focus state must not reshape what it marks (themecheck).
+    const head = side.match(/^\.section-head \{([^}]*)\}/m)?.[1] ?? ""
+    check("so do the 项目 and 最近 headings", /border-radius: \d+px;/.test(head), head)
+  }
+
   section("Round 41: web components and frames, second look")
   if (!findBrowser()) {
     check("(skipped: no Chrome or Edge on this machine)", true)
