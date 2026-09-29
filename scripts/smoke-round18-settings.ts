@@ -282,7 +282,7 @@ export async function roundEighteenSettingsChecks(check: Check, section: (name: 
     const settings = await read("src/renderer/src/components/SettingsDialog.vue")
     check("R18-M5: a row of tabs - refresh, add, then one per provider", /data-provider-tabs[\s\S]*data-provider-refresh-all[\s\S]*data-provider-add[\s\S]*v-for="provider in listed"/.test(models))
     check("R18-M5: a custom provider's tab carries delete, clone and save", /data-provider-remove[\s\S]*data-provider-clone[\s\S]*data-provider-save/.test(models))
-    check("R18-M5: the form offers the three protocols", ["openai", "anthropic", "responses"].every((value) => form.includes(`<option value="${value}">`)))
+    check("R18-M5: the form offers the three protocols", /\(\["openai", "anthropic", "responses"\] as const\)\.map\(\(value\) => \(\{ value, label: t\(`provider\.custom\.protocol\.\$\{value\}`\) \}\)\)/.test(form) && /:options="protocolOptions"/.test(form))
     check("R18-M5: a connection test, a model picker and the four inputs", /data-provider-probe/.test(form) && /data-model-combo/.test(form) && /v-for="key in MODALITIES"/.test(form))
     check("R18-M5: a blank key on an edit tests with the one held, never sent to the window", /\.\.\.\(editing \? \{ provider: editing\.id \} : \{\}\)/.test(form))
     check("R18-M5: the old add-model dialog is gone", !(await fs.stat(path.join(process.cwd(), "src/renderer/src/components/CustomModelDialog.vue")).catch(() => undefined)) && !/CustomModelDialog/.test(settings + models))

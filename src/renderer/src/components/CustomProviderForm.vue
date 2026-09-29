@@ -7,6 +7,7 @@ import { t } from "../lib/i18n"
 import { notice } from "../lib/toast"
 import { useEscapeLayerWhile } from "../lib/escape-layer"
 import ConfirmDialog from "./ConfirmDialog.vue"
+import SelectMenu from "./SelectMenu.vue"
 import { LIMIT_PRESETS, MODALITIES, comboEnterValue, limitLabel, limitOf, modalitySummary, providerIdError, validEndpoint, type Modality } from "../lib/custom-model"
 import { providerIdProblem } from "@shared/provider-id"
 
@@ -126,6 +127,10 @@ const form = ref({
  */
 const pristine = ref(JSON.stringify(form.value))
 const dirty = computed(() => JSON.stringify(form.value) !== pristine.value)
+
+const protocolOptions = computed(() =>
+  (["openai", "anthropic", "responses"] as const).map((value) => ({ value, label: t(`provider.custom.protocol.${value}`) })),
+)
 
 const busy = ref(false)
 const tried = ref(false)
@@ -506,11 +511,15 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
       <div class="cp-row">
         <label class="cp-label" for="cp-protocol">{{ t("provider.custom.field.protocol.label") }}</label>
         <div class="cp-control">
-          <select id="cp-protocol" v-model="form.protocol" class="cp-in" data-custom-protocol>
-            <option value="openai">{{ t("provider.custom.protocol.openai") }}</option>
-            <option value="anthropic">{{ t("provider.custom.protocol.anthropic") }}</option>
-            <option value="responses">{{ t("provider.custom.protocol.responses") }}</option>
-          </select>
+          <!-- Drawn in-app: a native select pops the OS list (system blue, grey, square) over this card. -->
+          <SelectMenu
+            id="cp-protocol"
+            v-model="form.protocol"
+            class="cp-select"
+            :options="protocolOptions"
+            match-width
+            data-custom-protocol
+          />
         </div>
       </div>
 
@@ -887,6 +896,78 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 
   :root:not([data-theme="light"]) .cp-in.bad {
     border-color: #ff6467;
+  }
+}
+
+/*
+ * The protocol picker wears the field above it: the same 36 tall, 6 round, 1px
+ * rule and dim-on-focus border, full width, the value at 13 in the field's
+ * colour. `.cp` in front outranks SelectMenu's own `.select` / `.trigger` rules
+ * and the settings page's `.content .trigger`, which is 28 tall and 8 round.
+ */
+.cp .cp-select {
+  width: 100%;
+}
+
+.cp .cp-select :deep(.trigger) {
+  justify-content: space-between;
+  width: 100%;
+  height: calc(36px * var(--ui-font-scale, 1));
+  padding-block: 0;
+  padding-inline: 12px 8px;
+  color: var(--text-strong);
+  background: transparent;
+  border: 1px solid #e3e3e0;
+  border-radius: 6px;
+  outline: none;
+  box-shadow: var(--shadow-xs);
+  font-family: var(--font-sans);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.cp .cp-select :deep(.trigger .label) {
+  font-weight: 400;
+}
+
+.cp .cp-select :deep(.trigger .caret) {
+  color: currentColor;
+  opacity: 0.5;
+}
+
+.cp .cp-select :deep(.trigger:focus-visible),
+.cp .cp-select :deep(.trigger.open) {
+  border-color: var(--text-weak);
+}
+
+/* A field does not light up under the pointer; the settings page's ghost trigger does. */
+.cp .cp-select :deep(.trigger:hover),
+.cp .cp-select :deep(.trigger.open) {
+  background: transparent;
+}
+
+:root[data-theme="dark"] .cp .cp-select :deep(.trigger),
+:root[data-theme="dark"] .cp .cp-select :deep(.trigger:hover),
+:root[data-theme="dark"] .cp .cp-select :deep(.trigger.open) {
+  background: rgb(58 58 58 / 0.3);
+  border-color: #3a3a3a;
+}
+
+:root[data-theme="dark"] .cp .cp-select :deep(.trigger:focus-visible),
+:root[data-theme="dark"] .cp .cp-select :deep(.trigger.open) {
+  border-color: var(--text-weak);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cp .cp-select :deep(.trigger),
+  :root:not([data-theme="light"]) .cp .cp-select :deep(.trigger:hover),
+  :root:not([data-theme="light"]) .cp .cp-select :deep(.trigger.open) {
+    background: rgb(58 58 58 / 0.3);
+    border-color: #3a3a3a;
+  }
+
+  :root:not([data-theme="light"]) .cp .cp-select :deep(.trigger:focus-visible),
+  :root:not([data-theme="light"]) .cp .cp-select :deep(.trigger.open) {
+    border-color: var(--text-weak);
   }
 }
 
