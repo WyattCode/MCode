@@ -977,6 +977,8 @@ class Connection {
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       return
     }
+    // A request made while a new session is being started waits for it: sent with none, the server would refuse it.
+    if (this.renewing && message.method !== "initialize" && message.method !== "notifications/initialized") await this.renewing.catch(() => {})
     const sentWith = this.sessionID
     const { response, release } = await this.open(
       new URL(this.config.url!),

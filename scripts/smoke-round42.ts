@@ -22,6 +22,16 @@
  *   server was reconnected by hand; and a failed call names its tool, its
  *   server and what the server said.
  *
+ * Second look, the same day: a call made while a new MCP session was being
+ * started went with no session and was refused; a history that shrank was
+ * estimated whole, which runs short on Chinese text, instead of the last
+ * report less what went; and the summary request's output fell to the floor
+ * on any large conversation, the 1.15 margin on an estimate cut to 90% of the
+ * window being over the whole window. And one inherited from v2 itself: the
+ * text kept "recent" through a compaction walked back to the start of the
+ * turn it cut into, so one large pasted message was kept whole and the
+ * conversation came out of its compaction nearly as long as it went in.
+ *
  * smoke.ts calls `roundFortyTwoChecks` with its own check and section.
  */
 import fs from "node:fs/promises"
@@ -38,7 +48,9 @@ import { describeAnthropicError } from "../src/server/provider/anthropic"
 import { describeHttp } from "../src/server/provider/openai"
 import { ProviderHttpError, providerErrorMessage } from "../src/server/provider/types"
 import { failureCode } from "../src/server/session/error-map"
-import { OUTPUT_FLOOR, fitOutput, isOverflowError } from "../src/server/session/overflow"
+import { OUTPUT_FLOOR, fitOutput, isOverflowError, promptSince } from "../src/server/session/overflow"
+import { estimateTokens } from "../src/server/session/estimate"
+import { RECENT_KEEP, splitConversation } from "../src/server/session/summary"
 import { isRetryable } from "../src/server/session/retry"
 import { BashTool } from "../src/server/tool/bash"
 import type { ToolContext } from "../src/server/tool/types"
@@ -175,7 +187,7 @@ export async function roundFortyTwoChecks(check: Check, section: (name: string) 
     const server = createServer((request, response) => {
       let raw = ""
       request.on("data", (chunk) => (raw += chunk))
-      request.on("end", () => {
+      request.on("end", async () => {
         const session = String(request.headers["mcp-session-id"] ?? "")
         if (request.method === "DELETE") {
           ended.push(session)
@@ -187,6 +199,11 @@ export async function roundFortyTwoChecks(check: Check, section: (name: string) 
           return response.end()
         }
         const body = raw ? JSON.parse(raw) : {}
+        // As a real server: anything but the handshake needs a session.
+        if (body.method !== "initialize" && !session) {
+          response.writeHead(400, { "content-type": "application/json" })
+          return response.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32000, message: "Bad Request: No valid session ID provided" } }))
+        }
         if (body.method !== "initialize" && forgotten.has(session)) {
           response.writeHead(404, { "content-type": "application/json" })
           return response.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message: "Session not found" } }))
@@ -200,6 +217,8 @@ export async function roundFortyTwoChecks(check: Check, section: (name: string) 
           response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }))
         }
         if (body.method === "initialize") {
+          // A second handshake takes a while, so a request can be made while the new session is coming.
+          if (issued > 0) await new Promise((resolve) => setTimeout(resolve, 300))
           current = `s${++issued}`
           initialized.push(current)
           return reply({ protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "r42", version: "1" } }, { "mcp-session-id": current })
@@ -253,14 +272,64 @@ export async function roundFortyTwoChecks(check: Check, section: (name: string) 
       const later = await run("echo", "three")
       check("and the calls after it go on under the new session", later === "echo: three" && calls.at(-1)?.session === "s2", calls.at(-1))
 
+      // Second look: a call made while the new session is still coming waits for it, rather than going with none.
+      forgotten.add(current)
+      const found = run("echo", "four")
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const during = await run("echo", "five")
+      check("a call made while a new session is being started waits for it", (await found) === "echo: four" && during === "echo: five" && initialized.length === 3, { during, initialized })
+
       const failed = await run("boom", "x")
       check("a failed call names its tool and server", failed.includes('MCP tool "boom" on server "web" failed'), failed)
       check("and says what the server said", failed.includes("HTTP 502") && failed.includes("upstream exploded"), failed)
     } finally {
       await mcp.close()
-      check("closing ends the server's session rather than leaving it to expire", ended.includes("s2"), ended)
+      check("closing ends the server's session rather than leaving it to expire", ended.includes("s3"), ended)
       server.close()
       await fs.rm(home, { recursive: true, force: true }).catch(() => undefined)
+    }
+  }
+
+  section("Round 42, second look: a shrunk history, and the summary's room")
+  {
+    const anchor = { model: "fake/m", measured: 40_000, estimated: 30_000 }
+    check("with no report, the whole request is estimated", JSON.stringify(promptSince(undefined, "fake/m", 31_000)) === JSON.stringify({ measured: 0, estimated: 31_000 }))
+    check("nor with another model's report", JSON.stringify(promptSince(anchor, "other/m", 31_000)) === JSON.stringify({ measured: 0, estimated: 31_000 }))
+    check("a history that grew is the report plus the growth", JSON.stringify(promptSince(anchor, "fake/m", 32_000)) === JSON.stringify({ measured: 40_000, estimated: 2_000 }))
+    check("one that shrank is the report less what went, with no margin", JSON.stringify(promptSince(anchor, "fake/m", 25_000)) === JSON.stringify({ measured: 35_000, estimated: 0 }))
+
+    // The text kept recent stays within its allowance when the turn it cuts into opens with a large message.
+    const said = (id: string, role: "user" | "assistant", text: string) =>
+      (role === "user"
+        ? { id, sessionID: "s", role, text, attachments: [], time: { created: 1 } }
+        : { id, sessionID: "s", role, parts: [{ type: "text", text }], time: { created: 1 } }) as never
+    const large = "x ".repeat(RECENT_KEEP * 4)
+    const split = splitConversation([said("u1", "user", "hello"), said("a1", "assistant", "hi"), said("u2", "user", large), said("a2", "assistant", "read it"), said("u3", "user", "and the last thing"), said("a3", "assistant", "done")])
+    check("a large message before the cut is summarised, not kept whole", Boolean(split) && estimateTokens(split!.recent) <= RECENT_KEEP && split!.older.some((message: { id: string }) => message.id === "u2"), { recent: estimateTokens(split?.recent), older: split?.older.map((message: { id: string }) => message.id) })
+    const newest = splitConversation([said("u1", "user", "hello"), said("a1", "assistant", "hi"), said("u2", "user", large), said("a2", "assistant", "read it")])
+    check("unless it is the newest turn, which is kept as before", Boolean(newest) && newest!.older.length === 2, newest?.older.map((message: { id: string }) => message.id))
+
+    // A conversation cut to ~88% of its window for its summary leaves the summary its 32k, not the floor.
+    // A million-token window, so the system prompt's size, which this check can only approximate, cannot tip it.
+    const e = await engine({ custom: { models: [{ id: "m", name: "M", limit: { context: 1_000_000, output: 32_000 } }] } as never })
+    try {
+      const session = await e.store.create({ directory: e.project, model: e.model })
+      await e.runner.prompt({ sessionID: session.id, text: "hello" })
+      await e.idle(session.id)
+      const first = e.bodies[0]!
+      const fixed = estimateTokens(String(first.messages?.[0]?.content ?? "")) + estimateTokens(JSON.stringify(first.tools ?? []))
+      // The older part is summarised; the last turn is kept as it is.
+      await e.runner.prompt({ sessionID: session.id, text: "x ".repeat((880_000 - fixed) * 2) })
+      await e.idle(session.id)
+      await e.runner.prompt({ sessionID: session.id, text: "and the last thing" })
+      await e.idle(session.id)
+      await e.runner.compact(session.id)
+      const asked = e.summaryBodies.at(-1)?.max_tokens as number | undefined
+      const carried = Math.round(JSON.stringify(e.summaryBodies.at(-1)?.messages ?? []).length / 4)
+      check("the summary request carries the large part, so the check means something", carried > 800_000, carried)
+      check("and its summary is given its 32k, not the floor", asked === 32_000, { asked, fixed })
+    } finally {
+      await e.close()
     }
   }
 }

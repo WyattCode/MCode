@@ -81,6 +81,24 @@ export function fitOutput(requested: number, entry: Pick<ModelEntry, "contextWin
 }
 
 /**
+ * A request's size from the last one a provider reported on: that report plus
+ * what the estimate grew by, the growth with a margin. A history that shrank -
+ * a crop, an undo, older output pruned - is the report less what went, with no
+ * margin: estimating the whole request instead runs far short on Chinese text.
+ * With no report for this model - none yet, another model, or one cleared by
+ * a compaction - the whole request is estimated.
+ */
+export function promptSince(
+  anchor: { model: string; measured: number; estimated: number } | undefined,
+  model: string,
+  estimated: number,
+): { measured: number; estimated: number } {
+  if (!anchor || anchor.model !== model) return { measured: 0, estimated }
+  const grown = estimated - anchor.estimated
+  return grown >= 0 ? { measured: anchor.measured, estimated: grown } : { measured: Math.max(0, anchor.measured + grown), estimated: 0 }
+}
+
+/**
  * The room a conversation has before it must be compacted: MiMo's `usable`,
  * 90% of the model's window with nothing held back for the answer (180k of a
  * 200k model). 0 when the window is not known, which never compacts by count.

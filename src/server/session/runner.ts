@@ -53,7 +53,7 @@ import { emptyUsage } from "./store"
 import type { Recording } from "./snapshot"
 import { Snapshots, keepSnapshotFile, snapshotBytes, withProjectLock } from "./snapshot"
 import { revertTurnFiles, turnFilePaths } from "./turn-revert"
-import { COMPACTION_TRIGGER_RATIO, SUMMARY_OUTPUT_MAX, fitOutput, isOverflowByCount, isOverflowError, maxOutputTokens, underPressure, usableContext } from "./overflow"
+import { COMPACTION_TRIGGER_RATIO, SUMMARY_OUTPUT_MAX, fitOutput, isOverflowByCount, promptSince, isOverflowError, maxOutputTokens, underPressure, usableContext } from "./overflow"
 // MiMo's pruning: what a turn re-sends of its older tool output once the prompt cache has gone cold.
 import { pruneLevelFor, prunedHistory, type PruneLevel } from "./prune"
 import { estimateTokens } from "./estimate"
@@ -1552,10 +1552,16 @@ export class SessionRunner {
           baseURL: definition.baseURL,
           headers: definition.headers,
           accountId: tokens?.accountId,
-          // OpenCode v2's summary cap, then fitted to the window like any request: the history was sized to 90% of it.
+          /*
+           * OpenCode v2's summary cap, then fitted to the window. With no
+           * margin on the estimate: the history was cut to 90% of the window
+           * by this same estimate, and 1.15 on top of that is over the whole
+           * window, which left every large summary 4096 tokens. A request the
+           * estimate undersold is refused and squeezed below, as before.
+           */
           maxOutput: fitOutput(Math.min(maxOutputTokens(session.model, entry), SUMMARY_OUTPUT_MAX), entry, {
-            measured: 0,
-            estimated: requestTokens({ system: system.system, systemTail: system.systemTail, tools: offered, history }),
+            measured: requestTokens({ system: system.system, systemTail: system.systemTail, tools: offered, history }),
+            estimated: 0,
           }),
           outputLimit: entry?.maxOutput,
           sessionID: session.id,
@@ -3057,16 +3063,10 @@ export class SessionRunner {
       // nor the session chat tools, which refuse a subagent anyway and only cost it a wasted call;
       // one asked for structured output has the tool it returns it through.
       const sentTools = [...this.offeredTools(session), ...(outputSchema ? [structuredOutputTool(outputSchema)] : [])]
-      /*
-       * The output asked for, fitted to what the window has left (OpenCode v2,
-       * d9987ef9): the last request's reported size plus what was added since.
-       * A different model, or a history that shrank - a compaction, a crop -
-       * makes the last report no guide, and the whole request is estimated.
-       */
+      // The output asked for, fitted to what the window has left (OpenCode v2, d9987ef9); see `promptSince`.
       const modelKey = `${session.model.provider}/${session.model.model}`
       const estimated = requestTokens({ system, systemTail, tools: sentTools, history: sentHistory })
-      const anchor = this.promptAnchors.get(sessionID)
-      const prompt = anchor && anchor.model === modelKey && estimated >= anchor.estimated ? { measured: anchor.measured, estimated: estimated - anchor.estimated } : { measured: 0, estimated }
+      const prompt = promptSince(this.promptAnchors.get(sessionID), modelKey, estimated)
       const maxOutput = fitOutput(maxOutputTokens(session.model, this.config.modelEntry(session.model)), this.config.modelEntry(session.model), prompt)
 
       const monitor = createLoopMonitor()
