@@ -785,7 +785,7 @@ async function timeoutsAndToolRules(check: Check, section: Section): Promise<voi
 
     const started = Date.now()
     const timedOut = await run("plain_slow")
-    check("a server with no timeout of its own gets the app-wide one", timedOut === "ERROR tools/call timed out" && Date.now() - started < 1500, { timedOut, ms: Date.now() - started })
+    check("a server with no timeout of its own gets the app-wide one", timedOut === 'ERROR MCP tool "slow" on server "plain" failed: tools/call timed out' && Date.now() - started < 1500, { timedOut, ms: Date.now() - started })
     const patient = await run("patient_slow")
     check("a server's own timeout wins over it", patient === "(no output)" || patient === "", patient)
   } finally {

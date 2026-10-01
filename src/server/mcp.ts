@@ -26,6 +26,7 @@ import { browserTarget } from "./open-url"
 import { terminate, windowsLaunch } from "./mcp-launch"
 import { probeTools, stopProbes, type ProbeResult } from "./mcp-probe"
 import { wildcardMatch } from "./permission"
+import { isHtmlBody, providerErrorMessage } from "./provider/types"
 import { renderCatalog, searchCatalog, summarize, type CatalogTool } from "./codemode/catalog"
 import { formatScriptResult, runScript } from "./codemode/sandbox"
 
@@ -169,6 +170,8 @@ export function mcpToolSchema(schema: Record<string, unknown> | undefined): Reco
 const CONNECT_TIMEOUT = 30_000
 /** A call to a server with no `timeout` of its own: the MCP SDK's default request timeout, which MiMo leaves in place. */
 const CALL_TIMEOUT = 60_000
+/** How long ending a Streamable HTTP session may hold up stopping a server (OpenCode v2's `TERMINATE_TIMEOUT`). */
+const TERMINATE_TIMEOUT = 1_000
 
 /** The version MiMo's MCP SDK offers in the handshake; a server answers with the one it speaks. */
 const PROTOCOL_VERSION = "2025-11-25"
@@ -416,6 +419,8 @@ class Connection {
   private readonly provider?: McpOAuthProvider
   /** The session a Streamable HTTP server handed out, sent back on every request. */
   private sessionID?: string
+  /** The new session being started after the server forgot the old one. */
+  private renewing?: Promise<void>
   /** A 401 after this connection already signed in once is not answered by signing in again. */
   private signedIn = false
   /** What the last 401 named, for finishing the sign-in it started. */
@@ -594,14 +599,40 @@ class Connection {
     this.capabilities = {}
   }
 
-  /** Settles once a local server has exited; see `terminate` for how it is asked to. */
+  /** Settles once a local server has exited, or a remote one has been told its session is over. */
   stop(): Promise<void> {
     this.closed = true
+    // Read before the streams are cut: the session id goes with them.
+    const ending = this.endSession()
     this.cut()
     const child = this.child
     this.child = undefined
     this.buffer = ""
-    return child ? terminate(child) : Promise.resolve()
+    return Promise.all([ending, child ? terminate(child) : undefined]).then(() => undefined)
+  }
+
+  /**
+   * Streamable HTTP: tells the server the session is over, as the spec asks
+   * of a client that is done with one. Closing the streams alone left it
+   * open on the server until it expired by itself (OpenCode v2, 155bc7df).
+   * A server that does not end sessions this way answers 405, which is fine;
+   * one that does not answer in a second is not waited on.
+   */
+  private async endSession(): Promise<void> {
+    const session = this.sessionID
+    if (this.transport !== "http" || !session || !this.config.url) return
+    this.sessionID = undefined
+    try {
+      const headers = new Headers({ "mcp-session-id": session })
+      if (this.protocolVersion) headers.set("mcp-protocol-version", this.protocolVersion)
+      const tokens = this.provider ? await this.provider.tokens() : undefined
+      if (tokens) headers.set("authorization", `Bearer ${tokens.access_token}`)
+      for (const [key, value] of Object.entries(this.config.headers ?? {})) headers.set(key, value)
+      const response = await fetch(this.config.url, { method: "DELETE", headers, signal: AbortSignal.timeout(TERMINATE_TIMEOUT) })
+      await response.body?.cancel().catch(() => {})
+    } catch (err) {
+      console.warn(`[mcp] ${this.name}: could not end the session`, err instanceof Error ? err.message : String(err))
+    }
   }
 
   /** Settles everything waiting on this connection and closes its streams, without deciding its status. */
@@ -628,7 +659,9 @@ class Connection {
     const timeout = this.config.timeout ?? this.hooks.callTimeout?.() ?? CALL_TIMEOUT
     const result = (await this.request("tools/call", { name: tool, arguments: args }, { timeout, signal }).catch(
       (err: unknown) => {
-        throw err instanceof ToolError ? err : new ToolError(err instanceof Error ? err.message : String(err))
+        if (err instanceof ToolError) throw err
+        // Which tool on which server, as OpenCode v2 says it (2fb7985b): "HTTP 502" alone named neither.
+        throw new ToolError(`MCP tool "${tool}" on server "${this.name}" failed: ${err instanceof Error ? err.message : String(err)}`)
       },
     )) as McpToolResult
     const { output, isError, attachments } = mcpToolOutput(result ?? {})
@@ -910,8 +943,25 @@ class Connection {
     })
   }
 
+  /**
+   * Streamable HTTP: a 404 to a request carrying a session id means the server
+   * no longer knows that session - it restarted, or let it expire. The spec
+   * has the client start a new one, which OpenCode v2's client does; MCode
+   * failed that request and every one after it until the server was
+   * reconnected by hand. One new session for any number of requests that
+   * found the old one gone at once.
+   */
+  private renewSession(expired: string): Promise<void> {
+    if (this.sessionID !== expired) return this.renewing ?? Promise.resolve()
+    this.sessionID = undefined
+    this.renewing ??= this.handshake().finally(() => {
+      this.renewing = undefined
+    })
+    return this.renewing
+  }
+
   /** Puts one frame on the wire; a reply that comes back in the response body is received from there. */
-  private async send(message: JsonRpcMessage, timeout = CALL_TIMEOUT): Promise<void> {
+  private async send(message: JsonRpcMessage, timeout = CALL_TIMEOUT, renewed = false): Promise<void> {
     const frame = JSON.stringify(message)
     if (this.transport === "stdio") {
       const child = this.child
@@ -927,6 +977,7 @@ class Connection {
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       return
     }
+    const sentWith = this.sessionID
     const { response, release } = await this.open(
       new URL(this.config.url!),
       "POST",
@@ -938,8 +989,16 @@ class Connection {
       const session = response.headers.get("mcp-session-id")
       if (session) this.sessionID = session
       if (!response.ok) {
-        await response.body?.cancel().catch(() => {})
-        throw new Error(`HTTP ${response.status}`)
+        if (response.status === 404 && sentWith && !renewed && message.method !== "initialize") {
+          await response.body?.cancel().catch(() => {})
+          release()
+          await this.renewSession(sentWith)
+          return await this.send(message, timeout, true)
+        }
+        // The server's own explanation where it gave one, never a web page.
+        const body = await response.text().catch(() => "")
+        const said = isHtmlBody(body) ? undefined : (providerErrorMessage(body) ?? (body.trim().slice(0, 300) || undefined))
+        throw new Error(`HTTP ${response.status}${said ? `: ${said}` : ""}`)
       }
       if (response.status === 202 || !response.body) return
       if ((response.headers.get("content-type") ?? "").includes("text/event-stream")) {

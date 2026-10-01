@@ -16,15 +16,24 @@
  *   at half the window instead of 90%.
  * - A command knows it is run by an agent: OpenCode v2's AGENT=1 and AI_AGENT,
  *   and MCode's own marker and conversation id.
+ * - MCP over Streamable HTTP: a stopped server's session is ended with a
+ *   DELETE rather than left to expire; a session the server forgot (404) is
+ *   replaced and the request sent again, where every call failed until the
+ *   server was reconnected by hand; and a failed call names its tool, its
+ *   server and what the server said.
  *
  * smoke.ts calls `roundFortyTwoChecks` with its own check and section.
  */
 import fs from "node:fs/promises"
+import { createServer } from "node:http"
 import os from "node:os"
 import path from "node:path"
 import Anthropic from "@anthropic-ai/sdk"
+import type { AppConfig, McpServerConfig } from "@shared/protocol"
 import type { Check } from "./smoke-round5"
 import { engine, say } from "./smoke-round5"
+import { Bus } from "../src/server/bus"
+import { McpServers } from "../src/server/mcp"
 import { describeAnthropicError } from "../src/server/provider/anthropic"
 import { describeHttp } from "../src/server/provider/openai"
 import { ProviderHttpError, providerErrorMessage } from "../src/server/provider/types"
@@ -151,6 +160,107 @@ export async function roundFortyTwoChecks(check: Check, section: (name: string) 
       if (before === undefined) delete process.env.AI_AGENT
       else process.env.AI_AGENT = before
       await fs.rm(dir, { recursive: true, force: true })
+    }
+  }
+
+  section("Round 42 (5-7): MCP sessions over Streamable HTTP, and what a failed call says")
+  {
+    // A Streamable HTTP server that hands out sessions, can forget one, and records the DELETE that ends one.
+    let issued = 0
+    let current = ""
+    const forgotten = new Set<string>()
+    const ended: string[] = []
+    const initialized: string[] = []
+    const calls: { session: string; tool: string }[] = []
+    const server = createServer((request, response) => {
+      let raw = ""
+      request.on("data", (chunk) => (raw += chunk))
+      request.on("end", () => {
+        const session = String(request.headers["mcp-session-id"] ?? "")
+        if (request.method === "DELETE") {
+          ended.push(session)
+          response.writeHead(200)
+          return response.end()
+        }
+        if (request.method === "GET") {
+          response.writeHead(405)
+          return response.end()
+        }
+        const body = raw ? JSON.parse(raw) : {}
+        if (body.method !== "initialize" && forgotten.has(session)) {
+          response.writeHead(404, { "content-type": "application/json" })
+          return response.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message: "Session not found" } }))
+        }
+        if (body.id === undefined) {
+          response.writeHead(202)
+          return response.end()
+        }
+        const reply = (result: unknown, headers: Record<string, string> = {}) => {
+          response.writeHead(200, { "content-type": "application/json", ...headers })
+          response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }))
+        }
+        if (body.method === "initialize") {
+          current = `s${++issued}`
+          initialized.push(current)
+          return reply({ protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "r42", version: "1" } }, { "mcp-session-id": current })
+        }
+        if (body.method === "tools/list") {
+          return reply({ tools: ["echo", "boom"].map((name) => ({ name, inputSchema: { type: "object", properties: { text: { type: "string" } } } })) })
+        }
+        if (body.method === "tools/call") {
+          calls.push({ session, tool: body.params.name })
+          if (body.params.name === "boom") {
+            response.writeHead(502, { "content-type": "application/json" })
+            return response.end(JSON.stringify({ error: { message: "upstream exploded" } }))
+          }
+          return reply({ content: [{ type: "text", text: `echo: ${body.params.arguments.text}` }] })
+        }
+        reply({})
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+    const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r42-mcp-"))
+    const value = { mcpServers: { web: { type: "remote", url, oauth: false } as McpServerConfig }, directory: home }
+    const config = { get: () => value as unknown as AppConfig, set: async () => value as unknown as AppConfig }
+    const mcp = new McpServers(new Bus(), config as never, undefined, home)
+    const context = {
+      sessionID: "ses_r42_mcp",
+      messageID: "msg_r42_mcp",
+      callID: "call_r42_mcp",
+      directory: home,
+      permissions: { ask: async () => undefined, action: () => "allow" },
+      signal: new AbortController().signal,
+      progress: () => {},
+      snapshot: async () => {},
+    } as unknown as ToolContext
+    const tool = (name: string) => mcp.tools(home).find((entry) => entry.name === `web_${name}`)
+    const run = (name: string, text: string) =>
+      tool(name)!.execute({ text }, context).then(
+        (result) => result.output,
+        (error: Error) => `ERROR ${error.message}`,
+      )
+    try {
+      await mcp.start()
+      const first = await run("echo", "one")
+      check("the server connects over Streamable HTTP and answers", first === "echo: one" && initialized.length === 1, { first, initialized })
+
+      // The server restarts and forgets the session: the next call is answered from a new one.
+      forgotten.add(current)
+      const after = await run("echo", "two")
+      check("a call into a forgotten session starts a new one and is answered", after === "echo: two", after)
+      check("with one new handshake, and the call sent again under the new session", initialized.length === 2 && calls.at(-1)?.session === "s2", { initialized, calls })
+      const later = await run("echo", "three")
+      check("and the calls after it go on under the new session", later === "echo: three" && calls.at(-1)?.session === "s2", calls.at(-1))
+
+      const failed = await run("boom", "x")
+      check("a failed call names its tool and server", failed.includes('MCP tool "boom" on server "web" failed'), failed)
+      check("and says what the server said", failed.includes("HTTP 502") && failed.includes("upstream exploded"), failed)
+    } finally {
+      await mcp.close()
+      check("closing ends the server's session rather than leaving it to expire", ended.includes("s2"), ended)
+      server.close()
+      await fs.rm(home, { recursive: true, force: true }).catch(() => undefined)
     }
   }
 }

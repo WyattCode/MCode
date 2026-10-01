@@ -9325,7 +9325,7 @@ async function mcpChecks(project: string) {
   check("and the server is told to cancel it", Array.isArray(cancelledIDs) && cancelledIDs.length === 1, cancelledIDs)
   const quickStart = Date.now()
   const timedOut = await run("quick_slow")
-  check("a server's own timeout bounds its calls", timedOut === "ERROR tools/call timed out" && Date.now() - quickStart < 2000, { timedOut, ms: Date.now() - quickStart })
+  check("a server's own timeout bounds its calls", timedOut === 'ERROR MCP tool "slow" on server "quick" failed: tools/call timed out' && Date.now() - quickStart < 2000, { timedOut, ms: Date.now() - quickStart })
 
   // E49
   const asked = (parsed(await run("my_server_ask-model")) ?? {}) as { content?: { text?: string } }
