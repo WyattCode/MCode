@@ -110,20 +110,31 @@ export function contextCount(tokens: { input: number; output: number; reasoning?
   return tokens.input + tokens.output + (tokens.reasoning ?? 0) + tokens.cacheRead + tokens.cacheWrite
 }
 
-/** The reference's `patterns`, verbatim. */
+/**
+ * The reference's `patterns`, brought up to OpenCode v2's `provider-error.ts`
+ * at 7e42a897 (MIT): Zhipu's and Qwen's own wordings among them, which ended
+ * the turn red instead of compacting it.
+ */
 const PATTERNS = [
   /prompt is too long/i,
   /request_too_large/i,
   /input is too long for requested model/i,
+  // Cloudflare Workers AI, as HTTP 413 (v2 a80a0001).
+  /exceeded this model context window limit/i,
   /exceeds the context window/i,
   /exceeds (?:the )?(?:model'?s )?maximum context length(?: of [\d,]+ tokens?|\s*\([\d,]+\))/i,
   /input token count.*exceeds the maximum/i,
+  // Amazon Nova on Bedrock, mid-stream (v2 599bdc98).
+  /number of input tokens exceeds maximum length/i,
   /tokens in request more than max tokens allowed/i,
   /maximum prompt length is \d+/i,
   /reduce the length of the messages/i,
+  // DeepInfra (v2 9c4c5870).
+  /requested input length \d+ exceeds maximum input length/i,
   /maximum context length is \d+ tokens/i,
   /exceeds (?:the )?maximum allowed input length of [\d,]+ tokens?/i,
-  /input \(\d+ tokens\) is longer than the model'?s context length \(\d+ tokens\)/i,
+  // Novita leaves the counts out (v2 f0f4c94c).
+  /input(?: \(\d+ tokens\))? is longer than the model'?s context length/i,
   /exceeds the limit of \d+/i,
   /exceeds the available context size/i,
   /greater than the context length/i,
@@ -133,10 +144,13 @@ const PATTERNS = [
   /request entity too large/i,
   /context length is only \d+ tokens/i,
   /input length.*exceeds.*context length/i,
-  /prompt too long; exceeded (?:max )?context length/i,
+  // Zhipu / Z.ai code 1261, as "Prompt too long" or "Prompt 超长" (v2 a931e8a9).
+  /prompt (?:too long|超长)/i,
   /too large for model with \d+ maximum context length/i,
   /prompt has [\d,]+ tokens?, but the configured context size is [\d,]+ tokens?/i,
   /model_context_window_exceeded/i,
+  // Alibaba DashScope (Qwen): "Range of input length should be [1, 129024]".
+  /range of input length should be/i,
   /too many tokens/i,
   /token limit exceeded/i,
 ]
