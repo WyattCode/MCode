@@ -173,6 +173,39 @@ export function isHtmlBody(body: string): boolean {
   return /^\s*(?:<!doctype|<html)/i.test(body)
 }
 
+/** The longest provider explanation carried on a failure. */
+const SAID_MAX = 1_000
+
+/**
+ * The provider's own explanation in an error body, from the layouts providers
+ * use, in OpenCode v2's order (`providerErrorMessage`, 2aaa265c, MIT): an
+ * `error.message`, an `error` that is itself the sentence, a top-level
+ * `message` (DashScope), AWS's `Message`, an RFC 9457 `detail`, and the first
+ * of an `errors` list. Undefined for anything else, a web page included.
+ */
+export function providerErrorMessage(body: string): string | undefined {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(body)
+  } catch {
+    return undefined
+  }
+  if (!parsed || typeof parsed !== "object") return undefined
+  const value = parsed as { error?: unknown; message?: unknown; Message?: unknown; detail?: unknown; errors?: unknown }
+  const errors = Array.isArray(value.errors) ? (value.errors[0] as { message?: unknown } | undefined) : undefined
+  const found = [
+    value.error && typeof value.error === "object" ? (value.error as { message?: unknown }).message : undefined,
+    value.error,
+    value.message,
+    value.Message,
+    value.detail,
+    errors?.message,
+  ].find((candidate): candidate is string => typeof candidate === "string" && /\S/.test(candidate))
+  if (!found) return undefined
+  const said = found.trim()
+  return said.length > SAID_MAX ? `${said.slice(0, SAID_MAX)}…` : said
+}
+
 export function wireOfBody(body: string): { code?: string; type?: string } | undefined {
   try {
     const parsed = JSON.parse(body) as { error?: { code?: unknown; type?: unknown } }
