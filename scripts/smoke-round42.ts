@@ -14,9 +14,14 @@
  *   prompt plus output against the window (vLLM, llama.cpp, LM Studio) refused
  *   every request once a 64k model's conversation passed 32k, and so compacted
  *   at half the window instead of 90%.
+ * - A command knows it is run by an agent: OpenCode v2's AGENT=1 and AI_AGENT,
+ *   and MCode's own marker and conversation id.
  *
  * smoke.ts calls `roundFortyTwoChecks` with its own check and section.
  */
+import fs from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
 import Anthropic from "@anthropic-ai/sdk"
 import type { Check } from "./smoke-round5"
 import { engine, say } from "./smoke-round5"
@@ -26,6 +31,8 @@ import { ProviderHttpError, providerErrorMessage } from "../src/server/provider/
 import { failureCode } from "../src/server/session/error-map"
 import { OUTPUT_FLOOR, fitOutput, isOverflowError } from "../src/server/session/overflow"
 import { isRetryable } from "../src/server/session/retry"
+import { BashTool } from "../src/server/tool/bash"
+import type { ToolContext } from "../src/server/tool/types"
 
 export async function roundFortyTwoChecks(check: Check, section: (name: string) => void): Promise<void> {
   section("Round 42 (1): the overflow wordings v2 learned since f0ed4f67")
@@ -119,6 +126,31 @@ export async function roundFortyTwoChecks(check: Check, section: (name: string) 
       check("the second, 40k into a 64k window, asks for what is left", typeof second === "number" && second < 24_000 && second > 20_000, { first, second })
     } finally {
       await e.close()
+    }
+  }
+
+  section("Round 42 (4): a command knows an agent is running it")
+  {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r42-env-"))
+    const script = path.join(dir, "env.js")
+    await fs.writeFile(script, "console.log(JSON.stringify(['AGENT', 'AI_AGENT', 'MCODE', 'MCODE_SESSION_ID'].map((name) => process.env[name] ?? null)))\n")
+    const context = { sessionID: "ses_r42_env", messageID: "msg_r42", callID: "call_r42_env", directory: dir, permissions: { ask: async () => undefined }, signal: new AbortController().signal, progress: () => {}, snapshot: async () => {} } as unknown as ToolContext
+    const seen = async () => {
+      const result = await BashTool.execute({ command: `node "${script}"`, description: "Environment" }, context).catch((error: Error) => ({ output: error.message }))
+      return result.output.match(/\[.*\]/)?.[0] ?? result.output
+    }
+    const before = process.env.AI_AGENT
+    try {
+      delete process.env.AI_AGENT
+      const plain = await seen()
+      check("AGENT=1, AI_AGENT names MCode, and the conversation is named", plain === JSON.stringify(["1", "mcode", "1", "ses_r42_env"]), plain)
+      process.env.AI_AGENT = "someone-else"
+      const kept = await seen()
+      check("an AI_AGENT the user's environment already sets is left alone", kept === JSON.stringify(["1", "someone-else", "1", "ses_r42_env"]), kept)
+    } finally {
+      if (before === undefined) delete process.env.AI_AGENT
+      else process.env.AI_AGENT = before
+      await fs.rm(dir, { recursive: true, force: true })
     }
   }
 }
