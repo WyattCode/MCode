@@ -6,7 +6,7 @@
  * Every request a provider would receive is inspected on the wire or through
  * the pure function that builds it. No model is called.
  */
-import { LARGE_OUTPUT_TOKEN_MAX, OUTPUT_TOKEN_MAX, isOverflowByCount, maxOutputTokens, usableContext } from "../src/server/session/overflow"
+import { LARGE_OUTPUT_TOKEN_MAX, OUTPUT_FLOOR, OUTPUT_TOKEN_MAX, isOverflowByCount, maxOutputTokens, usableContext } from "../src/server/session/overflow"
 import { reasoningRequest as anthropicReasoning } from "../src/server/provider/anthropic"
 import { costOf } from "../src/server/session/usage"
 import { usageOf } from "../src/server/provider/openai"
@@ -952,7 +952,8 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
           !JSON.stringify(replayed.at(-1)?.content).includes("FIRST request"),
         replayed.map((message) => message.role),
       )
-      check("with the model's usual output cap", asked?.max_tokens === 32_000, asked?.max_tokens)
+      // R42: the cap is fitted to the window's room, and this window is a mere 1000 tokens, so the floor is what is left.
+      check("with the output cap fitted to the window's room, no lower than the floor", asked?.max_tokens === OUTPUT_FLOOR, asked?.max_tokens)
       const stored = await e.store.get(manual.id)
       check("the summary is stored with its trigger", stored?.compacted?.trigger === "manual" && stored.compacted.summary.startsWith("## Objective"), stored?.compacted)
       await e.runner.prompt({ sessionID: manual.id, text: "THIRD request" })

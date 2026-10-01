@@ -10,16 +10,21 @@
  *   a key with no balance left read as "rate limited, wait a moment" and was
  *   retried for a quarter of an hour. A 429 that says the allowance is spent
  *   (Zhipu's 余额不足 among them) is now said at once.
+ * - The output asked for fits what the window has left. A server that checks
+ *   prompt plus output against the window (vLLM, llama.cpp, LM Studio) refused
+ *   every request once a 64k model's conversation passed 32k, and so compacted
+ *   at half the window instead of 90%.
  *
  * smoke.ts calls `roundFortyTwoChecks` with its own check and section.
  */
 import Anthropic from "@anthropic-ai/sdk"
 import type { Check } from "./smoke-round5"
+import { engine, say } from "./smoke-round5"
 import { describeAnthropicError } from "../src/server/provider/anthropic"
 import { describeHttp } from "../src/server/provider/openai"
 import { ProviderHttpError, providerErrorMessage } from "../src/server/provider/types"
 import { failureCode } from "../src/server/session/error-map"
-import { isOverflowError } from "../src/server/session/overflow"
+import { OUTPUT_FLOOR, fitOutput, isOverflowError } from "../src/server/session/overflow"
 import { isRetryable } from "../src/server/session/retry"
 
 export async function roundFortyTwoChecks(check: Check, section: (name: string) => void): Promise<void> {
@@ -86,5 +91,34 @@ export async function roundFortyTwoChecks(check: Check, section: (name: string) 
     const viaSaid = describeAnthropicError(viaSdk) ?? ""
     check("over the Anthropic protocol the reason is kept too", viaSaid.includes("余额不足"), viaSaid)
     check("and it is not retried there either", !isRetryable(viaSdk))
+  }
+
+  section("Round 42 (3): the output asked for fits what the window has left")
+  {
+    const window = { contextWindow: 64_000 }
+    check("a short conversation is asked for the whole allowance", fitOutput(32_000, window, { measured: 0, estimated: 1_000 }) === 32_000)
+    check("one past half the window is asked for what is left", fitOutput(32_000, window, { measured: 40_000, estimated: 2_000 }) === 64_000 - 40_000 - 2_300)
+    check("never less than the floor, which leaves the refusal to bring compaction", fitOutput(32_000, window, { measured: 63_000, estimated: 0 }) === OUTPUT_FLOOR)
+    check("and nothing is fitted for a model whose window is unknown", fitOutput(32_000, { contextWindow: 0 }, { measured: 900_000, estimated: 0 }) === 32_000)
+
+    // On the wire: a 64k local model whose first step reports 40k of prompt.
+    const e = await engine({ custom: { models: [{ id: "m", name: "M", limit: { context: 64_000, output: 32_000 } }] } as never })
+    try {
+      const frame = (data: unknown) => `data: ${JSON.stringify(data)}\n\n`
+      e.replies.push((response) => {
+        response.writeHead(200, { "content-type": "text/event-stream" })
+        response.write(frame({ choices: [{ delta: { tool_calls: [{ index: 0, id: "call_r42_read", function: { name: "read", arguments: JSON.stringify({ file_path: "README.md" }) } }] } }] }))
+        response.end(frame({ choices: [{ delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 40_000, completion_tokens: 40 } }) + "data: [DONE]\n\n")
+      })
+      e.replies.push(say("read it"))
+      const session = await e.store.create({ directory: e.project, model: e.model })
+      await e.runner.prompt({ sessionID: session.id, text: "read the readme" })
+      await e.idle(session.id)
+      const [first, second] = e.bodies.map((body) => body.max_tokens as number)
+      check("the first request asks for the model's whole 32k", first === 32_000, e.bodies.map((body) => body.max_tokens))
+      check("the second, 40k into a 64k window, asks for what is left", typeof second === "number" && second < 24_000 && second > 20_000, { first, second })
+    } finally {
+      await e.close()
+    }
   }
 }

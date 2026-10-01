@@ -53,11 +53,11 @@ import { emptyUsage } from "./store"
 import type { Recording } from "./snapshot"
 import { Snapshots, keepSnapshotFile, snapshotBytes, withProjectLock } from "./snapshot"
 import { revertTurnFiles, turnFilePaths } from "./turn-revert"
-import { COMPACTION_TRIGGER_RATIO, isOverflowByCount, isOverflowError, maxOutputTokens, underPressure, usableContext } from "./overflow"
+import { COMPACTION_TRIGGER_RATIO, SUMMARY_OUTPUT_MAX, fitOutput, isOverflowByCount, isOverflowError, maxOutputTokens, underPressure, usableContext } from "./overflow"
 // MiMo's pruning: what a turn re-sends of its older tool output once the prompt cache has gone cold.
 import { pruneLevelFor, prunedHistory, type PruneLevel } from "./prune"
 import { estimateTokens } from "./estimate"
-import { SHRINK_STEPS, SUMMARY_NUDGE, UNKNOWN_WINDOW, compactedText, continueNote, extractSummary, flattenOldest, isCheckpoint, isSummary, legacySummary, messagesTokens, nextRequestEstimate, shrinkLargeToolResults, splitConversation, summaryPrompt, touchedFiles, type CompactionTrigger } from "./summary"
+import { SHRINK_STEPS, SUMMARY_NUDGE, UNKNOWN_WINDOW, compactedText, continueNote, extractSummary, flattenOldest, isCheckpoint, isSummary, legacySummary, messagesTokens, nextRequestEstimate, requestTokens, shrinkLargeToolResults, splitConversation, summaryPrompt, touchedFiles, type CompactionTrigger } from "./summary"
 import { fetchInstruction, instructionUpdate, instructionValues, memorySection, systemPromptFrom, type InstructionValues } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
 import { GOAL_GUARD, JUDGE_SYSTEM, MAX_GOAL_REACT, cleanGoal, goalReminder, judgeQuestion, judgeTranscript, parseVerdict, sameGoal, type GoalVerdict } from "./goal"
@@ -345,6 +345,14 @@ export class SessionRunner {
   private readonly background = new Map<string, Set<AbortController>>()
   /** Which conversations are close enough to their compaction line to halve tool output. */
   private readonly pressured = new Map<string, boolean>()
+  /**
+   * The last request a conversation sent: the prompt size its provider
+   * reported, and the estimate of that same request. The next request is sized
+   * as the first plus what the estimate grew by, so only what was added since
+   * is guessed at - the four-characters-a-token estimate runs well short on
+   * Chinese text and on code.
+   */
+  private readonly promptAnchors = new Map<string, { model: string; measured: number; estimated: number }>()
   /** read: how much the running turn trims off older output, so read knows which instructions its request still carries. */
   private readonly turnPrune = new Map<string, PruneLevel>()
   /** Calls whose arguments arrived as text that could not be read, and why. */
@@ -778,6 +786,7 @@ export class SessionRunner {
     // ...and the requests that are not the turn: the title, and Smart's routing question.
     for (const controller of [...(this.background.get(sessionID) ?? [])]) controller.abort()
     this.pressured.delete(sessionID)
+    this.promptAnchors.delete(sessionID)
     this.permissions.rejectAll(sessionID)
     /*
      * Stopping a turn has to settle its question too. The tool is parked on a
@@ -1543,7 +1552,11 @@ export class SessionRunner {
           baseURL: definition.baseURL,
           headers: definition.headers,
           accountId: tokens?.accountId,
-          maxOutput: maxOutputTokens(session.model, entry),
+          // OpenCode v2's summary cap, then fitted to the window like any request: the history was sized to 90% of it.
+          maxOutput: fitOutput(Math.min(maxOutputTokens(session.model, entry), SUMMARY_OUTPUT_MAX), entry, {
+            measured: 0,
+            estimated: requestTokens({ system: system.system, systemTail: system.systemTail, tools: offered, history }),
+          }),
           outputLimit: entry?.maxOutput,
           sessionID: session.id,
           cacheTTL: entry?.cacheTTL,
@@ -1586,6 +1599,7 @@ export class SessionRunner {
     let refused: number | undefined
     let sent: Message[] = replay
     this.summarising.add(session.id)
+    this.promptAnchors.delete(session.id)
     this.bus.publish({ type: "session.compacting", sessionID: session.id, active: true })
     try {
       for (let rejections = 0; ; ) {
@@ -2990,6 +3004,71 @@ export class SessionRunner {
        * cut where it starts repeating itself, rather than being read after the
        * fact.
        */
+      const sentHistory: Message[] = lastStep
+        ? [
+            ...history,
+            /*
+             * Sent as the user, where the reference sends it as the
+             * assistant. A trailing assistant message is a prefill to
+             * Anthropic - the model continues that text rather than
+             * answering it - and a prefill cannot be combined with extended
+             * thinking, which MCode asks for by default. Copying the role
+             * would import a 400 on every Anthropic turn that reached the
+             * limit. Nothing changes for an OpenAI-compatible provider,
+             * where either role is an ordinary message.
+             */
+            {
+              id: `${assistant.id}:steps`,
+              sessionID,
+              role: "user" as const,
+              text: MAX_STEPS_PROMPT,
+              attachments: [],
+              time: { created: Date.now() },
+            },
+          ]
+        : resumed && step === 0
+          ? [
+              ...history,
+              // A request that ends on the model's own broken reply reads as a prefill; a line from the user does not.
+              {
+                id: `${assistant.id}:resume`,
+                sessionID,
+                role: "user" as const,
+                text: resumed === "restart" ? RESTART_PROMPT : RESUME_PROMPT,
+                attachments: [],
+                time: { created: Date.now() },
+              },
+            ]
+          : lead && step === 0
+            ? [
+                ...history,
+                // subagents: request only, like the resume line - the transcript keeps the command as typed.
+                {
+                  id: `${assistant.id}:subtask`,
+                  sessionID,
+                  role: "user" as const,
+                  text: SUBTASK_PROMPT,
+                  attachments: [],
+                  time: { created: Date.now() },
+                },
+              ]
+            : history
+      // subagents: a subagent is never handed the actor tool, so it cannot start subagents of its own,
+      // nor the session chat tools, which refuse a subagent anyway and only cost it a wasted call;
+      // one asked for structured output has the tool it returns it through.
+      const sentTools = [...this.offeredTools(session), ...(outputSchema ? [structuredOutputTool(outputSchema)] : [])]
+      /*
+       * The output asked for, fitted to what the window has left (OpenCode v2,
+       * d9987ef9): the last request's reported size plus what was added since.
+       * A different model, or a history that shrank - a compaction, a crop -
+       * makes the last report no guide, and the whole request is estimated.
+       */
+      const modelKey = `${session.model.provider}/${session.model.model}`
+      const estimated = requestTokens({ system, systemTail, tools: sentTools, history: sentHistory })
+      const anchor = this.promptAnchors.get(sessionID)
+      const prompt = anchor && anchor.model === modelKey && estimated >= anchor.estimated ? { measured: anchor.measured, estimated: estimated - anchor.estimated } : { measured: 0, estimated }
+      const maxOutput = fitOutput(maxOutputTokens(session.model, this.config.modelEntry(session.model)), this.config.modelEntry(session.model), prompt)
+
       const monitor = createLoopMonitor()
       let outcome: Awaited<ReturnType<SessionRunner["stream"]>>
       try {
@@ -2998,59 +3077,8 @@ export class SessionRunner {
         model: session.model,
         system,
         systemTail,
-        history: lastStep
-          ? [
-              ...history,
-              /*
-                * Sent as the user, where the reference sends it as the
-                * assistant. A trailing assistant message is a prefill to
-                * Anthropic - the model continues that text rather than
-                * answering it - and a prefill cannot be combined with extended
-                * thinking, which MCode asks for by default. Copying the role
-                * would import a 400 on every Anthropic turn that reached the
-                * limit. Nothing changes for an OpenAI-compatible provider,
-                * where either role is an ordinary message.
-                */
-              {
-                id: `${assistant.id}:steps`,
-                sessionID,
-                role: "user" as const,
-                text: MAX_STEPS_PROMPT,
-                attachments: [],
-                time: { created: Date.now() },
-              },
-            ]
-          : resumed && step === 0
-            ? [
-                ...history,
-                // A request that ends on the model's own broken reply reads as a prefill; a line from the user does not.
-                {
-                  id: `${assistant.id}:resume`,
-                  sessionID,
-                  role: "user" as const,
-                  text: resumed === "restart" ? RESTART_PROMPT : RESUME_PROMPT,
-                  attachments: [],
-                  time: { created: Date.now() },
-                },
-              ]
-            : lead && step === 0
-              ? [
-                  ...history,
-                  // subagents: request only, like the resume line - the transcript keeps the command as typed.
-                  {
-                    id: `${assistant.id}:subtask`,
-                    sessionID,
-                    role: "user" as const,
-                    text: SUBTASK_PROMPT,
-                    attachments: [],
-                    time: { created: Date.now() },
-                  },
-                ]
-              : history,
-        // subagents: a subagent is never handed the actor tool, so it cannot start subagents of its own,
-        // nor the session chat tools, which refuse a subagent anyway and only cost it a wasted call;
-        // one asked for structured output has the tool it returns it through.
-        tools: [...this.offeredTools(session), ...(outputSchema ? [structuredOutputTool(outputSchema)] : [])],
+        history: sentHistory,
+        tools: sentTools,
         // MiMo's last step: the tools stay defined, since the history carries calls to them, but none may be called.
         ...(lastStep ? { toolChoice: "none" as const } : {}),
         effort: effort ?? "",
@@ -3073,7 +3101,7 @@ export class SessionRunner {
          */
         variants: effort ? this.config.variants(session.model) : [],
         accountId: tokens?.accountId,
-        maxOutput: maxOutputTokens(session.model, this.config.modelEntry(session.model)),
+        maxOutput,
         outputLimit: this.config.modelEntry(session.model)?.maxOutput,
         // MiMo's prompt cache key and session affinity, and the hour-long cache where the model asks for it.
         sessionID,
@@ -3141,6 +3169,9 @@ export class SessionRunner {
           }
         : usage
       await this.store.addUsage(sessionID, usage)
+      // What this request came to as the provider counted it, beside the estimate it was sized by.
+      const promptSize = usage.input + usage.cacheRead + usage.cacheWrite
+      if (promptSize > 0) this.promptAnchors.set(sessionID, { model: modelKey, measured: promptSize, estimated })
       /*
        * MiMo's count trigger: once the tokens the provider reports reach 90%
        * of the window, a turn that goes on is compacted as an overflow before

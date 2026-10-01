@@ -45,6 +45,41 @@ export function maxOutputTokens(model: Pick<ModelRef, "provider" | "model">, ent
   return Math.min(entry?.maxOutput ?? 0, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX
 }
 
+/** OpenCode v2's `SUMMARY_OUTPUT_MAX`: a summary never needs more. */
+export const SUMMARY_OUTPUT_MAX = 32_000
+
+/**
+ * The least a reply is given room for once the window is nearly full. v2's is
+ * 1024; MCode's is higher because a thinking budget must stay under the
+ * output limit and is never below 1024 itself, and because a conversation with
+ * less room than this wants compacting, which a refusal brings about, not a
+ * reply cut short.
+ */
+export const OUTPUT_FLOOR = 4_096
+
+/** OpenCode v2's `ESTIMATE_ERROR`: text estimated at four characters a token can run low on dense text. */
+export const ESTIMATE_ERROR = 0.15
+
+/**
+ * How many output tokens to ask for, fitted to the room the window has left
+ * (OpenCode v2's `outputLimit`, d9987ef9, MIT).
+ *
+ * A server that checks the prompt and the requested output together against
+ * the window - vLLM, llama.cpp, LM Studio and the gateways in front of them -
+ * refuses a request whose sum is over, however short the answer would have
+ * been. Asking a 64k local model for 32k of output put every conversation past
+ * half its window into that refusal, and so into compaction long before the
+ * count trigger at 90%. `measured` is what the provider reported for the last
+ * request, `estimated` the text sent since; with no window known, nothing is
+ * fitted.
+ */
+export function fitOutput(requested: number, entry: Pick<ModelEntry, "contextWindow"> | undefined, prompt: { measured: number; estimated: number }): number {
+  const window = entry?.contextWindow ?? 0
+  if (window <= 0) return requested
+  const room = window - prompt.measured - Math.ceil(prompt.estimated * (1 + ESTIMATE_ERROR))
+  return Math.min(requested, Math.max(OUTPUT_FLOOR, room))
+}
+
 /**
  * The room a conversation has before it must be compacted: MiMo's `usable`,
  * 90% of the model's window with nothing held back for the answer (180k of a
