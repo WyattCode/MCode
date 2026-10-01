@@ -4,6 +4,7 @@ import { attachmentParts } from "./attachment-parts"
 import { userText } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
+import { providerErrorMessage } from "./types"
 import { anthropicAdaptive, anthropicOpus45 } from "./variants"
 import { guarded, stallGuard } from "./stall"
 import { costOf } from "../session/usage"
@@ -388,11 +389,14 @@ export const AnthropicAdapter: ProviderAdapter = {
   },
 }
 
+/** As `describeHttp` words it, with the provider's own explanation from the body the SDK parsed. */
 export function describeAnthropicError(err: unknown): string | undefined {
   if (!(err instanceof Anthropic.APIError)) return undefined
-  if (err.status === 401) return "Authentication failed - check the API key in Settings."
-  if (err.status === 429) return "Rate limited by the provider. Wait a moment and try again."
-  if (err.status && err.status >= 500) return `The provider returned ${err.status}. This is usually transient.`
+  const said = err.error ? providerErrorMessage(JSON.stringify(err.error)) : undefined
+  const after = said ? ` ${said}` : ""
+  if (err.status === 401) return `Authentication failed - check the API key in Settings.${after}`
+  if (err.status === 429) return said ? `Rate limited by the provider (429): ${said}` : "Rate limited by the provider. Wait a moment and try again."
+  if (err.status && err.status >= 500) return `The provider returned ${err.status}. This is usually transient.${after}`
   return `${err.name}: ${err.message}`
 }
 

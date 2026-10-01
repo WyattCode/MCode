@@ -453,6 +453,7 @@ import { roundThirtyEightChecks } from "./smoke-round38"
 import { roundThirtyNineChecks } from "./smoke-round39"
 import { roundFortyChecks } from "./smoke-round40"
 import { roundFortyOneChecks } from "./smoke-round41"
+import { roundFortyTwoChecks } from "./smoke-round42"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -7192,6 +7193,7 @@ async function main() {
   await roundThirtyNineChecks(check, section)
   await roundFortyChecks(check, section)
   await roundFortyOneChecks(check, section)
+  await roundFortyTwoChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
@@ -9323,7 +9325,7 @@ async function mcpChecks(project: string) {
   check("and the server is told to cancel it", Array.isArray(cancelledIDs) && cancelledIDs.length === 1, cancelledIDs)
   const quickStart = Date.now()
   const timedOut = await run("quick_slow")
-  check("a server's own timeout bounds its calls", timedOut === "ERROR tools/call timed out" && Date.now() - quickStart < 2000, { timedOut, ms: Date.now() - quickStart })
+  check("a server's own timeout bounds its calls", timedOut === 'ERROR MCP tool "slow" on server "quick" failed: tools/call timed out' && Date.now() - quickStart < 2000, { timedOut, ms: Date.now() - quickStart })
 
   // E49
   const asked = (parsed(await run("my_server_ask-model")) ?? {}) as { content?: { text?: string } }

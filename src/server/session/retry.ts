@@ -13,6 +13,7 @@
  */
 import Anthropic from "@anthropic-ai/sdk"
 import { isOverflowError } from "./overflow"
+import { QUOTA_GONE } from "./error-map"
 import { ProviderError, ProviderHttpError } from "../provider/types"
 
 export type RetryKind = "stream" | "network" | "rate_limit" | "server" | "unknown" | "request"
@@ -232,9 +233,15 @@ function classify(err: object): RetryKind | undefined {
   if (SERVER_WIRE_CODES.has(wire.code ?? "") || SERVER_WIRE_CODES.has(wire.type ?? "")) return "server"
   if (NETWORK.test(text)) return "network"
   if (STREAM.test(text)) return "stream"
-  if (wire.type === "too_many_requests" || /rate_limit/.test(`${wire.type ?? ""} ${wire.code ?? ""}`) || wire.code === "429" || RATE_LIMITED.test(text)) {
-    return "rate_limit"
-  }
+  const throttled = wire.type === "too_many_requests" || /rate_limit/.test(`${wire.type ?? ""} ${wire.code ?? ""}`) || wire.code === "429" || RATE_LIMITED.test(text)
+  /*
+   * A throttle and a spent allowance share 429. OpenCode v2 reads the
+   * provider's words there (`QUOTA_TEXT`, only on 429): no balance, an expired
+   * plan or a plan's usage cap does not come back by waiting, and retrying
+   * it held the turn for a quarter of an hour before saying so.
+   */
+  if ((status === 429 || throttled) && QUOTA_GONE.test(text)) return undefined
+  if (throttled) return "rate_limit"
   if (SERVER_CODE.test(wire.code ?? "")) return "server"
   if (status === 429) return "rate_limit"
   if (status !== undefined && (status === 408 || status === 425 || status >= 500)) return "server"

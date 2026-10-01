@@ -45,6 +45,59 @@ export function maxOutputTokens(model: Pick<ModelRef, "provider" | "model">, ent
   return Math.min(entry?.maxOutput ?? 0, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX
 }
 
+/** OpenCode v2's `SUMMARY_OUTPUT_MAX`: a summary never needs more. */
+export const SUMMARY_OUTPUT_MAX = 32_000
+
+/**
+ * The least a reply is given room for once the window is nearly full. v2's is
+ * 1024; MCode's is higher because a thinking budget must stay under the
+ * output limit and is never below 1024 itself, and because a conversation with
+ * less room than this wants compacting, which a refusal brings about, not a
+ * reply cut short.
+ */
+export const OUTPUT_FLOOR = 4_096
+
+/** OpenCode v2's `ESTIMATE_ERROR`: text estimated at four characters a token can run low on dense text. */
+export const ESTIMATE_ERROR = 0.15
+
+/**
+ * How many output tokens to ask for, fitted to the room the window has left
+ * (OpenCode v2's `outputLimit`, d9987ef9, MIT).
+ *
+ * A server that checks the prompt and the requested output together against
+ * the window - vLLM, llama.cpp, LM Studio and the gateways in front of them -
+ * refuses a request whose sum is over, however short the answer would have
+ * been. Asking a 64k local model for 32k of output put every conversation past
+ * half its window into that refusal, and so into compaction long before the
+ * count trigger at 90%. `measured` is what the provider reported for the last
+ * request, `estimated` the text sent since; with no window known, nothing is
+ * fitted.
+ */
+export function fitOutput(requested: number, entry: Pick<ModelEntry, "contextWindow"> | undefined, prompt: { measured: number; estimated: number }): number {
+  const window = entry?.contextWindow ?? 0
+  if (window <= 0) return requested
+  const room = window - prompt.measured - Math.ceil(prompt.estimated * (1 + ESTIMATE_ERROR))
+  return Math.min(requested, Math.max(OUTPUT_FLOOR, room))
+}
+
+/**
+ * A request's size from the last one a provider reported on: that report plus
+ * what the estimate grew by, the growth with a margin. A history that shrank -
+ * a crop, an undo, older output pruned - is the report less what went, with no
+ * margin: estimating the whole request instead runs far short on Chinese text.
+ * With no report for this model - none yet, another model, or one cleared by
+ * a compaction - the whole request is estimated.
+ */
+export function promptSince(
+  anchor: { model: string; measured: number; estimated: number } | undefined,
+  model: string,
+  estimated: number,
+): { measured: number; estimated: number } {
+  if (!anchor || anchor.model !== model) return { measured: 0, estimated }
+  const grown = estimated - anchor.estimated
+  return grown >= 0 ? { measured: anchor.measured, estimated: grown } : { measured: Math.max(0, anchor.measured + grown), estimated: 0 }
+}
+
 /**
  * The room a conversation has before it must be compacted: MiMo's `usable`,
  * 90% of the model's window with nothing held back for the answer (180k of a
@@ -110,20 +163,31 @@ export function contextCount(tokens: { input: number; output: number; reasoning?
   return tokens.input + tokens.output + (tokens.reasoning ?? 0) + tokens.cacheRead + tokens.cacheWrite
 }
 
-/** The reference's `patterns`, verbatim. */
+/**
+ * The reference's `patterns`, brought up to OpenCode v2's `provider-error.ts`
+ * at 7e42a897 (MIT): Zhipu's and Qwen's own wordings among them, which ended
+ * the turn red instead of compacting it.
+ */
 const PATTERNS = [
   /prompt is too long/i,
   /request_too_large/i,
   /input is too long for requested model/i,
+  // Cloudflare Workers AI, as HTTP 413 (v2 a80a0001).
+  /exceeded this model context window limit/i,
   /exceeds the context window/i,
   /exceeds (?:the )?(?:model'?s )?maximum context length(?: of [\d,]+ tokens?|\s*\([\d,]+\))/i,
   /input token count.*exceeds the maximum/i,
+  // Amazon Nova on Bedrock, mid-stream (v2 599bdc98).
+  /number of input tokens exceeds maximum length/i,
   /tokens in request more than max tokens allowed/i,
   /maximum prompt length is \d+/i,
   /reduce the length of the messages/i,
+  // DeepInfra (v2 9c4c5870).
+  /requested input length \d+ exceeds maximum input length/i,
   /maximum context length is \d+ tokens/i,
   /exceeds (?:the )?maximum allowed input length of [\d,]+ tokens?/i,
-  /input \(\d+ tokens\) is longer than the model'?s context length \(\d+ tokens\)/i,
+  // Novita leaves the counts out (v2 f0f4c94c).
+  /input(?: \(\d+ tokens\))? is longer than the model'?s context length/i,
   /exceeds the limit of \d+/i,
   /exceeds the available context size/i,
   /greater than the context length/i,
@@ -133,10 +197,13 @@ const PATTERNS = [
   /request entity too large/i,
   /context length is only \d+ tokens/i,
   /input length.*exceeds.*context length/i,
-  /prompt too long; exceeded (?:max )?context length/i,
+  // Zhipu / Z.ai code 1261, as "Prompt too long" or "Prompt 超长" (v2 a931e8a9).
+  /prompt (?:too long|超长)/i,
   /too large for model with \d+ maximum context length/i,
   /prompt has [\d,]+ tokens?, but the configured context size is [\d,]+ tokens?/i,
   /model_context_window_exceeded/i,
+  // Alibaba DashScope (Qwen): "Range of input length should be [1, 129024]".
+  /range of input length should be/i,
   /too many tokens/i,
   /token limit exceeded/i,
 ]

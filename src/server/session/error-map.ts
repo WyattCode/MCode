@@ -60,8 +60,15 @@ function statusOf(err: unknown, text: string): number | undefined {
 /**
  * An allowance that has run out, as the providers word it: a usage limit, an
  * exhausted quota, no credit left. Kept apart from being asked to slow down.
+ *
+ * Several providers send these on 429, the status of a throttle. OpenCode v2's
+ * `QUOTA_TEXT` (a931e8a9) adds Z.ai's balance, plan expiry, plan limits and
+ * plan model access; Zhipu's own endpoint says the same in Chinese (code 1113,
+ * "余额不足或无可用资源包", and the coding plan's 使用上限). retry.ts reads this
+ * too, so a spent allowance is said at once instead of waited on.
  */
-const QUOTA_GONE = /usage[ _-]?limit|insufficient[ _-]?quota|quota[ _-]?exceeded|exceeded your current quota|out of credit|insufficient[ _-]?(?:credit|balance|funds)|billing[ _-]?hard[ _-]?limit/i
+export const QUOTA_GONE =
+  /usage[ _-]?limit|insufficient[ _-]?quota|quota[ _-]?exceeded|exceeded your current quota|out of credit|insufficient[ _-]?(?:credit|balance|funds)|billing[ _-]?hard[ _-]?limit|budget exceeded|limit exhausted|package has expired|plan does not yet include|余额不足|无可用资源包|欠费|套餐已(?:过期|到期)|使用上限/i
 
 export function failureCode(err: unknown): { code: string; params?: Record<string, string> } | undefined {
   if (err instanceof ProviderError && err.code) return { code: err.code, params: err.params }

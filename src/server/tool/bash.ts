@@ -537,6 +537,17 @@ export const BashTool: ToolDefinition = {
           NO_COLOR: "1",
           // As MiMo sets it: Python on Windows otherwise writes the console codepage, or fails on a character it cannot encode.
           ...(process.platform === "win32" ? { PYTHONIOENCODING: "utf-8" } : {}),
+          /*
+           * OpenCode v2's agent markers (3740ec31): `AGENT=1` is the convention
+           * command-line tools read to switch to plain, non-interactive output
+           * for an agent, and `AI_AGENT` names which one unless the user's own
+           * environment already does. The conversation id lets a script or hook
+           * tell runs apart.
+           */
+          AGENT: "1",
+          AI_AGENT: process.env.AI_AGENT || "mcode",
+          MCODE: "1",
+          MCODE_SESSION_ID: context.sessionID,
           ...identity,
         },
         stdio: ["ignore", "pipe", "pipe"],

@@ -4,7 +4,7 @@ import { TOOL_MEDIA_NOTE, attachmentParts, type WirePart } from "./attachment-pa
 import { userText } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
-import { ProviderError, ProviderHttpError, headersOf, isHtmlBody, systemText, wireOfBody } from "./types"
+import { ProviderError, ProviderHttpError, headersOf, isHtmlBody, providerErrorMessage, systemText, wireOfBody } from "./types"
 import { requestHistory } from "./history"
 import { guarded, stallGuard } from "./stall"
 import { readData } from "./sse"
@@ -470,15 +470,25 @@ function describeStreamError(error: { message?: string; code?: unknown; type?: u
   return new ProviderError(message || "The provider reported an error but gave no detail.", undefined, undefined, wire)
 }
 
+/**
+ * A refused request in one sentence, with the provider's own words after it.
+ *
+ * Those words used to be dropped on a 429 and on a 5xx, so a key with no
+ * balance left read as "rate limited, wait a moment" - on the card and to the
+ * retry, which waited a quarter of an hour for a top-up. OpenCode v2 keeps the
+ * explanation (2aaa265c, 14af33d5): the message from the body where it has one
+ * of the usual layouts, else the body itself, never a web page.
+ */
 export function describeHttp(status: number, detail: string): string {
   const html = isHtmlBody(detail)
-  const trimmed = html ? "" : detail.slice(0, 300)
+  const reason = html ? "" : (providerErrorMessage(detail) ?? detail.trim().slice(0, 300))
+  const after = reason ? ` ${reason}` : ""
   // MiMo's own answer for a page served in place of an answer on these two.
   if (html && (status === 401 || status === 403)) return "A gateway or proxy blocked this request."
-  if (status === 401 || status === 403) return "Authentication failed - check the API key in Settings."
-  if (status === 404) return `The provider does not recognise this model (404).${trimmed ? ` ${trimmed}` : ""}`
-  if (status === 429) return "Rate limited by the provider. Wait a moment and try again."
-  if (status >= 500) return `The provider returned ${status}. This is usually transient.`
+  if (status === 401 || status === 403) return `Authentication failed - check the API key in Settings.${after}`
+  if (status === 404) return `The provider does not recognise this model (404).${after}`
+  if (status === 429) return reason ? `Rate limited by the provider (429): ${reason}` : "Rate limited by the provider. Wait a moment and try again."
+  if (status >= 500) return `The provider returned ${status}. This is usually transient.${after}`
   if (html) return `A gateway or proxy answered this request with a web page (${status}) rather than a reply.`
-  return `Request failed (${status}). ${trimmed}`
+  return `Request failed (${status}).${after}`
 }

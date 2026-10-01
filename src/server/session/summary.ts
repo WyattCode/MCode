@@ -339,7 +339,19 @@ function recentStart(entries: readonly { message: Message; text: string }[], kee
   )
   // Start at a user message so an assistant's tool calls and results stay together.
   const userBoundary = entries.findLastIndex((entry, index) => index <= dropped && entry.message.role === "user")
-  if (userBoundary > 0) return userBoundary
+  if (userBoundary > 0) {
+    /*
+     * Walking back to that turn's own message can take in far more than the
+     * allowance: one large paste, and the text kept "recent" held most of what
+     * the compaction was there to shrink, so the conversation came out of it
+     * nearly as long as it went in. v2 (7e42a897) still walks back. The next
+     * user message after the cut keeps the allowance, and the large turn is
+     * summarised with the rest; only when that turn is the newest is it kept.
+     */
+    const kept = entries.slice(userBoundary).reduce((sum, entry) => sum + estimateTokens(entry.text), 0)
+    const next = kept > keep ? entries.findIndex((entry, index) => index > dropped && entry.message.role === "user") : -1
+    return next > 0 ? next : userBoundary
+  }
   // Everything fits: keep only the latest exchange, so there is an older part left to summarise.
   const latestUser = entries.findLastIndex((entry) => entry.message.role === "user")
   if (latestUser > 0) return latestUser
@@ -359,6 +371,11 @@ export function continueNote(trigger: CompactionTrigger): string {
 }
 
 /** How much of a request these messages make, by the same four-characters-to-a-token reckoning as everything else here. */
+/** A whole request by the same estimate: the system prompt, its tail, the tool schemas and the history. */
+export function requestTokens(request: { system: string; systemTail?: string; tools: readonly unknown[]; history: readonly Message[] }): number {
+  return estimateTokens(request.system) + estimateTokens(request.systemTail) + estimateTokens(JSON.stringify(request.tools)) + messagesTokens(request.history)
+}
+
 export function messagesTokens(messages: readonly Message[]): number {
   let total = 0
   for (const message of messages) {
