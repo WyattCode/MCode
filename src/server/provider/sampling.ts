@@ -99,6 +99,30 @@ export function smallRequest(provider: string, modelID: string): { effort: strin
   return { effort: "low", extra: {} }
 }
 
+/** The OpenAI-compatible presets that are local servers, which read a chat template's switches as a typed-in endpoint does. */
+const LOCAL_SERVERS = new Set(["lmstudio", "vllm", "ollama"])
+
+/**
+ * The body fields that switch a model's thinking off for one request, where
+ * MCode knows them; undefined where it does not.
+ *
+ * Used for the one step after a reply the output limit cut while it was still
+ * thinking. Measured on the user's local Qwen (2026-10-02): told to act on its
+ * cut thinking, it thought 31k tokens more and was cut again; with thinking
+ * off it wrote the 19k-character file at once. Zhipu and DashScope have their
+ * own switches. A typed-in or local OpenAI-compatible server - vLLM, SGLang,
+ * llama.cpp - passes `chat_template_kwargs` to the model's chat template:
+ * `enable_thinking` for Qwen and GLM, `thinking` for DeepSeek and Kimi, as
+ * OpenCode v2 sends both to Workers AI. A cloud endpoint is left alone: the
+ * official OpenAI API refuses fields it does not know.
+ */
+export function thinkingOffExtra(provider: string, kind: string, handEntered: boolean): Record<string, unknown> | undefined {
+  if (provider === "zhipu") return { thinking: { type: "disabled" } }
+  if (provider === "dashscope") return { enable_thinking: false }
+  if (kind === "openai-compatible" && (handEntered || LOCAL_SERVERS.has(provider))) return { chat_template_kwargs: { enable_thinking: false, thinking: false } }
+  return undefined
+}
+
 export function providerExtras(provider: string, reasoning: boolean, sessionID?: string): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   if (provider === "zhipu") out.thinking = { type: "enabled", clear_thinking: false }

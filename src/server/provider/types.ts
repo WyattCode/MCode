@@ -94,6 +94,12 @@ export interface TurnRequest {
   sampling?: { temperature?: number; topP?: number; topK?: number }
   /** Body fields a provider needs beside the usual ones (see `providerExtras`). */
   extra?: Record<string, unknown>
+  /**
+   * No thinking for this request: the step after a reply the output limit cut
+   * while it was only thinking. The Anthropic adapter leaves its thinking field
+   * out; the OpenAI-compatible switches travel in `extra` (`thinkingOffExtra`).
+   */
+  thinkingOff?: boolean
   /** The conversation this request belongs to: MiMo's prompt cache key and session-affinity header. */
   sessionID?: string
   /** How long a cache mark should last, when the model asks for the hour-long one. */

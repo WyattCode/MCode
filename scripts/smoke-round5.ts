@@ -6,7 +6,7 @@
  * Every request a provider would receive is inspected on the wire or through
  * the pure function that builds it. No model is called.
  */
-import { LARGE_OUTPUT_TOKEN_MAX, OUTPUT_FLOOR, OUTPUT_TOKEN_MAX, isOverflowByCount, maxOutputTokens, usableContext } from "../src/server/session/overflow"
+import { LARGE_OUTPUT_TOKEN_MAX, OUTPUT_FLOOR, OUTPUT_TOKEN_CEILING, OUTPUT_TOKEN_MAX, isOverflowByCount, maxOutputTokens, usableContext } from "../src/server/session/overflow"
 import { reasoningRequest as anthropicReasoning } from "../src/server/provider/anthropic"
 import { costOf } from "../src/server/session/usage"
 import { usageOf } from "../src/server/provider/openai"
@@ -187,7 +187,8 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
     check("so is a GPT model on any provider", maxOutputTokens({ provider: "openrouter", model: "openai/gpt-5.5" }, undefined) === LARGE_OUTPUT_TOKEN_MAX)
     check("and anything on a MiMo provider", maxOutputTokens({ provider: "xiaomi", model: "anything" }, { maxOutput: 8_000 }) === LARGE_OUTPUT_TOKEN_MAX)
     check("another model keeps a smaller ceiling of its own", maxOutputTokens({ provider: "lmstudio", model: "qwen3" }, { maxOutput: 16_000 }) === 16_000)
-    check("but no more than 32k", maxOutputTokens({ provider: "lmstudio", model: "qwen3" }, { maxOutput: 100_000 }) === OUTPUT_TOKEN_MAX)
+    // R42: a ceiling above 32k is kept, as OpenCode v2 keeps it, up to its 256k.
+    check("and a larger one of its own, up to 256k", maxOutputTokens({ provider: "lmstudio", model: "qwen3" }, { maxOutput: 100_000 }) === 100_000 && maxOutputTokens({ provider: "lmstudio", model: "qwen3" }, { maxOutput: 1_000_000 }) === OUTPUT_TOKEN_CEILING)
     check("and 32k when its ceiling is unknown", maxOutputTokens({ provider: "lmstudio", model: "qwen3" }, { maxOutput: 0 }) === OUTPUT_TOKEN_MAX)
     const budgeted = anthropicReasoning("claude-haiku-4-5", "max", ["high", "max"], 20_000, 64_000)
     check(
