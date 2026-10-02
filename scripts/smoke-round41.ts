@@ -33,6 +33,7 @@ import { findBrowser } from "../src/server/appdrive/browser"
 import { connectedDevices, findAdb } from "../src/server/appdrive/android"
 import type { ToolContext } from "../src/server/tool/types"
 import { installDemo } from "./smoke-round41-install"
+import { isTestDevice, noTestDevice } from "./android-test-device"
 
 const root = process.cwd()
 
@@ -158,10 +159,12 @@ export async function roundFortyOneChecks(check: Check, section: (name: string) 
   section("Round 41: Android typing that adds to a field")
   {
     const adb = findAdb()
-    const devices = adb ? await connectedDevices(adb).catch(() => []) : []
+    const connected = adb ? await connectedDevices(adb).catch(() => []) : []
+    // Never a phone (android-test-device.ts).
+    const devices = connected.filter((device) => isTestDevice(device.serial))
     const javac = spawnSync(process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, "bin", "javac") : "javac", ["-version"], { windowsHide: true }).status === 0
     if (!adb || devices.length !== 1 || !javac) {
-      check(`(skipped: ${!adb ? "no adb" : devices.length !== 1 ? "not exactly one Android device connected" : "no JDK to build the demo app"})`, true)
+      check(!adb ? "(skipped: no adb)" : devices.length !== 1 ? (devices.length ? "(skipped: more than one emulator connected)" : noTestDevice(connected.length)) : "(skipped: no JDK to build the demo app)", true)
       return
     }
     const apk = path.join(os.tmpdir(), `mcode-r41-demo-${process.pid}.apk`)
@@ -170,7 +173,7 @@ export async function roundFortyOneChecks(check: Check, section: (name: string) 
     fs.rmSync(apk, { force: true })
     const context = contextFor("r41-android", os.tmpdir())
     try {
-      const opened = await AppTool.execute({ action: "android", package: "dev.mcode.demo" }, context)
+      const opened = await AppTool.execute({ action: "android", target: devices[0]!.serial, package: "dev.mcode.demo" }, context)
       const field = refOf(opened.output, /textbox/)
       await AppTool.execute({ action: "do", steps: [{ action: "type", ref: field, text: "小王" }] }, context)
       const added = await AppTool.execute({ action: "do", steps: [{ action: "type", ref: field, text: "和小明", clear: false }] }, context)
