@@ -22,8 +22,11 @@ import { ProviderError, ProviderHttpError } from "../provider/types"
  * catching it - the turn simply ended in red.
  */
 
-/** MiMo's `OUTPUT_TOKEN_MAX`, for models outside its large-output rule. */
+/** What a model outside the large-output rule is asked for when its own ceiling is not known (MiMo's and v2's fallback). */
 export const OUTPUT_TOKEN_MAX = 32_000
+
+/** OpenCode v2's `OUTPUT_TOKEN_MAX` (49403a55): no reply needs more, however much the model allows. */
+export const OUTPUT_TOKEN_CEILING = 256_000
 
 /** What MiMo asks of a Claude, GPT or MiMo model, whatever that model's own ceiling says. */
 export const LARGE_OUTPUT_TOKEN_MAX = 128_000
@@ -32,17 +35,23 @@ export const LARGE_OUTPUT_TOKEN_MAX = 128_000
 export const COMPACTION_TRIGGER_RATIO = 0.9
 
 /**
- * How many output tokens a request asks for, by MiMo's rule: 128k for a MiMo
- * provider or any model whose id names Claude, GPT or MiMo; otherwise the
- * model's own ceiling when known and under 32k, else 32k. An Anthropic request
- * is then held to the model's own ceiling by the adapter, as MiMo's SDK does
- * for a model it knows.
+ * How many output tokens a request asks for: 128k for a MiMo provider or any
+ * model whose id names Claude, GPT or MiMo (MiMo's rule); otherwise the
+ * model's own ceiling when known, up to 256k, else 32k (OpenCode v2's).
+ *
+ * MiMo held every other model to 32k whatever its ceiling said, so a model
+ * set up with 64k still got 32k - and a thinking model that needed 39k of
+ * thought for a drawing (the user's pelican on a local Qwen) was cut before
+ * it wrote a line, every time. `fitOutput` then holds the figure to what the
+ * window has left; an Anthropic request is held to the model's own ceiling by
+ * the adapter, as MiMo's SDK does for a model it knows.
  */
 export function maxOutputTokens(model: Pick<ModelRef, "provider" | "model">, entry: Pick<ModelEntry, "maxOutput"> | undefined): number {
   const provider = model.provider.toLowerCase()
   const id = model.model.toLowerCase()
   if (provider === "mimo" || provider === "xiaomi" || /claude|gpt|mimo/.test(id)) return LARGE_OUTPUT_TOKEN_MAX
-  return Math.min(entry?.maxOutput ?? 0, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX
+  const own = entry?.maxOutput ?? 0
+  return own > 0 ? Math.min(own, OUTPUT_TOKEN_CEILING) : OUTPUT_TOKEN_MAX
 }
 
 /** OpenCode v2's `SUMMARY_OUTPUT_MAX`: a summary never needs more. */

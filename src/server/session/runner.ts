@@ -67,7 +67,7 @@ import { historyService, memoryFilesFor, memoryWritable } from "../history/servi
 import { withAutomationNotes } from "../automation/framing"
 import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titleModelRef, titlePrompt, withoutSkillPrefix } from "./title"
 import { interfaceLocale } from "./locale"
-import { providerExtras, samplingFor, smallRequest } from "../provider/sampling"
+import { providerExtras, samplingFor, smallRequest, thinkingOffExtra } from "../provider/sampling"
 import { attachmentNote, runtimeContext, sessionNote } from "./context"
 import { settleAttachments, withAttachmentData, type AttachmentCache } from "./attachments"
 import type { ModelEntry } from "../provider/catalog"
@@ -80,7 +80,7 @@ import { BackgroundUsage, type BackgroundUse } from "./background-usage"
 import { UsageDays } from "./usage-days"
 import type { Usage as TurnUsage } from "@shared/protocol"
 import { ABORTED_TOOL } from "../provider/history"
-import { INTERRUPTED_FINISH, INTERRUPTED_NOTE, LENGTH_NOTE, LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, recallHint, reminder, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
+import { INTERRUPTED_FINISH, INTERRUPTED_NOTE, LENGTH_NOTE, THOUGHT_LENGTH_NOTE, LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, recallHint, reminder, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
 import { LoopMonitor, TEXT_LOOP_BUFFER, WanderWatch, applyCrops, describeLoop, detectStreak, stepDigest, textLoopNoteFor, type LoopIncident } from "./loop-health"
 import { interruptedTurn } from "@shared/resume"
 // session chat
@@ -2889,6 +2889,15 @@ export class SessionRunner {
      * message.
      */
     let continuing: AssistantMessage | undefined
+    /**
+     * The step before this one reached the output limit, which turns thinking
+     * off for this one (`thinkingOffExtra`). A thinking model given 32k can
+     * spend nearly all of it planning at every step: measured on the user's
+     * local Qwen, the step after a written file thought 25k more, began the
+     * file again and was cut inside the call. With thinking off for one step it
+     * does the work; the step after thinks again.
+     */
+    let afterCut = false
     for (let step = 0; ; step++) {
       if (controller.signal.aborted) return
       // The reference's `isLastStep`: tools that may not be called, and an instruction to write.
@@ -2985,6 +2994,9 @@ export class SessionRunner {
        * has no completion time until it stops for a reason of its own.
        */
       const carried = continuing !== undefined
+      // The step after one the output limit cut goes without thinking (`afterCut`).
+      const noThinking = afterCut
+      afterCut = false
       if (carried) {
         assistant.finish = undefined
         assistant.time.completed = undefined
@@ -2994,7 +3006,7 @@ export class SessionRunner {
          * step of the turn told the model a finished reply had been cut off;
          * it goes back on below only if this step is cut again.
          */
-        const kept = (notes.get(assistant.id) ?? []).filter((note) => note !== LENGTH_NOTE && note !== INTERRUPTED_NOTE)
+        const kept = (notes.get(assistant.id) ?? []).filter((note) => note !== LENGTH_NOTE && note !== THOUGHT_LENGTH_NOTE && note !== INTERRUPTED_NOTE)
         if (kept.length) notes.set(assistant.id, kept)
         else notes.delete(assistant.id)
       }
@@ -3112,7 +3124,11 @@ export class SessionRunner {
         interleaved: interleavedField(definition.kind, session.model, this.config.modelEntry(session.model)),
         // MiMo's family sampling and provider switches.
         sampling: samplingFor(session.model.model, this.config.modelEntry(session.model)?.temperature === true),
-        extra: providerExtras(session.model.provider, this.config.modelEntry(session.model)?.reasoning === true, sessionID),
+        extra: {
+          ...providerExtras(session.model.provider, this.config.modelEntry(session.model)?.reasoning === true, sessionID),
+          ...(noThinking ? thinkingOffExtra(session.model.provider, definition.kind, definition.handEntered === true, definition.baseURL) : {}),
+        },
+        ...(noThinking ? { thinkingOff: true } : {}),
       }, monitor, carried)
       } catch (failure) {
         /*
@@ -3141,6 +3157,8 @@ export class SessionRunner {
         }
         throw failure
       }
+      // A call cut part-way reports as a tool call; the provider's own finish says it was the limit.
+      if (outcome && (outcome.stop === "max_tokens" || outcome.finishReason === "length" || outcome.finishReason === "max_tokens")) afterCut = true
       if (outcome === undefined) {
         // Aborted mid-stream. Persist whatever arrived so the transcript is honest.
         assistant.finish = "aborted"
@@ -3277,7 +3295,7 @@ export class SessionRunner {
         await this.store.saveMessage(assistant)
         if ((next.note || repeatNote) && !lastStep) {
           // The rest of a sentence the limit cut belongs to the reply that started it.
-          if (next.note === LENGTH_NOTE || next.note === INTERRUPTED_NOTE) continuing = assistant
+          if (next.note === LENGTH_NOTE || next.note === THOUGHT_LENGTH_NOTE || next.note === INTERRUPTED_NOTE) continuing = assistant
           if (overflowing) {
             const compacted = await this.compactForOverflow(session, controller.signal)
             if (compacted) {

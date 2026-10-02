@@ -32,6 +32,18 @@
  * turn it cut into, so one large pasted message was kept whole and the
  * conversation came out of its compaction nearly as long as it went in.
  *
+ * And the user's pelican (2026-10-02): a local Qwen given 32k of output spent
+ * all of it thinking, four times over, and wrote nothing - the continuation
+ * dropped the thinking and asked it to go on "from exactly where it stopped",
+ * so it planned the drawing again from nothing each time. Measured on the
+ * model: it needs ~39k of thought for that drawing. The cut thinking now goes
+ * back as a digest with a note to act on it, and that one step goes without
+ * thinking where MCode knows the switch - told only to act, the model thought
+ * 31k more and was cut again; with thinking off it wrote the file at once. A
+ * ceiling set above 32k is kept (OpenCode v2's 256k) rather than held to 32k.
+ * Second look: the template switch goes only to a server on this machine or
+ * the local network - a typed-in endpoint can be a cloud API that refuses it.
+ *
  * smoke.ts calls `roundFortyTwoChecks` with its own check and section.
  */
 import fs from "node:fs/promises"
@@ -41,14 +53,21 @@ import path from "node:path"
 import Anthropic from "@anthropic-ai/sdk"
 import type { AppConfig, McpServerConfig } from "@shared/protocol"
 import type { Check } from "./smoke-round5"
-import { engine, say } from "./smoke-round5"
+import { engine, say, wireText } from "./smoke-round5"
 import { Bus } from "../src/server/bus"
 import { McpServers } from "../src/server/mcp"
 import { describeAnthropicError } from "../src/server/provider/anthropic"
 import { describeHttp } from "../src/server/provider/openai"
 import { ProviderHttpError, providerErrorMessage } from "../src/server/provider/types"
 import { failureCode } from "../src/server/session/error-map"
-import { OUTPUT_FLOOR, fitOutput, isOverflowError, promptSince } from "../src/server/session/overflow"
+import { OUTPUT_FLOOR, OUTPUT_TOKEN_CEILING, fitOutput, isOverflowError, maxOutputTokens, promptSince } from "../src/server/session/overflow"
+import { thoughtDigest } from "../src/server/provider/history"
+import { thinkingOffExtra } from "../src/server/provider/sampling"
+import { messagesRequest } from "../src/server/provider/anthropic"
+import { findTool } from "../src/server/tool/registry"
+import { isTestDevice } from "./android-test-device"
+import { installDemo } from "./smoke-round41-install"
+import { LENGTH_NOTE, THOUGHT_LENGTH_NOTE } from "../src/server/session/reminders"
 import { estimateTokens } from "../src/server/session/estimate"
 import { RECENT_KEEP, splitConversation } from "../src/server/session/summary"
 import { isRetryable } from "../src/server/session/retry"
@@ -330,6 +349,93 @@ export async function roundFortyTwoChecks(check: Check, section: (name: string) 
       check("and its summary is given its 32k, not the floor", asked === 32_000, { asked, fixed })
     } finally {
       await e.close()
+    }
+  }
+
+  section("Round 42 (8): a reply cut while it was still thinking")
+  {
+    check("a model's own output ceiling above 32k is kept", maxOutputTokens({ provider: "qw", model: "qwen38-nvfp4" }, { maxOutput: 64_000 }) === 64_000)
+    check("up to 256k", maxOutputTokens({ provider: "qw", model: "qwen38-nvfp4" }, { maxOutput: 1_000_000 }) === OUTPUT_TOKEN_CEILING)
+    const long = "a".repeat(1_500) + "b".repeat(50_000) + "c".repeat(6_000)
+    const digest = thoughtDigest(long)
+    check("the digest keeps the thinking's opening and where it had got to", digest.includes("a".repeat(1_500)) && digest.includes("c".repeat(6_000)) && !digest.includes("b".repeat(10)) && digest.length < 8_000, digest.length)
+
+    const off = (provider: string, kind: string, typed: boolean, url?: string) => JSON.stringify(thinkingOffExtra(provider, kind, typed, url))
+    const template = JSON.stringify({ chat_template_kwargs: { enable_thinking: false, thinking: false } })
+    check("a typed-in server on the local network is switched off through its chat template", off("qw", "openai-compatible", true, "http://192.168.10.212:8888/v1") === template && off("qw", "openai-compatible", true, "http://localhost:1234/v1") === template && off("vllm", "openai-compatible", false) === template)
+    // Second look: a typed-in endpoint can be a cloud API, which refuses a field it does not know.
+    check("but not a typed-in cloud endpoint, which would refuse the field", thinkingOffExtra("my-openai", "openai-compatible", true, "https://api.openai.com/v1") === undefined && thinkingOffExtra("gw", "openai-compatible", true, "http://172.32.0.5/v1") === undefined && thinkingOffExtra("gw", "openai-compatible", true, "not a url") === undefined)
+    check("Zhipu and DashScope by their own switches", off("zhipu", "openai-compatible", false) === JSON.stringify({ thinking: { type: "disabled" } }) && off("dashscope", "openai-compatible", false) === JSON.stringify({ enable_thinking: false }))
+    check("and a cloud endpoint that refuses unknown fields is left alone", thinkingOffExtra("openai", "openai-compatible", false) === undefined && thinkingOffExtra("deepseek", "openai-compatible", false) === undefined)
+    const claude = { apiKey: "", model: { provider: "anthropic", model: "claude-sonnet-4-5" }, system: "s", history: [], tools: [findTool("read")!], effort: "high", variants: ["high", "max"], signal: new AbortController().signal }
+    check("over the Anthropic protocol the thinking field is left out for that step", "thinking" in messagesRequest(claude as never) && !("thinking" in messagesRequest({ ...claude, thinkingOff: true } as never)))
+
+    // On the wire: a step of thinking alone, cut at the limit, then the step after it.
+    const e = await engine()
+    try {
+      const frame = (data: unknown) => `data: ${JSON.stringify(data)}\n\n`
+      e.replies.push((response) => {
+        response.writeHead(200, { "content-type": "text/event-stream" })
+        response.write(frame({ choices: [{ delta: { reasoning_content: "PLAN-OPENING: a pelican on a red bike. " + "Detail. ".repeat(3_000) + "PLAN-END: the wheels turn at 1.5s." } }] }))
+        response.end(frame({ choices: [{ delta: {}, finish_reason: "length" }], usage: { prompt_tokens: 10, completion_tokens: 32_000 } }) + "data: [DONE]\n\n")
+      })
+      e.replies.push(say("written"))
+      const session = await e.store.create({ directory: e.project, model: e.model })
+      await e.runner.prompt({ sessionID: session.id, text: "draw a pelican" })
+      await e.idle(session.id)
+      const next = wireText(e.bodies[1])
+      check("the step after carries where the thinking had got to", next.includes("PLAN-OPENING") && next.includes("PLAN-END") && next.includes("cut off at the output limit"), next.length)
+      check("and is told to act on it, not to carry on a reply it cannot see", next.includes(THOUGHT_LENGTH_NOTE.slice(0, 60)) && !next.includes(LENGTH_NOTE.slice(0, 60)))
+      check("that step goes without thinking; the first went with it", e.bodies[1]?.chat_template_kwargs?.enable_thinking === false && e.bodies[0]?.chat_template_kwargs === undefined, { first: e.bodies[0]?.chat_template_kwargs, next: e.bodies[1]?.chat_template_kwargs })
+      const last = (await e.assistants(session.id)).at(-1)
+      check("the turn then ends with the answer, not the output-limit failure", last?.errorCode !== "error.outputLength" && JSON.stringify(last?.parts ?? []).includes("written"), { error: last?.errorCode })
+
+      // Cut inside a tool call: the call cannot run, and the step after it goes without thinking too; the one after that thinks again.
+      e.replies.push((response) => {
+        response.writeHead(200, { "content-type": "text/event-stream" })
+        response.write(frame({ choices: [{ delta: { reasoning_content: "Long plan. " } }] }))
+        response.write(frame({ choices: [{ delta: { tool_calls: [{ index: 0, id: "call_r42_cut", function: { name: "write", arguments: '{"file_path":"p.html","content":"<svg' } }] } }] }))
+        response.end(frame({ choices: [{ delta: {}, finish_reason: "length" }], usage: { prompt_tokens: 10, completion_tokens: 32_000 } }) + "data: [DONE]\n\n")
+      })
+      e.replies.push((response) => {
+        response.writeHead(200, { "content-type": "text/event-stream" })
+        response.write(frame({ choices: [{ delta: { tool_calls: [{ index: 0, id: "call_r42_read", function: { name: "read", arguments: JSON.stringify({ file_path: "README.md" }) } }] } }] }))
+        response.end(frame({ choices: [{ delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 10, completion_tokens: 5 } }) + "data: [DONE]\n\n")
+      })
+      e.replies.push(say("done"))
+      const sent = e.bodies.length
+      await e.runner.prompt({ sessionID: session.id, text: "draw it again" })
+      await e.idle(session.id)
+      const kwargs = e.bodies.slice(sent).map((body) => body.chat_template_kwargs?.enable_thinking ?? "on")
+      check("a step cut inside a tool call is followed by one without thinking, then thinking again", JSON.stringify(kwargs) === JSON.stringify(["on", false, "on"]), kwargs)
+    } finally {
+      await e.close()
+    }
+  }
+
+  section("Round 42 (9): the device checks never drive a phone")
+  {
+    // 2026-10-02: the user's phone was the one device connected, and smoke tapped through its Settings.
+    const named = process.env.MCODE_ANDROID_DEVICE
+    try {
+      delete process.env.MCODE_ANDROID_DEVICE
+      check("an emulator is a test device", isTestDevice("emulator-5554") && isTestDevice("127.0.0.1:16384") && isTestDevice("localhost:5555"))
+      check("a phone on USB or over Wi-Fi is not", !isTestDevice("0186D460499C3540") && !isTestDevice("192.168.10.30:5555"))
+      process.env.MCODE_ANDROID_DEVICE = "0186D460499C3540"
+      check("unless it is named on purpose, and then only that one", isTestDevice("0186D460499C3540") && !isTestDevice("emulator-5554"))
+      delete process.env.MCODE_ANDROID_DEVICE
+      const refused = (() => {
+        try {
+          installDemo("adb-that-is-never-run", "0186D460499C3540", "demo.apk")
+          return "installed"
+        } catch (error) {
+          return (error as Error).message
+        }
+      })()
+      check("and the demo app is never installed on a phone", refused.includes("not an emulator"), refused)
+    } finally {
+      if (named === undefined) delete process.env.MCODE_ANDROID_DEVICE
+      else process.env.MCODE_ANDROID_DEVICE = named
     }
   }
 }

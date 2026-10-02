@@ -15,6 +15,7 @@
  *
  * smoke.ts calls `roundFortyChecks` with its own check and section.
  */
+import { isTestDevice, noTestDevice } from "./android-test-device"
 import fs from "node:fs"
 import http from "node:http"
 import os from "node:os"
@@ -116,13 +117,15 @@ export async function roundFortyChecks(check: Check, section: (name: string) => 
       // An emulator reachable on several local ports is listed once per port, and must still count as one device -
       // checked before anything is skipped, since counting it several times is exactly what would skip the rest.
       for (const port of [16384, 7555, 5555, 62001]) spawnSync(adb, ["connect", `127.0.0.1:${port}`], { windowsHide: true, timeout: 5_000 })
-      const transports = (await listDevices(adb).catch(() => [])).filter((device) => device.state === "device").length
-      if (transports > 1) check("one device reached through several ports counts once", (await connectedDevices(adb)).length === 1, { transports })
+      const transports = (await listDevices(adb).catch(() => [])).filter((device) => device.state === "device" && isTestDevice(device.serial)).length
+      if (transports > 1) check("one device reached through several ports counts once", (await connectedDevices(adb)).filter((device) => isTestDevice(device.serial)).length === 1, { transports })
     }
-    const devices = adb ? await connectedDevices(adb).catch(() => []) : []
+    const connected = adb ? await connectedDevices(adb).catch(() => []) : []
+    // Never a phone (android-test-device.ts).
+    const devices = connected.filter((device) => isTestDevice(device.serial))
     const javac = spawnSync(process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, "bin", "javac") : "javac", ["-version"], { windowsHide: true }).status === 0
     if (!adb || devices.length !== 1 || !javac) {
-      check(`(skipped: ${!adb ? "no adb" : devices.length !== 1 ? "not exactly one Android device connected" : "no JDK to build the demo app"})`, true)
+      check(!adb ? "(skipped: no adb)" : devices.length !== 1 ? (devices.length ? "(skipped: more than one emulator connected)" : noTestDevice(connected.length)) : "(skipped: no JDK to build the demo app)", true)
       return
     }
     const apk = path.join(os.tmpdir(), `mcode-r40-demo-${process.pid}.apk`)
@@ -131,7 +134,7 @@ export async function roundFortyChecks(check: Check, section: (name: string) => 
     fs.rmSync(apk, { force: true })
     const context = contextFor("r40-android", os.tmpdir())
     try {
-      const opened = await AppTool.execute({ action: "android", package: "dev.mcode.demo" }, context)
+      const opened = await AppTool.execute({ action: "android", target: devices[0]!.serial, package: "dev.mcode.demo" }, context)
       check("an empty field is named by its hint and reads as empty, not as holding its hint", /\[\d+\] textbox "昵称" value=""/.test(opened.output), opened.output)
       const started = Date.now()
       const done = await AppTool.execute(

@@ -289,7 +289,7 @@ export function messagesRequest(request: TurnRequest): MessagesBody {
     tools,
     ...(request.toolChoice && tools.length ? { tool_choice: { type: request.toolChoice } } : {}),
     messages,
-    ...reasoningRequest(request.model.model, request.effort, request.variants, maxTokens, limit ?? wanted),
+    ...(request.thinkingOff ? {} : reasoningRequest(request.model.model, request.effort, request.variants, maxTokens, limit ?? wanted)),
     // MiMo's family sampling: none for Claude, set for another family reached over this protocol.
     ...(request.sampling?.temperature !== undefined ? { temperature: request.sampling.temperature } : {}),
     ...(request.sampling?.topP !== undefined ? { top_p: request.sampling.topP } : {}),

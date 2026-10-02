@@ -99,6 +99,48 @@ export function smallRequest(provider: string, modelID: string): { effort: strin
   return { effort: "low", extra: {} }
 }
 
+/** The OpenAI-compatible presets that are local servers, which read a chat template's switches as a typed-in endpoint does. */
+const LOCAL_SERVERS = new Set(["lmstudio", "vllm", "ollama"])
+
+/**
+ * The body fields that switch a model's thinking off for one request, where
+ * MCode knows them; undefined where it does not.
+ *
+ * Used for the one step after a reply the output limit cut while it was still
+ * thinking. Measured on the user's local Qwen (2026-10-02): told to act on its
+ * cut thinking, it thought 31k tokens more and was cut again; with thinking
+ * off it wrote the 19k-character file at once. Zhipu and DashScope have their
+ * own switches. A typed-in or local OpenAI-compatible server - vLLM, SGLang,
+ * llama.cpp - passes `chat_template_kwargs` to the model's chat template:
+ * `enable_thinking` for Qwen and GLM, `thinking` for DeepSeek and Kimi, as
+ * OpenCode v2 sends both to Workers AI. Only to a server on this machine or
+ * the local network: a typed-in endpoint can as well be a cloud API - the
+ * official OpenAI one, Azure - which refuses a field it does not know, and the
+ * step after the cut would then fail outright.
+ */
+export function thinkingOffExtra(provider: string, kind: string, handEntered: boolean, baseURL?: string): Record<string, unknown> | undefined {
+  if (provider === "zhipu") return { thinking: { type: "disabled" } }
+  if (provider === "dashscope") return { enable_thinking: false }
+  if (kind === "openai-compatible" && (LOCAL_SERVERS.has(provider) || (handEntered && onLocalNetwork(baseURL)))) return { chat_template_kwargs: { enable_thinking: false, thinking: false } }
+  return undefined
+}
+
+/** Whether an address is this machine or a private network: a model server someone runs, not a cloud API. */
+export function onLocalNetwork(baseURL: string | undefined): boolean {
+  let host: string
+  try {
+    host = new URL(baseURL ?? "").hostname.toLowerCase().replace(/^\[|\]$/g, "")
+  } catch {
+    return false
+  }
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host === "host.docker.internal") return true
+  if (host === "::1" || /^f[cd][0-9a-f]{2}:/.test(host)) return true
+  const octets = host.split(".").map(Number)
+  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false
+  const [a, b] = octets as [number, number, number, number]
+  return a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254)
+}
+
 export function providerExtras(provider: string, reasoning: boolean, sessionID?: string): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   if (provider === "zhipu") out.thinking = { type: "enabled", clear_thinking: false }

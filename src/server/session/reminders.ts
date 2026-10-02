@@ -211,6 +211,20 @@ export const INTERRUPTED_NOTE = "The previous response was interrupted. Continue
 
 export const LENGTH_NOTE =
   "Your previous reply was cut off because it reached the output limit. Continue from exactly where it stopped - do not repeat or summarise what you already wrote."
+/**
+ * A reply the output limit cut while it was still thinking, with nothing
+ * written and nothing called.
+ *
+ * LENGTH_NOTE asks to carry on "from exactly where it stopped", but a model
+ * never sees its own thinking again - the request drops it - so it started the
+ * whole plan over and was cut at the same place, four times, and the turn
+ * failed (the user's pelican drawing on a local Qwen: 32,000 tokens of design
+ * notes each time, no file). The request now carries the thinking's beginning
+ * and end in its place (`thoughtDigest` in provider/history.ts), and this says
+ * to act on it rather than plan again.
+ */
+export const THOUGHT_LENGTH_NOTE =
+  "Your previous reply spent the whole output limit thinking and wrote no answer and no tool call. Where your thinking had got to is shown above - do not start it over or plan in more detail. Act now: make the tool call or write the answer, and keep any further thinking short. Write to the user in the language of the conversation, not the language of your thinking."
 export const TEXT_TOOL_NOTE = "Your previous reply wrote a tool call out as text, so nothing ran. Make that call again as a real tool call."
 export const EMPTY_NOTE = "Your previous reply had no answer and no tool call. Answer the user or call a tool; thinking alone is not a reply."
 
@@ -258,7 +272,8 @@ export function continuationFor(
   if (stop === "max_tokens") {
     if (counts.length >= CONTINUATION_LIMITS.length) return { error: { message: "The reply reached the output limit again after three continuations.", code: "error.outputLength" } }
     counts.length += 1
-    return { note: LENGTH_NOTE }
+    const thoughtOnly = !text && message.parts.some((part) => part.type === "reasoning" && part.text.trim() !== "")
+    return { note: thoughtOnly ? THOUGHT_LENGTH_NOTE : LENGTH_NOTE }
   }
   // MiMo's finish-reason tables fold the older `function_call` in with `tool_calls`;
   // self-hosted gateways and older vLLM/FastChat builds still end a turn with it.

@@ -65,11 +65,13 @@ try {
 
 if (process.argv.includes("--install")) {
   const adb = path.join(sdk, "platform-tools", process.platform === "win32" ? "adb.exe" : "adb")
-  const listed = () => spawnSync(adb, ["devices"], { encoding: "utf8" }).stdout.split(/\r?\n/).slice(1).filter((line) => /\tdevice$/.test(line)).map((line) => line.split("\t")[0])
+  // An emulator only, never a phone - the same test as scripts/android-test-device.ts.
+  const testDevice = (serial) => (process.env.MCODE_ANDROID_DEVICE ? serial === process.env.MCODE_ANDROID_DEVICE : /^emulator-\d+$/.test(serial) || /^(?:127\.0\.0\.1|localhost):\d+$/.test(serial))
+  const listed = () => spawnSync(adb, ["devices"], { encoding: "utf8" }).stdout.split(/\r?\n/).slice(1).filter((line) => /\tdevice$/.test(line)).map((line) => line.split("\t")[0]).filter(testDevice)
   // An emulator whose adb connection dropped is found again on its usual local ports.
   if (!listed().length) for (const port of [16384, 7555, 5555, 62001]) if (/connected to/.test(spawnSync(adb, ["connect", `127.0.0.1:${port}`], { encoding: "utf8" }).stdout) && listed().length) break
   const device = listed()[0]
-  if (!device) throw new Error("No Android device is connected")
+  if (!device) throw new Error("No Android emulator is connected (a phone is never used; name one in MCODE_ANDROID_DEVICE to allow it)")
   // Signed with a key made anew (the temp folder was cleaned), it cannot update the copy signed with the old one: that goes first.
   if (spawnSync(adb, ["-s", device, "install", "-r", output], { stdio: "inherit" }).status !== 0) {
     spawnSync(adb, ["-s", device, "uninstall", "dev.mcode.demo"], { stdio: "ignore" })

@@ -8,6 +8,7 @@
  *
  * smoke.ts calls `roundThirtyEightChecks` with its own check and section.
  */
+import { isTestDevice, noTestDevice } from "./android-test-device"
 import os from "node:os"
 import { execFile } from "node:child_process"
 import type { Check } from "./smoke-round5"
@@ -55,9 +56,11 @@ export async function roundThirtyEightChecks(check: Check, section: (name: strin
   section("Round 38: the app tool driving the Settings app on an Android device")
   {
     const adb = findAdb()
-    const devices = adb ? await connectedDevices(adb).catch(() => []) : []
+    const connected = adb ? await connectedDevices(adb).catch(() => []) : []
+    // Never a phone (android-test-device.ts).
+    const devices = connected.filter((device) => isTestDevice(device.serial))
     if (!adb || devices.length !== 1) {
-      check(`(skipped: ${!adb ? "no adb on this machine" : devices.length ? "more than one device connected" : "no Android device connected"})`, true)
+      check(!adb ? "(skipped: no adb on this machine)" : devices.length ? "(skipped: more than one emulator connected)" : noTestDevice(connected.length), true)
       return
     }
     const asked: string[] = []
@@ -65,7 +68,7 @@ export async function roundThirtyEightChecks(check: Check, section: (name: strin
     const run = (input: Record<string, unknown>) => AppTool.execute(input, context)
     try {
       const started = Date.now()
-      const opened = await run({ action: "android", package: "com.android.settings" })
+      const opened = await run({ action: "android", target: devices[0]!.serial, package: "com.android.settings" })
       check("android starts the app, asks once naming it, and lists its screen", asked.length === 1 && /com\.android\.settings/.test(asked[0]!) && /android:\/\/com\.android\.settings/.test(opened.output) && /^\[\d+\] \w+ "/m.test(opened.output), { asked, output: opened.output.slice(0, 600) })
       check("and is ready within ten seconds", Date.now() - started < 10_000, Date.now() - started)
       const first = Number(opened.output.split("\n").find((line) => /^\[\d+\] clickable "/.test(line))?.match(/^\[(\d+)\]/)?.[1])
