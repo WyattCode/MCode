@@ -41,6 +41,8 @@
  * thinking where MCode knows the switch - told only to act, the model thought
  * 31k more and was cut again; with thinking off it wrote the file at once. A
  * ceiling set above 32k is kept (OpenCode v2's 256k) rather than held to 32k.
+ * Second look: the template switch goes only to a server on this machine or
+ * the local network - a typed-in endpoint can be a cloud API that refuses it.
  *
  * smoke.ts calls `roundFortyTwoChecks` with its own check and section.
  */
@@ -358,8 +360,11 @@ export async function roundFortyTwoChecks(check: Check, section: (name: string) 
     const digest = thoughtDigest(long)
     check("the digest keeps the thinking's opening and where it had got to", digest.includes("a".repeat(1_500)) && digest.includes("c".repeat(6_000)) && !digest.includes("b".repeat(10)) && digest.length < 8_000, digest.length)
 
-    const off = (provider: string, kind: string, typed: boolean) => JSON.stringify(thinkingOffExtra(provider, kind, typed))
-    check("a typed-in or local server is switched off through its chat template", off("qw", "openai-compatible", true) === JSON.stringify({ chat_template_kwargs: { enable_thinking: false, thinking: false } }) && off("vllm", "openai-compatible", false) === off("qw", "openai-compatible", true))
+    const off = (provider: string, kind: string, typed: boolean, url?: string) => JSON.stringify(thinkingOffExtra(provider, kind, typed, url))
+    const template = JSON.stringify({ chat_template_kwargs: { enable_thinking: false, thinking: false } })
+    check("a typed-in server on the local network is switched off through its chat template", off("qw", "openai-compatible", true, "http://192.168.10.212:8888/v1") === template && off("qw", "openai-compatible", true, "http://localhost:1234/v1") === template && off("vllm", "openai-compatible", false) === template)
+    // Second look: a typed-in endpoint can be a cloud API, which refuses a field it does not know.
+    check("but not a typed-in cloud endpoint, which would refuse the field", thinkingOffExtra("my-openai", "openai-compatible", true, "https://api.openai.com/v1") === undefined && thinkingOffExtra("gw", "openai-compatible", true, "http://172.32.0.5/v1") === undefined && thinkingOffExtra("gw", "openai-compatible", true, "not a url") === undefined)
     check("Zhipu and DashScope by their own switches", off("zhipu", "openai-compatible", false) === JSON.stringify({ thinking: { type: "disabled" } }) && off("dashscope", "openai-compatible", false) === JSON.stringify({ enable_thinking: false }))
     check("and a cloud endpoint that refuses unknown fields is left alone", thinkingOffExtra("openai", "openai-compatible", false) === undefined && thinkingOffExtra("deepseek", "openai-compatible", false) === undefined)
     const claude = { apiKey: "", model: { provider: "anthropic", model: "claude-sonnet-4-5" }, system: "s", history: [], tools: [findTool("read")!], effort: "high", variants: ["high", "max"], signal: new AbortController().signal }

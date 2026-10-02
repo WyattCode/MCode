@@ -113,14 +113,32 @@ const LOCAL_SERVERS = new Set(["lmstudio", "vllm", "ollama"])
  * own switches. A typed-in or local OpenAI-compatible server - vLLM, SGLang,
  * llama.cpp - passes `chat_template_kwargs` to the model's chat template:
  * `enable_thinking` for Qwen and GLM, `thinking` for DeepSeek and Kimi, as
- * OpenCode v2 sends both to Workers AI. A cloud endpoint is left alone: the
- * official OpenAI API refuses fields it does not know.
+ * OpenCode v2 sends both to Workers AI. Only to a server on this machine or
+ * the local network: a typed-in endpoint can as well be a cloud API - the
+ * official OpenAI one, Azure - which refuses a field it does not know, and the
+ * step after the cut would then fail outright.
  */
-export function thinkingOffExtra(provider: string, kind: string, handEntered: boolean): Record<string, unknown> | undefined {
+export function thinkingOffExtra(provider: string, kind: string, handEntered: boolean, baseURL?: string): Record<string, unknown> | undefined {
   if (provider === "zhipu") return { thinking: { type: "disabled" } }
   if (provider === "dashscope") return { enable_thinking: false }
-  if (kind === "openai-compatible" && (handEntered || LOCAL_SERVERS.has(provider))) return { chat_template_kwargs: { enable_thinking: false, thinking: false } }
+  if (kind === "openai-compatible" && (LOCAL_SERVERS.has(provider) || (handEntered && onLocalNetwork(baseURL)))) return { chat_template_kwargs: { enable_thinking: false, thinking: false } }
   return undefined
+}
+
+/** Whether an address is this machine or a private network: a model server someone runs, not a cloud API. */
+export function onLocalNetwork(baseURL: string | undefined): boolean {
+  let host: string
+  try {
+    host = new URL(baseURL ?? "").hostname.toLowerCase().replace(/^\[|\]$/g, "")
+  } catch {
+    return false
+  }
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host === "host.docker.internal") return true
+  if (host === "::1" || /^f[cd][0-9a-f]{2}:/.test(host)) return true
+  const octets = host.split(".").map(Number)
+  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false
+  const [a, b] = octets as [number, number, number, number]
+  return a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254)
 }
 
 export function providerExtras(provider: string, reasoning: boolean, sessionID?: string): Record<string, unknown> {

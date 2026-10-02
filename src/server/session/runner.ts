@@ -3126,7 +3126,7 @@ export class SessionRunner {
         sampling: samplingFor(session.model.model, this.config.modelEntry(session.model)?.temperature === true),
         extra: {
           ...providerExtras(session.model.provider, this.config.modelEntry(session.model)?.reasoning === true, sessionID),
-          ...(noThinking ? thinkingOffExtra(session.model.provider, definition.kind, definition.handEntered === true) : {}),
+          ...(noThinking ? thinkingOffExtra(session.model.provider, definition.kind, definition.handEntered === true, definition.baseURL) : {}),
         },
         ...(noThinking ? { thinkingOff: true } : {}),
       }, monitor, carried)
