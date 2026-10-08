@@ -188,7 +188,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 1. ~~把 `v2.0` 合进 `main`~~：2026-09-27 已通过 #8 合并并发布 v0.5.3。
 2. ~~第三十一轮的新能力还没在真模型上用过~~：2026-09-27 已用局域网模型（deepseek-v4.1-flash，一次性配置 `%TEMP%\mcode-lan-trial`）跑过，见第三十二轮末尾。
-3. **OpenCode v2 再更新时**：最近一次对照到 `anomalyco/opencode` 的 `v2` 分支提交 `7e42a897`（包版本 2.0.21，第四十二轮）；之前是第三十一轮的 `f0ed4f67`。只读克隆和移植记录 `opencode-v2-port.md` 在会话的 scratchpad 里，是临时目录，可能已被清理；没有就重新克隆 v2 分支（Windows 上先 `git config core.longpaths true`，用 `--filter=blob:none`）。拉新提交后先按提交标题筛掉 ACP、终端界面、桌面端、CI、控制台，剩下的逐个读改动，和 MCode 对应代码比对；第三十一、四十二轮各项的来源文件见那两轮。
+3. **OpenCode v2 再更新时**：最近一次对照到 `anomalyco/opencode` 的 `v2` 分支提交 `75225026`（包版本 2.0.25，第四十四轮）；之前是第四十二轮的 `7e42a897`、第三十一轮的 `f0ed4f67`。只读克隆和移植记录 `opencode-v2-port.md` 在会话的 scratchpad 里，是临时目录，可能已被清理；没有就重新克隆 v2 分支（Windows 上先 `git config core.longpaths true`，用 `--filter=blob:none`）。拉新提交后先按提交标题筛掉 ACP、终端界面、桌面端、CI、控制台，剩下的逐个读改动，和 MCode 对应代码比对；第三十一、四十二、四十四轮各项的来源文件见那几轮；v2 的 shell 扫描测试（`packages/core/test/shell-scan/`）可以直接拿来跑 MCode 的扫描器，见第四十四轮。
 4. **真实模型还没覆盖到的**：第二十七轮验了撤销、删除提问和**手动**压缩。**按计数自动压缩**（对话用到窗口 90% 时在回合开始压缩）还没在真模型上跑过——需要一段真的很长的对话，或者给一次性配置里的模型填一个小窗口来触发。发送停靠与跟随、拖选暂停、批注发光（第十九轮 C 路）也还没在真实使用里看过。第三十一轮里**滚动压缩、意外退出后继续、断线续写、MCP 资源**只用桩模型验过；**`patch` 只给 GPT 模型**，局域网上没有 GPT，要有 GPT 服务商才能真用。局域网模型见记忆 `reference-lan-test-model`，只用一次性配置；那个配置（`%TEMP%\mcode-lan-trial`）第三十二轮后多了一个测试用 MCP 服务 `calc`（开着代码模式），联网搜索已设为「自动」。
 5. **MiMo 若再更新**：先比新旧 bundle 的版本差异（第十八轮做法），再决定要不要重跑逐页对照（第十九轮做法：四块只读审计 + 每条独立复核）。
 6. **留着的小尾巴**：
@@ -215,6 +215,17 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 更早的下一步建议留作记录，见文末「附录 C」。
 
 ## 逐轮记录（新到旧）
+
+### 第四十四轮：再对照 OpenCode v2 到 2.0.25（2026-10-09）
+
+v2 从 `7e42a897` 到 `75225026` 共 332 个提交，按标题筛掉 ACP、终端界面、桌面端、CI、控制台、文档、发版等，剩约 110 个跟内核和编程有关的，逐个读了。**MCode 已经有的**：不完整的工具调用参数被拒绝而不是猜着补（MCode 报「参数不是合法 JSON」）、名为 AGENTS.md 的文件夹不当说明文件读、Windows 盘符大小写不会让说明文件的查找越过仓库根（`foldersUp` 和 `worktreeTop` 从同一路径出发）、直接读取的说明文件不再附带一遍、探索子代理能用 shell、技能的 `disable-model-invocation`、快照的 git 调用已批量（路径走标准输入，没有命令行长度问题）。**不跟的**：v2 新接的一批云端服务（Vercel、Venice、Cohere、Azure CLI、AWS Bedrock、Google Interactions）、企业托管策略、外部凭据引用；v2 改成访问项目外目录默认不问，MCode 照 MiMo 继续问。
+
+修的和补的（`scripts/smoke-round44.ts` 四节，每条改回旧代码时变红）：
+
+1. **命令扫描漏掉的删除**（`bash-scan.ts`）：拿 v2 新写的对抗性扫描测试跑 MCode 的扫描器，这些带删除的命令都没被认出来，前一个词被「总是允许」过就会直接执行——PowerShell 的弯引号 `‘’“”`（PowerShell 把它们当引号）、`pwsh --command` 和 `/c`、`Invoke-Expression` / `iex`、命令名里的反引号转义（`Remove-`Item`）、前面的 `<# #>` 块注释、赋值号后面的命令（`$x = Remove-Item …`）、调用运算符加引号的名字（`& 'Remove-Item'`）；bash 的函数体 `f(){ rm …; }`。**运行时才拼出的命令名**（bash 的 `$(…)`、反引号、`$变量`；PowerShell 的 `& $x`）现在当作可能删除，每次单独问、不被「总是允许」覆盖——代价是 `"$PYTHON" script.py` 这类写法每次都问，v2 也是这样。PowerShell 里开头的变量是值不是程序（`foreach ($f in $files)`、`$a + $b` 不误报）；`&` 在命令开头是调用运算符，不再当分隔符。
+2. **MCP 授权页等换完令牌再说结果**（`mcp-oauth.ts` 的 `CallbackResult`）：以前收到授权码就显示「已登录」，服务端拒了也一样；现在等交换完成，失败时显示原因；超过 60 秒没结果就让用户回 MCode 看。
+3. **远程 MCP 服务连接遇到临时故障再试两次**（`mcp.ts` 的 `transientConnectFailure`，0.25 秒、1 秒后）：408、429、5xx（501 除外）、连接被拒/重置/超时；4xx 不重试。临时故障先重试 Streamable HTTP，最后一次才退回旧的 HTTP+SSE（否则 SSE 的 405 会盖掉原来的 503）。
+4. **小项**：千问云上的 Qwen 打缓存标记（系统提示和最后一条消息，`qwenCacheMarked`）；Anthropic 停掉回复时带回的类别和原因放进卡片的详情（`TurnOutcome.refusal`）；Together/TGI 的超长说法；代码模式说明改成建议 `Promise.allSettled`。
 
 ### 第四十三轮：思考型本地模型写不出东西——鹈鹕骑车（2026-10-02）
 
