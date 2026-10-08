@@ -170,6 +170,25 @@ export function mcpToolSchema(schema: Record<string, unknown> | undefined): Reco
 const CONNECT_TIMEOUT = 30_000
 /** A call to a server with no `timeout` of its own: the MCP SDK's default request timeout, which MiMo leaves in place. */
 const CALL_TIMEOUT = 60_000
+/**
+ * Whether a failed connection is one that usually clears by itself: 408, 429
+ * or a 5xx other than 501 (which never will), or the network refusing,
+ * resetting or timing out. A sign-in, a bad address or a 4xx is not.
+ */
+function transientConnectFailure(err: unknown): boolean {
+  if (err instanceof UnauthorizedError) return false
+  const message = err instanceof Error ? err.message : String(err)
+  const status = /^HTTP (\d{3})\b/.exec(message)?.[1]
+  if (status) return status === "408" || status === "429" || (status.startsWith("5") && status !== "501")
+  let current: unknown = err
+  for (let depth = 0; current && depth < 4; depth++) {
+    const code = (current as { code?: unknown }).code
+    if (typeof code === "string" && /^(?:ECONNREFUSED|ECONNRESET|ETIMEDOUT|EPIPE|EAI_AGAIN|UND_ERR_SOCKET|UND_ERR_CONNECT_TIMEOUT)$/.test(code)) return true
+    current = (current as { cause?: unknown }).cause
+  }
+  return /^fetch failed$|socket hang up|other side closed/i.test(message)
+}
+
 /** How long ending a Streamable HTTP session may hold up stopping a server (OpenCode v2's `TERMINATE_TIMEOUT`). */
 const TERMINATE_TIMEOUT = 1_000
 
@@ -544,7 +563,30 @@ class Connection {
    * MiMo's order for a remote server: Streamable HTTP, then HTTP+SSE. A server
    * that asked for a sign-in is not tried a second way - signing in is the answer.
    */
+  /**
+   * A remote server that is overloaded, restarting or dropped the connection
+   * usually answers a moment later. OpenCode v2 (421a04f5) tries twice more,
+   * 250 ms and then a second later, before calling it failed; MCode gave up at
+   * the first refusal and left the server failed until reconnected by hand.
+   */
   private async connectRemote(): Promise<void> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.connectRemoteOnce(attempt >= 2)
+      } catch (err) {
+        if (attempt >= 2 || this.closed || !transientConnectFailure(err)) throw err
+        console.warn(`[mcp] ${this.name}: connecting failed (${err instanceof Error ? err.message : String(err)}), trying again`)
+        this.cut()
+        this.sessionID = undefined
+        this.protocolVersion = undefined
+        await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 250 : 1_000))
+        // Stopped while waiting: not connected again behind the stop.
+        if (this.closed) throw err
+      }
+    }
+  }
+
+  private async connectRemoteOnce(lastTry: boolean): Promise<void> {
     this.transport = "http"
     try {
       await this.handshake()
@@ -552,6 +594,8 @@ class Connection {
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
       if (err instanceof UnauthorizedError || (this.provider && signInFailure(err))) throw err
+      // A passing failure is tried again as Streamable HTTP first: the HTTP+SSE attempt would replace it with its own 405.
+      if (!lastTry && transientConnectFailure(err)) throw err
       this.cut()
       this.sessionID = undefined
       this.protocolVersion = undefined
@@ -1177,7 +1221,7 @@ const CODE_MODE_DESCRIPTION = [
   'Call tools through `tools` using only exact paths and signatures from the catalog. Do not infer or normalize tool names; preserve bracket notation such as `tools.<namespace>["tool-name"](input)`.',
   "Each tool resolves to its text output; use JSON.parse when that text is JSON.",
   "End with an explicit `return`; without one the result is null.",
-  "Await every call whose completion matters; pending calls are interrupted when execution ends. Run independent calls concurrently with `Promise.all`.",
+  "Await every call whose completion matters; pending calls are interrupted when execution ends. Run independent calls concurrently with `Promise.allSettled`.",
 ].join("\n")
 
 export class McpServers {
@@ -1493,12 +1537,19 @@ export class McpServers {
       if (!browserTarget(address.href)) throw new Error("the server's sign-in address is not an http or https URL")
       const callback = waitForCallback(state, name)
       openInBrowser(address.href)
-      const code = await callback
-      const kept = (await store.get(name))?.oauthState
-      await store.clear(name, "oauthState")
-      if (kept !== state) throw new Error("OAuth state mismatch - potential CSRF attack")
-      await attempt.finishAuth(code)
-      await store.clear(name, "codeVerifier")
+      const { code, respond } = await callback
+      try {
+        const kept = (await store.get(name))?.oauthState
+        await store.clear(name, "oauthState")
+        if (kept !== state) throw new Error("OAuth state mismatch - potential CSRF attack")
+        await attempt.finishAuth(code)
+        await store.clear(name, "codeVerifier")
+        respond()
+      } catch (err) {
+        // The browser says what MCode says: a refused code is not a sign-in.
+        respond(err instanceof Error ? err.message : String(err))
+        throw err
+      }
     } else {
       await store.clear(name, "oauthState")
     }

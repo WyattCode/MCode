@@ -122,7 +122,31 @@ const WRAPPERS = new Set([
  * has named it all along, so the codebase knew about it and this scanner did
  * not.
  */
-const EVAL_WORDS = new Set(["eval", "source", "."])
+const EVAL_WORDS = new Set(["eval", "source", ".", "invoke-expression", "iex"])
+
+/**
+ * PowerShell's quote characters, which are more than the ASCII two: it reads
+ * the typographic quotes as quotes too, any of a kind closing any other. Read
+ * as ordinary letters, `Write-Output ‘a'; Remove-Item x; 'b’` was one long
+ * string to this scanner and a delete to PowerShell (OpenCode v2's
+ * adversarial scanner tests, 9d387f6b).
+ */
+const POSH_SINGLE = new Set(["'", "‘", "’", "‚", "‛"])
+const POSH_DOUBLE = new Set(['"', "“", "”", "„"])
+
+/**
+ * A command whose program is computed when it runs - `$(printf rm) -rf src`,
+ * `` `printf rm` ``, `$tool x`, PowerShell's `& $x` - names no program this
+ * scanner can know. It is treated as one that may delete: asked every time and
+ * never remembered, where its first word as an "always" rule would have let any
+ * later computed program through.
+ */
+function computedProgram(tokens: string[], powershell: boolean): boolean {
+  const first = tokens[0] ?? ""
+  // PowerShell reads a leading variable as a value, not a program: only its call operators run one.
+  if (powershell) return (first === "&" || first === ".") && /^[$(]/.test(tokens[1] ?? "")
+  return /^\$|^"\$|`/.test(first)
+}
 
 /**
  * Interpreters whose inline code is itself a command line, so it can be read as
@@ -223,7 +247,7 @@ function inlineBody(tokens: string[], posh: boolean): string | undefined {
        * decoded here so the command inside is read like any other; a body that
        * will not decode is left alone rather than guessed at.
        */
-      if (/^-(?:e|en|enc|enco|encod|encode|encoded|encodedc|encodedco|encodedcom|encodedcomm|encodedcomma|encodedcomman|encodedcommand)$/i.test(token)) {
+      if (/^(?:--?|\/)(?:e|en|enc|enco|encod|encode|encoded|encodedc|encodedco|encodedcom|encodedcomm|encodedcomma|encodedcomman|encodedcommand)$/i.test(token)) {
         const encoded = unquote(tokens[at + 1] ?? "")
         if (!encoded) return undefined
         try {
@@ -233,7 +257,8 @@ function inlineBody(tokens: string[], posh: boolean): string | undefined {
           return undefined
         }
       }
-      if (/^-(?:c|co|com|comm|comma|comman|command)$/i.test(token)) return unquote(tokens[at + 1] ?? "") || undefined
+      // `-Command`, and as pwsh also takes it, `--command` and `/command`; pwsh 7.4's `-CommandWithArgs` too.
+      if (/^(?:--?|\/)(?:c|co|com|comm|comma|comman|command|cwa|commandwithargs)$/i.test(token)) return unquote(tokens[at + 1] ?? "") || undefined
       continue
     }
     // cmd's own two: /c runs and ends, /k runs and stays.
@@ -270,7 +295,7 @@ function inlineBody(tokens: string[], posh: boolean): string | undefined {
  */
 function runsWithin(entry: SimpleCommand, powershell: boolean, depth: number): SimpleCommand[] {
   if (depth >= NEST_LIMIT) return []
-  const head = programName((entry.tokens[0] ?? "").replace(/["']/g, ""))
+  const head = programName((entry.tokens[0] ?? "").replace(ANY_QUOTE, ""))
   if (head === "find") {
     return findActions(entry.tokens).flatMap((tokens) => {
       const action: SimpleCommand = { tokens, source: tokens.join(" "), redirects: [], derived: true }
@@ -301,7 +326,10 @@ function runsWithin(entry: SimpleCommand, powershell: boolean, depth: number): S
     return [program, ...runsWithin(program, powershell, depth + 1)]
   }
   if (EVAL_WORDS.has(head)) {
-    const body = entry.tokens.slice(1).map(unquote).join(" ").trim()
+    // `Invoke-Expression -Command '...'` names its script's parameter: the script is what follows it.
+    const words = entry.tokens.slice(1)
+    if (powershell && /^-(?:c|co|com|comm|comma|comman|command)$/i.test(words[0] ?? "")) words.shift()
+    const body = words.map(unquote).join(" ").trim()
     if (!body) return []
     return scanCommands(body, powershell, depth + 1).map((found) => ({ ...found, derived: true }))
   }
@@ -338,6 +366,23 @@ function scanCommands(command: string, powershell: boolean, depth: number): Simp
      * named a program called `then` and showed no delete (R28-2).
      */
     if (!powershell) while (tokens.length && SHELL_KEYWORDS.has(tokens[0]!)) tokens.shift()
+    /*
+     * PowerShell runs what follows an assignment: `$x = Remove-Item src`, or
+     * `[string]$x=Remove-Item src`, deletes. Read as a command named `$x`
+     * it showed no delete (OpenCode v2's adversarial tests).
+     */
+    if (powershell) {
+      // `& 'Remove-Item' src` runs Remove-Item; `& $x` stays as it is, for `computedProgram`.
+      if ((tokens[0] === "&" || tokens[0] === ".") && tokens.length > 1 && !/^[$(]/.test(tokens[1]!)) tokens = tokens.slice(1)
+      // A bare `&` or `.` in front of a script block runs the block, whose commands are read on their own.
+      else if ((tokens[0] === "&" || tokens[0] === ".") && tokens.length === 1) tokens = []
+      const variable = /^(?:\[[^\]]*\])*\$[\w:{}?]+$/
+      if (variable.test(tokens[0] ?? "") && /^[-+*/%?]?\?*=$/.test(tokens[1] ?? "")) tokens = tokens.slice(2)
+      else {
+        const joined = /^((?:\[[^\]]*\])*\$[\w:{}?]+)[-+*/%]?=(.+)$/.exec(tokens[0] ?? "")
+        if (joined) tokens = [joined[2]!, ...tokens.slice(1)]
+      }
+    }
     // `FOO=1 git status` runs git; assignments in front are not the command, and a line of only them runs nothing.
     const first = powershell ? 0 : tokens.findIndex((token) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(token))
     const words = first === -1 ? [] : tokens.slice(first)
@@ -353,22 +398,29 @@ function scanCommands(command: string, powershell: boolean, depth: number): Simp
   for (let i = 0; i < command.length; i++) {
     const ch = command[i]
     if (start === -1 && !/\s/.test(ch) && !";&|\n".includes(ch)) start = i
+    // PowerShell's block comment, `<# ... #>`: not a redirection from a file named `#`.
+    if (powershell && ch === "<" && command[i + 1] === "#") {
+      const close = command.indexOf("#>", i + 2)
+      i = (close === -1 ? command.length : close + 2) - 1
+      continue
+    }
     if (ch === "#" && !inWord) {
       const newline = command.indexOf("\n", i)
       i = (newline === -1 ? command.length : newline) - 1
       continue
     }
-    if (ch === "'") {
-      const close = command.indexOf("'", i + 1)
-      const end = close === -1 ? command.length - 1 : close
+    if (ch === "'" || (powershell && POSH_SINGLE.has(ch))) {
+      let close = i + 1
+      while (close < command.length && !(powershell ? POSH_SINGLE.has(command[close]!) : command[close] === "'")) close++
+      const end = close >= command.length ? command.length - 1 : close
       word += command.slice(i, end + 1)
       inWord = true
       i = end
       continue
     }
-    if (ch === '"') {
+    if (ch === '"' || (powershell && POSH_DOUBLE.has(ch))) {
       let j = i + 1
-      while (j < command.length && command[j] !== '"') {
+      while (j < command.length && !(powershell ? POSH_DOUBLE.has(command[j]!) : command[j] === '"')) {
         if ((!powershell && command[j] === "\\") || (powershell && command[j] === "`")) j++
         else if (command[j] === "$" && command[j + 1] === "(") {
           const close = closing(command, j + 1)
@@ -391,8 +443,15 @@ function scanCommands(command: string, powershell: boolean, depth: number): Simp
       continue
     }
     if (ch === "`") {
+      // A backtick before the line's end continues the line: it is a space between words, not part of one.
+      if (powershell && (command[i + 1] === "\n" || command[i + 1] === "\r")) {
+        endWord()
+        i += command[i + 1] === "\r" && command[i + 2] === "\n" ? 2 : 1
+        continue
+      }
       if (powershell) {
-        word += command.slice(i, i + 2)
+        // An escape in a bare word is the character itself: `Remove-`Item` runs Remove-Item.
+        word += command[i + 1] ?? ""
         inWord = true
         i++
       } else {
@@ -435,9 +494,42 @@ function scanCommands(command: string, powershell: boolean, depth: number): Simp
       i = j - 1
       continue
     }
+    // PowerShell's `&` in front of a command is its call operator, not a separator; at a command's end it backgrounds it.
+    if (powershell && ch === "&" && command[i + 1] !== "&" && tokens.length === 0 && !inWord) {
+      word = "&"
+      inWord = true
+      endWord()
+      /*
+       * `& (Get-Command Remove-Item) src` runs whatever the parentheses work
+       * out to. Ended at the `(` like any group, the call lost its operator and
+       * read as nothing computed: the group stays one word after the `&`, and
+       * what is inside it is read too.
+       */
+      let k = i + 1
+      while (command[k] === " " || command[k] === "\t") k++
+      if (command[k] === "(") {
+        const close = closing(command, k)
+        nested.push(command.slice(k + 1, close))
+        word = command.slice(k, close + 1)
+        inWord = true
+        i = close
+      }
+      continue
+    }
     if (ch === "\n" || ch === ";" || ch === "&" || ch === "|") {
       endCommand(i)
       if ((ch === "&" || ch === "|") && command[i + 1] === ch) i++
+      continue
+    }
+    /*
+     * `f(){ rm -rf src; }; f` defines a function and runs it. The name and its
+     * `()` were read as one word, `f(){`, so the body's `rm` was that word's
+     * argument and showed no delete (OpenCode v2's adversarial tests). A name
+     * followed by `()` ends there, and the body is read as commands.
+     */
+    if (!powershell && ch === "(" && inWord && command[i + 1] === ")" && /^[A-Za-z_][\w.:-]*$/.test(word)) {
+      endCommand(i)
+      i++
       continue
     }
     if ((ch === "(" || ch === ")" || ch === "{" || ch === "}") && !inWord) {
@@ -540,7 +632,7 @@ export function rememberedPattern(tokens: string[], source: string): string | un
 function headOf(tokens: string[], powershell: boolean): string | undefined {
   const first = tokens[0]
   if (first === undefined) return undefined
-  const word = (first.replace(/["']/g, "").split(/[\\/]/).pop() ?? "").replace(/\.exe$/i, "")
+  const word = (first.replace(ANY_QUOTE, "").split(/[\\/]/).pop() ?? "").replace(/\.exe$/i, "")
   if (!word) return undefined
   return powershell ? word.toLowerCase() : word
 }
@@ -549,6 +641,8 @@ export function isDelete(tokens: string[], powershell: boolean): boolean {
   const head = headOf(tokens, powershell)
   if (!head) return false
   if (DELETE_COMMANDS.has(head)) return true
+  // A program computed when the line runs may be any program, a delete among them.
+  if (computedProgram(tokens, powershell)) return true
   // `find . -delete` removes every file it matches.
   if (head === "find") return tokens.includes("-delete")
   if (head !== "git" || tokens.length < 2) return false
@@ -632,8 +726,13 @@ function pathArgs(tokens: string[], powershell: boolean): string[] {
 
 function unquote(text: string): string {
   if (text.length >= 2 && (text[0] === '"' || text[0] === "'") && text[0] === text[text.length - 1]) return text.slice(1, -1)
+  // PowerShell's typographic quotes, any of a kind closing any other. In bash they are letters, and reading them as quotes there only asks more.
+  if (text.length >= 2 && ((POSH_SINGLE.has(text[0]!) && POSH_SINGLE.has(text[text.length - 1]!)) || (POSH_DOUBLE.has(text[0]!) && POSH_DOUBLE.has(text[text.length - 1]!)))) return text.slice(1, -1)
   return text
 }
+
+/** Every quote character, straight or typographic, taken out of a word to find the program it names. */
+const ANY_QUOTE = /["'‘’‚‛“”„]/g
 
 /** A file argument as a path, or undefined when it cannot be known before the command runs. */
 function argPath(arg: string, cwd: string, powershell: boolean): string | undefined {

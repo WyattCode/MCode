@@ -39,6 +39,8 @@ export interface TurnOutcome {
   usage: Usage
   /** The provider's own finish reason, as it said it: MiMo tells a tool-call finish with no call apart from a plain one. */
   finishReason?: string
+  /** What a provider said about a reply it stopped (Anthropic's `stop_details`): its policy area and why. */
+  refusal?: { category?: string; explanation?: string }
 }
 
 /** The whole system text of a request: the cached prefix, then what belongs to this conversation alone. */

@@ -191,6 +191,8 @@ const PATTERNS = [
   /tokens in request more than max tokens allowed/i,
   /maximum prompt length is \d+/i,
   /reduce the length of the messages/i,
+  // Hugging Face Text Generation Inference, as Together serves it (v2 5d707f1a).
+  /`inputs` tokens \+ `max_new_tokens` must be <= \d+/i,
   // DeepInfra (v2 9c4c5870).
   /requested input length \d+ exceeds maximum input length/i,
   /maximum context length is \d+ tokens/i,

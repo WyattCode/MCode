@@ -3215,10 +3215,15 @@ export class SessionRunner {
          * message for anything that logs it.
          */
         assistant.errorCode = "error.contentBlocked"
-        assistant.error =
+        const base =
           outcome.finishReason === "content_filter"
             ? "The provider's content filter stopped this reply."
             : "The model declined to continue with this request."
+        // With what the provider said about it, where it said anything: `Blocked (cyber): <its sentence>`.
+        const said = outcome.refusal
+        assistant.error = said ? [said.category ? `${base} (${said.category})` : base, said.explanation].filter(Boolean).join(" ") : base
+        // Shown under the card's own sentence, as every coded failure's detail is.
+        if (said) assistant.errorParams = { detail: [said.category ? `(${said.category})` : "", said.explanation ?? ""].filter(Boolean).join(" ") }
         assistant.time.completed = Date.now()
         await this.store.saveMessage(assistant)
         return

@@ -338,8 +338,25 @@ export const AnthropicAdapter: ProviderAdapter = {
       ...(request.sessionID ? { headers: { "x-session-affinity": request.sessionID } } : {}),
     })
 
+    let refusal: { category?: string; explanation?: string } | undefined
     for await (const event of guarded(stream, guard)) {
       if (request.signal.aborted) break
+
+      /*
+       * A reply the provider stops comes with what it stopped it for: a policy
+       * area and a sentence (OpenCode v2, b03d760f). The SDK's own types do not
+       * carry the field yet, so it is read off the event as sent.
+       */
+      if (event.type === "message_delta") {
+        const details = (event.delta as { stop_details?: { category?: unknown; explanation?: unknown } | null }).stop_details
+        if (details) {
+          refusal = {
+            ...(typeof details.category === "string" && details.category ? { category: details.category } : {}),
+            ...(typeof details.explanation === "string" && details.explanation ? { explanation: details.explanation } : {}),
+          }
+        }
+        continue
+      }
 
       if (event.type === "content_block_start") {
         const block = event.content_block
@@ -385,6 +402,7 @@ export const AnthropicAdapter: ProviderAdapter = {
       toolCalls,
       usage: usageFrom(final.usage),
       ...(final.stop_reason ? { finishReason: final.stop_reason } : {}),
+      ...(refusal && (refusal.category || refusal.explanation) ? { refusal } : {}),
     }
   },
 }
