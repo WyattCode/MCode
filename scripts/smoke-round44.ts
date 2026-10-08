@@ -19,6 +19,13 @@
  *   more overflow wording (Together / TGI); Code Mode's guidance follows v2
  *   to `Promise.allSettled`.
  *
+ * Second look, the same day: `& (expression)` still hid its program, a name in
+ * typographic quotes after `&` or `iex` was not unquoted, `Invoke-Expression
+ * -Command` read its parameter's name as the program, pwsh's `-cwa` script was
+ * not read, a bare `&` before a script block was a command called "&"; an MCP
+ * server stopped while a retry waited was connected again; a Qwen cache mark
+ * could land on a picture.
+ *
  * smoke.ts calls `roundFortyFourChecks` with its own check and section.
  */
 import fs from "node:fs"
@@ -31,7 +38,7 @@ import { createServer as createHttpServer } from "node:http"
 import { Bus } from "../src/server/bus"
 import { McpServers } from "../src/server/mcp"
 import type { AppConfig, McpServerConfig } from "@shared/protocol"
-import { OpenAICompatible, qwenCacheMarked } from "../src/server/provider/openai"
+import { OpenAICompatible, qwenCacheMarked, withQwenCacheMarks } from "../src/server/provider/openai"
 import { ProviderHttpError } from "../src/server/provider/types"
 import { isOverflowError } from "../src/server/session/overflow"
 import { engine } from "./smoke-round5"
@@ -228,5 +235,62 @@ export async function roundFortyFourChecks(check: Check, section: (name: string)
     check("Together's TGI wording is an overflow", isOverflowError(new ProviderHttpError(tgi, 422, {}), tgi))
     const mcpSource = fs.readFileSync(path.join(process.cwd(), "src", "server", "mcp.ts"), "utf8")
     check("Code Mode advises Promise.allSettled for independent calls, as v2 now does", mcpSource.includes("Run independent calls concurrently with `Promise.allSettled`."))
+  }
+
+  section("Round 44, second look: what the first pass still let through")
+  {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "mcode-r44-look-"))
+    try {
+      const scan = (command: string) => scanCommand(command, cwd, cwd, true)
+      for (const [command, why] of [
+        ["& (Get-Command Remove-Item) victim", "the call operator on an expression"],
+        ["& ‘Remove-Item’ victim", "a name in typographic quotes after the call operator"],
+        ["iex ‘Remove-Item victim’", "a script in typographic quotes handed to iex"],
+        ["Invoke-Expression -Command 'Remove-Item victim'", "Invoke-Expression with its -Command named"],
+        ["pwsh -cwa 'Remove-Item $args[0]' victim", "pwsh's -CommandWithArgs"],
+      ]) check(`a delete is seen through ${why}`, (await scan(command)).deletes.length > 0, command)
+      const block = await scan("& { Write-Output hi }")
+      check("a bare & before a script block is not a command of its own", JSON.stringify(block.patterns) === JSON.stringify(["Write-Output hi"]) && block.deletes.length === 0, block.patterns)
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true })
+    }
+
+    // A Qwen cache mark goes on text, not on a picture.
+    const messages: Record<string, unknown>[] = [
+      { role: "system", content: "s" },
+      { role: "user", content: [{ type: "text", text: "look at this" }, { type: "image_url", image_url: { url: "data:image/png;base64,AA==" } }] },
+    ]
+    withQwenCacheMarks(messages)
+    const parts = (messages[1]!.content as Record<string, any>[])
+    check("the last message's mark is on its text, not its picture", parts[0]?.cache_control?.type === "ephemeral" && parts[1]?.cache_control === undefined, parts)
+
+    // An MCP server stopped while a retry waits is not connected again behind the stop.
+    let handshakes = 0
+    const server = createHttpServer((request, response) => {
+      let raw = ""
+      request.on("data", (chunk) => (raw += chunk))
+      request.on("end", () => {
+        if (request.method === "POST" && JSON.parse(raw || "{}").method === "initialize") handshakes++
+        response.writeHead(request.method === "POST" ? 503 : 405)
+        response.end()
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "mcode-r44-stop-"))
+    try {
+      const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`
+      const value = { mcpServers: { web: { type: "remote", url, oauth: false } as McpServerConfig }, directory: home }
+      const config = { get: () => value as unknown as AppConfig, set: async () => value as unknown as AppConfig }
+      const mcp = new McpServers(new Bus(), config as never, undefined, home)
+      const starting = mcp.start()
+      await new Promise((resolve) => setTimeout(resolve, 120))
+      await mcp.close()
+      await starting.catch(() => undefined)
+      await new Promise((resolve) => setTimeout(resolve, 1_600))
+      check("a server stopped during a retry's wait is not tried again", handshakes === 1, { handshakes })
+    } finally {
+      server.close()
+      fs.rmSync(home, { recursive: true, force: true })
+    }
   }
 }

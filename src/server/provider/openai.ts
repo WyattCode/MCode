@@ -205,11 +205,15 @@ export function qwenCacheMarked(provider: string, modelID: string): boolean {
 
 export function withQwenCacheMarks(messages: Record<string, unknown>[]): void {
   const mark = { type: "ephemeral" }
+  // On a text block, as v2 places it: a picture is not where DashScope reads a mark.
   const marked = (message: Record<string, unknown> | undefined) => {
     const content = message?.content
     if (!message) return
     if (typeof content === "string" && content) message.content = [{ type: "text", text: content, cache_control: mark }]
-    else if (Array.isArray(content) && content.length) content[content.length - 1] = { ...(content[content.length - 1] as Record<string, unknown>), cache_control: mark }
+    else if (Array.isArray(content)) {
+      const at = content.findLastIndex((part) => (part as { type?: unknown }).type === "text")
+      if (at !== -1) content[at] = { ...(content[at] as Record<string, unknown>), cache_control: mark }
+    }
   }
   const system = messages.find((message) => message.role === "system")
   marked(system)

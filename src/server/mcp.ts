@@ -580,6 +580,8 @@ class Connection {
         this.sessionID = undefined
         this.protocolVersion = undefined
         await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 250 : 1_000))
+        // Stopped while waiting: not connected again behind the stop.
+        if (this.closed) throw err
       }
     }
   }

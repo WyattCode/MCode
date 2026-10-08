@@ -257,8 +257,8 @@ function inlineBody(tokens: string[], posh: boolean): string | undefined {
           return undefined
         }
       }
-      // `-Command`, and as pwsh also takes it, `--command` and `/command`.
-      if (/^(?:--?|\/)(?:c|co|com|comm|comma|comman|command)$/i.test(token)) return unquote(tokens[at + 1] ?? "") || undefined
+      // `-Command`, and as pwsh also takes it, `--command` and `/command`; pwsh 7.4's `-CommandWithArgs` too.
+      if (/^(?:--?|\/)(?:c|co|com|comm|comma|comman|command|cwa|commandwithargs)$/i.test(token)) return unquote(tokens[at + 1] ?? "") || undefined
       continue
     }
     // cmd's own two: /c runs and ends, /k runs and stays.
@@ -295,7 +295,7 @@ function inlineBody(tokens: string[], posh: boolean): string | undefined {
  */
 function runsWithin(entry: SimpleCommand, powershell: boolean, depth: number): SimpleCommand[] {
   if (depth >= NEST_LIMIT) return []
-  const head = programName((entry.tokens[0] ?? "").replace(/["']/g, ""))
+  const head = programName((entry.tokens[0] ?? "").replace(ANY_QUOTE, ""))
   if (head === "find") {
     return findActions(entry.tokens).flatMap((tokens) => {
       const action: SimpleCommand = { tokens, source: tokens.join(" "), redirects: [], derived: true }
@@ -326,7 +326,10 @@ function runsWithin(entry: SimpleCommand, powershell: boolean, depth: number): S
     return [program, ...runsWithin(program, powershell, depth + 1)]
   }
   if (EVAL_WORDS.has(head)) {
-    const body = entry.tokens.slice(1).map(unquote).join(" ").trim()
+    // `Invoke-Expression -Command '...'` names its script's parameter: the script is what follows it.
+    const words = entry.tokens.slice(1)
+    if (powershell && /^-(?:c|co|com|comm|comma|comman|command)$/i.test(words[0] ?? "")) words.shift()
+    const body = words.map(unquote).join(" ").trim()
     if (!body) return []
     return scanCommands(body, powershell, depth + 1).map((found) => ({ ...found, derived: true }))
   }
@@ -371,6 +374,8 @@ function scanCommands(command: string, powershell: boolean, depth: number): Simp
     if (powershell) {
       // `& 'Remove-Item' src` runs Remove-Item; `& $x` stays as it is, for `computedProgram`.
       if ((tokens[0] === "&" || tokens[0] === ".") && tokens.length > 1 && !/^[$(]/.test(tokens[1]!)) tokens = tokens.slice(1)
+      // A bare `&` or `.` in front of a script block runs the block, whose commands are read on their own.
+      else if ((tokens[0] === "&" || tokens[0] === ".") && tokens.length === 1) tokens = []
       const variable = /^(?:\[[^\]]*\])*\$[\w:{}?]+$/
       if (variable.test(tokens[0] ?? "") && /^[-+*/%?]?\?*=$/.test(tokens[1] ?? "")) tokens = tokens.slice(2)
       else {
@@ -494,6 +499,21 @@ function scanCommands(command: string, powershell: boolean, depth: number): Simp
       word = "&"
       inWord = true
       endWord()
+      /*
+       * `& (Get-Command Remove-Item) src` runs whatever the parentheses work
+       * out to. Ended at the `(` like any group, the call lost its operator and
+       * read as nothing computed: the group stays one word after the `&`, and
+       * what is inside it is read too.
+       */
+      let k = i + 1
+      while (command[k] === " " || command[k] === "\t") k++
+      if (command[k] === "(") {
+        const close = closing(command, k)
+        nested.push(command.slice(k + 1, close))
+        word = command.slice(k, close + 1)
+        inWord = true
+        i = close
+      }
       continue
     }
     if (ch === "\n" || ch === ";" || ch === "&" || ch === "|") {
@@ -612,7 +632,7 @@ export function rememberedPattern(tokens: string[], source: string): string | un
 function headOf(tokens: string[], powershell: boolean): string | undefined {
   const first = tokens[0]
   if (first === undefined) return undefined
-  const word = (first.replace(/["']/g, "").split(/[\\/]/).pop() ?? "").replace(/\.exe$/i, "")
+  const word = (first.replace(ANY_QUOTE, "").split(/[\\/]/).pop() ?? "").replace(/\.exe$/i, "")
   if (!word) return undefined
   return powershell ? word.toLowerCase() : word
 }
@@ -706,8 +726,13 @@ function pathArgs(tokens: string[], powershell: boolean): string[] {
 
 function unquote(text: string): string {
   if (text.length >= 2 && (text[0] === '"' || text[0] === "'") && text[0] === text[text.length - 1]) return text.slice(1, -1)
+  // PowerShell's typographic quotes, any of a kind closing any other. In bash they are letters, and reading them as quotes there only asks more.
+  if (text.length >= 2 && ((POSH_SINGLE.has(text[0]!) && POSH_SINGLE.has(text[text.length - 1]!)) || (POSH_DOUBLE.has(text[0]!) && POSH_DOUBLE.has(text[text.length - 1]!)))) return text.slice(1, -1)
   return text
 }
+
+/** Every quote character, straight or typographic, taken out of a word to find the program it names. */
+const ANY_QUOTE = /["'‘’‚‛“”„]/g
 
 /** A file argument as a path, or undefined when it cannot be known before the command runs. */
 function argPath(arg: string, cwd: string, powershell: boolean): string | undefined {
