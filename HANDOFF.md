@@ -9,10 +9,10 @@
 - **这是什么**：在界面和功能上 1:1 复刻小米 MiMo 桌面端的 Electron 应用，MCode 保留自己的名字、图标和字标。技术栈 Electron 41.7.2 + Vue 3 + Pinia + electron-vite，后端是同一进程里的 Node 服务。
 - **对照基准**：界面照 MiMo **26.920**（第十八轮起）。只读它的行为和尺寸，**不复制**它的代码、文案、图标、插画和品牌。逐项对照清单（含百分比）：https://claude.ai/code/artifact/f149a5d1-857e-4bae-80be-ca03265d9f83
 - **引擎跟随 OpenCode v2**（第三十一轮起，用户 2026-09-27 定的）：内核和 Agent 编程能力照 OpenCode 的 `v2` 分支逐项移植进 MCode 自己的引擎（v2 还没正式发布，所以是搬能力，不是换引擎）；界面和其余部分保留 MCode 自己的设计。只搬比 MCode 现有做法好的，MCode 更强的地方保留（见第三十一轮）。OpenCode 是 MIT 许可，移植的代码在注释里注明出处。
-- **版本**：0.7.1，由第四十六轮 `npm run package:win` 自动递增，Windows x64 安装包已生成并通过最终回归，准备发布。包含第四十四轮发版后的压缩循环保护、嵌套 PowerShell 识别，以及第四十五到四十六轮的路径和断线续写修复。包内主进程与 preload 已逐字节核对，更新元数据的大小和 SHA-512 与安装程序一致。本机 `D:\Apps\MCode` 仍是 0.7.0，没有替用户关闭或升级正在使用的安装版。
-- **分支**：`v2.0`，跟踪 `origin/v2.0`（私有仓库 `WyattCode/MCode`）。第四十六轮接手时 HEAD 是 `e3c0bdda`，`origin/main` 是 #15 的合并提交 `ef3b33ad`；本地 `main` 仍停在早期 #4，没有切换或更新它。本次提交包括第四十四轮发版后、第四十五到四十六轮修复；保留未跟踪的 `.claude/`，不提交本地测试产物。通常开 PR、合并和发版先征得用户同意；**本轮用户已明确授权提交 GitHub、打包发版**，因此直接完成。
-- **拉取请求**：#4 到 #15 已合并（合并提交，标题照 #10「MCode 2.0：0.6.4 —— …，第四十到四十一轮」的格式）。#3（`macos-hardening-v2`）已关闭：它声称的 16 条修复逐条对照过当前代码，5 条已被后来的工作修掉（含全部 3 条安全项）、2 条在本平台仍然存在并已修（0.4.6）、7 条只在 macOS 上能观察到，结论写在 #3 的关闭评论里。
-- **发布**：https://github.com/WyattCode/MCode/releases/tag/v0.7.0（2026-10-09，附安装程序、blockmap、`latest.yml`；v0.6.4 起**没有**勾选「预发布」，v0.6.3 勾了）；之前是 v0.6.9、v0.6.8、v0.6.7、v0.6.6、v0.6.4、v0.6.3、v0.5.3、v0.4.7、v0.4.5、v0.3.8。自动更新地址仍是占位的 `updates.invalid`，所以**发布不会触发任何自动更新**，装新版只能手动下载。
+- **版本**：0.7.1，由第四十六轮 `npm run package:win` 自动递增，已发布 Windows x64 稳定版 https://github.com/WyattCode/MCode/releases/tag/v0.7.1。包含第四十四轮发版后的压缩循环保护、嵌套 PowerShell 识别，以及第四十五到四十六轮的路径和断线续写修复。包内主进程与 preload 已逐字节核对，更新元数据的大小和 SHA-512 与安装程序一致，GitHub 三个附件的 SHA-256 与本地一致。本机 `D:\Apps\MCode` 仍是 0.7.0，没有替用户关闭或升级正在使用的安装版。
+- **分支**：`v2.0`，跟踪 `origin/v2.0`（私有仓库 `WyattCode/MCode`）。第四十六轮代码提交 `05c7bcf9`，最终回归记录 `12aa442f`，PR #16 已合并；`origin/main` 和标签 `v0.7.1` 为合并提交 `444f43ac`。发版后交接更新继续提交并推送在 `v2.0`；本地 `main` 仍停在早期 #4，没有切换或更新它。保留未跟踪的 `.claude/`，不提交本地测试产物。通常开 PR、合并和发版先征得用户同意；**本轮用户已明确授权提交 GitHub、打包发版**，因此直接完成。
+- **拉取请求**：#4 到 #16 已合并（合并提交，标题照 #10「MCode 2.0：0.6.4 —— …，第四十到四十一轮」的格式）。最新 https://github.com/WyattCode/MCode/pull/16，第四十五到四十六轮。#3（`macos-hardening-v2`）已关闭：它声称的 16 条修复逐条对照过当前代码，5 条已被后来的工作修掉（含全部 3 条安全项）、2 条在本平台仍然存在并已修（0.4.6）、7 条只在 macOS 上能观察到，结论写在 #3 的关闭评论里。
+- **发布**：https://github.com/WyattCode/MCode/releases/tag/v0.7.1（2026-10-09，最新稳定版，附安装程序、blockmap、`latest.yml`，三个附件已核对远程大小和 SHA-256；v0.6.4 起**没有**勾选「预发布」，v0.6.3 勾了）；之前是 v0.7.0、v0.6.9、v0.6.8、v0.6.7、v0.6.6、v0.6.4、v0.6.3、v0.5.3、v0.4.7、v0.4.5、v0.3.8。自动更新地址仍是占位的 `updates.invalid`，所以**发布不会触发任何自动更新**，装新版只能手动下载。
 - **验证状态**：2026-10-09 第四十六轮，build、typecheck 和十二项专项检查（含 sandboxcheck）全部通过；0.7.1 打包后从头复跑完整 smoke，**7746 passed / 0 failed**（`out/release-smoke-final.log`）。第三十七轮「切标签加点四下在五秒内」和原生消息框检查也通过；接着用户手机或没有模拟器时安卓检查会跳过。首次回归只有构建新鲜度检查失败，重建后已通过。发布 0.7.0 时曾有一条 Windows 计时检查超限，这是历史结果；本轮通过不消除原生窗口检查受机器负载、桌面操作影响的已知不稳定性。
 - **已知差异**：对照 26.920 没有已知的、未决的界面差异。仍然不同的三类——用户定的刻意差异（见下）；依赖小米账号或小米服务的功能；需要 Linux / macOS 真机才能核对的细节。
 - **真实模型**：第二十七轮起用局域网模型真用过——撤销、删除提问、手动压缩都端到端验证过（见那一节）；第三十一轮的排队、联网搜索、代码模式也在真模型上跑通了（见第三十二轮末尾）；用户自己也在日常用（第二十九轮的两个问题就是用出来的）。
@@ -225,7 +225,9 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 新增五条回归检查：环境变量目录、`-LiteralPath`、带空格目录、`Push-Location -Path`、Bash 带空格目录后的相对重定向。修复后第四十四轮独立检查 **66 passed / 0 failed**；只在测试包里换回旧目录逻辑，五条全部失败（`out/review-round46-mutant.log`），工作区源码没有被变异。
 
-typecheck 和十二项专项检查全部通过。首次完整 smoke **7745 passed / 1 failed**，唯一失败是「被测构建不早于源码」：新增源码改动后漏了先重建，代码相关断言和原生窗口检查都通过。随后执行 `npm run package:win`，自动递增为 0.7.1 并重新构建，安装程序、blockmap 和 `latest.yml` 均已生成；包内主进程与 preload 和本机输出一致，SHA-512 和大小核对通过（`out/release-package-evidence.json`）。最新构建上从头复跑完整 smoke **7746 passed / 0 failed**（`out/release-smoke-final.log`），包括构建新鲜度、原生窗口计时和本轮路径修复。代码提交 `05c7bcf9` 已推送，PR https://github.com/WyattCode/MCode/pull/16 待合并，随后发布。
+typecheck 和十二项专项检查全部通过。首次完整 smoke **7745 passed / 1 failed**，唯一失败是「被测构建不早于源码」：新增源码改动后漏了先重建，代码相关断言和原生窗口检查都通过。随后执行 `npm run package:win`，自动递增为 0.7.1 并重新构建，安装程序、blockmap 和 `latest.yml` 均已生成；包内主进程与 preload 和本机输出一致，SHA-512 和大小核对通过（`out/release-package-evidence.json`）。最新构建上从头复跑完整 smoke **7746 passed / 0 failed**（`out/release-smoke-final.log`），包括构建新鲜度、原生窗口计时和本轮路径修复。
+
+**提交与发布完成**：代码 `05c7bcf9`、最终验证记录 `12aa442f` 已推送，PR https://github.com/WyattCode/MCode/pull/16 合并为 `444f43ac`。稳定版 https://github.com/WyattCode/MCode/releases/tag/v0.7.1 已发布并设为最新，标签对应合并提交；安装程序 `MCode-0.7.1-x64.exe`（236,935,387 字节）、blockmap 和 `latest.yml` 三个附件远程大小与 SHA-256 全部匹配（`out/release-github-evidence.json`）。没有升级本机安装版，没有关闭用户应用，自动更新源仍是占位地址。
 
 ### 第四十五轮：复核发版后的修复，补真实恢复验证（2026-10-09）
 
