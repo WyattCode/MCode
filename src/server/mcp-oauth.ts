@@ -723,8 +723,25 @@ function startAuthorization(
 // The callback listener and the browser
 // ---------------------------------------------------------------------------
 
+/**
+ * The code the browser brought back, and how to answer that browser.
+ *
+ * The page used to say "Signed in" the moment the code arrived, before MCode
+ * had exchanged it for a token - so a code the server then refused still read
+ * as a success in the browser, while MCode said it failed. The page now waits
+ * for the exchange and says how it went, as OpenCode v2's does (4aba11e9).
+ */
+export interface CallbackResult {
+  code: string
+  /** Answers the browser: signed in, or why not. Only the first call counts. */
+  respond: (failure?: string) => void
+}
+
+/** How long the browser waits for the exchange before it is told to look in MCode instead. */
+const RESPOND_LIMIT = 60_000
+
 interface PendingCallback {
-  resolve: (code: string) => void
+  resolve: (result: CallbackResult) => void
   reject: (error: Error) => void
   timeout: ReturnType<typeof setTimeout>
 }
@@ -743,6 +760,8 @@ const PAGE_STYLE =
   "body{font-family:system-ui,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#161616;color:#e8e8e8}main{text-align:center;padding:2rem}p{color:#9a9a9a}code{display:block;margin-top:1rem;padding:.75rem 1rem;border-radius:8px;background:#2a1b1b;color:#f0a8a8}"
 
 const PAGE_OK = `<!doctype html><html><head><meta charset="utf-8"><title>MCode</title><style>${PAGE_STYLE}</style></head><body><main><h1>Signed in</h1><p>You can close this tab and return to MCode.</p></main><script>setTimeout(() => window.close(), 2000)</script></body></html>`
+
+const PAGE_PENDING = `<!doctype html><html><head><meta charset="utf-8"><title>MCode</title><style>${PAGE_STYLE}</style></head><body><main><h1>Finishing the sign-in</h1><p>Return to MCode to see whether it completed.</p></main></body></html>`
 
 const pageFailed = (reason: string) =>
   `<!doctype html><html><head><meta charset="utf-8"><title>MCode</title><style>${PAGE_STYLE}</style></head><body><main><h1>Sign-in did not complete</h1><p>Return to MCode and try again.</p><code>${escapeHtml(reason)}</code></main></body></html>`
@@ -794,8 +813,17 @@ function handleCallback(request: IncomingMessage, response: ServerResponse) {
   clearTimeout(pending.timeout)
   pendingCallbacks.delete(state)
   forget(state)
-  pending.resolve(code)
-  html(200, PAGE_OK)
+  let answered = false
+  const answer = (status: number, body: string) => {
+    if (answered) return
+    answered = true
+    clearTimeout(limit)
+    html(status, body)
+  }
+  // Never left hanging: an exchange that takes longer than this sends the browser back to MCode.
+  const limit = setTimeout(() => answer(200, PAGE_PENDING), RESPOND_LIMIT)
+  limit.unref?.()
+  pending.resolve({ code, respond: (failure) => (failure === undefined ? answer(200, PAGE_OK) : answer(400, pageFailed(failure))) })
 }
 
 function portInUse(port: number): Promise<boolean> {
@@ -842,9 +870,9 @@ export async function ensureCallbackServer(redirectUri?: string): Promise<void> 
   callbackServer = server
 }
 
-export function waitForCallback(state: string, name?: string): Promise<string> {
+export function waitForCallback(state: string, name?: string): Promise<CallbackResult> {
   if (name) stateByServer.set(name, state)
-  return new Promise<string>((resolve, reject) => {
+  return new Promise<CallbackResult>((resolve, reject) => {
     const timeout = setTimeout(() => {
       if (!pendingCallbacks.has(state)) return
       pendingCallbacks.delete(state)
