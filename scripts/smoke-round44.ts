@@ -26,13 +26,22 @@
  * server stopped while a retry waited was connected again; a Qwen cache mark
  * could land on a picture.
  *
+ * And from running it on the LAN Qwen with a 24k window: a compaction that
+ * made no room - the step after it over the line again - compacted and asked
+ * again without end (thirty requests in six minutes). The turn now stops at
+ * the second, saying how small the window is and how much MCode's own part
+ * takes; a compaction that did make room carries on as before. And on the
+ * same machine, whose shell is Git Bash: the model's `powershell -Command
+ * "Remove-Item ..."` was read with bash's case-sensitive rules and was no
+ * delete - each command is now read by its own shell's.
+ *
  * smoke.ts calls `roundFortyFourChecks` with its own check and section.
  */
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
-import { scanCommand } from "../src/server/tool/bash-scan"
+import { collectMutationTargets, scanCommand } from "../src/server/tool/bash-scan"
 import { createServer } from "node:net"
 import { createServer as createHttpServer } from "node:http"
 import { Bus } from "../src/server/bus"
@@ -41,7 +50,7 @@ import type { AppConfig, McpServerConfig } from "@shared/protocol"
 import { OpenAICompatible, qwenCacheMarked, withQwenCacheMarks } from "../src/server/provider/openai"
 import { ProviderHttpError } from "../src/server/provider/types"
 import { isOverflowError } from "../src/server/session/overflow"
-import { engine } from "./smoke-round5"
+import { engine, failure, say } from "./smoke-round5"
 import { ensureCallbackServer, stopCallbackServer, waitForCallback } from "../src/server/mcp-oauth"
 
 export async function roundFortyFourChecks(check: Check, section: (name: string) => void): Promise<void> {
@@ -291,6 +300,118 @@ export async function roundFortyFourChecks(check: Check, section: (name: string)
     } finally {
       server.close()
       fs.rmSync(home, { recursive: true, force: true })
+    }
+  }
+
+  section("Round 44 (5): a compaction that made no room is not repeated")
+  {
+    const frame = (data: unknown) => `data: ${JSON.stringify(data)}\n\n`
+    // A step that reads a file and reports `prompt` tokens: 19k is over the line of a 20k window (90%).
+    const readStep = (prompt: number) => (response: import("node:http").ServerResponse) => {
+      response.writeHead(200, { "content-type": "text/event-stream" })
+      response.write(frame({ choices: [{ delta: { tool_calls: [{ index: 0, id: `call_r44_${Math.random().toString(36).slice(2, 8)}`, function: { name: "read", arguments: JSON.stringify({ file_path: "README.md" }) } }] } }] }))
+      response.end(frame({ choices: [{ delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: prompt, completion_tokens: 20 } }) + "data: [DONE]\n\n")
+    }
+    const small = { custom: { models: [{ id: "m", name: "M", limit: { context: 20_000, output: 4_000 } }] } as never }
+
+    const stuck = await engine(small)
+    try {
+      for (let i = 0; i < 8; i++) stuck.replies.push(readStep(19_000))
+      const session = await stuck.store.create({ directory: stuck.project, model: stuck.model })
+      await stuck.runner.prompt({ sessionID: session.id, text: "read the readme" })
+      await stuck.idle(session.id, 400)
+      const last = (await stuck.assistants(session.id)).at(-1)
+      check("a turn still over the line right after compacting is not compacted again", stuck.summaryBodies.length === 1 && stuck.bodies.length === 2, { summaries: stuck.summaryBodies.length, requests: stuck.bodies.length })
+      check("it stops, saying the window is too small and how much MCode's own part takes", last?.errorCode === "error.contextTooSmall" && last.errorParams?.window === "20,000" && Number((last.errorParams?.fixed ?? "0").replace(/,/g, "")) > 1_000, { code: last?.errorCode, params: last?.errorParams })
+      check("the stopped turn releases its claim and is no longer busy", (await stuck.store.get(session.id))?.claim === undefined && !stuck.runner.busySessions().includes(session.id))
+    } finally {
+      await stuck.close()
+    }
+
+    const roomy = await engine(small)
+    try {
+      roomy.replies.push(readStep(19_000), readStep(4_000))
+      const session = await roomy.store.create({ directory: roomy.project, model: roomy.model })
+      await roomy.runner.prompt({ sessionID: session.id, text: "read the readme" })
+      await roomy.idle(session.id, 400)
+      const last = (await roomy.assistants(session.id)).at(-1)
+      check("one that did make room carries on to its answer", roomy.summaryBodies.length === 1 && last?.errorCode === undefined && last?.finish === "end_turn", { summaries: roomy.summaryBodies.length, finish: last?.finish, code: last?.errorCode })
+    } finally {
+      await roomy.close()
+    }
+
+    // A useful step between compactions must allow a later compaction.
+    const growing = await engine(small)
+    try {
+      growing.replies.push(readStep(19_000), readStep(4_000), readStep(19_000), readStep(4_000))
+      const session = await growing.store.create({ directory: growing.project, model: growing.model })
+      await growing.runner.prompt({ sessionID: session.id, text: "read the readme" })
+      await growing.idle(session.id, 400)
+      const last = (await growing.assistants(session.id)).at(-1)
+      check("a later overflow after a step that fitted may compact again", growing.summaryBodies.length === 2 && last?.finish === "end_turn" && !last.errorCode, { summaries: growing.summaryBodies.length, finish: last?.finish, code: last?.errorCode })
+    } finally {
+      await growing.close()
+    }
+
+    const tooLong = () => failure(400, {}, { error: { message: "This model's maximum context length is 20000 tokens. However, your messages resulted in 24000 tokens." } })
+    for (const mode of ["count-then-refusal", "repeated-refusal", "length-continuation"] as const) {
+      const e = await engine(small)
+      try {
+        if (mode === "count-then-refusal") e.replies.push(readStep(19_000), tooLong())
+        else if (mode === "repeated-refusal") e.replies.push(tooLong(), tooLong())
+        else e.replies.push(say("first part", "length", { prompt_tokens: 19_000, completion_tokens: 20 }), say("next part", "length", { prompt_tokens: 19_000, completion_tokens: 20 }))
+        const session = await e.store.create({ directory: e.project, model: e.model })
+        await e.runner.prompt({ sessionID: session.id, text: "finish the explanation" })
+        await e.idle(session.id, 400)
+        const last = (await e.assistants(session.id)).at(-1)
+        check(`compaction is bounded for ${mode}`, e.summaryBodies.length === 1 && e.bodies.length === 2 && last?.finish === "error", { summaries: e.summaryBodies.length, requests: e.bodies.length, finish: last?.finish })
+        if (mode !== "repeated-refusal") check(`the too-small explanation survives ${mode}`, last?.errorCode === "error.contextTooSmall", last?.errorCode)
+      } finally {
+        await e.close()
+      }
+    }
+  }
+
+  section("Round 44 (6): a PowerShell command inside a bash line is read as PowerShell")
+  {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "mcode-r44-nest-"))
+    try {
+      // What the LAN Qwen wrote in Git Bash, word for word apart from the path.
+      for (const command of [`powershell -NoProfile -Command "Remove-Item 'junk.tmp' -Force; Test-Path 'junk.tmp'"`, `pwsh -c "Remove-Item junk.tmp"`, `powershell.exe -Command "ri junk.tmp"`]) {
+        check(`a delete inside PowerShell run from bash is seen: ${command.slice(0, 40)}`, (await scanCommand(command, cwd, cwd, false)).deletes.length > 0, command)
+      }
+      const target = path.join(cwd, "made.txt")
+      const written = collectMutationTargets(`powershell -Command "Set-Content '${target}' hi"`, cwd, false).written
+      check("and so is what it writes", written.some((file) => file.toLowerCase() === target.toLowerCase()), written)
+      const oldRoot = process.env.MCODE_R44_NEST_ROOT
+      process.env.MCODE_R44_NEST_ROOT = cwd
+      try {
+        // Bash's single quotes pass the variable to PowerShell unchanged.
+        // Recognising the cmdlet is not enough: its paths use that shell too.
+        for (const body of ['Set-Content "$env:MCODE_R44_NEST_ROOT/made.txt" hi', 'Write-Output hi > "$env:MCODE_R44_NEST_ROOT/made.txt"']) {
+          const paths = collectMutationTargets(`powershell -Command '${body}'`, cwd, false).written
+          check(`a nested PowerShell write expands its environment path: ${body.split(" ")[0]}`, paths.some((file) => file.toLowerCase() === target.toLowerCase()), paths)
+        }
+        const elsewhere = path.join(cwd, "elsewhere")
+        const spaced = path.join(cwd, "a folder")
+        for (const [location, destination] of [
+          ['Set-Location "$env:MCODE_R44_NEST_ROOT"', cwd],
+          ['Set-Location -LiteralPath "$env:MCODE_R44_NEST_ROOT"', cwd],
+          [`Set-Location "${spaced}"`, spaced],
+          ['Push-Location -Path "$env:MCODE_R44_NEST_ROOT"', cwd],
+        ]) {
+          const paths = collectMutationTargets(`powershell -Command '${location}; Set-Content made.txt hi'`, elsewhere, false).written
+          check(`a nested PowerShell write follows its location: ${location}`, paths.some((file) => file.toLowerCase() === path.join(destination!, "made.txt").toLowerCase()), paths)
+        }
+        const paths = collectMutationTargets(`cd "${spaced}"; echo hi > made.txt`, elsewhere, false).written
+        check("a bash write follows a quoted location containing spaces", paths.includes(path.join(spaced, "made.txt")), paths)
+      } finally {
+        if (oldRoot === undefined) delete process.env.MCODE_R44_NEST_ROOT
+        else process.env.MCODE_R44_NEST_ROOT = oldRoot
+      }
+      check("a bare Remove-Item in bash, which bash cannot run, is not a delete", (await scanCommand("Remove-Item junk.tmp", cwd, cwd, false)).deletes.length === 0)
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true })
     }
   }
 }

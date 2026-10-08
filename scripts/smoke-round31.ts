@@ -151,7 +151,8 @@ export async function roundThirtyOneChecks(check: Check, section: (name: string)
         const second = JSON.parse(run.bodies[1] ?? "{}") as { messages?: { role?: string; content?: unknown }[] }
         const sent = (second.messages ?? []).map((message) => `${message.role}:${typeof message.content === "string" ? message.content : JSON.stringify(message.content)}`)
         check("the continuation carries what was already written", sent.some((line) => line.startsWith("assistant:") && line.includes("The answer is forty")), sent)
-        check("and asks for the rest in OpenCode v2's words", sent.some((line) => line.startsWith("user:") && line.includes(INTERRUPTED_NOTE)), sent)
+        check("and asks for the rest with the continuation note", sent.some((line) => line.startsWith("user:") && line.includes(INTERRUPTED_NOTE)), sent)
+        check("the continuation explains that even an unfinished line is appended, never rewritten", sent.some((line) => line.startsWith("user:") && line.includes("appended verbatim") && line.includes("Do not restart or rewrite the unfinished line")))
         check("the reply is not left in error", !(replies[0] as AssistantMessage | undefined)?.error, (replies[0] as AssistantMessage | undefined)?.error)
       } finally {
         stop()
