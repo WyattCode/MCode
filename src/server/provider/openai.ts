@@ -193,6 +193,31 @@ export function cacheMarked(provider: string, modelID: string): boolean {
 }
 
 /**
+ * Qwen on Alibaba's own chat endpoint caches only what is marked, so without a
+ * mark every turn of a long conversation paid the full input price again.
+ * OpenCode v2's policy for it (3bae692d): the system prompt and the last
+ * message carry the mark; the tool definitions are cached with the system
+ * prompt and read no mark of their own.
+ */
+export function qwenCacheMarked(provider: string, modelID: string): boolean {
+  return provider === "dashscope" && /^qwen/i.test(modelID)
+}
+
+export function withQwenCacheMarks(messages: Record<string, unknown>[]): void {
+  const mark = { type: "ephemeral" }
+  const marked = (message: Record<string, unknown> | undefined) => {
+    const content = message?.content
+    if (!message) return
+    if (typeof content === "string" && content) message.content = [{ type: "text", text: content, cache_control: mark }]
+    else if (Array.isArray(content) && content.length) content[content.length - 1] = { ...(content[content.length - 1] as Record<string, unknown>), cache_control: mark }
+  }
+  const system = messages.find((message) => message.role === "system")
+  marked(system)
+  const last = messages[messages.length - 1]
+  if (last !== system) marked(last)
+}
+
+/**
  * MiMo's marks on such a request: the last part of each of the last two
  * messages after the system prompt, where that message is made of parts - a
  * plain string carries none, as in MiMo - and the last tool definition.
@@ -215,6 +240,7 @@ export const OpenAICompatible: ProviderAdapter = {
     const messages = toMessages(systemText(request), request.history, request.inputs, request.interleaved)
     const tools: Record<string, unknown>[] = toolSchemas(request.tools, request.model)
     if (cacheMarked(request.model.provider, request.model.model)) withCacheMarks(messages, tools)
+    else if (qwenCacheMarked(request.model.provider, request.model.model)) withQwenCacheMarks(messages)
 
     // MiMo's stall timeout: a stream that goes quiet for 480s is cut off and retried.
     const guard = stallGuard(request.signal, false)
