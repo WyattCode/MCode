@@ -206,8 +206,13 @@ export const CONTINUATION_LIMITS = { length: 3, textTool: 2, empty: 2, interrupt
  */
 export const INTERRUPTED_FINISH = "stream_interrupted"
 
-/** OpenCode v2's own sentence for it (CONTINUE_AFTER_INCOMPLETE_STREAM). */
-export const INTERRUPTED_NOTE = "The previous response was interrupted. Continue from where you left off without repeating completed content."
+/**
+ * OpenCode v2's continuation, with MCode's append behaviour made explicit.
+ * "Without repeating completed content" still lets a model rewrite the last
+ * unfinished line. The LAN DeepSeek did exactly that after a dropped socket,
+ * but the runner appends the new text verbatim, duplicating that line's start.
+ */
+export const INTERRUPTED_NOTE = "The previous response was interrupted. Your next text will be appended verbatim to the text already shown. Continue from its exact final character, even inside an unfinished sentence, line, word, or code block. Output only the missing suffix. Do not restart or rewrite the unfinished line, and do not repeat or summarise any earlier content."
 
 export const LENGTH_NOTE =
   "Your previous reply was cut off because it reached the output limit. Continue from exactly where it stopped - do not repeat or summarise what you already wrote."

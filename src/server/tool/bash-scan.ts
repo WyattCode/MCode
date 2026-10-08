@@ -84,6 +84,15 @@ export interface SimpleCommand {
    * `npm publish` through unasked (R25-B2).
    */
   derived?: true
+  /**
+   * Whether this command is PowerShell, which can differ from the line it
+   * came from: `powershell -Command "Remove-Item x"` written in bash is a bash
+   * line whose inner command is PowerShell. Read with the outer line's rules,
+   * that `Remove-Item` kept its capitals, matched no case-folded delete, and
+   * deleted with an ordinary question - found on the LAN Qwen, whose shell
+   * here is Git Bash. Undefined is the line's own.
+   */
+  powershell?: boolean
 }
 
 /** MiMo's write commands: the ones whose path arguments name a file they change. */
@@ -298,7 +307,7 @@ function runsWithin(entry: SimpleCommand, powershell: boolean, depth: number): S
   const head = programName((entry.tokens[0] ?? "").replace(ANY_QUOTE, ""))
   if (head === "find") {
     return findActions(entry.tokens).flatMap((tokens) => {
-      const action: SimpleCommand = { tokens, source: tokens.join(" "), redirects: [], derived: true }
+      const action: SimpleCommand = { tokens, source: tokens.join(" "), redirects: [], derived: true, powershell: entry.powershell ?? powershell }
       return [action, ...runsWithin(action, powershell, depth + 1)]
     })
   }
@@ -322,7 +331,7 @@ function runsWithin(entry: SimpleCommand, powershell: boolean, depth: number): S
      * The bash tool's forced delete question is decided by this list alone;
      * there is no second guard behind it (R26-E1).
      */
-    const program: SimpleCommand = { tokens: inner, source: inner.join(" "), redirects: [], derived: true }
+    const program: SimpleCommand = { tokens: inner, source: inner.join(" "), redirects: [], derived: true, powershell: entry.powershell ?? powershell }
     return [program, ...runsWithin(program, powershell, depth + 1)]
   }
   if (EVAL_WORDS.has(head)) {
@@ -389,7 +398,7 @@ function scanCommands(command: string, powershell: boolean, depth: number): Simp
     // What the dialog shows and a rule is matched against starts where the command does, too.
     const source = command.slice(start, end).trim()
     const shown = powershell ? source : source.replace(/^(?:(?:if|then|else|elif|do|while|until|!)\s+)+/, "")
-    if (words.length) out.push({ tokens: words, source: shown, redirects })
+    if (words.length) out.push({ tokens: words, source: shown, redirects, powershell })
     tokens = []
     redirects = []
     start = -1
@@ -790,14 +799,6 @@ function insideTemp(target: string): boolean {
   return roots.some((root) => real !== root && real.startsWith(root + path.sep))
 }
 
-/** A token that could be a path: not a flag, and nothing only the shell could work out. */
-function plausiblePathArg(token: string): string | undefined {
-  if (!token || token.startsWith("-")) return undefined
-  const text = unquote(token)
-  if (!text || text.includes("*") || text.includes("$") || text.includes("(") || text.includes(" ")) return undefined
-  return text
-}
-
 function isSedInPlace(tokens: string[], powershell: boolean): boolean {
   if (headOf(tokens, powershell) !== "sed") return false
   return tokens.slice(1).some((token) => token === "-i" || token === "--in-place" || token.startsWith("--in-place=") || /^-[^-]*i/.test(token))
@@ -824,33 +825,41 @@ export function collectMutationTargets(command: string, cwd: string, powershell:
   let effective = path.resolve(cwd)
   const stack: string[] = []
   const written: string[] = []
-  const name = (raw: string) => {
-    const resolved = argPath(raw, effective, powershell)
+  const name = (raw: string, posh: boolean) => {
+    const resolved = argPath(raw, effective, posh)
     if (resolved) written.push(resolved)
   }
-  const moveTo = (raw: string | undefined) => {
-    if (raw) effective = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(effective, raw)
+  const moveTo = (tokens: string[], posh: boolean) => {
+    const raw = pathArgs(tokens, posh)[0]
+    // A literal location can include spaces, a drive spelling or a known
+    // PowerShell environment variable, just like a write's own path. A glob
+    // does not identify a single location before the command runs.
+    if (!raw || /[?*[]/.test(raw)) return
+    const resolved = argPath(raw, effective, posh)
+    if (resolved) effective = resolved
   }
-  for (const { tokens, redirects } of simpleCommands(command, powershell)) {
-    const head = headOf(tokens, powershell)
+  for (const { tokens, redirects, powershell: own } of simpleCommands(command, powershell)) {
+    // Each command by its own shell's rules: see SimpleCommand.powershell.
+    const posh = own ?? powershell
+    const head = headOf(tokens, posh)
     if (!head) continue
     if (head === "cd" || head === "set-location") {
-      moveTo(plausiblePathArg(tokens[1] ?? ""))
+      moveTo(tokens, posh)
       continue
     }
     if (head === "pushd" || head === "push-location") {
       stack.push(effective)
-      moveTo(plausiblePathArg(tokens[1] ?? ""))
+      moveTo(tokens, posh)
       continue
     }
     if (head === "popd" || head === "pop-location") {
       effective = stack.pop() ?? path.resolve(cwd)
       continue
     }
-    for (const target of redirects) name(target)
-    if (WRITE_COMMANDS.has(head) || isSedInPlace(tokens, powershell)) {
+    for (const target of redirects) name(target, posh)
+    if (WRITE_COMMANDS.has(head) || isSedInPlace(tokens, posh)) {
       const args = tokens.slice(1).filter((token) => !token.startsWith("-"))
-      for (const arg of COPY_DEST_ONLY.has(head) ? args.slice(-1) : args) name(arg)
+      for (const arg of COPY_DEST_ONLY.has(head) ? args.slice(-1) : args) name(arg, posh)
     }
   }
   return { written: [...new Set(written)] }
@@ -878,11 +887,13 @@ export async function scanCommand(command: string, cwd: string, project: string,
   const dirs = new Set<string>()
   const files = new Set<string>()
   let tempOnly = true
-  for (const { tokens, source, derived } of simpleCommands(command, powershell)) {
-    const head = headOf(tokens, powershell)
+  for (const { tokens, source, derived, powershell: own } of simpleCommands(command, powershell)) {
+    // Each command by its own shell's rules: see SimpleCommand.powershell.
+    const posh = own ?? powershell
+    const head = headOf(tokens, posh)
     if (head && FILES.has(head)) {
-      for (const arg of pathArgs(tokens, powershell)) {
-        const resolved = argPath(arg, cwd, powershell)
+      for (const arg of pathArgs(tokens, posh)) {
+        const resolved = argPath(arg, cwd, posh)
         if (resolved) files.add(resolved)
         if (!resolved || inside(project, resolved)) continue
         const isDir = await fs.stat(resolved).then((stat) => stat.isDirectory(), () => false)
@@ -895,12 +906,12 @@ export async function scanCommand(command: string, cwd: string, project: string,
       const remembered = derived ? undefined : rememberedPattern(tokens, source)
       if (remembered) always.add(remembered)
     }
-    if (isDelete(tokens, powershell)) {
+    if (isDelete(tokens, posh)) {
       deletes.add(source)
-      const args = head && DELETE_COMMANDS.has(head) ? pathArgs(tokens, powershell) : []
+      const args = head && DELETE_COMMANDS.has(head) ? pathArgs(tokens, posh) : []
       if (args.length === 0) tempOnly = false
       for (const arg of args) {
-        const resolved = argPath(arg, cwd, powershell)
+        const resolved = argPath(arg, cwd, posh)
         if (!resolved || !insideTemp(resolved) || inside(project, resolved)) tempOnly = false
       }
     }

@@ -2898,6 +2898,28 @@ export class SessionRunner {
      * does the work; the step after thinks again.
      */
     let afterCut = false
+    /**
+     * The step an overflow compaction was last made at. One that crossed the
+     * line again at the very next step made room for nothing: the instructions
+     * and tools alone fill the model's window, or the request posted again
+     * after the summary reads the same large file back in. Compacting again
+     * only repeats it - measured on the LAN Qwen given a 24k window, a turn
+     * compacted and re-asked thirty times in six minutes. The turn stops there,
+     * saying how small the window is and how much of it MCode's own part takes.
+     */
+    let compactedAt: number | undefined
+    const futile = (at: number) => compactedAt !== undefined && at - compactedAt <= 1
+    // Said on the step's own reply, as every coded failure is, and the turn ended there.
+    const stopTooSmall = async (message: AssistantMessage, fixed: number): Promise<never> => {
+      const window = this.config.modelEntry(session.model)?.contextWindow ?? 0
+      message.finish = "error"
+      message.error = `This model's context window (${window} tokens) is too small: the conversation is still over it after compacting, and MCode's instructions and tools take about ${fixed} tokens.`
+      message.errorCode = "error.contextTooSmall"
+      message.errorParams = { window: window.toLocaleString("en-US"), fixed: fixed.toLocaleString("en-US") }
+      message.time.completed = Date.now()
+      await this.store.saveMessage(message)
+      throw new Shown(new CodedError(message.error, "error.contextTooSmall", message.errorParams))
+    }
     for (let step = 0; ; step++) {
       if (controller.signal.aborted) return
       // The reference's `isLastStep`: tools that may not be called, and an instruction to write.
@@ -3141,7 +3163,9 @@ export class SessionRunner {
          */
         const reason = failure instanceof Shown ? failure.reason : failure
         if (rescued !== step && !controller.signal.aborted && isOverflowError(reason, describe(reason))) {
+          if (futile(step)) await stopTooSmall(assistant, requestTokens({ system, systemTail, tools: sentTools, history: [] }))
           rescued = step
+          compactedAt = step
           const compacted = await this.compactForOverflow(session, controller.signal)
           if (!compacted) throw failure
           session = compacted
@@ -3302,6 +3326,8 @@ export class SessionRunner {
           // The rest of a sentence the limit cut belongs to the reply that started it.
           if (next.note === LENGTH_NOTE || next.note === THOUGHT_LENGTH_NOTE || next.note === INTERRUPTED_NOTE) continuing = assistant
           if (overflowing) {
+            if (futile(step)) await stopTooSmall(assistant, requestTokens({ system, systemTail, tools: sentTools, history: [] }))
+            compactedAt = step
             const compacted = await this.compactForOverflow(session, controller.signal)
             if (compacted) {
               session = compacted
@@ -3329,7 +3355,11 @@ export class SessionRunner {
          */
         if (await this.goalGate(session, controller.signal)) {
           if (this.steered(sessionID)) continue
-          if (overflowing) session = (await this.compactForOverflow(session, controller.signal)) ?? session
+          if (overflowing) {
+            if (futile(step)) await stopTooSmall(assistant, requestTokens({ system, systemTail, tools: sentTools, history: [] }))
+            compactedAt = step
+            session = (await this.compactForOverflow(session, controller.signal)) ?? session
+          }
           continue
         }
         return
@@ -3383,7 +3413,11 @@ export class SessionRunner {
 
       if (controller.signal.aborted) return
       // MiMo compacts a step that crossed the line mid-turn as an overflow, before the model is asked again.
-      if (overflowing) session = (await this.compactForOverflow(session, controller.signal)) ?? session
+      if (overflowing) {
+        if (futile(step)) await stopTooSmall(assistant, requestTokens({ system, systemTail, tools: sentTools, history: [] }))
+        compactedAt = step
+        session = (await this.compactForOverflow(session, controller.signal)) ?? session
+      }
     }
   }
 
