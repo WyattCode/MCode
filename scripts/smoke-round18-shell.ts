@@ -107,7 +107,7 @@ export async function roundEighteenShellChecks(check: Check, section: (name: str
     const submit = composer.slice(composer.indexOf("async function submit("), composer.indexOf("/*\n * MiMo's /compact from the box"))
     const on = submit.indexOf("sending.value = true")
     const cleared = submit.indexOf('text.value = ""\n  attachments.value = []')
-    check("R18-U9: sending starts once the draft has left the box", on > cleared && cleared > 0)
+    check("R18-U9: sending starts before asynchronous preparation, blocking a duplicate send", on >= 0 && on < submit.indexOf("await prepareSend(delivery)") && cleared > on)
     check("R18-U9: and ends however the send ends", /\} finally \{\s*sending\.value = false\s*\}\s*\}$/.test(submit.trimEnd()), submit.slice(-160))
     const before = language.value
     language.value = "zh-CN"

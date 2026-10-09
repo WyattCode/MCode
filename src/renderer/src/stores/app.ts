@@ -37,8 +37,26 @@ import { noteDeliveryTurnEnded, noteDeliveryUpdate } from "../lib/delivered"
 import { readLegacyMessage } from "@shared/subagent"
 import { isScheduledPrompt } from "@shared/scheduled"
 import { returnFileNotices, takeFileNotices } from "../lib/file-notices"
+import { operationKind, type OperationKind } from "@shared/operation-kind"
 
 export const useApp = defineStore("app", () => {
+  const appOperations = ref(new Map<string, Map<string, OperationKind>>())
+  const lastAppSurface = new Map<string, OperationKind>()
+  const appOperationRevisions = new Map<string, number>()
+  function noteAppOperation(sessionID: string, part: import("@shared/protocol").AssistantPart) {
+    if (part.type !== "tool" || part.name !== "app") return
+    appOperationRevisions.set(sessionID, (appOperationRevisions.get(sessionID) ?? 0) + 1)
+    const kind = operationKind(part, lastAppSurface.get(sessionID))
+    if (part.metadata?.operationKind === "none") lastAppSurface.delete(sessionID)
+    // Only a completed switch establishes a fallback; explicit absence clears it above.
+    if (kind && part.status === "completed") lastAppSurface.set(sessionID, kind)
+    const active = new Map(appOperations.value.get(sessionID) ?? [])
+    if (kind && (part.status === "pending" || part.status === "running")) active.set(part.callID, kind)
+    else active.delete(part.callID)
+    if (active.size) appOperations.value.set(sessionID, active)
+    else appOperations.value.delete(sessionID)
+    if (part.input.action === "close" && part.status === "completed") lastAppSurface.delete(sessionID)
+  }
   const client = shallowRef<Client>()
   const connected = ref(false)
   /** Down long enough to be worth saying so, rather than mid-restart. */
@@ -480,6 +498,30 @@ export const useApp = defineStore("app", () => {
     message.parts.forEach((part, at) => into.set(part.id, { messageID: message.id, index: at }))
   }
 
+  /** Rebuild transient marks from the recovered transcript, including an ongoing call. */
+  function restoreAppOperations(sessionID: string, transcript: readonly Message[]) {
+    appOperations.value.delete(sessionID)
+    lastAppSurface.delete(sessionID)
+    for (const message of transcript) {
+      if (message.role === "assistant") for (const part of message.parts) noteAppOperation(sessionID, part)
+    }
+    if (!running.value.has(sessionID)) appOperations.value.delete(sessionID)
+  }
+
+  /** Background conversations need their marks too; live events arriving during a read win. */
+  async function recoverAppOperations(sessionIDs: readonly string[]) {
+    await Promise.all(sessionIDs.map(async (sessionID) => {
+      const revision = appOperationRevisions.get(sessionID) ?? 0
+      try {
+        const result = await api().request({ type: "session.get", sessionID })
+        if ((appOperationRevisions.get(sessionID) ?? 0) !== revision) return
+        restoreAppOperations(sessionID, result.messages.map(readLegacyMessage))
+      } catch {
+        // Another reconnect will retry; leave live state alone when a read fails.
+      }
+    }))
+  }
+
   function forgetSideTranscript(sessionID: string) {
     const transcripts = { ...sideTranscripts.value }
     delete transcripts[sessionID]
@@ -526,6 +568,9 @@ export const useApp = defineStore("app", () => {
         break
       }
       case "session.deleted": {
+        appOperations.value.delete(event.sessionID)
+        lastAppSurface.delete(event.sessionID)
+        appOperationRevisions.delete(event.sessionID)
         // subagents: goes with its transcript, and nothing else.
         if (isSubagent(event.sessionID)) {
           subagentSessions.value = subagentSessions.value.filter((session) => session.id !== event.sessionID)
@@ -578,6 +623,7 @@ export const useApp = defineStore("app", () => {
         if (event.sessionID === currentID.value) void reread(event.sessionID)
         break
       case "message.updated": {
+        if (event.message.role === "assistant") for (const part of event.message.parts) noteAppOperation(event.message.sessionID, part)
         // subagents: a saved subagent call from before the actor rename reads as an actor call.
         event.message = readLegacyMessage(event.message)
         /*
@@ -643,6 +689,7 @@ export const useApp = defineStore("app", () => {
         break
       }
       case "message.part.updated": {
+        noteAppOperation(event.sessionID, event.part)
         /*
          * N11-4: one part of a reply, rather than the whole message again. The
          * message itself always arrives first as message.updated, so a part for
@@ -726,6 +773,7 @@ export const useApp = defineStore("app", () => {
         break
       }
       case "session.idle": {
+        appOperations.value.delete(event.sessionID)
         // subagents: its end is its parent's business; no chime, unread dot or history for it.
         if (isSubagent(event.sessionID)) {
           if (running.value.delete(event.sessionID)) running.value = new Set(running.value)
@@ -889,6 +937,9 @@ export const useApp = defineStore("app", () => {
     client.value?.close()
 
     const instance = new Client(bootstrap.port, bootstrap.secret)
+    appOperations.value.clear()
+    lastAppSurface.clear()
+    appOperationRevisions.clear()
     client.value = instance
     instance.on(apply)
     /*
@@ -1005,6 +1056,7 @@ export const useApp = defineStore("app", () => {
     sideSessions.value = listed.sessions.filter((session) => session.sideOf)
     running.value = new Set(listed.running)
     clockTurns(listed.running)
+    await recoverAppOperations(listed.running)
     summarising.value = new Set(listed.compacting)
     /*
      * Questions a tool is still parked on.
@@ -1231,6 +1283,9 @@ export const useApp = defineStore("app", () => {
       sessions.value = listed.sessions.filter((session) => !session.sideOf && !session.parentID)
       sideSessions.value = listed.sessions.filter((session) => session.sideOf)
       running.value = new Set(listed.running)
+      for (const sessionID of appOperations.value.keys()) {
+        if (!running.value.has(sessionID)) appOperations.value.delete(sessionID)
+      }
       clockTurns(listed.running)
       summarising.value = new Set(listed.compacting)
       // The same replay as on boot: a socket that dropped missed anything
@@ -1243,6 +1298,7 @@ export const useApp = defineStore("app", () => {
       declared = ""
       declareWatched()
       if (currentID.value) await open(currentID.value)
+      await recoverAppOperations(listed.running)
     } catch {
       // A socket that dropped again; the next open will bring another attempt.
     }
@@ -1279,6 +1335,7 @@ export const useApp = defineStore("app", () => {
         messages.value = []
       }
     }
+    const operationRevision = appOperationRevisions.get(sessionID) ?? 0
     const result = await api().request({ type: "session.get", sessionID })
     // Left for another conversation while this one was read: its answer is not shown.
     if (currentID.value !== sessionID) return
@@ -1290,6 +1347,7 @@ export const useApp = defineStore("app", () => {
     }
     recent.value = [sessionID, ...recent.value.filter((id) => id !== sessionID)].slice(0, 50)
     const fresh = result.messages.map(readLegacyMessage)
+    if ((appOperationRevisions.get(sessionID) ?? 0) === operationRevision) restoreAppOperations(sessionID, fresh)
     // Replaced only when the read differs from what is on show: an identical list would be drawn again for nothing.
     if (transcriptKey(fresh) !== transcriptKey(messages.value)) {
       messages.value = fresh
@@ -1318,16 +1376,18 @@ export const useApp = defineStore("app", () => {
    * reader has already left has to be dropped rather than shown.
    */
   async function reread(sessionID: string) {
+    const operationRevision = appOperationRevisions.get(sessionID) ?? 0
     const result = await api()
       .request({ type: "session.get", sessionID })
       .catch(() => undefined)
     if (!result || currentID.value !== sessionID) return
     messages.value = result.messages.map(readLegacyMessage)
+    if ((appOperationRevisions.get(sessionID) ?? 0) === operationRevision) restoreAppOperations(sessionID, messages.value)
     partIndex.clear()
     messages.value.forEach(reindex)
   }
 
-  async function create(directory?: string, options: { scratch?: boolean } = {}) {
+  async function create(directory?: string, options: { scratch?: boolean; activate?: () => boolean } = {}) {
     const result = await api().request({
       type: "session.create",
       directory,
@@ -1338,6 +1398,8 @@ export const useApp = defineStore("app", () => {
     if (!sessions.value.some((session) => session.id === result.session.id)) {
       sessions.value.unshift(result.session)
     }
+    // A first send can finish creating after the user has already left its composer.
+    if (options.activate && !options.activate()) return result.session
     // Known to be empty, so it opens straight onto its hero rather than a loading line.
     hold(currentID.value)
     currentID.value = result.session.id
@@ -2244,12 +2306,14 @@ export const useApp = defineStore("app", () => {
    * say so and try again.
    */
   async function loadSide(sessionID: string): Promise<boolean> {
+    const operationRevision = appOperationRevisions.get(sessionID) ?? 0
     if (sideTranscripts.value[sessionID]) return true
     const result = await api().request({ type: "session.get", sessionID }).catch(() => undefined)
     if (sideTranscripts.value[sessionID]) return true
     if (!result) return false
     sidePartIndexes.delete(sessionID)
     const read = result.messages.map(readLegacyMessage)
+    if ((appOperationRevisions.get(sessionID) ?? 0) === operationRevision) restoreAppOperations(sessionID, read)
     read.forEach((message) => sideReindex(sessionID, message))
     sideTranscripts.value = { ...sideTranscripts.value, [sessionID]: read }
     return true
@@ -2260,8 +2324,8 @@ export const useApp = defineStore("app", () => {
    * conversation. The line as typed is the message; marked running before the
    * request, as a send is, because the turn's first events can arrive first.
    */
-  async function subtask(text: string, command: { description: string; prompt: string }): Promise<boolean> {
-    const target = currentID.value
+  async function subtask(text: string, command: { description: string; prompt: string }, to?: string): Promise<boolean> {
+    const target = to ?? currentID.value
     if (!target) return false
     turnError.value = undefined
     noteError(target, undefined)
@@ -2364,6 +2428,7 @@ export const useApp = defineStore("app", () => {
     sideID,
     // subagents
     subagentSessions,
+    appOperations,
     rootOf,
     subtask,
     sideMessages,

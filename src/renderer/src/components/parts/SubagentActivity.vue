@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue"
-import type { SubagentNotice, ToolPart } from "@shared/protocol"
+import type { SessionInfo, SubagentNotice, ToolPart } from "@shared/protocol"
 import SubagentAvatar from "./SubagentAvatar.vue"
 import { t } from "../../lib/i18n"
 import { actionOf, childFor, noticeStatus, pillStatus } from "../../lib/subagents"
@@ -16,15 +16,22 @@ import { useRightPanel } from "../../stores/right-panel"
  * 可能停滞 - or 已结束 when a row's notices disagree. A pill opens the 子智能体
  * tab on that subagent.
  */
-const props = defineProps<{ parts?: ToolPart[]; notices?: SubagentNotice[] }>()
+const props = defineProps<{ parts?: ToolPart[]; notices?: SubagentNotice[]; agents?: SessionInfo[] }>()
 
 const app = useApp()
 const rp = useRightPanel()
 
-const status = computed(() => (props.notices?.length ? noticeStatus(props.notices) : pillStatus(props.parts ?? [])))
+const status = computed(() => (props.agents?.length ? "running" : props.notices?.length ? noticeStatus(props.notices) : pillStatus(props.parts ?? [])))
 const statusText = computed(() => t(`subagentActivity.status.${status.value}`))
 
 const pills = computed(() => {
+  if (props.agents?.length) return props.agents.map((child) => ({
+    key: child.parentCallID,
+    id: child.id,
+    seed: child.subagent?.id ?? child.id,
+    name: child.title || t("subagentActivity.fallbackName"),
+    summary: undefined,
+  }))
   if (props.notices?.length) {
     return props.notices.map((notice) => {
       const child = app.subagentSessions.find((session) => session.id === notice.sessionID)

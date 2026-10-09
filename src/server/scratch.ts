@@ -1,6 +1,8 @@
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import { ProjectLocations, reservedProjectName } from "./project-location"
+import { CodedError } from "@shared/errors"
 
 /**
  * Where a task with no project works.
@@ -20,17 +22,19 @@ export function scratchRoot(chosen = ""): string {
 }
 
 /*
- * The parent folder, made if need be. A chosen folder that can no longer be
- * made - a drive since unplugged - costs the task its place, not the task.
+ * The parent folder, made if need be. Invalid or forbidden locations fail
+ * before writing; a verified location whose creation fails may fall back.
  */
-async function ensureRoot(chosen: string): Promise<string> {
+async function ensureRoot(chosen: string, locations: ProjectLocations): Promise<string> {
   const root = scratchRoot(chosen)
+  await locations.assert(root)
   try {
     await fs.mkdir(root, { recursive: true })
     return root
   } catch (err) {
     if (!chosen.trim()) throw err
     const fallback = scratchRoot()
+    await locations.assert(fallback)
     await fs.mkdir(fallback, { recursive: true })
     return fallback
   }
@@ -61,10 +65,11 @@ export function blankProjectName(raw: string): string {
  * default project location. A name already taken there gets " (2)", " (3)"...
  * rather than opening somebody's existing folder as if it were new.
  */
-export async function blankProjectDirectory(name: string, chosen = ""): Promise<string> {
+export async function blankProjectDirectory(name: string, chosen = "", locations = new ProjectLocations()): Promise<string> {
   const base = blankProjectName(name)
   if (!base) throw new Error("A project needs a name")
-  const root = await ensureRoot(chosen)
+  if (reservedProjectName(base)) throw new CodedError("This name is reserved for automatic task folders", "error.projectNameReserved")
+  const root = await ensureRoot(chosen, locations)
   for (let attempt = 1; ; attempt++) {
     const directory = path.join(root, attempt === 1 ? base : `${base} (${attempt})`)
     try {
@@ -76,8 +81,8 @@ export async function blankProjectDirectory(name: string, chosen = ""): Promise<
   }
 }
 
-export async function scratchDirectory(now = new Date(), chosen = ""): Promise<string> {
-  const root = await ensureRoot(chosen)
+export async function scratchDirectory(now = new Date(), chosen = "", locations = new ProjectLocations()): Promise<string> {
+  const root = await ensureRoot(chosen, locations)
   const pad = (value: number) => String(value).padStart(2, "0")
   const stamp =
     `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +

@@ -1224,10 +1224,32 @@ let probingAudio = false
 
 /* From the draft leaving the box until the message is taken or handed back: the new conversation, the mentioned files, the send itself. */
 const sending = ref(false)
+let composerMounted = true
+onBeforeUnmount(() => { composerMounted = false })
+
+async function submit(delivery?: "queue") {
+  if (sending.value || probingAudio) return
+  sending.value = true
+  try {
+    await prepareSend(delivery)
+  } finally {
+    sending.value = false
+  }
+}
 
 /** `delivery` "queue": OpenCode v2's 排队 - while a turn runs, wait for it to end instead of joining it. */
-async function submit(delivery?: "queue") {
+async function prepareSend(delivery?: "queue") {
   const value = text.value.trim()
+  const originKey = draftKey.value
+  let target = sessionID.value
+  let expectedModel = JSON.stringify(session.value?.model)
+  let createdHere = false
+  const stillHere = () => {
+    if (createdHere) {
+      if (!target || (props.side ? sessionID.value !== target : app.currentID !== target)) return false
+    } else if (!composerMounted || draftKey.value !== originKey || JSON.stringify(session.value?.model) !== expectedModel) return false
+    return !target || (!app.replacing.has(target) && !(props.side ? false : app.compacting))
+  }
   // MiMo's restricted conversation takes nothing at all: the review that took its turn said it may not be continued.
   if (restrictedHere.value) return
   if (mode.value === "shell") {
@@ -1274,26 +1296,9 @@ async function submit(delivery?: "queue") {
     notify(t("composer.compact.busy"))
     return
   }
-  // MiMo reads each audio file first: one it cannot read, or one past its limit, stops the send and keeps the draft.
-  if (probingAudio) return
-  const audio = attachments.value.filter((file) => isAudioFile(file.path))
-  if (audio.length) {
-    probingAudio = true
-    try {
-      for (const file of audio) {
-        const verdict = audioVerdict(await probeAudio(file))
-        if (verdict === "unsupported") {
-          notifyFailure(t("composer.audioFormatUnsupported"))
-          return
-        }
-        if (verdict === "tooLong") {
-          notifyFailure(t("composer.audioTooLong", { minutes: limitMinutes() }))
-          return
-        }
-      }
-    } finally {
-      probingAudio = false
-    }
+  if (!stillHere()) {
+    notifyFailure(t("composer.targetChanged"))
+    return
   }
   historyIndex.value = null
   const sent = attachments.value
@@ -1301,11 +1306,24 @@ async function submit(delivery?: "queue") {
   const chips = skills.value
   const scopeAtSend = annotationScope.value
   const pointed = scopeAtSend ? annotations.take(scopeAtSend) : []
+  const restoreOrigin = () => {
+    const key = createdHere && target ? `${props.side ? "side" : "main"}:${target}` : originKey
+    if (composerMounted && draftKey.value === key) saveDraft(key)
+    const kept = drafts.get(key)
+    drafts.set(key, {
+      text: kept?.text && kept.text !== value ? `${value}\n${kept.text}` : value,
+      attachments: [...sent, ...(kept?.attachments ?? []).filter((file) => !sent.some((entry) => entry.path === file.path))],
+      mentioned: [...new Set([...carried, ...(kept?.mentioned ?? [])])],
+      skills: [...new Set([...chips, ...(kept?.skills ?? [])])],
+    })
+    draftTouched.value = { key, at: Date.now() }
+    if (key === "home") homeFilled.value = true
+    scheduleDraftSave()
+    if (scopeAtSend && pointed.length) annotations.put(scopeAtSend, [...pointed, ...annotations.list(scopeAtSend)])
+  }
   /*
-   * Emptied before anything is awaited. The mentioned files still have to be
-   * read off disk, and leaving the draft on screen across that read would let
-   * a second Enter - a double tap, an impatient one - start a second send of
-   * the same sentence.
+   * Reserve this draft before any wait, including audio checks. Anything
+   * typed or attached during preparation belongs to the next draft.
    */
   text.value = ""
   attachments.value = []
@@ -1322,24 +1340,49 @@ async function submit(delivery?: "queue") {
      * because somebody looked at the home screen is a row in the side column
      * that nobody asked for. If it cannot be made, the draft comes back.
      */
-    let target = props.side ? sessionID.value : undefined
-    if (!sessionID.value) {
+    if (!stillHere()) {
+      restoreOrigin()
+      notifyFailure(t("composer.targetChanged"))
+      return
+    }
+    // Validate the reserved audio only; a refusal restores it beside any new draft.
+    const audio = sent.filter((file) => isAudioFile(file.path))
+    if (audio.length) {
+      probingAudio = true
+      try {
+        for (const file of audio) {
+          const verdict = audioVerdict(await probeAudio(file))
+          if (verdict !== "ok") {
+            restoreOrigin()
+            notifyFailure(verdict === "unsupported" ? t("composer.audioFormatUnsupported") : t("composer.audioTooLong", { minutes: limitMinutes() }))
+            return
+          }
+        }
+      } finally {
+        probingAudio = false
+      }
+      if (!stillHere()) {
+        restoreOrigin()
+        notifyFailure(t("composer.targetChanged"))
+        return
+      }
+    }
+    if (!target) {
       try {
         if (props.side) {
           // MiMo makes a side conversation on its first message; its tab hands over how.
           target = props.createSide ? await props.createSide() : undefined
           if (!target) throw new Error("")
         } else {
-          await app.create(props.startDirectory, { scratch: props.startScratch })
+          const created = await app.create(props.startDirectory, { scratch: props.startScratch, activate: stillHere })
+          target = created.id
           // MiMo's newChat says so whenever the first send makes a new task.
           notify(t("toast.newConvoCreated"))
         }
+        createdHere = true
+        expectedModel = JSON.stringify((props.side ? app.sideSessionOf(target) : app.sessions.find((entry) => entry.id === target))?.model)
       } catch (err) {
-        text.value = value
-        attachments.value = sent
-        mentioned.value = carried
-        skills.value = chips
-        if (scopeAtSend && pointed.length) annotations.put(scopeAtSend, pointed)
+        restoreOrigin()
         await nextTick(resize)
         notifyFailure(t("home.startFailed"), (err instanceof Error ? err.message : String(err)) || undefined)
         return
@@ -1355,6 +1398,12 @@ async function submit(delivery?: "queue") {
 
     const named = await mentionAttachments(value, carried, target)
     const filled = await fillCommand(value, target)
+    const currentModel = JSON.stringify((props.side ? app.sideSessionOf(target) : app.sessions.find((entry) => entry.id === target))?.model)
+    if (!stillHere() || currentModel !== expectedModel) {
+      restoreOrigin()
+      notifyFailure(t("composer.targetChanged"))
+      return
+    }
     /*
      * Files with nothing written beside them still make a message that reads as
      * one: MiMo puts a fixed short phrase in the body, so the bubble in the
@@ -1374,23 +1423,17 @@ async function submit(delivery?: "queue") {
      * refused. Not for the side chat, and not for a message joining a turn
      * already running, which starts none.
      */
-    const parkIn = !props.side && filled && !subtask && app.currentID && !app.busy ? app.currentID : undefined
+    const parkIn = !props.side && filled && !subtask && target && !app.running.has(target) ? target : undefined
     if (parkIn) requestPark(parkIn)
     // A rejected message should not cost the user what they typed, or gathered.
     const accepted = !filled
       ? false
       : subtask
-        ? await app.subtask(value, subtask)
+        ? await app.subtask(value, subtask, target)
         : await app.send(withSkills(body, chips), [...sent, ...named, ...commandFiles], target, pointed, filled.command, goalOnSend, delivery)
     if (!accepted && parkIn) clearPark(parkIn)
     if (!accepted) {
-      text.value = value
-      attachments.value = sent
-      mentioned.value = carried
-      skills.value = chips
-      // Back into the conversation the message was meant for - on the home screen, the one just made.
-      const back = annotationScope.value
-      if (back && pointed.length) annotations.put(back, [...pointed, ...annotations.list(back)])
+      restoreOrigin()
       await nextTick(resize)
     }
   } finally {
@@ -1518,7 +1561,7 @@ function subtaskOf(filled: { text: string; command?: CommandInfo }): { descripti
 function commandRoot(to?: string): string | undefined {
   // A side chat made by this very message is not this box's session yet, so it is read by the id it was sent to.
   const sideRoot = sideStore.sideSessionOf ? sideStore.sideSessionOf(to)?.directory : app.side?.directory
-  return props.side ? (sideRoot ?? session.value?.directory) : app.current?.directory
+  return props.side ? (sideRoot ?? session.value?.directory) : (to ? app.sessions.find((entry) => entry.id === to)?.directory : app.current?.directory)
 }
 
 /**
@@ -1870,6 +1913,8 @@ watch(draftTouched, (touched) => {
   if (touched.key !== draftKey.value) return
   const kept = drafts.get(touched.key)
   if (!kept) return
+  attachments.value = [...kept.attachments]
+  mentioned.value = new Set(kept.mentioned)
   skills.value = [...kept.skills]
   if (kept.text !== text.value) {
     text.value = kept.text

@@ -1597,6 +1597,8 @@ export interface AppConfig {
    * in the home directory.
    */
   projectRoot: string
+  /** Suppress new visible AI labels while retaining generated-content metadata. */
+  removeExplicitWatermark?: boolean
   /** Sessions whose tabs survive a close-others and sort to the front. */
   pinnedTabs: string[]
   /** Project folders pinned to the top of the side column's project list. */

@@ -23,7 +23,7 @@ export function startAutomations(dataDirectory: string, runner: SessionRunner, s
     agent: () => config.get().agent,
     effort: () => config.get().effort,
     locale: () => interfaceLocale(config.get().language),
-    scratch: () => scratchDirectory(new Date(), config.get().projectRoot),
+    scratch: () => scratchDirectory(new Date(), config.get().projectRoot, config.projectLocations),
     publish: (event) => bus.publish(event),
   })
   bus.subscribe((event) => {

@@ -455,6 +455,8 @@ import { roundFortyChecks } from "./smoke-round40"
 import { roundFortyOneChecks } from "./smoke-round41"
 import { roundFortyTwoChecks } from "./smoke-round42"
 import { roundFortyFourChecks } from "./smoke-round44"
+import { roundFortyEightChecks } from "./smoke-round48"
+import { roundFortyNineChecks } from "./smoke-round49"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -2717,11 +2719,12 @@ async function main() {
       response.writeHead(200, { "content-type": "application/json" })
       response.end(JSON.stringify({ data: models }))
     })
-    await new Promise<void>((resolve) => fake.listen(8794, "127.0.0.1", resolve))
+    await new Promise<void>((resolve) => fake.listen(0, "127.0.0.1", resolve))
+    const endpoint = `http://127.0.0.1:${(fake.address() as import("node:net").AddressInfo).port}/v1`
 
     const config = backend.runtime.config
     // A curation list an older build left behind has no say any more.
-    await config.set({ providerEndpoints: { lmstudio: "http://127.0.0.1:8794/v1" }, ...({ enabledModels: ["anthropic/claude-opus-5"] } as object) })
+    await config.set({ providerEndpoints: { lmstudio: endpoint }, ...({ enabledModels: ["anthropic/claude-opus-5"] } as object) })
 
     await call({ type: "provider.auth", provider: "lmstudio", apiKey: "local" })
     const offered = config.enabled().filter((entry) => entry.provider === "lmstudio").map((entry) => entry.model.id)
@@ -2753,10 +2756,11 @@ async function main() {
       response.writeHead(200, { "content-type": "application/json" })
       response.end(JSON.stringify({ data: served }))
     })
-    await new Promise<void>((resolve) => fake.listen(8793, "127.0.0.1", resolve))
+    await new Promise<void>((resolve) => fake.listen(0, "127.0.0.1", resolve))
+    const fixtureUrl8793 = `http://127.0.0.1:${(fake.address() as import("node:net").AddressInfo).port}`
 
     const found = await discoverModels(
-      { id: "probe", name: "Probe", kind: "openai-compatible", description: "", baseURL: "http://127.0.0.1:8793/v1" },
+      { id: "probe", name: "Probe", kind: "openai-compatible", description: "", baseURL: fixtureUrl8793 + "/v1" },
       "test",
     )
     const ids = found.map((entry) => entry.id)
@@ -3056,7 +3060,8 @@ async function main() {
         response.end("data: [DONE]\n\n")
       })
     })
-    await new Promise<void>((resolve) => fake.listen(8791, "127.0.0.1", resolve))
+    await new Promise<void>((resolve) => fake.listen(0, "127.0.0.1", resolve))
+    const fixtureUrl8791 = `http://127.0.0.1:${(fake.address() as import("node:net").AddressInfo).port}`
 
     const base = {
       apiKey: "secret",
@@ -3065,7 +3070,7 @@ async function main() {
       history: [],
       tools: [],
       signal: new AbortController().signal,
-      baseURL: "http://127.0.0.1:8791",
+      baseURL: fixtureUrl8791,
     }
 
     /*
@@ -3147,7 +3152,8 @@ async function main() {
       response.writeHead(200, { "content-type": "text/event-stream" })
       response.end(body)
     })
-    await new Promise<void>((resolve) => fake.listen(8794, "127.0.0.1", resolve))
+    await new Promise<void>((resolve) => fake.listen(0, "127.0.0.1", resolve))
+    const endpoint = `http://127.0.0.1:${(fake.address() as import("node:net").AddressInfo).port}/v1`
 
     /** Frames as a server would send them, terminator included. */
     const feed = (...frames: unknown[]) =>
@@ -3165,7 +3171,7 @@ async function main() {
           tools: [],
           effort: "medium",
           signal: new AbortController().signal,
-          baseURL: "http://127.0.0.1:8794/v1",
+          baseURL: endpoint,
         },
         (event) => announced.push(event),
       ).then(
@@ -3331,13 +3337,14 @@ async function main() {
       response.writeHead(200, { "content-type": "application/json" })
       response.end(JSON.stringify({ data: [{ id: "qwen/qwen3.8-27b" }] }))
     })
-    await new Promise<void>((resolve) => elsewhere.listen(8795, "127.0.0.1", resolve))
+    await new Promise<void>((resolve) => elsewhere.listen(0, "127.0.0.1", resolve))
+    const fixtureUrl8795 = `http://127.0.0.1:${(elsewhere.address() as import("node:net").AddressInfo).port}`
 
-    await call({ type: "config.set", patch: { providerEndpoints: { lmstudio: "http://127.0.0.1:8795/v1" } } })
+    await call({ type: "config.set", patch: { providerEndpoints: { lmstudio: fixtureUrl8795 + "/v1" } } })
     check(
       "the endpoint the user typed is the one in force",
       backend.runtime.config.providers().find((p) => p.id === "lmstudio")?.baseURL ===
-        "http://127.0.0.1:8795/v1",
+        fixtureUrl8795 + "/v1",
       backend.runtime.config.providers().find((p) => p.id === "lmstudio")?.baseURL,
     )
 
@@ -3375,9 +3382,10 @@ async function main() {
       response.writeHead(200, { "content-type": "text/event-stream" })
       response.end(`event: error\n\ndata: ${FAILURE}\n\n`)
     })
-    await new Promise<void>((resolve) => flaky.listen(8796, "127.0.0.1", resolve))
+    await new Promise<void>((resolve) => flaky.listen(0, "127.0.0.1", resolve))
+    const fixtureUrl8796 = `http://127.0.0.1:${(flaky.address() as import("node:net").AddressInfo).port}`
 
-    await call({ type: "config.set", patch: { providerEndpoints: { lmstudio: "http://127.0.0.1:8796/v1" } } })
+    await call({ type: "config.set", patch: { providerEndpoints: { lmstudio: fixtureUrl8796 + "/v1" } } })
     await call({ type: "provider.auth", provider: "lmstudio", apiKey: "local" })
 
     const failing = await call({ type: "session.create", directory: project })
@@ -3456,8 +3464,9 @@ async function main() {
         ;(replies.shift() ?? reply)(response)
       })
     })
-    await new Promise<void>((resolve) => scripted.listen(8799, "127.0.0.1", resolve))
-    await call({ type: "config.set", patch: { providerEndpoints: { lmstudio: "http://127.0.0.1:8799/v1" } } })
+    await new Promise<void>((resolve) => scripted.listen(0, "127.0.0.1", resolve))
+    const fixtureUrl8799 = `http://127.0.0.1:${(scripted.address() as import("node:net").AddressInfo).port}`
+    await call({ type: "config.set", patch: { providerEndpoints: { lmstudio: fixtureUrl8799 + "/v1" } } })
     await call({ type: "provider.auth", provider: "lmstudio", apiKey: "local" })
 
     const created = await call({ type: "session.create", directory: project })
@@ -3671,8 +3680,9 @@ async function main() {
         )
       })
     })
-    await new Promise<void>((resolve) => judge.listen(8797, "127.0.0.1", resolve))
-    await call({ type: "config.set", patch: { providerEndpoints: { lmstudio: "http://127.0.0.1:8797/v1" }, accessLevel: "auto" } })
+    await new Promise<void>((resolve) => judge.listen(0, "127.0.0.1", resolve))
+    const fixtureUrl8797 = `http://127.0.0.1:${(judge.address() as import("node:net").AddressInfo).port}`
+    await call({ type: "config.set", patch: { providerEndpoints: { lmstudio: fixtureUrl8797 + "/v1" }, accessLevel: "auto" } })
     await call({ type: "provider.auth", provider: "lmstudio", apiKey: "local" })
     const judged = await call({ type: "session.create", directory: project })
     const judgedID: string = judged.session.id
@@ -3766,11 +3776,12 @@ async function main() {
         )
       })
     })
-    await new Promise<void>((resolve) => smartServer.listen(8798, "127.0.0.1", resolve))
+    await new Promise<void>((resolve) => smartServer.listen(0, "127.0.0.1", resolve))
+    const fixtureUrl8798 = `http://127.0.0.1:${(smartServer.address() as import("node:net").AddressInfo).port}`
     await call({
       type: "config.set",
       patch: {
-        providerEndpoints: { lmstudio: "http://127.0.0.1:8798/v1" },
+        providerEndpoints: { lmstudio: fixtureUrl8798 + "/v1" },
         smartFast: { provider: "lmstudio", model: "fast-one" },
         smartMain: { provider: "lmstudio", model: "main-one" },
       },
@@ -5141,8 +5152,9 @@ async function main() {
         response.end(`data: ${JSON.stringify({ choices: [{ delta: { content: "carried on" }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`)
       })
     })
-    await new Promise<void>((resolve) => flaky.listen(8811, "127.0.0.1", resolve))
-    await call({ type: "config.set", patch: { providerEndpoints: { lmstudio: "http://127.0.0.1:8811/v1" } } })
+    await new Promise<void>((resolve) => flaky.listen(0, "127.0.0.1", resolve))
+    const fixtureUrl8811 = `http://127.0.0.1:${(flaky.address() as import("node:net").AddressInfo).port}`
+    await call({ type: "config.set", patch: { providerEndpoints: { lmstudio: fixtureUrl8811 + "/v1" } } })
     await call({ type: "provider.auth", provider: "lmstudio", apiKey: "local" })
     const made = await call({ type: "session.create", directory: project })
     const resumeID: string = made.session.id
@@ -7196,6 +7208,8 @@ async function main() {
   await roundFortyOneChecks(check, section)
   await roundFortyTwoChecks(check, section)
   await roundFortyFourChecks(check, section)
+  await roundFortyEightChecks(check, section)
+  await roundFortyNineChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

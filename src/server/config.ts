@@ -47,6 +47,7 @@ import { menuEfforts } from "@shared/effort-menu"
 import { normalizeBaseURL, normalizeModelId } from "@shared/custom-endpoint"
 import type { OAuthTokens } from "./auth/oauth"
 import { parseJsonc, renderJsonc } from "./jsonc"
+import { ProjectLocations } from "./project-location"
 
 export const DEFAULT_MODEL: ModelRef = { provider: "", model: "" }
 
@@ -475,6 +476,7 @@ export class Config {
 
   /** Which main repository a conversation folder is part of, kept between launches. */
   readonly repoRoots: RepoRoots
+  readonly projectLocations: ProjectLocations
 
   constructor(
     private readonly storage: Storage,
@@ -482,8 +484,10 @@ export class Config {
     private readonly credentialFile: string,
     /** The system's secure storage (L12-3); absent under plain node, where the file stays plain text. */
     private readonly secrets?: SecretBox,
+    installationDirectory?: string,
   ) {
     this.repoRoots = new RepoRoots(storage)
+    this.projectLocations = new ProjectLocations(installationDirectory)
   }
 
   /**
@@ -1075,6 +1079,11 @@ export class Config {
   }
 
   private async apply(patch: Partial<AppConfig>): Promise<AppConfig> {
+    if (typeof patch.projectRoot === "string" && patch.projectRoot.trim()) await this.projectLocations.assert(patch.projectRoot)
+    const existing = new Set([...this.current.projects, ...this.current.closedProjects])
+    for (const directory of [...(Array.isArray(patch.projects) ? patch.projects : []), ...(Array.isArray(patch.closedProjects) ? patch.closedProjects : [])]) {
+      if (!existing.has(directory)) await this.projectLocations.assert(directory)
+    }
     const before = this.current.permissions
     const providersBefore = this.current.customProviders
     const projectsBefore = { projects: this.current.projects, closedProjects: this.current.closedProjects }

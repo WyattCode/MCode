@@ -8,7 +8,7 @@
  * written as JSON to the file named in argv: a GUI process has no stdout the
  * parent can read.
  */
-import { BrowserWindow, app, ipcMain, webContents } from "electron"
+import { BrowserWindow, app, ipcMain, webContents, type WebContentsView } from "electron"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -74,8 +74,12 @@ app.whenReady().then(async () => {
     await wait(500)
     // A second page, which closes itself the way a sign-in callback page does.
     const second = newTab(window)
+    const closing = (window.contentView.children.at(-1) as WebContentsView).webContents
     navigate(window, bye)
-    await wait(300)
+    // Wait for the fixture to close before hiding it. The old 300 + 1500 ms
+    // budget stays intact; switching early could throttle its initial load.
+    const closeBy = Date.now() + 1800
+    while (!closing.isDestroyed() && Date.now() < closeBy) await wait(25)
     // A third, so the row still has more than one page once the second has gone.
     newTab(window)
     navigate(window, keep)

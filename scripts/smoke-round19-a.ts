@@ -155,7 +155,7 @@ export async function roundNineteenLaneAChecks(check: Check, section: (name: str
     check("its host passes no location", !/default-location/.test(app) && /request\(\{ type: "project\.createBlank", name: title \}\)/.test(app))
     check(
       "a blank project always lands under the default project location",
-      /\| \{ type: "project\.createBlank"; name: string \}/.test(protocol) && /blankProjectDirectory\(request\.name, runtime\.config\.get\(\)\.projectRoot\)/.test(handlers),
+      /\| \{ type: "project\.createBlank"; name: string \}/.test(protocol) && /blankProjectDirectory\(request\.name, runtime\.config\.get\(\)\.projectRoot, runtime\.config\.projectLocations\)/.test(handlers),
     )
   }
 

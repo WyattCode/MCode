@@ -420,7 +420,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "session.create": {
       const config = runtime.config.get()
-      const directory = request.scratch ? await scratchDirectory(new Date(), config.projectRoot) : (request.directory ?? config.directory)
+      const directory = request.scratch ? await scratchDirectory(new Date(), config.projectRoot, runtime.config.projectLocations) : (request.directory ?? config.directory)
+      await runtime.config.projectLocations.assert(directory)
       /*
        * A conversation in a folder the list does not know makes it a project,
        * as MiMo derives one. Listed before the session exists, so the window
@@ -447,12 +448,13 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "project.createBlank": {
       // Always under the default project location from Settings > 常规: MiMo's dialog has no place to change it.
-      const directory = await blankProjectDirectory(request.name, runtime.config.get().projectRoot)
+      const directory = await blankProjectDirectory(request.name, runtime.config.get().projectRoot, runtime.config.projectLocations)
       return { directory } satisfies Handled<"project.createBlank">
     }
 
     /* MiMo's project add and remove: the list changes, no conversation is made or deleted. */
     case "project.add": {
+      await runtime.config.projectLocations.assert(request.directory)
       const { patch, existed } = addedProject(runtime.config.get(), request.directory, request.used ? Date.now() : undefined)
       return { config: await runtime.config.set(patch), existed } satisfies Handled<"project.add">
     }
