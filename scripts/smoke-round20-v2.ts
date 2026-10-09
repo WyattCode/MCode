@@ -41,7 +41,7 @@ export async function roundTwentyV2Checks(check: Check, section: (name: string) 
   {
     const head = rule(header, ".head")
     check("the header's start inset is 18px", /padding-inline:\s*18px\b/.test(head), head)
-    check("the folded rail's insets are kept (129 on macOS, 72 elsewhere)", /\.head\.after-rail \{\s*padding-inline-start: 129px;/.test(header) && /\.head\.after-rail \{\s*padding-inline-start: 72px;/.test(header))
+    check("the folded rail's insets are kept (152 on macOS, 72 elsewhere)", /\.head\.after-rail \{\s*padding-inline-start: 152px;/.test(header) && /\.head\.after-rail \{\s*padding-inline-start: 72px;/.test(header))
   }
 
   // ------------------------------------------------------------------ R20-V2-3

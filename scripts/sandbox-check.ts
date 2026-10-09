@@ -28,7 +28,8 @@ function note(name: string, ok: boolean, detail = ""): void {
 }
 
 async function main(): Promise<void> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-gate-"))
+  // macOS's temp folder is a link (/var -> /private/var): the gate compares real locations, so build the fixture on the real one.
+  const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), "mcode-gate-"))
   const project = path.join(root, "project")
   const sibling = path.join(root, "projectile")
   const outside = path.join(root, "outside")

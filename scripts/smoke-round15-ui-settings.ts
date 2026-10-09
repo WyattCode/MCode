@@ -20,6 +20,7 @@ import path from "node:path"
 import { execFileSync, spawn } from "node:child_process"
 import { createRequire } from "node:module"
 import type { Check } from "./smoke-round5"
+import { esbuildCommand } from "./esbuild-command"
 
 interface Layout {
   error?: string
@@ -36,10 +37,11 @@ async function measure(root: string): Promise<Layout> {
   const work = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r15u2-"))
   try {
     const bundle = path.join(root, "out", "smoke-round15-ui-settings-layout.cjs")
+    const esbuild = esbuildCommand(root)
     execFileSync(
-      process.execPath,
+      esbuild.file,
       [
-        path.join(root, "node_modules", "esbuild", "bin", "esbuild"),
+        ...esbuild.prefix,
         "scripts/smoke-round15-ui-settings-layout.ts",
         "--bundle",
         "--platform=node",

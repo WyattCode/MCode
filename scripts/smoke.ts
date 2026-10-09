@@ -482,6 +482,9 @@ function section(name: string) {
 }
 
 async function main() {
+  // macOS's temp folder is /var/folders/..., a link to /private/var/folders/...: git, realpath and the tools report the
+  // second spelling, so checks that compare paths by text want the one spelling used throughout. Child processes inherit it.
+  if (process.platform === "darwin") process.env.TMPDIR = (await fs.realpath(os.tmpdir())) + "/"
   // KaTeX is fetched on first use in the app; every check that draws a formula wants it drawn.
   await loadMath()
   // round 5: the earlier sections script their providers reply by reply, and a background title request would take one.

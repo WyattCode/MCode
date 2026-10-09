@@ -19,7 +19,7 @@ import { Config } from "../src/server/config"
 import { Storage } from "../src/server/storage"
 import { SessionStore } from "../src/server/session/store"
 import { Permissions, RULES_KEY } from "../src/server/permission"
-import { ARTIFACT_SCHEMA_VERSION, ArtifactStore } from "../src/server/artifact/store"
+import { ARTIFACT_SCHEMA_VERSION, ArtifactStore, identityKey } from "../src/server/artifact/store"
 import { STORAGE_LAYOUT_VERSION, readStorageLayout } from "../src/server/storage-layout"
 import { Snapshots, snapshotBytes } from "../src/server/session/snapshot"
 import { CHECKPOINT_MIGRATION, migrateCheckpoints } from "../src/server/session/checkpoint-migrate"
@@ -522,8 +522,8 @@ export async function storageChecks(check: Check, section: (name: string) => voi
       await fs.mkdir(oldDir, { recursive: true })
       await fs.writeFile(path.join(oldDir, "kept.md"), "# kept", "utf8")
       await fs.writeFile(path.join(oldDir, "orphan.pptx"), "", "utf8")
-      add.run(path.join(oldDir, "kept.md").toLowerCase(), "ses_live", "Live one", oldDir, "kept.md", path.join(oldDir, "kept.md"), "deliverable", "doc", 5, 5)
-      add.run(path.join(oldDir, "orphan.pptx").toLowerCase(), "", "Gone one", oldDir, "orphan.pptx", path.join(oldDir, "orphan.pptx"), "deliverable", "doc", 6, 6)
+      add.run(identityKey(path.join(oldDir, "kept.md")), "ses_live", "Live one", oldDir, "kept.md", path.join(oldDir, "kept.md"), "deliverable", "doc", 5, 5)
+      add.run(identityKey(path.join(oldDir, "orphan.pptx")), "", "Gone one", oldDir, "orphan.pptx", path.join(oldDir, "orphan.pptx"), "deliverable", "doc", 6, 6)
       raw.close()
     }
     const migrated = await ArtifactStore.open(oldFile)

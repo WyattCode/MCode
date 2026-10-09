@@ -15,6 +15,7 @@ import path from "node:path"
 import net from "node:net"
 import { spawn } from "node:child_process"
 import { desktopState } from "./smoke-round37"
+import { createRequire } from "node:module"
 import { pathToFileURL } from "node:url"
 import type { Check } from "./smoke-round5"
 import { AppTool, closeAllApps } from "../src/server/tool/app"
@@ -192,7 +193,8 @@ export async function roundThirtySixChecks(check: Check, section: (name: string)
 
   section("Round 36: the app tool reaching an Electron window through its DevTools port")
   {
-    const electron = path.join(root, "node_modules", "electron", "dist", process.platform === "win32" ? "electron.exe" : "electron")
+    // The electron package names its own binary (an .exe, a bare file, or macOS's Electron.app/Contents/MacOS/Electron).
+    const electron = createRequire(import.meta.url)("electron") as unknown as string
     const port = await freePort()
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), "mcode-r36-electron-"))
     const child = spawn(electron, [`--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, page], { stdio: "ignore" })
