@@ -1,5 +1,7 @@
 appId: dev.mcode.app
 productName: MCode
+# A macOS build with no signing certificate still gets a valid ad-hoc signature (see the script).
+afterPack: scripts/mac-adhoc-sign.cjs
 directories:
   output: dist
   buildResources: build
