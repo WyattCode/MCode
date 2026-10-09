@@ -1,4 +1,4 @@
-import type { Effort } from "./protocol"
+import type { CustomThinking, Effort } from "./protocol"
 
 /**
  * The reasoning levels the model menu offers for a model, as MiMo's desktop
@@ -41,12 +41,43 @@ function claudeLevels(text: string): Effort[] {
   return ["low", "medium", "high"]
 }
 
+/** The levels a custom model may name, weakest first; `none` is the separate "can be turned off". */
+export const THINKING_LEVELS: readonly Effort[] = ["low", "medium", "high", "xhigh", "max"]
+
 /**
- * The level a turn sends: the app-wide choice if the menu offers it, else
- * medium, else the menu's first; nothing when the menu is empty.
+ * A custom model's `thinking` as it may be stored: only the levels above, once
+ * each and in their own order, a default that is one of them, and `canOff`
+ * only when true. Anything that is not an object is no thinking at all.
  */
-export function effortToSend(menu: readonly Effort[], chosen?: Effort): Effort | undefined {
+export function thinkingOf(value: unknown): CustomThinking | undefined {
+  if (!value || typeof value !== "object") return undefined
+  const raw = value as { efforts?: unknown; canOff?: unknown; default?: unknown }
+  const named = new Set(Array.isArray(raw.efforts) ? raw.efforts : [])
+  const efforts = THINKING_LEVELS.filter((level) => named.has(level))
+  return {
+    efforts: [...efforts],
+    ...(raw.canOff === true ? { canOff: true } : {}),
+    ...(typeof raw.default === "string" && efforts.includes(raw.default as Effort) ? { default: raw.default as Effort } : {}),
+  }
+}
+
+/**
+ * The menu a custom model's own word gives it: `none` first when it can be
+ * turned off, then the levels. A model that thinks but names no level has no
+ * control to draw, so `none` alone is not a menu either.
+ */
+export function thinkingMenu(thinking: CustomThinking): Effort[] {
+  return thinking.efforts.length ? [...(thinking.canOff ? (["none"] as const) : []), ...thinking.efforts] : []
+}
+
+/**
+ * The level a turn sends: the app-wide choice if the menu offers it, else the
+ * model's own default, else medium, else the menu's first; nothing when the
+ * menu is empty.
+ */
+export function effortToSend(menu: readonly Effort[], chosen?: Effort, preferred?: Effort): Effort | undefined {
   if (!menu.length) return undefined
   if (chosen && menu.includes(chosen)) return chosen
+  if (preferred && menu.includes(preferred)) return preferred
   return menu.includes("medium") ? "medium" : menu[0]
 }

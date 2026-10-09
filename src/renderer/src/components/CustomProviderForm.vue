@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
-import type { CustomModel, CustomProvider, ModelInfo } from "@shared/protocol"
+import type { CustomModel, CustomProvider, Effort, ModelInfo } from "@shared/protocol"
+import { THINKING_LEVELS } from "@shared/effort-menu"
 import { normalizeBaseURL, normalizeModelId } from "@shared/custom-endpoint"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
@@ -42,6 +43,17 @@ const app = useApp()
 
 type Mods = Record<Modality, boolean>
 
+/** A model's own word on thinking, as the form holds it: `on` is "this model thinks"; the rest only count when it does. */
+interface Thinking {
+  on: boolean
+  efforts: Effort[]
+  canOff: boolean
+  default?: Effort
+}
+
+/** What a model that is just being switched to thinking starts with: every level, and able to be turned off. */
+const blankThinking = (): Thinking => ({ on: false, efforts: [...THINKING_LEVELS], canOff: true })
+
 interface ModelRow {
   key: number
   id: string
@@ -49,6 +61,7 @@ interface ModelRow {
   context?: number
   output?: number
   mods: Mods
+  thinking: Thinking
   /** Whether the inputs were chosen here; untouched, what was stored (or the catalog) decides. */
   touched: boolean
   stored?: CustomModel
@@ -89,6 +102,9 @@ function storedRow(model: CustomModel): ModelRow {
       video: model.inputs?.video ?? effective?.video ?? false,
       pdf: model.inputs?.pdf ?? effective?.pdf ?? false,
     },
+    thinking: model.thinking
+      ? { on: true, efforts: [...model.thinking.efforts], canOff: model.thinking.canOff === true, ...(model.thinking.default ? { default: model.thinking.default } : {}) }
+      : blankThinking(),
     touched: false,
     stored: model,
   }
@@ -103,6 +119,7 @@ function newRow(id: string): ModelRow {
     context: hint?.contextWindow || undefined,
     output: hint?.maxOutput || undefined,
     mods: { image: hint?.inputs.image ?? false, audio: hint?.inputs.audio ?? false, video: hint?.inputs.video ?? false, pdf: hint?.inputs.pdf ?? false },
+    thinking: blankThinking(),
     // A model the catalog knows arrives with its inputs stated; one it does not is left for the backend's catalog.
     touched: Boolean(hint),
   }
@@ -345,6 +362,24 @@ function toggleMod(row: ModelRow, key: Modality, on: boolean) {
   row.touched = true
 }
 
+/* ------------------------------------------------------------ thinking */
+
+const levelLabel = (level: Effort) => t(`effort.gpt.${level}`)
+
+function toggleLevel(row: ModelRow, level: Effort, on: boolean) {
+  const kept = THINKING_LEVELS.filter((one) => (one === level ? on : row.thinking.efforts.includes(one)))
+  row.thinking.efforts = [...kept]
+  // A default that is no longer on offer goes back to "auto".
+  if (row.thinking.default && !kept.includes(row.thinking.default)) row.thinking.default = undefined
+}
+
+/* "Thinking only" and "may be turned off" are the two ends of one switch: the model either can be told not to think or cannot. */
+function setCanOff(row: ModelRow, canOff: boolean) {
+  row.thinking.canOff = canOff
+}
+
+const thinkingSummary = (row: ModelRow) => (row.thinking.on ? (row.thinking.efforts.map(levelLabel).join("·") || t("set.models.thinkingOn")) : "—")
+
 const modLabel = (key: Modality | "omni") =>
   t(
     key === "omni"
@@ -403,6 +438,13 @@ function modelOf(row: ModelRow): CustomModel {
   }
   if (row.stored?.cacheTTL) model.cacheTTL = row.stored.cacheTTL
   if (row.stored?.interleaved) model.interleaved = row.stored.interleaved
+  if (row.thinking.on) {
+    model.thinking = {
+      efforts: [...row.thinking.efforts],
+      ...(row.thinking.canOff ? { canOff: true } : {}),
+      ...(row.thinking.default ? { default: row.thinking.default } : {}),
+    }
+  }
   return model
 }
 
@@ -687,6 +729,54 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
               <input type="checkbox" :checked="row.mods[key]" :data-model-modality="key" @change="toggleMod(row, key, ($event.target as HTMLInputElement).checked)" />
               {{ modLabel(key) }}
             </label>
+          </div>
+        </div>
+        <div class="cp-pick" :data-menu-anchor="`thinking:${row.key}`">
+          <button type="button" class="cp-pick-btn wide" data-model-thinking-menu @click="toggleMenu(`thinking:${row.key}`)">
+            <span class="cp-pick-label">{{ t("set.models.thinking") }}</span>
+            <span class="cp-pick-value">
+              <span data-model-thinking-summary>{{ thinkingSummary(row) }}</span>
+              <svg class="cp-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m6 9.5 6 6 6-6" />
+              </svg>
+            </span>
+          </button>
+          <div v-if="openMenu === `thinking:${row.key}`" class="cp-menu thinking" role="menu" data-model-thinking-panel>
+            <label class="cp-option">
+              <input v-model="row.thinking.on" type="checkbox" data-model-thinking="on" />
+              {{ t("set.models.thinkingOn") }}
+            </label>
+            <template v-if="row.thinking.on">
+              <label class="cp-option">
+                <input type="checkbox" :checked="!row.thinking.canOff" data-model-thinking="only" @change="setCanOff(row, !($event.target as HTMLInputElement).checked)" />
+                {{ t("set.models.thinkingOnly") }}
+              </label>
+              <label class="cp-option">
+                <input type="checkbox" :checked="row.thinking.canOff" data-model-thinking="canOff" @change="setCanOff(row, ($event.target as HTMLInputElement).checked)" />
+                {{ t("set.models.thinkingCanOff") }}
+              </label>
+              <div class="cp-menu-label">{{ t("set.models.thinkingEfforts") }}</div>
+              <label v-for="level in THINKING_LEVELS" :key="level" class="cp-option">
+                <input type="checkbox" :checked="row.thinking.efforts.includes(level)" :data-model-effort="level" @change="toggleLevel(row, level, ($event.target as HTMLInputElement).checked)" />
+                {{ levelLabel(level) }}
+              </label>
+              <template v-if="row.thinking.efforts.length">
+                <div class="cp-menu-label">{{ t("set.models.thinkingDefault") }}</div>
+                <button
+                  v-for="choice in [undefined, ...row.thinking.efforts]"
+                  :key="choice ?? 'auto'"
+                  type="button"
+                  role="menuitemradio"
+                  class="cp-option"
+                  :aria-checked="row.thinking.default === choice"
+                  :data-model-effort-default="choice ?? 'auto'"
+                  @click="row.thinking.default = choice"
+                >
+                  <span>{{ choice ? levelLabel(choice) : t("set.models.thinkingAuto") }}</span>
+                  <span v-if="row.thinking.default === choice" class="cp-check">✓</span>
+                </button>
+              </template>
+            </template>
           </div>
         </div>
       </div>
@@ -1158,6 +1248,17 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 }
 
 /* MiMo rules the number off from the presets above it. */
+.cp-menu.thinking {
+  min-width: 220px;
+  max-height: none;
+}
+
+.cp-menu-label {
+  padding: 8px 8px 2px;
+  color: var(--text-weak);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+}
+
 .cp-menu-custom {
   margin-top: 4px;
   padding-top: 6px;

@@ -43,7 +43,7 @@ import { CodedError } from "@shared/errors"
 import type { Catalog, CatalogModel } from "@shared/models-dev"
 import { conversational } from "./provider/discover"
 import { modelVariants } from "./provider/variants"
-import { menuEfforts } from "@shared/effort-menu"
+import { menuEfforts, thinkingMenu, thinkingOf } from "@shared/effort-menu"
 import { normalizeBaseURL, normalizeModelId } from "@shared/custom-endpoint"
 import type { OAuthTokens } from "./auth/oauth"
 import { parseJsonc, renderJsonc } from "./jsonc"
@@ -104,8 +104,9 @@ function modelInfo(model: ModelEntry): ModelInfo {
       pdf: inputs.pdf ?? false,
     },
     cost: { input: model.input, output: model.output },
-    // The levels the menu offers, by MiMo's desktop rule; what each becomes on the wire is `variants()` below.
-    variants: menuEfforts(model.id, model.name),
+    // The levels the menu offers: the model's own word when it has given one, else MiMo's desktop rule. What each becomes on the wire is `variants()` below.
+    variants: model.menu ?? menuEfforts(model.id, model.name),
+    ...(model.defaultEffort ? { defaultEffort: model.defaultEffort } : {}),
   }
 }
 
@@ -417,6 +418,8 @@ export function customModelOf(model: CustomModelEntry): CustomModelEntry {
   if (Object.keys(inputs).length) out.inputs = inputs
   if (model.cacheTTL === "5m" || model.cacheTTL === "1h") out.cacheTTL = model.cacheTTL
   if (model.interleaved === "reasoning" || model.interleaved === "reasoning_content" || model.interleaved === "reasoning_details") out.interleaved = model.interleaved
+  const thinking = thinkingOf(model.thinking)
+  if (thinking) out.thinking = thinking
   return out
 }
 
@@ -1325,6 +1328,15 @@ export class Config {
             : {}),
           ...(model.cacheTTL ? { cacheTTL: model.cacheTTL } : {}),
           ...(model.interleaved ? { interleaved: model.interleaved } : {}),
+          // The model's own word on thinking: it reasons, and the server takes exactly these levels (`none` among them when it can be turned off).
+          ...(model.thinking
+            ? {
+                reasoning: true,
+                menu: thinkingMenu(model.thinking),
+                efforts: thinkingMenu(model.thinking),
+                ...(model.thinking.default ? { defaultEffort: model.thinking.default } : {}),
+              }
+            : {}),
           input: 0,
           output: 0,
         })),
@@ -1459,6 +1471,16 @@ export class Config {
     if (this.apiKey(id) || this.oauth[id]) return true
     const entry = this.definition(id)
     return Boolean(entry?.handEntered && entry.headers && Object.keys(entry.headers).length)
+  }
+
+  /**
+   * The levels the menu offers this model, and the one it falls back to: what
+   * the window is told in `ModelInfo.variants`, and what a turn clamps the
+   * app-wide level to.
+   */
+  menu(ref: ModelRef): { levels: Effort[]; preferred?: Effort } {
+    const entry = this.modelEntry(ref)
+    return { levels: entry?.menu ?? menuEfforts(ref.model, entry?.name), ...(entry?.defaultEffort ? { preferred: entry.defaultEffort } : {}) }
   }
 
   variants(ref: ModelRef): Effort[] | undefined {
