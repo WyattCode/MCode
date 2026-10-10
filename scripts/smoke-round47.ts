@@ -116,4 +116,6 @@ export async function roundFortySevenChecks(check: Check, section: (name: string
   check("the default is a drop-down and the levels sit in three columns", /<SelectMenu[^>]*:data-model-effort-default/.test(form) && /\.cp-think-grid \{[^}]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/.test(form))
   check("and saved on the model only when thinking is on", /if \(row\.thinking\.on\) \{\s*model\.thinking = \{/.test(form))
   check("'thinking only' and 'may be turned off' are one switch seen from both ends", form.includes("setCanOff(row, !(") && form.includes("setCanOff(row, ($event"))
+  // A thinking model with no level has an empty menu and sends no effort - it silently stops thinking.
+  check("the last level cannot be unchecked, in the box or in the handler", /if \(!kept\.length\) \{\s*input\.checked = true\s*return/.test(form) && /:disabled="row\.thinking\.efforts\.length === 1 && row\.thinking\.efforts\.includes\(level\)"/.test(form))
 }

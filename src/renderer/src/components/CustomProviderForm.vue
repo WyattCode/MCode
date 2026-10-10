@@ -366,8 +366,14 @@ function toggleMod(row: ModelRow, key: Modality, on: boolean) {
 
 const levelLabel = (level: Effort) => t(`effort.gpt.${level}`)
 
-function toggleLevel(row: ModelRow, level: Effort, on: boolean) {
+function toggleLevel(row: ModelRow, level: Effort, input: HTMLInputElement) {
+  const on = input.checked
   const kept = THINKING_LEVELS.filter((one) => (one === level ? on : row.thinking.efforts.includes(one)))
+  // A model that thinks takes at least one level: with none, the menu is empty and no level is ever sent, so it would not think at all.
+  if (!kept.length) {
+    input.checked = true
+    return
+  }
   row.thinking.efforts = [...kept]
   // A default that is no longer on offer goes back to "auto".
   if (row.thinking.default && !kept.includes(row.thinking.default)) row.thinking.default = undefined
@@ -770,7 +776,7 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
             <div class="cp-think-label">{{ t("set.models.thinkingEfforts") }}</div>
             <div class="cp-think-grid">
               <label v-for="level in THINKING_LEVELS" :key="level" class="cp-tick">
-                <input type="checkbox" :checked="row.thinking.efforts.includes(level)" :data-model-effort="level" @change="toggleLevel(row, level, ($event.target as HTMLInputElement).checked)" />
+                <input type="checkbox" :checked="row.thinking.efforts.includes(level)" :disabled="row.thinking.efforts.length === 1 && row.thinking.efforts.includes(level)" :data-model-effort="level" @change="toggleLevel(row, level, $event.target as HTMLInputElement)" />
                 {{ levelLabel(level) }}
               </label>
             </div>
