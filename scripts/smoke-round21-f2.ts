@@ -202,7 +202,7 @@ export async function roundTwentyOneLaneFTwoChecks(check: Check, section: (name:
     check("the picker list is the tighter of the two menus", /padding: 4px;/.test(rule(formStyle, ".cp-menu.combo")) && /padding: 6px;/.test(rule(formStyle, ".cp-menu")))
     check("the menus take the elevated card under shadow-pop", /background: #fffefd;/.test(rule(formStyle, ".cp-menu")) && /box-shadow: 0 12px 40px #00000024;/.test(rule(formStyle, ".cp-menu")))
     check("the custom number is ruled off and 28 tall", /class="cp-menu-custom"/.test(form) && /border-top: 1px solid #f0ebe5;/.test(rule(formStyle, ".cp-menu-custom")) && /height: calc\(28px \* var\(--ui-font-scale, 1\)\);/.test(rule(formStyle, ".cp-in.tiny")))
-    check("the four pickers (the two limits share one, then inputs, then MCode's thinking) show a 14px chevron", (form.match(/class="cp-caret"/g) ?? []).length === 3 && /width: 14px;/.test(rule(formStyle, ".cp-caret")))
+    check("the three pickers show a 14px chevron", (form.match(/class="cp-caret"/g) ?? []).length === 2 && /width: 14px;/.test(rule(formStyle, ".cp-caret")))
     check("a model card is MiMo's own, on the elevated card inside --color-line", /background: #fffefd;/.test(rule(formStyle, ".cp-model")) && /border: 1px solid #f0ebe5;/.test(rule(formStyle, ".cp-model")))
 
     check("a tab and a chip are MiMo's txt ink with no fill when chosen", /color: var\(--text-body\);/.test(rule(modelsStyle, ".tab")) && !/background: var\(--surface-hover\);/.test(rule(modelsStyle, ".tab.on")) && !/background: var\(--surface-hover\);/.test(rule(modelsStyle, ".preset.on")))

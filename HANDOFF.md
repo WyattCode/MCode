@@ -228,7 +228,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 - **打包产物的签名是坏的**（最重要）：没有证书时 electron-builder 跳过签名，留下 Electron 原版的临时签名——标识符是 `Electron` 而不是 `dev.mcode.app`，Info.plist 和资源没封存，`codesign --verify` 失败。系统认不出这个应用，「本地网络」开关打开也不生效，连局域网机器一律 `EHOSTUNREACH`（用 `open --env ELECTRON_RUN_AS_NODE=1 -a MCode.app --args probe.js` 以应用自己的身份复现，终端里同一地址是通的）。`scripts/mac-adhoc-sign.cjs` 作为 `afterPack` 钩子，**仅在本机没有任何有效证书时**做一次完整的临时签名；有证书时 electron-builder 照常签名并覆盖它。临时签名每次打包都会变，系统可能要重新授权；要稳定得有固定的开发者证书。
 - 打 macOS 包要 Xcode 26 以上的 `actool`（图标包 `build/icon.icon`），且要同意许可（`sudo xcodebuild -license accept`）。目前只出 arm64，未签名、未公证。
 
-**让测试能在 macOS 上跑完**（见 `48bddf7b`）：smoke 入口把 `TMPDIR` 解析成真实路径；esbuild 在 macOS 是原生二进制，用 `scripts/esbuild-command.ts` 启动；Electron 路径向 `electron` 包要；`Math.max(...大数组)` 改 `reduce`；家目录搜索夹具在 macOS 用 `Library`；第九轮迁移夹具用 `identityKey`；R18-U1 等断言更新到 macOS 侧栏新尺寸（98 / 152）。smoke 现在 **7698 passed / 6 failed**（Windows 上是 0）。剩下的六条：随包运行时只有 `win32-x64`，macOS 上没有 ripgrep 和 Python（2 条，外加依赖 rg 的「被停止的 glob / grep」2 条未查原因）；`D:\` 盘符路径的检查是 Windows 专用（1 条）；「循环回复应在输出上限前截断」是模拟服务一次写完 15200 字符的时序问题（1 条）。
+**让测试能在 macOS 上跑完**（见 `48bddf7b`）：smoke 入口把 `TMPDIR` 解析成真实路径；esbuild 在 macOS 是原生二进制，用 `scripts/esbuild-command.ts` 启动；Electron 路径向 `electron` 包要；`Math.max(...大数组)` 改 `reduce`；家目录搜索夹具在 macOS 用 `Library`；第九轮迁移夹具用 `identityKey`；R18-U1 等断言更新到 macOS 侧栏新尺寸（98 / 152）。smoke 现在 **7701 passed / 6 failed**（Windows 上是 0）。剩下的六条：随包运行时只有 `win32-x64`，macOS 上没有 ripgrep 和 Python（2 条，外加依赖 rg 的「被停止的 glob / grep」2 条未查原因）；`D:\` 盘符路径的检查是 Windows 专用（1 条）；「循环回复应在输出上限前截断」是模拟服务一次写完 15200 字符的时序问题（1 条）。
 
 **自定义模型自己声明思考强度（本轮功能）**
 
@@ -236,9 +236,9 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 - 自定义模型新增 `thinking: { efforts, canOff?, default? }`（`CustomThinking`，`src/shared/protocol.ts`）：有它就是「这个模型会思考」。`efforts` 取 `low / medium / high / xhigh / max` 的子集（WB 表单的五档），`canOff` 为真时菜单最前面多一项 `none`，`default` 是应用级强度不在菜单里时的回落（缺省 medium）。
 - 菜单以模型自己的话为准（`ModelEntry.menu`），没说话的模型仍走 MiMo 的按名字规则（`menuEfforts` 没动）；线上发送的集合 `ModelEntry.efforts` 与菜单一致。`effortToSend(menu, chosen, preferred)` 加了第三个参数；窗口和运行器都用它（`Config.menu()`）。
-- 表单（`CustomProviderForm.vue`）照 WB 的设置加了「思考」选择器：思考模式、仅思考模式、允许关闭思考（后两项是同一个开关的两端）、支持的思考强度、默认思考强度。新文案 7 条，18 种语言都有。
+- 表单（`CustomProviderForm.vue`）照 WB 的设置，**直接放在模型卡片里**：思考模式、仅思考模式、允许关闭思考（后两项是同一个开关的两端）排成一行，默认思考强度是下拉框，支持的思考强度是三列复选框；勾上思考模式才展开后两块。第一版把这些塞进一个按钮弹出的 14 行菜单，窗口矮时被截断，用户当场否掉；探针截图验证过现在的样子（临时数据目录，没碰真实配置）。新文案 6 条，18 种语言都有。
 - 应用级强度仍是一个值（MiMo 的做法）：从 Claude 切到这个模型，原来的 `high` 还在菜单里就继续用 `high`；只有不在菜单里才回落到模型的默认或 medium。
-- 验证：`scripts/smoke-round47.ts` 37 条；故意改坏两处（删掉模型默认、菜单不进窗口），分别 2 条、8 条变红（`default` 一条原先恰好等于菜单第一项而没抓到，已改成 `high`，再改坏就 4 条变红）；十二项专项检查全过。**真实模型**：经完整 runner 对这台 DS 跑 `none` / `low` / `high` / `max`，`none` 没有推理文本，其余有，且越高越长。
+- 验证：`scripts/smoke-round47.ts` 39 条；故意改坏两处（删掉模型默认、菜单不进窗口），分别 2 条、8 条变红（`default` 一条原先恰好等于菜单第一项而没抓到，已改成 `high`，再改坏就 4 条变红）；十二项专项检查全过。**真实模型**：经完整 runner 对这台 DS 跑 `none` / `low` / `high` / `max`，`none` 没有推理文本，其余有，且越高越长。
 - 顺带看到、没处理：这台服务把推理 token 放在 `usage.reasoning_tokens`，而 MCode 只读 `completion_tokens_details.reasoning_tokens`，所以用量里推理 token 记为 0，只影响用量显示，不影响功能。
 
 ### 第四十六轮：二次复核，提交并发布 0.7.1（2026-10-09）

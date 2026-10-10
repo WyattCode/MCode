@@ -111,6 +111,9 @@ export async function roundFortySevenChecks(check: Check, section: (name: string
   const form = source("src/renderer/src/components/CustomProviderForm.vue")
   check("the form has WB's thinking switches: on, only, may be turned off", ['data-model-thinking="on"', 'data-model-thinking="only"', 'data-model-thinking="canOff"'].every((mark) => form.includes(mark)))
   check("the five levels and the default are chosen there", form.includes(':data-model-effort="level"') && form.includes(":data-model-effort-default"))
+  // The first draft put all of this behind a button in a 14-row pop-up that ran off the window. WB lays it out in the card.
+  check("in the model's card, as WB lays it out, not in a pop-up behind a button", form.includes("data-model-thinking-block") && !form.includes("data-model-thinking-menu") && !form.includes("data-model-thinking-panel"))
+  check("the default is a drop-down and the levels sit in three columns", /<SelectMenu[^>]*:data-model-effort-default/.test(form) && /\.cp-think-grid \{[^}]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/.test(form))
   check("and saved on the model only when thinking is on", /if \(row\.thinking\.on\) \{\s*model\.thinking = \{/.test(form))
   check("'thinking only' and 'may be turned off' are one switch seen from both ends", form.includes("setCanOff(row, !(") && form.includes("setCanOff(row, ($event"))
 }

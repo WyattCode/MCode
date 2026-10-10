@@ -378,7 +378,11 @@ function setCanOff(row: ModelRow, canOff: boolean) {
   row.thinking.canOff = canOff
 }
 
-const thinkingSummary = (row: ModelRow) => (row.thinking.on ? (row.thinking.efforts.map(levelLabel).join("·") || t("set.models.thinkingOn")) : "—")
+/* The default is "auto" (the model's first fallback, medium) or one of the levels the model takes. */
+const defaultOptions = (row: ModelRow) => [
+  { value: "auto", label: t("set.models.thinkingAuto") },
+  ...row.thinking.efforts.map((level) => ({ value: level, label: levelLabel(level) })),
+]
 
 const modLabel = (key: Modality | "omni") =>
   t(
@@ -731,54 +735,47 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
             </label>
           </div>
         </div>
-        <div class="cp-pick" :data-menu-anchor="`thinking:${row.key}`">
-          <button type="button" class="cp-pick-btn wide" data-model-thinking-menu @click="toggleMenu(`thinking:${row.key}`)">
-            <span class="cp-pick-label">{{ t("set.models.thinking") }}</span>
-            <span class="cp-pick-value">
-              <span data-model-thinking-summary>{{ thinkingSummary(row) }}</span>
-              <svg class="cp-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="m6 9.5 6 6 6-6" />
-              </svg>
-            </span>
-          </button>
-          <div v-if="openMenu === `thinking:${row.key}`" class="cp-menu thinking" role="menu" data-model-thinking-panel>
-            <label class="cp-option">
-              <input v-model="row.thinking.on" type="checkbox" data-model-thinking="on" />
-              {{ t("set.models.thinkingOn") }}
+      </div>
+      <!-- WB's layout: the switches in a row, the default as a drop-down, the levels in three columns - all in the card, not behind a button. -->
+      <div class="cp-think" data-model-thinking-block>
+        <div class="cp-think-switches">
+          <label class="cp-tick">
+            <input v-model="row.thinking.on" type="checkbox" data-model-thinking="on" />
+            {{ t("set.models.thinkingOn") }}
+          </label>
+          <template v-if="row.thinking.on">
+            <label class="cp-tick">
+              <input type="checkbox" :checked="!row.thinking.canOff" data-model-thinking="only" @change="setCanOff(row, !($event.target as HTMLInputElement).checked)" />
+              {{ t("set.models.thinkingOnly") }}
             </label>
-            <template v-if="row.thinking.on">
-              <label class="cp-option">
-                <input type="checkbox" :checked="!row.thinking.canOff" data-model-thinking="only" @change="setCanOff(row, !($event.target as HTMLInputElement).checked)" />
-                {{ t("set.models.thinkingOnly") }}
-              </label>
-              <label class="cp-option">
-                <input type="checkbox" :checked="row.thinking.canOff" data-model-thinking="canOff" @change="setCanOff(row, ($event.target as HTMLInputElement).checked)" />
-                {{ t("set.models.thinkingCanOff") }}
-              </label>
-              <div class="cp-menu-label">{{ t("set.models.thinkingEfforts") }}</div>
-              <label v-for="level in THINKING_LEVELS" :key="level" class="cp-option">
+            <label class="cp-tick">
+              <input type="checkbox" :checked="row.thinking.canOff" data-model-thinking="canOff" @change="setCanOff(row, ($event.target as HTMLInputElement).checked)" />
+              {{ t("set.models.thinkingCanOff") }}
+            </label>
+          </template>
+        </div>
+        <template v-if="row.thinking.on">
+          <div class="cp-think-field">
+            <div class="cp-think-label">{{ t("set.models.thinkingDefault") }}</div>
+            <SelectMenu
+              class="cp-select"
+              :model-value="row.thinking.default ?? 'auto'"
+              :options="defaultOptions(row)"
+              match-width
+              :data-model-effort-default="row.id"
+              @update:model-value="row.thinking.default = $event === 'auto' ? undefined : ($event as Effort)"
+            />
+          </div>
+          <div class="cp-think-field">
+            <div class="cp-think-label">{{ t("set.models.thinkingEfforts") }}</div>
+            <div class="cp-think-grid">
+              <label v-for="level in THINKING_LEVELS" :key="level" class="cp-tick">
                 <input type="checkbox" :checked="row.thinking.efforts.includes(level)" :data-model-effort="level" @change="toggleLevel(row, level, ($event.target as HTMLInputElement).checked)" />
                 {{ levelLabel(level) }}
               </label>
-              <template v-if="row.thinking.efforts.length">
-                <div class="cp-menu-label">{{ t("set.models.thinkingDefault") }}</div>
-                <button
-                  v-for="choice in [undefined, ...row.thinking.efforts]"
-                  :key="choice ?? 'auto'"
-                  type="button"
-                  role="menuitemradio"
-                  class="cp-option"
-                  :aria-checked="row.thinking.default === choice"
-                  :data-model-effort-default="choice ?? 'auto'"
-                  @click="row.thinking.default = choice"
-                >
-                  <span>{{ choice ? levelLabel(choice) : t("set.models.thinkingAuto") }}</span>
-                  <span v-if="row.thinking.default === choice" class="cp-check">✓</span>
-                </button>
-              </template>
-            </template>
+            </div>
           </div>
-        </div>
+        </template>
       </div>
       <div v-if="limitBad(row)" class="cp-error" data-model-limit-error>{{ t("provider.custom.limitInvalid") }}</div>
     </div>
@@ -1248,15 +1245,37 @@ defineExpose({ submit, canSave, busy, dirty, testConnection })
 }
 
 /* MiMo rules the number off from the presets above it. */
-.cp-menu.thinking {
-  min-width: 220px;
-  max-height: none;
+.cp-think {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.cp-menu-label {
-  padding: 8px 8px 2px;
+.cp-think-switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+
+.cp-tick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-strong);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  cursor: pointer;
+}
+
+.cp-think-label {
+  margin-block-end: 6px;
   color: var(--text-weak);
-  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+.cp-think-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 12px;
 }
 
 .cp-menu-custom {
