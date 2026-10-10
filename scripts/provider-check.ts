@@ -177,6 +177,22 @@ async function main(): Promise<void> {
       note("the record is replaced, not duplicated", config.get().customProviders.length === 1, config.get().customProviders)
       note("the new values won", config.definition("probe")?.baseURL === "https://example.test/v2")
       note("and the id is no longer disabled", config.get().disabledProviders.length === 0)
+
+      // The user's own removal forgets the record: nothing is left to turn up in the config page.
+      await config.set({ customProviders: config.get().customProviders.filter((row) => row.id !== "probe") }, ["probe"])
+      note("a removal the user asked for leaves no record", !config.get().customProviders.some((row) => row.id === "probe"), config.get().customProviders)
+      note("and no disabled id", !config.get().disabledProviders.includes("probe"), config.get().disabledProviders)
+      note("the remove handler passes the id to forget", /customProviders\.filter\(\(entry\) => entry\.id !== request\.provider\) \}, \[request\.provider\]\)/.test(handlers))
+
+      // A record an older build left disabled is dropped at the next start, and a disabled built-in is not touched.
+      await config.set({ customProviders: [entry] })
+      await config.set({ customProviders: [] })
+      await config.set({ disabledProviders: [...config.get().disabledProviders, "anthropic"] })
+      note("an older removal still left a disabled record", config.get().customProviders.some((row) => row.id === "probe"))
+      const restarted = new Config(new Storage(root), new Bus(), path.join(root, "credentials.json"))
+      await restarted.load()
+      note("a start drops the leftover record", !restarted.get().customProviders.some((row) => row.id === "probe"), restarted.get().customProviders)
+      note("and keeps a disconnected built-in disabled", restarted.get().disabledProviders.join() === "anthropic", restarted.get().disabledProviders)
     }
   }
 

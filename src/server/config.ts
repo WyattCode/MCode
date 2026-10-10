@@ -394,6 +394,21 @@ function customProviderWrite(
   }
 }
 
+/**
+ * Removing a provider used to leave its record behind, disabled, and the config
+ * page kept showing it. Those leftovers are what a removal meant to delete, so a
+ * start drops them; a built-in's id in the disabled list is its disconnect, not touched.
+ */
+function forgetDisabledCustom(config: AppConfig): boolean {
+  const off = new Set(config.disabledProviders ?? [])
+  const gone = config.customProviders.filter((entry) => off.has(entry.id))
+  if (!gone.length) return false
+  const ids = new Set(gone.map((entry) => entry.id))
+  config.customProviders = config.customProviders.filter((entry) => !ids.has(entry.id))
+  config.disabledProviders = (config.disabledProviders ?? []).filter((id) => !ids.has(id))
+  return true
+}
+
 type CustomModelEntry = NonNullable<CustomProvider["models"]>[number]
 
 /**
@@ -724,7 +739,7 @@ export class Config {
     // Read before anything is merged: what follows must not write over a newer document.
     this.fromNewerVersion = typeof stored?.schemaVersion === "number" && stored.schemaVersion > CONFIG_SCHEMA_VERSION
     this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
-    const retired = dropRetired(this.current)
+    const retired = dropRetired(this.current) || forgetDisabledCustom(this.current)
     // Before the migrations, which read these values as the types they claim to be; in memory only.
     this.held = sanitizeHeld(this.current, stored)
     /*
@@ -1062,17 +1077,22 @@ export class Config {
     await Promise.allSettled([this.setting, this.persisting])
   }
 
-  set(patch: Partial<AppConfig>): Promise<AppConfig> {
-    const next = this.setting.catch(() => undefined).then(() => this.setNow(patch))
+  /**
+   * `forget` names custom providers to delete outright, for the one caller that
+   * means it: the user removing a provider. Every other write keeps the rule in
+   * `customProviderWrite` - an id that leaves the list is disabled, its record kept.
+   */
+  set(patch: Partial<AppConfig>, forget: readonly string[] = []): Promise<AppConfig> {
+    const next = this.setting.catch(() => undefined).then(() => this.setNow(patch, forget))
     this.setting = next
     return next
   }
 
-  private async setNow(patch: Partial<AppConfig>): Promise<AppConfig> {
+  private async setNow(patch: Partial<AppConfig>, forget: readonly string[]): Promise<AppConfig> {
     const previous = this.current
     const held = new Map(this.held)
     try {
-      return await this.apply(patch)
+      return await this.apply(patch, forget)
     } catch (err) {
       // A save that could not be written leaves the settings as they were, so memory never runs ahead of the file.
       this.current = previous
@@ -1081,7 +1101,7 @@ export class Config {
     }
   }
 
-  private async apply(patch: Partial<AppConfig>): Promise<AppConfig> {
+  private async apply(patch: Partial<AppConfig>, forget: readonly string[]): Promise<AppConfig> {
     if (typeof patch.projectRoot === "string" && patch.projectRoot.trim()) await this.projectLocations.assert(patch.projectRoot)
     const existing = new Set([...this.current.projects, ...this.current.closedProjects])
     for (const directory of [...(Array.isArray(patch.projects) ? patch.projects : []), ...(Array.isArray(patch.closedProjects) ? patch.closedProjects : [])]) {
@@ -1096,6 +1116,14 @@ export class Config {
     dropRetired(this.current)
     if (patch.customProviders) {
       this.current = { ...this.current, ...customProviderWrite(providersBefore, this.current) }
+    }
+    if (forget.length) {
+      // A provider the user removed leaves no record behind to turn up in the config page or be restored by a later add.
+      this.current = {
+        ...this.current,
+        customProviders: this.current.customProviders.filter((entry) => !forget.includes(entry.id)),
+        disabledProviders: (this.current.disabledProviders ?? []).filter((id) => !forget.includes(id)),
+      }
     }
     // A folder taken out of the removed set is a project again, and one put in it leaves the list.
     if (patch.projects || patch.closedProjects) {

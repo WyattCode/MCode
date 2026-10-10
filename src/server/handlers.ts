@@ -1266,9 +1266,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "provider.removeCustom": {
       const config = runtime.config.get()
-      await runtime.config.set({
-        customProviders: config.customProviders.filter((entry) => entry.id !== request.provider),
-      })
+      // Deleted for good, record and all: a disabled record left in config.json read as a model that had come back.
+      await runtime.config.set({ customProviders: config.customProviders.filter((entry) => entry.id !== request.provider) }, [request.provider])
       await runtime.config.setApiKey(request.provider, "")
       return { providers: runtime.config.providers() }
     }
