@@ -1868,6 +1868,25 @@ export interface CustomModel {
   cacheTTL?: "5m" | "1h"
   /** MiMo's `interleaved.field`: the message field an OpenAI-compatible model reads its own earlier reasoning back from. */
   interleaved?: "reasoning" | "reasoning_content" | "reasoning_details"
+  /**
+   * A model that reasons, and the levels it takes.
+   *
+   * MiMo draws an effort menu only for Claude and GPT-5 by name, so a model
+   * served by anyone else (a DeepSeek on the user's own server) had no way to
+   * say it reasons or which levels its server accepts. Present means "this
+   * model thinks". Absent leaves the by-name rule as it was.
+   */
+  thinking?: CustomThinking
+}
+
+/** What a custom model says about its own thinking. */
+export interface CustomThinking {
+  /** The levels the server accepts, in the order to offer them: any of low, medium, high, xhigh, max. */
+  efforts: Effort[]
+  /** Whether the server takes `none` (do not think). Absent means the model only thinks. */
+  canOff?: boolean
+  /** The level used when the app-wide one is not among these; absent means medium. */
+  default?: Effort
 }
 
 export interface CustomProvider {
@@ -2001,6 +2020,8 @@ export interface ModelInfo {
    * exactly one level and Claude 4.6 really does lack `xhigh`.
    */
   variants: Effort[]
+  /** The level a model with levels falls back to when the app-wide one is not offered; absent means medium. */
+  defaultEffort?: Effort
 }
 
 // ---------------------------------------------------------------------------

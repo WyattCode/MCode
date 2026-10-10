@@ -31,11 +31,12 @@ export function cycleVariant(variants: readonly Effort[], selected?: Effort): Ef
 
 /**
  * The level a model runs at once it is chosen, as MiMo clamps it: the level
- * already set if this model offers it, else medium, else the model's first.
+ * already set if this model offers it, else the model's own default (a custom
+ * model may name one), else medium, else the model's first.
  * A model without levels has none. The menu no longer has a "follow the
  * default" row, so a model with levels always has one named.
  */
-export const clampEffort: (variants: readonly Effort[], level?: Effort) => Effort | undefined = effortToSend
+export const clampEffort: (variants: readonly Effort[], level?: Effort, preferred?: Effort) => Effort | undefined = effortToSend
 
 /** The families MiMo draws a round vendor badge for in the model menu. */
 export type ModelFamily = "claude" | "openai" | "gemini" | "deepseek" | "kimi" | "glm" | "minimax" | "qwen" | "hunyuan"

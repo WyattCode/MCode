@@ -124,6 +124,7 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 与 MiMo 故意不同的地方（用户定的，不要改回去）
 
+- **自定义模型可以自己声明思考强度**（第四十七轮，用户 2026-10-10 定的，照 WB 的自定义模型表单）。MiMo 只给 Claude 和 GPT-5 按名字画强度菜单，其余模型（DeepSeek、Qwen、Kimi……）没有菜单也不发强度；MCode 允许自定义模型在表单里说「我会思考、接受这几档、能不能关、默认哪档」，菜单和线上参数都以它的话为准。没声明的模型行为和 MiMo 一样。不要把它当成多出来的功能删掉。
 - **第三十一轮从 OpenCode v2 搬来、MiMo 没有的能力**（用户 2026-09-27 定的：内核和 Agent 编程能力跟随 v2）。以后对照 MiMo 时不要当成多出来的功能删掉：
   - 运行中发消息可以**排队**（排队按钮 / Alt+Enter），输入框上方的排队栏；默认仍是 MiMo 的插话。
   - **联网搜索**工具 `websearch`，第一次用时问一次；**读取 MCP 资源**的两个工具；**代码模式**（每个 MCP 服务单独开关，在服务的「工具」面板里，默认关）。
@@ -306,6 +307,29 @@ build、typecheck、十二项专项检查已通过，追加取消保护后的最
 **范围与不计入新特性的内容**：没有发现一组成套新增的聊天、查看器或模型设置入口，但此轮不是每页/每种账号的完整交互回归，不能据此保证全量对齐。侧栏标记不证明录制回放本轮才发布；[官方桌面版更新记录](https://mimo.mi.com/docs/zh-CN/updates/feature/desktop) 仍只列 2026-09-01 初版，已提到 Record & Replay，没有提供 26.929 的逐项日志。旧基线不含完整技能资源和浏览器扩展，因此不推断当前出现的技能、扩展或 evolve 资源全是本次新增。账号/邀请错误与个人资料描述变化没有算成 MCode 通用功能差距。实际运行验到水印设置入口，其余新增行为依据静态接线；未用用户账号制造子智能体或操作任务。
 
 本轮只更新交接记录，产品仍是 **0.7.1**，界面对齐基准仍是 **26.920**。mdcheck 与 git diff --check 已通过；本轮没有产品改动，没有重跑构建和功能回归。
+
+### 第四十七轮：macOS 上接手，自定义模型自己声明思考强度（2026-10-10）
+
+在 macOS（Apple Silicon，Xcode 27 的 actool）上接手，分支 `macos-sync-0.7.1`，基于 `main`（#16，0.7.1）；旧分支 `macos-sync-0.4.7` 里的三个 macOS 提交挑过来两个（本地网络授权与搜索回退、红绿灯对齐），第三个（菜单栏图标）被 `main` 的 R33 取代，跳过。**没有推送、没有开 PR。**
+
+**产品修复（macOS）**
+
+- `resolvePath` 拿符号链接解析后的真实路径去比记忆目录，记忆目录本身没解析；数据目录经过链接（`/var` → `/private/var`）时，记忆文件会被当成项目外文件弹授权。现在两边都解析（`src/server/tool/fs-util.ts`）。
+- **打包产物的签名是坏的**（最重要）：没有证书时 electron-builder 跳过签名，留下 Electron 原版的临时签名——标识符是 `Electron` 而不是 `dev.mcode.app`，Info.plist 和资源没封存，`codesign --verify` 失败。系统认不出这个应用，「本地网络」开关打开也不生效，连局域网机器一律 `EHOSTUNREACH`（用 `open --env ELECTRON_RUN_AS_NODE=1 -a MCode.app --args probe.js` 以应用自己的身份复现，终端里同一地址是通的）。`scripts/mac-adhoc-sign.cjs` 作为 `afterPack` 钩子，**仅在本机没有任何有效证书时**做一次完整的临时签名；有证书时 electron-builder 照常签名并覆盖它。临时签名每次打包都会变，系统可能要重新授权；要稳定得有固定的开发者证书。
+- 打 macOS 包要 Xcode 26 以上的 `actool`（图标包 `build/icon.icon`），且要同意许可（`sudo xcodebuild -license accept`）。目前只出 arm64，未签名、未公证。
+
+**让测试能在 macOS 上跑完**（见 `48bddf7b`）：smoke 入口把 `TMPDIR` 解析成真实路径；esbuild 在 macOS 是原生二进制，用 `scripts/esbuild-command.ts` 启动；Electron 路径向 `electron` 包要；`Math.max(...大数组)` 改 `reduce`；家目录搜索夹具在 macOS 用 `Library`；第九轮迁移夹具用 `identityKey`；R18-U1 等断言更新到 macOS 侧栏新尺寸（98 / 152）。smoke 现在 **7701 passed / 6 failed**（Windows 上是 0）。剩下的六条：随包运行时只有 `win32-x64`，macOS 上没有 ripgrep 和 Python（2 条，外加依赖 rg 的「被停止的 glob / grep」2 条未查原因）；`D:\` 盘符路径的检查是 Windows 专用（1 条）；「循环回复应在输出上限前截断」是模拟服务一次写完 15200 字符的时序问题（1 条）。
+
+**自定义模型自己声明思考强度（本轮功能）**
+
+用户的本地 DeepSeek V4.1（sglang，`http://192.168.10.233:8888/v1`）按 `reasoning_effort` 分档：直接用 `curl` 实测，`none` 不思考，`low` / `medium` / `high` / `max` 的推理 token 递增（同一道难题：约 4.6K / 6.5K / 10K / 8K–16K），非法值报错，接受 `none / minimal / low / medium / high / xhigh / max`；不传参数时服务**默认不思考**。而 MiMo 只给 Claude 和 GPT-5 按名字画强度菜单，这个模型既没有菜单，也不发强度，于是一直没在思考。
+
+- 自定义模型新增 `thinking: { efforts, canOff?, default? }`（`CustomThinking`，`src/shared/protocol.ts`）：有它就是「这个模型会思考」。`efforts` 取 `low / medium / high / xhigh / max` 的子集（WB 表单的五档），`canOff` 为真时菜单最前面多一项 `none`，`default` 是应用级强度不在菜单里时的回落（缺省 medium）。
+- 菜单以模型自己的话为准（`ModelEntry.menu`），没说话的模型仍走 MiMo 的按名字规则（`menuEfforts` 没动）；线上发送的集合 `ModelEntry.efforts` 与菜单一致。`effortToSend(menu, chosen, preferred)` 加了第三个参数；窗口和运行器都用它（`Config.menu()`）。
+- 表单（`CustomProviderForm.vue`）照 WB 的设置，**直接放在模型卡片里**：思考模式、仅思考模式、允许关闭思考（后两项是同一个开关的两端）排成一行，默认思考强度是下拉框，支持的思考强度是三列复选框；勾上思考模式才展开后两块。第一版把这些塞进一个按钮弹出的 14 行菜单，窗口矮时被截断，用户当场否掉；探针截图验证过现在的样子（临时数据目录，没碰真实配置）。新文案 6 条，18 种语言都有。
+- 应用级强度仍是一个值（MiMo 的做法）：从 Claude 切到这个模型，原来的 `high` 还在菜单里就继续用 `high`；只有不在菜单里才回落到模型的默认或 medium。
+- 验证：`scripts/smoke-round47.ts` 39 条；故意改坏两处（删掉模型默认、菜单不进窗口），分别 2 条、8 条变红（`default` 一条原先恰好等于菜单第一项而没抓到，已改成 `high`，再改坏就 4 条变红）；十二项专项检查全过。**真实模型**：经完整 runner 对这台 DS 跑 `none` / `low` / `high` / `max`，`none` 没有推理文本，其余有，且越高越长。
+- 顺带看到、没处理：这台服务把推理 token 放在 `usage.reasoning_tokens`，而 MCode 只读 `completion_tokens_details.reasoning_tokens`，所以用量里推理 token 记为 0，只影响用量显示，不影响功能。
 
 ### 第四十六轮：二次复核，提交并发布 0.7.1（2026-10-09）
 

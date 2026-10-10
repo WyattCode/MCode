@@ -247,7 +247,7 @@ export async function roundEighteenLabelChecks(check: Check, section: (name: str
       check("R18-A1 wav: the tone is the standard's rhythm for AI, short-long short-short, and was not there before", endsWithTone(samples, 1, 16000) && !endsWithTone(voice.subarray(44), 1, 16000) && AIGC_TONE.pattern.join() === "1,-1,3,-3,1,-1,1")
       check("R18-A1 wav: the RIFF size matches the file and the AIGC INFO entry reads back", voiceOut.readUInt32LE(4) === voiceOut.length - 8 && fields(wavAigc(voiceOut)))
       const toneStereo = aigcTone(44100, 2)
-      check("R18-A1 wav: the tone peaks at its level, a quarter of full scale", Math.max(...Array.from({ length: toneStereo.length / 2 }, (_, i) => Math.abs(toneStereo.readInt16LE(i * 2)))) / 32767 <= AIGC_TONE.amplitude + 0.001)
+      check("R18-A1 wav: the tone peaks at its level, a quarter of full scale", Array.from({ length: toneStereo.length / 2 }, (_, i) => Math.abs(toneStereo.readInt16LE(i * 2))).reduce((a, b) => Math.max(a, b), 0) / 32767 <= AIGC_TONE.amplitude + 0.001)
 
       // MP3: a TXXX frame described AIGC, the tag's title kept, the audio byte for byte.
       const song = mp3WithTitle()

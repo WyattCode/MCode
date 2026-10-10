@@ -149,7 +149,12 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
-        input: { index: resolve("src/main/index.ts") },
+        input: {
+          index: resolve("src/main/index.ts"),
+          // Its own entry because it is loaded as a worker at runtime, by a path
+          // resolved next to the main bundle rather than by an import.
+          "search-worker": resolve("src/server/tool/search-worker.ts"),
+        },
       },
     },
     resolve: {

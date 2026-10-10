@@ -71,6 +71,15 @@ export interface ModelEntry {
    * turned out to have been read off the wrong gateway's copy of the snapshot.
    */
   efforts?: Effort[]
+  /**
+   * The levels the model MENU offers, when the model's own owner has said (a
+   * custom model's `thinking`). Absent, the menu follows MiMo's by-name rule
+   * (`menuEfforts`). `efforts` above is what goes on the wire; for a custom
+   * model the two are the same list.
+   */
+  menu?: Effort[]
+  /** The level to fall back to when the app-wide one is not in the menu. */
+  defaultEffort?: Effort
 }
 
 export interface ProviderDefinition {

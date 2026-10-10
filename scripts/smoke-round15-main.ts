@@ -14,6 +14,7 @@ import os from "node:os"
 import path from "node:path"
 import { createRequire } from "node:module"
 import type { Check } from "./smoke-round5"
+import { esbuildCommand } from "./esbuild-command"
 
 type Tried = { ok: boolean; value?: unknown; error?: string }
 type MainResult = {
@@ -44,10 +45,11 @@ async function underElectron(root: string): Promise<MainResult> {
   try {
     // ESM, as the app's own main is: office.ts reaches code that reads import.meta.url.
     const bundle = path.join(root, "out", "smoke-round15-main.mjs")
+    const esbuild = esbuildCommand(root)
     execFileSync(
-      process.execPath,
+      esbuild.file,
       [
-        path.join(root, "node_modules", "esbuild", "bin", "esbuild"),
+        ...esbuild.prefix,
         "scripts/smoke-round15-main-electron.ts",
         "--bundle",
         "--platform=node",

@@ -522,9 +522,9 @@ function openMenu(event: MouseEvent) {
 }
 
 /* The side column folded away: its toggle and 新建任务 float over the start of this row. */
-/* MiMo 26.920's inset past the folded controls: 新建任务's end (107 + 24) less 2, the window's own x now that no rail stands before it. */
+/* MiMo 26.920's inset past the folded controls: the controls' end less 2, the window's own x now that no rail stands before it. On macOS those controls sit at 98, clear of the traffic lights, so this is 23 further in than the off-macOS 129 would be. */
 .head.after-rail {
-  padding-inline-start: 129px;
+  padding-inline-start: 152px;
 }
 
 /* Left-aligned folded controls (the user's choice, off macOS): 新建任务 ends at 18 + 24 + 8 + 24 = 74, less the same 2. */

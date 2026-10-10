@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from "vue"
 import type { ProviderStatus } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
+import { localDownMessage, offMachine } from "../lib/local-runtime"
 import { notify, notifyFailure } from "../lib/toast"
 import { groupProviders, providerLabel, quickAddGroups, type Group } from "../lib/connect"
 import { cloneId } from "../lib/custom-model"
@@ -114,7 +115,8 @@ async function saveEndpoint(provider: ProviderStatus) {
 /** A better answer than the network's own for a runtime on this machine that is not running its server. */
 function localFailure(provider: ProviderStatus): string | undefined {
   if (!provider.authMethods?.includes("local")) return undefined
-  return t("auth.localDown", { name: provider.name, url: provider.baseURL ?? "" })
+  const url = provider.baseURL ?? ""
+  return localDownMessage(provider.name, url, app.platform === "darwin" && offMachine(url))
 }
 
 const refreshing = ref(false)
