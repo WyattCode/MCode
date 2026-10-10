@@ -4391,7 +4391,7 @@ onBeforeUnmount(() => {
 .rail-no-drag {
   position: fixed;
   top: 13px;
-  inset-inline-start: 75px;
+  inset-inline-start: 98px;
   z-index: 1;
   width: 56px;
   height: 24px;

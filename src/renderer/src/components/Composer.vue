@@ -2652,7 +2652,7 @@ const variants = computed<Effort[]>(() => currentModel.value?.variants ?? [])
  * model with levels always shows one.
  */
 const effortLevel = computed<Effort | undefined>(() =>
-  clampEffort(variants.value, app.config?.effort),
+  clampEffort(variants.value, app.config?.effort, currentModel.value?.defaultEffort),
 )
 
 const effortLabel = computed(() => {
@@ -2985,7 +2985,8 @@ async function chooseAgent(next: (typeof AGENTS)[number]) {
 async function chooseModel(provider: string, model: string) {
   menu.value = undefined
   const before = app.modelPick(sessionID.value)
-  const variants = props.side ? [] : (findModel(app.providers, { provider, model })?.variants ?? [])
+  const chosen = findModel(app.providers, { provider, model })
+  const variants = props.side ? [] : (chosen?.variants ?? [])
   /*
    * On the home screen there is no session to set it on, so the choice is the
    * app's default - which the next task created from here will start with, and
@@ -2996,11 +2997,11 @@ async function chooseModel(provider: string, model: string) {
    * on offer.
    */
   if (!sessionID.value) {
-    const effort = clampEffort(variants, app.config?.effort)
+    const effort = clampEffort(variants, app.config?.effort, chosen?.defaultEffort)
     await app.patchConfig({ model: { provider, model }, smart: false, ...(effort && effort !== app.config?.effort ? { effort } : {}) })
   } else {
     await app.setModel({ provider, model }, sessionID.value)
-    const effort = clampEffort(variants, app.config?.effort)
+    const effort = clampEffort(variants, app.config?.effort, chosen?.defaultEffort)
     if (effort && effort !== app.config?.effort) await app.setEffort(effort)
   }
   app.announceModel(before, { provider, model })

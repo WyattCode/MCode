@@ -17,6 +17,7 @@ import type { Check } from "./smoke-round5"
 import * as runtimesScript from "./runtimes.mjs"
 import { NsisUpdater } from "electron-updater"
 import { createUpdater, resyncInstallerBase, type AutoUpdaterLike, type FeedInfo } from "../src/main/updater"
+import { esbuildCommand } from "./esbuild-command"
 
 type Seen = { host: string; path: string; method: string; referer?: string; agent?: string; cookie?: string }
 type Answer = { status: number; type: string | null; bytes: number }
@@ -91,10 +92,11 @@ async function underElectron(root: string): Promise<NetResult> {
       env: { ...process.env, MSYS_NO_PATHCONV: "1", MSYS2_ARG_CONV_EXCL: "*" },
     })
     const bundle = path.join(root, "out", "smoke-round14-net.cjs")
+    const esbuild = esbuildCommand(root)
     execFileSync(
-      process.execPath,
+      esbuild.file,
       [
-        path.join(root, "node_modules", "esbuild", "bin", "esbuild"),
+        ...esbuild.prefix,
         "scripts/smoke-round14-net-electron.ts",
         "--bundle",
         "--platform=node",

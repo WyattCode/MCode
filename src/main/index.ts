@@ -53,6 +53,7 @@ import { PICKER_BUSY } from "@shared/native-pick"
 import { readOnlyInstall, type InstallAnswer } from "@shared/update-reason"
 import { readSoundfont } from "./soundfont"
 import { applyZoom } from "./zoom"
+import { askForLocalNetwork } from "./local-network"
 import { APP_NAME, WINDOW_MIN, badgeCount, noticeTitle, pinnedProfile, readTaskNotice, relaunchArgs, textMenuItems, wantsNotice } from "./desktop-rules"
 import { registerOffice } from "./office"
 import { COMPOSER_INPUT_FILE, registerComposerInput } from "./composer-input"
@@ -646,8 +647,14 @@ function createWindow(show = true): BrowserWindow {
     // The renderer draws its own title bar so the window matches the app's
     // dark chrome instead of the OS default.
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
-    // MiMo's traffic lights, 5 in and 15 down.
-    ...(process.platform === "darwin" ? { trafficLightPosition: { x: 5, y: 15 } } : {}),
+    /*
+     * MiMo starts the group at x=20, and the row below it centres on y=25: the
+     * side column's control row is 24px tall with 13px above it, so a 12px
+     * light wants its top at 25 - 6 = 19 to sit on that line. x=5 put the group
+     * further left than macOS itself and y=15 sat it four pixels high, which is
+     * what "not lining up" was.
+     */
+    ...(process.platform === "darwin" ? { trafficLightPosition: { x: 20, y: 19 } } : {}),
     /*
      * Windows keeps its own caption buttons, drawn into the bar as an overlay.
      *
@@ -883,6 +890,12 @@ app.whenReady().then(async () => {
    * already being recorded by the time it happens.
    */
   wireProcessRecovery()
+  /*
+   * Early, so the macOS Local Network permission is settled while the user is
+   * still setting the app up rather than on the click that connects a runtime
+   * on another machine, with the request already failing behind it.
+   */
+  askForLocalNetwork()
   // Packaged only: a development build would register the bare Electron binary.
   if (app.isPackaged) app.setAsDefaultProtocolClient(LINK_SCHEME)
 

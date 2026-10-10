@@ -3,6 +3,7 @@ import fs from "node:fs/promises"
 import { ToolError, type ToolContext } from "./types"
 import { historyService, isMemoryPath, memoryWritable } from "../history/service"
 import { MEMORY_SANDBOXED_AGENTS, memoryWriteRefusal, sandboxRefusal } from "../memory/guard"
+import { insideMemory } from "../memory/paths"
 import { guardAppData } from "./app-data"
 import { worktreeTop } from "../session/worktree"
 
@@ -190,7 +191,10 @@ export async function resolvePath(context: ToolContext, target: string, access: 
   if (repository && within(await truePath(repository))) return resolved
 
   // memory: the memory folder is reached without asking, as MiMo does.
-  if (isMemoryPath(real)) return resolved
+  // `real` is symlink-resolved, so the root is compared in the same spelling: a data folder reached through a link
+  // (macOS's /var -> /private/var) would otherwise never match.
+  const memoryRoot = historyService()?.memoryRoot
+  if (isMemoryPath(real) || (memoryRoot && insideMemory(await truePath(memoryRoot), real))) return resolved
 
   // Approve the directory itself, not the file, so reading a second file in the
   // same folder does not ask again.

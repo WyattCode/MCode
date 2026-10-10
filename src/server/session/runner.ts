@@ -20,7 +20,7 @@ import type {
 import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 import { Identifier } from "@shared/id"
-import { effortToSend, menuEfforts } from "@shared/effort-menu"
+import { effortToSend } from "@shared/effort-menu"
 import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fallback"
 import { readTask, smartRoute, type TaskReading } from "@shared/smart"
 import type { Bus } from "../bus"
@@ -2997,7 +2997,8 @@ export class SessionRunner {
        * MiMo's effort is one app-wide value, not a conversation's own, and it
        * is sent only for a model whose menu offers levels - clamped to them.
        */
-      const effort = effortToSend(menuEfforts(session.model.model, this.config.modelEntry(session.model)?.name), config.effort)
+      const menu = this.config.menu(session.model)
+      const effort = effortToSend(menu.levels, config.effort, menu.preferred)
 
       const assistant: AssistantMessage =
         continuing ??

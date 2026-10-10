@@ -430,8 +430,10 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
     const savedHome = process.env.HOME
     const fenced = os.homedir
     try {
-      for (const folder of ["Pictures", "Documents", "AppData/Roaming", "code/Pictures"]) await fs.mkdir(path.join(home, folder), { recursive: true })
-      for (const file of ["Pictures/note-a.txt", "Documents/note-b.txt", "AppData/Roaming/note-c.txt", "code/note-d.txt", "code/Pictures/note-e.txt"]) {
+      // The per-user application folder: AppData on Windows, Library on macOS (each is on that platform's protected list).
+      const appFolder = process.platform === "darwin" ? "Library/Caches" : "AppData/Roaming"
+      for (const folder of ["Pictures", "Documents", appFolder, "code/Pictures"]) await fs.mkdir(path.join(home, folder), { recursive: true })
+      for (const file of ["Pictures/note-a.txt", "Documents/note-b.txt", `${appFolder}/note-c.txt`, "code/note-d.txt", "code/Pictures/note-e.txt"]) {
         await fs.writeFile(path.join(home, file), "x")
       }
       process.env.USERPROFILE = home
