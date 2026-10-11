@@ -15,6 +15,8 @@ import { readFileSync } from "node:fs"
 import type { Check } from "./smoke-round5"
 import { Bus } from "../src/server/bus"
 import { SessionStore } from "../src/server/session/store"
+import { STALE_MEDIA_NOTE, toMessages } from "../src/server/provider/openai"
+import type { Message } from "../src/shared/protocol"
 import { Storage } from "../src/server/storage"
 
 const source = (file: string) => readFileSync(file, "utf8")
@@ -62,4 +64,31 @@ export async function roundFiftyThreeChecks(check: Check, section: (name: string
   section("Round 53: with every model gone, 自动")
   check("nothing left to pick puts the default and each stranded conversation on 自动", /if \(!ref\) \{[\s\S]{0,200}fallBackToSmart\(\)/.test(store) && /\.filter\(\(entry\) => !entry\.smart && !modelAvailable\(providers\.value, entry\.model\)\)/.test(store))
   check("but not at launch, where nothing connected yet is not a loss", /ensureUsableModel\(undefined, \{ smartWhenNone: false \}\)/.test(store))
+
+  section("Round 53: a tool's picture is looked at once, so the server's prefix cache survives")
+  /*
+   * Measured on the LAN Qwen (2026-10-11): 27k tokens, a second request cached 27286 of them
+   * without a picture and 0 with one - wherever it sat, even after an identical text prefix.
+   * A 42-minute run took a screenshot, and every later step recomputed 57-78k tokens.
+   */
+  const shot = [{ path: "a.png", mime: "image/png", data: "iVBORw0KGgo=" }]
+  const step = (n: number, withShot: boolean): Message => ({
+    id: `msg_a${n}`,
+    sessionID: "ses_r53",
+    role: "assistant",
+    model: { provider: "p", model: "m" },
+    agent: "build",
+    parts: [{ type: "tool", id: `p${n}`, callID: `call_${n}`, name: "read", status: "completed", input: { file_path: "a.png" }, output: "shown", ...(withShot ? { attachments: shot } : {}), time: { created: n } }],
+    time: { created: n },
+  })
+  const history: Message[] = [{ id: "msg_u", sessionID: "ses_r53", role: "user", text: "look", attachments: [], time: { created: 1 } }, step(2, true), step(3, true), step(4, true)]
+  const wire = toMessages("sys", history, { image: true }) as Record<string, any>[]
+  const pictures = wire.filter((m) => m.role === "user" && Array.isArray(m.content) && m.content.some((p: any) => p.type === "image_url"))
+  const stale = wire.filter((m) => m.role === "user" && m.content === STALE_MEDIA_NOTE)
+  check("only the step the model has not answered keeps its picture", pictures.length === 1 && wire.lastIndexOf(pictures[0]) === wire.length - 1, { pictures: pictures.length })
+  check("the earlier two are a short note instead", stale.length === 2, { stale: stale.length })
+  check("each picture's message still follows its own tool result", wire.map((m) => m.role).join() === "system,user,assistant,tool,user,assistant,tool,user,assistant,tool,user")
+  const later = toMessages("sys", [...history, { id: "msg_a5", sessionID: "ses_r53", role: "assistant", model: { provider: "p", model: "m" }, agent: "build", parts: [{ type: "text", id: "t5", text: "done" }], time: { created: 5 } } as Message], { image: true }) as Record<string, any>[]
+  check("once the model has spoken, none of the pictures is sent again", !later.some((m) => Array.isArray(m.content) && m.content.some((p: any) => p.type === "image_url")))
+  check("a picture the user attached is not touched", (toMessages("sys", [{ id: "msg_u2", sessionID: "ses_r53", role: "user", text: "see", attachments: [{ path: "u.png", mime: "image/png", data: "iVBORw0KGgo=" }], time: { created: 1 } }, step(2, false), { id: "msg_u3", sessionID: "ses_r53", role: "user", text: "and", attachments: [], time: { created: 3 } }] as Message[], { image: true }) as Record<string, any>[]).some((m) => Array.isArray(m.content) && m.content.some((p: any) => p.type === "image_url")))
 }

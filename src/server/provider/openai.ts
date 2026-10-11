@@ -99,7 +99,11 @@ function chatMedia(part: Exclude<WirePart, { kind: "text" }>): Record<string, un
 export function toMessages(system: string, history: Message[], inputs?: Partial<ModelModalities>, interleaved?: string) {
   const out: Record<string, unknown>[] = [{ role: "system", content: system }]
 
-  for (const message of requestHistory(history)) {
+  const sent = requestHistory(history)
+  // The step the model has not answered yet: the only one whose tool pictures it still has to look at.
+  const answering = sent.findLastIndex((entry) => entry.role === "assistant")
+
+  for (const [at, message] of sent.entries()) {
     if (message.role === "user") {
       // MiMo's parts: a picture the model reads goes natively; every other attachment is named by path in the turn's blocks.
       const parts = attachmentParts(message.attachments ?? [], inputs, "chat", "user")
@@ -178,12 +182,29 @@ export function toMessages(system: string, history: Message[], inputs?: Partial<
       const notes = pieces.flatMap((piece) => (piece.kind === "text" ? [piece.text] : []))
       out.push({ role: "tool", tool_call_id: part.callID, content: [said, ...notes].filter(Boolean).join("\n\n") })
       const carried = pieces.filter((piece) => piece.kind !== "text")
-      if (carried.length) out.push({ role: "user", content: [{ type: "text", text: TOOL_MEDIA_NOTE }, ...carried.map(chatMedia)] })
+      if (!carried.length) continue
+      /*
+       * Looked at once, then let go. A server that reads any request with a picture
+       * in it from scratch (measured 2026-10-11 on the LAN Qwen: 27k tokens, cache
+       * hit 27286 without a picture and 0 with one, wherever it sat) repeated that
+       * on every later step of the turn - 33 steps and 2.2M prompt tokens for a
+       * screenshot check. The model has answered this picture by the next step;
+       * what it needs again it reads from the file.
+       */
+      out.push(
+        at === answering
+          ? { role: "user", content: [{ type: "text", text: TOOL_MEDIA_NOTE }, ...carried.map(chatMedia)] }
+          : { role: "user", content: STALE_MEDIA_NOTE },
+      )
     }
   }
 
   return out
 }
+
+/** What takes the place of a tool's picture once the model has moved past it. */
+export const STALE_MEDIA_NOTE =
+  "The file or files the tool call just above returned were shown to you at that step and are not attached again; read the file again if you need to see it."
 
 const MAX_TOKENS = 32_000
 
