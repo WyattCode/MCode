@@ -3,16 +3,16 @@
 //   $env:LAN_KEY = "<the key>"      (PowerShell; the script never prints or stores it)
 //   node scripts/lan-cache-probe.mjs
 //
-// Optional: LAN_URL (default http://192.168.10.124:8888/v1), LAN_MODEL (default Qwen3.8-Flash-Next).
+// Also set LAN_URL (the server's /v1 address); optional LAN_MODEL (default Qwen3.8-Flash-Next).
 // Each case sends two requests that share a long prefix and reports, for the second,
 // how many prompt tokens the server says it read from cache and how long the first token took.
 import zlib from "node:zlib"
 
-const URL_ = (process.env.LAN_URL ?? "http://192.168.10.124:8888/v1").replace(/\/$/, "")
+const URL_ = (process.env.LAN_URL ?? "").replace(/\/$/, "")
 const MODEL = process.env.LAN_MODEL ?? "Qwen3.8-Flash-Next"
 const KEY = process.env.LAN_KEY
-if (!KEY) {
-  console.error("Set LAN_KEY first.")
+if (!KEY || !URL_) {
+  console.error("Set LAN_KEY and LAN_URL first.")
   process.exit(1)
 }
 

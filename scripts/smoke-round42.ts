@@ -362,7 +362,7 @@ export async function roundFortyTwoChecks(check: Check, section: (name: string) 
 
     const off = (provider: string, kind: string, typed: boolean, url?: string) => JSON.stringify(thinkingOffExtra(provider, kind, typed, url))
     const template = JSON.stringify({ chat_template_kwargs: { enable_thinking: false, thinking: false } })
-    check("a typed-in server on the local network is switched off through its chat template", off("qw", "openai-compatible", true, "http://192.168.10.212:8888/v1") === template && off("qw", "openai-compatible", true, "http://localhost:1234/v1") === template && off("vllm", "openai-compatible", false) === template)
+    check("a typed-in server on the local network is switched off through its chat template", off("qw", "openai-compatible", true, "http://192.168.1.20:8888/v1") === template && off("qw", "openai-compatible", true, "http://localhost:1234/v1") === template && off("vllm", "openai-compatible", false) === template)
     // Second look: a typed-in endpoint can be a cloud API, which refuses a field it does not know.
     check("but not a typed-in cloud endpoint, which would refuse the field", thinkingOffExtra("my-openai", "openai-compatible", true, "https://api.openai.com/v1") === undefined && thinkingOffExtra("gw", "openai-compatible", true, "http://172.32.0.5/v1") === undefined && thinkingOffExtra("gw", "openai-compatible", true, "not a url") === undefined)
     check("Zhipu and DashScope by their own switches", off("zhipu", "openai-compatible", false) === JSON.stringify({ thinking: { type: "disabled" } }) && off("dashscope", "openai-compatible", false) === JSON.stringify({ enable_thinking: false }))
@@ -420,13 +420,13 @@ export async function roundFortyTwoChecks(check: Check, section: (name: string) 
     try {
       delete process.env.MCODE_ANDROID_DEVICE
       check("an emulator is a test device", isTestDevice("emulator-5554") && isTestDevice("127.0.0.1:16384") && isTestDevice("localhost:5555"))
-      check("a phone on USB or over Wi-Fi is not", !isTestDevice("0186D460499C3540") && !isTestDevice("192.168.10.30:5555"))
-      process.env.MCODE_ANDROID_DEVICE = "0186D460499C3540"
-      check("unless it is named on purpose, and then only that one", isTestDevice("0186D460499C3540") && !isTestDevice("emulator-5554"))
+      check("a phone on USB or over Wi-Fi is not", !isTestDevice("0123456789ABCDEF") && !isTestDevice("192.168.1.30:5555"))
+      process.env.MCODE_ANDROID_DEVICE = "0123456789ABCDEF"
+      check("unless it is named on purpose, and then only that one", isTestDevice("0123456789ABCDEF") && !isTestDevice("emulator-5554"))
       delete process.env.MCODE_ANDROID_DEVICE
       const refused = (() => {
         try {
-          installDemo("adb-that-is-never-run", "0186D460499C3540", "demo.apk")
+          installDemo("adb-that-is-never-run", "0123456789ABCDEF", "demo.apk")
           return "installed"
         } catch (error) {
           return (error as Error).message
