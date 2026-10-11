@@ -21,6 +21,7 @@ import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promise
 import { dirname } from "node:path"
 import { Identifier } from "@shared/id"
 import { effortToSend } from "@shared/effort-menu"
+import { NO_TESTING_NOTE, NO_TESTING_REFUSAL, forbidsTesting } from "@shared/no-testing"
 import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fallback"
 import { readTask, smartRoute, type TaskReading } from "@shared/smart"
 import type { Bus } from "../bus"
@@ -2049,6 +2050,8 @@ export class SessionRunner {
 
     // A conversation whose model has gone since it last ran moves to one that is there.
     session = await this.withAvailableModel(session)
+    // The level is the conversation's own: one stored before that took the app's at its next turn, and keeps it from here.
+    if (!session.effort) session = await this.store.setEffort(session.id, this.config.get().effort)
 
     /*
      * The project is photographed from here rather than from the first tool
@@ -2087,6 +2090,10 @@ export class SessionRunner {
     // plan: what this turn may do, or - on the turn after the switch - that it may build again.
     const planning = input.inbox ? undefined : await this.planNote(session, stored)
     if (planning) context.push(planning)
+    // Told not to test: the turn says so to the model, and the app tool is refused for it (see runTool).
+    const noTesting = !input.inbox && forbidsTesting(input.text)
+    if (noTesting) context.push(NO_TESTING_NOTE)
+    this.turn(session.id).noTesting = noTesting
     const user: UserMessage = {
       id: Identifier.message(),
       sessionID: session.id,
@@ -2811,7 +2818,7 @@ export class SessionRunner {
         role: "assistant",
         model: session.model,
         agent: session.agent,
-        effort: config.effort,
+        effort: session.effort ?? config.effort,
         parts: [],
         time: { created: Date.now() },
       }
@@ -2994,11 +3001,12 @@ export class SessionRunner {
       )
 
       /*
-       * MiMo's effort is one app-wide value, not a conversation's own, and it
-       * is sent only for a model whose menu offers levels - clamped to them.
+       * The conversation's own level (the user's choice, 2026-10-11: MiMo keeps
+       * one app-wide value), sent only for a model whose menu offers levels -
+       * clamped to them.
        */
       const menu = this.config.menu(session.model)
-      const effort = effortToSend(menu.levels, config.effort, menu.preferred)
+      const effort = effortToSend(menu.levels, session.effort ?? config.effort, menu.preferred)
 
       const assistant: AssistantMessage =
         continuing ??
@@ -3882,12 +3890,25 @@ export class SessionRunner {
       return
     }
 
+    // subagents: a subagent's calls belong to the turn of the conversation it works for.
+    const owner = this.owners.get(input.session.id) ?? input.session.id
+    // Told not to test: driving a browser or an app is what the verification loops were made of.
+    if (tool.name === "app" && this.turn(owner).noTesting) {
+      part.status = "error"
+      part.error = NO_TESTING_REFUSAL
+      part.metadata = { recoverable: true }
+      part.time.started = Date.now()
+      part.time.completed = part.time.started
+      this.settleForLoops(input.session.id, part, input.signal)
+      publish()
+      await this.store.saveMessage(assistant, true)
+      return
+    }
+
     part.status = "running"
     part.time.started = Date.now()
     publish()
 
-    // subagents: a subagent's calls belong to the turn of the conversation it works for.
-    const owner = this.owners.get(input.session.id) ?? input.session.id
     const reach = reachOf(part.name)
     if (reach !== "reads") {
       const turn = this.turn(owner)
@@ -4255,6 +4276,8 @@ export class SessionRunner {
       directory: parent.directory,
       model,
       agent,
+      // It thinks as hard as the conversation that sent it.
+      ...(parent.effort ? { effort: parent.effort } : {}),
       title: spec.description || name,
       parentID: parent.id,
       parentMessageID: call.messageID,
@@ -5050,6 +5073,8 @@ interface Turn {
   directory?: string
   /** True once a tool ran whose file changes cannot be seen from here. */
   opaque: boolean
+  /** The message this turn answers told the model not to test or verify. */
+  noTesting?: boolean
   /**
    * The user messages this turn is answering, in the order they were sent.
    *

@@ -2697,7 +2697,7 @@ const variants = computed<Effort[]>(() => currentModel.value?.variants ?? [])
  * model with levels always shows one.
  */
 const effortLevel = computed<Effort | undefined>(() =>
-  clampEffort(variants.value, app.config?.effort, currentModel.value?.defaultEffort),
+  clampEffort(variants.value, session.value?.effort ?? app.config?.effort, currentModel.value?.defaultEffort),
 )
 
 const effortLabel = computed(() => {
@@ -2718,7 +2718,7 @@ async function chooseModelEffort(provider: string, model: string, level: Effort)
     await app.patchConfig({ model: { provider, model }, smart: false, effort: level })
   } else {
     await app.setModel({ provider, model }, sessionID.value)
-    await app.setEffort(level)
+    await app.setEffort(level, sessionID.value)
   }
   app.announceModel(before, { provider, model })
 }
@@ -3046,8 +3046,8 @@ async function chooseModel(provider: string, model: string) {
     await app.patchConfig({ model: { provider, model }, smart: false, ...(effort && effort !== app.config?.effort ? { effort } : {}) })
   } else {
     await app.setModel({ provider, model }, sessionID.value)
-    const effort = clampEffort(variants, app.config?.effort, chosen?.defaultEffort)
-    if (effort && effort !== app.config?.effort) await app.setEffort(effort)
+    const effort = clampEffort(variants, session.value?.effort ?? app.config?.effort, chosen?.defaultEffort)
+    if (effort && effort !== session.value?.effort) await app.setEffort(effort, sessionID.value)
   }
   app.announceModel(before, { provider, model })
 }

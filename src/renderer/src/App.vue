@@ -3664,7 +3664,7 @@ async function cycleEffort() {
    * steps at all draws no pill and this does nothing.
    */
   const variants = findModel(app.providers, app.shownModel(app.current?.model) ?? app.config?.model)?.variants ?? []
-  const next = cycleVariant(variants, app.config?.effort)
+  const next = cycleVariant(variants, app.current?.effort ?? app.config?.effort)
   if (next) await app.setEffort(next)
 }
 
@@ -3672,7 +3672,7 @@ async function cycleEffort() {
 async function stepEffort(by: 1 | -1) {
   const variants = findModel(app.providers, app.shownModel(app.current?.model) ?? app.config?.model)?.variants ?? []
   if (!variants.length) return
-  const current = app.config?.effort
+  const current = app.current?.effort ?? app.config?.effort
   const at = current ? variants.indexOf(current) : -1
   const next = at === -1 ? variants[0] : variants[at + by]
   if (next && next !== current) await app.setEffort(next)

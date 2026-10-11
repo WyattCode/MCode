@@ -1,4 +1,4 @@
-import type { AgentName, AssistantMessage, Message, ModelRef, SessionInfo, Usage } from "@shared/protocol"
+import type { AgentName, AssistantMessage, Effort, Message, ModelRef, SessionInfo, Usage } from "@shared/protocol"
 import { Identifier } from "@shared/id"
 import type { Storage } from "../storage"
 import type { Bus } from "../bus"
@@ -257,6 +257,7 @@ export class SessionStore {
     agent?: AgentName
     goalMode?: boolean
     smart?: boolean
+    effort?: Effort
     scratch?: boolean
     /** MiMo's grouping label, carried by a branch so it is listed beside what it came from. */
     group?: string
@@ -288,6 +289,7 @@ export class SessionStore {
       slug: newSlug(),
       ...(input.goalMode ? { goalMode: true } : {}),
       ...(input.smart ? { smart: true } : {}),
+      ...(input.effort ? { effort: input.effort } : {}),
       ...(input.scratch ? { scratch: true } : {}),
       ...(input.group !== undefined ? { group: input.group } : {}),
       ...(input.sideOf ? { sideOf: input.sideOf } : {}),
@@ -483,6 +485,11 @@ export class SessionStore {
         return next
       }),
     )
+  }
+
+  /** The conversation's own effort. Not activity, so `updated` stays, as with `setAccess`. */
+  async setEffort(sessionID: string, effort: Effort): Promise<SessionInfo> {
+    return this.exclusive(this.infoKey(sessionID), () => this.writeInfo(sessionID, (session) => ({ ...session, effort })))
   }
 
   /*
@@ -747,6 +754,8 @@ export class SessionStore {
       directory: origin.directory,
       model: origin.model,
       agent: origin.agent,
+      // Its level too: a branch is the same conversation going another way, not a new one at the app's.
+      ...(origin.effort ? { effort: origin.effort } : {}),
       // A branch works the way its origin did, and in the same kind of folder.
       goalMode: origin.goalMode,
       scratch: origin.scratch,
