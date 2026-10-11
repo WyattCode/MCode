@@ -2049,6 +2049,8 @@ export class SessionRunner {
 
     // A conversation whose model has gone since it last ran moves to one that is there.
     session = await this.withAvailableModel(session)
+    // The level is the conversation's own: one stored before that took the app's at its next turn, and keeps it from here.
+    if (!session.effort) session = await this.store.setEffort(session.id, this.config.get().effort)
 
     /*
      * The project is photographed from here rather than from the first tool
@@ -2811,7 +2813,7 @@ export class SessionRunner {
         role: "assistant",
         model: session.model,
         agent: session.agent,
-        effort: config.effort,
+        effort: session.effort ?? config.effort,
         parts: [],
         time: { created: Date.now() },
       }
@@ -2994,11 +2996,12 @@ export class SessionRunner {
       )
 
       /*
-       * MiMo's effort is one app-wide value, not a conversation's own, and it
-       * is sent only for a model whose menu offers levels - clamped to them.
+       * The conversation's own level (the user's choice, 2026-10-11: MiMo keeps
+       * one app-wide value), sent only for a model whose menu offers levels -
+       * clamped to them.
        */
       const menu = this.config.menu(session.model)
-      const effort = effortToSend(menu.levels, config.effort, menu.preferred)
+      const effort = effortToSend(menu.levels, session.effort ?? config.effort, menu.preferred)
 
       const assistant: AssistantMessage =
         continuing ??

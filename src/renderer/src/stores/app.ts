@@ -1102,7 +1102,7 @@ export const useApp = defineStore("app", () => {
 
     // A default left pointing at a provider whose key was since removed would
     // fail on the first prompt with no hint as to why.
-    await ensureUsableModel()
+    await ensureUsableModel(undefined, { smartWhenNone: false })
 
     // No session is opened on boot: the launcher is the entry point, and a
     // project is chosen there. Auto-creating one would skip past it.
@@ -1872,9 +1872,16 @@ export const useApp = defineStore("app", () => {
     await api().request({ type: "session.access", sessionID, access })
   }
 
-  /** MiMo's effort is one app-wide level: every conversation, and the next, runs at it. */
-  async function setEffort(effort: Effort) {
-    await patchConfig({ effort })
+  /**
+   * A conversation's effort is its own (the user's choice, 2026-10-11; MiMo keeps
+   * one app-wide level). The app's level only says where the next conversation
+   * starts, so it follows the last choice made - not a side chat's, which is
+   * its own too.
+   */
+  async function setEffort(effort: Effort, to?: string) {
+    const target = to ?? currentID.value
+    if (target) await api().request({ type: "session.effort", sessionID: target, effort })
+    if (!target || !isSide(target)) await patchConfig({ effort })
   }
 
   async function setModel(model: ModelRef, to?: string) {
@@ -2086,7 +2093,7 @@ export const useApp = defineStore("app", () => {
    * shows the session's model, and that session was created against whatever
    * default was in place beforehand.
    */
-  async function ensureUsableModel(prefer?: string) {
+  async function ensureUsableModel(prefer?: string, options: { smartWhenNone?: boolean } = {}) {
     const chosen = config.value?.model
 
     // Nothing to do when the current pick still works and no move was asked for.
@@ -2094,12 +2101,31 @@ export const useApp = defineStore("app", () => {
     if ((!prefer || !preferReady) && modelAvailable(providers.value, chosen)) return
 
     const ref = fallbackModel(availableModels(providers.value), preferReady ? prefer : undefined)
-    if (!ref) return
+    if (!ref) {
+      // Not at launch: a profile with nothing connected yet is not one that just lost its models.
+      if (options.smartWhenNone !== false) await fallBackToSmart()
+      return
+    }
     await patchConfig({ model: ref })
     // An open session keeps its own model, so it has to be moved explicitly; the others follow on their next turn.
     const open = currentID.value ? sessions.value.find((entry) => entry.id === currentID.value) : undefined
     if (open && !modelAvailable(providers.value, open.model)) await api().request({ type: "session.model", sessionID: open.id, model: ref })
     else if (open && preferReady) await api().request({ type: "session.model", sessionID: open.id, model: ref })
+  }
+
+  /**
+   * Every model is gone: the default and each conversation whose model went
+   * with them are put on 自动, rather than left naming one that can no longer
+   * be picked. A conversation that is already on it, or still has its model,
+   * is not touched.
+   */
+  async function fallBackToSmart() {
+    if (!config.value?.smart) await patchConfig({ smart: true })
+    await Promise.all(
+      sessions.value
+        .filter((entry) => !entry.smart && !modelAvailable(providers.value, entry.model))
+        .map((entry) => api().request({ type: "session.smart", sessionID: entry.id })),
+    )
   }
 
   /**

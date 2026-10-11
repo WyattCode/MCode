@@ -128,11 +128,17 @@ export async function roundNineProviderChecks(check: Check, section: (name: stri
       await e.runner.prompt({ sessionID: gpt.id, text: "hello" })
       await e.idle(gpt.id)
       check("a GPT-5 model is sent the chosen level", e.bodies.at(-1)?.reasoning_effort === "high", e.bodies.at(-1)?.reasoning_effort)
-      await e.config.set({ effort: "max" })
+      // The level is the conversation's own: it took the app's "high" on its first turn, and only its own change moves it.
+      await e.store.setEffort(gpt.id, "max")
       e.replies.push(say("ok"))
       await e.runner.prompt({ sessionID: gpt.id, text: "again" })
       await e.idle(gpt.id)
       check("and a level its menu lacks falls to medium", e.bodies.at(-1)?.reasoning_effort === "medium", e.bodies.at(-1)?.reasoning_effort)
+      await e.config.set({ effort: "low" })
+      e.replies.push(say("ok"))
+      await e.runner.prompt({ sessionID: gpt.id, text: "once more" })
+      await e.idle(gpt.id)
+      check("and the app's own level no longer moves a conversation that has its own", e.bodies.at(-1)?.reasoning_effort === "medium", e.bodies.at(-1)?.reasoning_effort)
     } finally {
       await e.close()
     }

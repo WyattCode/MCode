@@ -92,6 +92,13 @@ export interface SessionInfo {
   /** Which of the two Smart picked; absent until the first message. */
   smartRoute?: "fast" | "main"
   /**
+   * The reasoning effort this conversation runs at: its own, like its model.
+   * A new conversation starts at the app's last choice and keeps it from then
+   * on; one stored before this field existed takes the app's level at its next
+   * turn and keeps that.
+   */
+  effort?: Effort
+  /**
    * Started with no project: its directory is a folder made for it alone.
    *
    * The side column lists these under Recent rather than as projects, since
@@ -1681,7 +1688,7 @@ export interface AppConfig {
   projectIcons: Record<string, string>
   /** Per-project badge hue override; absent means derived from the path. */
   projectColors: Record<string, string>
-  /** The reasoning effort every turn runs at: MiMo keeps one app-wide level, not one per conversation. */
+  /** The level a new conversation starts at - the last one chosen. Each conversation then keeps its own (`SessionInfo.effort`). */
   effort: Effort
   /** Which agent preset new sessions start in. */
   agent: AgentName
@@ -2115,6 +2122,7 @@ export type Request =
   | { type: "session.model"; sessionID: string; model: ModelRef }
   /** Puts the conversation on Smart, to pick its model from the next first message. */
   | { type: "session.smart"; sessionID: string }
+  | { type: "session.effort"; sessionID: string; effort: Effort }
   /*
    * `agent` and `model` are what a slash command named, and they hold for the
    * turn this starts and no longer: MiMo runs a command's turn as the agent and
@@ -2481,6 +2489,7 @@ export interface ResponseMap {
   "session.fork": { session: SessionInfo }
   "session.model": { session: SessionInfo }
   "session.smart": { session: SessionInfo }
+  "session.effort": { session: SessionInfo }
   "session.prompt": { messageID: string }
   "session.queue.remove": Record<string, never>
   "session.queue.send": { messageID: string }

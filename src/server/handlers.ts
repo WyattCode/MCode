@@ -441,6 +441,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         agent: config.agent,
         goalMode: config.goalMode,
         ...(config.smart ? { smart: true } : {}),
+        // Its own level from the start: the app's last choice, then the conversation's to change.
+        effort: config.effort,
         title: request.title,
       })
       return { session } satisfies Handled<"session.create">
@@ -633,6 +635,9 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         session: await runtime.sessions.update(request.sessionID, { smart: true, smartRoute: undefined }),
       } satisfies Handled<"session.smart">
 
+
+    case "session.effort":
+      return { session: await runtime.sessions.setEffort(request.sessionID, request.effort) } satisfies Handled<"session.effort">
 
     case "session.agent":
       return { session: await runtime.sessions.update(request.sessionID, { agent: request.agent }) }
