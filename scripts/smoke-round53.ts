@@ -54,6 +54,7 @@ export async function roundFiftyThreeChecks(check: Check, section: (name: string
   check("a new conversation starts at the app's last level", /effort: config\.effort,\s*title: request\.title/.test(handlers))
   check("the window can set one conversation's level", /case "session\.effort":[\s\S]{0,200}sessions\.setEffort\(request\.sessionID, request\.effort\)/.test(handlers))
 
+  check("a branch and a subagent start at their origin's level", /\.\.\.\(origin\.effort \? \{ effort: origin\.effort \} : \{\}\)/.test(source("src/server/session/store.ts")) && /\.\.\.\(parent\.effort \? \{ effort: parent\.effort \} : \{\}\)/.test(runner))
   const store = source("src/renderer/src/stores/app.ts")
   check("the window sets a conversation's level on that conversation", /type: "session\.effort", sessionID: target, effort/.test(store))
   check("a side chat's level never becomes the app's", /if \(!target \|\| !isSide\(target\)\) await patchConfig\(\{ effort \}\)/.test(store))
@@ -96,7 +97,7 @@ export async function roundFiftyThreeChecks(check: Check, section: (name: string
 
   section("Round 53: told not to test, a turn does not drive a browser to check its work")
   const told = ["创建一个HTML，内容是SVG绘制一个鹈鹕骑自行车的2D动画，你不需要任何测试，只靠你自己完成", "不要测试，直接做", "不用测试", "无需测试", "别验证了", "不要截图验证", "不需要进行任何验证", "Don't test it, just write it", "do not run any tests", "no testing please", "skip verification", "without screenshots", "no need to verify"]
-  const asked = ["请帮我测试这个页面", "不要忘记测试", "测试一下并截图给我", "不要测试环境的数据", "Don't forget to test it", "please verify the layout", "write tests for the parser", "不要使用任何skill"]
+  const asked = ["请帮我测试这个页面", "不要忘记测试", "测试一下并截图给我", "不要测试环境的数据", "不用验证码登录", "无验证码", "Don't forget to test it", "please verify the layout", "write tests for the parser", "不要使用任何skill"]
   check("every way of saying it is understood", told.every((text) => forbidsTesting(text)), told.filter((text) => !forbidsTesting(text)))
   check("a request to test or verify is not mistaken for the opposite", asked.every((text) => !forbidsTesting(text)), asked.filter((text) => forbidsTesting(text)))
 

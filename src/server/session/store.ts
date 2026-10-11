@@ -754,6 +754,8 @@ export class SessionStore {
       directory: origin.directory,
       model: origin.model,
       agent: origin.agent,
+      // Its level too: a branch is the same conversation going another way, not a new one at the app's.
+      ...(origin.effort ? { effort: origin.effort } : {}),
       // A branch works the way its origin did, and in the same kind of folder.
       goalMode: origin.goalMode,
       scratch: origin.scratch,

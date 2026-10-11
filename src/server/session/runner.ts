@@ -4276,6 +4276,8 @@ export class SessionRunner {
       directory: parent.directory,
       model,
       agent,
+      // It thinks as hard as the conversation that sent it.
+      ...(parent.effort ? { effort: parent.effort } : {}),
       title: spec.description || name,
       parentID: parent.id,
       parentMessageID: call.messageID,

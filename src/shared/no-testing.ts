@@ -10,7 +10,7 @@
  * Narrow on purpose: "don't forget to test" and "不要忘记测试" are the opposite
  * request, and "不要测试环境的数据" is about something else.
  */
-const CHINESE = /[不无别勿](?:需要|需|要|用|必)?(?:再)?(?:去|做|进行|执行)?(?:任何|一切)?(?:的)?(?:测试|验证|检验|试运行|截图)(?!环境|服务器|数据|账号|账户|用例|集|文件)/u
+const CHINESE = /[不无别勿](?:需要|需|要|用|必)?(?:再)?(?:去|做|进行|执行)?(?:任何|一切)?(?:的)?(?:测试|验证|检验|试运行|截图)(?!环境|服务器|数据|账号|账户|用例|集|文件|码)/u
 const ENGLISH = /\b(?:no|without|skip)\s+(?:any\s+)?(?:testing|tests|verification|screenshots?)\b|\b(?:do not|don't|dont|never|no need to|need not|needn't)\s+(?:(?:run|do|perform|need to|any)\s+)*(?:test|tests|testing|verify|verification|screenshot)/i
 
 export function forbidsTesting(text: string): boolean {
