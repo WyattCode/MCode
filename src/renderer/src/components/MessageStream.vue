@@ -52,6 +52,7 @@ import {
   type Geometry,
 } from "../lib/scroll-follow"
 import { reducedMotion } from "../lib/modal"
+import { subagentsAtWork } from "../lib/subagent-chip"
 
 /**
  * WHY EVERY MESSAGE IS DRAWN, where opencode virtualises.
@@ -97,6 +98,10 @@ const shownBusy = computed(() => (props.side ? app.sideBusyOf(sideKey.value) : a
 const shownCompacting = computed(() => (props.side ? false : app.compacting))
 const shownSession = computed(() => (props.side ? app.sideSessionOf(sideKey.value) : app.current))
 const shownID = computed(() => (props.side ? sideKey.value : app.currentID))
+const backgroundAgents = computed(() => {
+  if (props.side || props.latest || props.subagent || shownBusy.value || !shownID.value) return []
+  return subagentsAtWork(app.subagentSessions, app.running, app.rootOf).get(shownID.value) ?? []
+})
 /* The project the shown conversation works in; a side conversation shares the main one's. */
 const shownDirectory = computed(() => app.current?.directory)
 const shownStreaming = computed(() => (props.side ? app.sideStreamingOf(sideKey.value) : app.streaming))
@@ -2059,6 +2064,10 @@ defineExpose({ stepMessage, scroller })
       </div>
       </template>
 
+      <div v-if="backgroundAgents.length" class="background-agents" data-background-agents role="status" aria-live="polite">
+        <p>{{ t("subagentActivity.background", { count: backgroundAgents.length }) }}</p>
+        <SubagentActivity :agents="backgroundAgents" />
+      </div>
       <div v-if="shownError && !latest" class="err banner">{{ shownError }}</div>
     </div>
 
@@ -2084,6 +2093,12 @@ defineExpose({ stepMessage, scroller })
 </template>
 
 <style scoped>
+.background-agents {
+  margin-block: 12px;
+  color: var(--text-weak);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+.background-agents p { margin-block: 0 4px; }
 /* MiMo's msg-actions: 2px apart, drawn a hair up into the reply above. */
 .msg-actions {
   display: flex;

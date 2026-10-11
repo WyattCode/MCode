@@ -23,9 +23,11 @@ import { describeStep, type SteppingDriver } from "../appdrive/stepping"
 
 /** One driver per conversation: the app it has open, kept between calls. */
 const drivers = new Map<string, SteppingDriver>()
+const surfaces = new Map<string, "browser" | "computer">()
 
 /** Ends one conversation's app, as closing it would: called when the conversation is deleted. */
 export async function closeAppOf(sessionID: string): Promise<void> {
+  surfaces.delete(sessionID)
   const driver = drivers.get(sessionID)
   drivers.delete(sessionID)
   await driver?.close().catch(() => undefined)
@@ -35,6 +37,7 @@ export async function closeAppOf(sessionID: string): Promise<void> {
 export async function closeAllApps(): Promise<void> {
   const open = [...drivers.values()]
   drivers.clear()
+  surfaces.clear()
   await Promise.all(open.map((driver) => driver.close().catch(() => undefined)))
 }
 
@@ -120,7 +123,27 @@ export const AppTool: ToolDefinition = {
    */
   execute(input, context) {
     const before = queues.get(context.sessionID) ?? Promise.resolve()
-    const run = before.then(() => perform(input, context))
+    const run = before.then(async () => {
+      context.signal.throwIfAborted()
+      const action = String(input.action)
+      const surface = action === "open" ? "browser" : ["window", "launch", "android", "attach"].includes(action) ? "computer" : surfaces.get(context.sessionID)
+      await context.reportOperation?.(surface)
+      context.signal.throwIfAborted()
+      let result: ToolResult
+      try {
+        result = await perform(input, context)
+      } catch (error) {
+        // A failed replacement may have closed the old driver before starting its successor.
+        if (!drivers.has(context.sessionID)) {
+          surfaces.delete(context.sessionID)
+          await context.reportOperation?.(undefined)
+        }
+        throw error
+      }
+      if (action === "close") surfaces.delete(context.sessionID)
+      else if (surface) surfaces.set(context.sessionID, surface)
+      return surface ? { ...result, metadata: { ...result.metadata, operationKind: surface } } : result
+    })
     const settled = run.catch(() => undefined)
     queues.set(context.sessionID, settled)
     void settled.then(() => {
@@ -237,6 +260,7 @@ async function attach(port: number, target: string | undefined, context: ToolCon
 async function replace(context: ToolContext, start: () => Promise<SteppingDriver>): Promise<SteppingDriver> {
   const previous = drivers.get(context.sessionID)
   drivers.delete(context.sessionID)
+  surfaces.delete(context.sessionID)
   if (previous) await previous.close().catch(() => undefined)
   const driver = await start().catch((error: unknown) => {
     throw new ToolError(error instanceof Error ? error.message : String(error))

@@ -85,6 +85,21 @@ export function isSpaceLess(): boolean {
 type Table = Record<string, string>
 
 const zhCN: Table = {
+  "error.projectLocationInvalid": "无法确认这个目录可安全使用，请选择其他目录。",
+  "error.projectLocationInstall": "应用安装目录不能存放项目，升级可能影响其中的文件。",
+  "error.projectNameReserved": "这个名称留给自动任务目录使用，请换一个名称。",
+  "composer.targetChanged": "发送目标已变化，内容已保留，请回到原会话重新发送。",
+  "subagentActivity.background": "后台仍在运行：{count} 个子智能体。可以继续发送消息。",
+  "subagentActivity.status.running": "工作中",
+  "subagents.status.stopped": "已停止",
+  "toolLabel.incomplete": "未完成",
+  "side.operation.browser": "正在操作浏览器",
+  "side.operation.computer": "正在操作电脑",
+  "set.watermark": "不添加可见 AI 标识",
+  "set.watermarkSub": "之后交付的文件仍保留 AI 生成元数据。",
+  "set.watermarkConfirm": "关闭后续交付的可见标识？",
+  "set.watermarkBody": "仅影响之后添加的标识。AI 生成元数据和文件已有的可见标识会保留。",
+  "set.watermarkApply": "确认开启",
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "新建任务",
   "side.awaitingPill": "待确认",
@@ -2475,6 +2490,21 @@ const zhCN: Table = {
 }
 
 const zhTW: Table = {
+  "error.projectLocationInvalid": "無法確認這個目錄可安全使用，請選擇其他目錄。",
+  "error.projectLocationInstall": "應用程式安裝目錄不能存放專案，升級可能影響其中的檔案。",
+  "error.projectNameReserved": "這個名稱保留給自動任務目錄，請換個名稱。",
+  "composer.targetChanged": "傳送目標已變更，內容已保留，請回到原對話重送。",
+  "subagentActivity.background": "背景仍在執行：{count} 個子智慧體。可以繼續傳送訊息。",
+  "subagentActivity.status.running": "工作中",
+  "subagents.status.stopped": "已停止",
+  "toolLabel.incomplete": "未完成",
+  "side.operation.browser": "正在操作瀏覽器",
+  "side.operation.computer": "正在操作電腦",
+  "set.watermark": "不新增可見 AI 標識",
+  "set.watermarkSub": "之後交付的檔案仍保留 AI 生成中繼資料。",
+  "set.watermarkConfirm": "關閉後續交付的可見標識？",
+  "set.watermarkBody": "僅影響之後新增的標識。AI 生成中繼資料和檔案既有的可見標識會保留。",
+  "set.watermarkApply": "確認啟用",
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "新建任務",
   "side.awaitingPill": "待確認",
@@ -4844,6 +4874,21 @@ const zhTW: Table = {
 }
 
 const en: Table = {
+  "error.projectLocationInvalid": "This directory could not be verified. Choose another location.",
+  "error.projectLocationInstall": "Projects cannot be stored in the app installation; updates may affect its files.",
+  "error.projectNameReserved": "This name is reserved for automatic task folders. Choose another name.",
+  "composer.targetChanged": "The send target changed. Your input was kept; return to the original chat to send it.",
+  "subagentActivity.background": "Subagents working in the background: {count}. You can keep sending messages.",
+  "subagentActivity.status.running": "Working",
+  "subagents.status.stopped": "Stopped",
+  "toolLabel.incomplete": "Incomplete",
+  "side.operation.browser": "Controlling browser",
+  "side.operation.computer": "Controlling computer",
+  "set.watermark": "Skip visible AI labels",
+  "set.watermarkSub": "Future deliveries still retain AI-generated metadata.",
+  "set.watermarkConfirm": "Skip visible labels on future deliveries?",
+  "set.watermarkBody": "Only new labels are affected. AI-generated metadata and existing visible labels are retained.",
+  "set.watermarkApply": "Enable",
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "New task",
   "side.awaitingPill": "Confirm",
@@ -7215,6 +7260,21 @@ const en: Table = {
 
 // --- generated language tables ---
 const ar: Table = {
+  "error.projectLocationInvalid": "تعذر التحقق من هذا المجلد. اختر موقعاً آخر.",
+  "error.projectLocationInstall": "لا يمكن حفظ المشاريع في مجلد تثبيت التطبيق؛ قد تؤثر التحديثات على ملفاته.",
+  "error.projectNameReserved": "هذا الاسم محجوز لمجلدات المهام التلقائية. اختر اسماً آخر.",
+  "composer.targetChanged": "تغير هدف الإرسال. تم حفظ إدخالك؛ عد إلى المحادثة الأصلية لإرساله.",
+  "subagentActivity.background": "الوكلاء العاملون في الخلفية: {count}. يمكنك متابعة إرسال الرسائل.",
+  "subagentActivity.status.running": "يعمل",
+  "subagents.status.stopped": "متوقف",
+  "toolLabel.incomplete": "غير مكتمل",
+  "side.operation.browser": "التحكم بالمتصفح",
+  "side.operation.computer": "التحكم بالحاسوب",
+  "set.watermark": "تخطي علامات الذكاء الاصطناعي المرئية",
+  "set.watermarkSub": "تحتفظ الملفات القادمة ببيانات التوليد الوصفية.",
+  "set.watermarkConfirm": "تخطي العلامات المرئية في الملفات القادمة؟",
+  "set.watermarkBody": "يتأثر فقط إدراج علامات جديدة. تبقى بيانات التوليد الوصفية والعلامات المرئية الموجودة.",
+  "set.watermarkApply": "تفعيل",
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "مهمة جديدة",
   "side.awaitingPill": "بانتظار التأكيد",
@@ -9546,6 +9606,21 @@ const ar: Table = {
 }
 
 const bs: Table = {
+  "error.projectLocationInvalid": "Ovaj direktorij nije moguće provjeriti. Odaberite drugi.",
+  "error.projectLocationInstall": "Projekti ne mogu biti u instalaciji aplikacije; ažuriranja mogu uticati na datoteke.",
+  "error.projectNameReserved": "Naziv je rezervisan za automatske zadatke. Odaberite drugi.",
+  "composer.targetChanged": "Odredište slanja se promijenilo. Unos je sačuvan; vratite se u izvorni razgovor.",
+  "subagentActivity.background": "Podagenti koji rade u pozadini: {count}. Možete nastaviti slati poruke.",
+  "subagentActivity.status.running": "Radi",
+  "subagents.status.stopped": "Zaustavljeno",
+  "toolLabel.incomplete": "Nedovršeno",
+  "side.operation.browser": "Upravljanje preglednikom",
+  "side.operation.computer": "Upravljanje računarom",
+  "set.watermark": "Preskoči vidljive AI oznake",
+  "set.watermarkSub": "Buduće datoteke zadržavaju metapodatke AI generisanja.",
+  "set.watermarkConfirm": "Preskočiti vidljive oznake u budućim datotekama?",
+  "set.watermarkBody": "Mijenja se samo dodavanje novih oznaka. Metapodaci i postojeće vidljive oznake ostaju.",
+  "set.watermarkApply": "Omogući",
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Novi zadatak",
   "side.awaitingPill": "Potvrdi",
@@ -11877,6 +11952,21 @@ const bs: Table = {
 }
 
 const da: Table = {
+  "error.projectLocationInvalid": "Mappen kunne ikke kontrolleres. Vælg en anden.",
+  "error.projectLocationInstall": "Projekter må ikke ligge i appens installation; opdateringer kan påvirke filerne.",
+  "error.projectNameReserved": "Navnet er reserveret til automatiske opgaver. Vælg et andet.",
+  "composer.targetChanged": "Modtageren blev ændret. Indholdet er gemt; vend tilbage til den oprindelige chat.",
+  "subagentActivity.background": "Underagenter i baggrunden: {count}. Du kan fortsætte med at sende beskeder.",
+  "subagentActivity.status.running": "Arbejder",
+  "subagents.status.stopped": "Stoppet",
+  "toolLabel.incomplete": "Ufuldført",
+  "side.operation.browser": "Styrer browser",
+  "side.operation.computer": "Styrer computer",
+  "set.watermark": "Undlad synlige AI-mærker",
+  "set.watermarkSub": "Fremtidige filer beholder metadata om AI-generering.",
+  "set.watermarkConfirm": "Undlade synlige mærker i fremtidige filer?",
+  "set.watermarkBody": "Kun nye mærker påvirkes. Metadata og eksisterende synlige mærker bevares.",
+  "set.watermarkApply": "Aktivér",
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Ny opgave",
   "side.awaitingPill": "Bekræft",
@@ -14208,6 +14298,21 @@ const da: Table = {
 }
 
 const de: Table = {
+  "error.projectLocationInvalid": "Dieses Verzeichnis konnte nicht geprüft werden. Wählen Sie einen anderen Ort.",
+  "error.projectLocationInstall": "Projekte dürfen nicht im Installationsordner liegen; Updates können Dateien verändern.",
+  "error.projectNameReserved": "Dieser Name ist für automatische Aufgaben reserviert. Wählen Sie einen anderen.",
+  "composer.targetChanged": "Das Sendeziel hat sich geändert. Ihre Eingabe bleibt erhalten; kehren Sie zum ursprünglichen Chat zurück.",
+  "subagentActivity.background": "Unteragenten im Hintergrund: {count}. Sie können weitere Nachrichten senden.",
+  "subagentActivity.status.running": "Arbeitet",
+  "subagents.status.stopped": "Gestoppt",
+  "toolLabel.incomplete": "Unvollständig",
+  "side.operation.browser": "Browsersteuerung",
+  "side.operation.computer": "Computersteuerung",
+  "set.watermark": "Sichtbare KI-Kennzeichnung weglassen",
+  "set.watermarkSub": "Künftige Dateien behalten Metadaten zur KI-Erzeugung.",
+  "set.watermarkConfirm": "Sichtbare Kennzeichnung bei künftigen Dateien weglassen?",
+  "set.watermarkBody": "Nur neue Kennzeichnungen sind betroffen. Metadaten und vorhandene sichtbare Kennzeichnungen bleiben erhalten.",
+  "set.watermarkApply": "Aktivieren",
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Neue Aufgabe",
   "side.awaitingPill": "Bestätigen",
@@ -16539,6 +16644,21 @@ const de: Table = {
 }
 
 const es: Table = {
+  "error.projectLocationInvalid": "No se pudo verificar esta carpeta. Elige otra.",
+  "error.projectLocationInstall": "Los proyectos no pueden estar en la instalación de la aplicación; las actualizaciones pueden afectar los archivos.",
+  "error.projectNameReserved": "Este nombre está reservado para tareas automáticas. Elige otro.",
+  "composer.targetChanged": "El destino cambió. Se conservó el contenido; vuelve al chat original para enviarlo.",
+  "subagentActivity.background": "Subagentes en segundo plano: {count}. Puedes seguir enviando mensajes.",
+  "subagentActivity.status.running": "Trabajando",
+  "subagents.status.stopped": "Detenido",
+  "toolLabel.incomplete": "Sin completar",
+  "side.operation.browser": "Controlando navegador",
+  "side.operation.computer": "Controlando ordenador",
+  "set.watermark": "Omitir etiquetas visibles de IA",
+  "set.watermarkSub": "Los archivos futuros conservan los metadatos de generación con IA.",
+  "set.watermarkConfirm": "¿Omitir etiquetas visibles en archivos futuros?",
+  "set.watermarkBody": "Solo afecta a etiquetas nuevas. Se conservan los metadatos y las etiquetas visibles existentes.",
+  "set.watermarkApply": "Activar",
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Nueva tarea",
   "side.awaitingPill": "Confirmar",
@@ -18870,6 +18990,21 @@ const es: Table = {
 }
 
 const fr: Table = {
+  "error.projectLocationInvalid": "Ce dossier ne peut pas être vérifié. Choisissez un autre emplacement.",
+  "error.projectLocationInstall": "Les projets ne peuvent pas être dans le dossier de l’application ; les mises à jour peuvent modifier les fichiers.",
+  "error.projectNameReserved": "Ce nom est réservé aux tâches automatiques. Choisissez un autre nom.",
+  "composer.targetChanged": "La destination a changé. Votre saisie est conservée ; revenez à la conversation initiale.",
+  "subagentActivity.background": "Sous-agents en arrière-plan : {count}. Vous pouvez continuer à envoyer des messages.",
+  "subagentActivity.status.running": "En cours",
+  "subagents.status.stopped": "Arrêté",
+  "toolLabel.incomplete": "Inachevé",
+  "side.operation.browser": "Contrôle du navigateur",
+  "side.operation.computer": "Contrôle de l’ordinateur",
+  "set.watermark": "Omettre les mentions IA visibles",
+  "set.watermarkSub": "Les futurs fichiers conservent les métadonnées de génération par IA.",
+  "set.watermarkConfirm": "Omettre les mentions visibles sur les futurs fichiers ?",
+  "set.watermarkBody": "Seules les nouvelles mentions sont concernées. Les métadonnées et mentions visibles existantes sont conservées.",
+  "set.watermarkApply": "Activer",
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Nouvelle tâche",
   "side.awaitingPill": "À confirmer",
@@ -21201,6 +21336,21 @@ const fr: Table = {
 }
 
 const ja: Table = {
+  "error.projectLocationInvalid": "このフォルダーを確認できません。別の場所を選んでください。",
+  "error.projectLocationInstall": "アプリのインストール先にはプロジェクトを保存できません。更新でファイルが変更される可能性があります。",
+  "error.projectNameReserved": "この名前は自動タスク用です。別の名前を選んでください。",
+  "composer.targetChanged": "送信先が変わりました。入力は保存されています。元のチャットから送信してください。",
+  "subagentActivity.background": "バックグラウンドで作業中のサブエージェント：{count}。引き続きメッセージを送信できます。",
+  "subagentActivity.status.running": "作業中",
+  "subagents.status.stopped": "停止済み",
+  "toolLabel.incomplete": "未完了",
+  "side.operation.browser": "ブラウザーを操作中",
+  "side.operation.computer": "コンピューターを操作中",
+  "set.watermark": "可視の AI 表示を追加しない",
+  "set.watermarkSub": "今後のファイルにも AI 生成メタデータは保持されます。",
+  "set.watermarkConfirm": "今後のファイルで可視表示を省略しますか？",
+  "set.watermarkBody": "新たに追加する表示のみが対象です。メタデータと既存の可視表示は保持されます。",
+  "set.watermarkApply": "有効にする",
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "新しいタスク",
   "side.awaitingPill": "確認待ち",
@@ -23532,6 +23682,21 @@ const ja: Table = {
 }
 
 const ko: Table = {
+  "error.projectLocationInvalid": "이 폴더를 확인할 수 없습니다. 다른 위치를 선택하세요.",
+  "error.projectLocationInstall": "앱 설치 폴더에는 프로젝트를 저장할 수 없습니다. 업데이트가 파일에 영향을 줄 수 있습니다.",
+  "error.projectNameReserved": "자동 작업용으로 예약된 이름입니다. 다른 이름을 선택하세요.",
+  "composer.targetChanged": "전송 대상이 바뀌었습니다. 입력은 보관되었습니다. 원래 대화로 돌아가 전송하세요.",
+  "subagentActivity.background": "백그라운드 작업 중인 하위 에이전트: {count}. 메시지를 계속 보낼 수 있습니다.",
+  "subagentActivity.status.running": "작업 중",
+  "subagents.status.stopped": "중지됨",
+  "toolLabel.incomplete": "미완료",
+  "side.operation.browser": "브라우저 조작 중",
+  "side.operation.computer": "컴퓨터 조작 중",
+  "set.watermark": "보이는 AI 표시 생략",
+  "set.watermarkSub": "이후 파일에도 AI 생성 메타데이터는 유지됩니다.",
+  "set.watermarkConfirm": "이후 파일의 보이는 표시를 생략할까요?",
+  "set.watermarkBody": "새 표시만 영향을 받습니다. 메타데이터와 기존의 보이는 표시는 유지됩니다.",
+  "set.watermarkApply": "사용",
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "새 작업",
   "side.awaitingPill": "확인 필요",
@@ -25863,6 +26028,21 @@ const ko: Table = {
 }
 
 const nb: Table = {
+  "error.projectLocationInvalid": "Denne mappen kunne ikke kontrolleres. Velg et annet sted.",
+  "error.projectLocationInstall": "Prosjekter kan ikke ligge i appinstallasjonen; oppdateringer kan påvirke filene.",
+  "error.projectNameReserved": "Navnet er reservert for automatiske oppgaver. Velg et annet.",
+  "composer.targetChanged": "Målet ble endret. Innholdet er bevart; gå tilbake til den opprinnelige samtalen.",
+  "subagentActivity.background": "Underagenter i bakgrunnen: {count}. Du kan fortsette å sende meldinger.",
+  "subagentActivity.status.running": "Arbeider",
+  "subagents.status.stopped": "Stoppet",
+  "toolLabel.incomplete": "Ufullført",
+  "side.operation.browser": "Styrer nettleser",
+  "side.operation.computer": "Styrer datamaskin",
+  "set.watermark": "Hopp over synlige KI-merker",
+  "set.watermarkSub": "Fremtidige filer beholder metadata om KI-generering.",
+  "set.watermarkConfirm": "Hoppe over synlige merker i fremtidige filer?",
+  "set.watermarkBody": "Bare nye merker påvirkes. Metadata og eksisterende synlige merker beholdes.",
+  "set.watermarkApply": "Aktiver",
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Ny oppgave",
   "side.awaitingPill": "Bekreft",
@@ -28194,6 +28374,21 @@ const nb: Table = {
 }
 
 const pl: Table = {
+  "error.projectLocationInvalid": "Nie można sprawdzić tego folderu. Wybierz inny.",
+  "error.projectLocationInstall": "Projekty nie mogą być w folderze instalacji; aktualizacje mogą wpływać na pliki.",
+  "error.projectNameReserved": "Ta nazwa jest zarezerwowana dla automatycznych zadań. Wybierz inną.",
+  "composer.targetChanged": "Cel wysyłania się zmienił. Treść zachowano; wróć do pierwotnej rozmowy.",
+  "subagentActivity.background": "Podagenci w tle: {count}. Możesz nadal wysyłać wiadomości.",
+  "subagentActivity.status.running": "Pracuje",
+  "subagents.status.stopped": "Zatrzymano",
+  "toolLabel.incomplete": "Nieukończone",
+  "side.operation.browser": "Sterowanie przeglądarką",
+  "side.operation.computer": "Sterowanie komputerem",
+  "set.watermark": "Pomiń widoczne oznaczenia AI",
+  "set.watermarkSub": "Przyszłe pliki zachowują metadane generowania przez AI.",
+  "set.watermarkConfirm": "Pominąć widoczne oznaczenia w przyszłych plikach?",
+  "set.watermarkBody": "Dotyczy tylko nowych oznaczeń. Metadane i istniejące widoczne oznaczenia pozostają.",
+  "set.watermarkApply": "Włącz",
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Nowe zadanie",
   "side.awaitingPill": "Potwierdź",
@@ -30525,6 +30720,21 @@ const pl: Table = {
 }
 
 const ptBR: Table = {
+  "error.projectLocationInvalid": "Não foi possível verificar esta pasta. Escolha outra.",
+  "error.projectLocationInstall": "Projetos não podem ficar na instalação do aplicativo; atualizações podem afetar os arquivos.",
+  "error.projectNameReserved": "Este nome é reservado para tarefas automáticas. Escolha outro.",
+  "composer.targetChanged": "O destino mudou. O conteúdo foi mantido; volte à conversa original para enviar.",
+  "subagentActivity.background": "Subagentes em segundo plano: {count}. Você pode continuar enviando mensagens.",
+  "subagentActivity.status.running": "Trabalhando",
+  "subagents.status.stopped": "Parado",
+  "toolLabel.incomplete": "Incompleto",
+  "side.operation.browser": "Controlando navegador",
+  "side.operation.computer": "Controlando computador",
+  "set.watermark": "Omitir marcas visíveis de IA",
+  "set.watermarkSub": "Arquivos futuros mantêm os metadados de geração por IA.",
+  "set.watermarkConfirm": "Omitir marcas visíveis nos próximos arquivos?",
+  "set.watermarkBody": "Afeta apenas novas marcas. Os metadados e as marcas visíveis existentes são mantidos.",
+  "set.watermarkApply": "Ativar",
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Nova tarefa",
   "side.awaitingPill": "Confirmar",
@@ -32856,6 +33066,21 @@ const ptBR: Table = {
 }
 
 const ru: Table = {
+  "error.projectLocationInvalid": "Не удалось проверить эту папку. Выберите другую.",
+  "error.projectLocationInstall": "Проекты нельзя хранить в папке установки: обновления могут изменить файлы.",
+  "error.projectNameReserved": "Имя зарезервировано для автоматических задач. Выберите другое.",
+  "composer.targetChanged": "Адресат изменился. Ввод сохранён; вернитесь в исходный чат для отправки.",
+  "subagentActivity.background": "Подагенты в фоне: {count}. Можно продолжать отправлять сообщения.",
+  "subagentActivity.status.running": "Работает",
+  "subagents.status.stopped": "Остановлен",
+  "toolLabel.incomplete": "Не завершено",
+  "side.operation.browser": "Управление браузером",
+  "side.operation.computer": "Управление компьютером",
+  "set.watermark": "Не добавлять видимые отметки ИИ",
+  "set.watermarkSub": "Новые файлы сохраняют метаданные о создании с помощью ИИ.",
+  "set.watermarkConfirm": "Не добавлять видимые отметки в новые файлы?",
+  "set.watermarkBody": "Изменяется только добавление новых отметок. Метаданные и существующие видимые отметки сохраняются.",
+  "set.watermarkApply": "Включить",
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Новая задача",
   "side.awaitingPill": "Подтвердить",
@@ -35187,6 +35412,21 @@ const ru: Table = {
 }
 
 const th: Table = {
+  "error.projectLocationInvalid": "ตรวจสอบโฟลเดอร์นี้ไม่ได้ โปรดเลือกที่อื่น",
+  "error.projectLocationInstall": "เก็บโปรเจกต์ในโฟลเดอร์ติดตั้งแอปไม่ได้ การอัปเดตอาจกระทบไฟล์",
+  "error.projectNameReserved": "ชื่อนี้สงวนไว้สำหรับงานอัตโนมัติ โปรดใช้ชื่ออื่น",
+  "composer.targetChanged": "ปลายทางเปลี่ยนแล้ว ข้อความถูกเก็บไว้ โปรดกลับไปส่งในแชตเดิม",
+  "subagentActivity.background": "เอเจนต์ย่อยที่ทำงานเบื้องหลัง: {count} คุณส่งข้อความต่อได้",
+  "subagentActivity.status.running": "กำลังทำงาน",
+  "subagents.status.stopped": "หยุดแล้ว",
+  "toolLabel.incomplete": "ยังไม่เสร็จ",
+  "side.operation.browser": "กำลังควบคุมเบราว์เซอร์",
+  "side.operation.computer": "กำลังควบคุมคอมพิวเตอร์",
+  "set.watermark": "ไม่เพิ่มป้าย AI ที่มองเห็นได้",
+  "set.watermarkSub": "ไฟล์ในอนาคตยังคงเก็บข้อมูลเมตาการสร้างด้วย AI",
+  "set.watermarkConfirm": "ไม่เพิ่มป้ายที่มองเห็นได้ในไฟล์ถัดไปหรือไม่",
+  "set.watermarkBody": "มีผลเฉพาะป้ายใหม่ ข้อมูลเมตาและป้ายที่มีอยู่แล้วจะยังคงอยู่",
+  "set.watermarkApply": "เปิดใช้",
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "งานใหม่",
   "side.awaitingPill": "รอยืนยัน",
@@ -37518,6 +37758,21 @@ const th: Table = {
 }
 
 const tr: Table = {
+  "error.projectLocationInvalid": "Bu klasör doğrulanamadı. Başka bir konum seçin.",
+  "error.projectLocationInstall": "Projeler uygulamanın kurulumunda saklanamaz; güncellemeler dosyaları etkileyebilir.",
+  "error.projectNameReserved": "Bu ad otomatik görevler için ayrılmıştır. Başka bir ad seçin.",
+  "composer.targetChanged": "Gönderim hedefi değişti. Girdiniz korundu; göndermek için asıl sohbete dönün.",
+  "subagentActivity.background": "Arka planda çalışan alt ajanlar: {count}. Mesaj göndermeye devam edebilirsiniz.",
+  "subagentActivity.status.running": "Çalışıyor",
+  "subagents.status.stopped": "Durduruldu",
+  "toolLabel.incomplete": "Tamamlanmadı",
+  "side.operation.browser": "Tarayıcı kontrolü",
+  "side.operation.computer": "Bilgisayar kontrolü",
+  "set.watermark": "Görünür AI etiketlerini atla",
+  "set.watermarkSub": "Gelecekteki dosyalar AI üretim meta verilerini korur.",
+  "set.watermarkConfirm": "Gelecekteki dosyalarda görünür etiketler atlansın mı?",
+  "set.watermarkBody": "Yalnızca yeni etiketler etkilenir. Meta veriler ve mevcut görünür etiketler korunur.",
+  "set.watermarkApply": "Etkinleştir",
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Yeni görev",
   "side.awaitingPill": "Onayla",
@@ -39849,6 +40104,21 @@ const tr: Table = {
 }
 
 const uk: Table = {
+  "error.projectLocationInvalid": "Не вдалося перевірити цю папку. Виберіть іншу.",
+  "error.projectLocationInstall": "Проєкти не можна зберігати в папці встановлення: оновлення можуть змінити файли.",
+  "error.projectNameReserved": "Ім’я зарезервоване для автоматичних завдань. Виберіть інше.",
+  "composer.targetChanged": "Адресат змінився. Ввід збережено; поверніться до початкового чату для надсилання.",
+  "subagentActivity.background": "Підагенти у фоні: {count}. Можна продовжувати надсилати повідомлення.",
+  "subagentActivity.status.running": "Працює",
+  "subagents.status.stopped": "Зупинено",
+  "toolLabel.incomplete": "Не завершено",
+  "side.operation.browser": "Керування браузером",
+  "side.operation.computer": "Керування комп’ютером",
+  "set.watermark": "Не додавати видимі позначки ШІ",
+  "set.watermarkSub": "Майбутні файли зберігають метадані створення за допомогою ШІ.",
+  "set.watermarkConfirm": "Не додавати видимі позначки в майбутні файли?",
+  "set.watermarkBody": "Змінюється лише додавання нових позначок. Метадані та наявні видимі позначки зберігаються.",
+  "set.watermarkApply": "Увімкнути",
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Нове завдання",
   "side.awaitingPill": "Підтвердити",

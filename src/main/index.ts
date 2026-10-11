@@ -930,7 +930,7 @@ app.whenReady().then(async () => {
    * inside the window rather than the window itself.
    */
   // Only this app's own page may open the socket from a browser context.
-  const starting = startBackend(app.getPath("userData"), { origins: rendererOrigins(process.env.ELECTRON_RENDERER_URL), secrets: safeStorageBox }).then((started) => {
+  const starting = startBackend(app.getPath("userData"), { origins: rendererOrigins(process.env.ELECTRON_RENDERER_URL), secrets: safeStorageBox, installationDirectory: app.isPackaged ? path.dirname(process.execPath) : undefined }).then((started) => {
     backend = started
     /*
      * MiMo keeps the machine from suspending while a turn runs. The runner's busy
@@ -1025,6 +1025,7 @@ app.whenReady().then(async () => {
     const chosen = backend?.runtime.config.get().projectRoot ?? ""
     for (const candidate of [scratchRoot(chosen), scratchRoot()]) {
       try {
+        await backend?.runtime.config.projectLocations.assert(candidate)
         await fs.mkdir(candidate, { recursive: true })
         return candidate
       } catch {

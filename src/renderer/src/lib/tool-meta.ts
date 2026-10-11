@@ -11,7 +11,7 @@ import { t } from "./i18n"
  */
 
 /** A step's state on screen; the part's own status plus what its metadata says happened. */
-export type StepState = "running" | "completed" | "error" | "rejected" | "skipped"
+export type StepState = "running" | "completed" | "error" | "rejected" | "skipped" | "incomplete"
 
 export type StepIconName =
   | "read"
@@ -96,6 +96,7 @@ export function permissionsOf(part: ToolPart): PermissionRecord[] {
  * wrote beside it.
  */
 export function stepState(part: ToolPart): StepState {
+  if (part.metadata?.interrupted === true) return "incomplete"
   if (part.status === "running" || part.status === "pending") return "running"
   if (part.status === "error") {
     if (part.metadata?.recoverable === true) return "skipped"
@@ -116,6 +117,7 @@ export function toolName(name: string): string {
 
 /** MiMo's verb for a step: 已读取 / 正在读取 / 读取失败 / 已拒绝读取 / 未执行：读取, or the fallbacks for any other tool. */
 export function toolVerb(name: string, state: StepState): string {
+  if (state === "incomplete") return t("toolLabel.incomplete")
   const known = SPEAKS_AS[name] ?? name
   const table = state === "completed" ? "done" : state
   if (LABELLED.has(known)) return t(`toolLabel.${table}.${known}`)
@@ -129,6 +131,7 @@ export function toolVerb(name: string, state: StepState): string {
  * with no action, and one refused for its arguments keep the actor tool's own.
  */
 export function stepVerb(part: ToolPart, state: StepState): string {
+  if (state === "incomplete") return toolVerb(part.name, state)
   const action = operationInput(part.input).action
   if (part.name === "actor" && state !== "skipped" && typeof action === "string" && action !== "spawn" && SUBAGENT_ACTIONS.some((known) => known === action)) {
     return t(`toolLabel.subagentAction.${action}.${state}`)

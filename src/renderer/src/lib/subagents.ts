@@ -21,7 +21,7 @@ export function isPill(part: ToolPart): boolean {
 }
 
 /** The words after the pills, MiMo's six: 开始工作 / 已完成 / 失败 / 已取消 / 可能停滞 / 已结束. */
-export type PillStatus = "started" | SubagentNoticeStatus
+export type PillStatus = "started" | "running" | SubagentNoticeStatus
 
 /**
  * 已完成 once every pill is a run that has answered; a spawn only started its
@@ -40,7 +40,7 @@ export function noticeStatus(notices: readonly SubagentNotice[]): PillStatus {
 }
 
 /** A subagent's state in the tab, in MiMo's five words: 处理中 / 已完成 / 失败 / 已取消 / 已跳过. */
-export type SubagentStatus = "running" | "completed" | "error" | "rejected" | "skipped"
+export type SubagentStatus = "running" | "completed" | "error" | "rejected" | "skipped" | "stopped"
 
 export interface SubagentItem {
   /** The task call's id, which is what a pill opens the tab on. */
@@ -61,6 +61,7 @@ export interface SubagentItem {
 /* A call cut off by Stop reads as cancelled, as MiMo's cancelled outcome does. */
 export function subagentStatus(part: ToolPart): SubagentStatus {
   const state = stepState(part)
+  if (state === "incomplete") return "stopped"
   if (state === "error" && part.metadata?.aborted === true) return "rejected"
   // A run whose subagent was stopped some other way answers that it was cancelled.
   if (state === "completed" && part.metadata?.cancelled === true) return "rejected"
@@ -83,7 +84,7 @@ function recorded(state: SessionInfo["subagent"]): SubagentStatus | undefined {
   if (!state?.status || state.status === "running") return undefined
   if (state.outcome === "failure") return "error"
   if (state.outcome === "cancelled") return "rejected"
-  return state.outcome === "success" ? "completed" : undefined
+  return state.outcome === "success" ? "completed" : "stopped"
 }
 
 /** The subagent an actor call started, found by the call rather than the parent, so a branch still finds it. */

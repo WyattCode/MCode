@@ -2,6 +2,7 @@ import { existsSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { Worker } from "node:worker_threads"
+import { SearchStopped } from "./ignore"
 import { ToolError } from "./types"
 import { runFallbackJob, type FallbackJob, type GlobOutcome, type GrepOutcome } from "./search-fallback"
 
@@ -59,6 +60,9 @@ export async function runFallback(
     return runFallbackJob(job, signal)
   }
 
+  // A turn stopped before the search began must not run it: no listener below would ever hear an abort that already happened.
+  if (signal.aborted) throw new SearchStopped()
+
   return new Promise((resolve, reject) => {
     const worker = new Worker(file, { workerData: job })
     let settled = false
@@ -84,7 +88,7 @@ export async function runFallback(
       timeoutMs,
     )
 
-    const onAbort = () => finish(() => reject(new ToolError("Search cancelled")))
+    const onAbort = () => finish(() => reject(new SearchStopped()))
     signal.addEventListener("abort", onAbort, { once: true })
 
     worker.once("message", (message: { ok: boolean; result?: GrepOutcome | GlobOutcome; error?: string }) => {

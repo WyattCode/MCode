@@ -132,13 +132,13 @@ const SKIP_WORDS: Record<PresentSkip["reason"], string> = {
  * renders made on the way to a document, as 26.920 labels its deliverables
  * only. One at a time, in the order given.
  */
-async function labelHandedOver(files: PresentedFile[], snapshot: (target: string) => Promise<void>): Promise<AigcOutcome[]> {
+async function labelHandedOver(files: PresentedFile[], snapshot: (target: string) => Promise<void>, removeExplicit = false): Promise<AigcOutcome[]> {
   const local = files.flatMap((file) => ("path" in file ? [file.path] : []))
   const demoted = demotedInBatch(local)
   const outcomes: AigcOutcome[] = []
   for (const target of local) {
     if (demoted.has(target)) continue
-    const outcome = await labelDelivered(target, { snapshot })
+    const outcome = await labelDelivered(target, { snapshot, removeExplicit })
     if (outcome.kind) outcomes.push(outcome)
   }
   return outcomes
@@ -173,12 +173,14 @@ export const PresentFilesTool: ToolDefinition = {
     const { files, skipped } = await presentable(list, context.directory, cwd)
     const names = files.map((file) => file.name)
     const notes = skipped.map((skip) => `Skipped "${skip.entry}": it ${SKIP_WORDS[skip.reason]}.`)
-    const labelled = await labelHandedOver(files, context.snapshot)
+    const labelled = await labelHandedOver(files, context.snapshot, context.removeExplicitWatermark)
     const head = files.length
       ? `Showed ${files.length} ${files.length === 1 ? "file" : "files"} to the user: ${names.join(", ")}. The first opens in the preview panel.`
       : "No files were shown to the user."
     const marked = labelled.filter((outcome) => outcome.status === "labelled").map((outcome) => baseName(outcome.path))
-    if (marked.length) notes.push(`The AI-generated label (AI生成) was written into ${marked.join(", ")}, as the rules for AI-generated content require; leave it in place.`)
+    if (marked.length) notes.push(context.removeExplicitWatermark
+      ? `AI-generated metadata was retained in ${marked.join(", ")}. The user's delivery setting suppresses new visible labels; existing labels are left in place.`
+      : `The AI-generated label (AI生成) was written into ${marked.join(", ")}, as the rules for AI-generated content require; leave it in place.`)
     return {
       output: [head, ...notes].join("\n"),
       title: names.join(", ").slice(0, 80),

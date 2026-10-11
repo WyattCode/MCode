@@ -4,6 +4,7 @@ import type { SessionChat } from "../session/chat"
 import type { ToolOutputs } from "./truncate"
 import type { SkillInfo } from "../skill"
 import type { Attachment, ModelModalities, TaskItem, WebSearchSelection } from "@shared/protocol"
+import type { OperationKind } from "@shared/operation-kind"
 
 export interface ToolContext {
   sessionID: string
@@ -23,8 +24,12 @@ export interface ToolContext {
    */
   questions: Questions
   signal: AbortSignal
+  /** Delivery policy captured when the tool starts; metadata remains mandatory. */
+  removeExplicitWatermark?: boolean
   /** Streams partial output into the tool card while the tool is still running. */
   progress: (text: string) => void
+  /** App control reports its actual surface while a queued call starts running. */
+  reportOperation?: (kind: OperationKind | undefined) => void | Promise<void>
   /**
    * Records a file's current contents before changing them.
    *

@@ -201,32 +201,34 @@ def pdf(source, target, text, value):
     if not reader.pages:
         return {"ok": False, "reason": "empty"}
     info = reader.metadata or {}
-    if "/AIGC" in info:
-        return {"ok": True, "present": True, "value": str(info["/AIGC"])}
-    import io
-    from reportlab.pdfgen import canvas
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    explicit = str(info.get("/MCodeExplicit", "1" if "/AIGC" in info else "0")) == "1"
+    if "/AIGC" in info and (not text or explicit):
+        return {"ok": True, "present": True, "explicit": explicit, "value": str(info["/AIGC"])}
     writer = PdfWriter(clone_from=reader)
-    last = writer.pages[-1]
-    box = last.mediabox
-    left, bottom, width, height = float(box.left), float(box.bottom), float(box.width), float(box.height)
-    pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
-    size = 8
-    buffer = io.BytesIO()
-    sheet = canvas.Canvas(buffer, pagesize=(left + width, bottom + height))
-    sheet.setFont("STSong-Light", size)
-    sheet.setFillGray(0.5)
-    margin = min(18.0, width * 0.04)
-    sheet.drawRightString(left + width - margin, bottom + max(8.0, margin * 0.6), text)
-    sheet.showPage()
-    sheet.save()
-    buffer.seek(0)
-    last.merge_page(PdfReader(buffer).pages[0])
+    if text:
+        import io
+        from reportlab.pdfgen import canvas
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+        last = writer.pages[-1]
+        box = last.mediabox
+        left, bottom, width, height = float(box.left), float(box.bottom), float(box.width), float(box.height)
+        pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+        size = 8
+        buffer = io.BytesIO()
+        sheet = canvas.Canvas(buffer, pagesize=(left + width, bottom + height))
+        sheet.setFont("STSong-Light", size)
+        sheet.setFillGray(0.5)
+        margin = min(18.0, width * 0.04)
+        sheet.drawRightString(left + width - margin, bottom + max(8.0, margin * 0.6), text)
+        sheet.showPage()
+        sheet.save()
+        buffer.seek(0)
+        last.merge_page(PdfReader(buffer).pages[0])
     if writer._info is None:
         # A PDF without an information dictionary gets one.
         writer._info = DictionaryObject()
-    writer.add_metadata({NameObject("/AIGC"): TextStringObject(value)})
+    writer.add_metadata({NameObject("/AIGC"): TextStringObject(value), NameObject("/MCodeExplicit"): TextStringObject("1" if text or explicit else "0")})
     with open(target, "wb") as handle:
         writer.write(handle)
     again = PdfReader(target)
@@ -234,7 +236,7 @@ def pdf(source, target, text, value):
         return {"ok": False, "reason": "page-count"}
     if str((again.metadata or {}).get("/AIGC")) != value:
         return {"ok": False, "reason": "metadata-lost"}
-    return {"ok": True, "present": False}
+    return {"ok": True, "present": False, "explicit": bool(text) or explicit}
 
 try:
     if sys.argv[1] == "check":
@@ -247,7 +249,7 @@ except Exception as error:
 `
 
 /** Runs the labeller's Python with arguments, answering its one line of JSON. */
-async function runPython(python: string, args: string[], timeoutMs = 60_000): Promise<{ ok: boolean; reason?: string; present?: boolean; value?: string }> {
+async function runPython(python: string, args: string[], timeoutMs = 60_000): Promise<{ ok: boolean; reason?: string; present?: boolean; value?: string; explicit?: boolean }> {
   return new Promise((resolve) => {
     const child = spawn(python, ["-c", PYTHON, ...args], { windowsHide: true, env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONDONTWRITEBYTECODE: "1" } })
     let out = ""
@@ -474,14 +476,20 @@ async function xlsxExplicit(zip: JSZip): Promise<{ part: string; xml: string } |
 }
 
 /** Rewrites an Office package: the visible label where it is missing, and the AIGC property. */
-async function labelOffice(kind: "docx" | "pptx" | "xlsx", bytes: Buffer): Promise<{ bytes?: Buffer; explicit: boolean; reason?: string; changed: string[]; before: string[] }> {
+async function labelOffice(kind: "docx" | "pptx" | "xlsx", bytes: Buffer, allowExplicit = true): Promise<{ bytes?: Buffer; explicit: boolean; reason?: string; changed: string[]; before: string[] }> {
   const zip = await JSZip.loadAsync(bytes)
   const before = Object.keys(zip.files).sort()
   const existing = await officeAigc(zip)
   const changed: string[] = []
-  let explicit = true
+  let explicit = allowExplicit
   let reason: string | undefined
-  if (kind === "docx") {
+  if (!allowExplicit) {
+    // Keep existing visible labels, and suppress only new insertions.
+    for (const name of before.filter((name) => /^(word\/document|ppt\/slides\/slide\d+|xl\/worksheets\/sheet\d+)\.xml$/.test(name))) {
+      const xml = await zipText(zip, name)
+      if (xml?.includes(MARK_NAME) || xml?.includes(AIGC_TEXT)) explicit = true
+    }
+  } else if (kind === "docx") {
     const document = await zipText(zip, "word/document.xml")
     if (!document) throw new Error("the package has no word/document.xml")
     const next = docxExplicit(document)
@@ -543,16 +551,18 @@ const markupOnly = (text: string) =>
   text.replace(/<!--[\s\S]*?(?:-->|$)|<(script|style|textarea|title|noscript)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, (range) => " ".repeat(range.length))
 
 /** A web page: the corner tag at the top of the body, and a comment after the doctype. */
-export function labelHtml(html: string): string | undefined {
-  if (html.includes(HTML_MARK)) return undefined
+export function labelHtml(html: string, allowExplicit = true): string | undefined {
+  const labelled = html.includes(HTML_MARK)
+  const metadata = html.includes(HTML_COMMENT)
+  if ((labelled || !allowExplicit) && metadata) return undefined
   const bom = html.startsWith("\uFEFF") ? "\uFEFF" : ""
   let text = html.slice(bom.length)
   const markup = markupOnly(text)
   const body = /<body\b[^>]*>/i.exec(markup)
-  if (body) {
+  if (allowExplicit && !labelled && body) {
     const at = body.index + body[0].length
     text = `${text.slice(0, at)}\n${HTML_BADGE}${text.slice(at)}`
-  } else {
+  } else if (allowExplicit && !labelled) {
     const head = /<\/head\s*>/i.exec(markup)
     const opener = head ?? /<html\b[^>]*>/i.exec(markup) ?? /<!doctype\b[^>]*>/i.exec(markup)
     const at = opener ? opener.index + opener[0].length : 0
@@ -560,7 +570,7 @@ export function labelHtml(html: string): string | undefined {
   }
   const doctype = /^\s*<!doctype\b[^>]*>/i.exec(text)
   const at = doctype ? doctype[0].length : 0
-  text = at ? `${text.slice(0, at)}\n${HTML_COMMENT}${text.slice(at)}` : `${HTML_COMMENT}\n${text}`
+  if (!metadata) text = at ? `${text.slice(0, at)}\n${HTML_COMMENT}${text.slice(at)}` : `${HTML_COMMENT}\n${text}`
   return bom + text
 }
 
@@ -707,7 +717,7 @@ const riffChunk = (id: string, body: Buffer) => {
 }
 
 /** A WAV recording: the tone appended to its samples, and the AIGC entry in its INFO list (the other entries kept). */
-function labelWav(bytes: Buffer): { bytes?: Buffer; explicit: boolean; reason?: string } {
+function labelWav(bytes: Buffer, allowExplicit = true): { bytes?: Buffer; explicit: boolean; reason?: string } {
   const chunks = wavChunks(bytes)
   const format = wavFormat(bytes, chunks)
   const data = chunks.find((chunk) => chunk.id === "data")
@@ -716,13 +726,13 @@ function labelWav(bytes: Buffer): { bytes?: Buffer; explicit: boolean; reason?: 
   const toneable = format.pcm && format.bits === 16 && format.channels > 0 && format.sampleRate >= 8000
   const hasTone = toneable && endsWithTone(samples, format.channels, format.sampleRate)
   const existing = wavAigc(bytes)
-  if ((hasTone || !toneable) && existing?.ContentPropagator === AIGC_PRODUCER) return { explicit: hasTone, reason: toneable ? undefined : "wav-encoding" }
+  if ((hasTone || !toneable || !allowExplicit) && existing?.ContentPropagator === AIGC_PRODUCER) return { explicit: hasTone, reason: toneable ? undefined : "wav-encoding" }
   const entry = riffChunk("AIGC", Buffer.from(`${aigcJson(aigcFields(existing))}\0`, "utf8"))
   const out: Buffer[] = []
   let listed = false
   for (const chunk of chunks) {
     if (chunk.id === "data") {
-      out.push(riffChunk("data", toneable && !hasTone ? Buffer.concat([samples, aigcTone(format.sampleRate, format.channels)]) : samples))
+      out.push(riffChunk("data", allowExplicit && toneable && !hasTone ? Buffer.concat([samples, aigcTone(format.sampleRate, format.channels)]) : samples))
     } else if (chunk.id === "LIST" && !listed && bytes.toString("latin1", chunk.start + 8, chunk.start + 12) === "INFO") {
       const kept: Buffer[] = [Buffer.from("INFO", "latin1")]
       let at = chunk.start + 12
@@ -747,7 +757,7 @@ function labelWav(bytes: Buffer): { bytes?: Buffer; explicit: boolean; reason?: 
   head.write("RIFF", 0, "latin1")
   head.writeUInt32LE(body.length + 4, 4)
   head.write("WAVE", 8, "latin1")
-  return { bytes: Buffer.concat([head, body]), explicit: toneable, reason: toneable ? undefined : "wav-encoding" }
+  return { bytes: Buffer.concat([head, body]), explicit: hasTone || (allowExplicit && toneable), reason: toneable ? undefined : "wav-encoding" }
 }
 
 /** Walks a rewritten WAV again: sizes consistent, format unchanged, the original samples first in its data. */
@@ -1095,6 +1105,8 @@ function checkJpeg(before: Buffer, after: Buffer): void {
 
 /** What labelling needs from its caller. */
 export interface AigcDeps {
+  /** Skip new visible labels, keeping existing labels and generated-content metadata. */
+  removeExplicit?: boolean
   /** Records the file's contents before they change, so undo can put them back. */
   snapshot?: (target: string) => Promise<void>
   /** The bundled Python; without it PDFs are left alone and Office files are checked by this module alone. */
@@ -1105,32 +1117,33 @@ export interface AigcDeps {
 }
 
 /** The new bytes for a file, with whether its visible label is on it; undefined bytes when both halves already are. */
-async function rewrite(kind: AigcKind, bytes: Buffer): Promise<{ bytes?: Buffer; explicit: boolean; reason?: string; check: (next: Buffer) => Promise<void> | void }> {
+async function rewrite(kind: AigcKind, bytes: Buffer, allowExplicit = true): Promise<{ bytes?: Buffer; explicit: boolean; reason?: string; check: (next: Buffer) => Promise<void> | void }> {
   switch (kind) {
     case "docx":
     case "pptx":
     case "xlsx": {
-      const result = await labelOffice(kind, bytes)
+      const result = await labelOffice(kind, bytes, allowExplicit)
       return { bytes: result.bytes, explicit: result.explicit, reason: result.reason, check: (next) => checkOffice(next, result.changed, result.before) }
     }
     case "html": {
       const text = bytes.toString("utf8")
       // A page in another encoding would be damaged by a UTF-8 rewrite.
       if (!Buffer.from(text, "utf8").equals(bytes)) throw new Error("the page is not UTF-8")
-      const next = labelHtml(text)
+      const next = labelHtml(text, allowExplicit)
       return {
         bytes: next === undefined ? undefined : Buffer.from(next, "utf8"),
-        explicit: true,
+        explicit: (next ?? text).includes(HTML_MARK),
         check: (out) => {
           // Only insertions: taking the two out again gives the page back byte for byte.
           const written = out.toString("utf8")
-          const without = stripOnce(stripOnce(written, [`\n${HTML_COMMENT}`, `${HTML_COMMENT}\n`]), [`\n${HTML_BADGE}`, `${HTML_BADGE}\n`])
+          let without = text.includes(HTML_COMMENT) ? written : stripOnce(written, [`\n${HTML_COMMENT}`, `${HTML_COMMENT}\n`])
+          if (allowExplicit && !text.includes(HTML_MARK)) without = stripOnce(without, [`\n${HTML_BADGE}`, `${HTML_BADGE}\n`])
           if (without !== text) throw new Error("the page's own text changed")
         },
       }
     }
     case "wav": {
-      const result = labelWav(bytes)
+      const result = labelWav(bytes, allowExplicit)
       return { bytes: result.bytes, explicit: result.explicit, reason: result.reason, check: (next) => checkWav(bytes, next) }
     }
     case "mp3":
@@ -1185,7 +1198,7 @@ export async function labelDelivered(target: string, deps: AigcDeps = {}): Promi
   try {
     if (kind === "pdf") return await labelPdf(target, stat, python, deps, skip)
     const bytes = await fs.readFile(target)
-    const plan = await rewrite(kind, bytes)
+    const plan = await rewrite(kind, bytes, deps.removeExplicit !== true)
     if (!plan.bytes) return { path: target, kind, status: "present", explicit: plan.explicit, implicit: true, ...(plan.reason ? { reason: plan.reason } : {}) }
     const next = plan.bytes
     await plan.check(next)
@@ -1225,9 +1238,9 @@ async function labelPdf(
   if (bytes.toString("latin1", 0, 5) !== "%PDF-") return skip("error: not a PDF file")
   const temp = `${target}.${process.pid}.aigc.pdf`
   try {
-    const result = await runPython(python, ["pdf", target, temp, AIGC_TEXT, aigcJson(aigcFields())])
+    const result = await runPython(python, ["pdf", target, temp, deps.removeExplicit ? "" : AIGC_TEXT, aigcJson(aigcFields())])
     if (!result.ok) return skip(result.reason === "encrypted" ? "encrypted" : `error: ${result.reason}`)
-    if (result.present) return { path: target, kind: "pdf", status: "present", explicit: true, implicit: true }
+    if (result.present) return { path: target, kind: "pdf", status: "present", explicit: result.explicit === true, implicit: true }
     const next = await fs.readFile(temp)
     const now = await fs.stat(target)
     if (!sameFile(stat, now)) return skip("changed-meanwhile")
@@ -1235,7 +1248,7 @@ async function labelPdf(
     await replaceWith(target, next, async (written) => {
       if (written.toString("latin1", 0, 5) !== "%PDF-" || !written.includes("/AIGC")) throw new Error("the rewritten PDF lost its label")
     }, stat.mode & 0o777)
-    return { path: target, kind: "pdf", status: "labelled", explicit: true, implicit: true }
+    return { path: target, kind: "pdf", status: "labelled", explicit: result.explicit === true, implicit: true }
   } finally {
     await fs.rm(temp, { force: true }).catch(() => {})
   }

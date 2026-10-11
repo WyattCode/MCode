@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import OperationBadges from "./OperationBadges.vue"
 import type { SessionInfo } from "@shared/protocol"
 import { computed, onBeforeUnmount, onMounted, onUpdated, ref, watch } from "vue"
 import RowTitle from "./RowTitle.vue"
@@ -1302,6 +1303,7 @@ onBeforeUnmount(() => {
               <span v-else class="status-pill" :aria-label="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
             </span>
           </button>
+          <OperationBadges :session-id="block.session.id" :working="working(block.session.id)" />
           <!-- subagents: MiMo 26.920's chip - how many subagents still work for this conversation, named under the pointer. -->
           <button
             v-if="workingFor.get(block.session.id)"
@@ -1534,6 +1536,7 @@ onBeforeUnmount(() => {
                 </span>
               </button>
               <!-- subagents: MiMo 26.920's chip - how many subagents still work for this conversation, named under the pointer. -->
+              <OperationBadges :session-id="session.id" :working="working(session.id)" />
               <button
                 v-if="workingFor.get(session.id)"
                 type="button"
@@ -1690,6 +1693,7 @@ onBeforeUnmount(() => {
             </span>
           </button>
           <!-- subagents: MiMo 26.920's chip - how many subagents still work for this conversation, named under the pointer. -->
+          <OperationBadges :session-id="entry.session.id" :working="working(entry.session.id)" />
           <button
             v-if="workingFor.get(entry.session.id)"
             type="button"

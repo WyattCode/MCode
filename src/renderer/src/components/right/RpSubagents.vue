@@ -475,7 +475,8 @@ onBeforeUnmount(() => {
   background: #d28a32;
 }
 
-.rp-subagent-detail-status.skipped .rp-subagent-dot {
+.rp-subagent-detail-status.skipped .rp-subagent-dot,
+.rp-subagent-detail-status.stopped .rp-subagent-dot {
   background: #8b918b;
 }
 

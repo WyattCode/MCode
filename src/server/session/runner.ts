@@ -3954,6 +3954,14 @@ export class SessionRunner {
         questions: this.questions,
         signal: input.signal,
         snapshot: (target) => this.record(owner, target),
+        removeExplicitWatermark: this.config.get().removeExplicitWatermark === true,
+        reportOperation: async (kind) => {
+          if (tool.name !== "app" || part.status !== "running") return
+          part.metadata = { ...(part.metadata ?? {}), operationKind: kind ?? "none" }
+          publish()
+          // A reloaded window reads the transcript while the operation is still running.
+          await this.store.saveMessage(assistant, true)
+        },
         shell: this.config.get().shell,
         // websearch: the user's choice of service, asked once and kept in the settings.
         webSearch: {

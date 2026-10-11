@@ -71,7 +71,7 @@ export async function roundNineteenLaneCChecks(check: Check, section: (name: str
     const composer = await read("src/renderer/src/components/Composer.vue")
     check(
       "the composer asks for a park just before sending, only for a turn it starts in the main thread",
-      /const parkIn = !props\.side && filled && !subtask && app\.currentID && !app\.busy \? app\.currentID : undefined\s+if \(parkIn\) requestPark\(parkIn\)\s+\/\/[^\n]*\n\s+const accepted =/.test(composer),
+      /const parkIn = !props\.side && filled && !subtask && target && !app\.running\.has\(target\) \? target : undefined\s+if \(parkIn\) requestPark\(parkIn\)\s+\/\/[^\n]*\n\s+const accepted =/.test(composer),
     )
     check("and takes it back when the send is refused", /if \(!accepted && parkIn\) clearPark\(parkIn\)/.test(composer))
     check(

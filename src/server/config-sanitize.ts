@@ -56,7 +56,7 @@ export function sanitizeConfig(doc: AppConfig, fallback: AppConfig): boolean {
   for (const key of ["allowFullAccess", "goalMode", "tray", "voiceSend", "voiceFeedback", "fontSmoothing", "pointerCursor", "spineSound"]) {
     if (typeof record[key] !== "boolean") put(key, base[key])
   }
-  for (const key of ["smart", "browserEnabled", "videoCardDetails", "sessionChat"]) {
+  for (const key of ["smart", "browserEnabled", "videoCardDetails", "sessionChat", "removeExplicitWatermark"]) {
     if (record[key] !== undefined && typeof record[key] !== "boolean") drop(key)
   }
 

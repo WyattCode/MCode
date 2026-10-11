@@ -67,6 +67,8 @@ export interface BackendOptions {
   origins?: readonly string[]
   /** The system's secure storage for the saved keys (L12-3); the desktop app passes Electron's safeStorage. */
   secrets?: SecretBox
+  /** The installed application directory; omitted for development builds. */
+  installationDirectory?: string
 }
 
 /** How many ports the system is asked for before the backend gives up on one a browser accepts. */
@@ -113,7 +115,7 @@ export async function listenForWindow(server: Server, host: string, refused: (po
 export async function startBackend(dataDirectory: string, options: BackendOptions = {}): Promise<Backend> {
   const storage = new Storage(path.join(dataDirectory, "storage"))
   const bus = new Bus()
-  const config = new Config(storage, bus, path.join(dataDirectory, "credentials.json"), options.secrets)
+  const config = new Config(storage, bus, path.join(dataDirectory, "credentials.json"), options.secrets, options.installationDirectory)
   const auth = new AuthManager(config, bus)
   await config.load()
   // The model's file tools never write here: config.json there decides what starts at launch.

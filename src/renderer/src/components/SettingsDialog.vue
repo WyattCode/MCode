@@ -793,6 +793,25 @@ const voiceModes = computed(() => [
  * turning the switch on takes a confirmation; turning it off does not.
  */
 const confirmingVoiceSend = ref(false)
+const confirmingWatermark = ref(false)
+const watermarkSaving = ref(false)
+
+async function setWatermarkRemoval(remove: boolean) {
+  if (watermarkSaving.value) return
+  watermarkSaving.value = true
+  try {
+    await app.patchConfig({ removeExplicitWatermark: remove })
+    confirmingWatermark.value = false
+  } finally {
+    watermarkSaving.value = false
+  }
+}
+
+function toggleWatermarkRemoval() {
+  if (watermarkSaving.value) return
+  if (app.config?.removeExplicitWatermark) void setWatermarkRemoval(false)
+  else confirmingWatermark.value = true
+}
 
 function toggleVoiceSend() {
   if (app.config?.voiceSend) void app.patchConfig({ voiceSend: false })
@@ -1706,6 +1725,17 @@ onBeforeUnmount(() => {
                 </button>
               </span>
             </div>
+
+            <div class="line" data-watermark-row>
+              <div class="line-text">
+                <div class="line-title">{{ t("set.watermark") }}</div>
+                <div class="line-sub">{{ t("set.watermarkSub") }}</div>
+              </div>
+              <button class="switch" :class="{ on: app.config?.removeExplicitWatermark }" type="button" role="switch" :aria-checked="Boolean(app.config?.removeExplicitWatermark)" :aria-label="t('set.watermark')" :disabled="watermarkSaving" data-watermark-toggle @click="toggleWatermarkRemoval"><span class="knob" /></button>
+            </div>
+            <Teleport to="body">
+              <ConfirmDialog v-if="confirmingWatermark" :title="t('set.watermarkConfirm')" :body="t('set.watermarkBody')" :confirm-label="t('set.watermarkApply')" :danger="false" @close="!watermarkSaving && (confirmingWatermark = false)" @confirm="setWatermarkRemoval(true)" />
+            </Teleport>
 
             <!-- MiMo's searchable picker; an empty language is 自动检测. -->
             <div class="line" data-language-row>
