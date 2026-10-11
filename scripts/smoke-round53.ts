@@ -61,6 +61,7 @@ export async function roundFiftyThreeChecks(check: Check, section: (name: string
   const composer = source("src/renderer/src/components/Composer.vue")
   check("the chip names the conversation's level first", /clampEffort\(variants\.value, session\.value\?\.effort \?\? app\.config\?\.effort/.test(composer))
   check("choosing a model moves that conversation's level, not everyone's", /app\.setEffort\(effort, sessionID\.value\)/.test(composer) && /app\.setEffort\(level, sessionID\.value\)/.test(composer))
+  check("with thinking off the pill names only the model", /level && level !== "none" \? t\(effortLabelKey/.test(composer))
   const app = source("src/renderer/src/App.vue")
   check("the keyboard steps the open conversation's level", (app.match(/app\.current\?\.effort \?\? app\.config\?\.effort/g) ?? []).length === 2)
 
@@ -119,5 +120,26 @@ export async function roundFiftyThreeChecks(check: Check, section: (name: string
     check("the next message, which does not say it, gets the tool back", later?.type === "tool" && later.error !== NO_TESTING_REFUSAL, later)
   } finally {
     await e.close()
+  }
+
+  section("Round 53: the levels a custom thinking model is asked at go out as the server's own table says")
+  {
+    // The user's Qwen3.8-Flash-Next: off, low, medium and highest (xhigh) - measured 2026-10-11 to take reasoning_effort at each, none included.
+    const q = await engine({ custom: { models: [{ id: "qwen-think", name: "Q", thinking: { efforts: ["low", "medium", "xhigh"], canOff: true, default: "medium" } }] } })
+    try {
+      const sent: Record<string, unknown> = {}
+      for (const level of ["low", "medium", "xhigh", "none"] as const) {
+        const own = await q.store.create({ directory: q.project, model: { provider: "fake", model: "qwen-think" }, effort: level })
+        q.replies.push(say("ok"))
+        await q.runner.prompt({ sessionID: own.id, text: "hi" })
+        await q.idle(own.id)
+        sent[level] = q.bodies.at(-1)?.reasoning_effort
+      }
+      check("low, medium, xhigh and none each go out as themselves", JSON.stringify(sent) === JSON.stringify({ low: "low", medium: "medium", xhigh: "xhigh", none: "none" }), sent)
+      const offered = q.config.providers().find((entry) => entry.id === "fake")?.models.find((model) => model.id === "qwen-think")?.variants
+      check("and the menu offers exactly those, with off first", offered?.join() === "none,low,medium,xhigh", offered)
+    } finally {
+      await q.close()
+    }
   }
 }

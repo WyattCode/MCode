@@ -5086,7 +5086,7 @@ async function main() {
     check("five lines of code are fenced as their language", detectCodeLanguage(js) === "js", detectCodeLanguage(js))
     check("JSON that parses is json", detectCodeLanguage('{\n  "a": 1,\n  "b": [1, 2],\n  "c": {\n    "d": true\n  }\n}') === "json")
     check("four lines are too few", detectCodeLanguage("const a = 1\nlet b = 2\nconst c = 3\nlet d = 4") === undefined)
-    check("prose is not code", detectCodeLanguage("Dear team,\n\nthanks for the update.\nI will look tomorrow.\nBest,\nWyatt") === undefined)
+    check("prose is not code", detectCodeLanguage("Dear team,\n\nthanks for the update.\nI will look tomorrow.\nBest,\nSam") === undefined)
     check("text already fenced is left alone", detectCodeLanguage("```\n" + js + "\n```") === undefined)
     const fenced = insertFence("see: tail", 5, 5, "js", "a()\n\n")
     check("the fence gets lines of its own", fenced.text === "see: \n```js\na()\n```\ntail", fenced.text)

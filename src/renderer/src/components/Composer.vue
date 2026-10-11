@@ -2703,7 +2703,8 @@ const effortLevel = computed<Effort | undefined>(() =>
 const effortLabel = computed(() => {
   const model = currentModel.value
   const level = effortLevel.value
-  return model && level ? t(effortLabelKey(model.id, model.name, level)) : ""
+  // Thinking turned off says nothing beside the name: the menu's own row says it, the pill shows only what is on.
+  return model && level && level !== "none" ? t(effortLabelKey(model.id, model.name, level)) : ""
 })
 
 /*
