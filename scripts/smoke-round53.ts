@@ -13,6 +13,8 @@ import os from "node:os"
 import path from "node:path"
 import { readFileSync } from "node:fs"
 import type { Check } from "./smoke-round5"
+import { calls, engine, say, wireText } from "./smoke-round5"
+import { NO_TESTING_NOTE, NO_TESTING_REFUSAL, forbidsTesting } from "../src/shared/no-testing"
 import { Bus } from "../src/server/bus"
 import { SessionStore } from "../src/server/session/store"
 import { STALE_MEDIA_NOTE, toMessages } from "../src/server/provider/openai"
@@ -91,4 +93,30 @@ export async function roundFiftyThreeChecks(check: Check, section: (name: string
   const later = toMessages("sys", [...history, { id: "msg_a5", sessionID: "ses_r53", role: "assistant", model: { provider: "p", model: "m" }, agent: "build", parts: [{ type: "text", id: "t5", text: "done" }], time: { created: 5 } } as Message], { image: true }) as Record<string, any>[]
   check("once the model has spoken, none of the pictures is sent again", !later.some((m) => Array.isArray(m.content) && m.content.some((p: any) => p.type === "image_url")))
   check("a picture the user attached is not touched", (toMessages("sys", [{ id: "msg_u2", sessionID: "ses_r53", role: "user", text: "see", attachments: [{ path: "u.png", mime: "image/png", data: "iVBORw0KGgo=" }], time: { created: 1 } }, step(2, false), { id: "msg_u3", sessionID: "ses_r53", role: "user", text: "and", attachments: [], time: { created: 3 } }] as Message[], { image: true }) as Record<string, any>[]).some((m) => Array.isArray(m.content) && m.content.some((p: any) => p.type === "image_url")))
+
+  section("Round 53: told not to test, a turn does not drive a browser to check its work")
+  const told = ["创建一个HTML，内容是SVG绘制一个鹈鹕骑自行车的2D动画，你不需要任何测试，只靠你自己完成", "不要测试，直接做", "不用测试", "无需测试", "别验证了", "不要截图验证", "不需要进行任何验证", "Don't test it, just write it", "do not run any tests", "no testing please", "skip verification", "without screenshots", "no need to verify"]
+  const asked = ["请帮我测试这个页面", "不要忘记测试", "测试一下并截图给我", "不要测试环境的数据", "Don't forget to test it", "please verify the layout", "write tests for the parser", "不要使用任何skill"]
+  check("every way of saying it is understood", told.every((text) => forbidsTesting(text)), told.filter((text) => !forbidsTesting(text)))
+  check("a request to test or verify is not mistaken for the opposite", asked.every((text) => !forbidsTesting(text)), asked.filter((text) => forbidsTesting(text)))
+
+  const e = await engine()
+  try {
+    const session = await e.store.create({ directory: e.project, model: e.model })
+    e.replies.push(calls([{ name: "app", input: { action: "open", url: "file:///x.html" } }]), say("done"))
+    await e.runner.prompt({ sessionID: session.id, text: "做一个页面，你不需要任何测试" })
+    await e.idle(session.id)
+    const first = wireText(e.bodies[0])
+    check("the turn tells the model, in a note", first.includes(NO_TESTING_NOTE), first.slice(-200))
+    const part = (await e.assistants(session.id)).flatMap((message) => message.parts).find((p) => p.type === "tool" && p.name === "app")
+    check("and the app tool is refused, as an error it reads back", part?.type === "tool" && part.status === "error" && part.error === NO_TESTING_REFUSAL, part)
+
+    e.replies.push(calls([{ name: "app", input: { action: "close" } }]), say("done"))
+    await e.runner.prompt({ sessionID: session.id, text: "现在打开浏览器看一下" })
+    await e.idle(session.id)
+    const later = (await e.assistants(session.id)).flatMap((message) => message.parts).filter((p) => p.type === "tool" && p.name === "app").at(-1)
+    check("the next message, which does not say it, gets the tool back", later?.type === "tool" && later.error !== NO_TESTING_REFUSAL, later)
+  } finally {
+    await e.close()
+  }
 }

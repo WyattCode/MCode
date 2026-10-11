@@ -21,6 +21,7 @@ import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promise
 import { dirname } from "node:path"
 import { Identifier } from "@shared/id"
 import { effortToSend } from "@shared/effort-menu"
+import { NO_TESTING_NOTE, NO_TESTING_REFUSAL, forbidsTesting } from "@shared/no-testing"
 import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fallback"
 import { readTask, smartRoute, type TaskReading } from "@shared/smart"
 import type { Bus } from "../bus"
@@ -2089,6 +2090,10 @@ export class SessionRunner {
     // plan: what this turn may do, or - on the turn after the switch - that it may build again.
     const planning = input.inbox ? undefined : await this.planNote(session, stored)
     if (planning) context.push(planning)
+    // Told not to test: the turn says so to the model, and the app tool is refused for it (see runTool).
+    const noTesting = !input.inbox && forbidsTesting(input.text)
+    if (noTesting) context.push(NO_TESTING_NOTE)
+    this.turn(session.id).noTesting = noTesting
     const user: UserMessage = {
       id: Identifier.message(),
       sessionID: session.id,
@@ -3885,12 +3890,25 @@ export class SessionRunner {
       return
     }
 
+    // subagents: a subagent's calls belong to the turn of the conversation it works for.
+    const owner = this.owners.get(input.session.id) ?? input.session.id
+    // Told not to test: driving a browser or an app is what the verification loops were made of.
+    if (tool.name === "app" && this.turn(owner).noTesting) {
+      part.status = "error"
+      part.error = NO_TESTING_REFUSAL
+      part.metadata = { recoverable: true }
+      part.time.started = Date.now()
+      part.time.completed = part.time.started
+      this.settleForLoops(input.session.id, part, input.signal)
+      publish()
+      await this.store.saveMessage(assistant, true)
+      return
+    }
+
     part.status = "running"
     part.time.started = Date.now()
     publish()
 
-    // subagents: a subagent's calls belong to the turn of the conversation it works for.
-    const owner = this.owners.get(input.session.id) ?? input.session.id
     const reach = reachOf(part.name)
     if (reach !== "reads") {
       const turn = this.turn(owner)
@@ -5053,6 +5071,8 @@ interface Turn {
   directory?: string
   /** True once a tool ran whose file changes cannot be seen from here. */
   opaque: boolean
+  /** The message this turn answers told the model not to test or verify. */
+  noTesting?: boolean
   /**
    * The user messages this turn is answering, in the order they were sent.
    *
