@@ -127,7 +127,7 @@ export function dangerousCommand(command: string): boolean {
 /* MiMo's read-only allowlist: at Ask, a command made only of these runs once without a question. */
 const READ_ONLY = new Set([
   "pwd", "whoami", "hostname", "uname", "date", "id", "uptime", "arch", "tty", "ls", "cat", "head", "tail", "wc", "echo", "which",
-  "type", "printenv", "ps", "df", "du", "tree", "stat", "file", "basename", "dirname", "grep", "rg", "cut", "column", "true", "false",
+  "type", "ps", "df", "du", "tree", "stat", "file", "basename", "dirname", "grep", "rg", "cut", "column", "true", "false",
 ])
 const READ_ONLY_GIT = new Set([
   "status", "log", "diff", "show", "blame", "rev-parse", "describe", "shortlog", "reflog", "ls-files", "ls-tree", "whatchanged",
@@ -143,16 +143,154 @@ const NOT_PLAIN = /[<>`\n(){}]|\$\(/
 /** Redirections that only discard output, taken out before looking. */
 const HARMLESS_REDIRECT = /(?:2>&1|&>\s*\/dev\/null|(?:\d)?\s*>\s*\/dev\/null)(?=$|[\s;|&])/g
 
+/*
+ * Shell strips matching outer quotes before a program sees its arguments. A
+ * token that still carries a quote after that is not something this allowlist
+ * can reason about, so callers fail closed.
+ */
+function stripArgQuotes(word: string): string | undefined {
+  let out = word
+  while (
+    out.length >= 2 &&
+    ((out[0] === "'" && out[out.length - 1] === "'") ||
+      (out[0] === '"' && out[out.length - 1] === '"'))
+  ) {
+    out = out.slice(1, -1)
+  }
+  return /['"]/.test(out) ? undefined : out
+}
+
+/*
+ * Normalize whitespace-split tokens the way the shell would. Long options may
+ * quote only their value (`--config="..."`), so strip that too; anything left
+ * with a quote, a dollar sign, or a backslash is a substitution or escape this
+ * allowlist cannot reason about, so callers fail closed.
+ */
+function normalizeWords(words: string[]): string[] | undefined {
+  const out: string[] = []
+  for (const word of words) {
+    const stripped = stripArgQuotes(word)
+    if (stripped !== undefined) {
+      if (/[\\$'"]/.test(stripped)) return undefined
+      out.push(stripped)
+      continue
+    }
+    const eq = word.indexOf("=")
+    if (eq > 0) {
+      const value = stripArgQuotes(word.slice(eq + 1))
+      if (value !== undefined) {
+        const token = `${word.slice(0, eq + 1)}${value}`
+        if (/[\\$'"]/.test(token)) return undefined
+        out.push(token)
+        continue
+      }
+    }
+    return undefined
+  }
+  return out
+}
+
+/*
+ * ripgrep's `--pre` runs a program over every match before it is searched; the
+ * value is that program. `--pre-glob` only says which files the preprocessor
+ * sees and is harmless, so only `--pre` and `--pre=` are the exec hook.
+ */
+function hasPreExec(words: string[]): boolean {
+  return words.some((word) => word === "--pre" || word.startsWith("--pre="))
+}
+
+/*
+ * A read-only git subcommand turned dangerous by a flag after it: `-O` /
+ * `--open-files-in-pager` runs a pager program, `--output` writes a file,
+ * `--ext-diff` may invoke an external diff, `--textconv` runs textconv filters,
+ * `--show-signature` may invoke gpg, and `--paginate` runs a pager. A `-c` /
+ * `--config` that sets an exec-capable key is the same trick spelled
+ * differently. Git config keys are case-insensitive, and the value may be glued
+ * to the flag, so both are refused. The global `-c` sits before the subcommand
+ * and is refused there already; this scans what follows it.
+ */
+const GIT_CONFIG_TRICK =
+  /^(?:core\.(?:pager|editor|askpass)|pager\.|alias\.|diff\.external|diff\.[^=]+\.textconv|gpg\.program|filter\.|interactive\.difffilter)/i
+function gitUnsafeArgs(words: string[]): boolean {
+  const sub = words[1] ?? ""
+
+  /*
+   * `symbolic-ref` with one name only reads; a second name writes the ref, and
+   * `--delete` / `-d` removes one. Count non-flag args after the subcommand.
+   */
+  if (sub === "symbolic-ref") {
+    let nonFlagArgs = 0
+    for (let at = 2; at < words.length; at++) {
+      const word = words[at] ?? ""
+      if (word === "--delete" || word.startsWith("--delete=") || word === "-d" || /^-[A-Za-z]*d[A-Za-z]*$/.test(word)) {
+        return true
+      }
+      if (!word.startsWith("-")) nonFlagArgs++
+    }
+    if (nonFlagArgs >= 2) return true
+  }
+
+  /* `--filters` runs smudge/filter drivers; `--batch-command` can write objects. */
+  if (sub === "cat-file") {
+    for (let at = 2; at < words.length; at++) {
+      const word = words[at] ?? ""
+      if (
+        word === "--filters" ||
+        word.startsWith("--filters=") ||
+        word === "--batch-command" ||
+        word.startsWith("--batch-command=")
+      ) {
+        return true
+      }
+    }
+  }
+
+  /* `reflog show` (default) reads; `delete` / `expire` mutate the reflog. */
+  if (sub === "reflog") {
+    for (let at = 2; at < words.length; at++) {
+      const word = words[at] ?? ""
+      if (word.startsWith("-")) continue
+      const lower = word.toLowerCase()
+      if (lower === "delete" || lower === "expire") return true
+      break
+    }
+  }
+
+  for (let at = 2; at < words.length; at++) {
+    const word = words[at] ?? ""
+    if (word.startsWith("-O")) return true
+    if (word === "--open-files-in-pager" || word.startsWith("--open-files-in-pager=")) return true
+    if (word === "--output" || word.startsWith("--output=")) return true
+    if (word === "--ext-diff" || word.startsWith("--ext-diff=")) return true
+    if (word === "--textconv" || word.startsWith("--textconv=")) return true
+    if (word === "--show-signature" || word.startsWith("--show-signature=")) return true
+    if (word === "--paginate" || word.startsWith("--paginate=")) return true
+    if ((word === "-c" || word === "--config") && GIT_CONFIG_TRICK.test(words[at + 1] ?? "")) return true
+    if (word.startsWith("--config=") && GIT_CONFIG_TRICK.test(word.slice("--config=".length))) return true
+    if (word.startsWith("-c") && word.length > 2 && GIT_CONFIG_TRICK.test(word.slice(2))) return true
+  }
+  return false
+}
+
 function readOnlyPiece(piece: string): boolean {
-  const words = piece.trim().split(/\s+/).filter(Boolean)
+  const rawWords = piece.trim().split(/\s+/).filter(Boolean)
+  const words = normalizeWords(rawWords)
+  if (!words) return false
   const head = words[0] ?? ""
   if (!head) return false
-  if (head === "git") return READ_ONLY_GIT.has(words[1] ?? "")
-  if (head === "tail" && words.some((word) => word === "-f" || word === "--follow" || word.startsWith("--follow="))) return false
+  if (head === "git") return READ_ONLY_GIT.has(words[1] ?? "") && !gitUnsafeArgs(words)
+  if (head === "tail" && words.some((word) => word === "--follow" || word.startsWith("--follow=") || /^-[A-Za-z]*[fF]/.test(word))) return false
+  if ((head === "rg" || head === "grep") && hasPreExec(words)) return false
   return READ_ONLY.has(head) || READ_ONLY_POWERSHELL.has(head.toLowerCase())
 }
 
 export function readOnlyCommand(command: string): boolean {
+  /*
+   * A line break separates shell commands. Collapsing it into a space would
+   * make `pwd\nchmod …` look like one read-only piece while bash still runs
+   * both lines — Ask would auto-allow. Refuse any line break first.
+   */
+  if (/[\n\r\u2028\u2029]/.test(command)) return false
   const text = command.replace(HARMLESS_REDIRECT, " ").replace(/\s+/g, " ").trim()
   if (!text) return false
   const parts = text.split(/\s*(?:&&|\|\||;)\s*/).map((part) => part.trim()).filter(Boolean)

@@ -95,7 +95,7 @@ import type { TaskControl } from "../tool/types"
 import type { McpServers } from "../mcp"
 
 /** What a turn needs of the MCP layer: a project's servers connected, their tools, and their names. */
-type McpAccess = Pick<McpServers, "ready" | "tools" | "names">
+type McpAccess = Pick<McpServers, "ready" | "tools" | "names" | "needsTrustPrompt" | "trust">
 
 /*
  * What a resumed turn is told at its first step, in MCode's own words. Sent in
@@ -2138,6 +2138,36 @@ export class SessionRunner {
    * working directory inside it, as MiMo's desktop attaches them. A subagent's
    * prompt is the runner's own and gets none.
    */
+
+  /**
+   * First local MCP from a project file in this folder: ask once, remember
+   * trust, then ready() may start them. "Not now" leaves them blocked.
+   */
+  private async ensureMcpTrust(sessionID: string, directory: string, signal?: AbortSignal): Promise<void> {
+    if (!this.mcp) return
+    if (!(await this.mcp.needsTrustPrompt(directory))) return
+    try {
+      const [answer] = await this.questions.ask({
+        sessionID,
+        questions: [
+          {
+            question: "This folder configures local MCP servers (mcode.json / .claude.json). Trust and start them? They can run programs on your machine.",
+            header: "MCP",
+            options: [
+              { label: "Trust", description: "Start this folder's MCP servers" },
+              { label: "Not now", description: "Skip them for now" },
+            ],
+          },
+        ],
+        signal,
+      })
+      const chosen = (answer ?? []).map((entry) => entry.trim()).filter(Boolean)
+      if (chosen.includes("Trust")) await this.mcp.trust(directory)
+    } catch {
+      // Dismissed or stopped: leave untrusted; ready() will not spawn them.
+    }
+  }
+
   private async runtimeNotes(session: SessionInfo, first: boolean): Promise<string[]> {
     if (session.parentID) return []
     const config = this.config.get()
@@ -2794,6 +2824,7 @@ export class SessionRunner {
     this.loopWatches.delete(sessionID)
     // The project's servers are connected (or have failed) before the turn is offered their tools, as MiMo's instance waits for them.
     this.workingIn.set(sessionID, session.directory)
+    await this.ensureMcpTrust(sessionID, session.directory, controller.signal)
     await this.mcp?.ready(session.directory)
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new CodedError(`No provider called ${session.model.provider} is set up`, "error.noModel")
