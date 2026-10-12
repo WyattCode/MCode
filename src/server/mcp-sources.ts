@@ -15,7 +15,10 @@ import { parseJsonc } from "./jsonc"
  * wins), then `mcode.json(c)` in each `.mcode` folder on that walk and in the
  * home folder, and last Claude Code's `mcpServers` from `~/.claude.json` and
  * `<directory>/.claude.json`, which never displace a server of MCode's own.
- * Entries are merged key by key, as MiMo merges its config layers.
+ *
+ * Project files may add servers and may merge into earlier project layers, but
+ * they never merge into or replace an app server. They also may not use
+ * `{file:…}` or `{env:…}` substitution; only MCode's own app config does.
  */
 
 type Raw = Record<string, unknown>
@@ -36,6 +39,16 @@ export interface ResolvedServer {
   invalid?: string
   /** "app" for MCode's own settings, "project" for a project file, "claude" for Claude Code's. */
   origin: "app" | "project" | "claude"
+  /** True when this entry came from the project tree and should be trusted before starting. */
+  needsTrust?: boolean
+}
+
+/** True when any string in `value` still contains a substitution marker. */
+export function containsSubstitution(value: unknown): boolean {
+  if (typeof value === "string") return /\{(?:file|env):/.test(value)
+  if (Array.isArray(value)) return value.some(containsSubstitution)
+  if (isRecord(value)) return Object.values(value).some(containsSubstitution)
+  return false
 }
 
 /**
@@ -121,6 +134,13 @@ async function exists(file: string): Promise<boolean> {
     () => false,
   )
 }
+
+const samePath = (a: string, b: string): boolean => {
+  const left = path.resolve(a)
+  const right = path.resolve(b)
+  return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right
+}
+
 
 /** The folders from `directory` up to its repository root, nearest first; to the drive root outside a repository. */
 async function walkUp(directory: string): Promise<string[]> {
@@ -230,18 +250,31 @@ export async function resolveServers(input: {
   home?: string
 }): Promise<ResolvedServer[]> {
   const home = input.home ?? sourceHome()
-  const layers = new Map<string, { value: unknown; origin: ResolvedServer["origin"]; broken?: string }>()
+  const homeMcodeFolder = path.join(home, ".mcode")
+  const homeClaudeFile = path.join(home, ".claude.json")
+  const projectClaudeFile = input.directory ? path.join(input.directory, ".claude.json") : undefined
+  const layers = new Map<string, { value: unknown; origin: ResolvedServer["origin"]; broken?: string; trust?: boolean }>()
   /* Each file's strings are filled in against that file's own folder before the layers merge, as MiMo fills in each file's text. */
   const add = async (name: string, raw: unknown, folder: string, origin: ResolvedServer["origin"]) => {
     const before = layers.get(name)
+    // A project layer must never rewrite an app server, even key by key.
+    if (before?.origin === "app") return
     let value: unknown = raw
     let broken = before?.broken
-    try {
-      value = await substituteEntry(raw, folder, home)
-    } catch (error) {
-      broken ??= error instanceof Error ? error.message : String(error)
+    let trust = before?.trust
+    if (origin === "app") {
+      try {
+        value = await substituteEntry(raw, folder, home)
+      } catch (error) {
+        broken ??= error instanceof Error ? error.message : String(error)
+      }
+    } else if (origin === "project") {
+      if (containsSubstitution(raw)) broken ??= "project MCP configs may not use {file:} or {env:} substitution"
+      // Any project-tree file (including ancestors walked from the working
+      // directory) needs trust; only the user's own ~/.mcode is exempt.
+      if (!samePath(folder, homeMcodeFolder)) trust = true
     }
-    layers.set(name, { value: before ? mergeDeep(before.value, value) : value, origin: before?.origin ?? origin, ...(broken ? { broken } : {}) })
+    layers.set(name, { value: before ? mergeDeep(before.value, value) : value, origin: before?.origin ?? origin, ...(broken ? { broken } : {}), ...(trust ? { trust } : {}) })
   }
   for (const [name, value] of Object.entries(input.servers)) await add(name, value, path.dirname(input.configFile), "app")
   if (input.directory) {
@@ -249,11 +282,12 @@ export async function resolveServers(input: {
       for (const [name, value] of Object.entries((await readProjectFile(file)) ?? {})) await add(name, value, path.dirname(file), "project")
     }
     // Claude Code's file is plain JSON with no substitution of its own, and it never displaces one of MCode's.
-    for (const file of [path.join(home, ".claude.json"), path.join(input.directory, ".claude.json")]) {
+    for (const file of [homeClaudeFile, path.join(input.directory, ".claude.json")]) {
+      const fromProject = Boolean(projectClaudeFile && samePath(file, projectClaudeFile) && !samePath(file, homeClaudeFile))
       for (const [name, value] of Object.entries(await claudeServers(file))) {
         const before = layers.get(name)
         if (before && before.origin !== "claude") continue
-        layers.set(name, { value, origin: "claude" })
+        layers.set(name, { value, origin: "claude", ...(fromProject ? { trust: true } : {}) })
       }
     }
   }
@@ -261,9 +295,10 @@ export async function resolveServers(input: {
   for (const [name, layer] of layers) {
     const checked = checkEntry(layer.value)
     if ("skip" in checked) continue
-    if (layer.broken) out.push({ name, invalid: layer.broken, origin: layer.origin })
-    else if ("invalid" in checked) out.push({ name, invalid: checked.invalid, origin: layer.origin })
-    else out.push({ name, config: checked.config, origin: layer.origin })
+    const needsTrust = layer.trust ? { needsTrust: true } : {}
+    if (layer.broken) out.push({ name, invalid: layer.broken, origin: layer.origin, ...needsTrust })
+    else if ("invalid" in checked) out.push({ name, invalid: checked.invalid, origin: layer.origin, ...needsTrust })
+    else out.push({ name, config: checked.config, origin: layer.origin, ...needsTrust })
   }
   return out
 }
