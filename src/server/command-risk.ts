@@ -127,7 +127,7 @@ export function dangerousCommand(command: string): boolean {
 /* MiMo's read-only allowlist: at Ask, a command made only of these runs once without a question. */
 const READ_ONLY = new Set([
   "pwd", "whoami", "hostname", "uname", "date", "id", "uptime", "arch", "tty", "ls", "cat", "head", "tail", "wc", "echo", "which",
-  "type", "printenv", "ps", "df", "du", "tree", "stat", "file", "basename", "dirname", "grep", "rg", "cut", "column", "true", "false",
+  "type", "ps", "df", "du", "tree", "stat", "file", "basename", "dirname", "grep", "rg", "cut", "column", "true", "false",
 ])
 const READ_ONLY_GIT = new Set([
   "status", "log", "diff", "show", "blame", "rev-parse", "describe", "shortlog", "reflog", "ls-files", "ls-tree", "whatchanged",
@@ -143,12 +143,44 @@ const NOT_PLAIN = /[<>`\n(){}]|\$\(/
 /** Redirections that only discard output, taken out before looking. */
 const HARMLESS_REDIRECT = /(?:2>&1|&>\s*\/dev\/null|(?:\d)?\s*>\s*\/dev\/null)(?=$|[\s;|&])/g
 
+/*
+ * ripgrep's `--pre` runs a program over every match before it is searched; the
+ * value is that program. `--pre-glob` only says which files the preprocessor
+ * sees and is harmless, so only `--pre` and `--pre=` are the exec hook.
+ */
+function hasPreExec(words: string[]): boolean {
+  return words.some((word) => word === "--pre" || word.startsWith("--pre="))
+}
+
+/*
+ * A read-only git subcommand turned dangerous by a flag after it: `-O` /
+ * `--open-files-in-pager` runs a pager program, `--output` writes a file,
+ * `--ext-diff` may invoke an external diff, and a `-c` / `--config` that sets
+ * the pager or an alias is the same trick spelled differently. The global `-c`
+ * sits before the subcommand and is refused there already; this scans what
+ * follows it.
+ */
+const GIT_CONFIG_TRICK = /^(?:core\.pager|pager\.|alias\.)/
+function gitUnsafeArgs(words: string[]): boolean {
+  for (let at = 2; at < words.length; at++) {
+    const word = words[at] ?? ""
+    if (word.startsWith("-O")) return true
+    if (word === "--open-files-in-pager" || word.startsWith("--open-files-in-pager=")) return true
+    if (word === "--output" || word.startsWith("--output=")) return true
+    if (word === "--ext-diff") return true
+    if ((word === "-c" || word === "--config") && GIT_CONFIG_TRICK.test(words[at + 1] ?? "")) return true
+    if (word.startsWith("--config=") && GIT_CONFIG_TRICK.test(word.slice("--config=".length))) return true
+  }
+  return false
+}
+
 function readOnlyPiece(piece: string): boolean {
   const words = piece.trim().split(/\s+/).filter(Boolean)
   const head = words[0] ?? ""
   if (!head) return false
-  if (head === "git") return READ_ONLY_GIT.has(words[1] ?? "")
+  if (head === "git") return READ_ONLY_GIT.has(words[1] ?? "") && !gitUnsafeArgs(words)
   if (head === "tail" && words.some((word) => word === "-f" || word === "--follow" || word.startsWith("--follow="))) return false
+  if ((head === "rg" || head === "grep") && hasPreExec(words)) return false
   return READ_ONLY.has(head) || READ_ONLY_POWERSHELL.has(head.toLowerCase())
 }
 
