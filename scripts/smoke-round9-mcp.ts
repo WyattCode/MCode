@@ -158,13 +158,16 @@ async function serverSources(check: Check, section: Section): Promise<void> {
     const sub = path.join(repo, "sub")
     await write(path.join(outer, "mcode.json"), '{"mcpServers":{"outside":{"type":"local","command":["x"]}}}')
     await fs.mkdir(path.join(repo, ".git"), { recursive: true })
-    await write(path.join(repo, "mcode.json"), '{"mcpServers":{"shared":{"environment":{"FROM":"repo"}},"proj":{"type":"local","command":["node","{file:tool.js}"]}}}')
+    await write(
+      path.join(repo, "mcode.json"),
+      '{"mcpServers":{"shared":{"environment":{"FROM":"repo"}},"projFile":{"type":"local","command":["node","{file:tool.js}"]},"projEnv":{"type":"local","command":["node","{env:MCODE_R9_PROBE_VAR}"]},"layered":{"type":"local","command":["node","repo.js"],"environment":{"FROM":"repo","LEVEL":"repo"}}}}',
+    )
     await write(path.join(repo, "tool.js"), "repo-tool")
-    await write(path.join(sub, "mcode.json"), '{"mcpServers":{"shared":{"environment":{"LEVEL":"sub-json"}}}}')
-    await write(path.join(sub, "mcode.jsonc"), '{\n  // nearest wins\n  "mcpServers": {"shared": {"environment": {"LEVEL": "sub-jsonc"}},},\n}')
+    await write(path.join(sub, "mcode.json"), '{"mcpServers":{"shared":{"environment":{"LEVEL":"sub-json"}},"layered":{"environment":{"LEVEL":"sub-json"}}}}')
+    await write(path.join(sub, "mcode.jsonc"), '{\n  // nearest wins\n  "mcpServers": {"shared": {"environment": {"LEVEL": "sub-jsonc"}}, "layered": {"environment": {"LEVEL": "sub-jsonc"}},},\n}')
     await write(path.join(sub, ".mcode", "mcode.json"), '{"mcpServers":{"dotted":{"type":"local","command":["y"]}}}')
     await write(path.join(repo, ".mcode", "mcode.jsonc"), '{"mcpServers":{"typeless":{"command":["z"]},"broken":{"type":"local","command":"z --flag"}}}')
-    await write(path.join(home, ".mcode", "mcode.json"), '{"mcpServers":{}}')
+    await write(path.join(home, ".mcode", "mcode.json"), '{"mcpServers":{"homeOnly":{"type":"local","command":["h"]}}}')
     const files = (await projectFiles(sub, home)).map((file) => path.relative(dir, file).replaceAll("\\", "/"))
     check(
       "project files are merged outermost first up to the repository root, then the .mcode folders, then the home one",
@@ -210,18 +213,53 @@ async function serverSources(check: Check, section: Section): Promise<void> {
     const byName = Object.fromEntries(resolved.map((entry) => [entry.name, entry]))
     check(
       "the servers keep the order their first layer named them: the app's, the project's, then Claude Code's",
-      JSON.stringify(resolved.map((entry) => entry.name)) === '["shared","appOnly","proj","dotted","broken","fromClaude","web","later"]',
+      JSON.stringify(resolved.map((entry) => entry.name)) ===
+        '["shared","appOnly","projFile","projEnv","layered","dotted","broken","homeOnly","fromClaude","web","later"]',
       resolved.map((entry) => entry.name),
     )
     check(
-      "a project layer is merged into the app's entry key by key, the nearest file winning",
-      JSON.stringify(byName.shared?.config?.environment) === '{"FROM":"repo","LEVEL":"sub-jsonc"}' && byName.shared?.config?.command?.[1] === "app.js" && byName.shared.origin === "app",
+      "a project layer cannot merge into or replace an app server of the same name",
+      JSON.stringify(byName.shared?.config?.environment) === '{"FROM":"app"}' &&
+        JSON.stringify(byName.shared?.config?.command) === '["node","app.js"]' &&
+        byName.shared?.origin === "app" &&
+        !byName.shared?.invalid &&
+        byName.shared?.needsTrust === undefined,
       byName.shared,
     )
-    check("{file:…} in a project file counts from that file's folder", byName.proj?.config?.command?.[1] === "repo-tool", byName.proj)
-    check("the app's own entries are filled in too", byName.appOnly?.config?.url === "https://from-env.example/mcp", byName.appOnly)
+    check(
+      "project layers still merge into an earlier project entry, the nearest file winning",
+      JSON.stringify(byName.layered?.config?.environment) === '{"FROM":"repo","LEVEL":"sub-jsonc"}' &&
+        JSON.stringify(byName.layered?.config?.command) === '["node","repo.js"]' &&
+        byName.layered?.origin === "project" &&
+        byName.layered?.needsTrust === true,
+      byName.layered,
+    )
+    check(
+      "{file:…} in a project file is refused, not read",
+      Boolean(byName.projFile?.invalid?.includes("project MCP configs may not use {file:} or {env:} substitution")) &&
+        !byName.projFile?.config &&
+        byName.projFile?.origin === "project" &&
+        byName.projFile?.needsTrust === true,
+      byName.projFile,
+    )
+    check(
+      "{env:…} in a project file is refused",
+      Boolean(byName.projEnv?.invalid?.includes("project MCP configs may not use {file:} or {env:} substitution")) &&
+        !byName.projEnv?.config &&
+        byName.projEnv?.origin === "project" &&
+        byName.projEnv?.needsTrust === true,
+      byName.projEnv,
+    )
+    check("the app's own entries are filled in too", byName.appOnly?.config?.url === "https://from-env.example/mcp" && byName.appOnly?.needsTrust === undefined, byName.appOnly)
     check("a Claude Code server never displaces one of MCode's", byName.shared?.config?.command?.[0] === "node")
-    check("the project's .claude.json wins over the home one", byName.later?.config?.command?.[0] === "project-version" && byName.later.config.enabled === false, byName.later)
+    check(
+      "the project's .claude.json wins over the home one and needs trust",
+      byName.later?.config?.command?.[0] === "project-version" && byName.later?.config?.enabled === false && byName.later?.origin === "claude" && byName.later?.needsTrust === true,
+      byName.later,
+    )
+    check("a home Claude Code server does not need project trust", byName.fromClaude?.origin === "claude" && byName.fromClaude?.needsTrust === undefined, byName.fromClaude)
+    check("a project-only server from a .mcode folder needs trust", byName.dotted?.origin === "project" && byName.dotted?.needsTrust === true, byName.dotted)
+    check("a server from the home .mcode folder is project-origin but not project-trusted", byName.homeOnly?.origin === "project" && byName.homeOnly?.needsTrust === undefined, byName.homeOnly)
     check("an entry without a type is left out, a malformed one kept with its reason", !byName.typeless && Boolean(byName.broken?.invalid) && !byName.broken?.config, byName.broken)
     check("the walk stops at the repository root", !byName.outside)
     const alone = await resolveServers({ servers: { one: { type: "local", command: ["x"] } }, configFile: path.join(dir, "config.json"), home })
