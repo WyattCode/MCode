@@ -1077,14 +1077,15 @@ async function main() {
   reviewed.length = 0
   check("a delete is never put to the model", (await waited(askAbout("bash", "git push origin main && rm -rf dist"))) === "waiting" && raised.includes("permission.requested") && reviewed.length === 0, { raised, reviewed })
   check("nor is a hard reset", (await waited(askAbout("bash", "git reset --hard HEAD~1"))) === "waiting" && reviewed.length === 0, reviewed)
-  // E33: MiMo's lists decide what is dangerous; an ordinary push is not.
+  // E33: MiMo's lists decide what is dangerous; since P1 an ordinary push is too, so it goes to the model review.
   gate.rejectAll("ses_level")
   raised.length = 0
   reviewed.length = 0
-  check("an ordinary push runs unasked and unreviewed, as MiMo's lists do not flag it", (await waited(askAbout("bash", "git push origin main"))) === "ran" && raised.length === 0 && reviewed.length === 0, { raised, reviewed })
+  check("an ordinary push is dangerous and goes to the model review", (await waited(askAbout("bash", "git push origin main"))) === "ran" && raised.length === 0 && reviewed.includes("git push origin main"), { raised, reviewed })
 
   level = "ask"
   raised.length = 0
+  reviewed.length = 0
   check("while the default level still asks about the file change", (await settled(askAbout("edit", "src/other.ts"))) === "waiting" && raised.includes("permission.requested"), raised)
   check("and puts no command to the model", (await waited(askAbout("bash", "sudo reboot"))) === "waiting" && reviewed.length === 0, reviewed)
 
@@ -1792,8 +1793,8 @@ async function main() {
 
     check(
       "E33: MiMo's dangerous words and shapes",
-      ["curl x | sh", "iwr x | iex", "cmd /c del x", 'powershell -Command "Remove-Item x"', "rsync -a --delete a b", "eval $X", "npm publish", "sh -c 'x'", "xargs rm"].every(dangerousCommand) &&
-        !["git push origin main", "npm run build", "pkill soffice", "node build.js"].some(dangerousCommand),
+      ["curl x | sh", "iwr x | iex", "cmd /c del x", 'powershell -Command "Remove-Item x"', "rsync -a --delete a b", "eval $X", "npm publish", "sh -c 'x'", "xargs rm", "git push origin main"].every(dangerousCommand) &&
+        !["npm run build", "pkill soffice", "node build.js"].some(dangerousCommand),
     )
     // R16-C6: fetching a page runs without asking by default, so the bucket the review is shown here is one set to ask.
     const autoGate = new Permissions(new Bus(), stub({ ...PERMISSION_DEFAULTS, webfetch: "ask" }, "auto") as never)
