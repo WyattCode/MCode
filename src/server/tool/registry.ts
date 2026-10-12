@@ -179,10 +179,10 @@ export function hasOwnToolsOnly(agent: string): boolean {
  * Windows PowerShell 5.1, which has no such operator. `shell` is already part
  * of the prompt prefix key, so a changed setting rebuilds the prefix anyway.
  */
-export function toolsForTurn(agent: string, options: { voiceFeedback: boolean; shell?: string; sessionChat?: boolean; webSearch?: boolean }): ToolDefinition[] {
+export function toolsForTurn(agent: string, options: { voiceFeedback: boolean; shell?: string; sessionChat?: boolean; webSearch?: boolean; lean?: boolean }): ToolDefinition[] {
   return toolsFor(agent)
-    // The lean experiment (prompts.ts leanMode): tools a coding turn does not reach for - talking to other conversations, the window's own settings, PDFs, the history search.
-    .filter((tool) => process.env.MCODE_LEAN !== "1" || !LEAN_LEAVES_OUT.has(tool.name))
+    // The lean experiment (MCODE_LEAN=1) is the only thing that trims tools now: a local model's prompt is lean by default, but its tool list stays full unless the old switch is set. `options.lean` is accepted for compatibility and ignored.
+    .filter((tool) => !leanToolExperiment() || !LEAN_LEAVES_OUT.has(tool.name))
     .filter((tool) => tool.name !== "speak" || options.voiceFeedback)
     .filter((tool) => tool.name !== "websearch" || options.webSearch !== false)
     .filter((tool) => !withheldByLab(tool.name, options))
@@ -197,8 +197,13 @@ export function toolsForTurn(agent: string, options: { voiceFeedback: boolean; s
  */
 export const SESSION_CHAT_TOOLS = new Set(["contacts", "talk_to_session", "create_session", "update_session", "list_external_sessions", "read_external_session"])
 
-/** What the lean experiment leaves out of a turn's tools. */
+/** What the explicit MCODE_LEAN=1 experiment leaves out of a turn's tools. */
 const LEAN_LEAVES_OUT = new Set([...SESSION_CHAT_TOOLS, "get_desktop_settings", "set_desktop_setting", "pdf_locate", "history"])
+
+/** Whether the old lean-tool experiment is explicitly on. */
+function leanToolExperiment(): boolean {
+  return process.env.MCODE_LEAN === "1"
+}
 
 /** Whether a switch in the lab keeps this tool from the model: neither offered nor run. */
 export function withheldByLab(name: string, settings: { sessionChat?: boolean }): boolean {

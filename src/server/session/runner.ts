@@ -631,6 +631,14 @@ export class SessionRunner {
     )
   }
 
+  /** Whether the session's model comes from a user-added (custom) provider. */
+  private isLocal(session: TurnSession): boolean {
+    const custom = this.config.get().customProviders
+    if (!custom?.length) return false
+    const provider = session.model.provider
+    return !!provider && custom.some((p) => p.id === provider)
+  }
+
   /**
    * This turn's copy of the conversation, run as the agent and model a slash
    * command named.
@@ -1439,13 +1447,15 @@ export class SessionRunner {
       fetchInstruction: (url) => this.fetchInstructionCached(url),
     })
     const initial = await this.syncInstructions(session.id, values)
+    const local = this.isLocal(session)
     const key = JSON.stringify([
       session.agent,
       initial,
+      local,
       this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory).map((tool) => tool.name),
     ])
     const frozen = this.prefixes.get(session.id)
-    const base = frozen?.key === key ? frozen.system : systemPromptFrom(session.agent, initial)
+    const base = frozen?.key === key ? frozen.system : systemPromptFrom(session.agent, initial, undefined, { local })
     this.prefixes.set(session.id, { key, system: base })
     // subagents: a subagent is told what it is, after what its agent would be told anyway.
     const outputSchema = session.subagent?.outputSchema
