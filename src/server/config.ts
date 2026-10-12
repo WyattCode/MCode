@@ -116,6 +116,7 @@ function defaults(): AppConfig {
     model: DEFAULT_MODEL,
     theme: "system",
     mcpServers: {},
+    trustedMcpProjects: [],
     pinnedTabs: [],
     pinnedProjects: [],
     projectOrder: [],
