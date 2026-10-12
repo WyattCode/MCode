@@ -1,5 +1,5 @@
 /**
- * P0-1: project local MCP does not spawn until the folder is trusted.
+ * P0-1 / P1: project MCP (local or remote) does not start until the folder is trusted.
  * Run: `npx tsx scripts/smoke-p0-mcp-trust.ts` (or esbuild and node the outfile).
  */
 import fs from "node:fs/promises"
@@ -152,6 +152,54 @@ async function main() {
     )
   } finally {
     await fs.rm(appDir, { recursive: true, force: true }).catch(() => {})
+  }
+
+
+  // Remote project MCP must also stay gated until trusted (P1 residual from P0).
+  const remoteDir = await temporary("mcode-p1-remote-trust-")
+  try {
+    const project = path.join(remoteDir, "project")
+    await fs.mkdir(path.join(project, ".git"), { recursive: true })
+    await write(
+      path.join(project, "mcode.json"),
+      JSON.stringify({ mcpServers: { rem: { type: "remote", url: "https://example.invalid/mcp" } } }),
+    )
+    const bus = new Bus()
+    const config = stubConfig(bus, { mcpServers: {}, directory: project, trustedMcpProjects: [] })
+    const mcp = new McpServers(bus, config as never, undefined, path.join(remoteDir, "home"))
+    try {
+      await mcp.start()
+      await mcp.ready(project)
+      const resolved = await resolveServers({
+        servers: {},
+        configFile: path.join(remoteDir, "config.json"),
+        directory: project,
+        home: path.join(remoteDir, "home"),
+      })
+      const rem = resolved.find((entry) => entry.name === "rem")
+      check("remote project entry needs trust", rem?.needsTrust === true && rem?.config?.type === "remote", rem)
+      check("untrusted remote: needsTrustPrompt is true", await mcp.needsTrustPrompt(project) === true)
+      const listed = mcp.list().find((entry) => entry.name === "rem") as unknown as { status?: string; error?: string } | undefined
+      check("untrusted remote: reported failed", listed?.status === "failed", listed)
+      check(
+        "untrusted remote: failure mentions trust",
+        Boolean(listed?.error?.includes(MCP_PROJECT_TRUST_MESSAGE) || listed?.error?.includes("have not been trusted")),
+        listed?.error,
+      )
+      // Trusting should clear the trust gate; connection to example.invalid may still fail for network — status must not stay on the trust message.
+      await mcp.trust(project)
+      await mcp.ready(project)
+      const after = mcp.list().find((entry) => entry.name === "rem") as unknown as { status?: string; error?: string } | undefined
+      check(
+        "trusted remote: no longer blocked solely for trust",
+        after?.status !== "failed" || !String(after?.error ?? "").includes(MCP_PROJECT_TRUST_MESSAGE),
+        after,
+      )
+    } finally {
+      await mcp.close()
+    }
+  } finally {
+    await fs.rm(remoteDir, { recursive: true, force: true }).catch(() => {})
   }
 
   console.log(`\n${passed} passed, ${failed} failed`)

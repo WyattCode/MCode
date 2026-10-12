@@ -2140,8 +2140,8 @@ export class SessionRunner {
    */
 
   /**
-   * First local MCP from a project file in this folder: ask once, remember
-   * trust, then ready() may start them. "Not now" leaves them blocked.
+   * First project MCP (local or remote) from a project file in this folder: ask
+   * once, remember trust, then ready() may start them. "Not now" leaves them blocked.
    */
   private async ensureMcpTrust(sessionID: string, directory: string, signal?: AbortSignal): Promise<void> {
     if (!this.mcp) return
@@ -2151,7 +2151,7 @@ export class SessionRunner {
         sessionID,
         questions: [
           {
-            question: "This folder configures local MCP servers (mcode.json / .claude.json). Trust and start them? They can run programs on your machine.",
+            question: "This folder configures MCP servers (mcode.json / .claude.json). Trust and start them? Local ones can run programs; remote ones can reach the network with any headers the file sets.",
             header: "MCP",
             options: [
               { label: "Trust", description: "Start this folder's MCP servers" },
@@ -2164,7 +2164,7 @@ export class SessionRunner {
       const chosen = (answer ?? []).map((entry) => entry.trim()).filter(Boolean)
       if (chosen.includes("Trust")) await this.mcp.trust(directory)
     } catch {
-      // Dismissed or stopped: leave untrusted; ready() will not spawn them.
+      // Dismissed or stopped: leave untrusted; ready() will not start them.
     }
   }
 

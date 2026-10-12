@@ -1408,7 +1408,7 @@ export class McpServers {
     const work: Promise<void>[] = []
     for (const entry of entries) {
       const gated =
-        entry.needsTrust && entry.config?.type === "local" && !this.isTrusted(group.directory)
+        entry.needsTrust && !this.isTrusted(group.directory)
           ? { ...entry, invalid: entry.invalid ?? MCP_PROJECT_TRUST_MESSAGE }
           : entry
       const enabled = gated.config?.enabled !== false
@@ -1454,11 +1454,11 @@ export class McpServers {
     }
   }
 
-  /** True when the directory has a local project MCP that still needs a trust decision. */
+  /** True when the directory has a project MCP (local or remote) that still needs a trust decision. */
   async needsTrustPrompt(directory: string): Promise<boolean> {
     if (this.isTrusted(directory)) return false
     const entries = await this.resolve(directory)
-    return entries.some((entry) => entry.needsTrust && entry.config?.type === "local" && !entry.invalid)
+    return entries.some((entry) => entry.needsTrust && !entry.invalid)
   }
 
   /** A directory's servers, connected (or tried) before this settles. */
