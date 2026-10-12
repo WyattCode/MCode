@@ -18,7 +18,7 @@ import {
   waitForCallback,
   wwwAuthenticateParams,
 } from "./mcp-oauth"
-import type { Attachment, McpServerConfig, McpServerState, McpStatus } from "@shared/protocol"
+import type { Attachment, McpServerConfig, McpServerState, McpStatus, McpTrustPrompt } from "@shared/protocol"
 import { redactCommand, redactString } from "@shared/mcp-redact"
 import { ToolError, type ToolContext, type ToolDefinition } from "./tool/types"
 import { resolveServers, type ResolvedServer } from "./mcp-sources"
@@ -1199,6 +1199,41 @@ function madeFrom(entry: ResolvedServer): string {
   return JSON.stringify({ config: entry.config ?? null, invalid: entry.invalid ?? null })
 }
 
+/** A project server that would actually be started. A disabled or invalid entry never runs, so it asks nothing. */
+function holdsForTrust(entry: ResolvedServer): boolean {
+  return Boolean(entry.needsTrust && entry.config && entry.config.enabled !== false && !entry.invalid)
+}
+
+/** What the question is about, so a later edit to the command asks again. */
+function trustFingerprint(entries: readonly ResolvedServer[]): string {
+  return JSON.stringify(
+    entries
+      .map((entry) => ({ name: entry.name, origin: entry.origin, config: entry.config ?? null }))
+      .sort((left, right) => left.name.localeCompare(right.name)),
+  )
+}
+
+function trustDetail(entry: ResolvedServer): string {
+  const config = entry.config
+  if (!config) return ""
+  const text = config.type === "remote" ? (config.url ?? "") : (config.command ?? []).join(" ")
+  return text.length > 300 ? `${text.slice(0, 300)}…` : text
+}
+
+interface TrustDecision {
+  decision: "allow" | "deny"
+  fingerprint: string
+}
+
+interface TrustWait {
+  fingerprint: string
+  prompt: McpTrustPrompt
+  promise: Promise<"allow" | "deny">
+  resolve: (decision: "allow" | "deny") => void
+}
+
+const TRUST_KEY = "mcp-trust"
+
 /** A Code Mode step's title: the tools its script called, the first three and how many more. */
 export function codeModeTitle(tools: readonly string[]): string {
   const names = [...new Set(tools)]
@@ -1248,6 +1283,10 @@ export class McpServers {
   /** Servers whose sign-in is under way, so a second press does not start another. */
   private readonly authorizing = new Set<string>()
   private sampler?: McpSampler
+  /** Per directory, for the set of project servers that was shown. A changed command asks again. */
+  private readonly trustDecisions = new Map<string, TrustDecision>()
+  private readonly trustWaiting = new Map<string, TrustWait>()
+  private readonly trustLoaded: Promise<void>
 
   constructor(
     private readonly bus: Bus,
@@ -1257,6 +1296,7 @@ export class McpServers {
     private readonly home?: string,
   ) {
     this.oauth = storage ? new McpAuthStore(storage) : undefined
+    this.trustLoaded = this.loadTrust()
     this.fingerprint = JSON.stringify(this.config.get().mcpServers ?? {})
     this.bus.subscribe((event) => {
       if (event.type === "session.idle") {
@@ -1393,8 +1433,100 @@ export class McpServers {
     return connection
   }
 
-  /** Brings a group's connections in line with `entries`: a changed entry is connected again with what it says now. */
+  /**
+   * Project servers, and a local server from the directory's own `.claude.json`,
+   * wait until that directory is trusted. The app's own servers and the user's
+   * home config do not. The question is remembered per directory for the exact
+   * set that was shown, so a later change to the command asks again.
+   */
   private async reconcile(group: Group, entries: ResolvedServer[]): Promise<void> {
+    const held = entries.filter(holdsForTrust)
+    const open = entries.filter((entry) => !holdsForTrust(entry))
+    if (!held.length) {
+      await this.apply(group, entries)
+      return
+    }
+    await this.trustLoaded
+    const saved = this.trustDecisions.get(directoryKey(group.directory))
+    const fingerprint = trustFingerprint(held)
+    // Already answered for this exact set: one pass, so a trusted server is not stopped and started again.
+    if (saved?.fingerprint === fingerprint) {
+      await this.apply(group, saved.decision === "allow" ? entries : open)
+      return
+    }
+    await this.apply(group, open)
+    const decision = await this.decisionFor(group.directory, held)
+    if (decision === "allow") await this.apply(group, entries)
+  }
+
+  /** The questions still waiting, for a window that was not up when they were asked. */
+  trustPrompts(): McpTrustPrompt[] {
+    return [...this.trustWaiting.values()].map((wait) => wait.prompt)
+  }
+
+  /**
+   * The reader's answer. Remembered for this directory and this set of servers.
+   * When a question is open it unblocks the start that asked; otherwise it is
+   * applied to a group that already settled (a refusal being changed).
+   */
+  async setProjectTrust(directory: string, decision: "allow" | "deny"): Promise<void> {
+    const key = directoryKey(directory)
+    const waiting = this.trustWaiting.get(key)
+    if (!waiting) return
+    this.trustDecisions.set(key, { decision, fingerprint: waiting.fingerprint })
+    await this.persistTrust()
+    this.trustWaiting.delete(key)
+    this.publishTrust()
+    waiting.resolve(decision)
+  }
+
+  private async loadTrust(): Promise<void> {
+    if (!this.storage) return
+    const saved = await this.storage.read<Record<string, TrustDecision>>(TRUST_KEY).catch(() => undefined)
+    if (!saved || typeof saved !== "object") return
+    for (const [key, value] of Object.entries(saved)) {
+      if (!value || (value.decision !== "allow" && value.decision !== "deny") || typeof value.fingerprint !== "string") continue
+      this.trustDecisions.set(key, { decision: value.decision, fingerprint: value.fingerprint })
+    }
+  }
+
+  private async persistTrust(): Promise<void> {
+    if (!this.storage) return
+    await this.storage.write(TRUST_KEY, Object.fromEntries(this.trustDecisions)).catch(() => undefined)
+  }
+
+  private publishTrust(): void {
+    this.bus.publish({ type: "mcp.trust", prompts: this.trustPrompts() })
+  }
+
+  private async decisionFor(directory: string, held: ResolvedServer[]): Promise<"allow" | "deny"> {
+    await this.trustLoaded
+    const key = directoryKey(directory)
+    const fingerprint = trustFingerprint(held)
+    const saved = this.trustDecisions.get(key)
+    if (saved?.fingerprint === fingerprint) return saved.decision
+    const pending = this.trustWaiting.get(key)
+    if (pending?.fingerprint === fingerprint) return pending.promise
+    // The set changed under an open question. The old start does not run it; this one asks about the new set.
+    if (pending) {
+      this.trustWaiting.delete(key)
+      pending.resolve("deny")
+    }
+    let resolve!: (decision: "allow" | "deny") => void
+    const promise = new Promise<"allow" | "deny">((settle) => {
+      resolve = settle
+    })
+    const prompt: McpTrustPrompt = {
+      directory,
+      servers: held.map((entry) => ({ name: entry.name, detail: trustDetail(entry) })),
+    }
+    this.trustWaiting.set(key, { fingerprint, prompt, promise, resolve })
+    this.publishTrust()
+    return promise
+  }
+
+  /** Brings a group's connections in line with `entries`: a changed entry is connected again with what it says now. */
+  private async apply(group: Group, entries: ResolvedServer[]): Promise<void> {
     const wanted = new Set(entries.map((entry) => entry.name))
     for (const [name, connection] of [...group.connections]) {
       if (wanted.has(name)) continue

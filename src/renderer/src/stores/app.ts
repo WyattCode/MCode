@@ -8,6 +8,7 @@ import type { Attachment, AgentName,
   CustomModel,
   Effort,
   McpServerState,
+  McpTrustPrompt,
   Message,
   ModelRef,
   PermissionRequest,
@@ -860,6 +861,9 @@ export const useApp = defineStore("app", () => {
         if (changed && commandsFor) void refreshCommands(commandsFor)
         break
       }
+      case "mcp.trust":
+        mcpTrust.value = event.prompts
+        break
       case "permission.resolved":
         dropPermission(event.requestID)
         break
@@ -1072,6 +1076,7 @@ export const useApp = defineStore("app", () => {
     chatLinks.value = listed.chatLinks ?? {}
     automationTasks.value = listed.automations ?? []
     noteRetries(listed.retries)
+    mcpTrust.value = listed.mcpTrust ?? []
     booted = true
     /*
      * Everything the first screen reads has now arrived.
@@ -1203,6 +1208,8 @@ export const useApp = defineStore("app", () => {
 
   /** Every MCP server the backend knows about, and how each one is doing. */
   const mcpServers = ref<McpServerState[]>([])
+  /** Project folders waiting on a trust answer before their MCP servers start. */
+  const mcpTrust = ref<McpTrustPrompt[]>([])
 
   /**
    * The worst thing currently true of the runtime.
@@ -1294,6 +1301,7 @@ export const useApp = defineStore("app", () => {
       chatLinks.value = listed.chatLinks ?? {}
       automationTasks.value = listed.automations ?? []
       noteRetries(listed.retries)
+      mcpTrust.value = listed.mcpTrust ?? []
       // A fresh socket knows nothing about this window; say again what it is drawing.
       declared = ""
       declareWatched()
@@ -1843,6 +1851,15 @@ export const useApp = defineStore("app", () => {
   /** Takes one turn's file changes back out of the project; the card turns into its reverted form on the message update. */
   async function revertTurn(sessionID: string, messageIDs: string[]) {
     return api().request({ type: "session.revertTurn", sessionID, messageIDs })
+  }
+
+  async function respondMcpTrust(directory: string, decision: "allow" | "deny") {
+    try {
+      await api().request({ type: "mcp.trust", directory, decision })
+      mcpTrust.value = mcpTrust.value.filter((prompt) => prompt.directory !== directory)
+    } catch (err) {
+      notifyFailure(t("mcp.trust.title"), err instanceof Error ? err.message : String(err))
+    }
   }
 
   async function respond(response: PermissionResponse, reason?: string) {
@@ -2397,6 +2414,8 @@ export const useApp = defineStore("app", () => {
     connected,
     ready,
     mcpServers,
+    mcpTrust,
+    respondMcpTrust,
     runtimeStatus,
     loadMcp,
     platform,

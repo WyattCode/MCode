@@ -124,10 +124,14 @@ export function dangerousCommand(command: string): boolean {
   })
 }
 
-/* MiMo's read-only allowlist: at Ask, a command made only of these runs once without a question. */
+/*
+ * MiMo's read-only allowlist: at Ask, a command made only of these runs once
+ * without a question. `printenv` and bare `env` are left out on purpose: both
+ * dump the environment, secrets included, straight into the model's context.
+ */
 const READ_ONLY = new Set([
   "pwd", "whoami", "hostname", "uname", "date", "id", "uptime", "arch", "tty", "ls", "cat", "head", "tail", "wc", "echo", "which",
-  "type", "printenv", "ps", "df", "du", "tree", "stat", "file", "basename", "dirname", "grep", "rg", "cut", "column", "true", "false",
+  "type", "ps", "df", "du", "tree", "stat", "file", "basename", "dirname", "grep", "rg", "cut", "column", "true", "false",
 ])
 const READ_ONLY_GIT = new Set([
   "status", "log", "diff", "show", "blame", "rev-parse", "describe", "shortlog", "reflog", "ls-files", "ls-tree", "whatchanged",
@@ -143,11 +147,44 @@ const NOT_PLAIN = /[<>`\n(){}]|\$\(/
 /** Redirections that only discard output, taken out before looking. */
 const HARMLESS_REDIRECT = /(?:2>&1|&>\s*\/dev\/null|(?:\d)?\s*>\s*\/dev\/null)(?=$|[\s;|&])/g
 
+function bareWord(word: string): string {
+  return word.replace(/^["']|["']$/g, "")
+}
+
+/*
+ * Flags that turn a read-only name into something that runs a program or
+ * writes a file. The name alone used to be enough, so `rg --pre=bash` and
+ * `git grep -Oless` ran at Ask with no question.
+ */
+function gitEscapes(words: readonly string[]): boolean {
+  return words.slice(1).some((word) => {
+    const flag = bareWord(word)
+    // `-O` is grep's pager and diff's order file; either way it is not a plain read.
+    if (flag === "-O" || /^-[^-]*O/.test(flag)) return true
+    if (flag === "--open-files-in-pager" || flag.startsWith("--open-files-in-pager=")) return true
+    if (flag === "--output" || flag.startsWith("--output=")) return true
+    if (flag === "--ext-diff" || flag === "--textconv") return true
+    return false
+  })
+}
+
+/** `rg --pre` runs a program over every file it searches. `--pre-glob` does not. */
+function rgEscapes(words: readonly string[]): boolean {
+  return words.slice(1).some((word) => {
+    const flag = bareWord(word)
+    return flag === "--pre" || flag.startsWith("--pre=")
+  })
+}
+
 function readOnlyPiece(piece: string): boolean {
   const words = piece.trim().split(/\s+/).filter(Boolean)
   const head = words[0] ?? ""
   if (!head) return false
-  if (head === "git") return READ_ONLY_GIT.has(words[1] ?? "")
+  if (head === "git") {
+    if (gitEscapes(words)) return false
+    return READ_ONLY_GIT.has(words[1] ?? "")
+  }
+  if (head === "rg" && rgEscapes(words)) return false
   if (head === "tail" && words.some((word) => word === "-f" || word === "--follow" || word.startsWith("--follow="))) return false
   return READ_ONLY.has(head) || READ_ONLY_POWERSHELL.has(head.toLowerCase())
 }

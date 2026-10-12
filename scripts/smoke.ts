@@ -1810,9 +1810,35 @@ async function main() {
 
     check("E34: reading pieces are read-only", readOnlyCommand("git status && ls -la | grep src 2>&1") && readOnlyCommand("Get-ChildItem | Select-Object Name") && readOnlyCommand("cat a.txt > /dev/null"))
     check("but a write, a following tail, a substitution, a background job or a build are not", !readOnlyCommand("cat a > b") && !readOnlyCommand("tail -f log.txt") && !readOnlyCommand("echo $(rm x)") && !readOnlyCommand("ls & rm x") && !readOnlyCommand("npm test"))
+    const escapes = [
+      "rg --pre=bash notes.txt",
+      "rg --pre bash notes.txt",
+      'rg "--pre=bash" notes.txt',
+      "git grep -Oless pattern",
+      "git grep -O less pattern",
+      "git grep --open-files-in-pager=less pattern",
+      "git diff --output=out.patch",
+      "git log --output out.txt",
+      "git show --ext-diff",
+      "git diff --textconv",
+      "printenv",
+      "env",
+    ]
+    check("exec, pager, output and env dumps are not read-only", escapes.every((command) => !readOnlyCommand(command)), escapes.filter(readOnlyCommand))
+    const plainReads = ["rg -n TODO src", "rg --pre-glob '*.md' TODO", "git status", "git diff --stat", "git log --oneline -5", "git grep -n pattern", "git show HEAD:src/a.ts", "git diff --no-ext-diff", "cat file.txt", "head -n 20 file.txt"]
+    check("ordinary reads of project files stay read-only", plainReads.every(readOnlyCommand), plainReads.filter((command) => !readOnlyCommand(command)))
     const askGate = new Permissions(new Bus(), stub({ ...PERMISSION_DEFAULTS }) as never)
     check("at Ask a read-only command runs without a question", (await outcome(askGate, askGate.ask({ sessionID: "s-e34", messageID: "m", callID: "c-e34-ro", kind: "bash", title: "t", subject: "git log --oneline -5" }), "c-e34-ro")) === "ran")
     check("while any other asks", (await outcome(askGate, askGate.ask({ sessionID: "s-e34", messageID: "m", callID: "c-e34-rw", kind: "bash", title: "t", subject: "npm test" }), "c-e34-rw")) === "asked")
+    const asks = async (command: string, callID: string) =>
+      (await outcome(askGate, askGate.ask({ sessionID: "s-e34", messageID: "m", callID, kind: "bash", title: "t", subject: command }), callID)) === "asked"
+    check("rg --pre asks at the default level", await asks("rg --pre=bash notes.txt", "c-e34-pre"))
+    check("git grep -O asks at the default level", await asks("git grep -Oless pattern", "c-e34-pager"))
+    check("git diff --output asks at the default level", await asks("git diff --output=out.patch", "c-e34-output"))
+    check("printenv asks at the default level", await asks("printenv", "c-e34-env"))
+    check("a plain rg search still does not", (await outcome(askGate, askGate.ask({ sessionID: "s-e34", messageID: "m", callID: "c-e34-rg", kind: "bash", title: "t", subject: "rg -n TODO src" }), "c-e34-rg")) === "ran")
+    check("git diff --stat still does not", (await outcome(askGate, askGate.ask({ sessionID: "s-e34", messageID: "m", callID: "c-e34-stat", kind: "bash", title: "t", subject: "git diff --stat" }), "c-e34-stat")) === "ran")
+    check("cat of a project file still does not", (await outcome(askGate, askGate.ask({ sessionID: "s-e34", messageID: "m", callID: "c-e34-cat", kind: "bash", title: "t", subject: "cat file.txt" }), "c-e34-cat")) === "ran")
 
     check("E36: .env and .env.local ask, .env.example does not", readAsks(".env") && readAsks("config/.env.local") && !readAsks("app/.env.example") && !readAsks("environment.ts"))
     const readCheck = (gate: Permissions, file: string, callID: string) =>

@@ -1516,6 +1516,19 @@ export interface McpServerState {
   tools: number
 }
 
+/**
+ * A project folder wants to start MCP servers that came from its own files.
+ *
+ * Asked once per directory for a given set of servers, and remembered. The
+ * window shows it; nothing from those files is started until the answer is allow.
+ */
+export interface McpTrustPrompt {
+  /** The project directory the question is about. */
+  directory: string
+  /** What would be started, so the question can name the command or address. */
+  servers: { name: string; detail: string }[]
+}
+
 /** Where an importable MCP server was found: Claude Code, Kiro or Codex. */
 export type McpImportSource = "claude" | "kiro" | "codex"
 
@@ -2385,6 +2398,8 @@ export type Request =
    * named in `keep` that come back blank keep the values already stored.
    */
   | { type: "mcp.save"; name: string; entry: McpServerConfig; keep?: { env?: string[]; headers?: string[] } }
+  /** Trust, or refuse, project MCP servers for one directory. Remembered for the set that was asked. */
+  | { type: "mcp.trust"; directory: string; decision: "allow" | "deny" }
   | { type: "agents.state" }
   | { type: "agents.ensure" }
   | { type: "agents.setEnabled"; enabled: boolean }
@@ -2441,6 +2456,14 @@ export interface ResponseMap {
      * permissions get, for the same reason.
      */
     retries: Record<string, { messageID: string; attempt: number; message: string; next: number; kind?: string; max?: number }>
+    /**
+     * Project MCP trust questions still waiting.
+     *
+     * Asked as an event, and a window that was not listening - it was still
+     * starting, or it reloaded - would otherwise leave the start parked with
+     * nothing on screen. The same replay the permissions get.
+     */
+    mcpTrust: McpTrustPrompt[]
   }
   /**
    * One page, grouped by conversation. `nextCursor` is absent on the last page;
@@ -2624,6 +2647,7 @@ export interface ResponseMap {
   "mcp.importApply": { imported: string[] }
   /** 导入: counts only - no title, no path, nothing that was written in another app. */
   "mcp.save": { config: AppConfig }
+  "mcp.trust": Record<string, never>
   "agents.state": { path: string; state: AgentsFileState }
   /** Writes a starting file when there is none. */
   "agents.ensure": { path: string; state: AgentsFileState }
@@ -2732,6 +2756,8 @@ export type ServerEvent =
   | { type: "shell.exit"; shellID: string; code: number | null }
   | { type: "config.updated"; config: AppConfig }
   | { type: "mcp.status"; servers: McpServerState[] }
+  /** Project folders whose MCP servers are waiting to be trusted. Empty once none are. */
+  | { type: "mcp.trust"; prompts: McpTrustPrompt[] }
   /** skills: a SKILL.md whose frontmatter could not be read, reported once per file. */
   | { type: "skill.problem"; path: string; message: string }
   /**

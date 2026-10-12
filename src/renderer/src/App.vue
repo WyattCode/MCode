@@ -37,6 +37,7 @@ import { interruptedReason } from "@shared/update-reason"
 import type TerminalDrawerComponent from "./components/TerminalDrawer.vue"
 import Toasts from "./components/Toasts.vue"
 import ConfirmDialog from "./components/ConfirmDialog.vue"
+import ProjectTrustDialog from "./components/ProjectTrustDialog.vue"
 import NewProjectDialog from "./components/NewProjectDialog.vue"
 import type { MenuItem } from "./lib/menu"
 const ConnectDialog = defineAsyncComponent(() => import("./components/ConnectDialog.vue"))
@@ -4196,6 +4197,12 @@ onBeforeUnmount(() => {
     :value="t('home.blankDefault')"
     @close="namingProject = undefined"
     @submit="createNamedProject"
+  />
+
+  <ProjectTrustDialog
+    v-if="app.mcpTrust[0]"
+    :prompt="app.mcpTrust[0]"
+    @answer="(decision) => app.mcpTrust[0] && app.respondMcpTrust(app.mcpTrust[0].directory, decision)"
   />
 
   <AppMenu

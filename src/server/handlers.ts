@@ -330,6 +330,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         automations: automationService()?.sidebar() ?? [],
         // And the waits between attempts, which live nowhere else at all (N11-17).
         retries: runtime.runner.retryRows(),
+        mcpTrust: runtime.mcp.trustPrompts(),
       } satisfies Handled<"session.list">
 
     /*
@@ -1652,6 +1653,10 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "mcp.importApply":
       return { imported: await applyMcpImports(runtime.config, request.items) } satisfies Handled<"mcp.importApply">
+
+    case "mcp.trust":
+      await runtime.mcp.setProjectTrust(request.directory, request.decision)
+      return {} satisfies Handled<"mcp.trust">
 
     case "mcp.save": {
       // The window was never sent the saved secrets, so blank rows it marks as kept take the stored ones here.
