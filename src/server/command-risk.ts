@@ -89,6 +89,7 @@ const DANGEROUS_WORDS = new Set([
   "kill", "killall", "pkill", "taskkill", "chmod", "chown", "chflags", "icacls", "rm", "rmdir", "shred", "del", "rd", "erase",
   "eval", "source", "xargs", "env", "remove-item", "stop-process", "stop-computer", "restart-computer", "invoke-expression", "iex",
   "set-executionpolicy", "format-volume", "clear-disk", "nc", "ncat", "netcat", "crontab",
+  "mv", "truncate", "move-item",
 ])
 const DANGEROUS_SHAPES: RegExp[] = [
   /\b(?:npm|yarn|pnpm|cargo)\s+publish\b/i,
@@ -108,6 +109,16 @@ const DANGEROUS_SHAPES: RegExp[] = [
   /\bcmd(?:\.exe)?(?:\s+\/[A-Za-z](?::\S+)?)*\s+\/[ck]\b/i,
   /\b(?:powershell|pwsh)(?:\.exe)?\s+[^\n]*?-(?:c|command|encodedcommand)\b/i,
   /\brsync\b[^\n]*?--delete/i,
+  /* Options/args may sit before the subcommand: `git -c a=b push`, `gh --repo o/r pr merge`. Not `git stash push`. */
+  /\bgit(?!\s+stash\b)(?:\s+\S+)*?\s+push\b/i,
+  /\bgh(?:\s+\S+)*?\s+pr\s+merge\b/i,
+  /\b(?:python3?|node|nodejs)(?:\s+--?[A-Za-z0-9-]+)*\s+-[A-Za-z]*[ce][A-Za-z]*\b/i,
+  /\bfind\b[^\n]*?-delete\b/i,
+  /* Discard worktree paths: `git checkout -- file` (bare `--`), not `--track`/`--ours` flags. */
+  /\bgit\s+checkout\b[^\n]*?(?:\s)--(?:\s|$)/i,
+  /\bgit\s+restore\b/i,
+  /\bgit\s+stash\s+(?:drop|clear)\b/i,
+  /\b(?:curl|wget)\b[\s\S]*?(?:&&|\|\||;|\n)\s*(?:env\s+)?(?:ba|z|da|fi)?sh\b/i,
 ]
 
 export function dangerousCommand(command: string): boolean {
