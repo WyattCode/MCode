@@ -62,10 +62,35 @@ const TYPES: Record<string, string> = {
   ".pdf": "application/pdf",
 }
 
+export const PREVIEW_TOKEN_TTL_MS = 60 * 60 * 1000
+
+export const PREVIEW_CSP =
+  "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
+
+/*
+ * Files a preview page may reasonably ask for beside its entry document.
+ * Anything else in the folder is treated as private, even if it shares the
+ * token origin.
+ */
+const SIDECAR_EXTENSIONS = new Set([
+  ".css", ".js", ".mjs", ".map",
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".avif", ".svg",
+  ".woff", ".woff2", ".ttf", ".otf",
+  ".mp4", ".webm", ".mov", ".m4v", ".ogv",
+  ".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac",
+])
+
+interface PreviewToken {
+  dir: string
+  createdAt: number
+  /** Basenames opened via servePreview for this folder token (multiple tabs). */
+  entries: Set<string>
+}
+
 let port = 0
 let starting: Promise<number> | undefined
 const tokenOfDir = new Map<string, string>()
-const dirOfToken = new Map<string, string>()
+const dirOfToken = new Map<string, PreviewToken>()
 
 /*
  * A reply's interactive widgets, by the token that is their origin. They are
@@ -78,6 +103,34 @@ const WIDGETS_HELD = 64
 const widgetOfToken = new Map<string, string>()
 /** The path a widget's origin answers on; anything else on it is a 404. */
 const WIDGET_PATH = "/widget.html"
+
+function sweepExpiredTokens(now = Date.now()): void {
+  for (const [token, meta] of dirOfToken) {
+    if (now - meta.createdAt > PREVIEW_TOKEN_TTL_MS) {
+      dirOfToken.delete(token)
+      if (tokenOfDir.get(meta.dir) === token) tokenOfDir.delete(meta.dir)
+    }
+  }
+}
+
+/** Test helper: make every folder token expired without changing production behaviour. */
+export function expirePreviewTokensForTest(): void {
+  for (const meta of dirOfToken.values()) meta.createdAt = 0
+}
+
+function previewCsp(request: http.IncomingMessage): string {
+  /*
+   * frame-ancestors 'none' is the right rule for a page that should never be
+   * framed, but the preview itself is framed by the app. Chromium cannot tell
+   * the app's iframe from another site's iframe by origin here, so when the
+   * request is being framed we drop only that one directive and keep the rest
+   * of the policy, including connect-src 'none'.
+   */
+  if (String(request.headers["sec-fetch-dest"] ?? "").toLowerCase() === "iframe") {
+    return PREVIEW_CSP.replace(/;\s*frame-ancestors 'none'/, "")
+  }
+  return PREVIEW_CSP
+}
 
 /** The script put into a served page in edit mode; the nonce ties its messages to one view. */
 function agentSource(nonce: string): string {
@@ -230,6 +283,7 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
   // Each folder is its own origin, <token>.localhost:<port>; any other Host (a bare address, a rebound name) is refused.
   const host = /^([0-9a-f]{24})\.localhost:(\d+)$/.exec((request.headers.host ?? "").toLowerCase())
   const token = host && Number(host[2]) === port ? host[1] : undefined
+  if (token) sweepExpiredTokens()
   /*
    * A widget's origin holds one document and nothing else, under the policy
    * that lets it run itself and reach nothing: no network, no frames, no form,
@@ -242,8 +296,16 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     response.end(request.method === "HEAD" ? undefined : widget)
     return
   }
-  const dir = token ? dirOfToken.get(token) : undefined
-  if (!dir) return fail(404, "not found")
+  const meta = token ? dirOfToken.get(token) : undefined
+  if (!meta) return fail(404, "not found")
+  if (Date.now() - meta.createdAt > PREVIEW_TOKEN_TTL_MS) {
+    if (token) {
+      dirOfToken.delete(token)
+      if (tokenOfDir.get(meta.dir) === token) tokenOfDir.delete(meta.dir)
+    }
+    return fail(404, "not found")
+  }
+  const dir = meta.dir
   let url: URL
   try {
     url = new URL(request.url ?? "/", "http://localhost")
@@ -270,6 +332,15 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     const real = path.relative(realDir, realTarget)
     if (real === ".." || real.startsWith(`..${path.sep}`) || path.isAbsolute(real)) return fail(403, "forbidden")
   }
+  /*
+   * A folder token is not a licence to read the folder. The opened entry is
+   * allowed, and only sidecar assets beside it are allowed; secrets, documents,
+   * sibling pages and anything else are hidden as if they were not there.
+   */
+  if (!meta.entries.has(relative)) {
+    const sidecarExtension = path.extname(target).toLowerCase()
+    if (!SIDECAR_EXTENSIONS.has(sidecarExtension)) return fail(404, "not found")
+  }
   const extension = path.extname(target).toLowerCase()
   const type = TYPES[extension] ?? "application/octet-stream"
   const nonce = url.searchParams.get("__mcodeedit")
@@ -282,7 +353,7 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     }
     const script = `<script data-mcode-edit-agent>${agentSource(nonce)}</script>`
     const at = html.search(/<\/body>/i)
-    response.writeHead(200, { "Content-Type": type, "Cache-Control": "no-store" })
+    response.writeHead(200, { "Content-Type": type, "Cache-Control": "no-store", "Content-Security-Policy": previewCsp(request) })
     response.end(at >= 0 ? `${html.slice(0, at)}${script}${html.slice(at)}` : `${html}${script}`)
     return
   }
@@ -308,6 +379,7 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     "Content-Type": type,
     "Cache-Control": "no-store",
     "Accept-Ranges": "bytes",
+    ...(extension === ".html" || extension === ".htm" ? { "Content-Security-Policy": previewCsp(request) } : {}),
     ...(extension === ".svg" || extension === ".pdf"
       ? // Without the second header a cross-origin reader cannot see the range headers, and pdf.js would pull whole files.
         { "Access-Control-Allow-Origin": "*", "Access-Control-Expose-Headers": "Accept-Ranges, Content-Range, Content-Length" }
@@ -427,13 +499,25 @@ export async function servePreview(file: string): Promise<{ ok: true; url: strin
     return { ok: false, error: "serverFailed" }
   }
   const dir = path.dirname(absolute)
+  const entryName = path.basename(absolute)
+  const now = Date.now()
+  sweepExpiredTokens(now)
   let token = tokenOfDir.get(dir)
-  if (!token) {
+  let meta = token ? dirOfToken.get(token) : undefined
+  if (!meta || now - meta.createdAt > PREVIEW_TOKEN_TTL_MS) {
+    if (token) {
+      dirOfToken.delete(token)
+      if (tokenOfDir.get(meta?.dir ?? dir) === token) tokenOfDir.delete(meta?.dir ?? dir)
+    }
     token = randomBytes(12).toString("hex")
+    meta = { dir, createdAt: now, entries: new Set([entryName]) }
     tokenOfDir.set(dir, token)
-    dirOfToken.set(token, dir)
+    dirOfToken.set(token, meta)
+  } else {
+    meta.createdAt = now
+    meta.entries.add(entryName)
   }
-  return { ok: true, url: `http://${token}.localhost:${listening}/${encodeURIComponent(path.basename(absolute))}` }
+  return { ok: true, url: `http://${token}.localhost:${listening}/${encodeURIComponent(entryName)}` }
 }
 
 /* Salted, so the same widget keeps one address while the app runs and no other program can work out what it is. */
