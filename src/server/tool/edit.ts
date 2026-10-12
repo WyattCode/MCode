@@ -6,6 +6,7 @@ import { relative, resolvePath } from "./fs-util"
 import { changed, unifiedDiff } from "../diff"
 import { isMemoryPath } from "../history/service"
 import { guardPlanWrite } from "../session/plan"
+import { checkFresh, recordWrite } from "./read-tracker"
 
 /** The longest closest-match hint a failed edit carries. */
 const HINT_MAX_CHARS = 2000
@@ -157,17 +158,225 @@ function endingOf(text: string): "\r\n" | "\n" {
   return text.includes("\r\n") ? "\r\n" : "\n"
 }
 
+/** Both \r\n and a lone \n: no single rule describes this file's endings, so no fuzzy tier is trusted. */
+function mixedEndings(text: string): boolean {
+  return text.includes("\r\n") && /(^|[^\r])\n/.test(text)
+}
+
 interface Change {
   oldString: string
   newString: string
   replaceAll: boolean
 }
 
+type MatchTier = "unicode" | "trailing-whitespace" | "indentation"
+
+interface MatchRange {
+  start: number
+  end: number
+}
+
+interface ReplaceResult {
+  updated: string
+  occurrences: number
+  matchTier?: MatchTier
+  ranges?: MatchRange[]
+  reindented?: boolean
+}
+
+const TIER_LABEL: Record<MatchTier, string> = {
+  unicode: "typographic quotes and unicode spaces",
+  "trailing-whitespace": "trailing whitespace",
+  indentation: "indentation differences",
+}
+
+function stripCR(line: string): string {
+  return line.endsWith("\r") ? line.slice(0, -1) : line
+}
+
+function quoteLines(text: string): string[] {
+  const lines = text.replace(/\r\n/g, "\n").split("\n")
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop()
+  return lines
+}
+
+function normalizeUnicodeLine(line: string): string {
+  return line
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015]/g, "-")
+    .replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ")
+    .replace(/\u2026/g, "...")
+}
+
+function commonIndent(lines: string[]): string {
+  const indents = lines.filter((line) => line.trim()).map((line) => /^[ \t]*/.exec(line)?.[0] ?? "")
+  if (!indents.length) return ""
+  let prefix = indents[0]!
+  for (const indent of indents.slice(1)) {
+    let i = 0
+    while (i < prefix.length && i < indent.length && prefix[i] === indent[i]) i++
+    prefix = prefix.slice(0, i)
+    if (!prefix) break
+  }
+  return prefix
+}
+
+function removeIndent(line: string, indent: string): string {
+  if (!line.trim()) return ""
+  if (indent && line.startsWith(indent)) return line.slice(indent.length)
+  return line
+}
+
+function findTierMatches(actual: string[], wanted: string[], tier: MatchTier): number[] {
+  const size = wanted.length
+  if (size === 0 || actual.length < size) return []
+  const matches: number[] = []
+
+  if (tier === "unicode") {
+    const target = wanted.map(normalizeUnicodeLine)
+    for (let i = 0; i + size <= actual.length; i++) {
+      let ok = true
+      for (let j = 0; j < size; j++) {
+        if (normalizeUnicodeLine(stripCR(actual[i + j]!)) !== target[j]) {
+          ok = false
+          break
+        }
+      }
+      if (ok) matches.push(i)
+    }
+    return matches
+  }
+
+  if (tier === "trailing-whitespace") {
+    const target = wanted.map((line) => line.trimEnd())
+    for (let i = 0; i + size <= actual.length; i++) {
+      let ok = true
+      for (let j = 0; j < size; j++) {
+        if (stripCR(actual[i + j]!).trimEnd() !== target[j]) {
+          ok = false
+          break
+        }
+      }
+      if (ok) matches.push(i)
+    }
+    return matches
+  }
+
+  const quoteIndent = commonIndent(wanted)
+  for (let i = 0; i + size <= actual.length; i++) {
+    const block = actual.slice(i, i + size).map(stripCR)
+    const blockIndent = commonIndent(block)
+    let ok = true
+    for (let j = 0; j < size; j++) {
+      if (removeIndent(wanted[j]!, quoteIndent) !== removeIndent(block[j]!, blockIndent)) {
+        ok = false
+        break
+      }
+    }
+    if (ok) matches.push(i)
+  }
+  return matches
+}
+
+function nonOverlapping(matches: number[], size: number): boolean {
+  for (let i = 1; i < matches.length; i++) {
+    if (matches[i]! - matches[i - 1]! < size) return false
+  }
+  return true
+}
+
+function replacementLines(newString: string, ending: "\r\n" | "\n", tier: MatchTier | undefined, quoteIndent: string, blockIndent: string): string[] {
+  if (newString === "") return []
+  const lines = newString.replace(/\r\n/g, "\n").split("\n").map(stripCR)
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop()
+
+  const logical = tier === "indentation"
+    ? lines.map((line) => {
+        if (!line.trim()) return ""
+        if (quoteIndent && line.startsWith(quoteIndent)) return blockIndent + line.slice(quoteIndent.length)
+        return blockIndent + line
+      })
+    : lines
+
+  return logical.map((line) => (ending === "\r\n" ? `${line}\r` : line))
+}
+
+function applyLineMatches(original: string, matches: number[], size: number, newString: string, ending: "\r\n" | "\n", tier: MatchTier | undefined, wanted: string[]): string {
+  const raw = original.split("\n")
+  const trailing = raw.length > 1 && raw[raw.length - 1] === ""
+  const actual = trailing ? raw.slice(0, -1) : raw.slice()
+  const result = actual.slice()
+  const quoteIndent = tier === "indentation" ? commonIndent(wanted) : ""
+
+  for (const start of [...matches].sort((a, b) => b - a)) {
+    const block = actual.slice(start, start + size).map(stripCR)
+    const blockIndent = tier === "indentation" ? commonIndent(block) : ""
+    const replacement = replacementLines(newString, ending, tier, quoteIndent, blockIndent)
+    result.splice(start, size, ...replacement)
+  }
+
+  return result.join("\n") + (trailing ? "\n" : "")
+}
+
+function lineAt(text: string, index: number): number {
+  let line = 1
+  for (let i = 0; i < index && i < text.length; i++) {
+    if (text[i] === "\n") line++
+  }
+  return line
+}
+
+function exactOccurrences(text: string, find: string): number[] {
+  if (!find) return []
+  const out: number[] = []
+  let index = text.indexOf(find)
+  while (index !== -1) {
+    out.push(index)
+    index = text.indexOf(find, index + find.length)
+  }
+  return out
+}
+
+function formatRanges(ranges: MatchRange[]): string {
+  return ranges.map((range) => `${range.start}-${range.end}`).join(", ")
+}
+
+function candidateLines(actual: string[], matches: number[], size: number): string {
+  return matches
+    .slice(0, 5)
+    .map((start) => {
+      const block = actual.slice(start, start + size).map(stripCR)
+      const shown = block.slice(0, 3).map((line, i) => `  ${start + i + 1}: ${line.trim()}`)
+      if (block.length > 3) shown.push(`  … (${block.length - 3} more)`)
+      return shown.join("\n")
+    })
+    .join("\n")
+}
+
+function numberedHint(original: string, hint: string): string {
+  const index = original.indexOf(hint)
+  if (index === -1) return hint
+  const startLine = lineAt(original, index)
+  const lines = hint.split("\n")
+  const endLine = startLine + Math.max(0, lines.length - 1)
+  const body = lines.map((line, i) => `  ${startLine + i}: ${stripCR(line)}`).join("\n")
+  return `(lines ${startLine}-${endLine})\n${body}`
+}
+
+function fuzzyError(display: string, tier: MatchTier, matches: number[], size: number, actual: string[]): ToolError {
+  const label = TIER_LABEL[tier]
+  const candidates = candidateLines(actual, matches, size)
+  return new ToolError(
+    `old_string was not found exactly in ${display}, and the closest match (ignoring ${label}) appears ${matches.length} times, so nothing was written. Include surrounding lines so it matches only once, or set replace_all to change every one.\n${candidates}`,
+  )
+}
+
 /**
- * One exact replacement, on text rather than on the disk. Throws what the
+ * One replacement, on text rather than on the disk. Throws what the
  * model should read when the quote is missing or is not unique.
  */
-function replaceIn(original: string, change: Change, ending: "\r\n" | "\n", display: string): { updated: string; occurrences: number } {
+function replaceIn(original: string, change: Change, ending: "\r\n" | "\n", display: string): ReplaceResult {
   const inFileEndings = (text: string) => {
     const plain = text.replaceAll("\r\n", "\n")
     return ending === "\n" ? plain : plain.replaceAll("\n", "\r\n")
@@ -176,22 +385,69 @@ function replaceIn(original: string, change: Change, ending: "\r\n" | "\n", disp
   const replacement = inFileEndings(change.newString)
 
   const first = original.indexOf(find)
-  if (first === -1) {
-    const hint = closestMatch(original, change.oldString)
-    const shown = hint && hint.length > HINT_MAX_CHARS ? `${hint.slice(0, HINT_MAX_CHARS)}\n… (cut)` : hint
-    throw new ToolError(
-      `old_string was not found in ${display}. It has to match the file exactly, including whitespace, indentation and line endings.` +
-        (shown ? `\n\nThe closest text in the file - note its exact whitespace, and send it again as old_string:\n${shown}` : ""),
-    )
+  if (first !== -1) {
+    const occurrences = original.split(find).length - 1
+    if (occurrences > 1 && !change.replaceAll) {
+      const starts = exactOccurrences(original, find).map((index) => lineAt(original, index))
+      const shown = starts.slice(0, 5).map((line) => `  ${line}`).join("\n")
+      throw new ToolError(
+        `old_string appears ${occurrences} times in ${display}, and replace_all is not set. Set replace_all to change every one, or include surrounding lines so it matches only once.\n${shown}`,
+      )
+    }
+    const updated = change.replaceAll ? original.split(find).join(replacement) : original.slice(0, first) + replacement + original.slice(first + find.length)
+    return { updated, occurrences }
   }
-  const occurrences = original.split(find).length - 1
-  if (occurrences > 1 && !change.replaceAll) {
-    throw new ToolError(
-      `old_string appears ${occurrences} times in ${display}, and replace_all is not set. Set replace_all to change every one, or include surrounding lines so it matches only once.`,
-    )
+
+  const raw = original.split("\n")
+  const trailing = raw.length > 1 && raw[raw.length - 1] === ""
+  const actual = trailing ? raw.slice(0, -1) : raw
+  const wanted = quoteLines(change.oldString)
+
+  // A file with both \r\n and a lone \n has no single ending rule to lean on,
+  // so no fuzzy tier is trusted: fall through to the exact not-found error.
+  const mixed = mixedEndings(original)
+
+  if (wanted.length > 0 && !mixed) {
+    for (const tier of ["unicode", "trailing-whitespace", "indentation"] as const) {
+      const matches = findTierMatches(actual, wanted, tier)
+      if (matches.length === 0) continue
+
+      if (matches.length > 1) {
+        if (change.replaceAll && nonOverlapping(matches, wanted.length)) {
+          const updated = applyLineMatches(original, matches, wanted.length, change.newString, ending, tier, wanted)
+          const ranges = matches.map((start) => ({ start: start + 1, end: start + wanted.length }))
+          return {
+            updated,
+            occurrences: matches.length,
+            matchTier: tier,
+            ranges,
+            reindented: tier === "indentation",
+          }
+        }
+        throw fuzzyError(display, tier, matches, wanted.length, actual)
+      }
+
+      const start = matches[0]!
+      const updated = applyLineMatches(original, matches, wanted.length, change.newString, ending, tier, wanted)
+      return {
+        updated,
+        occurrences: 1,
+        matchTier: tier,
+        ranges: [{ start: start + 1, end: start + wanted.length }],
+        reindented: tier === "indentation",
+      }
+    }
   }
-  const updated = change.replaceAll ? original.split(find).join(replacement) : original.slice(0, first) + replacement + original.slice(first + find.length)
-  return { updated, occurrences }
+
+  const hint = closestMatch(original, change.oldString)
+  const shownRaw = hint ? numberedHint(original, hint) : undefined
+  const shown = shownRaw && shownRaw.length > HINT_MAX_CHARS ? `${shownRaw.slice(0, HINT_MAX_CHARS)}\n… (cut)` : shownRaw
+  const lead = `old_string was not found in ${display}. It has to match the file exactly, including whitespace, indentation and line endings.`
+  if (!shown) throw new ToolError(lead)
+  const [header, ...body] = shown.split("\n")
+  throw new ToolError(
+    `${lead}\n\nThe closest text in the file ${header} - note its exact whitespace, and send it again as old_string:\n${body.join("\n")}`,
+  )
 }
 
 /**
@@ -224,6 +480,25 @@ export async function currentText(target: string, display: string): Promise<stri
     }
     throw new ToolError(`${display} could not be read (${code ?? (error as Error).message}), so it was not changed.`)
   }
+}
+
+/**
+ * The last look before the bytes land: the file must still hold exactly the
+ * text the diff the user approved was computed from (or still be absent, for a
+ * new file). Anything else - an editor, a formatter, another tool that ran
+ * while the approval was open - stops the write.
+ */
+async function unchangedSince(target: string, display: string, expected: string | undefined): Promise<void> {
+  const changedError = () => new ToolError(`${display} changed while the edit was waiting for approval; nothing was written. Read it again.`)
+  let now: string | undefined
+  try {
+    now = await fs.readFile(target, "utf8")
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw changedError()
+    now = undefined
+  }
+  if (now === expected) return
+  throw changedError()
 }
 
 export const WriteTool: ToolDefinition = {
@@ -263,6 +538,11 @@ export const WriteTool: ToolDefinition = {
 
     return locked(target, async () => {
       const previous = await currentText(target, display)
+      const stale = await checkFresh(context.sessionID, target, previous)
+      if (stale) {
+        throw new ToolError(`${display} has changed since you last read it (modified on disk after your read - by a command, a formatter or another tool). Read it again before editing; nothing was written.`)
+      }
+
       const { diff, filediff } = changed(display, unifiedDiff(display, previous ?? "", content))
 
       // memory: memory files are written without asking, as MiMo does.
@@ -280,7 +560,9 @@ export const WriteTool: ToolDefinition = {
 
       await context.snapshot(target)
       await fs.mkdir(path.dirname(target), { recursive: true })
+      await unchangedSince(target, display, previous)
       await fs.writeFile(target, content, "utf8")
+      await recordWrite(context.sessionID, target, content)
 
       return {
         output: `${previous === undefined ? "Created" : "Overwrote"} ${display} (${content.split("\n").length} lines)`,
@@ -306,7 +588,7 @@ export const EditTool: ToolDefinition = {
     "- Set replace_all to change every occurrence instead. That is the way to rename a symbol through a file; it is the wrong way to change one of several similar-looking lines.",
     "",
     "What it does",
-    "- new_string has to differ from old_string, and is written exactly as given - it is not reindented for you.",
+    "- new_string has to differ from old_string, and is written as given. Small differences in indentation, trailing spaces or typographic quotes are tolerated when the match is unique, and the result says when that happened; still quote exactly.",
     "- An empty old_string writes new_string as the whole file, creating it when it is not there. Use write for that instead unless you are creating a small file in passing.",
     "- One call changes one place in one file; make one call per change.",
     "- The result is a diff, and the user sees it. Do not paste the changed lines back into your reply.",
@@ -352,11 +634,18 @@ export const EditTool: ToolDefinition = {
       // MiMo's edit with nothing to find writes the whole file.
       if (oldString === "") {
         const previous = await currentText(target, display)
+        const stale = await checkFresh(context.sessionID, target, previous)
+        if (stale) {
+          throw new ToolError(`${display} has changed since you last read it (modified on disk after your read - by a command, a formatter or another tool). Read it again before editing; nothing was written.`)
+        }
+
         const { diff, filediff } = changed(display, unifiedDiff(display, previous ?? "", newString))
         await ask(diff)
         await context.snapshot(target)
         await fs.mkdir(path.dirname(target), { recursive: true })
+        await unchangedSince(target, display, previous)
         await fs.writeFile(target, newString, "utf8")
+        await recordWrite(context.sessionID, target, newString)
         return {
           output: `${previous === undefined ? "Created" : "Overwrote"} ${display}`,
           title: display,
@@ -369,16 +658,41 @@ export const EditTool: ToolDefinition = {
       if (stat.isDirectory()) throw new ToolError(`${display} is a folder, not a file`)
       const original = await fs.readFile(target, "utf8")
 
-      const { updated, occurrences } = replaceIn(original, { oldString, newString, replaceAll }, endingOf(original), display)
+      const stale = await checkFresh(context.sessionID, target, original)
+      if (stale) {
+        throw new ToolError(`${display} has changed since you last read it (modified on disk after your read - by a command, a formatter or another tool). Read it again before editing; nothing was written.`)
+      }
+
+      const { updated, occurrences, matchTier, ranges, reindented } = replaceIn(original, { oldString, newString, replaceAll }, endingOf(original), display)
       const { diff, filediff } = changed(display, unifiedDiff(display, original.replaceAll("\r\n", "\n"), updated.replaceAll("\r\n", "\n")))
       await ask(diff)
       await context.snapshot(target)
+      await unchangedSince(target, display, original)
       await fs.writeFile(target, updated, "utf8")
+      await recordWrite(context.sessionID, target, updated)
+
+      let output = `Edited ${display}`
+      if (matchTier && ranges) {
+        const rangeText = `matched lines ${formatRanges(ranges)}`
+        const tierText = `after ignoring ${TIER_LABEL[matchTier]}`
+        const reindentText = reindented ? "; new_string re-indented" : ""
+        output += replaceAll ? ` (${occurrences} occurrences, ${rangeText} ${tierText}${reindentText})` : ` (${rangeText} ${tierText}${reindentText})`
+      } else if (replaceAll) {
+        output += ` (${occurrences} occurrences)`
+      }
 
       return {
-        output: `Edited ${display}${replaceAll ? ` (${occurrences} occurrences)` : ""}`,
+        output,
         title: display,
-        metadata: { path: display, diff, filediff, occurrences: replaceAll ? occurrences : 1 },
+        metadata: {
+          path: display,
+          diff,
+          filediff,
+          occurrences: replaceAll ? occurrences : 1,
+          ...(matchTier ? { matchTier } : {}),
+          ...(ranges ? { ranges } : {}),
+          ...(reindented ? { reindented: true } : {}),
+        },
       }
     })
   },
