@@ -230,12 +230,18 @@ function readOnlyPiece(piece: string): boolean {
   const head = words[0] ?? ""
   if (!head) return false
   if (head === "git") return READ_ONLY_GIT.has(words[1] ?? "") && !gitUnsafeArgs(words)
-  if (head === "tail" && words.some((word) => word === "-f" || word === "--follow" || word.startsWith("--follow="))) return false
+  if (head === "tail" && words.some((word) => word === "--follow" || word.startsWith("--follow=") || /^-[A-Za-z]*[fF]/.test(word))) return false
   if ((head === "rg" || head === "grep") && hasPreExec(words)) return false
   return READ_ONLY.has(head) || READ_ONLY_POWERSHELL.has(head.toLowerCase())
 }
 
 export function readOnlyCommand(command: string): boolean {
+  /*
+   * A line break separates shell commands. Collapsing it into a space would
+   * make `pwd\nchmod …` look like one read-only piece while bash still runs
+   * both lines — Ask would auto-allow. Refuse any line break first.
+   */
+  if (/[\n\r\u2028\u2029]/.test(command)) return false
   const text = command.replace(HARMLESS_REDIRECT, " ").replace(/\s+/g, " ").trim()
   if (!text) return false
   const parts = text.split(/\s*(?:&&|\|\||;)\s*/).map((part) => part.trim()).filter(Boolean)

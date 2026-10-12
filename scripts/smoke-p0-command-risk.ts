@@ -69,6 +69,30 @@ check("git log -c ALIAS.x=!echo hi is not read-only", !readOnlyCommand("git log 
 check("git log -ccore.pager=bash is not read-only", !readOnlyCommand("git log -ccore.pager=bash"))
 check("git log -cCore.Pager=bash is not read-only", !readOnlyCommand("git log -cCore.Pager=bash"))
 
+// Newline-separated commands are never read-only, even when every line looks harmless.
+const newlineAttackPairs: [string, string][] = [
+  ["pwd", "chmod 777 ."],
+  ["pwd", "sudo id"],
+  ["pwd", "git push origin main"],
+  ["pwd", "kill -9 1"],
+  ["pwd", "rg --pre=bash zzz"],
+  ["pwd", "git grep -Obash zzz"],
+  ["pwd", "git log --output=/tmp/x"],
+  ["ls", "rm -rf ."],
+]
+const newlineSeparators = ["\n", "\r", "\r\n", "\u2028", "\u2029"]
+for (const [first, second] of newlineAttackPairs) {
+  for (const sep of newlineSeparators) {
+    const command = `${first}${sep}${second}`
+    check(`${JSON.stringify(command)} is not read-only`, !readOnlyCommand(command))
+  }
+}
+
+// tail -F follows like tail -f, including combined short flags.
+check("tail -F is not read-only", !readOnlyCommand("tail -F file"))
+check("tail -fF is not read-only", !readOnlyCommand("tail -fF file"))
+check("tail -n 10 is still read-only", readOnlyCommand("tail -n 10 file"))
+
 // The everyday spellings, still read-only.
 check("rg pattern src is still read-only", readOnlyCommand("rg pattern src"))
 check("git log -1 is still read-only", readOnlyCommand("git log -1"))
