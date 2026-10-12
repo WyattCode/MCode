@@ -144,6 +144,49 @@ const NOT_PLAIN = /[<>`\n(){}]|\$\(/
 const HARMLESS_REDIRECT = /(?:2>&1|&>\s*\/dev\/null|(?:\d)?\s*>\s*\/dev\/null)(?=$|[\s;|&])/g
 
 /*
+ * Shell strips matching outer quotes before a program sees its arguments. A
+ * token that still carries a quote after that is not something this allowlist
+ * can reason about, so callers fail closed.
+ */
+function stripArgQuotes(word: string): string | undefined {
+  let out = word
+  while (
+    out.length >= 2 &&
+    ((out[0] === "'" && out[out.length - 1] === "'") ||
+      (out[0] === '"' && out[out.length - 1] === '"'))
+  ) {
+    out = out.slice(1, -1)
+  }
+  return /['"]/.test(out) ? undefined : out
+}
+
+/*
+ * Normalize whitespace-split tokens the way the shell would. Long options may
+ * quote only their value (`--config="..."`), so strip that too; anything left
+ * with a quote is unsafe.
+ */
+function normalizeWords(words: string[]): string[] | undefined {
+  const out: string[] = []
+  for (const word of words) {
+    const stripped = stripArgQuotes(word)
+    if (stripped !== undefined) {
+      out.push(stripped)
+      continue
+    }
+    const eq = word.indexOf("=")
+    if (eq > 0) {
+      const value = stripArgQuotes(word.slice(eq + 1))
+      if (value !== undefined) {
+        out.push(`${word.slice(0, eq + 1)}${value}`)
+        continue
+      }
+    }
+    return undefined
+  }
+  return out
+}
+
+/*
  * ripgrep's `--pre` runs a program over every match before it is searched; the
  * value is that program. `--pre-glob` only says which files the preprocessor
  * sees and is harmless, so only `--pre` and `--pre=` are the exec hook.
@@ -167,7 +210,7 @@ function gitUnsafeArgs(words: string[]): boolean {
     if (word.startsWith("-O")) return true
     if (word === "--open-files-in-pager" || word.startsWith("--open-files-in-pager=")) return true
     if (word === "--output" || word.startsWith("--output=")) return true
-    if (word === "--ext-diff") return true
+    if (word === "--ext-diff" || word.startsWith("--ext-diff=")) return true
     if ((word === "-c" || word === "--config") && GIT_CONFIG_TRICK.test(words[at + 1] ?? "")) return true
     if (word.startsWith("--config=") && GIT_CONFIG_TRICK.test(word.slice("--config=".length))) return true
   }
@@ -175,7 +218,9 @@ function gitUnsafeArgs(words: string[]): boolean {
 }
 
 function readOnlyPiece(piece: string): boolean {
-  const words = piece.trim().split(/\s+/).filter(Boolean)
+  const rawWords = piece.trim().split(/\s+/).filter(Boolean)
+  const words = normalizeWords(rawWords)
+  if (!words) return false
   const head = words[0] ?? ""
   if (!head) return false
   if (head === "git") return READ_ONLY_GIT.has(words[1] ?? "") && !gitUnsafeArgs(words)

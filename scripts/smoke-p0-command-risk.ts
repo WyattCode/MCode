@@ -2,7 +2,8 @@
  * Focused checks for P0-2: a command on the read-only allowlist is only
  * read-only while its flags keep it that way. `rg --pre`, git's `-O` /
  * `--open-files-in-pager`, `--output` and `--ext-diff`, and `printenv` all run
- * or write something, so none of them may wave through at Ask.
+ * or write something, so none of them may wave through at Ask — including the
+ * same flags wrapped in shell quotes (`rg '--pre'`, `git log -c "core.pager=…"`).
  *
  * Run on its own: `npx tsx scripts/smoke-p0-command-risk.ts`.
  */
@@ -30,6 +31,19 @@ check("git log --output=<file> is not read-only", !readOnlyCommand("git log --ou
 check("git diff --output=<file> is not read-only", !readOnlyCommand("git diff --output=src/main.ts"))
 check("git diff --ext-diff is not read-only", !readOnlyCommand("git diff --ext-diff"))
 check("printenv is not read-only", !readOnlyCommand("printenv"))
+
+// The same dangerous spellings, hidden behind shell quotes.
+check("rg '--pre' bash zzz is not read-only", !readOnlyCommand("rg '--pre' bash zzz"))
+check("rg \"--pre\" bash zzz is not read-only", !readOnlyCommand('rg "--pre" bash zzz'))
+check("rg \"--pre=bash\" zzz is not read-only", !readOnlyCommand('rg "--pre=bash" zzz'))
+check("git grep \"-O\" bash zzz is not read-only", !readOnlyCommand('git grep "-O" bash zzz'))
+check("git grep '-Obash' zzz is not read-only", !readOnlyCommand("git grep '-Obash' zzz"))
+check("git grep \"--open-files-in-pager=bash\" zzz is not read-only", !readOnlyCommand('git grep "--open-files-in-pager=bash" zzz'))
+check("git log \"--output=/tmp/x\" is not read-only", !readOnlyCommand('git log "--output=/tmp/x"'))
+check("git diff \"--ext-diff\" is not read-only", !readOnlyCommand('git diff "--ext-diff"'))
+check("git log -c \"core.pager=bash\" is not read-only", !readOnlyCommand('git log -c "core.pager=bash"'))
+check("git log -c 'core.pager=bash' is not read-only", !readOnlyCommand("git log -c 'core.pager=bash'"))
+check("git log --config=\"core.pager=bash\" is not read-only", !readOnlyCommand('git log --config="core.pager=bash"'))
 
 // The everyday spellings, still read-only.
 check("rg pattern src is still read-only", readOnlyCommand("rg pattern src"))
