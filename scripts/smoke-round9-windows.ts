@@ -5,6 +5,7 @@
  * section. Nothing here starts Electron: the modules under test take their
  * Electron and file-system pieces as arguments.
  */
+import { createHash } from "node:crypto"
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
@@ -505,7 +506,7 @@ export async function roundNineWindowsChecks(check: Check, section: (name: strin
       onQuit: () => {},
     } as never)
     real.logger = null
-    const sha512 = "A".repeat(86) + "=="
+    const sha512 = createHash("sha512").update("mcode-smoke-installer").digest("base64")
     const day = 24 * 60 * 60 * 1000
     const now = Date.parse("2026-09-17T00:00:00Z")
     const library = {
@@ -613,7 +614,7 @@ export async function roundNineWindowsChecks(check: Check, section: (name: strin
     check("a failure after that is silent and keeps the ready update", (await updater.checkNow()).phase === "ready" && updater.readyVersion() === "0.3.0")
     library.checkFails = false
 
-    library.info = { version: "0.2.4", files: [{ url: "MCode-0.2.4-x64.exe", sha512: "0".repeat(128) }], rollback: true, releaseDate: new Date(now - 2 * day).toISOString() }
+    library.info = { version: "0.2.4", files: [{ url: "MCode-0.2.4-x64.exe", sha512: createHash("sha512").update("mcode-smoke-rollback").digest("hex") }], rollback: true, releaseDate: new Date(now - 2 * day).toISOString() }
     const rollbackUpdater = createUpdater({ currentVersion: "0.2.5", feedURL: () => feed, autoUpdater: library, emit: () => {}, log: () => {}, now: () => now })
     const rolledBack = await rollbackUpdater.checkNow()
     check("a declared, recent rollback (hex digest) is the one older version that downloads", rolledBack.outcome === "ready" && rolledBack.version === "0.2.4", rolledBack)

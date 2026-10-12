@@ -21,6 +21,12 @@
  *    Windows can ask for elevation (N9-3). The caller starts it only once the
  *    backend has shut down.
  *
+ * Residual risk: this is feed authenticity, not publisher authenticity.
+ * Without OS code signing or a publisherName check, a compromised HTTPS feed
+ * (or DNS/MITM against a misconfigured feed) can still ship a malicious
+ * installer whose sha512 matches the feed. The sha512 only proves the download
+ * matches the feed, not that the feed is honest.
+ *
  * Nothing here imports Electron: the caller passes electron-updater's
  * autoUpdater (or a fake), so smoke drives the schedule and the rules.
  */
@@ -49,6 +55,8 @@ export const CHECK_INTERVAL = 3 * 60 * 60 * 1000
 /** MiMo's rollback window. */
 export const ROLLBACK_DAYS = 30
 const NOTES_LIMIT = 20_000
+
+export const UPDATE_AUTH_RESIDUAL = "sha512 proves the download matches the feed only; there is no code signing or publisher check"
 
 export interface Scheduler {
   setTimeout(run: () => void, ms: number): unknown
@@ -116,11 +124,42 @@ export function compareVersions(a: string, b: string): number {
 
 /** A sha512 as electron-builder writes it: 64 bytes, base64 (or hex). */
 const SHA512 = /^(?:[A-Za-z0-9+/]{86}==|[0-9a-fA-F]{128})$/
+const ZERO_SHA512_HEX = "0".repeat(128)
+const ZERO_SHA512_BASE64 = "A".repeat(86) + "=="
+
+function isZeroSha512(value: string): boolean {
+  return value === ZERO_SHA512_HEX || value === ZERO_SHA512_BASE64
+}
+
+function sha512Problem(value: unknown): string | undefined {
+  const text = typeof value === "string" ? value : ""
+  if (!SHA512.test(text)) return "no sha512"
+  if (isZeroSha512(text)) return "placeholder sha512"
+  return undefined
+}
 
 /** Why a feed entry is refused, or undefined when it may be downloaded. */
 export function refusal(info: FeedInfo, currentVersion: string, now: number): string | undefined {
-  const files = info.files?.length ? info.files : info.sha512 !== undefined ? [{ sha512: info.sha512 }] : []
-  if (!files.length || files.some((file) => !SHA512.test(String(file.sha512 ?? "")))) return `the feed gives no sha512 for ${info.version}, so it cannot be verified`
+  if (info.files !== undefined) {
+    if (!Array.isArray(info.files) || info.files.length === 0) {
+      return `the feed gives no files for ${info.version}, so it cannot be verified`
+    }
+    for (const file of info.files) {
+      const sha512 = sha512Problem(file?.sha512)
+      if (sha512 === "no sha512") return `the feed gives no sha512 for ${info.version}, so it cannot be verified`
+      if (sha512 === "placeholder sha512") return `the feed gives a placeholder sha512 for ${info.version}, so it cannot be verified`
+      if (typeof file?.url !== "string" || file.url.trim() === "") {
+        return `the feed gives a file without a url for ${info.version}, so it cannot be downloaded`
+      }
+    }
+  } else if (info.sha512 !== undefined) {
+    const sha512 = sha512Problem(info.sha512)
+    if (sha512 === "no sha512") return `the feed gives no sha512 for ${info.version}, so it cannot be verified`
+    if (sha512 === "placeholder sha512") return `the feed gives a placeholder sha512 for ${info.version}, so it cannot be verified`
+  } else {
+    return `the feed gives no sha512 for ${info.version}, so it cannot be verified`
+  }
+
   const order = compareVersions(info.version, currentVersion)
   if (order > 0) return undefined
   if (order === 0) return "not newer"
@@ -278,10 +317,14 @@ export function createUpdater(deps: UpdaterDeps): Updater {
       const checked = await updater.checkForUpdates()
       if (!checked) throw new Error("updates apply to the installed app only")
       const version = checked.updateInfo.version
+      if (refused && compareVersions(version, deps.currentVersion) > 0) {
+        settle()
+        deps.log(/sha512|placeholder|verified|url/i.test(refused) ? `[update] authenticity check refused ${version}: ${refused}` : `[update] ${refused}`)
+        return result("failed", { error: refused, during: "check", version })
+      }
       if (!checked.isUpdateAvailable) {
         settle()
         // A newer entry that cannot be verified is a failure; an older one without a rollback just leaves this version current.
-        if (refused && compareVersions(version, deps.currentVersion) > 0) return result("failed", { error: refused, during: "check", version })
         if (refused) deps.log(`[update] ${refused}`)
         return result("current", { version })
       }
