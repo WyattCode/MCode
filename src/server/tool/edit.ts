@@ -1,12 +1,13 @@
 import fs from "node:fs/promises"
 import path from "node:path"
-import type { ToolDefinition } from "./types"
+import type { ToolContext, ToolDefinition } from "./types"
 import { ToolError } from "./types"
 import { relative, resolvePath } from "./fs-util"
 import { changed, unifiedDiff } from "../diff"
 import { isMemoryPath } from "../history/service"
 import { guardPlanWrite } from "../session/plan"
 import { checkFresh, recordWrite } from "./read-tracker"
+import { postEditCheckDetailed } from "./post-edit-check"
 
 /** The longest closest-match hint a failed edit carries. */
 const HINT_MAX_CHARS = 2000
@@ -501,6 +502,18 @@ async function unchangedSince(target: string, display: string, expected: string 
   throw changedError()
 }
 
+function allowProjectTools(context: ToolContext): boolean {
+  try {
+    return Boolean(
+      context.permissions &&
+      typeof context.permissions.action === "function" &&
+      context.permissions.action("bash") === "allow",
+    )
+  } catch {
+    return false
+  }
+}
+
 export const WriteTool: ToolDefinition = {
   name: "write",
   description: [
@@ -564,10 +577,19 @@ export const WriteTool: ToolDefinition = {
       await fs.writeFile(target, content, "utf8")
       await recordWrite(context.sessionID, target, content)
 
+      const check = await postEditCheckDetailed(target, context.directory, context.signal, allowProjectTools(context)).catch(() => undefined)
+      const output = `${previous === undefined ? "Created" : "Overwrote"} ${display} (${content.split("\n").length} lines)${check?.text ?? ""}`
+
       return {
-        output: `${previous === undefined ? "Created" : "Overwrote"} ${display} (${content.split("\n").length} lines)`,
+        output,
         title: display,
-        metadata: { path: display, diff, filediff, created: previous === undefined },
+        metadata: {
+          path: display,
+          diff,
+          filediff,
+          created: previous === undefined,
+          ...(check ? { postEditCheck: { checker: check.checker, problems: check.problems, ...(check.status ? { status: check.status } : {}) } } : {}),
+        },
       }
     })
   },
@@ -646,10 +668,20 @@ export const EditTool: ToolDefinition = {
         await unchangedSince(target, display, previous)
         await fs.writeFile(target, newString, "utf8")
         await recordWrite(context.sessionID, target, newString)
+
+        const check = await postEditCheckDetailed(target, context.directory, context.signal, allowProjectTools(context)).catch(() => undefined)
+        const output = `${previous === undefined ? "Created" : "Overwrote"} ${display}${check?.text ?? ""}`
+
         return {
-          output: `${previous === undefined ? "Created" : "Overwrote"} ${display}`,
+          output,
           title: display,
-          metadata: { path: display, diff, filediff, created: previous === undefined },
+          metadata: {
+            path: display,
+            diff,
+            filediff,
+            created: previous === undefined,
+            ...(check ? { postEditCheck: { checker: check.checker, problems: check.problems, ...(check.status ? { status: check.status } : {}) } } : {}),
+          },
         }
       }
 
@@ -681,6 +713,9 @@ export const EditTool: ToolDefinition = {
         output += ` (${occurrences} occurrences)`
       }
 
+      const check = await postEditCheckDetailed(target, context.directory, context.signal, allowProjectTools(context)).catch(() => undefined)
+      output += check?.text ?? ""
+
       return {
         output,
         title: display,
@@ -692,6 +727,7 @@ export const EditTool: ToolDefinition = {
           ...(matchTier ? { matchTier } : {}),
           ...(ranges ? { ranges } : {}),
           ...(reindented ? { reindented: true } : {}),
+          ...(check ? { postEditCheck: { checker: check.checker, problems: check.problems, ...(check.status ? { status: check.status } : {}) } } : {}),
         },
       }
     })

@@ -15,6 +15,8 @@ import path from "node:path"
 import { EditTool, WriteTool } from "../src/server/tool/edit"
 import { recordRead } from "../src/server/tool/read-tracker"
 
+process.env.MCODE_POST_EDIT_CHECK = "0"
+
 let passed = 0
 let failed = 0
 let currentScenario = "startup"
