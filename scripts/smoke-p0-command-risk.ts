@@ -45,6 +45,30 @@ check("git log -c \"core.pager=bash\" is not read-only", !readOnlyCommand('git l
 check("git log -c 'core.pager=bash' is not read-only", !readOnlyCommand("git log -c 'core.pager=bash'"))
 check("git log --config=\"core.pager=bash\" is not read-only", !readOnlyCommand('git log --config="core.pager=bash"'))
 
+// The same dangerous spellings, hidden behind shell expansion or escaping.
+check("rg --pre$IFS bash is not read-only", !readOnlyCommand("rg --pre$IFS bash"))
+check("git log -c$IFS core.pager=bash is not read-only", !readOnlyCommand("git log -c$IFS core.pager=bash"))
+check("git log --output$IFS /tmp/x is not read-only", !readOnlyCommand("git log --output$IFS /tmp/x"))
+check("rg \\--pre bash is not read-only", !readOnlyCommand("rg \\--pre bash"))
+check("rg --pre\\=bash is not read-only", !readOnlyCommand("rg --pre\\=bash"))
+check("git log \\-c core.pager=bash is not read-only", !readOnlyCommand("git log \\-c core.pager=bash"))
+check("git log --config\\=core.pager=bash is not read-only", !readOnlyCommand("git log --config\\=core.pager=bash"))
+check("git grep \\-Obash is not read-only", !readOnlyCommand("git grep \\-Obash"))
+
+// The same dangerous spellings, hidden behind embedded empty quotes.
+check("rg --pre''=bash is not read-only", !readOnlyCommand("rg --pre''=bash"))
+check("rg --pre\"\"=bash is not read-only", !readOnlyCommand('rg --pre""=bash'))
+check("git log --config''=core.pager=bash is not read-only", !readOnlyCommand("git log --config''=core.pager=bash"))
+
+// The same dangerous spellings, hidden behind case-insensitive git config.
+check("git log -c CORE.PAGER=bash is not read-only", !readOnlyCommand("git log -c CORE.PAGER=bash"))
+check("git log -c Core.Pager=bash is not read-only", !readOnlyCommand("git log -c Core.Pager=bash"))
+check("git log -c ALIAS.x=!echo hi is not read-only", !readOnlyCommand("git log -c ALIAS.x=!echo hi"))
+
+// Defense in depth: glued -c payloads are refused even if git rejects them today.
+check("git log -ccore.pager=bash is not read-only", !readOnlyCommand("git log -ccore.pager=bash"))
+check("git log -cCore.Pager=bash is not read-only", !readOnlyCommand("git log -cCore.Pager=bash"))
+
 // The everyday spellings, still read-only.
 check("rg pattern src is still read-only", readOnlyCommand("rg pattern src"))
 check("git log -1 is still read-only", readOnlyCommand("git log -1"))

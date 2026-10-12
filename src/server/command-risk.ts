@@ -163,13 +163,15 @@ function stripArgQuotes(word: string): string | undefined {
 /*
  * Normalize whitespace-split tokens the way the shell would. Long options may
  * quote only their value (`--config="..."`), so strip that too; anything left
- * with a quote is unsafe.
+ * with a quote, a dollar sign, or a backslash is a substitution or escape this
+ * allowlist cannot reason about, so callers fail closed.
  */
 function normalizeWords(words: string[]): string[] | undefined {
   const out: string[] = []
   for (const word of words) {
     const stripped = stripArgQuotes(word)
     if (stripped !== undefined) {
+      if (/[\\$'"]/.test(stripped)) return undefined
       out.push(stripped)
       continue
     }
@@ -177,7 +179,9 @@ function normalizeWords(words: string[]): string[] | undefined {
     if (eq > 0) {
       const value = stripArgQuotes(word.slice(eq + 1))
       if (value !== undefined) {
-        out.push(`${word.slice(0, eq + 1)}${value}`)
+        const token = `${word.slice(0, eq + 1)}${value}`
+        if (/[\\$'"]/.test(token)) return undefined
+        out.push(token)
         continue
       }
     }
@@ -199,11 +203,12 @@ function hasPreExec(words: string[]): boolean {
  * A read-only git subcommand turned dangerous by a flag after it: `-O` /
  * `--open-files-in-pager` runs a pager program, `--output` writes a file,
  * `--ext-diff` may invoke an external diff, and a `-c` / `--config` that sets
- * the pager or an alias is the same trick spelled differently. The global `-c`
- * sits before the subcommand and is refused there already; this scans what
- * follows it.
+ * the pager or an alias is the same trick spelled differently. Git config keys
+ * are case-insensitive, and the value may be glued to the flag, so both are
+ * refused. The global `-c` sits before the subcommand and is refused there
+ * already; this scans what follows it.
  */
-const GIT_CONFIG_TRICK = /^(?:core\.pager|pager\.|alias\.)/
+const GIT_CONFIG_TRICK = /^(?:core\.pager|pager\.|alias\.)/i
 function gitUnsafeArgs(words: string[]): boolean {
   for (let at = 2; at < words.length; at++) {
     const word = words[at] ?? ""
@@ -213,6 +218,7 @@ function gitUnsafeArgs(words: string[]): boolean {
     if (word === "--ext-diff" || word.startsWith("--ext-diff=")) return true
     if ((word === "-c" || word === "--config") && GIT_CONFIG_TRICK.test(words[at + 1] ?? "")) return true
     if (word.startsWith("--config=") && GIT_CONFIG_TRICK.test(word.slice("--config=".length))) return true
+    if (word.startsWith("-c") && word.length > 2 && GIT_CONFIG_TRICK.test(word.slice(2))) return true
   }
   return false
 }
