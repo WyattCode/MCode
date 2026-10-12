@@ -202,13 +202,15 @@ function hasPreExec(words: string[]): boolean {
 /*
  * A read-only git subcommand turned dangerous by a flag after it: `-O` /
  * `--open-files-in-pager` runs a pager program, `--output` writes a file,
- * `--ext-diff` may invoke an external diff, and a `-c` / `--config` that sets
- * the pager or an alias is the same trick spelled differently. Git config keys
- * are case-insensitive, and the value may be glued to the flag, so both are
- * refused. The global `-c` sits before the subcommand and is refused there
- * already; this scans what follows it.
+ * `--ext-diff` may invoke an external diff, `--textconv` runs textconv filters,
+ * `--show-signature` may invoke gpg, and `--paginate` runs a pager. A `-c` /
+ * `--config` that sets an exec-capable key is the same trick spelled
+ * differently. Git config keys are case-insensitive, and the value may be glued
+ * to the flag, so both are refused. The global `-c` sits before the subcommand
+ * and is refused there already; this scans what follows it.
  */
-const GIT_CONFIG_TRICK = /^(?:core\.pager|pager\.|alias\.)/i
+const GIT_CONFIG_TRICK =
+  /^(?:core\.(?:pager|editor|askpass)|pager\.|alias\.|diff\.external|diff\.[^=]+\.textconv|gpg\.program|filter\.|interactive\.difffilter)/i
 function gitUnsafeArgs(words: string[]): boolean {
   for (let at = 2; at < words.length; at++) {
     const word = words[at] ?? ""
@@ -216,6 +218,9 @@ function gitUnsafeArgs(words: string[]): boolean {
     if (word === "--open-files-in-pager" || word.startsWith("--open-files-in-pager=")) return true
     if (word === "--output" || word.startsWith("--output=")) return true
     if (word === "--ext-diff" || word.startsWith("--ext-diff=")) return true
+    if (word === "--textconv" || word.startsWith("--textconv=")) return true
+    if (word === "--show-signature" || word.startsWith("--show-signature=")) return true
+    if (word === "--paginate" || word.startsWith("--paginate=")) return true
     if ((word === "-c" || word === "--config") && GIT_CONFIG_TRICK.test(words[at + 1] ?? "")) return true
     if (word.startsWith("--config=") && GIT_CONFIG_TRICK.test(word.slice("--config=".length))) return true
     if (word.startsWith("-c") && word.length > 2 && GIT_CONFIG_TRICK.test(word.slice(2))) return true

@@ -45,6 +45,21 @@ check("git log -c \"core.pager=bash\" is not read-only", !readOnlyCommand('git l
 check("git log -c 'core.pager=bash' is not read-only", !readOnlyCommand("git log -c 'core.pager=bash'"))
 check("git log --config=\"core.pager=bash\" is not read-only", !readOnlyCommand('git log --config="core.pager=bash"'))
 
+// Git flags that run external programs or pagers.
+check("git grep --textconv foo is not read-only", !readOnlyCommand("git grep --textconv foo"))
+check("git diff --textconv is not read-only", !readOnlyCommand("git diff --textconv"))
+check("git show --textconv HEAD is not read-only", !readOnlyCommand("git show --textconv HEAD"))
+check("git log -p --textconv is not read-only", !readOnlyCommand("git log -p --textconv"))
+check("git log --show-signature is not read-only", !readOnlyCommand("git log --show-signature"))
+check("git grep --show-signature is not read-only", !readOnlyCommand("git grep --show-signature"))
+check("git log --paginate is not read-only", !readOnlyCommand("git log --paginate"))
+
+// Expanded exec-setting git config keys.
+check("git log -c diff.external=bash is not read-only", !readOnlyCommand("git log -c diff.external=bash"))
+check("git log -c gpg.program=bash is not read-only", !readOnlyCommand("git log -c gpg.program=bash"))
+check("git log -c filter.foo.smudge=bash is not read-only", !readOnlyCommand("git log -c filter.foo.smudge=bash"))
+check("git log -c diff.evil.textconv=bash is not read-only", !readOnlyCommand("git log -c diff.evil.textconv=bash"))
+
 // The same dangerous spellings, hidden behind shell expansion or escaping.
 check("rg --pre$IFS bash is not read-only", !readOnlyCommand("rg --pre$IFS bash"))
 check("git log -c$IFS core.pager=bash is not read-only", !readOnlyCommand("git log -c$IFS core.pager=bash"))
@@ -96,6 +111,7 @@ check("tail -n 10 is still read-only", readOnlyCommand("tail -n 10 file"))
 // The everyday spellings, still read-only.
 check("rg pattern src is still read-only", readOnlyCommand("rg pattern src"))
 check("git log -1 is still read-only", readOnlyCommand("git log -1"))
+check("git grep -c pattern is still read-only", readOnlyCommand("git grep -c pattern"))
 check("git diff HEAD~1 is still read-only", readOnlyCommand("git diff HEAD~1"))
 check("cat README.md is still read-only", readOnlyCommand("cat README.md"))
 check("git status && ls | grep src is still read-only", readOnlyCommand("git status && ls | grep src"))
