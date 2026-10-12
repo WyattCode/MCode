@@ -63,9 +63,9 @@
     "@xterm/xterm": "^5.5.0",
     "abcjs": "6.7.0",
     "docx-preview": "0.3.7",
-    "dompurify": "3.4.15",
+    "dompurify": "3.4.17",
     "echarts": "6.1.0",
-    "electron": "41.7.2",
+    "electron": "41.10.7",
     "electron-builder": "^26.0.0",
     "electron-vite": "^5.0.0",
     "exceljs": "4.4.0",
@@ -86,7 +86,7 @@
     "vue-tsc": "^3.0.0"
   },
   "allowScripts": {
-    "electron@41.7.2": true,
+    "electron@41.10.7": true,
     "esbuild@0.25.12": true,
     "esbuild@0.28.2": true
   }

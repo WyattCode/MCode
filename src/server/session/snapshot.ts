@@ -671,9 +671,30 @@ class Repo {
    * kept body and a turn's trees are reachable from no ref by design, and a
    * plain `-ad` would drop the ones already packed and leave the loose ones
    * loose. Nothing is ever pruned.
+   *
+   * Except that `repack` starts from the refs: a store with none (every
+   * checkpoint store) answers "Nothing new to pack" and leaves every loose
+   * object loose, on git 2.47 at least. So the loose objects are named to
+   * `pack-objects` directly, by their file names under objects/, and
+   * `prune-packed` then removes only the loose copies the new pack holds.
+   * Packs already written are left as they are, and a pass with nothing
+   * loose writes nothing.
    */
   pack(alongside?: Repo): Promise<boolean> {
-    const run = async () => (await this.git(["repack", "-a", "-d", "--keep-unreachable", "-q"])).code === 0
+    const run = async () => {
+      const objects = path.join(this.gitDir, "objects")
+      const loose: string[] = []
+      for (const fan of await fs.readdir(objects).catch(() => [] as string[])) {
+        if (!/^[0-9a-f]{2}$/.test(fan)) continue
+        for (const rest of await fs.readdir(path.join(objects, fan)).catch(() => [] as string[])) {
+          if (/^[0-9a-f]{38}$/.test(rest)) loose.push(fan + rest)
+        }
+      }
+      if (loose.length === 0) return true
+      const packed = await this.git(["pack-objects", "-q", path.join(objects, "pack", "pack")], loose.join("\n") + "\n")
+      if (packed.code !== 0) return false
+      return (await this.git(["prune-packed", "-q"])).code === 0
+    }
     return this.lock(() => (alongside && alongside !== this ? alongside.lock(run) : run()))
   }
 }

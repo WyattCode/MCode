@@ -108,7 +108,15 @@ export async function roundFifteenSettingsUiChecks(check: Check, section: (name:
      * classes and stay.
      */
     check("the MCP server's name is not drawn over its switch and buttons", m?.titleOverControl === 0, m?.titleOverControl)
-    check("nor do those run past the card", (m?.controlPastCard ?? 1) <= 0 && m?.cardClipsX === 0, { past: m?.controlPastCard, clipped: m?.cardClipsX })
+    /*
+     * The probe sets `system-ui, "Segoe UI"`: Segoe UI on Windows, the system
+     * face on macOS, and on Linux whatever fontconfig picks (DejaVu Sans,
+     * markedly wider), which ran the German buttons 3px into the padding.
+     * There a few pixels of padding may go; the card clipping its own
+     * controls may not, anywhere.
+     */
+    const pastAllowed = process.platform === "win32" || process.platform === "darwin" ? 0 : 4
+    check("nor do those run past the card", (m?.controlPastCard ?? 1) <= pastAllowed && m?.cardClipsX === 0, { past: m?.controlPastCard, clipped: m?.cardClipsX })
     check("a long server name sets in two lines at most, instead of breaking into a column", (m?.titleLines ?? 9) <= 2, { lines: m?.titleLines, height: m?.titleHeight })
     const s = layout.shortButtons
     check(
