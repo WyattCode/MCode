@@ -118,5 +118,20 @@ check("git status && ls | grep src is still read-only", readOnlyCommand("git sta
 check("cat a.txt > /dev/null is still read-only", readOnlyCommand("cat a.txt > /dev/null"))
 check("rg --pre-glob is harmless and stays read-only", readOnlyCommand("rg --pre-glob=*.txt pattern"))
 
+
+// Git read-only subcommands that can mutate or run filters with the wrong form.
+check("git symbolic-ref HEAD refs/heads/main is not read-only", !readOnlyCommand("git symbolic-ref HEAD refs/heads/main"))
+check("git symbolic-ref --delete refs/heads/foo is not read-only", !readOnlyCommand("git symbolic-ref --delete refs/heads/foo"))
+check("git symbolic-ref -d refs/heads/foo is not read-only", !readOnlyCommand("git symbolic-ref -d refs/heads/foo"))
+check("git symbolic-ref HEAD is still read-only", readOnlyCommand("git symbolic-ref HEAD"))
+check("git symbolic-ref -q HEAD is still read-only", readOnlyCommand("git symbolic-ref -q HEAD"))
+check("git cat-file --filters HEAD:f is not read-only", !readOnlyCommand("git cat-file --filters HEAD:f"))
+check("git cat-file --batch-command is not read-only", !readOnlyCommand("git cat-file --batch-command"))
+check("git cat-file -t HEAD is still read-only", readOnlyCommand("git cat-file -t HEAD"))
+check("git reflog delete HEAD is not read-only", !readOnlyCommand("git reflog delete HEAD"))
+check("git reflog expire --all is not read-only", !readOnlyCommand("git reflog expire --all"))
+check("git reflog is still read-only", readOnlyCommand("git reflog"))
+check("git reflog show is still read-only", readOnlyCommand("git reflog show"))
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed === 0 ? 0 : 1)

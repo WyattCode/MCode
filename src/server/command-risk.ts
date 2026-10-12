@@ -212,6 +212,50 @@ function hasPreExec(words: string[]): boolean {
 const GIT_CONFIG_TRICK =
   /^(?:core\.(?:pager|editor|askpass)|pager\.|alias\.|diff\.external|diff\.[^=]+\.textconv|gpg\.program|filter\.|interactive\.difffilter)/i
 function gitUnsafeArgs(words: string[]): boolean {
+  const sub = words[1] ?? ""
+
+  /*
+   * `symbolic-ref` with one name only reads; a second name writes the ref, and
+   * `--delete` / `-d` removes one. Count non-flag args after the subcommand.
+   */
+  if (sub === "symbolic-ref") {
+    let nonFlagArgs = 0
+    for (let at = 2; at < words.length; at++) {
+      const word = words[at] ?? ""
+      if (word === "--delete" || word.startsWith("--delete=") || word === "-d" || /^-[A-Za-z]*d[A-Za-z]*$/.test(word)) {
+        return true
+      }
+      if (!word.startsWith("-")) nonFlagArgs++
+    }
+    if (nonFlagArgs >= 2) return true
+  }
+
+  /* `--filters` runs smudge/filter drivers; `--batch-command` can write objects. */
+  if (sub === "cat-file") {
+    for (let at = 2; at < words.length; at++) {
+      const word = words[at] ?? ""
+      if (
+        word === "--filters" ||
+        word.startsWith("--filters=") ||
+        word === "--batch-command" ||
+        word.startsWith("--batch-command=")
+      ) {
+        return true
+      }
+    }
+  }
+
+  /* `reflog show` (default) reads; `delete` / `expire` mutate the reflog. */
+  if (sub === "reflog") {
+    for (let at = 2; at < words.length; at++) {
+      const word = words[at] ?? ""
+      if (word.startsWith("-")) continue
+      const lower = word.toLowerCase()
+      if (lower === "delete" || lower === "expire") return true
+      break
+    }
+  }
+
   for (let at = 2; at < words.length; at++) {
     const word = words[at] ?? ""
     if (word.startsWith("-O")) return true
