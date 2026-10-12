@@ -58,7 +58,17 @@ export async function roundTenFileChecks(check: Check, section: (name: string) =
     ...(existsSync(bundled) ? [{ label: "ripgrep", env: bundled }] : []),
     { label: "the walk that stands in for it", env: undefined },
   ]
-  if (!existsSync(bundled)) check("the bundled ripgrep is in resources/runtimes for these checks", false, bundled)
+  /*
+   * resources/runtimes is filled by scripts/runtimes.mjs, which builds
+   * win32-x64 only, so a Linux or macOS checkout - or one that has not run it -
+   * has no bundled ripgrep. There the ripgrep pass is skipped with a visible
+   * line and the walk is still checked; where the runtime is required
+   * (MCODE_REQUIRE_RUNTIMES=1, or CI on Windows) its absence still fails.
+   */
+  if (!existsSync(bundled)) {
+    if (process.env.MCODE_REQUIRE_RUNTIMES === "1" || (process.platform === "win32" && !!process.env.CI)) check("the bundled ripgrep is in resources/runtimes for these checks", false, bundled)
+    else console.log(`  skip the bundled-ripgrep pass: ${bundled} is not in this checkout (scripts/runtimes.mjs builds win32-x64)`)
+  }
   for (const engine of engines) {
     section(`Round 10 (T10-9/10/26/27/29): glob and grep through ${engine.label}`)
     if (engine.env) process.env.MCODE_RIPGREP_PATH = engine.env

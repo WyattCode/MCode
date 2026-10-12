@@ -189,9 +189,19 @@ export async function roundFourteenPackagingChecks(check: Check, section: (name:
     const available = (info: Record<string, unknown>) => (real as unknown as { isUpdateAvailable(info: unknown): Promise<boolean> }).isUpdateAvailable(info)
     const system = os.release()
     check("a newer, verified version for this system is still an update", await available({ version: "0.3.0", files: [{ url: "MCode-0.3.0-x64.exe", sha512 }], minimumSystemVersion: "1.0.0" }), system)
+    /*
+     * electron-updater compares os.release() with semver.lt and, when that
+     * throws, only warns and lets the update through. A Linux kernel string
+     * such as "6.12.94+" is not semver, so there the refusal cannot happen
+     * and the fallback is what is checked: the update is allowed (the
+     * library's warning goes to its own logger, not to MCode's). Where the release is semver (Windows, macOS) the refusal
+     * is checked as before.
+     */
+    const releaseIsSemver = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/.test(system)
+    const tooNew = await available({ version: "0.3.0", files: [{ url: "MCode-0.3.0-x64.exe", sha512 }], minimumSystemVersion: "99.0.0" })
     check(
-      "one whose feed asks for a newer system than this one is not",
-      !(await available({ version: "0.3.0", files: [{ url: "MCode-0.3.0-x64.exe", sha512 }], minimumSystemVersion: "99.0.0" })) && logged.some((line) => line.includes("99.0.0")),
+      releaseIsSemver ? "one whose feed asks for a newer system than this one is not" : `on a release that is not semver (${system}) the newer-system rule falls back to a warning`,
+      releaseIsSemver ? !tooNew && logged.some((line) => line.includes("99.0.0")) : tooNew,
       logged,
     )
     check("and MCode's own rules still follow it (no sha512, no update)", !(await available({ version: "0.3.0", files: [{ url: "MCode-0.3.0-x64.exe" }], minimumSystemVersion: "1.0.0" })))

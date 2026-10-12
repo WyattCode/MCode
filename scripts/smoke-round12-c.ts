@@ -7,7 +7,7 @@
 import fs from "node:fs/promises"
 import { createServer, type AddressInfo } from "node:net"
 import path from "node:path"
-import { WebSocketServer } from "ws"
+import { WebSocket as WsWebSocket, WebSocketServer } from "ws"
 import type { Check } from "./smoke-round5"
 import { Client } from "../src/renderer/src/lib/client"
 import { LANGUAGES, language, t } from "../src/renderer/src/lib/i18n"
@@ -177,6 +177,32 @@ const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
  * sent afterwards. A request the socket did carry fails when the socket drops.
  */
 async function queuedRequestChecks(check: Check): Promise<void> {
+  /*
+   * The Client runs in the renderer, where Chromium follows a refused
+   * connect's `error` with a `close`, and it reconnects from `close`. Node
+   * 22's built-in WebSocket (undici) fires the `error` and never the `close`,
+   * so under it the Client never tried again and these checks failed on
+   * Linux without anything being wrong in it. The `ws` client keeps the
+   * browser's order, so the section runs over that and puts the global back.
+   * It is an EventEmitter, which throws an `error` nobody listens for where a
+   * browser only dispatches it, hence the empty listener.
+   */
+  class BrowserOrder extends WsWebSocket {
+    constructor(...args: ConstructorParameters<typeof WsWebSocket>) {
+      super(...args)
+      this.on("error", () => undefined)
+    }
+  }
+  const builtIn = globalThis.WebSocket
+  globalThis.WebSocket = BrowserOrder as unknown as typeof WebSocket
+  try {
+    await queuedRequestChecksOver(check)
+  } finally {
+    globalThis.WebSocket = builtIn
+  }
+}
+
+async function queuedRequestChecksOver(check: Check): Promise<void> {
   const port = await freePort()
   const received: string[] = []
   let server: WebSocketServer | undefined

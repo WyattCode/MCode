@@ -66,9 +66,22 @@ export async function roundFifteenUiChatChecks(check: Check, section: (name: str
      * tab only ever said the file was not there.
      */
     const roots = async () => []
-    const kept = await officeRefusal("mcode:read-file-bytes", [driveDir, driveBase], roots)
+    /*
+     * The guard asks path.isAbsolute, which knows drive letters only on
+     * Windows: on posix "D:\\" is a relative name and is refused for its
+     * shape, rightly, since no such folder can reach the channel there. The
+     * drive-root pair is checked where it occurs; elsewhere the posix root,
+     * the same bug's shape on that platform, is checked instead. That "D:"
+     * alone is refused holds everywhere.
+     */
     const cut = await officeRefusal("mcode:read-file-bytes", [`D:`, driveBase], roots)
-    check("the channel accepts the folder the views now send", kept === undefined, kept)
+    if (process.platform === "win32") {
+      const kept = await officeRefusal("mcode:read-file-bytes", [driveDir, driveBase], roots)
+      check("the channel accepts the folder the views now send", kept === undefined, kept)
+    } else {
+      const kept = await officeRefusal("mcode:read-file-bytes", [posixDir, posixBase], roots)
+      check("the channel accepts the posix root the views send on this platform", kept === undefined, kept)
+    }
     check("and refused the one three of them used to send", cut === "shape", cut)
 
     const views = ["XlsxView", "PptxView", "HtmlTab", "PdfView", "DocxView"]

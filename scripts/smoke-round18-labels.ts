@@ -315,7 +315,9 @@ export async function roundEighteenLabelChecks(check: Check, section: (name: str
         const pdfAgain = await labelDelivered(pdfFile, { python: py, log: deps.log })
         check("R18-A1 pdf: a second delivery leaves it as it is", pdfAgain.status === "present" && (await fs.readFile(pdfFile)).equals(pdfBytes), pdfAgain)
       } else {
-        check("R18-A1 pdf: this checkout has no bundled Python to label a PDF with (resources/runtimes)", false)
+        // As with ripgrep in round 10: the bundled Python exists only where scripts/runtimes.mjs ran (win32-x64).
+        if (process.env.MCODE_REQUIRE_RUNTIMES === "1" || (process.platform === "win32" && !!process.env.CI)) check("R18-A1 pdf: this checkout has no bundled Python to label a PDF with (resources/runtimes)", false)
+        else console.log("  skip R18-A1 pdf: no bundled Python in resources/runtimes (scripts/runtimes.mjs builds win32-x64)")
       }
 
       // present_files: labels what it hands over, except a render demoted beside its document; undo sees it first.

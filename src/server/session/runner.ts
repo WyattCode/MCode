@@ -3570,17 +3570,24 @@ export class SessionRunner {
         announce(part)
       } else if (event.type === "text.delta" || event.type === "reasoning.delta") {
         const part = blocks.get(event.index)
-        if (part) append(part, event.text)
         /*
          * Both the words and the thinking, as MiMo watches them: its n-gram
          * check runs on its `text-delta` and its `reasoning-delta` alike, so a
          * model stuck repeating one passage inside its own thinking has the
          * stream cut too. Nothing here could reach the reasoning arm until the
          * thinking was asked for at all.
+         *
+         * The check decides before the append. A reply the socket delivered in
+         * one read is parsed into deltas after the cut has fired, and keeping
+         * them stored the whole loop the cut was meant to stop (15,200
+         * characters on a Linux loopback): once `cut` is set, neither the
+         * delta that fired it nor the ones already parsed behind it are kept.
          */
         if (!cut && monitor?.append(event.text)) {
           cut = true
           inner.abort()
+        } else if (!cut && part) {
+          append(part, event.text)
         }
       } else if (event.type === "block.end") {
         const part = blocks.get(event.index)
