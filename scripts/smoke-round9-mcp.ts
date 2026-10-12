@@ -320,6 +320,7 @@ async function perProject(check: Check, section: Section): Promise<void> {
   const mcp = new McpServers(bus, config as never, undefined, path.join(dir, "home"))
   try {
     await mcp.start()
+    await mcp.trust(second)
     await mcp.ready(second)
     const whereFirst = await callTool(mcp, first, "life_where")
     const whereSecond = await callTool(mcp, second, "life_where")

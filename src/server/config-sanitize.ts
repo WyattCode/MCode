@@ -75,7 +75,7 @@ export function sanitizeConfig(doc: AppConfig, fallback: AppConfig): boolean {
   if (record.maxSteps !== undefined && !(Number.isSafeInteger(record.maxSteps) && (record.maxSteps as number) > 0)) drop("maxSteps")
 
   const strings = (value: unknown) => Array.isArray(value) && value.every((item) => typeof item === "string")
-  for (const key of ["pinnedTabs", "pinnedProjects", "projectOrder", "projects", "closedProjects", "migrations", "disabledProviders"]) {
+  for (const key of ["pinnedTabs", "pinnedProjects", "projectOrder", "projects", "closedProjects", "migrations", "disabledProviders", "trustedMcpProjects"]) {
     const value = record[key]
     if (!Array.isArray(value)) put(key, base[key])
     else if (!strings(value)) put(key, value.filter((item) => typeof item === "string"))

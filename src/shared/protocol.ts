@@ -1617,6 +1617,15 @@ export interface AppConfig {
   /** Model Context Protocol servers, by the name they are shown under. */
   mcpServers: Record<string, McpServerConfig>
   /**
+   * Absolute directory paths the user has trusted for project MCP servers.
+   *
+   * A local MCP server whose config came from a project file (mcode.json,
+   * .claude.json) is not spawned until the user has trusted the directory it
+   * lives in. Trust is remembered here, keyed the same way `mcp.ts` keys its
+   * per-directory groups (resolved; lower-cased on win32).
+   */
+  trustedMcpProjects: string[]
+  /**
    * MiMo's `experimental.mcp_timeout`: how long, in milliseconds, a tool call
    * may take on a server that sets no `timeout` of its own (a minute when
    * unset). Written by hand into the config file.

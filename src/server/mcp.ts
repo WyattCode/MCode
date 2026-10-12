@@ -1190,6 +1190,8 @@ interface Group {
 /** A group nobody has asked for in this long is closed, except the one the settings page shows. */
 const IDLE_GROUP_MS = 30 * 60_000
 
+export const MCP_PROJECT_TRUST_MESSAGE = "this folder's MCP servers have not been trusted yet"
+
 function directoryKey(directory: string): string {
   const resolved = path.resolve(directory)
   return process.platform === "win32" ? resolved.toLowerCase() : resolved
@@ -1405,13 +1407,17 @@ export class McpServers {
     group.entries = entries
     const work: Promise<void>[] = []
     for (const entry of entries) {
-      const enabled = entry.config?.enabled !== false
-      let connection = group.connections.get(entry.name)
-      if (connection && group.made.get(entry.name) !== madeFrom(entry)) {
+      const gated =
+        entry.needsTrust && entry.config?.type === "local" && !this.isTrusted(group.directory)
+          ? { ...entry, invalid: entry.invalid ?? MCP_PROJECT_TRUST_MESSAGE }
+          : entry
+      const enabled = gated.config?.enabled !== false
+      let connection = group.connections.get(gated.name)
+      if (connection && group.made.get(gated.name) !== madeFrom(gated)) {
         void connection.stop()
         connection = undefined
       }
-      connection ??= this.connection(group, entry)
+      connection ??= this.connection(group, gated)
       if (!enabled) {
         if (connection.status !== "disabled") connection.disable()
         continue
@@ -1422,6 +1428,37 @@ export class McpServers {
     this.publish()
     await Promise.all(work)
     this.publish()
+  }
+
+  /** Directory key used for trust + groups (resolved; lower-case on win32). */
+  trustKey(directory: string): string {
+    return directoryKey(directory)
+  }
+
+  isTrusted(directory: string): boolean {
+    const key = this.trustKey(directory)
+    const trusted = this.config.get().trustedMcpProjects ?? []
+    return trusted.some((entry) => this.trustKey(entry) === key)
+  }
+
+  async trust(directory: string): Promise<void> {
+    const key = this.trustKey(directory)
+    const trusted = this.config.get().trustedMcpProjects ?? []
+    if (!trusted.some((entry) => this.trustKey(entry) === key)) {
+      await this.config.set({ trustedMcpProjects: [...trusted, path.resolve(directory)] })
+    }
+    const group = this.groups.get(key)
+    if (group) {
+      group.ready = this.resolve(group.directory).then((entries) => this.reconcile(group, entries))
+      await group.ready
+    }
+  }
+
+  /** True when the directory has a local project MCP that still needs a trust decision. */
+  async needsTrustPrompt(directory: string): Promise<boolean> {
+    if (this.isTrusted(directory)) return false
+    const entries = await this.resolve(directory)
+    return entries.some((entry) => entry.needsTrust && entry.config?.type === "local" && !entry.invalid)
   }
 
   /** A directory's servers, connected (or tried) before this settles. */
