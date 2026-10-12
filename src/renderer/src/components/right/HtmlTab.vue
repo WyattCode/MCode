@@ -344,7 +344,7 @@ onBeforeUnmount(() => {
           class="rp-html-frame"
           :title="tab.name"
           :src="src"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-downloads"
+          sandbox="allow-scripts allow-modals allow-downloads"
           :data-pointer-over="pointerOver ? 'true' : 'false'"
           @mouseenter="pointerOver = true"
           @mouseleave="pointerOver = false"

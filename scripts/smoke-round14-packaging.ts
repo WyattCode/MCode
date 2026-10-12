@@ -8,6 +8,7 @@
  * functions or read the sources and build configuration.
  */
 import { execFileSync, spawn } from "node:child_process"
+import { createHash } from "node:crypto"
 import fs from "node:fs/promises"
 import { createServer } from "node:net"
 import os from "node:os"
@@ -185,7 +186,7 @@ export async function roundFourteenPackagingChecks(check: Check, section: (name:
     const { real, library } = standInUpdater(os.tmpdir())
     const logged: string[] = []
     createUpdater({ currentVersion: "0.2.5", feedURL: () => "", autoUpdater: library, emit: () => {}, log: (line) => logged.push(line), scheduler: idle })
-    const sha512 = "A".repeat(86) + "=="
+    const sha512 = createHash("sha512").update("mcode-smoke-installer").digest("base64")
     const available = (info: Record<string, unknown>) => (real as unknown as { isUpdateAvailable(info: unknown): Promise<boolean> }).isUpdateAvailable(info)
     const system = os.release()
     check("a newer, verified version for this system is still an update", await available({ version: "0.3.0", files: [{ url: "MCode-0.3.0-x64.exe", sha512 }], minimumSystemVersion: "1.0.0" }), system)
@@ -207,7 +208,7 @@ export async function roundFourteenPackagingChecks(check: Check, section: (name:
       const downloaded = path.join(pending, "MCode-0.3.0-x64.exe")
       await fs.writeFile(downloaded, "new installer")
       await fs.writeFile(path.join(cache, "installer.exe"), "old installer")
-      const sha512 = "A".repeat(86) + "=="
+      const sha512 = createHash("sha512").update("mcode-smoke-installer").digest("base64")
       const info: FeedInfo = { version: "0.3.0", files: [{ url: "MCode-0.3.0-x64.exe", sha512 }] }
       const library: AutoUpdaterLike = {
         autoDownload: false,
