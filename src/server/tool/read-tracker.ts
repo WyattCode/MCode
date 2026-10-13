@@ -69,6 +69,12 @@ export async function recordWrite(sessionID: string, absPath: string, content?: 
   recordRead(sessionID, absPath, { mtimeMs: stat.mtimeMs, size: stat.size }, content)
 }
 
+export function wasRead(sessionID: string, absPath: string): boolean {
+  const entries = sessions.get(sessionID)
+  if (!entries) return false
+  return entries.has(pathKey(absPath))
+}
+
 export async function checkFresh(sessionID: string, absPath: string, current?: string): Promise<string | undefined> {
   const entries = sessions.get(sessionID)
   if (!entries) return undefined

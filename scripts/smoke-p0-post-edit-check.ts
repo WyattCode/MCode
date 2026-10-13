@@ -10,6 +10,7 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { EditTool } from "../src/server/tool/edit"
+import { recordRead } from "../src/server/tool/read-tracker"
 import { postEditCheck, postEditCheckDetailed, runWithTimeout, timeoutResult } from "../src/server/tool/post-edit-check"
 
 let passed = 0
@@ -246,6 +247,8 @@ async function main(): Promise<void> {
       const root = await tempDir()
       const file = path.join(root, "bad.js")
       await fs.writeFile(file, "const x = 1\n", "utf8")
+      const stamp = await fs.stat(file)
+      await recordRead("s1", file, { mtimeMs: stamp.mtimeMs, size: stamp.size }, "const x = 1\n")
       const result = await EditTool.execute({ file_path: "bad.js", old_string: "const x = 1", new_string: "const x = (" }, context(root, "s1"))
       check("edit output has post-edit check", result.output.includes("Post-edit check (node --check): 1 problem(s) in bad.js"), result.output)
       check("edit metadata has checker", result.metadata?.postEditCheck?.checker === "node --check", result.metadata)

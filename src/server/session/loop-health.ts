@@ -81,6 +81,20 @@ export function describeLoop(incident: LoopIncident): string {
   }
 }
 
+/** A concrete next step for an incident, in the same spirit as the verify-loop notes. */
+export function suggestLoopNextStep(incident: LoopIncident): string {
+  switch (incident.kind) {
+    case "same-call":
+      return "Change the arguments or switch tools; do not repeat the identical call."
+    case "edit-repeat":
+      return `Re-read ${incident.path}, make a smaller distinct edit, or run the failing check first.`
+    case "bash-retry":
+      return concreteStepFromBashRetry(incident.command)
+    case "action-streak":
+      return "Re-read the task goal; try a different search query or open a known entry file."
+  }
+}
+
 /** A diff reduced to what it actually changes: the added and removed lines, whitespace flattened. */
 export function normalizeDiff(diff: string): string {
   return diff
@@ -171,6 +185,12 @@ export class LoopMonitor {
   constructor(private readonly sessionID?: string) {}
 
   consume(part: ToolPart): LoopIncident | undefined {
+    const incident = this.detect(part)
+    if (incident && !incident.note) incident.note = suggestLoopNextStep(incident)
+    return incident
+  }
+
+  private detect(part: ToolPart): LoopIncident | undefined {
     if (part.status === "pending" || part.status === "running") return undefined
     if (EDIT_TOOLS.has(part.name)) return this.edit(part)
     if (part.name === "bash") return this.bash(part)
@@ -307,7 +327,7 @@ const WANDER_NOTE = [
 
 const WANDER_HANDOVER = [
   `Another ${WANDER_CALLS} calls have gone by without changing a file the project already had. This line of investigation is not working.`,
-  "Stop investigating. Tell the user what you have established, what you suspect and why, and the concrete next step to try (re-read the failing file, run the narrowest check, or narrow the failing assertion); do not stop at a request for advice.",
+  "Stop investigating. Tell the user what you have established, what you suspect and why, and the concrete next step to try (re-state the failing check, re-read the last edited file, or run the narrowest check); do not stop at a request for advice.",
 ].join(" ")
 
 /**

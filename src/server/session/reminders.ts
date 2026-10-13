@@ -1,4 +1,5 @@
 import type { AssistantMessage, AssistantPart, Message, ToolPart } from "@shared/protocol"
+import { parseTextToolCalls } from "./text-tool-parse"
 
 /**
  * What the model is told about the turn it is in, beside the conversation
@@ -234,12 +235,12 @@ export const TEXT_TOOL_NOTE = "Your previous reply wrote a tool call out as text
 export const EMPTY_NOTE = "Your previous reply had no answer and no tool call. Answer the user or call a tool; thinking alone is not a reply."
 
 /** Tool-call markup a model wrote as prose, as MiMo spots it. */
-const TEXT_TOOL_CALL = /<invoke name=|<parameter name=|<\/invoke>|<function_calls>/
+const TEXT_TOOL_CALL = /<invoke name=|<parameter name=|<\/invoke>|<function_calls>|<tool_call>|tool_call:|to=functions\./
 
 /** The finish reasons that mean "this step ended on a tool call", as MiMo's tables map them. */
 const TOOL_FINISH = new Set(["tool_calls", "tool_use", "function_call"])
 
-export type Continuation = { note?: string; error?: { message: string; code?: string } }
+export type Continuation = { note?: string; error?: { message: string; code?: string }; recovered?: { name: string; input: Record<string, unknown> }[] }
 
 /**
  * MiMo's auto-continue after a step that ended without a tool call to run:
@@ -282,7 +283,11 @@ export function continuationFor(
   }
   // MiMo's finish-reason tables fold the older `function_call` in with `tool_calls`;
   // self-hosted gateways and older vLLM/FastChat builds still end a turn with it.
-  if (TOOL_FINISH.has(finishReason ?? "") && TEXT_TOOL_CALL.test(text)) {
+  if (TOOL_FINISH.has(finishReason ?? "") && (TEXT_TOOL_CALL.test(text) || /```json/i.test(text))) {
+    const parsed = parseTextToolCalls(text)
+    if (parsed.length > 0) {
+      return { recovered: parsed, note: `Recovered ${parsed.length} tool call(s) written as text and will run them.` }
+    }
     const error = { message: "The model wrote a tool call as text instead of making the call." }
     if (counts.textTool >= CONTINUATION_LIMITS.textTool) return { error }
     counts.textTool += 1

@@ -6,7 +6,7 @@ import { relative, resolvePath } from "./fs-util"
 import { changed, unifiedDiff } from "../diff"
 import { isMemoryPath } from "../history/service"
 import { guardPlanWrite } from "../session/plan"
-import { checkFresh, recordWrite } from "./read-tracker"
+import { checkFresh, recordWrite, wasRead } from "./read-tracker"
 import { postEditCheckDetailed } from "./post-edit-check"
 import type { PostEditCheckResult } from "./post-edit-check"
 import {
@@ -654,6 +654,10 @@ export const WriteTool: ToolDefinition = {
 
     return locked(target, async () => {
       const previous = await currentText(target, display)
+      if (previous !== undefined && !wasRead(context.sessionID, target)) {
+        throw new ToolError(`${display} has not been read in this conversation. Read it first, then edit; nothing was written.`)
+      }
+
       const stale = await checkFresh(context.sessionID, target, previous)
       if (stale) {
         throw new ToolError(`${display} has changed since you last read it (modified on disk after your read - by a command, a formatter or another tool). Read it again before editing; nothing was written.`)
@@ -763,6 +767,10 @@ export const EditTool: ToolDefinition = {
       // MiMo's edit with nothing to find writes the whole file.
       if (oldString === "") {
         const previous = await currentText(target, display)
+        if (previous !== undefined && !wasRead(context.sessionID, target)) {
+          throw new ToolError(`${display} has not been read in this conversation. Read it first, then edit; nothing was written.`)
+        }
+
         const stale = await checkFresh(context.sessionID, target, previous)
         if (stale) {
           throw new ToolError(`${display} has changed since you last read it (modified on disk after your read - by a command, a formatter or another tool). Read it again before editing; nothing was written.`)
@@ -800,6 +808,10 @@ export const EditTool: ToolDefinition = {
       if (!stat) throw new ToolError(`File not found: ${display}`)
       if (stat.isDirectory()) throw new ToolError(`${display} is a folder, not a file`)
       const original = await fs.readFile(target, "utf8")
+
+      if (!wasRead(context.sessionID, target)) {
+        throw new ToolError(`${display} has not been read in this conversation. Read it first, then edit; nothing was written.`)
+      }
 
       const stale = await checkFresh(context.sessionID, target, original)
       if (stale) {
