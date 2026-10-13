@@ -166,9 +166,9 @@ async function main(): Promise<void> {
         const result = await postEditCheckDetailed(path.join(root, "a.ts"), root, undefined, true)
         check("ts checker", result?.checker === "tsc", result)
         check("ts edited file problem reported", result?.text.includes("Post-edit check (tsc): 1 problem(s) in a.ts") === true, result?.text)
-        check("ts edited file line number", /a\.ts\(1,\d+\): error TS\d+:/.test(result?.text ?? ""), result?.text)
+        check("ts edited file line number", /a\.ts:1:\d+:error TS\d+:/.test(result?.text ?? ""), result?.text)
         check("ts other file counted", /\+1 errors in other files/.test(result?.text ?? ""), result?.text)
-        check("ts other file example", /b\.ts\(1,\d+\): error TS\d+:/.test(result?.text ?? ""), result?.text)
+        check("ts other file example", /b\.ts:1:\d+:error TS\d+:/.test(result?.text ?? ""), result?.text)
       }
     } catch (error) {
       failUnexpected("typescript project", error)
@@ -250,6 +250,18 @@ async function main(): Promise<void> {
       check("edit output has post-edit check", result.output.includes("Post-edit check (node --check): 1 problem(s) in bad.js"), result.output)
       check("edit metadata has checker", result.metadata?.postEditCheck?.checker === "node --check", result.metadata)
       check("edit metadata has problems", result.metadata?.postEditCheck?.problems === 1, result.metadata)
+      check("edit output has Re-run", result.output.includes("Re-run:"), result.output)
+
+      const diagnostics = result.metadata?.postEditCheck?.diagnostics
+      check("edit metadata has diagnostics array", Array.isArray(diagnostics) && diagnostics.length >= 1, diagnostics)
+      check(
+        "edit diagnostics have file and message",
+        Array.isArray(diagnostics) && diagnostics.every((d: any) => typeof d?.file === "string" && typeof d?.message === "string"),
+        diagnostics,
+      )
+
+      const rerunHint = result.metadata?.postEditCheck?.rerunHint
+      check("edit metadata has non-empty rerunHint", typeof rerunHint === "string" && rerunHint.length > 0, result.metadata)
     } catch (error) {
       failUnexpected("edit tool appends check", error)
     }

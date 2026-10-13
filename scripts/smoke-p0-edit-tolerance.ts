@@ -93,6 +93,22 @@ async function main(): Promise<void> {
       check("indentation tier metadata", indent.metadata?.matchTier === "indentation", indent.metadata)
     })
 
+    // indentation tier must not add blockIndent to new_string lines that do not
+    // start with the quote's common indentation prefix
+    await run("indentation no over-indent", async (ctx) => {
+      await fs.writeFile(file, "function f() {\n\tif ( Cond ) {\n\t\treturn 1\n\t}\n}\n", "utf8")
+      const noOver = await EditTool.execute({
+        file_path: "a.js",
+        old_string: "  if ( Cond ) {\n  \treturn 1\n  }",
+        new_string: "  if ( Cond ) {\n\t\treturn 2\n  }",
+      }, ctx)
+      const content = await fs.readFile(file, "utf8")
+      check("indentation no over-indent applied", content === "function f() {\n\tif ( Cond ) {\n\t\treturn 2\n\t}\n}\n", JSON.stringify(content))
+      check("indentation no over-indent says so", /matched lines 2-4 after ignoring indentation differences; new_string re-indented/.test(noOver.output), noOver.output)
+      check("indentation no over-indent metadata", noOver.metadata?.matchTier === "indentation", noOver.metadata)
+      check("indentation no over-indent no extra block indent", !content.includes("\t\t\t") && !content.includes("\t  return") && !content.includes("  \treturn"), JSON.stringify(content))
+    })
+
     // curly-quote quote matched against ASCII
     await run("curly quote tier", async (ctx) => {
       await fs.writeFile(file, "const s = 'hello'\n", "utf8")

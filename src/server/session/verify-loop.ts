@@ -57,16 +57,18 @@ export interface VerifyLoopCheck {
   problems: number
   path?: string
   status?: string
+  rerunHint?: string
 }
 
 /** A concrete next step for a failed post-edit check. */
 export function concreteStepFromPostEdit(check: VerifyLoopCheck): string {
   const target = check.path ?? "the edited file"
   const checker = check.checker || "check"
+  const rerun = check.rerunHint ? `, then re-run: ${check.rerunHint}` : ""
   if (check.status === "timeout") {
     return `Re-run the ${checker} check on ${target} with a longer timeout, then fix what it reports.`
   }
-  return `Re-read ${target}, fix the ${checker} error(s), then re-edit.`
+  return `Re-read ${target}, fix the ${checker} error(s), then re-edit${rerun}.`
 }
 
 /** A concrete next step for a failed verify command. */

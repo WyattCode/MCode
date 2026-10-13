@@ -171,6 +171,13 @@ async function main(): Promise<void> {
         check("edit loop note does not ask the user", !/ask the user/i.test(result.output), result.output)
         check("edit metadata records the round", result.metadata?.verifyLoop?.round === 1, result.metadata)
         check("edit metadata not stuck", result.metadata?.verifyLoop?.stuck === false, result.metadata)
+
+        const diagnostics = result.metadata?.postEditCheck?.diagnostics
+        if (Array.isArray(diagnostics) && diagnostics.length > 0) {
+          check("edit loop mentions re-run", /Re-run|rerun/i.test(result.output), result.output)
+        } else {
+          okNote("edit loop mentions re-run", "no diagnostics metadata")
+        }
       } else {
         okNote("edit tool verify loop", "post-edit check did not fire (node unavailable or disabled)")
       }

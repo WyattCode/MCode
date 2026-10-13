@@ -349,17 +349,20 @@ function nonOverlapping(matches: number[], size: number): boolean {
 function replacementLines(newString: string, ending: "\r\n" | "\n", tier: MatchTier | undefined, quoteIndent: string, blockIndent: string): string[] {
   if (newString === "") return []
   const lines = newString.replace(/\r\n/g, "\n").split("\n").map(stripCR)
-  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop()
+  const trailingNewline = lines.length > 1 && lines[lines.length - 1] === ""
+  if (trailingNewline) lines.pop()
 
   const logical = tier === "indentation"
     ? lines.map((line) => {
         if (!line.trim()) return ""
         if (quoteIndent && line.startsWith(quoteIndent)) return blockIndent + line.slice(quoteIndent.length)
-        return blockIndent + line
+        return line
       })
     : lines
 
-  return logical.map((line) => (ending === "\r\n" ? `${line}\r` : line))
+  const result = logical.map((line) => (ending === "\r\n" ? `${line}\r` : line))
+  if (trailingNewline) result.push("")
+  return result
 }
 
 function applyLineMatches(original: string, matches: number[], size: number, newString: string, ending: "\r\n" | "\n", tier: MatchTier | undefined, wanted: string[]): string {
@@ -585,6 +588,7 @@ function verifyLoopForCheck(sessionID: string, display: string, check: PostEditC
       problems: check.problems,
       path: display,
       status: check.status,
+      rerunHint: check.rerunHint,
     })
     const text = stuck
       ? formatStuckSuggestion(check.problems, round, max, concrete)
@@ -600,6 +604,16 @@ function verifyLoopForCheck(sessionID: string, display: string, check: PostEditC
       max: verifyLoopMax(),
       stuck: false,
     },
+  }
+}
+
+function postEditCheckMetadata(check: PostEditCheckResult): Record<string, unknown> {
+  return {
+    checker: check.checker,
+    problems: check.problems,
+    ...(check.status ? { status: check.status } : {}),
+    ...(check.diagnostics?.length ? { diagnostics: check.diagnostics } : {}),
+    ...(check.rerunHint ? { rerunHint: check.rerunHint } : {}),
   }
 }
 
@@ -679,7 +693,7 @@ export const WriteTool: ToolDefinition = {
           filediff,
           created: previous === undefined,
           ...(check ? {
-            postEditCheck: { checker: check.checker, problems: check.problems, ...(check.status ? { status: check.status } : {}) },
+            postEditCheck: postEditCheckMetadata(check),
             ...(loop.metadata ? { verifyLoop: loop.metadata } : {}),
           } : {}),
         },
@@ -775,7 +789,7 @@ export const EditTool: ToolDefinition = {
             filediff,
             created: previous === undefined,
             ...(check ? {
-              postEditCheck: { checker: check.checker, problems: check.problems, ...(check.status ? { status: check.status } : {}) },
+              postEditCheck: postEditCheckMetadata(check),
               ...(loop.metadata ? { verifyLoop: loop.metadata } : {}),
             } : {}),
           },
@@ -827,7 +841,7 @@ export const EditTool: ToolDefinition = {
           ...(ranges ? { ranges } : {}),
           ...(reindented ? { reindented: true } : {}),
           ...(check ? {
-            postEditCheck: { checker: check.checker, problems: check.problems, ...(check.status ? { status: check.status } : {}) },
+            postEditCheck: postEditCheckMetadata(check),
             ...(loop.metadata ? { verifyLoop: loop.metadata } : {}),
           } : {}),
         },

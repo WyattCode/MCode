@@ -3,11 +3,20 @@ import { constants } from "node:fs"
 import fs from "node:fs/promises"
 import path from "node:path"
 
+export interface Diagnostic {
+  file: string
+  line?: number
+  column?: number
+  message: string
+}
+
 export interface PostEditCheckResult {
   checker: string
   text: string
   problems: number
   status?: "ok" | "timeout"
+  diagnostics?: Diagnostic[]
+  rerunHint?: string
 }
 
 export interface RunResult {
@@ -210,20 +219,59 @@ function localize(text: string, file: string, projectDir: string): string {
   return out
 }
 
-function formatResult(checker: string, rel: string, lines: string[], problems: number): PostEditCheckResult {
+function diagnosticLine(d: Diagnostic): string {
+  const loc: string[] = [d.file]
+  if (d.line !== undefined) loc.push(String(d.line))
+  if (d.column !== undefined) loc.push(String(d.column))
+  return `${loc.join(":")}:${d.message}`
+}
+
+function formatResult(
+  checker: string,
+  rel: string,
+  lines: string[],
+  problems: number,
+  diagnostics?: Diagnostic[],
+  rerunHint?: string,
+  textDiagnostics: Diagnostic[] | undefined = diagnostics,
+): PostEditCheckResult {
   if (problems === 0) {
     return { checker, problems: 0, status: "ok", text: cap(`\n\nPost-edit check (${checker}): no problems in ${rel}.`) }
   }
 
-  const body = lines.length ? lines.slice(0, 15) : ["(no details)"]
-  if (problems > body.length) body.push(`(showing first ${body.length})`)
-  const text = [
+  const summaryLines = lines.filter((line) => line.startsWith("+"))
+  let body: string[]
+  let omitted = 0
+
+  if (textDiagnostics?.length) {
+    const maxDiagnosticLines = Math.max(0, 15 - summaryLines.length)
+    const shown = textDiagnostics.slice(0, maxDiagnosticLines)
+    omitted = textDiagnostics.length - shown.length
+    body = [...shown.map(diagnosticLine), ...summaryLines]
+  } else {
+    const shownLines = lines.slice(0, 15)
+    omitted = Math.max(0, lines.length - shownLines.length)
+    body = shownLines.length ? shownLines : ["(no details)"]
+  }
+
+  if (problems > body.length || omitted > 0) body.push(`(showing first ${body.length})`)
+
+  const parts = [
     `\n\nPost-edit check (${checker}): ${problems} problem(s) in ${rel}`,
     ...body,
-    "Fix these before moving on, or say why they are expected.",
-  ].join("\n")
+  ]
+  if (rerunHint) parts.push(`Re-run: ${rerunHint}`)
+  parts.push("Fix these before moving on, or say why they are expected.")
 
-  return { checker, problems, status: "ok", text: cap(text) }
+  const text = parts.join("\n")
+  return {
+    checker,
+    problems,
+    status: "ok",
+    text: cap(text),
+    ...(diagnostics?.length ? { diagnostics } : {}),
+    ...(rerunHint ? { rerunHint } : {}),
+  }
 }
 
 export function timeoutResult(checker: string, rel: string, seconds: number): PostEditCheckResult {
@@ -249,6 +297,41 @@ function syntaxCheckLines(text: string, file: string, projectDir: string): strin
   return out.slice(0, 15)
 }
 
+function parseSyntaxDiagnostics(raw: string, file: string, projectDir: string): Diagnostic[] {
+  const rel = relativeFile(file, projectDir)
+  const lines = raw.split(/\r?\n/)
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+
+    const m1 = /^(.+?):(\d+)$/.exec(trimmed)
+    if (m1) {
+      const lineNum = parseInt(m1[2]!, 10)
+      const msgLine = lines.find((l) => /^(SyntaxError|TypeError|ReferenceError|RangeError|Error):/.test(l.trim()))
+      const message = msgLine?.trim() || "syntax error"
+      return [{ file: rel, line: lineNum, message }]
+    }
+
+    const m2 = /File\s+"(.+?)"\s*,\s*line\s+(\d+)/.exec(trimmed)
+    if (m2) {
+      const lineNum = parseInt(m2[2]!, 10)
+      const msgLine = lines.find((l) => /^(SyntaxError|IndentationError|TabError):/.test(l.trim()))
+      const message = msgLine?.trim() || "syntax error"
+      return [{ file: rel, line: lineNum, message }]
+    }
+  }
+
+  const firstMeaningful = lines.find((l) => l.trim() && !/^\s*at\s/.test(l) && !/^Node\.js/.test(l))?.trim()
+  return [{ file: rel, message: firstMeaningful || "syntax error" }]
+}
+
+function syntaxRerunHint(checker: string, rel: string): string {
+  if (checker === "node --check") return `node --check ${rel}`
+  if (checker === "py_compile") return `python -m py_compile ${rel}`
+  return `${checker} ${rel}`
+}
+
 function syntaxRunResult(
   checker: string,
   run: RunResult,
@@ -261,8 +344,34 @@ function syntaxRunResult(
   if (run.timedOut) return timeoutResult(checker, rel, timeoutSeconds)
   if (run.code === 0) return formatResult(checker, rel, [], 0)
 
-  const lines = syntaxCheckLines(`${run.stderr}\n${run.stdout}`, file, projectDir)
-  return formatResult(checker, rel, lines.length ? lines : [`${checker} failed with exit code ${run.code ?? "unknown"}`], 1)
+  const raw = `${run.stderr}\n${run.stdout}`
+  const lines = syntaxCheckLines(raw, file, projectDir)
+  const diagnostics = parseSyntaxDiagnostics(raw, file, projectDir)
+  const rerunHint = syntaxRerunHint(checker, rel)
+  return formatResult(checker, rel, lines.length ? lines : [`${checker} failed with exit code ${run.code ?? "unknown"}`], 1, diagnostics, rerunHint)
+}
+
+function parseDiagnosticLines(lines: string[]): Diagnostic[] {
+  const out: Diagnostic[] = []
+  for (const line of lines) {
+    const m1 = /^(.+?):(\d+):(\d+):\s*(.*)$/.exec(line)
+    if (m1) {
+      out.push({ file: m1[1]!, line: parseInt(m1[2]!, 10), column: parseInt(m1[3]!, 10), message: m1[4]! })
+      continue
+    }
+    const m2 = /^(.+?):(\d+):(\d+)\s*-\s*(.*)$/.exec(line)
+    if (m2) {
+      out.push({ file: m2[1]!, line: parseInt(m2[2]!, 10), column: parseInt(m2[3]!, 10), message: m2[4]! })
+    }
+  }
+  return out
+}
+
+function diagnosticRerunHint(checker: string, rel: string): string {
+  if (checker === "eslint") return `npx eslint ${rel}`
+  if (checker === "ruff") return `ruff check ${rel}`
+  if (checker === "pyright") return `pyright ${rel}`
+  return `${checker} ${rel}`
 }
 
 function diagnosticRunResult(
@@ -281,12 +390,14 @@ function diagnosticRunResult(
   const all = nonEmptyLines(localize(raw, file, projectDir))
   const matching = all.filter(filter)
   const lines = matching.slice(0, 15)
+  const diagnostics = parseDiagnosticLines(matching)
+  const rerunHint = diagnosticRerunHint(checker, rel)
 
-  if (matching.length > 0) return formatResult(checker, rel, lines, matching.length)
+  if (matching.length > 0) return formatResult(checker, rel, lines, matching.length, diagnostics, rerunHint)
   if (run.code === 0) return formatResult(checker, rel, [], 0)
 
   const fallback = all.slice(0, 15)
-  return formatResult(checker, rel, fallback.length ? fallback : [`${checker} failed with exit code ${run.code ?? "unknown"}`], all.length || 1)
+  return formatResult(checker, rel, fallback.length ? fallback : [`${checker} failed with exit code ${run.code ?? "unknown"}`], all.length || 1, undefined, rerunHint)
 }
 
 async function findTsconfig(file: string, projectDir: string): Promise<string | undefined> {
@@ -376,8 +487,13 @@ function parseTscDiagnostics(raw: string, projectDir: string): TscDiagnostic[] {
   return out
 }
 
-function formatDiagnostic(diagnostic: TscDiagnostic, projectDir: string): string {
-  return `${relativeFile(diagnostic.path, projectDir)}(${diagnostic.line},${diagnostic.column}): ${diagnostic.message}`
+function tscToDiagnostic(d: TscDiagnostic, projectDir: string): Diagnostic {
+  return {
+    file: relativeFile(d.path, projectDir),
+    line: parseInt(d.line, 10),
+    column: parseInt(d.column, 10),
+    message: d.message,
+  }
 }
 
 async function checkTypeScript(
@@ -401,6 +517,9 @@ async function checkTypeScript(
   if (run.aborted) return undefined
   if (run.timedOut) return timeoutResult("tsc", rel, 25)
 
+  const relTsconfig = relativeFile(tsconfig, projectDir)
+  const rerunHint = `npx tsc -p ${relTsconfig} --noEmit`
+
   const raw = `${run.stdout}\n${run.stderr}`
   const diagnostics = parseTscDiagnostics(raw, projectDir)
   const edited = diagnostics.filter((diagnostic) => samePath(diagnostic.path, file))
@@ -409,17 +528,28 @@ async function checkTypeScript(
   if (edited.length === 0 && other.length === 0) {
     if (run.code === 0) return formatResult("tsc", rel, [], 0)
     const lines = nonEmptyLines(localize(raw, file, projectDir)).slice(0, 15)
-    return formatResult("tsc", rel, lines.length ? lines : [`tsc failed with exit code ${run.code ?? "unknown"}`], 1)
+    return formatResult("tsc", rel, lines.length ? lines : [`tsc failed with exit code ${run.code ?? "unknown"}`], 1, undefined, rerunHint)
   }
 
-  const maxEdited = other.length > 0 ? 14 : 15
-  const lines = edited.slice(0, maxEdited).map((diagnostic) => formatDiagnostic(diagnostic, projectDir))
+  const editedDiagnostics = edited.map((d) => tscToDiagnostic(d, projectDir))
+  const otherExamples = other.slice(0, 3).map((d) => tscToDiagnostic(d, projectDir))
+  const structured: Diagnostic[] = [...editedDiagnostics, ...otherExamples]
+  const summaryLines: string[] = []
+
   if (other.length > 0) {
-    const examples = other.slice(0, 3).map((diagnostic) => formatDiagnostic(diagnostic, projectDir)).join("; ")
-    lines.push(`+${other.length} errors in other files, e.g. ${examples}`)
+    const examples = otherExamples.map(diagnosticLine).join("; ")
+    summaryLines.push(`+${other.length} errors in other files, e.g. ${examples}`)
   }
 
-  return formatResult("tsc", rel, lines, edited.length > 0 ? edited.length : 1)
+  return formatResult(
+    "tsc",
+    rel,
+    summaryLines,
+    edited.length > 0 ? edited.length : 1,
+    structured,
+    rerunHint,
+    editedDiagnostics,
+  )
 }
 
 async function hasEslintConfig(projectDir: string): Promise<boolean> {
@@ -499,7 +629,8 @@ async function checkJson(file: string, projectDir: string, rel: string): Promise
     return formatResult("json", rel, [], 0)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    return formatResult("json", rel, [message], 1)
+    const diagnostics: Diagnostic[] = [{ file: rel, message }]
+    return formatResult("json", rel, [message], 1, diagnostics)
   }
 }
 

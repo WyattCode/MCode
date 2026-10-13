@@ -24,6 +24,7 @@
 
 import { schedulingOffered } from "../tool/registry"
 import { leanMode } from "./lean"
+import { verifyLoopMax } from "./verify-loop"
 
 export { leanMode } from "./lean"
 
@@ -153,7 +154,7 @@ ${schedulingOffered() ? "" : `\n${SCHEDULING_UNAVAILABLE}\n`}
 ## Desktop verification
 - Search the project to understand it before you change it, and run independent searches together.
 - Make the change, then prove it with tests. Do not assume which test framework or script the project uses; find out from its README or its files.
-- If a check fails or a post-edit problem is reported, keep fixing it in the same turn for up to 3 rounds without asking; if it still fails, report the command, the error and one concrete next step.
+- If a check fails or a post-edit problem is reported, keep fixing it in the same turn for up to ${verifyLoopMax()} rounds (override with MCODE_VERIFY_LOOP_MAX) without asking; if it still fails, report the command, the error and one concrete next step.
 - When the change is to an interface - a web page, an Electron app's window, a native Windows app, an Android app - use it with the app tool: open the page, attach to the running app, launch the program (with the app tool, not the shell), or reach the device with android, and click through what you changed, several steps to a call. That is how an interface is tried; do not write scripts of your own to drive a browser or the app.
 - At the end, run whatever lint and type checks the project has. If none can be found, ask which to use and propose noting them in AGENTS.md.
 - Make a commit only on the user's explicit request.
@@ -221,7 +222,8 @@ The deck must point only at local files that are really there - no web addresses
  * minimal diffs, edit discipline, verification, follow-through and the final
  * reply shape.
  */
-const CODING_PROTOCOL = `## Coding protocol
+function codingProtocol(): string {
+  return `## Coding protocol
 
 **Explore before editing.**
 Find the entry point with grep or glob. Read the code involved and its tests.
@@ -238,8 +240,8 @@ If an edit result says the file changed since you read it, read it again before 
 **Verify.**
 After changing code, run the narrowest relevant check: the test file, the script named in the task, or the type checker.
 Find the commands from package.json, pyproject.toml, Makefile or README rather than asking.
-When a "Post-edit check" line or a failing test or type check reports a problem, keep fixing it in the SAME turn - read the error, change the code, rerun - for up to 3 rounds, and do not stop to ask the user for advice in between.
-If it still fails after 3 rounds, report the command, the error and one concrete next step (re-read the file at its path, or rerun the command); do not just ask what to do.
+When a "Post-edit check" line or a failing test or type check reports a problem, keep fixing it in the SAME turn - read the error, change the code, rerun - for up to ${verifyLoopMax()} rounds (override with MCODE_VERIFY_LOOP_MAX), and do not stop to ask the user for advice in between.
+If it still fails after ${verifyLoopMax()} rounds, report the command, the error and one concrete next step (re-read the file at its path, or rerun the command); do not just ask what to do.
 Never claim success without having run a check; say plainly when you could not run one.
 
 **Carry through.**
@@ -247,6 +249,7 @@ Do not stop at a plan. Complete the work in the same turn.
 
 **Final reply.**
 2-6 lines: what was wrong and what changed (files), how it was verified (command + result), anything left. Do not restate diffs.`
+}
 
 /**
  * Whether this process runs the lean coding prompt and tool list - an
@@ -286,7 +289,7 @@ export function agentPrompt(agent?: string, options?: { local?: boolean }): stri
   // MiMo's consolidation agents carry their own prompt in place of the general one.
   if (agent === "dream") return DREAM
   if (agent === "distill") return DISTILL
-  return [CORE, leanMode(options?.local) ? lean(desktop()) + "\n\n" + CODING_PROTOCOL : desktop()].join("\n\n")
+  return [CORE, leanMode(options?.local) ? lean(desktop()) + "\n\n" + codingProtocol() : desktop()].join("\n\n")
 }
 
 /**
