@@ -180,7 +180,7 @@ interface Change {
   replaceAll: boolean
 }
 
-type MatchTier = "unicode" | "trailing-whitespace" | "indentation"
+type MatchTier = "trailing-whitespace" | "trim" | "unicode" | "normalize" | "indentation"
 
 interface MatchRange {
   start: number
@@ -196,8 +196,10 @@ interface ReplaceResult {
 }
 
 const TIER_LABEL: Record<MatchTier, string> = {
-  unicode: "typographic quotes and unicode spaces",
   "trailing-whitespace": "trailing whitespace",
+  trim: "leading and trailing whitespace",
+  unicode: "typographic quotes and unicode spaces",
+  normalize: "typographic quotes, unicode spaces and surrounding whitespace",
   indentation: "indentation differences",
 }
 
@@ -215,9 +217,13 @@ function normalizeUnicodeLine(line: string): string {
   return line
     .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
     .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
-    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015]/g, "-")
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, "-")
     .replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ")
     .replace(/\u2026/g, "...")
+}
+
+function normalizeTrimmedLine(line: string): string {
+  return normalizeUnicodeLine(line).trim()
 }
 
 function commonIndent(lines: string[]): string {
@@ -239,25 +245,32 @@ function removeIndent(line: string, indent: string): string {
   return line
 }
 
+function findIndentationMatches(actual: string[], wanted: string[]): number[] {
+  const size = wanted.length
+  if (size === 0 || actual.length < size) return []
+  const matches: number[] = []
+  const quoteIndent = commonIndent(wanted)
+
+  for (let i = 0; i + size <= actual.length; i++) {
+    const block = actual.slice(i, i + size).map(stripCR)
+    const blockIndent = commonIndent(block)
+    let ok = true
+    for (let j = 0; j < size; j++) {
+      if (removeIndent(wanted[j]!, quoteIndent) !== removeIndent(block[j]!, blockIndent)) {
+        ok = false
+        break
+      }
+    }
+    if (ok) matches.push(i)
+  }
+
+  return matches
+}
+
 function findTierMatches(actual: string[], wanted: string[], tier: MatchTier): number[] {
   const size = wanted.length
   if (size === 0 || actual.length < size) return []
   const matches: number[] = []
-
-  if (tier === "unicode") {
-    const target = wanted.map(normalizeUnicodeLine)
-    for (let i = 0; i + size <= actual.length; i++) {
-      let ok = true
-      for (let j = 0; j < size; j++) {
-        if (normalizeUnicodeLine(stripCR(actual[i + j]!)) !== target[j]) {
-          ok = false
-          break
-        }
-      }
-      if (ok) matches.push(i)
-    }
-    return matches
-  }
 
   if (tier === "trailing-whitespace") {
     const target = wanted.map((line) => line.trimEnd())
@@ -274,20 +287,56 @@ function findTierMatches(actual: string[], wanted: string[], tier: MatchTier): n
     return matches
   }
 
-  const quoteIndent = commonIndent(wanted)
-  for (let i = 0; i + size <= actual.length; i++) {
-    const block = actual.slice(i, i + size).map(stripCR)
-    const blockIndent = commonIndent(block)
-    let ok = true
-    for (let j = 0; j < size; j++) {
-      if (removeIndent(wanted[j]!, quoteIndent) !== removeIndent(block[j]!, blockIndent)) {
-        ok = false
-        break
+  if (tier === "trim") {
+    const target = wanted.map((line) => line.trim())
+    const indentationMatches = new Set(findIndentationMatches(actual, wanted))
+    for (let i = 0; i + size <= actual.length; i++) {
+      if (indentationMatches.has(i)) continue
+      let ok = true
+      for (let j = 0; j < size; j++) {
+        if (stripCR(actual[i + j]!).trim() !== target[j]) {
+          ok = false
+          break
+        }
       }
+      if (ok) matches.push(i)
     }
-    if (ok) matches.push(i)
+    return matches
   }
-  return matches
+
+  if (tier === "unicode") {
+    const target = wanted.map(normalizeUnicodeLine)
+    for (let i = 0; i + size <= actual.length; i++) {
+      let ok = true
+      for (let j = 0; j < size; j++) {
+        if (normalizeUnicodeLine(stripCR(actual[i + j]!)) !== target[j]) {
+          ok = false
+          break
+        }
+      }
+      if (ok) matches.push(i)
+    }
+    return matches
+  }
+
+  if (tier === "normalize") {
+    const target = wanted.map(normalizeTrimmedLine)
+    const indentationMatches = new Set(findIndentationMatches(actual, wanted))
+    for (let i = 0; i + size <= actual.length; i++) {
+      if (indentationMatches.has(i)) continue
+      let ok = true
+      for (let j = 0; j < size; j++) {
+        if (normalizeTrimmedLine(stripCR(actual[i + j]!)) !== target[j]) {
+          ok = false
+          break
+        }
+      }
+      if (ok) matches.push(i)
+    }
+    return matches
+  }
+
+  return findIndentationMatches(actual, wanted)
 }
 
 function nonOverlapping(matches: number[], size: number): boolean {
@@ -419,7 +468,7 @@ function replaceIn(original: string, change: Change, ending: "\r\n" | "\n", disp
   const mixed = mixedEndings(original)
 
   if (wanted.length > 0 && !mixed) {
-    for (const tier of ["unicode", "trailing-whitespace", "indentation"] as const) {
+    for (const tier of ["trailing-whitespace", "trim", "unicode", "normalize", "indentation"] as const) {
       const matches = findTierMatches(actual, wanted, tier)
       if (matches.length === 0) continue
 
@@ -654,7 +703,7 @@ export const EditTool: ToolDefinition = {
     "- Set replace_all to change every occurrence instead. That is the way to rename a symbol through a file; it is the wrong way to change one of several similar-looking lines.",
     "",
     "What it does",
-    "- new_string has to differ from old_string, and is written as given. Small differences in indentation, trailing spaces or typographic quotes are tolerated when the match is unique, and the result says when that happened; still quote exactly.",
+    "- new_string has to differ from old_string, and is written as given. Small differences in trailing spaces, leading/trailing whitespace, typographic quotes, unicode punctuation/spaces, or indentation are tolerated when the match is unique, and the result says when that happened; still quote exactly.",
     "- An empty old_string writes new_string as the whole file, creating it when it is not there. Use write for that instead unless you are creating a small file in passing.",
     "- One call changes one place in one file; make one call per change.",
     "- The result is a diff, and the user sees it. Do not paste the changed lines back into your reply.",

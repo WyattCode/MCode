@@ -118,6 +118,37 @@ async function main(): Promise<void> {
       check("trailing whitespace metadata", trailing.metadata?.matchTier === "trailing-whitespace", trailing.metadata)
     })
 
+    // leading + trailing whitespace, with the quote itself trimmed
+    await run("trim tier", async (ctx) => {
+      await fs.writeFile(file, "    foo   \n    bar\t\n", "utf8")
+      const trimmed = await EditTool.execute({ file_path: "a.js", old_string: "foo\nbar", new_string: "baz\nqux" }, ctx)
+      check("trim tier applied", (await fs.readFile(file, "utf8")) === "baz\nqux\n", trimmed)
+      check("trim tier says so", /matched lines 1-2 after ignoring leading and trailing whitespace/.test(trimmed.output), trimmed.output)
+      check("trim tier metadata", trimmed.metadata?.matchTier === "trim", trimmed.metadata)
+    })
+
+    // curly quotes plus trailing whitespace compose into the normalize tier
+    await run("normalize tier", async (ctx) => {
+      await fs.writeFile(file, "const s = “hello”   \n", "utf8")
+      const normalized = await EditTool.execute({ file_path: "a.js", old_string: "const s = \"hello\"", new_string: "const s = \"hi\"" }, ctx)
+      check("normalize tier applied", (await fs.readFile(file, "utf8")) === "const s = \"hi\"\n", normalized)
+      check("normalize tier says so", /matched lines 1-1 after ignoring typographic quotes, unicode spaces and surrounding whitespace/.test(normalized.output), normalized.output)
+      check("normalize tier metadata", normalized.metadata?.matchTier === "normalize", normalized.metadata)
+    })
+
+    // unicode dash/ellipsis plus surrounding whitespace
+    await run("normalize tier with unicode punctuation and trim", async (ctx) => {
+      await fs.writeFile(file, "    const x = 1 — 2   \n    const y = 1…\t\n", "utf8")
+      const normalized = await EditTool.execute({
+        file_path: "a.js",
+        old_string: "const x = 1 - 2\nconst y = 1...",
+        new_string: "const x = 1 - 3\nconst y = 1..",
+      }, ctx)
+      check("normalize unicode punctuation applied", (await fs.readFile(file, "utf8")) === "const x = 1 - 3\nconst y = 1..\n", normalized)
+      check("normalize unicode punctuation says so", /matched lines 1-2 after ignoring typographic quotes, unicode spaces and surrounding whitespace/.test(normalized.output), normalized.output)
+      check("normalize unicode punctuation metadata", normalized.metadata?.matchTier === "normalize", normalized.metadata)
+    })
+
     // ambiguous fuzzy -> error with line numbers and file unchanged
     await run("ambiguous fuzzy", async (ctx) => {
       await fs.writeFile(file, "foo\nbar\nfoo\n", "utf8")
