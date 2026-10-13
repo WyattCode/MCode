@@ -46,6 +46,10 @@ withEnv("MCODE_LEAN", undefined, () => {
   // 2. local:true: lean prompt with coding protocol, no slide decks, at least 25% shorter.
   const lean = agentPrompt("build", { local: true })
   ok("local prompt contains '## Coding protocol'", lean.includes("## Coding protocol"))
+  ok("local prompt has Result: template", lean.includes("Result:"))
+  ok("local prompt has Files: template", lean.includes("Files:"))
+  ok("local prompt has Verified: template", lean.includes("Verified:"))
+  ok("local prompt has Left / risks: template", lean.includes("Left / risks:"))
   ok("local prompt lacks '### Slide decks'", !lean.includes("### Slide decks"))
   const reduction = 1 - lean.length / full.length
   ok(`local prompt is at least 25% shorter (actual: ${(reduction * 100).toFixed(1)}%)`, reduction >= 0.25)

@@ -1383,14 +1383,17 @@ async function main() {
     check("and only once in a conversation", !(await run("read", { file_path: "pkg/deep/code.ts" }, "r-agents2")).output.includes("Pkg rule: tabs."))
 
     await put("crlf.txt", "one\r\ntwo\r\n")
+    await run("read", { file_path: "crlf.txt" }, "r-crlf")
     await run("edit", { file_path: "crlf.txt", old_string: "one\ntwo", new_string: "uno\ndos" }, "e-crlf")
     check("an edit keeps a file's CRLF line endings", (await fs.readFile(path.join(e24, "crlf.txt"), "utf8")) === "uno\r\ndos\r\n")
     await run("edit", { file_path: "made/new.txt", old_string: "", new_string: "fresh\n" }, "e-create")
     check("an empty old_string writes the whole file, creating it", (await fs.readFile(path.join(e24, "made", "new.txt"), "utf8").catch(() => "")) === "fresh\n")
     await put("indent.txt", "    indented line\n")
+    await run("read", { file_path: "indent.txt" }, "r-indent")
     const miss = await run("edit", { file_path: "indent.txt", old_string: "  indented   line", new_string: "x" }, "e-miss")
     check("a text not found comes back with the closest text in the file", miss.output.startsWith("ERROR old_string was not found") && miss.output.includes("closest text") && miss.output.includes("    indented line"), miss.output)
     await put("twice.txt", "x\nx\n")
+    await run("read", { file_path: "twice.txt" }, "r-twice")
     check("two matches without replace_all say so", (await run("edit", { file_path: "twice.txt", old_string: "x", new_string: "y" }, "e-twice")).output.includes("replace_all is not set"))
 
     for (let i = 0; i < 150; i++) await put(`many/f${i}.txt`, "n")

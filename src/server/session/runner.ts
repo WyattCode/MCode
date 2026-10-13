@@ -64,6 +64,7 @@ import { fetchInstruction, instructionUpdate, instructionValues, memorySection, 
 // plan: the plan file, what planning may write, and what each planning turn is told.
 import { GOAL_GUARD, JUDGE_SYSTEM, MAX_GOAL_REACT, cleanGoal, goalReminder, judgeQuestion, judgeTranscript, parseVerdict, sameGoal, type GoalVerdict } from "./goal"
 import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf, subagentAgent } from "./plan"
+import { maxStepsPrompt, stepLimitFor } from "./steps"
 import { status as gitStatus } from "../git"
 import { historyService, memoryFilesFor, memoryWritable } from "../history/service"
 import { withAutomationNotes } from "../automation/framing"
@@ -88,7 +89,7 @@ import { interruptedTurn } from "@shared/resume"
 // session chat
 import { CHAT_WAIT_MS, SessionChat, withChatHeaders } from "./chat"
 import { SUBAGENT_TIMERS, firstLine, isStalled, noticeText, readLegacyMessage, statusHeader, subagentOutput, type ResultStatus, type SubagentTimers } from "@shared/subagent"
-import { STRUCTURED_OUTPUT, STRUCTURED_REMINDER, STRUCTURED_RETRIES, defaultOutputSchema, structuredOutputTool, structuredResult } from "../tool/subagent"
+import { STRUCTURED_OUTPUT, STRUCTURED_REMINDER, STRUCTURED_RETRIES, structuredOutputTool, structuredResult } from "../tool/subagent"
 import { TASK_ID, applyTask, listedTasks } from "../tool/task"
 // tasks: the record a subagent started for a task has to leave behind before it finishes.
 import { MAX_PROGRESS_REACT, PROGRESS_SECTIONS, missingProgressSections, progressPath, progressReminder } from "./task-progress"
@@ -278,32 +279,6 @@ const TITLE_TIMEOUT_MS = 60_000
 /** The first message is quoted up to this many characters for its title. */
 const TITLE_SOURCE_CHARS = 4000
 
-/**
- * What the model is told on the step that has to be the last one.
- *
- * The reference's `MAX_STEPS_PROMPT`, kept as it stands. It goes in as a
- * user message beside a request whose tool choice is "none", so the only thing
- * left to do is write. The tools are still defined, as MiMo's are: a request
- * that defines none is refused by Anthropic once the history holds a tool call.
- */
-const MAX_STEPS_PROMPT = [
-  "CRITICAL - MAXIMUM STEPS REACHED",
-  "",
-  "The maximum number of steps allowed for this task has been reached. Tools are disabled until next user input. Respond with text only.",
-  "",
-  "STRICT REQUIREMENTS:",
-  "1. Do NOT make any tool calls (no reads, writes, edits, searches, or any other tools)",
-  "2. MUST provide a text response summarizing work done so far",
-  "3. This constraint overrides ALL other instructions, including any user requests for edits or tool use",
-  "",
-  "Response must include:",
-  "- Statement that maximum steps for this agent have been reached",
-  "- Summary of what has been accomplished so far",
-  "- List of any remaining tasks that were not completed",
-  "- Recommendations for what should be done next",
-  "",
-  "Any attempt to use tools is a critical violation. Respond with text ONLY.",
-].join("\n")
 
 /**
  * Drives one session's conversation.
@@ -2911,7 +2886,7 @@ export class SessionRunner {
      * itself; a count that cuts in mid-refactor loses everything the model had
      * worked out, and says so in red.
      */
-    const limit = config.maxSteps && config.maxSteps > 0 ? config.maxSteps : undefined
+    const limit = stepLimitFor(config.maxSteps, this.isLocal(session))
     /* MiMo's continuations this turn: notes kept in the request after the reply they answer, and how many of each were used. */
     const notes = new Map<string, string[]>()
     const continued = { length: 0, textTool: 0, empty: 0, interrupted: 0 }
@@ -3115,7 +3090,7 @@ export class SessionRunner {
               id: `${assistant.id}:steps`,
               sessionID,
               role: "user" as const,
-              text: MAX_STEPS_PROMPT,
+              text: maxStepsPrompt(limit!),
               attachments: [],
               time: { created: Date.now() },
             },
@@ -4358,8 +4333,6 @@ export class SessionRunner {
 
     // plan: an explore subagent only reads; anything else builds, even started from a planning turn (see subagentAgent).
     const agent: AgentName = subagentAgent(type)
-    // Explore gets a fixed result shape when the caller named none (DEFAULT_EXPLORE_OUTPUT_SCHEMA).
-    const outputSchema = spec.outputSchema ?? defaultOutputSchema(type)
     const child = await this.store.create({
       directory: parent.directory,
       model,
@@ -4378,7 +4351,7 @@ export class SessionRunner {
         turns: 1,
         ...(taskID ? { taskID } : {}),
         ...(spec.command ? { command: spec.command } : {}),
-        ...(outputSchema ? { outputSchema } : {}),
+        ...(spec.outputSchema ? { outputSchema: spec.outputSchema } : {}),
       },
     })
     await this.store.saveMessage({

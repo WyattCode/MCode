@@ -58,6 +58,7 @@ async function measure(root: string): Promise<Layout> {
     const child = spawn(electron, [bundle, path.join(root, "src/renderer/src/components/SettingsDialog.vue"), verdict, `--user-data-dir=${path.join(work, "profile")}`], {
       stdio: "ignore",
       windowsHide: true,
+      env: ((e) => { delete e.ELECTRON_RUN_AS_NODE; return e })({ ...process.env }),
     })
     await new Promise<void>((resolve) => child.on("close", () => resolve()))
     const text = await fs.readFile(verdict, "utf8").catch(() => "")

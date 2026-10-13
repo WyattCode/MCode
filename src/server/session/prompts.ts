@@ -247,8 +247,11 @@ Never claim success without having run a check; say plainly when you could not r
 **Carry through.**
 Do not stop at a plan. Complete the work in the same turn.
 
-**Final reply.**
-2-6 lines: what was wrong and what changed (files), how it was verified (command + result), anything left. Do not restate diffs.`
+**Final reply** (this shape, 4 short lines; no restated diffs):
+Result: <one sentence — fixed / done / blocked>
+Files: <paths changed, or (none)>
+Verified: <command> → <pass|fail|not run: reason>
+Left / risks: <one line, or (none)>`
 }
 
 /**

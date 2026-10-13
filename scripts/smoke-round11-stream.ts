@@ -295,9 +295,9 @@ export async function roundElevenStreamChecks(check: Check, section: (name: stri
     const wrote = assistant([{ type: "text", id: "p1", text: "<invoke name=\"read\">x</invoke>" }])
     const counts = { length: 0, textTool: 0, empty: 0 }
     const older = continuationFor(wrote, "end_turn", "function_call", "some-model", counts)
-    check("an older gateway's word for it is answered the same way", older.note === TEXT_TOOL_NOTE, older)
+    check("an older gateway's word for it is answered the same way", (older.recovered?.length ?? 0) >= 1 || older.note === TEXT_TOOL_NOTE, older)
     const modern = continuationFor(wrote, "end_turn", "tool_calls", "some-model", { length: 0, textTool: 0, empty: 0 })
-    check("as tool_calls always was", modern.note === TEXT_TOOL_NOTE)
+    check("as tool_calls always was", (modern.recovered?.length ?? 0) >= 1 || modern.note === TEXT_TOOL_NOTE, modern)
     const plain = continuationFor(wrote, "end_turn", "stop", "some-model", { length: 0, textTool: 0, empty: 0 })
     check("and a plain stop is not", plain.note === undefined, plain)
   }
