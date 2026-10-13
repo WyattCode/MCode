@@ -46,6 +46,7 @@ import { Semaphore, STEP_TOOL_LIMIT, SUBAGENT_LIMIT } from "./semaphore"
 import { CodedError, codeOf, paramsOf } from "@shared/errors"
 import { describeAnthropicError } from "../provider/anthropic"
 import { adapterFor } from "../provider/adapter"
+import { interleavedField } from "../provider/interleaved"
 import type { AuthManager } from "../auth/manager"
 import type { ProviderAdapter, TurnEvent, TurnOutcome } from "../provider/types"
 import { failureCode, failureDetail } from "./error-map"
@@ -87,7 +88,7 @@ import { interruptedTurn } from "@shared/resume"
 // session chat
 import { CHAT_WAIT_MS, SessionChat, withChatHeaders } from "./chat"
 import { SUBAGENT_TIMERS, firstLine, isStalled, noticeText, readLegacyMessage, statusHeader, subagentOutput, type ResultStatus, type SubagentTimers } from "@shared/subagent"
-import { STRUCTURED_OUTPUT, STRUCTURED_REMINDER, STRUCTURED_RETRIES, structuredOutputTool, structuredResult } from "../tool/subagent"
+import { STRUCTURED_OUTPUT, STRUCTURED_REMINDER, STRUCTURED_RETRIES, defaultOutputSchema, structuredOutputTool, structuredResult } from "../tool/subagent"
 import { TASK_ID, applyTask, listedTasks } from "../tool/task"
 // tasks: the record a subagent started for a task has to leave behind before it finishes.
 import { MAX_PROGRESS_REACT, PROGRESS_SECTIONS, missingProgressSections, progressPath, progressReminder } from "./task-progress"
@@ -136,7 +137,10 @@ const RETURN_NOTE = [
   "Begin your final message with these two lines, with nothing before them:",
   "**Status**: success, partial, failed or blocked",
   "**Summary**: one sentence saying what happened",
-  "Then give what the task asked for. Where it applies, end with **Files changed**: the paths you changed, or (none).",
+  "Then give what the task asked for. End with these three lines, each filled in or marked (none):",
+  "**Files changed**: the paths you changed, or (none)",
+  "**Checks run**: the inspections or commands you already ran, or (none)",
+  "**Remaining risks**: open questions or risks for the agent that sent you, or (none)",
 ].join("\n")
 
 /* tasks: MiMo's completion gate sends a general subagent back this many times at most. */
@@ -4354,6 +4358,8 @@ export class SessionRunner {
 
     // plan: an explore subagent only reads; anything else builds, even started from a planning turn (see subagentAgent).
     const agent: AgentName = subagentAgent(type)
+    // Explore gets a fixed result shape when the caller named none (DEFAULT_EXPLORE_OUTPUT_SCHEMA).
+    const outputSchema = spec.outputSchema ?? defaultOutputSchema(type)
     const child = await this.store.create({
       directory: parent.directory,
       model,
@@ -4372,7 +4378,7 @@ export class SessionRunner {
         turns: 1,
         ...(taskID ? { taskID } : {}),
         ...(spec.command ? { command: spec.command } : {}),
-        ...(spec.outputSchema ? { outputSchema: spec.outputSchema } : {}),
+        ...(outputSchema ? { outputSchema } : {}),
       },
     })
     await this.store.saveMessage({
@@ -5178,16 +5184,6 @@ interface Turn {
  */
 function pathKey(target: string): string {
   return process.platform === "win32" ? target.toLowerCase() : target
-}
-
-/**
- * MiMo's interleaved field: what the model's entry states, else `reasoning_content`
- * for a DeepSeek model reached over the OpenAI-compatible wire.
- */
-function interleavedField(kind: string, model: ModelRef, entry: ModelEntry | undefined): string | undefined {
-  if (kind !== "openai-compatible") return undefined
-  if (entry?.interleaved) return entry.interleaved
-  return model.model.toLowerCase().includes("deepseek") ? "reasoning_content" : undefined
 }
 
 /** An overflow compaction leaves attached files out of what it replays, naming each where it was. */

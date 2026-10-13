@@ -437,6 +437,15 @@ export function customModelOf(model: CustomModelEntry): CustomModelEntry {
   if (model.interleaved === "reasoning" || model.interleaved === "reasoning_content" || model.interleaved === "reasoning_details") out.interleaved = model.interleaved
   const thinking = thinkingOf(model.thinking)
   if (thinking) out.thinking = thinking
+  /*
+   * A model that says it thinks reads its reasoning back on the OpenAI-
+   * compatible wire, where the chain of thought arrives beside the answer under
+   * `reasoning_content`. Stated thinking is the user's word that the model
+   * reasons; an unstated interleaved field on such a model is an oversight, not
+   * a refusal, so it defaults here. An explicit `interleaved` is never
+   * overridden - a server that puts it elsewhere says so by naming it.
+   */
+  if (thinking && !out.interleaved) out.interleaved = "reasoning_content"
   return out
 }
 
