@@ -13,6 +13,16 @@ const rounds = new Map<string, number>()
 /** Default number of automatic fix rounds before the note changes to "stuck". */
 export const VERIFY_LOOP_DEFAULT_MAX = 3
 
+/** How many session entries the loop map keeps before trimming the oldest half. */
+const MAX_VERIFY_LOOP_SESSIONS = 200
+
+function capVerifyLoopSessions(): void {
+  if (rounds.size <= MAX_VERIFY_LOOP_SESSIONS) return
+  const remove = Math.floor(rounds.size / 2)
+  const oldest = Array.from(rounds.keys()).slice(0, remove)
+  for (const sessionID of oldest) rounds.delete(sessionID)
+}
+
 /** The max can be lowered or raised for a run without changing the prompt. */
 export function verifyLoopMax(): number {
   const raw = process.env.MCODE_VERIFY_LOOP_MAX
@@ -31,7 +41,9 @@ export function resetVerifyLoop(sessionID: string): void {
 
 export function incrementVerifyLoop(sessionID: string): number {
   const next = getVerifyLoopRound(sessionID) + 1
+  rounds.delete(sessionID)
   rounds.set(sessionID, next)
+  capVerifyLoopSessions()
   return next
 }
 

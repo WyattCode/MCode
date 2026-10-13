@@ -262,7 +262,7 @@ export class LoopMonitor {
       this.failed.set(command, count)
     }
     const retry: LoopIncident | undefined = count >= BASH_RETRIES ? { kind: "bash-retry", tool: part.name, command, count } : undefined
-    if (retry && this.sessionID) retry.note = this.verifyNote(1, command)
+    if (retry && verifying && this.sessionID) retry.note = this.verifyNote(1, command)
     if (!verifying) return retry
     if (retry) return retry
     const streak = this.track({ kind: "verify", progress }, part.name)
