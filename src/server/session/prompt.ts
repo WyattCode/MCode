@@ -100,7 +100,7 @@ export async function instructionValues(context: PromptContext): Promise<Instruc
 }
 
 /** The system prompt assembled from its instruction values, which may be a conversation's baseline rather than what is on disk now. */
-export function systemPromptFrom(agent: string, values: InstructionValues, memory?: PromptContext["memory"], options?: { local?: boolean }): string {
+export function systemPromptFrom(agent: string, values: InstructionValues, memory?: PromptContext["memory"], options?: { local?: boolean; modelID?: string }): string {
   /*
    * The one agent prompt every model reads in every mode (session/prompts.ts).
    * It is the first section, so the cached prefix opens with the same bytes

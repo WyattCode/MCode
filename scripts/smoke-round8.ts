@@ -100,7 +100,7 @@ export async function roundEightChecks(check: Check, section: (name: string) => 
       const claude = await sent("claude-sonnet-5")
       const gpt = await sent("gpt-5")
       const qwen = await sent("qwen3")
-      check("a Claude, a GPT and a Qwen turn carry the same agent prompt", claude.system === gpt.system && gpt.system === qwen.system && qwen.system.includes("# MCode desktop"), claude.system.slice(0, 80))
+      check("a Claude and a GPT turn carry the same agent prompt; a Qwen turn differs only in its coding protocol", claude.system === gpt.system && claude.system.includes("# MCode desktop") && qwen.system.includes("**Pace**") && !claude.system.includes("**Pace**") && claude.system.indexOf("## Coding protocol") > 0 && qwen.system.indexOf("## Coding protocol") > 0 && claude.system.slice(0, claude.system.indexOf("## Coding protocol")) === qwen.system.slice(0, qwen.system.indexOf("## Coding protocol")), claude.system.slice(0, 80))
 
       /* The prefix has to stay byte-identical across a conversation or the provider's cache is paid for twice. */
       e.replies.push(say("again"))

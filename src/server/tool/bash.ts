@@ -443,7 +443,7 @@ export const BashTool: ToolDefinition = {
 
     const timeout = input.timeout === undefined ? DEFAULT_TIMEOUT : Number(input.timeout)
     if (!Number.isFinite(timeout) || timeout < 0) throw new ToolError(`timeout has to be a number of milliseconds, zero or more: ${String(input.timeout)}`)
-    const maxTokens = input.max_output_tokens === undefined ? DEFAULT_MAX_OUTPUT_TOKENS : Number(input.max_output_tokens)
+    const maxTokens = input.max_output_tokens === undefined ? (context.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS) : Number(input.max_output_tokens)
     if (!Number.isInteger(maxTokens) || maxTokens <= 0) throw new ToolError(`max_output_tokens has to be a positive whole number: ${String(input.max_output_tokens)}`)
     const description = typeof input.description === "string" ? input.description : ""
 

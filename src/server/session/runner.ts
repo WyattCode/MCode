@@ -65,6 +65,10 @@ import { fetchInstruction, instructionUpdate, instructionValues, memorySection, 
 import { GOAL_GUARD, JUDGE_SYSTEM, MAX_GOAL_REACT, cleanGoal, goalReminder, judgeQuestion, judgeTranscript, parseVerdict, sameGoal, type GoalVerdict } from "./goal"
 import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf, subagentAgent } from "./plan"
 import { maxStepsPrompt, stepLimitFor } from "./steps"
+import { promptFamily } from "./prompts"
+
+/** Codex's unified_exec default output budget, used for reasoning-family models. */
+const REASONING_MAX_OUTPUT_TOKENS = 10_000
 import { status as gitStatus } from "../git"
 import { historyService, memoryFilesFor, memoryWritable } from "../history/service"
 import { withAutomationNotes } from "../automation/framing"
@@ -1431,10 +1435,11 @@ export class SessionRunner {
       session.agent,
       initial,
       local,
+      promptFamily(session.model.model),
       this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory).map((tool) => tool.name),
     ])
     const frozen = this.prefixes.get(session.id)
-    const base = frozen?.key === key ? frozen.system : systemPromptFrom(session.agent, initial, undefined, { local })
+    const base = frozen?.key === key ? frozen.system : systemPromptFrom(session.agent, initial, undefined, { local, modelID: session.model.model })
     this.prefixes.set(session.id, { key, system: base })
     // subagents: a subagent is told what it is, after what its agent would be told anyway.
     const outputSchema = session.subagent?.outputSchema
@@ -4050,6 +4055,8 @@ export class SessionRunner {
           select: async (selection) => void (await this.config.set({ websearch: selection })),
         },
         toolOutputs: this.toolOutputs,
+        // Codex's exec default (10k tokens) for open reasoning models on a step budget; others keep bash's own.
+        ...(promptFamily(input.session.model.model) === "reasoning" ? { maxOutputTokens: REASONING_MAX_OUTPUT_TOKENS } : {}),
         subagent: this.workers.has(input.session.id),
         // session chat: a conversation's own calls only; a subagent has no contacts.
         chat: this.workers.has(input.session.id) ? undefined : this.chat,

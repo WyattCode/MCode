@@ -17,7 +17,7 @@ export const TASK_ID = /^T\d+(\.\d+)*$/
 /** Finished tasks drop out of lists this long after they end, as MiMo archives them. */
 export const TASK_ARCHIVE_MS = 7 * 24 * 60 * 60 * 1000
 
-export const TASK_ACTIONS = ["create", "list", "get", "start", "block", "unblock", "done", "abandon", "rename"] as const
+export const TASK_ACTIONS = ["create", "list", "get", "start", "block", "unblock", "done", "abandon", "rename", "plan"] as const
 export type TaskAction = (typeof TASK_ACTIONS)[number]
 
 const TERMINAL = new Set<TaskStatus>(["done", "abandoned"])
@@ -84,6 +84,69 @@ export function applyTask(
     }
   }
 
+  if (action === "plan") {
+    const rawPlan = input.plan
+    if (!Array.isArray(rawPlan) || rawPlan.length === 0) throw new ToolError("plan needs a non-empty list of steps.")
+
+    const explanation = text(input.explanation)
+    const steps: { step: string; status: TaskStatus }[] = []
+    let inProgress = 0
+
+    for (const entry of rawPlan) {
+      if (!entry || typeof entry !== "object") throw new ToolError("plan items need a step and a status.")
+      const item = entry as Record<string, unknown>
+      const step = text(item.step)
+      if (!step) throw new ToolError("plan items need a step.")
+
+      const rawStatus = typeof item.status === "string" ? item.status.trim() : ""
+      let status: TaskStatus
+      if (rawStatus === "pending" || rawStatus === "open") status = "open"
+      else if (rawStatus === "in_progress") status = "in_progress"
+      else if (rawStatus === "completed" || rawStatus === "done") status = "done"
+      else throw new ToolError(`plan status "${rawStatus}" is not one of pending, in_progress, completed (or open, done).`)
+
+      if (status === "in_progress") inProgress++
+      steps.push({ step, status })
+    }
+
+    if (inProgress > 1) throw new ToolError("At most one step can be in_progress at a time.")
+
+    const ids: string[] = []
+    const lines: string[] = []
+
+    for (const { step, status } of steps) {
+      const at = list.findIndex((task) => !task.parentID && task.status !== "abandoned" && task.summary.trim() === step)
+      if (at < 0) {
+        const id = nextTaskID(undefined, list.map((task) => task.id))
+        const task: TaskItem = {
+          id,
+          summary: step,
+          status,
+          owner: context.owner,
+          created: now,
+          updated: now,
+          ...(status === "done" ? { ended: now } : {}),
+        }
+        list.push(task)
+        ids.push(id)
+        lines.push(`${id} [${status}] ${step}`)
+        continue
+      }
+
+      const current = list[at]!
+      const next: TaskItem = { ...current, summary: step, status, owner: context.owner, updated: now }
+      if (status === "done") next.ended = current.ended ?? now
+      else delete next.ended
+
+      list[at] = next
+      ids.push(current.id)
+      lines.push(`${current.id} [${status}] ${step}`)
+    }
+
+    const output = [explanation, ...lines].filter(Boolean).join("\n")
+    return { tasks: list, result: { output, title: `${ids.length}`, metadata: { ids } } }
+  }
+
   const id = text(input.id)
   const at = list.findIndex((task) => task.id === id)
   if (action === "get") {
@@ -132,6 +195,7 @@ export const TaskTool: ToolDefinition = {
     "- done: mark a task finished, as soon as it is. Needs id; event_summary can say what was done.",
     "- abandon: drop a task that will not be finished. Needs id; event_summary can say why.",
     "- rename: change a task's summary. Needs id and summary.",
+    "- plan: set the whole plan in one call: plan is a list of {step, status} with status pending, in_progress or completed (at most one in_progress); steps are matched to existing tasks by their text and new ones are created. Prefer it to several create/start/done calls.",
     "",
     "Use it for work of three or more steps, work that spans turns, or work a subagent does (pass the task's id to the actor tool as task_id). Skip it for a single quick action.",
     "Start a task before working on it and mark it done straight after. Only mark it done when it is wholly done: if tests fail or something is left, keep it in progress or block it. Keep one task in progress at a time when working alone.",
@@ -153,6 +217,23 @@ export const TaskTool: ToolDefinition = {
           status: { type: "string", enum: [...TASK_STATUSES], description: "list: only tasks with this status" },
           include_terminal: { type: "boolean", description: "list: also done and abandoned tasks" },
           include_archived: { type: "boolean", description: "list: also tasks finished over a week ago" },
+          plan: {
+            type: "array",
+            description: "plan: the whole plan, in order",
+            items: {
+              type: "object",
+              properties: {
+                step: { type: "string", description: "the task text" },
+                status: {
+                  type: "string",
+                  enum: ["pending", "in_progress", "completed", "open", "done"],
+                  description: "pending/open, in_progress, completed/done",
+                },
+              },
+              required: ["step", "status"],
+            },
+          },
+          explanation: { type: "string", description: "plan: a line to say before the plan" },
         },
         required: ["action"],
       },

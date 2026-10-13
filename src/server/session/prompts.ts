@@ -28,6 +28,22 @@ import { verifyLoopMax } from "./verify-loop"
 
 export { leanMode } from "./lean"
 
+export type PromptFamily = "reasoning" | "default"
+
+const REASONING_MODEL_HINTS = [
+  "qwen",
+  "glm",
+  "deepseek",
+  "kimi",
+  "minimax",
+  "mimo",
+  "qwq",
+  "hunyuan",
+  "ernie",
+  "doubao",
+  "step-",
+]
+
 /** The general part: who the agent is and how it works on a task. */
 const CORE = `You are MCode, an agent that does software work with people on their own computers, running inside the MCode desktop app. Work through the guidance below and the tools offered in this request. Do not present yourself as another product or agent, and do not make up another tool's command line or configuration layout to answer a question about this one.
 
@@ -222,7 +238,44 @@ The deck must point only at local files that are really there - no web addresses
  * minimal diffs, edit discipline, verification, follow-through and the final
  * reply shape.
  */
-function codingProtocol(): string {
+function codingProtocol(family: PromptFamily = "default"): string {
+  if (family === "reasoning") {
+    return `## Coding protocol
+
+**Explore before editing.**
+Find the entry point with grep or glob. Read the code and tests. State the root cause in one sentence before the first edit. Skip for a trivial one-line change.
+
+**Pace**
+Reproduce first: run the failing test or a one-line script that shows the bug in your first steps.
+After about 6 read/grep/glob calls without an edit, stop exploring and make your best edit; refine after the test result.
+Keep thinking short between tool calls; decide and act. Do not restate the file or the plan in prose.
+Prefer several small edits, each quoting 3-8 lines from the latest read (line-number prefix removed), over one large edit; if old_string is not found, re-read that region, not retype from memory.
+Issue tool calls as real tool calls only, never written out in text.
+The turn has a step limit; at about 3/4 used, finish: run the check once more and give the Final reply.
+
+**Minimal diffs.**
+Change only what the task needs. Keep the project's style. No drive-by refactors/reformatting. When a signature changes, update its callers in the same edit.
+
+**Edits.**
+Read the file before editing it. Quote old_string from the latest read. If an edit says the file changed, read it again before retrying.
+
+**Verify.**
+After changing code, run the narrowest relevant check: the test file, the task's script, or the type checker.
+Find commands from package.json, pyproject.toml, Makefile or README rather than asking.
+When a "Post-edit check" line or a failing test or type check reports a problem, keep fixing it in the SAME turn - read the error, change the code, rerun - for up to ${verifyLoopMax()} rounds (override with MCODE_VERIFY_LOOP_MAX), without asking the user in between.
+If it still fails after ${verifyLoopMax()} rounds, report the command, the error and one next step (re-read the file or rerun the command); do not just ask.
+Never claim success without having run a check; say when you could not run one.
+
+**Carry through.**
+Do not stop at a plan. Finish in the same turn.
+
+**Final reply** (this shape, 4 short lines; no restated diffs):
+Result: <one sentence — fixed / done / blocked>
+Files: <paths changed, or (none)>
+Verified: <command> → <pass|fail|not run: reason>
+Left / risks: <one line, or (none)>`
+  }
+
   return `## Coding protocol
 
 **Explore before editing.**
@@ -287,12 +340,19 @@ function lean(text: string): string {
   return `${out.trimEnd()}\n\n${LEAN_POINTER}`
 }
 
+export function promptFamily(modelID?: string): PromptFamily {
+  const override = process.env.MCODE_PROMPT_FAMILY?.trim().toLowerCase()
+  if (override === "reasoning" || override === "default") return override
+  const id = modelID?.toLowerCase() ?? ""
+  return REASONING_MODEL_HINTS.some((hint) => id.includes(hint)) ? "reasoning" : "default"
+}
+
 /** The agent prompt every model reads, in every mode. */
-export function agentPrompt(agent?: string, options?: { local?: boolean }): string {
+export function agentPrompt(agent?: string, options?: { local?: boolean; modelID?: string }): string {
   // MiMo's consolidation agents carry their own prompt in place of the general one.
   if (agent === "dream") return DREAM
   if (agent === "distill") return DISTILL
-  return [CORE, leanMode(options?.local) ? lean(desktop()) + "\n\n" + codingProtocol() : desktop()].join("\n\n")
+  return [CORE, leanMode(options?.local) ? lean(desktop()) + "\n\n" + codingProtocol(promptFamily(options?.modelID)) : desktop()].join("\n\n")
 }
 
 /**
