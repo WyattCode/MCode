@@ -8,6 +8,16 @@ import { isMemoryPath } from "../history/service"
 import { guardPlanWrite } from "../session/plan"
 import { checkFresh, recordWrite } from "./read-tracker"
 import { postEditCheckDetailed } from "./post-edit-check"
+import type { PostEditCheckResult } from "./post-edit-check"
+import {
+  concreteStepFromPostEdit,
+  formatStuckSuggestion,
+  formatVerifyLoopNote,
+  getVerifyLoopRound,
+  incrementVerifyLoop,
+  resetVerifyLoop,
+  verifyLoopMax,
+} from "../session/verify-loop"
 
 /** The longest closest-match hint a failed edit carries. */
 const HINT_MAX_CHARS = 2000
@@ -514,6 +524,36 @@ function allowProjectTools(context: ToolContext): boolean {
   }
 }
 
+function verifyLoopForCheck(sessionID: string, display: string, check: PostEditCheckResult | undefined): { text: string; metadata?: Record<string, unknown> } {
+  if (!check) return { text: "" }
+
+  if (check.problems > 0) {
+    const round = incrementVerifyLoop(sessionID)
+    const max = verifyLoopMax()
+    const stuck = round > max
+    const concrete = concreteStepFromPostEdit({
+      checker: check.checker,
+      problems: check.problems,
+      path: display,
+      status: check.status,
+    })
+    const text = stuck
+      ? formatStuckSuggestion(check.problems, round, max, concrete)
+      : formatVerifyLoopNote(check.problems, round, max, concrete)
+    return { text, metadata: { round, max, stuck } }
+  }
+
+  if (check.status !== "timeout") resetVerifyLoop(sessionID)
+  return {
+    text: "",
+    metadata: {
+      round: getVerifyLoopRound(sessionID),
+      max: verifyLoopMax(),
+      stuck: false,
+    },
+  }
+}
+
 export const WriteTool: ToolDefinition = {
   name: "write",
   description: [
@@ -578,7 +618,8 @@ export const WriteTool: ToolDefinition = {
       await recordWrite(context.sessionID, target, content)
 
       const check = await postEditCheckDetailed(target, context.directory, context.signal, allowProjectTools(context)).catch(() => undefined)
-      const output = `${previous === undefined ? "Created" : "Overwrote"} ${display} (${content.split("\n").length} lines)${check?.text ?? ""}`
+      const loop = verifyLoopForCheck(context.sessionID, display, check)
+      const output = `${previous === undefined ? "Created" : "Overwrote"} ${display} (${content.split("\n").length} lines)${check?.text ?? ""}${loop.text}`
 
       return {
         output,
@@ -588,7 +629,10 @@ export const WriteTool: ToolDefinition = {
           diff,
           filediff,
           created: previous === undefined,
-          ...(check ? { postEditCheck: { checker: check.checker, problems: check.problems, ...(check.status ? { status: check.status } : {}) } } : {}),
+          ...(check ? {
+            postEditCheck: { checker: check.checker, problems: check.problems, ...(check.status ? { status: check.status } : {}) },
+            ...(loop.metadata ? { verifyLoop: loop.metadata } : {}),
+          } : {}),
         },
       }
     })
@@ -670,7 +714,8 @@ export const EditTool: ToolDefinition = {
         await recordWrite(context.sessionID, target, newString)
 
         const check = await postEditCheckDetailed(target, context.directory, context.signal, allowProjectTools(context)).catch(() => undefined)
-        const output = `${previous === undefined ? "Created" : "Overwrote"} ${display}${check?.text ?? ""}`
+        const loop = verifyLoopForCheck(context.sessionID, display, check)
+        const output = `${previous === undefined ? "Created" : "Overwrote"} ${display}${check?.text ?? ""}${loop.text}`
 
         return {
           output,
@@ -680,7 +725,10 @@ export const EditTool: ToolDefinition = {
             diff,
             filediff,
             created: previous === undefined,
-            ...(check ? { postEditCheck: { checker: check.checker, problems: check.problems, ...(check.status ? { status: check.status } : {}) } } : {}),
+            ...(check ? {
+              postEditCheck: { checker: check.checker, problems: check.problems, ...(check.status ? { status: check.status } : {}) },
+              ...(loop.metadata ? { verifyLoop: loop.metadata } : {}),
+            } : {}),
           },
         }
       }
@@ -714,7 +762,9 @@ export const EditTool: ToolDefinition = {
       }
 
       const check = await postEditCheckDetailed(target, context.directory, context.signal, allowProjectTools(context)).catch(() => undefined)
+      const loop = verifyLoopForCheck(context.sessionID, display, check)
       output += check?.text ?? ""
+      output += loop.text
 
       return {
         output,
@@ -727,7 +777,10 @@ export const EditTool: ToolDefinition = {
           ...(matchTier ? { matchTier } : {}),
           ...(ranges ? { ranges } : {}),
           ...(reindented ? { reindented: true } : {}),
-          ...(check ? { postEditCheck: { checker: check.checker, problems: check.problems, ...(check.status ? { status: check.status } : {}) } } : {}),
+          ...(check ? {
+            postEditCheck: { checker: check.checker, problems: check.problems, ...(check.status ? { status: check.status } : {}) },
+            ...(loop.metadata ? { verifyLoop: loop.metadata } : {}),
+          } : {}),
         },
       }
     })

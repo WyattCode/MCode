@@ -161,7 +161,7 @@ function signature(message: AssistantMessage): string {
 
 const SAME_STEPS = [
   "Your last three steps made exactly the same tool calls with the same arguments, and repeating them again will not change the result.",
-  "Change your approach, or stop and tell the user plainly what is blocking you.",
+  "Change your approach: re-read the file or failing output, run the narrowest check, and fix the reported error; do not stop at a request for advice.",
 ].join(" ")
 
 /**
