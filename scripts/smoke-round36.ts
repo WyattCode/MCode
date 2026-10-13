@@ -60,7 +60,8 @@ function freePort(): Promise<number> {
 export async function roundThirtySixChecks(check: Check, section: (name: string) => void): Promise<void> {
   section("Round 36: the app tool - offered to the model, and how it reads a page")
   {
-    check("offered last, after every earlier tool, so no cached prefix moves", TOOLS.at(-1)?.name === "app")
+    // P1's lsp may be appended after it; app still follows every earlier tool.
+    check("offered after every earlier tool, so no cached prefix moves", TOOLS.at(-2)?.name === "app" && TOOLS.at(-1)?.name === "lsp")
     check("asked about like a command, and treated as able to change anything", AppTool.permission === "bash" && reachOf("app") === "opaque")
     const description = AppTool.description
     check("its description tells the model to batch its steps", /one do/.test(description) && /fast/.test(description))

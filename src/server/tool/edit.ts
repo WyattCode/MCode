@@ -9,6 +9,7 @@ import { guardPlanWrite } from "../session/plan"
 import { checkFresh, recordWrite, wasRead } from "./read-tracker"
 import { postEditCheckDetailed } from "./post-edit-check"
 import type { PostEditCheckResult } from "./post-edit-check"
+import { lspDiagnostics, formatLspDiagnostics } from "../lsp"
 import {
   concreteStepFromPostEdit,
   formatStuckSuggestion,
@@ -564,7 +565,7 @@ async function unchangedSince(target: string, display: string, expected: string 
   throw changedError()
 }
 
-function allowProjectTools(context: ToolContext): boolean {
+export function allowProjectTools(context: ToolContext): boolean {
   try {
     return Boolean(
       context.permissions &&
@@ -684,9 +685,13 @@ export const WriteTool: ToolDefinition = {
       await fs.writeFile(target, content, "utf8")
       await recordWrite(context.sessionID, target, content)
 
-      const check = await postEditCheckDetailed(target, context.directory, context.signal, allowProjectTools(context)).catch(() => undefined)
+      const [check, lsp] = await Promise.all([
+        postEditCheckDetailed(target, context.directory, context.signal, allowProjectTools(context)).catch(() => undefined),
+        lspDiagnostics(target, context.directory, { signal: context.signal, allowProjectTools: allowProjectTools(context) }).catch(() => undefined),
+      ])
+      const lspText = lsp && lsp.diagnostics.length > 0 && (check?.problems ?? 0) === 0 ? formatLspDiagnostics(display, lsp) : ""
       const loop = verifyLoopForCheck(context.sessionID, display, check)
-      const output = `${previous === undefined ? "Created" : "Overwrote"} ${display} (${content.split("\n").length} lines)${check?.text ?? ""}${loop.text}`
+      const output = `${previous === undefined ? "Created" : "Overwrote"} ${display} (${content.split("\n").length} lines)${check?.text ?? ""}${lspText}${loop.text}`
 
       return {
         output,
@@ -696,6 +701,7 @@ export const WriteTool: ToolDefinition = {
           diff,
           filediff,
           created: previous === undefined,
+          ...(lsp ? { lsp: { server: lsp.server, errors: lsp.errors, diagnostics: lsp.diagnostics } } : {}),
           ...(check ? {
             postEditCheck: postEditCheckMetadata(check),
             ...(loop.metadata ? { verifyLoop: loop.metadata } : {}),
@@ -784,9 +790,13 @@ export const EditTool: ToolDefinition = {
         await fs.writeFile(target, newString, "utf8")
         await recordWrite(context.sessionID, target, newString)
 
-        const check = await postEditCheckDetailed(target, context.directory, context.signal, allowProjectTools(context)).catch(() => undefined)
+        const [check, lsp] = await Promise.all([
+          postEditCheckDetailed(target, context.directory, context.signal, allowProjectTools(context)).catch(() => undefined),
+          lspDiagnostics(target, context.directory, { signal: context.signal, allowProjectTools: allowProjectTools(context) }).catch(() => undefined),
+        ])
+        const lspText = lsp && lsp.diagnostics.length > 0 && (check?.problems ?? 0) === 0 ? formatLspDiagnostics(display, lsp) : ""
         const loop = verifyLoopForCheck(context.sessionID, display, check)
-        const output = `${previous === undefined ? "Created" : "Overwrote"} ${display}${check?.text ?? ""}${loop.text}`
+        const output = `${previous === undefined ? "Created" : "Overwrote"} ${display}${check?.text ?? ""}${lspText}${loop.text}`
 
         return {
           output,
@@ -796,6 +806,7 @@ export const EditTool: ToolDefinition = {
             diff,
             filediff,
             created: previous === undefined,
+            ...(lsp ? { lsp: { server: lsp.server, errors: lsp.errors, diagnostics: lsp.diagnostics } } : {}),
             ...(check ? {
               postEditCheck: postEditCheckMetadata(check),
               ...(loop.metadata ? { verifyLoop: loop.metadata } : {}),
@@ -836,9 +847,14 @@ export const EditTool: ToolDefinition = {
         output += ` (${occurrences} occurrences)`
       }
 
-      const check = await postEditCheckDetailed(target, context.directory, context.signal, allowProjectTools(context)).catch(() => undefined)
+      const [check, lsp] = await Promise.all([
+        postEditCheckDetailed(target, context.directory, context.signal, allowProjectTools(context)).catch(() => undefined),
+        lspDiagnostics(target, context.directory, { signal: context.signal, allowProjectTools: allowProjectTools(context) }).catch(() => undefined),
+      ])
+      const lspText = lsp && lsp.diagnostics.length > 0 && (check?.problems ?? 0) === 0 ? formatLspDiagnostics(display, lsp) : ""
       const loop = verifyLoopForCheck(context.sessionID, display, check)
       output += check?.text ?? ""
+      output += lspText
       output += loop.text
 
       return {
@@ -852,6 +868,7 @@ export const EditTool: ToolDefinition = {
           ...(matchTier ? { matchTier } : {}),
           ...(ranges ? { ranges } : {}),
           ...(reindented ? { reindented: true } : {}),
+          ...(lsp ? { lsp: { server: lsp.server, errors: lsp.errors, diagnostics: lsp.diagnostics } } : {}),
           ...(check ? {
             postEditCheck: postEditCheckMetadata(check),
             ...(loop.metadata ? { verifyLoop: loop.metadata } : {}),

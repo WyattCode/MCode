@@ -23,6 +23,7 @@ import { AutomationUpdateTool } from "./automation"
 import { PlanExitTool } from "./plan-exit"
 import { SpeakTool } from "./speak"
 import { AppTool } from "./app"
+import { LspTool } from "./lsp"
 
 /**
  * The tool surface offered to the model.
@@ -94,6 +95,8 @@ export const TOOLS: ToolDefinition[] = [
   WebSearchTool,
   // MCode's own app tool (R36): appended, for the same reason. Operates the app being built through its DevTools port.
   AppTool,
+  // MCode's lsp tool (P1): appended, for the same reason. Read-only diagnostics/definition/references/hover.
+  LspTool,
 ]
 
 /**
