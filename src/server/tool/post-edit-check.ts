@@ -2,6 +2,7 @@ import { spawn } from "node:child_process"
 import { constants } from "node:fs"
 import fs from "node:fs/promises"
 import path from "node:path"
+import { loadVerifyCommands } from "./verify-commands"
 
 export interface Diagnostic {
   file: string
@@ -302,10 +303,7 @@ function parseSyntaxDiagnostics(raw: string, file: string, projectDir: string): 
   const lines = raw.split(/\r?\n/)
 
   for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-
-    const m1 = /^(.+?):(\d+)$/.exec(trimmed)
+    const m1 = /^(.+?):(\d+)$/.exec(trimmedLine(line))
     if (m1) {
       const lineNum = parseInt(m1[2]!, 10)
       const msgLine = lines.find((l) => /^(SyntaxError|TypeError|ReferenceError|RangeError|Error):/.test(l.trim()))
@@ -313,7 +311,7 @@ function parseSyntaxDiagnostics(raw: string, file: string, projectDir: string): 
       return [{ file: rel, line: lineNum, message }]
     }
 
-    const m2 = /File\s+"(.+?)"\s*,\s*line\s+(\d+)/.exec(trimmed)
+    const m2 = /File\s+"(.+?)"\s*,\s*line\s+(\d+)/.exec(trimmedLine(line))
     if (m2) {
       const lineNum = parseInt(m2[2]!, 10)
       const msgLine = lines.find((l) => /^(SyntaxError|IndentationError|TabError):/.test(l.trim()))
@@ -324,6 +322,10 @@ function parseSyntaxDiagnostics(raw: string, file: string, projectDir: string): 
 
   const firstMeaningful = lines.find((l) => l.trim() && !/^\s*at\s/.test(l) && !/^Node\.js/.test(l))?.trim()
   return [{ file: rel, message: firstMeaningful || "syntax error" }]
+}
+
+function trimmedLine(line: string): string {
+  return line.trim()
 }
 
 function syntaxRerunHint(checker: string, rel: string): string {
@@ -415,19 +417,43 @@ async function findTsconfig(file: string, projectDir: string): Promise<string | 
   return undefined
 }
 
-async function findTsc(tsconfig: string, projectDir: string): Promise<string | undefined> {
-  const root = path.resolve(projectDir)
-  let dir = path.resolve(path.dirname(tsconfig))
+function ancestorDirs(start: string): string[] {
+  const out: string[] = []
+  let dir = path.resolve(start)
 
-  while (isUnder(dir, root)) {
-    const candidate = path.join(dir, "node_modules", "typescript", "bin", "tsc")
-    if (await exists(candidate)) return candidate
+  while (true) {
+    out.push(dir)
     const parent = path.dirname(dir)
     if (parent === dir) break
     dir = parent
   }
 
+  return out
+}
+
+async function findTscInDir(dir: string): Promise<string | undefined> {
+  const bin = path.join(dir, "node_modules", "typescript", "bin", "tsc")
+  if (await exists(bin)) return bin
+
+  const lib = path.join(dir, "node_modules", "typescript", "lib", "tsc.js")
+  if (await exists(lib)) return lib
+
   return undefined
+}
+
+export async function findTsc(tsconfig: string, projectDir: string): Promise<string | undefined> {
+  const seen = new Set<string>()
+  const dirs = [...ancestorDirs(path.dirname(tsconfig)), ...ancestorDirs(projectDir)]
+
+  for (const dir of dirs) {
+    if (seen.has(dir)) continue
+    seen.add(dir)
+
+    const found = await findTscInDir(dir)
+    if (found) return found
+  }
+
+  return await which("tsc")
 }
 
 async function findEslint(projectDir: string): Promise<string | undefined> {
@@ -436,12 +462,30 @@ async function findEslint(projectDir: string): Promise<string | undefined> {
   return undefined
 }
 
+function isJavaScriptFile(candidate: string): boolean {
+  return /\.(?:js|mjs|cjs)$/i.test(candidate)
+}
+
+function tscInvocation(tscPath: string): { command: string; args: string[] } {
+  const base = path.basename(tscPath).toLowerCase()
+  if (isJavaScriptFile(tscPath) || base === "tsc" || base === "tsc.js") {
+    return { command: nodeCommand(), args: [tscPath] }
+  }
+  return { command: tscPath, args: [] }
+}
+
 async function runTsc(tsconfig: string, tscPath: string, projectDir: string): Promise<RunResult> {
   const key = path.resolve(tsconfig)
   const existing = tscRuns.get(key)
   if (existing) return await existing
 
-  const run = runWithTimeout(nodeCommand(), [tscPath, "--noEmit", "-p", tsconfig, "--pretty", "false"], 25_000, { cwd: projectDir })
+  const invocation = tscInvocation(tscPath)
+  const run = runWithTimeout(
+    invocation.command,
+    [...invocation.args, "--noEmit", "-p", tsconfig, "--pretty", "false"],
+    25_000,
+    { cwd: projectDir },
+  )
   tscRuns.set(key, run)
   try {
     return await run
@@ -634,6 +678,34 @@ async function checkJson(file: string, projectDir: string, rel: string): Promise
   }
 }
 
+async function appendProjectChecks(
+  result: PostEditCheckResult | undefined,
+  projectDir: string,
+  signal?: AbortSignal,
+): Promise<PostEditCheckResult | undefined> {
+  if (!result || result.problems <= 0 || signal?.aborted) return result
+
+  try {
+    const commands = await loadVerifyCommands(projectDir)
+    if (!commands.length) return result
+
+    const extra = `Project checks: ${commands.join(" · ")}`
+    if (result.text.includes(extra)) return result
+
+    const finalSentence = "Fix these before moving on, or say why they are expected."
+    let text = result.text
+    if (text.includes(finalSentence)) {
+      text = text.replace(finalSentence, `${extra}\n${finalSentence}`)
+    } else {
+      text = `${text}\n${extra}`
+    }
+
+    return { ...result, text: cap(text) }
+  } catch {
+    return result
+  }
+}
+
 /**
  * Run the project-appropriate quick check for a freshly written file. Returns
  * undefined when there is nothing to report, no checker applies, or the check
@@ -652,15 +724,17 @@ export async function postEditCheckDetailed(
   const ext = path.extname(file).toLowerCase()
 
   try {
-    if (TS_EXTENSIONS.has(ext)) return await checkTypeScript(file, projectDir, rel, signal, allowProjectTools)
-    if (JS_EXTENSIONS.has(ext)) return await checkJavaScript(file, projectDir, rel, signal, allowProjectTools)
-    if (ext === ".py") return await checkPython(file, projectDir, rel, signal)
-    if (ext === ".json") return await checkJson(file, projectDir, rel)
+    let result: PostEditCheckResult | undefined
+
+    if (TS_EXTENSIONS.has(ext)) result = await checkTypeScript(file, projectDir, rel, signal, allowProjectTools)
+    else if (JS_EXTENSIONS.has(ext)) result = await checkJavaScript(file, projectDir, rel, signal, allowProjectTools)
+    else if (ext === ".py") result = await checkPython(file, projectDir, rel, signal)
+    else if (ext === ".json") result = await checkJson(file, projectDir, rel)
+
+    return await appendProjectChecks(result, projectDir, signal)
   } catch {
     return undefined
   }
-
-  return undefined
 }
 
 export async function postEditCheck(
