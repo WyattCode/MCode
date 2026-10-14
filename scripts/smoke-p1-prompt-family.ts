@@ -56,12 +56,15 @@ try {
   check("reasoning protocol under 2800 chars", reasoningProtocol.length < 2800, reasoningProtocol.length)
   check("reasoning has no-simulate rule", reasoningProtocol.includes("Don't simulate code in your head"))
   check("reasoning has node -e", reasoningProtocol.includes("node -e"))
+  check("reasoning has Finish when green", reasoningProtocol.includes("Finish when green"))
+  check("reasoning has pre-existing", reasoningProtocol.includes("pre-existing"))
 
   const defaultLean = agentPrompt("build", { local: true, modelID: "gpt-5" })
   check("default lean has coding protocol", defaultLean.includes("## Coding protocol"))
   check("default lean has no Pace", !defaultLean.includes("**Pace**"))
   check("default lean has no no-simulate rule", !defaultLean.includes("Don't simulate code in your head"))
   check("default lean has no node -e", !defaultLean.includes("node -e"))
+  check("default lean has no Finish when green", !defaultLean.includes("Finish when green"))
 
   const full = agentPrompt("build", { local: false, modelID: "qwen" })
   check("full desktop has no coding protocol", !full.includes("## Coding protocol"))

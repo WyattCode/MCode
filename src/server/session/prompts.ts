@@ -252,6 +252,7 @@ Keep thinking short between tool calls; decide and act. Do not restate the file 
 Prefer several small edits, each quoting 3-8 lines from the latest read (line-number prefix removed), over one large edit; if old_string is not found, re-read that region, not retype from memory.
 Issue tool calls as real tool calls only, never written out in text.
 The turn has a step limit; at about 3/4 used, finish: run the check once more and give the Final reply.
+ - Finish when green: once the reproduction and the repo's relevant tests pass, write the final reply. Don't revert the fix to re-prove it or chase pre-existing failures in code you didn't touch - mention them instead.
  - Don't simulate code in your head beyond a few lines: when you need to know what a function returns or how state evolves, run it - a one-line \`node -e\` / \`python -c\` call answers in seconds.
  - If you notice you have been deliberating for long without a tool call, stop and act on the best current hypothesis: make the edit or run the check, and let the result correct you.
 
