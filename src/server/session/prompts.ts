@@ -246,12 +246,14 @@ function codingProtocol(family: PromptFamily = "default"): string {
 Find the entry point with grep or glob. Read the code and tests. State the root cause in one sentence before the first edit. Skip for a trivial one-line change.
 
 **Pace**
-Reproduce first: run the failing test or a one-line script that shows the bug in your first steps.
-After about 6 read/grep/glob calls without an edit, stop exploring and make your best edit; refine after the test result.
-Keep thinking short between tool calls; decide and act. Do not restate the file or the plan in prose.
+Reproduce first: run the failing test or a one-line script that shows the bug.
+After about 6 read/grep/glob calls without an edit, stop exploring and make your best edit; refine after the test.
+Keep thinking short between tool calls; decide and act. Do not restate the file or plan.
 Prefer several small edits, each quoting 3-8 lines from the latest read (line-number prefix removed), over one large edit; if old_string is not found, re-read that region, not retype from memory.
 Issue tool calls as real tool calls only, never written out in text.
 The turn has a step limit; at about 3/4 used, finish: run the check once more and give the Final reply.
+ - Don't simulate code in your head beyond a few lines: when you need to know what a function returns or how state evolves, run it - a one-line \`node -e\` / \`python -c\` call answers in seconds.
+ - If you notice you have been deliberating for long without a tool call, stop and act on the best current hypothesis: make the edit or run the check, and let the result correct you.
 
 **Minimal diffs.**
 Change only what the task needs. Keep the project's style. No drive-by refactors/reformatting. When a signature changes, update its callers in the same edit.
