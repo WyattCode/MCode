@@ -64,7 +64,7 @@ async function underElectron(root: string): Promise<MainResult> {
     )
     const verdict = path.join(work, "main.json")
     const electron = createRequire(import.meta.url)("electron") as unknown as string
-    const child = spawn(electron, [bundle, `--user-data-dir=${path.join(work, "profile")}`, verdict], { stdio: "ignore", windowsHide: true })
+    const child = spawn(electron, [bundle, `--user-data-dir=${path.join(work, "profile")}`, verdict], { stdio: "ignore", windowsHide: true, env: ((e) => { delete e.ELECTRON_RUN_AS_NODE; return e })({ ...process.env }) })
     await new Promise<void>((resolve) => child.on("close", () => resolve()))
     const text = await fs.readFile(verdict, "utf8").catch(() => "")
     return text ? (JSON.parse(text) as MainResult) : { error: "the helper wrote nothing" }

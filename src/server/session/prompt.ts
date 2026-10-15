@@ -100,13 +100,13 @@ export async function instructionValues(context: PromptContext): Promise<Instruc
 }
 
 /** The system prompt assembled from its instruction values, which may be a conversation's baseline rather than what is on disk now. */
-export function systemPromptFrom(agent: string, values: InstructionValues, memory?: PromptContext["memory"]): string {
+export function systemPromptFrom(agent: string, values: InstructionValues, memory?: PromptContext["memory"], options?: { local?: boolean; modelID?: string }): string {
   /*
    * The one agent prompt every model reads in every mode (session/prompts.ts).
    * It is the first section, so the cached prefix opens with the same bytes
    * whatever the model.
    */
-  const sections = [agentPrompt(agent)]
+  const sections = [agentPrompt(agent, options)]
 
   /*
    * Before the project's own files, and said to be the reader's rather than
@@ -328,7 +328,7 @@ async function projectInstructions(
   /* The web addresses last, each once, in the order they were configured. */
   const urls = [...new Set(patterns.filter((pattern) => /^https?:\/\//i.test(pattern)))]
   const fetched = await Promise.all(urls.map((url) => get(url).catch(() => "")))
-  const remote = urls.flatMap((url, at) => (fetched[at] ? [`<instructions source="${url}">\n${fetched[at]}\n</instructions>`] : []))
+  const remote = urls.flatMap((url, at) => (fetched[at] ? [`<instructions source="${url}">\n${fetched[at]}</instructions>`] : []))
 
   return [...local, ...remote].join("\n\n")
 }

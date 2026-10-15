@@ -46,7 +46,7 @@ export async function roundThirtyFiveChecks(check: Check, section: (name: string
 
     feed(watch, WANDER_CALLS - 1, 300)
     const second = watch.note()
-    check("twenty more and it is told to hand over to the user", /Stop investigating/.test(second ?? "") && /end your turn/.test(second ?? ""), second)
+    check("twenty more and it is told to hand over to the user", /Stop investigating/.test(second ?? "") && /concrete next step/.test(second ?? ""), second)
     feed(watch, WANDER_CALLS * 2, 400)
     check("and after that it is left alone", watch.note() === undefined)
 

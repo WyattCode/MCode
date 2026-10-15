@@ -13,6 +13,42 @@ export const STRUCTURED_RETRIES = 2
 export const STRUCTURED_REMINDER = `You have not returned your result yet. Call ${STRUCTURED_OUTPUT} now, once, with an object that matches its parameters.`
 
 /**
+ * The result shape an explore subagent is given when its caller asked for none.
+ *
+ * Explore is the read-only finder: its value to the parent is a precise answer
+ * about where things live and what was checked, not a wall of prose the parent
+ * has to re-read the project to trust. A fixed shape makes every explore result
+ * carry the same fields - what was found, which paths it touches, what was
+ * already looked at, and what is still open - so the parent can act on it
+ * without a second round trip. The required three are the ones a parent cannot
+ * reconstruct from the rest: the finding, the paths it concerns, and the risks
+ * left standing.
+ */
+export const DEFAULT_EXPLORE_OUTPUT_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    summary: { type: "string", description: "One or two sentences on what was found" },
+    files: { type: "array", items: { type: "string" }, description: "Relevant paths read or implicated" },
+    entry_points: { type: "array", items: { type: "string" }, description: "Key symbols or entry files" },
+    checks_run: { type: "array", items: { type: "string" }, description: "Inspections or commands already run; empty if none" },
+    remaining_risks: { type: "array", items: { type: "string" }, description: "Open questions or risks for the parent" },
+    suggested_next: { type: "string", description: "Concrete next step for the parent" },
+  },
+  required: ["summary", "files", "remaining_risks"],
+}
+
+/**
+ * The output schema a subagent gets when its caller named none.
+ *
+ * Explore always has one: a finder's answer is meant to be read as data. A
+ * general subagent keeps its prose result unless the caller asked for a schema,
+ * since its work is usually a change whose shape is whatever the task said.
+ */
+export function defaultOutputSchema(type: "explore" | "general"): Record<string, unknown> | undefined {
+  return type === "explore" ? DEFAULT_EXPLORE_OUTPUT_SCHEMA : undefined
+}
+
+/**
  * The tool a subagent returns structured output through: its parameters are
  * the schema it was given, so the arguments are checked against it before the
  * call counts. A schema that is not an object is wrapped under `result`.

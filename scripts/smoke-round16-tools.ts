@@ -17,6 +17,7 @@ import { calls, engine, type Check } from "./smoke-round5"
 import { INTERACTIVE_REFUSAL, bashDescription } from "../src/server/tool/bash"
 import { changed, trimDiff, unifiedDiff } from "../src/server/diff"
 import { EditTool, WriteTool } from "../src/server/tool/edit"
+import { recordRead } from "../src/server/tool/read-tracker"
 import type { ToolContext } from "../src/server/tool/types"
 import { ListExternalSessionsTool, ReadExternalSessionTool } from "../src/server/tool/external-session"
 import { CLAUDE_CODE_AGENT } from "../src/server/external-sessions"
@@ -113,6 +114,8 @@ export async function roundSixteenToolChecks(check: Check, section: (name: strin
     await fs.mkdir(project, { recursive: true })
     const target = path.join(project, "deep.ts")
     await fs.writeFile(target, deep, "utf8")
+    const stamp = await fs.stat(target)
+    await recordRead("ses_c3", target, { mtimeMs: stamp.mtimeMs, size: stamp.size }, deep)
     const asked: string[] = []
     const context = {
       sessionID: "ses_c3",

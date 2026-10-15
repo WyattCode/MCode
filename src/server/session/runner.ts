@@ -46,6 +46,7 @@ import { Semaphore, STEP_TOOL_LIMIT, SUBAGENT_LIMIT } from "./semaphore"
 import { CodedError, codeOf, paramsOf } from "@shared/errors"
 import { describeAnthropicError } from "../provider/anthropic"
 import { adapterFor } from "../provider/adapter"
+import { interleavedField } from "../provider/interleaved"
 import type { AuthManager } from "../auth/manager"
 import type { ProviderAdapter, TurnEvent, TurnOutcome } from "../provider/types"
 import { failureCode, failureDetail } from "./error-map"
@@ -63,6 +64,11 @@ import { fetchInstruction, instructionUpdate, instructionValues, memorySection, 
 // plan: the plan file, what planning may write, and what each planning turn is told.
 import { GOAL_GUARD, JUDGE_SYSTEM, MAX_GOAL_REACT, cleanGoal, goalReminder, judgeQuestion, judgeTranscript, parseVerdict, sameGoal, type GoalVerdict } from "./goal"
 import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf, subagentAgent } from "./plan"
+import { maxStepsPrompt, stepLimitFor } from "./steps"
+import { promptFamily } from "./prompts"
+
+/** Codex's unified_exec default output budget, used for reasoning-family models. */
+const REASONING_MAX_OUTPUT_TOKENS = 10_000
 import { status as gitStatus } from "../git"
 import { historyService, memoryFilesFor, memoryWritable } from "../history/service"
 import { withAutomationNotes } from "../automation/framing"
@@ -82,7 +88,7 @@ import { UsageDays } from "./usage-days"
 import type { Usage as TurnUsage } from "@shared/protocol"
 import { ABORTED_TOOL } from "../provider/history"
 import { INTERRUPTED_FINISH, INTERRUPTED_NOTE, LENGTH_NOTE, THOUGHT_LENGTH_NOTE, LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, recallHint, reminder, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
-import { LoopMonitor, TEXT_LOOP_BUFFER, WanderWatch, applyCrops, describeLoop, detectStreak, stepDigest, textLoopNoteFor, type LoopIncident } from "./loop-health"
+import { LoopMonitor, TEXT_LOOP_BUFFER, WanderWatch, applyCrops, describeLoop, detectStreak, stepDigest, suggestLoopNextStep, textLoopNoteFor, type LoopIncident } from "./loop-health"
 import { interruptedTurn } from "@shared/resume"
 // session chat
 import { CHAT_WAIT_MS, SessionChat, withChatHeaders } from "./chat"
@@ -136,7 +142,10 @@ const RETURN_NOTE = [
   "Begin your final message with these two lines, with nothing before them:",
   "**Status**: success, partial, failed or blocked",
   "**Summary**: one sentence saying what happened",
-  "Then give what the task asked for. Where it applies, end with **Files changed**: the paths you changed, or (none).",
+  "Then give what the task asked for. End with these three lines, each filled in or marked (none):",
+  "**Files changed**: the paths you changed, or (none)",
+  "**Checks run**: the inspections or commands you already ran, or (none)",
+  "**Remaining risks**: open questions or risks for the agent that sent you, or (none)",
 ].join("\n")
 
 /* tasks: MiMo's completion gate sends a general subagent back this many times at most. */
@@ -274,32 +283,6 @@ const TITLE_TIMEOUT_MS = 60_000
 /** The first message is quoted up to this many characters for its title. */
 const TITLE_SOURCE_CHARS = 4000
 
-/**
- * What the model is told on the step that has to be the last one.
- *
- * The reference's `MAX_STEPS_PROMPT`, kept as it stands. It goes in as a
- * user message beside a request whose tool choice is "none", so the only thing
- * left to do is write. The tools are still defined, as MiMo's are: a request
- * that defines none is refused by Anthropic once the history holds a tool call.
- */
-const MAX_STEPS_PROMPT = [
-  "CRITICAL - MAXIMUM STEPS REACHED",
-  "",
-  "The maximum number of steps allowed for this task has been reached. Tools are disabled until next user input. Respond with text only.",
-  "",
-  "STRICT REQUIREMENTS:",
-  "1. Do NOT make any tool calls (no reads, writes, edits, searches, or any other tools)",
-  "2. MUST provide a text response summarizing work done so far",
-  "3. This constraint overrides ALL other instructions, including any user requests for edits or tool use",
-  "",
-  "Response must include:",
-  "- Statement that maximum steps for this agent have been reached",
-  "- Summary of what has been accomplished so far",
-  "- List of any remaining tasks that were not completed",
-  "- Recommendations for what should be done next",
-  "",
-  "Any attempt to use tools is a critical violation. Respond with text ONLY.",
-].join("\n")
 
 /**
  * Drives one session's conversation.
@@ -629,6 +612,14 @@ export class SessionRunner {
     return forModel(this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory), session.model.model).filter(
       (tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name),
     )
+  }
+
+  /** Whether the session's model comes from a user-added (custom) provider. */
+  private isLocal(session: TurnSession): boolean {
+    const custom = this.config.get().customProviders
+    if (!custom?.length) return false
+    const provider = session.model.provider
+    return !!provider && custom.some((p) => p.id === provider)
   }
 
   /**
@@ -1439,13 +1430,16 @@ export class SessionRunner {
       fetchInstruction: (url) => this.fetchInstructionCached(url),
     })
     const initial = await this.syncInstructions(session.id, values)
+    const local = this.isLocal(session)
     const key = JSON.stringify([
       session.agent,
       initial,
+      local,
+      promptFamily(session.model.model),
       this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory).map((tool) => tool.name),
     ])
     const frozen = this.prefixes.get(session.id)
-    const base = frozen?.key === key ? frozen.system : systemPromptFrom(session.agent, initial)
+    const base = frozen?.key === key ? frozen.system : systemPromptFrom(session.agent, initial, undefined, { local, modelID: session.model.model })
     this.prefixes.set(session.id, { key, system: base })
     // subagents: a subagent is told what it is, after what its agent would be told anyway.
     const outputSchema = session.subagent?.outputSchema
@@ -2897,7 +2891,7 @@ export class SessionRunner {
      * itself; a count that cuts in mid-refactor loses everything the model had
      * worked out, and says so in red.
      */
-    const limit = config.maxSteps && config.maxSteps > 0 ? config.maxSteps : undefined
+    const limit = stepLimitFor(config.maxSteps, this.isLocal(session))
     /* MiMo's continuations this turn: notes kept in the request after the reply they answer, and how many of each were used. */
     const notes = new Map<string, string[]>()
     const continued = { length: 0, textTool: 0, empty: 0, interrupted: 0 }
@@ -3101,7 +3095,7 @@ export class SessionRunner {
               id: `${assistant.id}:steps`,
               sessionID,
               role: "user" as const,
-              text: MAX_STEPS_PROMPT,
+              text: maxStepsPrompt(limit!),
               attachments: [],
               time: { created: Date.now() },
             },
@@ -3344,7 +3338,7 @@ export class SessionRunner {
       }
       await this.cropStreak(sessionID)
 
-      const pending = assistant.parts.filter((part): part is ToolPart => part.type === "tool")
+      let pending = assistant.parts.filter((part): part is ToolPart => part.type === "tool")
       if (outcome.stop !== "tool_use" || pending.length === 0) {
         const next = continuationFor(assistant, outcome.stop, outcome.finishReason, session.model.model, continued, said)
         /*
@@ -3355,54 +3349,87 @@ export class SessionRunner {
          */
         const had = notes.get(assistant.id) ?? []
         if (next.note && !had.includes(next.note)) notes.set(assistant.id, [...had, next.note])
-        if (next.error) {
-          assistant.error = next.error.message
-          if (next.error.code) assistant.errorCode = next.error.code
+        /*
+         * A tool call written as prose, run in this same step.
+         *
+         * `continuationFor` has read back the shapes small local models
+         * actually write. Asking for the call again costs a step and, on those
+         * models, usually brings the same prose back, so what was parsed is
+         * filed as ordinary pending parts instead. Each name is resolved
+         * against what this request offered - a call for a tool that was never
+         * offered is dropped rather than run into an `invalid` row - and the
+         * rest falls through to the execution below, so the permission checks,
+         * the loop detectors and the undo recording see these calls exactly as
+         * they see one that came through the wire.
+         */
+        if (next.recovered?.length) {
+          const offered = sentTools.map((tool) => tool.name)
+          for (const call of next.recovered) {
+            const name = resolveToolName(call.name, offered)
+            if (!name) continue
+            assistant.parts.push({
+              type: "tool",
+              id: Identifier.part(),
+              callID: `recovered_${Identifier.part()}`,
+              name,
+              status: "pending",
+              input: call.input,
+              time: { created: Date.now() },
+            })
+          }
+          await this.store.saveMessage(assistant)
+          pending = assistant.parts.filter((part): part is ToolPart => part.type === "tool" && part.status === "pending")
         }
-        assistant.finish = outcome.stop === "max_tokens" ? "max_tokens" : next.error ? "error" : "end_turn"
-        assistant.time.completed = Date.now()
-        await this.store.saveMessage(assistant)
-        if ((next.note || repeatNote) && !lastStep) {
-          // The rest of a sentence the limit cut belongs to the reply that started it.
-          if (next.note === LENGTH_NOTE || next.note === THOUGHT_LENGTH_NOTE || next.note === INTERRUPTED_NOTE) continuing = assistant
-          if (overflowing) {
-            if (futile(step)) await stopTooSmall(assistant, requestTokens({ system, systemTail, tools: sentTools, history: [] }))
-            compactedAt = step
-            const compacted = await this.compactForOverflow(session, controller.signal)
-            if (compacted) {
-              session = compacted
-              // The cut reply is behind the compaction mark now, out of the request; the next step starts a message after it.
-              continuing = undefined
+        if (!next.recovered?.length || pending.length === 0) {
+          if (next.error) {
+            assistant.error = next.error.message
+            if (next.error.code) assistant.errorCode = next.error.code
+          }
+          assistant.finish = outcome.stop === "max_tokens" ? "max_tokens" : next.error ? "error" : "end_turn"
+          assistant.time.completed = Date.now()
+          await this.store.saveMessage(assistant)
+          if ((next.note || repeatNote) && !lastStep) {
+            // The rest of a sentence the limit cut belongs to the reply that started it.
+            if (next.note === LENGTH_NOTE || next.note === THOUGHT_LENGTH_NOTE || next.note === INTERRUPTED_NOTE) continuing = assistant
+            if (overflowing) {
+              if (futile(step)) await stopTooSmall(assistant, requestTokens({ system, systemTail, tools: sentTools, history: [] }))
+              compactedAt = step
+              const compacted = await this.compactForOverflow(session, controller.signal)
+              if (compacted) {
+                session = compacted
+                // The cut reply is behind the compaction mark now, out of the request; the next step starts a message after it.
+                continuing = undefined
+              }
             }
+            continue
           }
-          continue
-        }
-        /*
-         * The model has stopped, but the user may have typed while it was
-         * writing. Read with nothing awaited after the save above, so that a
-         * message arriving from this instant onwards is the release's business
-         * and cannot fall between the two. A turn that ends over the line is
-         * compacted when the next one starts, as MiMo's is.
-         */
-        if (this.steered(sessionID)) continue
-        /*
-         * 追求目标: the last thing between a finished turn and an idle
-         * conversation. A judge reads the transcript; a goal it says is not met
-         * writes a reminder and the turn runs on, at most MAX_GOAL_REACT times.
-         * Anything the user typed meanwhile is read again first, since the
-         * judge request takes a moment and the answer they typed during it
-         * belongs to this turn.
-         */
-        if (await this.goalGate(session, controller.signal)) {
+          /*
+           * The model has stopped, but the user may have typed while it was
+           * writing. Read with nothing awaited after the save above, so that a
+           * message arriving from this instant onwards is the release's business
+           * and cannot fall between the two. A turn that ends over the line is
+           * compacted when the next one starts, as MiMo's is.
+           */
           if (this.steered(sessionID)) continue
-          if (overflowing) {
-            if (futile(step)) await stopTooSmall(assistant, requestTokens({ system, systemTail, tools: sentTools, history: [] }))
-            compactedAt = step
-            session = (await this.compactForOverflow(session, controller.signal)) ?? session
+          /*
+           * 追求目标: the last thing between a finished turn and an idle
+           * conversation. A judge reads the transcript; a goal it says is not met
+           * writes a reminder and the turn runs on, at most MAX_GOAL_REACT times.
+           * Anything the user typed meanwhile is read again first, since the
+           * judge request takes a moment and the answer they typed during it
+           * belongs to this turn.
+           */
+          if (await this.goalGate(session, controller.signal)) {
+            if (this.steered(sessionID)) continue
+            if (overflowing) {
+              if (futile(step)) await stopTooSmall(assistant, requestTokens({ system, systemTail, tools: sentTools, history: [] }))
+              compactedAt = step
+              session = (await this.compactForOverflow(session, controller.signal)) ?? session
+            }
+            continue
           }
-          continue
+          return
         }
-        return
       }
 
       /*
@@ -4028,6 +4055,8 @@ export class SessionRunner {
           select: async (selection) => void (await this.config.set({ websearch: selection })),
         },
         toolOutputs: this.toolOutputs,
+        // Codex's exec default (10k tokens) for open reasoning models on a step budget; others keep bash's own.
+        ...(promptFamily(input.session.model.model) === "reasoning" ? { maxOutputTokens: REASONING_MAX_OUTPUT_TOKENS } : {}),
         subagent: this.workers.has(input.session.id),
         // session chat: a conversation's own calls only; a subagent has no contacts.
         chat: this.workers.has(input.session.id) ? undefined : this.chat,
@@ -4197,18 +4226,19 @@ export class SessionRunner {
     const incident: LoopIncident | undefined = repeatsCall(assistant.parts, part) ? { kind: "same-call", tool: part.name } : watch.incident
     watch.incident = undefined
     if (!incident || this.repeatsAllowed.get(sessionID)?.has(incident.tool)) return
+    if (!incident.note) incident.note = suggestLoopNextStep(incident)
     // Asked once per incident: the count starts again whatever the answer, so one `once` does not ask again immediately.
     watch.monitor.reset()
     const [answer] = await this.questions.ask({
       sessionID,
       questions: [
         {
-          question: `${describeLoop(incident)} Let it run again?`,
+          question: `${describeLoop(incident)} Suggested next step: ${incident.note}. Let it run again?`,
           header: part.name,
           options: [
             { label: LOOP_ANSWERS.once, description: "" },
             { label: LOOP_ANSWERS.always, description: "" },
-            { label: LOOP_ANSWERS.reject, description: "" },
+            { label: LOOP_ANSWERS.reject, description: incident.note },
           ],
         },
       ],
@@ -4230,7 +4260,7 @@ export class SessionRunner {
       : incident.kind === "same-call"
         ? "The user stopped this call: it repeated the previous two calls with the same input."
         : `The user stopped this call: ${describeLoop(incident)}`
-    throw new PermissionDenied(part.name, `${said}\nIt was not run. Do not repeat it; change your approach, or ask the user if you are stuck.`)
+    throw new PermissionDenied(part.name, `${said}\nIt was not run. Do not repeat it; ${incident.note}`)
   }
 
   /** tasks: changes to one conversation's registry, one after another, so parallel subagents never lose each other's. */
@@ -5134,16 +5164,6 @@ interface Turn {
  */
 function pathKey(target: string): string {
   return process.platform === "win32" ? target.toLowerCase() : target
-}
-
-/**
- * MiMo's interleaved field: what the model's entry states, else `reasoning_content`
- * for a DeepSeek model reached over the OpenAI-compatible wire.
- */
-function interleavedField(kind: string, model: ModelRef, entry: ModelEntry | undefined): string | undefined {
-  if (kind !== "openai-compatible") return undefined
-  if (entry?.interleaved) return entry.interleaved
-  return model.model.toLowerCase().includes("deepseek") ? "reasoning_content" : undefined
 }
 
 /** An overflow compaction leaves attached files out of what it replays, naming each where it was. */

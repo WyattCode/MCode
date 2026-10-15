@@ -982,9 +982,9 @@ export async function roundThirtyOneChecks(check: Check, section: (name: string)
         const retold = await search("unknown value")
         check("a setting naming an unknown service is asked about again", questions.length === 1 && stored === "auto" && !(retold instanceof Error), { questions: questions.length, stored, retold: String(retold) })
 
-        // Offered last, and not at all once turned off.
-        // R36's app tool came after it; websearch is still after everything that came before it.
-        check("websearch comes after every earlier tool, so every cached order stays", TOOLS.at(-2)?.name === "websearch" && TOOLS.at(-1)?.name === "app")
+        // Offered after every earlier tool, and not at all once turned off.
+        // R36's app tool and P1's lsp came after it; websearch is still after everything that came before it.
+        check("websearch comes after every earlier tool, so every cached order stays", TOOLS.at(-3)?.name === "websearch" && TOOLS.at(-2)?.name === "app" && TOOLS.at(-1)?.name === "lsp")
         const offered = (webSearch?: boolean) => toolsForTurn("build", { voiceFeedback: false, webSearch }).map((tool) => tool.name)
         check("it is offered until the user turns it off", offered(undefined).includes("websearch") && offered(true).includes("websearch") && !offered(false).includes("websearch"))
         check("it counts as a tool that only reads", reachOf("websearch") === "reads")

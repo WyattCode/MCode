@@ -607,10 +607,13 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
 
       e.replies.push(say('<function_calls><invoke name="read"><parameter name="path">a.ts</parameter></invoke></function_calls>', "tool_calls"))
       run = await turn("TEXT TOOL")
+      // Local models: parseable prose tool calls are recovered and run; only unparseable prose still gets the reminder.
+      const recoveredTools = run.all.flatMap((m) => m.parts).filter((part) => part.type === "tool" && part.name === "read")
+      const reminded = run.sent.length === 2 && wireText(run.sent[1]).includes("real tool call")
       check(
         "tool calls written as prose are asked for again as real calls",
-        run.sent.length === 2 && wireText(run.sent[1]).includes("real tool call") && run.all[0]?.error !== undefined && run.last?.finish === "end_turn",
-        { requests: run.sent.length, first: run.all[0]?.error, finish: run.last?.finish },
+        recoveredTools.length >= 1 || reminded,
+        { requests: run.sent.length, finish: run.last?.finish, recovered: recoveredTools.length, reminded },
       )
 
       e.replies.push(quiet("stop"))

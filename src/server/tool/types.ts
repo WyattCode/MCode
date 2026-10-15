@@ -62,6 +62,8 @@ export interface ToolContext {
   chat?: SessionChat
   /** Where outputs the shared cap cut are saved; a tool may read those wherever the project is. */
   toolOutputs?: ToolOutputs
+  /** Default bash output budget in tokens for this conversation's model, when it differs from the tool's own default. */
+  maxOutputTokens?: number
   /** skills: every skill this conversation can reach, read fresh from disk. */
   skills?: () => Promise<SkillInfo[]>
   /** tasks: the conversation's task registry; a subagent's is its parent's. */

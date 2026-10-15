@@ -9,6 +9,7 @@ import { relative, resolvePath } from "./fs-util"
 import { clearedNote } from "../session/prune"
 import { builtinSkillsRoot } from "../skill"
 import { shrunkImage } from "../provider/attachment-parts"
+import { recordRead } from "./read-tracker"
 import {
   READ_AUDIO_TYPES,
   READ_IMAGE_SOURCE_BYTES,
@@ -262,6 +263,7 @@ async function linesOf(file: string, offset: number, limit: number) {
   let count = 0
   let cut = false
   let more = false
+  let lineCut = false
   try {
     for await (const text of reader) {
       count++
@@ -270,7 +272,11 @@ async function linesOf(file: string, offset: number, limit: number) {
         more = true
         continue
       }
-      const line = text.length > MAX_LINE_LENGTH ? `${text.slice(0, MAX_LINE_LENGTH)}… (line cut at ${MAX_LINE_LENGTH} characters)` : text
+      let line = text
+      if (text.length > MAX_LINE_LENGTH) {
+        lineCut = true
+        line = `${text.slice(0, MAX_LINE_LENGTH)}… (line cut at ${MAX_LINE_LENGTH} characters)`
+      }
       const size = Buffer.byteLength(line, "utf8") + (raw.length > 0 ? 1 : 0)
       if (bytes + size > MAX_BYTES) {
         cut = true
@@ -284,7 +290,7 @@ async function linesOf(file: string, offset: number, limit: number) {
     reader.close()
     stream.destroy()
   }
-  return { raw, count, cut, more }
+  return { raw, count, cut, more, lineCut }
 }
 
 export const ReadTool: ToolDefinition = {
@@ -391,7 +397,7 @@ export const ReadTool: ToolDefinition = {
 
     if (isBinary(target, sample)) throw new ToolError(`Cannot read binary file: ${display}`)
 
-    const { raw, count, cut, more } = await linesOf(target, offset, limit)
+    const { raw, count, cut, more, lineCut } = await linesOf(target, offset, limit)
     if (count < offset && !(count === 0 && offset === 1)) {
       throw new ToolError(`Offset ${offset} is past the end of ${display}, which has ${count} lines`)
     }
@@ -404,6 +410,21 @@ export const ReadTool: ToolDefinition = {
     else output += `\n\n(End of file - ${count} lines in all)`
     output += "\n</content>"
     output = withInstructions(output, loaded)
+
+    /*
+     * A content hash is only safe when this read saw the whole file exactly:
+     * a page, a byte cut or a line cut is not the file's text.
+     */
+    let fullText: string | undefined
+    if (offset === 1 && !cut && !more && !lineCut) {
+      const text = await fs.readFile(target, "utf8").catch(() => undefined)
+      if (text !== undefined) {
+        const after = await fs.stat(target).catch(() => undefined)
+        if (after && after.mtimeMs === stat.mtimeMs && after.size === stat.size) fullText = text
+      }
+    }
+
+    recordRead(context.sessionID, target, { mtimeMs: stat.mtimeMs, size: stat.size }, fullText)
 
     return {
       output,

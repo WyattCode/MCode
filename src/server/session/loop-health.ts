@@ -1,4 +1,13 @@
 import type { AssistantMessage, AssistantPart, MessageCrop, ToolPart } from "@shared/protocol"
+import {
+  concreteStepFromBashRetry,
+  formatStuckSuggestion,
+  formatVerifyLoopNote,
+  getVerifyLoopRound,
+  incrementVerifyLoop,
+  resetVerifyLoop,
+  verifyLoopMax,
+} from "./verify-loop"
 
 /**
  * Whether a turn is getting anywhere, and what to do when it plainly is not.
@@ -50,13 +59,13 @@ const VERIFY_COMMAND =
 
 export type LoopIncident =
   /** The third call in a row with the same tool and byte-identical arguments. */
-  | { kind: "same-call"; tool: string }
+  | { kind: "same-call"; tool: string; note?: string }
   /** The same change written to one file again, near enough that the difference is cosmetic. */
-  | { kind: "edit-repeat"; tool: string; path: string; count: number; similarity: number }
+  | { kind: "edit-repeat"; tool: string; path: string; count: number; similarity: number; note?: string }
   /** The same command, normalised, failing again with nothing in between that changed its output. */
-  | { kind: "bash-retry"; tool: string; command: string; count: number }
+  | { kind: "bash-retry"; tool: string; command: string; count: number; note?: string }
   /** Four actions of one kind in a row, none of which moved anything. */
-  | { kind: "action-streak"; tool: string; action: string; count: number }
+  | { kind: "action-streak"; tool: string; action: string; count: number; note?: string }
 
 /** What the user is asked about, in one sentence. The model never reads this; the question does. */
 export function describeLoop(incident: LoopIncident): string {
@@ -69,6 +78,20 @@ export function describeLoop(incident: LoopIncident): string {
       return `This command has failed ${incident.count} times with nothing in between changing what it printed: ${incident.command}`
     case "action-streak":
       return `${incident.count} ${incident.action} calls in a row have turned nothing up.`
+  }
+}
+
+/** A concrete next step for an incident, in the same spirit as the verify-loop notes. */
+export function suggestLoopNextStep(incident: LoopIncident): string {
+  switch (incident.kind) {
+    case "same-call":
+      return "Change the arguments or switch tools; do not repeat the identical call."
+    case "edit-repeat":
+      return `Re-read ${incident.path}, make a smaller distinct edit, or run the failing check first.`
+    case "bash-retry":
+      return concreteStepFromBashRetry(incident.command)
+    case "action-streak":
+      return "Re-read the task goal; try a different search query or open a known entry file."
   }
 }
 
@@ -159,7 +182,15 @@ export class LoopMonitor {
   private action?: { kind: string; progress: boolean }
   private streak = 0
 
+  constructor(private readonly sessionID?: string) {}
+
   consume(part: ToolPart): LoopIncident | undefined {
+    const incident = this.detect(part)
+    if (incident && !incident.note) incident.note = suggestLoopNextStep(incident)
+    return incident
+  }
+
+  private detect(part: ToolPart): LoopIncident | undefined {
     if (part.status === "pending" || part.status === "running") return undefined
     if (EDIT_TOOLS.has(part.name)) return this.edit(part)
     if (part.name === "bash") return this.bash(part)
@@ -191,6 +222,19 @@ export class LoopMonitor {
     this.verify.clear()
     this.action = undefined
     this.streak = 0
+    if (this.sessionID) resetVerifyLoop(this.sessionID)
+  }
+
+  private verifyNote(problems: number, command?: string): string | undefined {
+    if (!this.sessionID) return undefined
+    const round = getVerifyLoopRound(this.sessionID) || incrementVerifyLoop(this.sessionID)
+    const max = verifyLoopMax()
+    const concrete = command
+      ? concreteStepFromBashRetry(command)
+      : "Re-read the failing output, change the code (not the test), then rerun the narrowest check."
+    return round > max
+      ? formatStuckSuggestion(problems, round, max, concrete)
+      : formatVerifyLoopNote(problems, round, max, concrete)
   }
 
   private edit(part: ToolPart): LoopIncident | undefined {
@@ -230,14 +274,22 @@ export class LoopMonitor {
     const progress = ok || (before !== undefined && before.result !== result)
     if (verifying) this.verify.set(command, { ok, result })
     if (ok) this.failed.delete(command)
+    if (verifying && !ok && this.sessionID) incrementVerifyLoop(this.sessionID)
+    if (verifying && ok && this.sessionID) resetVerifyLoop(this.sessionID)
     let count = 0
     if (!ok) {
       count = progress ? 1 : (this.failed.get(command) ?? 0) + 1
       this.failed.set(command, count)
     }
     const retry: LoopIncident | undefined = count >= BASH_RETRIES ? { kind: "bash-retry", tool: part.name, command, count } : undefined
+    if (retry && verifying && this.sessionID) retry.note = this.verifyNote(1, command)
     if (!verifying) return retry
-    return retry ?? this.track({ kind: "verify", progress }, part.name)
+    if (retry) return retry
+    const streak = this.track({ kind: "verify", progress }, part.name)
+    if (streak && streak.kind === "action-streak" && streak.action === "verify" && this.sessionID) {
+      streak.note = this.verifyNote(1, command)
+    }
+    return streak
   }
 
   /** A run of same-kind actions, broken by anything that got somewhere or by a different kind of action. */
@@ -275,7 +327,7 @@ const WANDER_NOTE = [
 
 const WANDER_HANDOVER = [
   `Another ${WANDER_CALLS} calls have gone by without changing a file the project already had. This line of investigation is not working.`,
-  "Stop investigating. Tell the user what you have established, what you suspect and why, and what you would need from them, and end your turn.",
+  "Stop investigating. Tell the user what you have established, what you suspect and why, and the concrete next step to try (re-state the failing check, re-read the last edited file, or run the narrowest check); do not stop at a request for advice.",
 ].join(" ")
 
 /**
@@ -345,12 +397,12 @@ export function stepDigest(text: string): string {
 
 const TEXT_LOOP_NOTE = [
   "Your last few steps said the same thing over again, word for word.",
-  "Stop and do something different: a different tool or different arguments, a different approach, or - if something is blocking you - say plainly what it is and ask the user.",
+  "Stop and do something different: a different tool or different arguments, a different approach, or - if something is blocking you - say plainly what it is and the concrete next step you will try.",
 ].join(" ")
 
 const TEXT_LOOP_REPLAN = [
   "You are still repeating the same step after being pulled out of it once.",
-  "The approach you are on has failed. Say what you were trying to do and why it did not work, then ask the user how to go on rather than trying it again.",
+  "The approach you are on has failed. Say what you were trying to do and why it did not work, then take a concrete next step (re-read the relevant file, run the narrowest failing check, or narrow the failing assertion) instead of trying the same thing again.",
 ].join(" ")
 
 /**

@@ -60,7 +60,8 @@ function freePort(): Promise<number> {
 export async function roundThirtySixChecks(check: Check, section: (name: string) => void): Promise<void> {
   section("Round 36: the app tool - offered to the model, and how it reads a page")
   {
-    check("offered last, after every earlier tool, so no cached prefix moves", TOOLS.at(-1)?.name === "app")
+    // P1's lsp may be appended after it; app still follows every earlier tool.
+    check("offered after every earlier tool, so no cached prefix moves", TOOLS.at(-2)?.name === "app" && TOOLS.at(-1)?.name === "lsp")
     check("asked about like a command, and treated as able to change anything", AppTool.permission === "bash" && reachOf("app") === "opaque")
     const description = AppTool.description
     check("its description tells the model to batch its steps", /one do/.test(description) && /fast/.test(description))
@@ -197,7 +198,7 @@ export async function roundThirtySixChecks(check: Check, section: (name: string)
     const electron = createRequire(import.meta.url)("electron") as unknown as string
     const port = await freePort()
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), "mcode-r36-electron-"))
-    const child = spawn(electron, [`--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, page], { stdio: "ignore" })
+    const child = spawn(electron, [`--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, page], { stdio: "ignore", env: ((e) => { delete e.ELECTRON_RUN_AS_NODE; return e })({ ...process.env }) })
     const asked: string[] = []
     const context = contextFor("r36-electron", asked)
     try {
@@ -213,12 +214,18 @@ export async function roundThirtySixChecks(check: Check, section: (name: string)
       check("attach reaches the app's window by its title", Boolean(attached) && /\[\d+\] tab "计数"/.test(attached?.output ?? ""), attached?.output ?? last)
       // The loop above retries while Electron starts, and each try is its own call with its own question.
       check("and every call asks, naming the port", asked.length >= 1 && asked.every((subject) => subject === `127.0.0.1:${port}`), asked)
-      const clicked = await AppTool.execute({ action: "do", steps: [{ action: "click", ref: refOf(attached?.output ?? "", "计数") }] }, context)
-      check("a click in the Electron window works the same way", /当前计数：0/.test(clicked.output), clicked.output)
-      check("Electron's %c-styled warnings arrive as plain words", !/%c/.test(attached?.output ?? ""), attached?.output)
-      await AppTool.execute({ action: "close" }, context)
-      await new Promise((resolve) => setTimeout(resolve, 300))
-      check("closing only lets go: the app itself keeps running", child.exitCode === null)
+      if (attached) {
+        const clicked = await AppTool.execute({ action: "do", steps: [{ action: "click", ref: refOf(attached.output ?? "", "计数") }] }, context)
+        check("a click in the Electron window works the same way", /当前计数：0/.test(clicked.output), clicked.output)
+        check("Electron's %c-styled warnings arrive as plain words", !/%c/.test(attached.output ?? ""), attached.output)
+        await AppTool.execute({ action: "close" }, context)
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        check("closing only lets go: the app itself keeps running", child.exitCode === null)
+      } else {
+        check("a click in the Electron window works the same way", false, "attach never succeeded")
+        check("Electron's %c-styled warnings arrive as plain words", false, "attach never succeeded")
+        check("closing only lets go: the app itself keeps running", false, "attach never succeeded")
+      }
     } finally {
       await closeAllApps()
       child.kill()
