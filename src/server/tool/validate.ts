@@ -37,12 +37,16 @@ function fits(expected: string, value: unknown): boolean {
   return actual === expected
 }
 
+function schemaTypes(schema: Schema): string[] {
+  const declared = schema.type
+  return typeof declared === "string" ? [declared] : Array.isArray(declared) ? declared.filter((t): t is string => typeof t === "string") : []
+}
+
 function visit(schema: Schema, value: unknown, at: string, problems: string[]): void {
   if (problems.length >= MAX_PROBLEMS) return
   const name = at || "arguments"
 
-  const declared = schema.type
-  const types = typeof declared === "string" ? [declared] : Array.isArray(declared) ? declared.filter((t): t is string => typeof t === "string") : []
+  const types = schemaTypes(schema)
   if (types.length && !types.some((type) => fits(type, value))) {
     problems.push(`${name} should be ${types.join(" or ")}, got ${typeOf(value)}`)
     return
@@ -87,9 +91,42 @@ export function argumentProblems(schema: Schema, input: unknown): string[] {
  * It has to say that nothing ran, so the model does not assume a half-done
  * change, and what to send instead, so the retry is not the same call again.
  */
-export function refusedArgumentsNote(tool: string, problems: string[]): string {
-  return (
+function parameterSummary(schema?: Schema): string {
+  if (!schema || !isRecord(schema)) return ""
+
+  const properties = isRecord(schema.properties) ? schema.properties : {}
+  const required = Array.isArray(schema.required) ? schema.required.filter((key): key is string => typeof key === "string") : []
+  const entries = Object.entries(properties).slice(0, 12)
+  if (!entries.length) return ""
+
+  const parts = entries.map(([name, rule]) => {
+    const flags: string[] = []
+
+    if (isRecord(rule)) {
+      const types = schemaTypes(rule)
+      flags.push(types.length ? types.join(" or ") : "any")
+
+      if (required.includes(name)) flags.push("required")
+
+      if (Array.isArray(rule.enum)) {
+        const options = rule.enum.slice(0, 8).map((option) => (typeof option === "string" ? option : JSON.stringify(option)))
+        if (options.length) flags.push(`enum: ${options.join("|")}${rule.enum.length > 8 ? "..." : ""}`)
+      }
+    } else {
+      flags.push("any")
+    }
+
+    return `${name} (${flags.join(", ")})`
+  })
+
+  return `Expected parameters: ${parts.join(", ")}.`
+}
+
+export function refusedArgumentsNote(tool: string, problems: string[], schema?: Schema): string {
+  const base =
     `The ${tool} call was not run because its arguments did not match the tool's parameters: ` +
     `${problems.join("; ")}. Nothing was changed. Call ${tool} again with arguments that match its parameters.`
-  )
+
+  const summary = parameterSummary(schema)
+  return summary ? `${base} ${summary}` : base
 }
