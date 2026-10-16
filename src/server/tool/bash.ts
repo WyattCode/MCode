@@ -13,6 +13,7 @@ import { gitBash, platformShell, which, windowsPath } from "../shell-path"
 import { mergeConflictNotice } from "./merge-conflict"
 import { killTree } from "../kill-tree"
 import { windowsOfTree } from "../appdrive/windows"
+import { noteShellRun } from "./test-memory"
 
 const DEFAULT_TIMEOUT = 120_000
 
@@ -707,6 +708,11 @@ export const BashTool: ToolDefinition = {
         // A merge or rebase this left stopped on conflicts: the note says to back out and hand the conflict over.
         output += await mergeConflictNotice(cwd, command, output)
         if (cut && file) output += `\n\nThe whole output is saved at ${file}`
+        try {
+          noteShellRun(context.sessionID, cwd, command, raw, code)
+        } catch {
+          // Test-memory bookkeeping must never change shell tool behavior.
+        }
         resolve({
           output,
           title: description || command,

@@ -10,6 +10,7 @@ import { checkFresh, recordWrite, wasRead } from "./read-tracker"
 import { guardFailure } from "./edit-recover"
 import { postEditCheckDetailed } from "./post-edit-check"
 import type { PostEditCheckResult } from "./post-edit-check"
+import { rerunAfterEdit } from "./test-memory"
 import { lspDiagnostics, formatLspDiagnostics } from "../lsp"
 import {
   concreteStepFromPostEdit,
@@ -692,7 +693,8 @@ export const WriteTool: ToolDefinition = {
       ])
       const lspText = lsp && lsp.diagnostics.length > 0 && (check?.problems ?? 0) === 0 ? formatLspDiagnostics(display, lsp) : ""
       const loop = verifyLoopForCheck(context.sessionID, display, check)
-      const output = `${previous === undefined ? "Created" : "Overwrote"} ${display} (${content.split("\n").length} lines)${check?.text ?? ""}${lspText}${loop.text}`
+      const rerun = (check?.problems ?? 0) === 0 ? await rerunAfterEdit(context.sessionID, context.signal) : ""
+      const output = `${previous === undefined ? "Created" : "Overwrote"} ${display} (${content.split("\n").length} lines)${check?.text ?? ""}${lspText}${loop.text}${rerun}`
 
       return {
         output,
@@ -797,7 +799,8 @@ export const EditTool: ToolDefinition = {
         ])
         const lspText = lsp && lsp.diagnostics.length > 0 && (check?.problems ?? 0) === 0 ? formatLspDiagnostics(display, lsp) : ""
         const loop = verifyLoopForCheck(context.sessionID, display, check)
-        const output = `${previous === undefined ? "Created" : "Overwrote"} ${display}${check?.text ?? ""}${lspText}${loop.text}`
+        const rerun = (check?.problems ?? 0) === 0 ? await rerunAfterEdit(context.sessionID, context.signal) : ""
+        const output = `${previous === undefined ? "Created" : "Overwrote"} ${display}${check?.text ?? ""}${lspText}${loop.text}${rerun}`
 
         return {
           output,
@@ -854,8 +857,11 @@ export const EditTool: ToolDefinition = {
       ])
       const lspText = lsp && lsp.diagnostics.length > 0 && (check?.problems ?? 0) === 0 ? formatLspDiagnostics(display, lsp) : ""
       const loop = verifyLoopForCheck(context.sessionID, display, check)
+      const rerun = (check?.problems ?? 0) === 0 ? await rerunAfterEdit(context.sessionID, context.signal) : ""
       output += check?.text ?? ""
       output += lspText
+      output += loop.text
+      output += rerun
       output += loop.text
 
       return {
