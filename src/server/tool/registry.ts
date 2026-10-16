@@ -24,6 +24,7 @@ import { PlanExitTool } from "./plan-exit"
 import { SpeakTool } from "./speak"
 import { AppTool } from "./app"
 import { LspTool } from "./lsp"
+import { offlineByEnv } from "./offline"
 
 /**
  * The tool surface offered to the model.
@@ -183,11 +184,13 @@ export function hasOwnToolsOnly(agent: string): boolean {
  * of the prompt prefix key, so a changed setting rebuilds the prefix anyway.
  */
 export function toolsForTurn(agent: string, options: { voiceFeedback: boolean; shell?: string; sessionChat?: boolean; webSearch?: boolean; lean?: boolean }): ToolDefinition[] {
+  const offline = offlineByEnv()
   return toolsFor(agent)
     // The lean experiment (MCODE_LEAN=1) is the only thing that trims tools now: a local model's prompt is lean by default, but its tool list stays full unless the old switch is set. `options.lean` is accepted for compatibility and ignored.
     .filter((tool) => !leanToolExperiment() || !LEAN_LEAVES_OUT.has(tool.name))
     .filter((tool) => tool.name !== "speak" || options.voiceFeedback)
     .filter((tool) => tool.name !== "websearch" || options.webSearch !== false)
+    .filter((tool) => !offline || (tool.name !== "websearch" && tool.name !== "webfetch"))
     .filter((tool) => !withheldByLab(tool.name, options))
     .map((tool) => (tool.name === "bash" ? { ...tool, description: bashDescription(options.shell) } : tool))
 }

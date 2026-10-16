@@ -2,6 +2,7 @@ import { lookup } from "node:dns/promises"
 import TurndownService from "turndown"
 import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
+import { isOffline, markOffline, offlineMessage } from "./offline"
 
 /** MiMo's webfetch limits: 30 seconds unless the call says, never more than 120, and 5 MB of response. */
 const DEFAULT_TIMEOUT_SECONDS = 30
@@ -79,6 +80,25 @@ async function assertReachable(raw: string): Promise<void> {
   }
   if ((resolved.family === 4 && blockedIPv4(resolved.address)) || (resolved.family === 6 && blockedIPv6(resolved.address))) {
     throw refuse(`${hostname} resolves to ${resolved.address}`)
+  }
+}
+
+/** Resolve and check an address, tripping the session's offline breaker when DNS cannot find it. */
+async function reachable(raw: string, sessionID: string): Promise<void> {
+  try {
+    await assertReachable(raw)
+  } catch (error) {
+    if (error instanceof ToolError && error.message.startsWith("Could not resolve")) {
+      let hostname = ""
+      try {
+        hostname = new URL(raw).hostname
+      } catch {
+        hostname = raw
+      }
+      markOffline(sessionID, `could not resolve ${hostname}`)
+      throw new ToolError(`${error.message}\n\n${offlineMessage()}`)
+    }
+    throw error
   }
 }
 
@@ -176,6 +196,7 @@ export const WebFetchTool: ToolDefinition = {
     additionalProperties: false,
   },
   async execute(input, context) {
+    if (isOffline(context.sessionID)) throw new ToolError(offlineMessage())
     const raw = String(input.url)
     if (!raw.startsWith("http://") && !raw.startsWith("https://")) throw new ToolError("The URL has to start with http:// or https://")
     let url: URL
@@ -185,7 +206,7 @@ export const WebFetchTool: ToolDefinition = {
       throw new ToolError(`Not a valid URL: ${raw}`)
     }
     const format = input.format === "text" || input.format === "html" ? input.format : "markdown"
-    await assertReachable(url.toString())
+    await reachable(url.toString(), context.sessionID)
 
     await context.permissions.ask({
       sessionID: context.sessionID,
@@ -218,7 +239,7 @@ export const WebFetchTool: ToolDefinition = {
           await response.body?.cancel().catch(() => {})
           if (hop >= MAX_REDIRECTS) throw new ToolError("Too many redirects")
           target = new URL(location, target).toString()
-          await assertReachable(target)
+          await reachable(target, context.sessionID)
           continue
         }
         return { response, target }
