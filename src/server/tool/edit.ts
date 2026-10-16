@@ -7,8 +7,10 @@ import { changed, unifiedDiff } from "../diff"
 import { isMemoryPath } from "../history/service"
 import { guardPlanWrite } from "../session/plan"
 import { checkFresh, recordWrite, wasRead } from "./read-tracker"
+import { guardFailure } from "./edit-recover"
 import { postEditCheckDetailed } from "./post-edit-check"
 import type { PostEditCheckResult } from "./post-edit-check"
+import { rerunAfterEdit } from "./test-memory"
 import { lspDiagnostics, formatLspDiagnostics } from "../lsp"
 import {
   concreteStepFromPostEdit,
@@ -656,12 +658,12 @@ export const WriteTool: ToolDefinition = {
     return locked(target, async () => {
       const previous = await currentText(target, display)
       if (previous !== undefined && !wasRead(context.sessionID, target)) {
-        throw new ToolError(`${display} has not been read in this conversation. Read it first, then edit; nothing was written.`)
+        throw await guardFailure(context, target, display, "unread")
       }
 
       const stale = await checkFresh(context.sessionID, target, previous)
       if (stale) {
-        throw new ToolError(`${display} has changed since you last read it (modified on disk after your read - by a command, a formatter or another tool). Read it again before editing; nothing was written.`)
+        throw await guardFailure(context, target, display, "stale")
       }
 
       const { diff, filediff } = changed(display, unifiedDiff(display, previous ?? "", content))
@@ -691,7 +693,8 @@ export const WriteTool: ToolDefinition = {
       ])
       const lspText = lsp && lsp.diagnostics.length > 0 && (check?.problems ?? 0) === 0 ? formatLspDiagnostics(display, lsp) : ""
       const loop = verifyLoopForCheck(context.sessionID, display, check)
-      const output = `${previous === undefined ? "Created" : "Overwrote"} ${display} (${content.split("\n").length} lines)${check?.text ?? ""}${lspText}${loop.text}`
+      const rerun = (check?.problems ?? 0) === 0 ? await rerunAfterEdit(context.sessionID, context.signal) : ""
+      const output = `${previous === undefined ? "Created" : "Overwrote"} ${display} (${content.split("\n").length} lines)${check?.text ?? ""}${lspText}${loop.text}${rerun}`
 
       return {
         output,
@@ -774,12 +777,12 @@ export const EditTool: ToolDefinition = {
       if (oldString === "") {
         const previous = await currentText(target, display)
         if (previous !== undefined && !wasRead(context.sessionID, target)) {
-          throw new ToolError(`${display} has not been read in this conversation. Read it first, then edit; nothing was written.`)
+          throw await guardFailure(context, target, display, "unread")
         }
 
         const stale = await checkFresh(context.sessionID, target, previous)
         if (stale) {
-          throw new ToolError(`${display} has changed since you last read it (modified on disk after your read - by a command, a formatter or another tool). Read it again before editing; nothing was written.`)
+          throw await guardFailure(context, target, display, "stale")
         }
 
         const { diff, filediff } = changed(display, unifiedDiff(display, previous ?? "", newString))
@@ -796,7 +799,8 @@ export const EditTool: ToolDefinition = {
         ])
         const lspText = lsp && lsp.diagnostics.length > 0 && (check?.problems ?? 0) === 0 ? formatLspDiagnostics(display, lsp) : ""
         const loop = verifyLoopForCheck(context.sessionID, display, check)
-        const output = `${previous === undefined ? "Created" : "Overwrote"} ${display}${check?.text ?? ""}${lspText}${loop.text}`
+        const rerun = (check?.problems ?? 0) === 0 ? await rerunAfterEdit(context.sessionID, context.signal) : ""
+        const output = `${previous === undefined ? "Created" : "Overwrote"} ${display}${check?.text ?? ""}${lspText}${loop.text}${rerun}`
 
         return {
           output,
@@ -821,12 +825,12 @@ export const EditTool: ToolDefinition = {
       const original = await fs.readFile(target, "utf8")
 
       if (!wasRead(context.sessionID, target)) {
-        throw new ToolError(`${display} has not been read in this conversation. Read it first, then edit; nothing was written.`)
+        throw await guardFailure(context, target, display, "unread")
       }
 
       const stale = await checkFresh(context.sessionID, target, original)
       if (stale) {
-        throw new ToolError(`${display} has changed since you last read it (modified on disk after your read - by a command, a formatter or another tool). Read it again before editing; nothing was written.`)
+        throw await guardFailure(context, target, display, "stale")
       }
 
       const { updated, occurrences, matchTier, ranges, reindented } = replaceIn(original, { oldString, newString, replaceAll }, endingOf(original), display)
@@ -853,8 +857,11 @@ export const EditTool: ToolDefinition = {
       ])
       const lspText = lsp && lsp.diagnostics.length > 0 && (check?.problems ?? 0) === 0 ? formatLspDiagnostics(display, lsp) : ""
       const loop = verifyLoopForCheck(context.sessionID, display, check)
+      const rerun = (check?.problems ?? 0) === 0 ? await rerunAfterEdit(context.sessionID, context.signal) : ""
       output += check?.text ?? ""
       output += lspText
+      output += loop.text
+      output += rerun
       output += loop.text
 
       return {

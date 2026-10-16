@@ -281,15 +281,24 @@ async function main(): Promise<void> {
       check("never-read edit throws", editThrown)
       check("never-read edit leaves file unchanged", (await fs.readFile(fresh, "utf8")) === "hello\n")
 
+      const freshWrite = path.join(root, "fresh-write.js")
+      await fs.writeFile(freshWrite, "hello\n", "utf8")
+
       let writeThrown = false
+      let writeErrorText = ""
       try {
-        await WriteTool.execute({ file_path: "fresh.js", content: "world\n" }, ctx)
+        await WriteTool.execute({ file_path: "fresh-write.js", content: "world\n" }, ctx)
       } catch (error) {
         writeThrown = true
-        check("never-read write message", /has not been read/.test(String((error as Error).message)), String(error))
+        writeErrorText = String((error as Error).message)
+        check("never-read write message", /has not been read/.test(writeErrorText), writeErrorText)
+        check("never-read write error shows current content", writeErrorText.includes("hello"), writeErrorText)
       }
       check("never-read write throws", writeThrown)
-      check("never-read write leaves file unchanged", (await fs.readFile(fresh, "utf8")) === "hello\n")
+      check("never-read write leaves file unchanged", (await fs.readFile(freshWrite, "utf8")) === "hello\n")
+
+      const retriedWrite = await WriteTool.execute({ file_path: "fresh-write.js", content: "world\n" }, ctx)
+      check("retried write after failed guard succeeds", (await fs.readFile(freshWrite, "utf8")) === "world\n", retriedWrite)
     })
 
     // read then edit ok

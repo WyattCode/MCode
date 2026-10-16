@@ -40,6 +40,7 @@ import { instructionsIn } from "../tool/read"
 import { keepReadCopy } from "../tool/read-media"
 import { ToolError } from "../tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../tool/validate"
+import { repairToolArguments } from "../tool/arg-repair"
 import { ToolOutputs } from "../tool/truncate"
 import { cooldownLeft, noteRateLimit, retryDecision, waitFor, withRequestRetry } from "./retry"
 import { Semaphore, STEP_TOOL_LIMIT, SUBAGENT_LIMIT } from "./semaphore"
@@ -88,6 +89,7 @@ import { UsageDays } from "./usage-days"
 import type { Usage as TurnUsage } from "@shared/protocol"
 import { ABORTED_TOOL } from "../provider/history"
 import { INTERRUPTED_FINISH, INTERRUPTED_NOTE, LENGTH_NOTE, THOUGHT_LENGTH_NOTE, LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, recallHint, reminder, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
+import { withPatchCheckpoint } from "./patch-checkpoint"
 import { LoopMonitor, TEXT_LOOP_BUFFER, WanderWatch, applyCrops, describeLoop, detectStreak, stepDigest, suggestLoopNextStep, textLoopNoteFor, type LoopIncident } from "./loop-health"
 import { interruptedTurn } from "@shared/resume"
 // session chat
@@ -3018,7 +3020,7 @@ export class SessionRunner {
       // in a row bring a note to change approach.
       const history = forWire(
         await withAttachmentData(
-          withSameStepsNote(withNotes(withSkillReminders(step > 0 ? frameSteered(chatted) : chatted), notes)),
+          withPatchCheckpoint(withSameStepsNote(withNotes(withSkillReminders(step > 0 ? frameSteered(chatted) : chatted), notes)), { local: this.isLocal(session) }),
           session.directory,
           attachmentData,
         ),
@@ -3933,6 +3935,8 @@ export class SessionRunner {
       part.input = normalizeToolInput(part.input, tool.parameters)
       // And a value this model's own schema turned into a string is read back as the number the tool declares.
       part.input = inputForTool(input.session.model, tool.parameters, part.input) as typeof part.input
+      const repaired = repairToolArguments(tool.name, tool.parameters, part.input)
+      part.input = repaired.input as typeof part.input
     }
     const problems = tool.name === "invalid" ? [] : unreadable ? [unreadable] : argumentProblems(tool.parameters, part.input)
     if (problems.length) {
@@ -3945,7 +3949,7 @@ export class SessionRunner {
        * prose in the step for what is a common, self-correcting slip.
        */
       part.errorCode = "error.toolArgumentInvalid"
-      part.error = refusedArgumentsNote(tool.name, problems)
+      part.error = refusedArgumentsNote(tool.name, problems, tool.parameters)
       part.metadata = { recoverable: true }
       part.time.started = Date.now()
       part.time.completed = part.time.started

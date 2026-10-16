@@ -397,7 +397,12 @@ export async function roundTenBashChecks(check: Check, section: (name: string) =
       )
 
       const nodesc = await turn("NODESC")
-      check("a bash call without a description is refused as MiMo's schema refuses it", nodesc.parts[0]?.status === "error" && nodesc.parts[0].errorCode === "error.toolArgumentInvalid", nodesc.parts[0])
+      const nodescPart = nodesc.parts[0]
+      check(
+        "a bash call without a description is repaired and runs",
+        nodescPart?.status === "completed" && String((nodescPart?.input as { description?: unknown } | undefined)?.description ?? "").startsWith("Run: "),
+        nodescPart,
+      )
 
       const fetched = await turn("BIGFETCH")
       const cut = fetched.parts[0]?.output ?? ""

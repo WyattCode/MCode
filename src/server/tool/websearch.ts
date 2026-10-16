@@ -2,6 +2,7 @@ import type { QuestionPrompt, WebSearchProviderID, WebSearchSelection } from "@s
 import type { ToolContext, ToolDefinition } from "./types"
 import { ToolError } from "./types"
 import { WEB_SEARCH_PROVIDERS, WebSearchHttpError, searchWeb, webSearchProvider, webSearchText } from "../websearch"
+import { isOffline, markOffline, offlineMessage, probeOnline } from "./offline"
 
 /**
  * OpenCode v2's `websearch` tool (tool/plugin/websearch.ts, MIT).
@@ -21,6 +22,40 @@ const HTTP_ERRORS = new Map([
   [429, "Web search rate limited (HTTP 429)"],
   [401, "Web search authentication failed (HTTP 401)"],
 ])
+
+/** Whether a stored selection is one this build knows, so no consent question is needed. */
+function selectionKnown(value: WebSearchSelection | undefined): boolean {
+  return value === false || value === "auto" || (typeof value === "string" && webSearchProvider(value) !== undefined)
+}
+
+/** Hostnames to probe before asking the user: the providers' own hosts when they name one. */
+function providerHosts(): string[] {
+  const hosts: string[] = []
+  for (const provider of WEB_SEARCH_PROVIDERS) {
+    const entry = provider as unknown as { url?: string; host?: string; endpoint?: string }
+    const raw = entry.url ?? entry.host ?? entry.endpoint
+    if (!raw) continue
+    try {
+      hosts.push(new URL(raw).hostname)
+    } catch {
+      hosts.push(raw)
+    }
+  }
+  return hosts.length > 0 ? hosts : ["duckduckgo.com", "www.bing.com"]
+}
+
+/** A DNS or connection failure behind a search error, if there is one. */
+function networkFailure(error: unknown): string | undefined {
+  const codes = new Set(["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED"])
+  let current: unknown = error
+  for (let depth = 0; current !== undefined && current !== null && depth < 5; depth++) {
+    const err = current as { code?: unknown; message?: unknown; cause?: unknown }
+    if (typeof err.code === "string" && codes.has(err.code)) return err.code
+    if (typeof err.message === "string" && /fetch failed|ENOTFOUND|EAI_AGAIN|ECONNREFUSED/i.test(err.message)) return "network error"
+    current = err.cause
+  }
+  return undefined
+}
 
 /** One question at a time for the whole app: two searches in one step must not ask twice (v2 providerSelectionLock). */
 let choosing: Promise<void> = Promise.resolve()
@@ -111,6 +146,14 @@ export const WebSearchTool: ToolDefinition = {
   async execute(input, context) {
     const query = typeof input.query === "string" ? input.query.trim() : ""
     if (!query) throw new ToolError("query is required")
+    if (isOffline(context.sessionID)) throw new ToolError(offlineMessage())
+    const access = context.webSearch
+    if (access && !context.subagent && !selectionKnown(access.selection())) {
+      if (!(await probeOnline(providerHosts()))) {
+        markOffline(context.sessionID, "no DNS for web search providers")
+        throw new ToolError(offlineMessage())
+      }
+    }
     const selection = await chosen(context)
     if (selection === false) throw new ToolError("The user has turned web search off. Do not search the web; work from what you already have or ask for a page to fetch.")
     const named = selection === "auto" ? undefined : webSearchProvider(selection)
@@ -138,8 +181,11 @@ export const WebSearchTool: ToolDefinition = {
       return { output: webSearchText(found.results), title: query, metadata: { provider: found.provider, results: found.results.length } }
     } catch (error) {
       if (context.signal.aborted) throw error
+      const network = networkFailure(error)
+      if (network) markOffline(context.sessionID, `search failed: ${network}`)
       const message = error instanceof WebSearchHttpError ? (HTTP_ERRORS.get(error.status) ?? `Web search request failed (HTTP ${error.status})`) : `Unable to search the web for ${query}`
-      throw new ToolError(provider ? `${message} [${webSearchProvider(provider)?.name ?? provider}]` : message)
+      const text = provider ? `${message} [${webSearchProvider(provider)?.name ?? provider}]` : message
+      throw new ToolError(network ? `${text}\n\n${offlineMessage()}` : text)
     }
   },
 }
