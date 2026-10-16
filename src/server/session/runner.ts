@@ -89,6 +89,7 @@ import { UsageDays } from "./usage-days"
 import type { Usage as TurnUsage } from "@shared/protocol"
 import { ABORTED_TOOL } from "../provider/history"
 import { INTERRUPTED_FINISH, INTERRUPTED_NOTE, LENGTH_NOTE, THOUGHT_LENGTH_NOTE, LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, recallHint, reminder, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
+import { withPatchCheckpoint } from "./patch-checkpoint"
 import { LoopMonitor, TEXT_LOOP_BUFFER, WanderWatch, applyCrops, describeLoop, detectStreak, stepDigest, suggestLoopNextStep, textLoopNoteFor, type LoopIncident } from "./loop-health"
 import { interruptedTurn } from "@shared/resume"
 // session chat
@@ -3019,7 +3020,7 @@ export class SessionRunner {
       // in a row bring a note to change approach.
       const history = forWire(
         await withAttachmentData(
-          withSameStepsNote(withNotes(withSkillReminders(step > 0 ? frameSteered(chatted) : chatted), notes)),
+          withPatchCheckpoint(withSameStepsNote(withNotes(withSkillReminders(step > 0 ? frameSteered(chatted) : chatted), notes)), { local: this.isLocal(session) }),
           session.directory,
           attachmentData,
         ),
