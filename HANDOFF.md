@@ -221,6 +221,23 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 第五十四轮：同步 GitHub 的 0.7.5–0.7.7，补 lsp 工具的文案（2026-10-17）
+
+用户说「Github源代码更新了」。origin/main 在交接停在 0.7.4 之后多了三版（都只写在 git 上，没进本文档）：
+
+- **0.7.5（#22-#25）**：安全修复——只读白名单拒 shell 转义、换行、git textconv/签名和改动型 git 形态；auto-approval 的 dangerousCommand 收紧；项目级 MCP 先信任再拉起、不许盖 app 或读密钥；HTML 预览 token/CSP 收紧；更新哈希缺失、为空或占位即失败（fail closed）。依赖 Electron 41.7.2 → **41.10.7**、dompurify 3.4.17。另修两个真实 Linux bug（loop cut 丢缓冲增量、无 refs 的 checkpoint 打包），纯环境类检查改为平台感知。
+- **0.7.6（#26 agent parity）**：edit 容错与 post-edit 检查（新 `post-edit-check.ts`、`verify-commands.ts`、`findTsc` 加固）；本地模型 maxSteps 默认 32 与精简收尾模板；按模型的编码提示词（reasoning 家族「跑代码别演代码」「绿了就收，别追旧账」、Codex 10k bash 预算、单次调用任务计划）；最小 LSP 客户端 + 只读 `lsp` 工具（`lsp.ts`，typescript-language-server / pyright，编辑后回报诊断）。
+- **0.7.7（#27 agent parity 2）**：每会话联网工具熔断器 + `MCODE_OFFLINE` 收起联网工具（新 `offline.ts`）；edit 守卫失败时回显当前文件并记为已读，重试一步到位；工具参数先确定性修复再拒绝（新 `arg-repair.ts`）；干净编辑后重跑会话上次失败的测试命令（90s 上限，每次超时只一次，新 `test-memory.ts`）；本地模型的 patch 检查点（新 `read-tracker.ts`）。
+
+本轮做的：
+
+- `git fetch` 后把 origin/main（`31bdcf5d`）合并进 v2.0（合并提交 `7858782b`），无冲突；本地 v2.0 在此之前只多 0.7.4 之后的交接提交。**本轮未推送**。
+- `npm install`（node_modules 里的 Electron 还是 41.7.2，补到 41.10.7）。
+- **补 `tool.lsp` 文案**：0.7.6 的 `lsp` 工具没进语言表，i18ncheck 报「the tool registry has 1 value(s) with no string: tool.lsp」——和第三十一轮 `tool.patch` 同型的漏。按新工具惯例加进 18 张表（zhCN「语言服务器」、zhTW「語言伺服器」，其余 16 张英文「Language server」），锚点在 `tool.skill_search` 之后（lsp 在注册表里也是最后追加）。改后 i18ncheck 全绿。
+- typecheck + 十二项专项检查全过（2026-10-17，本机）。**完整 smoke 未重跑**（上游 0.7.6/0.7.7 已按发布流程验证过，本轮只动了 18 行字符串）。
+
+环境坑（本会话新发现）：本机 WorkBuddy 的 shell 带着 **`ELECTRON_RUN_AS_NODE=1`**，electron.exe 退化成纯 Node（`--version` 打出的是内嵌 Node v24 而非 v41.x），toolcheck 的「nested PowerShell under Electron」三条因此假红（`app` undefined）。跑任何要真 Electron 的检查前先 `unset ELECTRON_RUN_AS_NODE`。注意这与 0.7.6 里「让 smoke 在 Electron-as-Node 下也绿」（`f6347191`）是两回事：那个是让 smoke 的断言兼容两种模式，这个是检查必须真起 Electron 才有效。
+
 ### 第五十三轮：每个会话各自的强度，模型删光后落到自动（2026-10-11）
 
 用户要求：每个会话有自己的大模型设定，不要统一；所有自定义模型被删光后，默认选「自动」，不要还选着删掉的那个。模型本来就按会话存，统一的是**思考强度**（`config.effort` 全应用一个值，改一个会话会改所有会话）。
