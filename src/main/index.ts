@@ -11,6 +11,8 @@ import { applyRuntimeEnv, bundledRuntimeEnv } from "./runtimes"
 import { DailyLog, LOG_DIR } from "./log-file"
 import { BOOT_DEFAULTS, BOOT_PREFS_FILE, readBootPrefs, themePref, windowBackground, writeBootPrefs, type BootPrefs } from "./boot-prefs"
 import { startBackend, type Backend } from "../server/index"
+import { startRemoteGateway, type RemoteGateway } from "../server/remote/gateway"
+import { loadOrCreateToken } from "../server/remote/token"
 import { rendererOrigins } from "../server/socket-guard"
 import { safeStorageBox } from "./safe-storage"
 import { workingRoots } from "../server/file-access"
@@ -191,7 +193,13 @@ Object.assign(process.env, imeFilled)
 const logs = new DailyLog({ dir: path.join(app.getPath("userData"), LOG_DIR) })
 captureConsole(logs)
 if (Object.keys(imeFilled).length) console.info(`[linux-ime] filled in for fcitx: ${Object.keys(imeFilled).join(", ")}`)
-app.on("will-quit", () => void logs.close())
+app.on("will-quit", () => {
+  void remoteGateway?.close()
+  void logs.close()
+})
+
+/** MCode Remote's gateway, when the config's remote switch has it on. Closed on quit. */
+let remoteGateway: RemoteGateway | undefined
 process.on("uncaughtException", (error) => recordProcessError("uncaught exception", error))
 process.on("unhandledRejection", (reason) => recordProcessError("unhandled rejection", reason))
 
@@ -940,6 +948,37 @@ app.whenReady().then(async () => {
     const powerHold = new PowerHold(powerSaveBlocker, (line) => console.info(line))
     const runtime = started.runtime
     runtime.bus.subscribe(() => powerHold.sync(runtime.runner.busySessions()))
+    /*
+     * MCode Remote (docs/remote-design.md): a gateway for paired phones,
+     * started and stopped by the config's `remote` switch - on by hand in
+     * config.json for now, a settings switch later. The pairing token lives
+     * beside the storage, never in the config, so an edit to the config alone
+     * never opens the machine. The loopback backend socket stays bound: the
+     * gateway is one more subscriber, not a wider hole.
+     */
+    const syncGateway = async () => {
+      const remote = runtime.config.get().remote
+      if (remote?.enabled && !remoteGateway) {
+        try {
+          remoteGateway = await startRemoteGateway(runtime, {
+            host: remote.host ?? "127.0.0.1",
+            port: remote.port ?? 0,
+            token: loadOrCreateToken(app.getPath("userData")),
+          })
+          console.info(`[remote] gateway listening on ${remote.host ?? "127.0.0.1"}:${remoteGateway.port}; the pairing token is in storage/remote-token.json`)
+        } catch (error) {
+          console.error("[remote] the gateway did not start", error)
+        }
+      } else if (!remote?.enabled && remoteGateway) {
+        await remoteGateway.close().catch(() => {})
+        remoteGateway = undefined
+        console.info("[remote] gateway stopped")
+      }
+    }
+    runtime.bus.subscribe((event) => {
+      if (event.type === "config.updated") void syncGateway()
+    })
+    void syncGateway()
     return started
   })
   startingBackend = starting
