@@ -9,11 +9,11 @@
 - **这是什么**：在界面和功能上 1:1 复刻小米 MiMo 桌面端的 Electron 应用，MCode 保留自己的名字、图标和字标。技术栈 Electron 41.7.2 + Vue 3 + Pinia + electron-vite，后端是同一进程里的 Node 服务。
 - **对照基准**：界面照 MiMo **26.920**（第十八轮起）。 第四十七轮已只读比较本机 **26.929.292248**；第四十八轮补了确认的五项增量并修复发送目标竞态，但没有重跑新版全部页面，不宣称全量对齐。只读它的行为和尺寸，**不复制**它的代码、文案、图标、插画和品牌。逐项对照清单（含百分比）：https://claude.ai/code/artifact/f149a5d1-857e-4bae-80be-ca03265d9f83
 - **引擎跟随 OpenCode v2**（第三十一轮起，用户 2026-09-27 定的）：内核和 Agent 编程能力照 OpenCode 的 `v2` 分支逐项移植进 MCode 自己的引擎（v2 还没正式发布，所以是搬能力，不是换引擎）；界面和其余部分保留 MCode 自己的设计。只搬比 MCode 现有做法好的，MCode 更强的地方保留（见第三十一轮）。OpenCode 是 MIT 许可，移植的代码在注释里注明出处。
-- **版本**：**0.7.8**（`package.json`；GitHub Releases 最新版 v0.7.8，2026-10-17，Windows 安装包 `MCode-0.7.8-x64.exe` 237,049,120 字节，SHA-256 已与远程核对；版本号提交 `5fb157d8`，发布内容见第五十五轮）。0.7.5-0.7.7 无安装包（Linux 制作）；0.7.4（`MCode-0.7.4-x64.exe`）是再往前最后一个带安装包的发布，本机 `D:\Apps\MCode` 装的是 0.7.7（第五十四轮本地打包）或 0.7.8（自行安装）。自动更新地址仍是占位的 `updates.invalid`，不会触发自动更新。
+- **版本**：**0.7.9**（`package.json`；GitHub Releases 最新版 v0.7.9，2026-10-18，Windows 安装包 + **Android debug APK**（`MCode-Remote-0.1.0-debug.apk`，20.8MB），SHA-256 已与远程核对；发布内容见第五十六轮）。0.7.8（`MCode-0.7.8-x64.exe` 237,049,120 字节）是前一版；0.7.5-0.7.7 无安装包（Linux 制作）；0.7.4 再往前。本机 `D://Apps//MCode` 装 0.7.8——**0.7.9 的 Remote 需要装新版或在仓库跑 `npm run remote`**。自动更新地址仍是占位的 `updates.invalid`，不会触发自动更新。0.7.5-0.7.7 无安装包（Linux 制作）；0.7.4（`MCode-0.7.4-x64.exe`）是再往前最后一个带安装包的发布，本机 `D:\Apps\MCode` 装的是 0.7.7（第五十四轮本地打包）或 0.7.8（自行安装）。自动更新地址仍是占位的 `updates.invalid`，不会触发自动更新。
 - **分支**：第五十四轮起 **`v2.0` 退役**。0.7.5 起的工作本就直接从 feature 分支（`fix/...`、`feat/...`）合进 `main`（#22-#27），`origin/v2.0` 停在 0.7.4 的交接提交 `2f9f92f8` 之后无人再推；本地 `v2.0` 已删，远端留着不动。以后一切工作（含交接更新）都从最新 `main` 拉分支、PR 合回 `main`。私有仓库 `WyattCode/MCode`。保留未跟踪的 `.claude/`，不提交本地测试产物。
-- **拉取请求**：#4 到 #20、#22 到 #30 已全部合并（#21 关闭未合并；0.7.5=#22-#25、0.7.6=#26、0.7.7=#27，见第五十四轮；#29=session-check 跟上 read-before-edit 守卫、#30=0.7.8 版本号，见第五十五轮；标题照 #10「MCode 2.0：0.6.4 —— …，第四十到四十一轮」的格式）。#3（`macos-hardening-v2`）已关闭：它声称的 16 条修复逐条对照过当前代码，5 条已被后来的工作修掉（含全部 3 条安全项）、2 条在本平台仍然存在并已修（0.4.6）、7 条只在 macOS 上能观察到，结论写在 #3 的关闭评论里。
-- **发布**：https://github.com/WyattCode/MCode/releases/tag/v0.7.8（2026-10-17，最新稳定版，**Windows 安装包回归**——`MCode-0.7.8-x64.exe` 237,049,120 字节 + blockmap + `latest.yml`，三个附件 SHA-256 已与本地核对）。带安装包的最近版本：v0.7.8、v0.7.4、v0.7.3、v0.7.2；v0.7.5-0.7.7 无安装包（Linux 制作）；更早 v0.7.1、v0.7.0、v0.6.9、v0.6.8、v0.6.7、v0.6.6、v0.6.4、v0.6.3、v0.5.3、v0.4.7、v0.4.5、v0.3.8。自动更新地址仍是占位的 `updates.invalid`，所以**发布不会触发任何自动更新**。
-- **验证状态**：2026-10-09 第四十九轮二次复核，build、typecheck 和十二项专项检查全部通过；最终完整 smoke **7794 passed / 0 failed**（out/round49-smoke.log）。修复音频预检抢走新草稿、操作标记断线恢复、驱动替换/关闭后的旧类型，以及已取消的排队操作迟到执行。新增 13 条回归用 11 份实现变异逐条证明能失败；10 份隔离界面构建变异被检出，正常探针通过。旧浏览器夹具改为等待实际关闭，原 1800ms 预算和产品监听变异的失败断言均保留。独立可见 Electron 窗口、真实浏览器及 Windows 原生窗口检查均通过，计时阈值未放宽。本轮未接安卓设备，未重跑真实模型；详情见第四十九轮。第五十四轮（2026-10-17）：typecheck 与十二项专项检查在本机 Windows 全过；0.7.5-0.7.7 的完整回归（**7781 passed / 0 failed**）都是 Release 流程在 Linux 上以「Electron 41 作为 Node」跑的，Windows 完整 smoke 未重跑。第五十五轮（2026-10-17）：**Windows 完整 smoke 首次重跑——7838 passed / 35 failed**，35 条全部为执行环境因素（WorkBuddy 作业对象里 GPU 子进程不稳导致软渲染下的窗口/绘制类、外网封面抓取类、DevTools attach 类、构建未完成时产物过旧的连带一条），agent/session/tool/fs 核心逻辑零失败；session-check 修复后十二项专项全过（详见第五十五轮）。
+- **拉取请求**：#4 到 #20、#22 到 #38 已全部合并（#21 关闭未合并；0.7.5=#22-#25、0.7.6=#26、0.7.7=#27，见第五十四轮；#29=session-check 修复、#30=0.7.8 版本号，见第五十五轮；**MCode Remote**：#32=设计、#33=网关、#34=桌面集成、#35=Web 驾驶舱、#36=历史回放、#37=原生安卓、#38=真机修复，见第五十六轮；标题照 #10「MCode 2.0：0.6.4 —— …，第四十到四十一轮」的格式）。#3（`macos-hardening-v2`）已关闭：它声称的 16 条修复逐条对照过当前代码，5 条已被后来的工作修掉（含全部 3 条安全项）、2 条在本平台仍然存在并已修（0.4.6）、7 条只在 macOS 上能观察到，结论写在 #3 的关闭评论里。
+- **发布**：https://github.com/WyattCode/MCode/releases/tag/v0.7.9（2026-10-18，最新稳定版，Windows 安装包 + **首个安卓 APK**，附件 SHA-256 已与本地核对）。前一版 v0.7.8（Windows 安装包回归）。带安装包的最近版本：v0.7.8、v0.7.4、v0.7.3、v0.7.2；v0.7.5-0.7.7 无安装包（Linux 制作）；更早 v0.7.1、v0.7.0、v0.6.9、v0.6.8、v0.6.7、v0.6.6、v0.6.4、v0.6.3、v0.5.3、v0.4.7、v0.4.5、v0.3.8。自动更新地址仍是占位的 `updates.invalid`，所以**发布不会触发任何自动更新**。
+- **验证状态**：2026-10-09 第四十九轮二次复核，build、typecheck 和十二项专项检查全部通过；最终完整 smoke **7794 passed / 0 failed**（out/round49-smoke.log）。修复音频预检抢走新草稿、操作标记断线恢复、驱动替换/关闭后的旧类型，以及已取消的排队操作迟到执行。新增 13 条回归用 11 份实现变异逐条证明能失败；10 份隔离界面构建变异被检出，正常探针通过。旧浏览器夹具改为等待实际关闭，原 1800ms 预算和产品监听变异的失败断言均保留。独立可见 Electron 窗口、真实浏览器及 Windows 原生窗口检查均通过，计时阈值未放宽。本轮未接安卓设备，未重跑真实模型；详情见第四十九轮。第五十四轮（2026-10-17）：typecheck 与十二项专项检查在本机 Windows 全过；0.7.5-0.7.7 的完整回归（**7781 passed / 0 failed**）都是 Release 流程在 Linux 上以「Electron 41 作为 Node」跑的，Windows 完整 smoke 未重跑。第五十五轮（2026-10-17）：**Windows 完整 smoke 首次重跑——7838 passed / 35 failed**，35 条全部为执行环境因素（WorkBuddy 作业对象里 GPU 子进程不稳导致软渲染下的窗口/绘制类、外网封面抓取类、DevTools attach 类、构建未完成时产物过旧的连带一条），agent/session/tool/fs 核心逻辑零失败；session-check 修复后十二项专项全过（详见第五十五轮）。 第五十六轮（2026-10-18）：typecheck 绿；mdcheck/wiringcheck/toolcheck/sessioncheck 绿；**remotecheck 新增专项 7/7**（网关协议端到端：错误令牌拒绝、welcome、session.list 经 handle、会话事件投递、transcript 通道、断线补发）；基线 smoke 7838/35 与 0.7.8 一致（Remote 纯增量零回归）。
 - **已知差异**：对照 26.920 没有已知的、未决的界面差异；26.929 确认的水印选择、后台子智能体提示、停止/未完成状态、项目目录保护和电脑/浏览器标记已补（第四十八轮），发送期间切会话的问题已复现并修复；没有实现录制回放，也没有全页复核新版。仍然不同的三类——用户定的刻意差异（见下）；依赖小米账号或小米服务的功能；需要 Linux / macOS 真机才能核对的细节。
 - **真实模型**：第二十七轮起用局域网模型真用过——撤销、删除提问、手动压缩都端到端验证过（见那一节）；第三十一轮的排队、联网搜索、代码模式也在真模型上跑通了（见第三十二轮末尾）；用户自己也在日常用（第二十九轮的两个问题就是用出来的）。
 
@@ -220,6 +220,29 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 更早的下一步建议留作记录，见文末「附录 C」。
 
 ## 逐轮记录（新到旧）
+
+### 第五十六轮：MCode Remote 全链路（手机驾驶舱+网关+桌面集成+原生安卓）、二次审核、0.7.8/0.7.9 发版、三方编程基准（2026-10-17/18）
+
+**MCode Remote**（设计 `docs/remote-design.md`，#32）：手机驾驶舱、本机引擎——移动端只做观察/输入/批准，代码与密钥不出本机；断线本机照跑，重连游标补发。目标设备 Xiaomi 18 Fold。
+
+- **#33 网关 M1**：`src/server/remote/gateway.ts`——又一个 Bus 订阅者 + 2000 条事件缓冲（`remote.resume` 补发）+ 命令复用 `handle()` + `frameForWindow` 掩码 + shell 流扣留 + subprotocol 配对令牌（恒定时间比较）；backend 的 loopback socket 边界不变。
+- **#34 桌面集成 M1.5**：`AppConfig.remote`（absent=off；token 存 `storage/remote-token.json` 不进 config）；main 按 `config.updated` 热启停，will-quit 关闭。
+- **#35 Web 驾驶舱 M2**：`cockpit.html` 零依赖单页由 gateway 同端口 serve；连接页/会话下拉/实时时间线/权限卡三键/steer 输入+停止；≥1000px 双栏。
+- **#36 历史回放**：切换会话先 `session.get`（本就返回 {session, messages}，零服务端改动）。
+- **#37 原生安卓 M2.5**：`android/` 最小 Gradle 工程（Kotlin 1.9 + Compose + OkHttp）；WindowSizeClass 折叠屏双栏；本机构建链（JDK 21 + Gradle 8.7 + SDK 34 在 `~/.workbuddy/binaries/`）；APK 20.8MB。
+- **#38 真机修复**：`--token` 覆盖（之前被忽略→401）、拒绝诊断、安卓 intent extras 自动连接 + ws 日志。
+- **`npm run remotecheck`**：协议端到端 7 断言（#35 起 6，#36 后 7）。
+- **18 Fold 真机实测**：adb 无线调试安装 + 启动 + UI 双栏渲染 + WS 全链路（open→welcome→response）+ 历史回放渲染真实会话「阅读交接文档」。发指令的 UI 自动化未跑完（手机折上），协议层已被 remotecheck 验证。
+
+**二次审核（0.7.9 前）**：①fs.watch 风险实测排除（50 轮切换+事件风暴零停顿，锁 41.7.2 的理由不再成立）；②session-check 4 BAD 修复（#29，read-before-edit 守卫下脚本化 turn 编辑不落地——测试没跟上）；③**一次误报已更正**：office.ts statOf 的 `await fs.stat` 本走 `node:fs/promises` 从未是 bug——教训入 MEMORY：判断 API 误用先看 import。
+
+**三方编程基准 rb8**（7 题 × 7 组合，真机外三模型）：MCode **21/21**；OpenCode 15/21（GLM 列 6 题 400——ai-sdk 与 EXL3 服务不兼容）；WorkBuddy 7/7。速度 MCode DeepSeek 最快（13-39 秒/题）。数据 `out/bench/`。
+
+**0.7.8 发版**：#30 版本号 → Release v0.7.8（Windows 包回归，SHA 核对）。**0.7.9 发版**：Windows 包 + **首个安卓 APK**。
+
+**本机环境坑（全部踩过）**：WorkBuddy 作业对象会回收分离启动的进程（gateway 必须 run_in_background）；safe-delete shim 拦批量删除（打包用 `env -u NODE_OPTIONS -u CODEBUDDY_SAFE_DELETE_*`）；adb server 每命令后死（操作全放单条命令链）；折叠屏双 display 的 screencap 混警告（按 PNG 签名提取）；curl 被环境代理劫持（`--noproxy "*"`）。
+
+**遗留**：设置页 UI/配对二维码（现靠 config.json + 手输 token）、推送（前台服务长连接）、外网 Relay/自建隧道指南、多机管理、release 签名、发指令真机 UI 验证（协议层已验）。
 
 ### 第五十五轮：二次审核、0.7.8 发版（Windows 包回归）、三方编程能力对比（2026-10-17）
 
