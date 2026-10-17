@@ -80,6 +80,17 @@ let phone: WebSocket
   check("the right token gets a remote.welcome", typeof welcome.eventId === "number", welcome)
 }
 
+// 2.5 the cockpit page is served from the same port
+{
+  const res = await fetch(`http://127.0.0.1:${gateway.port}/cockpit`)
+  const body = await res.text()
+  check(
+    "the cockpit page is served from the gateway",
+    res.status === 200 && body.includes("MCode") && body.includes("mcode.remote."),
+    res.status,
+  )
+}
+
 // 3. session.list through handle()
 {
   send(phone, { kind: "request", id: "r1", request: { type: "session.list" } })
