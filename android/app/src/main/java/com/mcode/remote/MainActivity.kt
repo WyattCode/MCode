@@ -3,6 +3,7 @@ package com.mcode.remote
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -149,6 +150,9 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Draw behind the system bars like Claude does: the page's own color
+        // reaches the status bar and the gesture area, so no black strips.
+        enableEdgeToEdge()
         // The keep-alive umbrella: an ongoing quiet notification that keeps the
         // process out of the kill-first bucket while a session is expected to
         // keep running. Android 13+ gates its visibility behind a permission.
@@ -458,6 +462,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         }
                     }
                 }
+                Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
             }
         } else {
             if (empty) {
@@ -468,6 +473,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         WelcomePane(withInput = true, inputBar = inputBar)
                     }
+                    Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
                 }
             } else {
                 Scaffold(
@@ -475,7 +481,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                     topBar = { AppTopBar(wide = false, title = currentSessionTitle(sessions, currentSession), onDrawer = { drawerOpen = true }, onRefresh = {
                         request(JSONObject().put("type", "session.list"), "list${System.nanoTime()}")
                     }) },
-                    bottomBar = { inputBar() },
+                    bottomBar = {
+                        Column {
+                            inputBar()
+                            Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
+                        }
+                    },
                 ) { padding ->
                     Box(Modifier.padding(padding).fillMaxSize()) { Timeline(items, Modifier.fillMaxSize()) }
                 }
@@ -502,21 +513,26 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit) {
 
 @Composable
 fun AppTopBar(wide: Boolean, title: String, onDrawer: () -> Unit, onRefresh: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onDrawer) {
-            Icon(Icons.Outlined.Menu, contentDescription = "菜单", tint = LocalText.current)
-        }
-        Spacer(Modifier.weight(1f))
-        Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
-        Spacer(Modifier.weight(1f))
-        IconButton(onClick = { }) {
-            Icon(Icons.Outlined.Tune, contentDescription = "筛选", tint = LocalText.current)
-        }
-        IconButton(onClick = onRefresh) {
-            Icon(Icons.Outlined.Checklist, contentDescription = "任务", tint = LocalText.current)
-        }
-        IconButton({ }) {
-            Icon(Icons.Outlined.VisibilityOff, contentDescription = "隐私", tint = LocalMuted.current)
+    // Same color as the page, and it owns the status-bar inset so the cream
+    // runs under the system bar instead of a black strip.
+    Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
+        Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onDrawer) {
+                Icon(Icons.Outlined.Menu, contentDescription = "菜单", tint = LocalText.current)
+            }
+            Spacer(Modifier.weight(1f))
+            Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = { }) {
+                Icon(Icons.Outlined.Tune, contentDescription = "筛选", tint = LocalText.current)
+            }
+            IconButton(onClick = onRefresh) {
+                Icon(Icons.Outlined.Checklist, contentDescription = "任务", tint = LocalText.current)
+            }
+            IconButton({ }) {
+                Icon(Icons.Outlined.VisibilityOff, contentDescription = "隐私", tint = LocalMuted.current)
+            }
         }
     }
 }
