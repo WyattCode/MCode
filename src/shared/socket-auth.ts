@@ -17,3 +17,15 @@ export const SECRET_PROTOCOL_PREFIX = "mcode.auth."
 export function socketProtocols(secret: string): string[] {
   return [SOCKET_PROTOCOL, `${SECRET_PROTOCOL_PREFIX}${secret}`]
 }
+
+/**
+ * MCode Remote (docs/remote-design.md): the pairing token rides the same way -
+ * in the subprotocol list, never in a URL. The phone offers
+ * `mcode.remote.<token>`; the gateway's side is `server/remote/gateway.ts`.
+ */
+export const REMOTE_PROTOCOL_PREFIX = "mcode.remote."
+
+/** The subprotocols a paired phone offers: the plain one first, then the token. */
+export function remoteProtocols(token: string): string[] {
+  return [SOCKET_PROTOCOL, `${REMOTE_PROTOCOL_PREFIX}${token}`]
+}
