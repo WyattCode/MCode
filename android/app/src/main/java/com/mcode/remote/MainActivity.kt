@@ -14,6 +14,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Send
+import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.GraphicEq
+import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
@@ -166,20 +176,14 @@ fun MCodeTheme(content: @Composable () -> Unit) {
     }
 }
 
-/* The Claude starburst: twelve hand-set rays, alternating lengths. */
+/* The Claude starburst is replaced by MCode's own mark (PC artwork). */
 @Composable
-fun Starburst(modifier: Modifier = Modifier, color: Color = Ember) {
-    Canvas(modifier) {
-        val center = Offset(size.width / 2f, size.height / 2f)
-        val long = size.minDimension / 2f
-        val short = long * 0.62f
-        for (i in 0 until 12) {
-            val angle = Math.toRadians((i * 30.0) + if (i % 2 == 0) 0.0 else 9.0)
-            val r = if (i % 2 == 0) long else short
-            val end = center + Offset(Math.sin(angle).toFloat() * r, (-Math.cos(angle)).toFloat() * r)
-            drawLine(color, center, end, strokeWidth = size.minDimension * 0.045f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
-        }
-    }
+fun MCodeMark(modifier: Modifier = Modifier) {
+    androidx.compose.foundation.Image(
+        painter = androidx.compose.ui.res.painterResource(R.drawable.mcode_mark),
+        contentDescription = "MCode",
+        modifier = modifier,
+    )
 }
 
 fun relTime(updated: Long): String {
@@ -418,7 +422,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String) {
 @Composable
 fun AppTopBar(wide: Boolean, sessions: List<SessionRow>, current: String?, onDrawer: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        TextButton(onDrawer) { Text("☰", fontSize = 20.sp, color = LocalText.current) }
+        IconButton(onDrawer) {
+            Icon(Icons.Outlined.Tune, contentDescription = "菜单", tint = LocalText.current)
+        }
         if (!wide) {
             Spacer(Modifier.weight(1f))
             Text(currentSessionTitle(sessions, current), fontSize = 15.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
@@ -426,6 +432,9 @@ fun AppTopBar(wide: Boolean, sessions: List<SessionRow>, current: String?, onDra
         } else {
             Text("最近记录", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
             Spacer(Modifier.weight(1f))
+        }
+        IconButton({ }) {
+            Icon(Icons.Outlined.VisibilityOff, contentDescription = "隐私", tint = LocalMuted.current)
         }
     }
 }
@@ -441,7 +450,7 @@ fun ConversationBody(items: List<Item>) {
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Starburst(Modifier.size(72.dp))
+            MCodeMark(Modifier.size(88.dp))
             Spacer(Modifier.height(18.dp))
             Text("来思考什么？", fontSize = 22.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
             Spacer(Modifier.height(6.dp))
@@ -534,13 +543,13 @@ fun DrawerContent(
             Spacer(Modifier.height(28.dp))
             Text("MCode", fontFamily = FontFamily.Serif, fontSize = 27.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
             Spacer(Modifier.height(26.dp))
-            DrawerItem("项目") { }
+            DrawerItem(Icons.Outlined.Folder, "项目") { }
             Spacer(Modifier.height(18.dp))
-            DrawerItem("Code") { }
+            DrawerItem(Icons.Outlined.Code, "Code") { }
             Spacer(Modifier.height(18.dp))
-            DrawerItem("定时任务") { }
+            DrawerItem(Icons.Outlined.Schedule, "定时任务") { }
             Spacer(Modifier.height(18.dp))
-            DrawerItem("连接设置") { onReconnect() }
+            DrawerItem(Icons.Outlined.Settings, "连接设置") { onReconnect() }
             Spacer(Modifier.height(20.dp))
             HorizontalDivider(color = LocalMuted.current.copy(alpha = 0.18f))
             Spacer(Modifier.height(18.dp))
@@ -553,6 +562,11 @@ fun DrawerContent(
                 Text("W", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
             }
             Spacer(Modifier.weight(1f))
+            Box(
+                Modifier.size(44.dp).background(LocalText.current, CircleShape).clickable { },
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Outlined.GraphicEq, contentDescription = "语音", tint = LocalBg.current, modifier = Modifier.size(20.dp)) }
+            Spacer(Modifier.width(10.dp))
             Button(
                 onCreate,
                 shape = RoundedCornerShape(22.dp),
@@ -563,8 +577,15 @@ fun DrawerContent(
 }
 
 @Composable
-fun DrawerItem(label: String, onClick: () -> Unit) {
-    Text(label, fontSize = 16.sp, color = LocalText.current, modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 6.dp))
+fun DrawerItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = label, tint = LocalText.current, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(18.dp))
+        Text(label, fontSize = 16.sp, color = LocalText.current)
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -580,7 +601,7 @@ fun ConnectScreen(url: String, token: String, onDismiss: () -> Unit, onConnect: 
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Starburst(Modifier.size(64.dp))
+        MCodeMark(Modifier.size(76.dp))
         Spacer(Modifier.height(20.dp))
         Text("来思考什么？", fontSize = 21.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
         Spacer(Modifier.height(8.dp))
@@ -648,11 +669,22 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String) -> Unit,
                     }
                     Spacer(Modifier.weight(1f))
                     Box(
+                        Modifier.size(38.dp).background(LocalPill.current, CircleShape).clickable { },
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(Icons.Outlined.Mic, contentDescription = "语音", tint = LocalText.current, modifier = Modifier.size(19.dp)) }
+                    Spacer(Modifier.width(8.dp))
+                    Box(
                         Modifier.size(44.dp).background(LocalText.current, CircleShape).clickable(enabled = enabled) {
                             if (text.isNotBlank()) { onSend(text); text = "" }
                         },
                         contentAlignment = Alignment.Center,
-                    ) { Text("↑", fontSize = 19.sp, color = LocalBg.current, fontWeight = FontWeight.SemiBold) }
+                    ) {
+                        if (text.isBlank()) {
+                            Icon(Icons.Outlined.GraphicEq, contentDescription = "语音输入", tint = LocalBg.current, modifier = Modifier.size(20.dp))
+                        } else {
+                            Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "发送", tint = LocalBg.current, modifier = Modifier.size(19.dp))
+                        }
+                    }
                 }
             }
         }
