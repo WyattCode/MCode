@@ -509,8 +509,14 @@ async function main(): Promise<void> {
     await fs.writeFile(byShell, "as the turn found it", "utf8")
 
     const mixed = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    /*
+     * The edit is preceded by a read: since the read-before-edit guard landed
+     * (0.7.6), an edit to a file the turn never read is refused with the
+     * current contents attached, and a scripted turn has no second attempt.
+     */
     script = [
       [
+        { name: "read", input: { file_path: byEdit } },
         { name: "edit", input: { file_path: byEdit, old_string: "the first line", new_string: "a different line" } },
         { name: "bash", input: rewrite },
       ],
@@ -560,7 +566,7 @@ async function main(): Promise<void> {
     await fs.writeFile(edited, "the first line\n", "utf8")
 
     const plain = await sessions.create({ directory: loose, model: { provider: "fake", model: "m" } })
-    script = [[{ name: "edit", input: { file_path: edited, old_string: "the first line", new_string: "a different line" } }]]
+    script = [[{ name: "read", input: { file_path: edited } }, { name: "edit", input: { file_path: edited, old_string: "the first line", new_string: "a different line" } }]]
     const edits = idle(plain.id)
     await runner.prompt({ sessionID: plain.id, text: "edit it" })
     await edits
@@ -581,6 +587,7 @@ async function main(): Promise<void> {
     const opaque = await sessions.create({ directory: loose, model: { provider: "fake", model: "m" } })
     script = [
       [
+        { name: "read", input: { file_path: edited } },
         { name: "edit", input: { file_path: edited, old_string: "the first line", new_string: "changed again" } },
         { name: "bash", input: rewrite },
       ],
