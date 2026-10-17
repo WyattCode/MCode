@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MCode 驾驶舱</title>
+<style>
+  :root {
+    --bg: #101214; --panel: #17191c; --panel2: #1d2024; --line: #2a2e33;
+    --fg: #e8eaed; --muted: #9aa0a6; --accent: #6ea8fe; --ok: #4ade80;
+    --warn: #fbbf24; --err: #f87171; --user: #233246;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+    background: var(--panel); border-bottom: 1px solid var(--line); flex: none;
+  }
+  #dot { width: 9px; height: 9px; border-radius: 50%; background: var(--err); flex: none; }
+  #dot.on { background: var(--ok); }
+  header select {
+    flex: 1; min-width: 0; background: var(--panel2); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit;
+  }
+  header button { background: var(--panel2); color: var(--muted); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font: inherit; cursor: pointer; }
+  .panes { flex: 1; display: grid; grid-template-columns: 1fr; min-height: 0; }
+  @media (min-width: 1000px) { .panes { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); } .panes > #detail { display: block; } }
+  #timeline { overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  #detail { display: none; overflow-y: auto; padding: 14px; border-left: 1px solid var(--line); background: var(--panel); }
+  .msg { border-radius: 10px; padding: 8px 12px; max-width: 100%; word-break: break-word; }
+  .msg.user { background: var(--user); align-self: flex-end; max-width: 85%; }
+  .msg.assistant { background: var(--panel2); align-self: stretch; }
+  .msg .who { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+  .msg pre { white-space: pre-wrap; font: inherit; }
+  .toolrow { font-size: 12px; color: var(--muted); padding: 4px 12px; border-left: 2px solid var(--line); }
+  .toolrow b { color: var(--fg); font-weight: 500; }
+  .pcard { border: 1px solid var(--warn); border-radius: 10px; padding: 10px 12px; background: #241f0e; }
+  .pcard .t { font-weight: 500; margin-bottom: 4px; }
+  .pcard .d { font-size: 12px; color: var(--muted); margin-bottom: 8px; word-break: break-all; }
+  .pcard .btns { display: flex; gap: 8px; }
+  .pcard button { flex: 1; padding: 8px 0; border-radius: 8px; border: 1px solid var(--line); background: var(--panel2); color: var(--fg); font: inherit; cursor: pointer; }
+  .pcard .allow { background: #17351f; border-color: var(--ok); }
+  .pcard .reject { background: #3a1a1a; border-color: var(--err); }
+  .errline { color: var(--err); font-size: 12px; }
+  .hint { color: var(--muted); font-size: 12px; text-align: center; }
+  footer { display: flex; gap: 8px; padding: 10px 14px; background: var(--panel); border-top: 1px solid var(--line); flex: none; }
+  #input { flex: 1; background: var(--panel2); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font: inherit; resize: none; min-height: 44px; max-height: 140px; }
+  footer button { padding: 0 18px; border-radius: 10px; border: 1px solid var(--line); background: var(--accent); color: #0b1220; font: inherit; font-weight: 500; cursor: pointer; }
+  footer button:disabled { opacity: 0.4; cursor: default; }
+  #stop { background: var(--panel2); color: var(--err); }
+  #connect { position: fixed; inset: 0; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; z-index: 10; }
+  #connect h1 { font-size: 18px; font-weight: 500; }
+  #connect input { width: min(420px, 100%); background: var(--panel2); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; padding: 12px; font: inherit; }
+  #connect button { width: min(420px, 100%); padding: 12px; border-radius: 10px; border: 0; background: var(--accent); color: #0b1220; font: inherit; font-weight: 500; cursor: pointer; }
+  #connect .hint { max-width: 420px; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<h2 class="sr">MCode 远程驾驶舱：会话时间线、diff 与权限批准</h2>
+<div id="connect">
+  <h1>MCode 驾驶舱</h1>
+  <input id="c-url" placeholder="ws://192.168.x.x:端口" autocapitalize="off" spellcheck="false">
+  <input id="c-token" placeholder="配对令牌（storage/remote-token.json）" autocapitalize="off" spellcheck="false">
+  <button id="c-go">连接</button>
+  <p class="hint">与电脑同一网络。地址和令牌只保存在本机浏览器，令牌不进入网址。</p>
+</div>
+
+<header>
+  <span id="dot" title="连接状态"></span>
+  <select id="sessions"></select>
+  <button id="new">新会话</button>
+</header>
+<div class="panes">
+  <div id="timeline"><p class="hint">连接后这里显示实时消息流</p></div>
+  <aside id="detail"><p class="hint">选中消息的详情与 diff 显示在这里</p></div>
+</div>
+<footer>
+  <textarea id="input" rows="1" placeholder="给本机的 MCode 发指令…"></textarea>
+  <button id="stop" title="中断当前任务">停止</button>
+  <button id="send">发送</button>
+</footer>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const state = { ws: null, cursor: 0, sessions: {}, current: null, pending: {}, requestId: 0, titles: {} };
+
+const saveCfg = (url, token) => localStorage.setItem("mcode-remote", JSON.stringify({ url, token }));
+const loadCfg = () => { try { return JSON.parse(localStorage.getItem("mcode-remote") || "{}"); } catch { return {}; } };
+
+function frame(frame) { state.ws.send(JSON.stringify(frame)); }
+function request(request) {
+  const id = "r" + ++state.requestId;
+  frame({ kind: "request", id, request });
+  return id;
+}
+
+function connect(url, token) {
+  state.ws = new WebSocket(url, ["mcode", "mcode.remote." + token]);
+  state.ws.onopen = () => { $("dot").classList.add("on"); request({ type: "session.list" }); };
+  state.ws.onclose = () => { $("dot").classList.remove("on"); setTimeout(() => connect(url, token), 2500); };
+  state.ws.onerror = () => {};
+  state.ws.onmessage = (ev) => { try { handle(JSON.parse(ev.data)); } catch {} };
+}
+
+function handle(f) {
+  if (f.kind === "remote.welcome") { state.cursor = f.eventId; frame({ kind: "remote.resume", cursor: f.eventId }); return; }
+  if (f.kind === "response") {
+    if (f.id === state.listReq && f.ok) renderSessions(f.data.sessions || [], f.data.running || []);
+    if (!f.ok) addLine("errline", "命令失败：" + (f.error || "未知错误"));
+    return;
+  }
+  if (f.kind === "remote.resync") { request({ type: "session.list" }); return; }
+  if (f.kind !== "remote.event") return;
+  state.cursor = Math.max(state.cursor, f.eventId);
+  const e = f.event;
+  if (e.type === "session.updated") { state.titles[e.session.id] = e.session.title || e.session.id; refreshSelect(); if (e.session.id === state.current) markBusy(false); }
+  if (e.type === "session.idle") markBusy(false);
+  if (e.type === "session.error") addLine("errline", e.error);
+  if (e.type === "message.updated") upsertMessage(e.sessionID, e.message);
+  if (e.type === "message.part.updated") upsertPart(e.sessionID, e.messageID, e.part);
+  if (e.type === "permission.requested") addPermissionCard(e.request);
+  if (e.type === "permission.resolved") removePermissionCard(e.requestID);
+  if (e.type === "session.deleted") { delete state.titles[e.sessionID]; refreshSelect(); }
+}
+
+function markBusy(busy) {}
+
+function renderSessions(sessions, running) {
+  state.sessions = {};
+  for (const s of sessions) state.titles[s.id] = s.title || s.id;
+  refreshSelect(running);
+  if (!state.current && sessions.length) select(sessions[sessions.length - 1].id);
+}
+
+function refreshSelect(running) {
+  const sel = $("sessions");
+  const current = state.current;
+  sel.innerHTML = "";
+  const ids = Object.keys(state.titles);
+  for (const id of ids) {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = (running && running.includes(id) ? "▶ " : "") + (state.titles[id] || id);
+    sel.appendChild(opt);
+  }
+  if (current && ids.includes(current)) sel.value = current;
+  sel.onchange = () => select(sel.value);
+}
+
+function select(id) { state.current = id; $("timeline").innerHTML = ""; if (id) frame({ kind: "request", id: "w" + ++state.requestId, request: { type: "session.watch", sessionIDs: [id] } }); }
+
+function bubble(role, text) {
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  const who = document.createElement("div"); who.className = "who";
+  who.textContent = role === "user" ? "你" : role === "assistant" ? "MCode" : role;
+  const pre = document.createElement("pre"); pre.textContent = text;
+  div.append(who, pre);
+  $("timeline").appendChild(div);
+  scroll();
+  return div;
+}
+function addLine(cls, text) { const d = document.createElement("div"); d.className = cls; d.textContent = text; $("timeline").appendChild(d); scroll(); }
+function scroll() { const t = $("timeline"); t.scrollTop = t.scrollHeight; }
+
+const messages = {};
+function upsertMessage(sessionID, message) {
+  if (sessionID !== state.current) return;
+  const existing = messages[message.id];
+  if (existing) existing.el?.remove();
+  const role = message.role || "assistant";
+  const parts = message.parts || [];
+  const texts = parts.filter((p) => p.type === "text").map((p) => p.text).join("\n");
+  const el = bubble(role, texts || "…");
+  messages[message.id] = { el, parts: {} };
+  for (const part of parts) if (part.type === "tool") addToolRow(part);
+}
+
+function upsertPart(sessionID, messageID, part) {
+  if (sessionID !== state.current) return;
+  const entry = messages[messageID];
+  if (!entry) return;
+  if (part.type === "text") { const pre = entry.el.querySelector("pre"); if (pre) pre.textContent = part.text || pre.textContent; }
+  if (part.type === "tool") addToolRow(part);
+}
+
+function addToolRow(part) {
+  const row = document.createElement("div");
+  row.className = "toolrow";
+  const name = part.name || part.tool || "tool";
+  const status = part.state && part.state.status ? part.state.status : "";
+  row.innerHTML = "<b></b> <span></span>";
+  row.querySelector("b").textContent = name;
+  row.querySelector("span").textContent = status;
+  $("timeline").appendChild(row); scroll();
+}
+
+function addPermissionCard(request) {
+  const card = document.createElement("div");
+  card.className = "pcard";
+  card.id = "pc-" + request.id;
+  const t = document.createElement("div"); t.className = "t"; t.textContent = "权限请求：" + (request.kind || "tool");
+  const d = document.createElement("div"); d.className = "d";
+  d.textContent = [request.title, request.meta && request.meta.path, JSON.stringify(request.input || "").slice(0, 200)].filter(Boolean).join(" · ");
+  const btns = document.createElement("div"); btns.className = "btns";
+  for (const [label, value, cls] of [["允许一次", "once", "allow"], ["总是允许", "always", "allow"], ["拒绝", "reject", "reject"]]) {
+    const b = document.createElement("button");
+    b.className = cls; b.textContent = label;
+    b.onclick = () => { request({ type: "permission.respond", requestID: request.id, response: value }); card.remove(); };
+    btns.appendChild(b);
+  }
+  card.append(t, d, btns);
+  $("timeline").appendChild(card); scroll();
+}
+function removePermissionCard(id) { const el = $("pc-" + id); if (el) el.remove(); }
+
+$("c-go").onclick = () => {
+  const url = $("c-url").value.trim() || (location.origin.replace(/^http/, "ws"));
+  const token = $("c-token").value.trim();
+  if (!url || !token) return;
+  saveCfg(url, token);
+  $("connect").style.display = "none";
+  connect(url, token);
+};
+$("send").onclick = sendInput;
+$("input").addEventListener("keydown", (ev) => { if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); sendInput(); } });
+function sendInput() {
+  const text = $("input").value.trim();
+  if (!text || !state.current) return;
+  request({ type: "session.prompt", sessionID: state.current, text, delivery: "steer" });
+  $("input").value = "";
+}
+$("stop").onclick = () => { if (state.current) request({ type: "session.abort", sessionID: state.current }); };
+$("new").onclick = () => request({ type: "session.create", title: "来自手机" });
+
+(function boot() {
+  const cfg = loadCfg();
+  if (cfg.url && cfg.token) { $("c-url").value = cfg.url; $("c-token").value = cfg.token; $("connect").style.display = "none"; connect(cfg.url, cfg.token); }
+})();
+</script>
+</body>
+</html>

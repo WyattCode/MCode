@@ -6,6 +6,7 @@ import { handle } from "../handlers"
 import { sameSecret } from "../socket-guard"
 import { isBlockedPort } from "@shared/blocked-ports"
 import { frameForWindow } from "../config-view"
+import cockpitHtml from "./cockpit.html"
 import type { Runtime } from "../index"
 
 /** Shells a phone opens are owned by the gateway, not by any window. */
@@ -82,7 +83,18 @@ export async function startRemoteGateway(runtime: Runtime, options: RemoteGatewa
   if (options.port && isBlockedPort(options.port)) throw new Error(`port ${options.port} is one browsers refuse`)
   if (!options.token) throw new Error("a pairing token is required")
 
-  const http: Server = createServer()
+  // The cockpit page (and nothing else): the phone's browser opens it, keeps
+  // its token in localStorage, and dials the same port as WebSocket.
+  const http: Server = createServer((req, res) => {
+    const url = req.url || "/"
+    if (url === "/" || url === "/cockpit" || url.startsWith("/cockpit?")) {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" })
+      res.end(cockpitHtml)
+      return
+    }
+    res.writeHead(404, { "content-type": "text/plain; charset=utf-8" })
+    res.end("not found")
+  })
   const wss = new WebSocketServer({
     server: http,
     // Phones are not browsers: no Origin check. The pairing token is the whole gate.
