@@ -78,7 +78,7 @@ val LocalPill = staticCompositionLocalOf { CreamPill }
 sealed class Item {
     abstract val key: String
     data class Msg(val id: String, val role: String, var text: String) : Item() { override val key = "msg.$id" }
-    data class Tool(val uid: String, val name: String, val status: String) : Item() { override val key = "tool.$uid" }
+    data class Tool(val uid: String, val name: String, val status: String, val output: String) : Item() { override val key = "tool.$uid" }
     data class Perm(val requestId: String, val kind: String, val detail: String) : Item() { override val key = "perm.$requestId" }
     data class Err(val text: String) : Item() { override val key = "err.$text.${hashCode()}" }
 }
@@ -272,7 +272,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
         for (i in 0 until parts.length()) {
             val part = parts.optJSONObject(i) ?: continue
             if (part.optString("type") == "tool") {
-                items.add(Item.Tool(java.util.UUID.randomUUID().toString(), part.optString("name", "tool"), part.optString("status", "")))
+                items.add(Item.Tool(java.util.UUID.randomUUID().toString(), part.optString("name", "tool"), part.optString("status", ""), part.optString("output", "").replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.filter { !it.isWhitespace() }?.take(90) ?: ""))
             }
         }
     }
@@ -284,7 +284,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
         if (existing !is Item.Msg) return
         when (part.optString("type")) {
             "text" -> items[known] = existing.copy(text = part.optString("text"))
-            "tool" -> items.add(Item.Tool(java.util.UUID.randomUUID().toString(), part.optString("name", "tool"), part.optJSONObject("state")?.optString("status", "") ?: ""))
+            "tool" -> items.add(Item.Tool(java.util.UUID.randomUUID().toString(), part.optString("name", "tool"), part.optJSONObject("state")?.optString("status", "") ?: "", part.optString("output", "").replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.filter { !it.isWhitespace() }?.take(90) ?: ""))
         }
     }
 
@@ -401,25 +401,26 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
             }
         },
     ) {
-        Scaffold(
-            containerColor = MaterialTheme.colorScheme.background,
-            topBar = { AppTopBar(wide, sessions, currentSession, onDrawer = { drawerOpen = true }, onRefresh = {
-                request(JSONObject().put("type", "session.list"), "list${System.nanoTime()}")
-            }) },
-            bottomBar = {
-                InputCapsule(
-                    enabled = currentSession != null,
-                    modelLabel = "本地模型",
-                    onSend = { text ->
-                        request(JSONObject().put("type", "session.prompt").put("sessionID", currentSession!!).put("text", text).put("delivery", "steer"))
-                    },
-                    onStop = { currentSession?.let { request(JSONObject().put("type", "session.abort").put("sessionID", it)) } },
-                    onNew = { request(JSONObject().put("type", "session.create").put("title", "来自手机")) },
-                )
-            },
-        ) { padding ->
-            if (wide) {
-                Row(Modifier.padding(padding).fillMaxSize()) {
+        val inputBar: @Composable () -> Unit = {
+            InputCapsule(
+                enabled = currentSession != null,
+                modelLabel = "本地模型",
+                onSend = { text ->
+                    request(JSONObject().put("type", "session.prompt").put("sessionID", currentSession!!).put("text", text).put("delivery", "steer"))
+                },
+                onStop = { currentSession?.let { request(JSONObject().put("type", "session.abort").put("sessionID", it)) } },
+                onNew = { request(JSONObject().put("type", "session.create").put("title", "来自手机")) },
+            )
+        }
+        if (wide) {
+            // Claude's fold layout: the top bar spans, records fill the left
+            // column to the bottom, and the input capsule lives in the right
+            // column under the conversation.
+            Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                AppTopBar(wide = true, sessions, currentSession, onDrawer = { drawerOpen = true }, onRefresh = {
+                    request(JSONObject().put("type", "session.list"), "list${System.nanoTime()}")
+                })
+                Row(Modifier.weight(1f).fillMaxWidth()) {
                     Column(Modifier.weight(0.42f).fillMaxHeight()) {
                         OutlinedTextField(
                             search, { search = it },
@@ -431,14 +432,23 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                             singleLine = true,
                         )
                         Spacer(Modifier.height(6.dp))
-                        SessionList(sessions, currentSession, search, onSelect = { select(it) }, compact = false)
+                        SessionList(sessions, currentSession, search, onSelect = { select(it) }, compact = false, modifier = Modifier.weight(1f))
                     }
-                    Box(Modifier.weight(0.58f).fillMaxHeight()) {
-                        ConversationBody(items)
+                    Column(Modifier.weight(0.58f).fillMaxHeight()) {
+                        Box(Modifier.weight(1f).fillMaxWidth()) { ConversationBody(items) }
+                        inputBar()
                     }
                 }
-            } else {
-                ConversationBody(items)
+            }
+        } else {
+            Scaffold(
+                containerColor = MaterialTheme.colorScheme.background,
+                topBar = { AppTopBar(wide = false, sessions, currentSession, onDrawer = { drawerOpen = true }, onRefresh = {
+                    request(JSONObject().put("type", "session.list"), "list${System.nanoTime()}")
+                }) },
+                bottomBar = { inputBar() },
+            ) { padding ->
+                Box(Modifier.padding(padding).fillMaxSize()) { ConversationBody(items) }
             }
         }
     }
@@ -508,8 +518,9 @@ fun ConversationBody(items: List<Item>) {
                             }
                         }
                     }
-                    is Item.Tool -> Row(Modifier.padding(start = 10.dp)) {
+                    is Item.Tool -> Column(Modifier.padding(start = 10.dp)) {
                         Text("· ${item.name} ${item.status}", fontSize = 12.sp, color = LocalMuted.current)
+                        if (item.output.isNotBlank()) Text(item.output, fontSize = 11.sp, color = LocalMuted.current.copy(alpha = 0.8f), maxLines = 1)
                     }
                     is Item.Perm -> PermCard(item, onPerm = { _, _ -> })
                     is Item.Err -> Text(item.text, fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(start = 10.dp))
@@ -670,9 +681,9 @@ fun ConnectScreen(url: String, token: String, onDismiss: () -> Unit, onConnect: 
 /* ------------------------------------------------------------------ */
 
 @Composable
-fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String) -> Unit, onStop: () -> Unit, onNew: () -> Unit) {
+fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String) -> Unit, onStop: () -> Unit, onNew: () -> Unit, modifier: Modifier = Modifier) {
     var text by remember { mutableStateOf("") }
-    Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 10.dp)) {
+    Box(modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 10.dp)) {
         Surface(
             shape = RoundedCornerShape(28.dp),
             color = MaterialTheme.colorScheme.surface,
