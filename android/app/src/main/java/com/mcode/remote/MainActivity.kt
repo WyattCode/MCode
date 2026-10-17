@@ -63,18 +63,22 @@ class RemoteClient {
             .build()
         ws = http.newWebSocket(request, object : okhttp3.WebSocketListener() {
             override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
+                println("[remote] ws open")
                 onState(true)
             }
             override fun onClosed(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
                 onState(false)
             }
             override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) {
+                println("[remote] ws failure: $t")
                 onState(false)
             }
             override fun onMessage(webSocket: okhttp3.WebSocket, text: String) {
                 try {
+                    println("[remote] frame kind: " + JSONObject(text).optString("kind"))
                     onFrame(JSONObject(text))
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    println("[remote] frame error: $e")
                 }
             }
         })
@@ -98,12 +102,14 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val autoUrl = intent.getStringExtra("connectUrl") ?: ""
+        val autoToken = intent.getStringExtra("connectToken") ?: ""
         setContent {
             val wsc = calculateWindowSizeClass(this)
             val dark = androidx.compose.foundation.isSystemInDarkTheme()
             val scheme = if (dark) darkColorScheme() else lightColorScheme()
             MaterialTheme(colorScheme = scheme) {
-                App(wsc.widthSizeClass)
+                App(wsc.widthSizeClass, autoUrl, autoToken)
             }
         }
     }
@@ -114,13 +120,18 @@ class MainActivity : ComponentActivity() {
 /* ------------------------------------------------------------------ */
 
 @Composable
-fun App(widthSize: WindowWidthSizeClass) {
+fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String) {
     val scope = rememberCoroutineScope()
     val client = remember { RemoteClient() }
 
     var connected by remember { mutableStateOf(false) }
-    var url by remember { mutableStateOf("") }
-    var token by remember { mutableStateOf("") }
+    var connectedOnce by remember { mutableStateOf(autoUrl.isNotBlank() && autoToken.isNotBlank()) }
+    var url by remember { mutableStateOf(autoUrl) }
+    var token by remember { mutableStateOf(autoToken) }
+
+    LaunchedEffect(Unit) {
+        if (autoUrl.isNotBlank() && autoToken.isNotBlank()) client.connect(autoUrl, autoToken)
+    }
 
     val sessions = remember { mutableStateListOf<SessionRow>() }
     val items = remember { mutableStateListOf<Item>() }
@@ -246,7 +257,6 @@ fun App(widthSize: WindowWidthSizeClass) {
         }
     }
 
-    var connectedOnce by remember { mutableStateOf(false) }
     client.onState = { up ->
         connected = up
         if (up) connectedOnce = true
