@@ -18,10 +18,10 @@ class KeepAliveService : Service() {
         super.onCreate()
         val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         manager.createNotificationChannel(
-            NotificationChannel("remote-keepalive", "MCode Remote 连接", NotificationManager.IMPORTANCE_LOW),
+            NotificationChannel("remote-keepalive", "MCode 连接", NotificationManager.IMPORTANCE_LOW),
         )
         val notification = Notification.Builder(this, "remote-keepalive")
-            .setContentTitle("MCode Remote")
+            .setContentTitle("MCode")
             .setContentText("与本机 MCode 的连接保持中")
             .setSmallIcon(R.drawable.mcode_mark)
             .setOngoing(true)
