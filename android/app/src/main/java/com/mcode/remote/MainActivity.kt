@@ -149,6 +149,17 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The keep-alive umbrella: an ongoing quiet notification that keeps the
+        // process out of the kill-first bucket while a session is expected to
+        // keep running. Android 13+ gates its visibility behind a permission.
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 2026)
+        }
+        androidx.core.content.ContextCompat.startForegroundService(
+            this, android.content.Intent(this, KeepAliveService::class.java),
+        )
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
         val savedUrl = prefs.getString("url", DEFAULT_URL) ?: DEFAULT_URL
         val savedToken = prefs.getString("token", DEFAULT_TOKEN) ?: DEFAULT_TOKEN
@@ -540,9 +551,22 @@ fun Timeline(items: List<Item>, modifier: Modifier) {
                             }
                         }
                     }
-                    is Item.Tool -> Column(Modifier.padding(start = 10.dp)) {
-                        Text("· ${item.name} ${item.status}", fontSize = 12.sp, color = LocalMuted.current)
-                        if (item.output.isNotBlank()) Text(item.output, fontSize = 11.sp, color = LocalMuted.current.copy(alpha = 0.8f), maxLines = 1)
+                    is Item.Tool -> {
+                        var open by remember { mutableStateOf(false) }
+                        Column(
+                            Modifier.padding(start = 10.dp).clickable { open = !open },
+                        ) {
+                            Text("· ${item.name} ${item.status}" + if (item.output.isNotBlank() && !open) " ▸" else "", fontSize = 12.sp, color = LocalMuted.current)
+                            if (item.output.isNotBlank()) {
+                                Text(
+                                    item.output,
+                                    fontSize = 11.sp,
+                                    color = LocalMuted.current.copy(alpha = 0.8f),
+                                    maxLines = if (open) Int.MAX_VALUE else 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
                     }
                     is Item.Perm -> PermCard(item, onPerm = { _, _ -> })
                     is Item.Err -> Text(item.text, fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(start = 10.dp))
