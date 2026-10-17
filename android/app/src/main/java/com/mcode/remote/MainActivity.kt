@@ -137,15 +137,27 @@ class RemoteClient {
 /* ------------------------------------------------------------------ */
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        /** Single-operator defaults; overridden by what the connect screen saves. */
+        const val DEFAULT_URL = "ws://192.168.10.156:7900"
+        const val DEFAULT_TOKEN = "mcode-fold-2026"
+        const val PREFS = "mcode-remote"
+    }
+
     @OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val autoUrl = intent.getStringExtra("connectUrl") ?: ""
-        val autoToken = intent.getStringExtra("connectToken") ?: ""
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        val savedUrl = prefs.getString("url", DEFAULT_URL) ?: DEFAULT_URL
+        val savedToken = prefs.getString("token", DEFAULT_TOKEN) ?: DEFAULT_TOKEN
+        val autoUrl = intent.getStringExtra("connectUrl") ?: savedUrl
+        val autoToken = intent.getStringExtra("connectToken") ?: savedToken
         setContent {
             val wsc = calculateWindowSizeClass(this)
             MCodeTheme {
-                App(wsc.widthSizeClass, autoUrl, autoToken)
+                App(wsc.widthSizeClass, autoUrl, autoToken) { u, t ->
+                    prefs.edit().putString("url", u).putString("token", t).apply()
+                }
             }
         }
     }
@@ -207,7 +219,7 @@ fun relTime(updated: Long): String {
 /* ------------------------------------------------------------------ */
 
 @Composable
-fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String) {
+fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onSave: (String, String) -> Unit) {
     val scope = rememberCoroutineScope()
     val client = remember { RemoteClient() }
 
@@ -355,6 +367,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String) {
         ConnectScreen(url, token, onDismiss = { showConnect = false }) { u, t ->
             showConnect = false
             url = u; token = t
+            onSave(u, t)
             client.close()
             client.connect(u, t)
         }
