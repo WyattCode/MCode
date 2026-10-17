@@ -1617,6 +1617,17 @@ export interface AppConfig {
   /** Model Context Protocol servers, by the name they are shown under. */
   mcpServers: Record<string, McpServerConfig>
   /**
+   * MCode Remote (docs/remote-design.md): whether paired phones may connect.
+   *
+   * Absent is off. `host` widens the bind from loopback - "0.0.0.0" for the
+   * LAN; anything wider is the operator's own call. `port` is fixed rather
+   * than picked per launch when given, so a phone's saved address keeps
+   * working. The pairing token is not stored here: it lives beside the
+   * storage (`remote-token.json`), generated on first use, and is what a
+   * phone must present, so editing the config alone never opens the machine.
+   */
+  remote?: { enabled: boolean; host?: string; port?: number }
+  /**
    * Absolute directory paths the user has trusted for project MCP servers.
    *
    * A local MCP server whose config came from a project file (mcode.json,

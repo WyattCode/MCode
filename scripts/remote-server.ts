@@ -9,12 +9,11 @@
  * --data-dir at the desktop profile only while the desktop app is closed, so
  * two SessionRunners never share one store.
  */
-import { randomBytes } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { startBackend } from "../src/server/index"
 import { startRemoteGateway } from "../src/server/remote/gateway"
+import { loadOrCreateToken } from "../src/server/remote/token"
 
 const args = process.argv.slice(2)
 const flag = (name: string) => {
@@ -26,19 +25,7 @@ const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roami
 const dataDir = path.resolve(flag("data-dir") ?? path.join(appData, "mcode-remote"))
 const host = flag("host") ?? "127.0.0.1"
 const port = Number(flag("port") ?? 0)
-
-mkdirSync(dataDir, { recursive: true })
-const tokenFile = path.join(dataDir, "storage", "remote-token.json")
-let token: string
-if (flag("token")) {
-  token = String(flag("token"))
-} else if (existsSync(tokenFile)) {
-  token = JSON.parse(readFileSync(tokenFile, "utf8")).token
-} else {
-  token = randomBytes(24).toString("base64url")
-  mkdirSync(path.dirname(tokenFile), { recursive: true })
-  writeFileSync(tokenFile, JSON.stringify({ token }), "utf8")
-}
+const token = loadOrCreateToken(dataDir)
 
 console.log("[remote] starting the backend…")
 const backend = await startBackend(dataDir, { origins: [] })
