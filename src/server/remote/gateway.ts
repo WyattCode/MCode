@@ -102,7 +102,9 @@ export async function startRemoteGateway(runtime: Runtime, options: RemoteGatewa
       const protocols = typeof req.headers["sec-websocket-protocol"] === "string" ? req.headers["sec-websocket-protocol"] : ""
       const offered = tokenFromProtocols(protocols)
       if (offered !== undefined && sameSecret(offered, options.token)) return done(true)
-      console.warn(`[remote] refused a connection (${offered === undefined ? "no token" : "wrong token"})`)
+      console.warn(
+        `[remote] refused a connection (offered ${offered === undefined ? "no subprotocol" : `token len ${offered.length} prefix ${offered.slice(0, 4)}`}; expected len ${options.token.length})`,
+      )
       done(false, 401)
     },
     maxPayload: 8 * 1024 * 1024,

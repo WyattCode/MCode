@@ -25,7 +25,9 @@ const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roami
 const dataDir = path.resolve(flag("data-dir") ?? path.join(appData, "mcode-remote"))
 const host = flag("host") ?? "127.0.0.1"
 const port = Number(flag("port") ?? 0)
-const token = loadOrCreateToken(dataDir)
+// An explicit --token overrides the stored one (demo and CI); otherwise the
+// token beside the storage is generated on first use and kept for good.
+const token = flag("token") ?? loadOrCreateToken(dataDir)
 
 console.log("[remote] starting the backend…")
 const backend = await startBackend(dataDir, { origins: [] })
