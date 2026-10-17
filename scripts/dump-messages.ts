@@ -1,17 +1,22 @@
-// Dump the first session's message structure to see why parts render empty.
+// Dump the first tool part of the latest session (structure probe).
 import { startBackend } from "../src/server/index"
-import path from "node:path"
-import os from "node:os"
 
 const dataDir = "C:/Users/Wyatt/AppData/Roaming/mcode"
 const backend = await startBackend(dataDir, { origins: [] })
 const sessions = await backend.runtime.sessions.list()
 const first = sessions.sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0))[0]
-console.log("session:", first?.id, first?.title)
+console.log("session:", first?.id, first?.title, "| updated:", first?.updated)
 const messages = await backend.runtime.sessions.messages(first.id)
 console.log("messages:", messages.length)
-const last = messages[messages.length - 1]
-console.log("last message keys:", Object.keys(last ?? {}))
-console.log(JSON.stringify(last, null, 1).slice(0, 1200))
+let found = 0
+for (const m of messages) {
+  for (const part of m.parts ?? []) {
+    if (part.type === "tool" && found < 2) {
+      console.log("TOOL PART:", JSON.stringify(part).slice(0, 600))
+      found++
+    }
+  }
+}
+console.log("updated field of first:", typeof first?.updated, first?.updated)
 await backend.close()
 process.exit(0)
