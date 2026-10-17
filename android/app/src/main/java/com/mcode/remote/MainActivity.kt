@@ -16,11 +16,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Send
+import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.VisibilityOff
@@ -75,7 +78,7 @@ val LocalPill = staticCompositionLocalOf { CreamPill }
 sealed class Item {
     abstract val key: String
     data class Msg(val id: String, val role: String, var text: String) : Item() { override val key = "msg.$id" }
-    data class Tool(val name: String, val status: String) : Item() { override val key = "tool.$name.$status.${hashCode()}" }
+    data class Tool(val uid: String, val name: String, val status: String) : Item() { override val key = "tool.$uid" }
     data class Perm(val requestId: String, val kind: String, val detail: String) : Item() { override val key = "perm.$requestId" }
     data class Err(val text: String) : Item() { override val key = "err.$text.${hashCode()}" }
 }
@@ -266,6 +269,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
             items.add(Item.Msg(id, role, text.toString().trim().ifEmpty { "…" }))
             messageIndex[id] = items.size - 1
         }
+        for (i in 0 until parts.length()) {
+            val part = parts.optJSONObject(i) ?: continue
+            if (part.optString("type") == "tool") {
+                items.add(Item.Tool(java.util.UUID.randomUUID().toString(), part.optString("name", "tool"), part.optString("status", "")))
+            }
+        }
     }
 
     fun upsertPart(sessionID: String, messageID: String, part: JSONObject) {
@@ -275,7 +284,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
         if (existing !is Item.Msg) return
         when (part.optString("type")) {
             "text" -> items[known] = existing.copy(text = part.optString("text"))
-            "tool" -> items.add(Item.Tool(part.optString("name", "tool"), part.optJSONObject("state")?.optString("status", "") ?: ""))
+            "tool" -> items.add(Item.Tool(java.util.UUID.randomUUID().toString(), part.optString("name", "tool"), part.optJSONObject("state")?.optString("status", "") ?: ""))
         }
     }
 
@@ -394,7 +403,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
     ) {
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
-            topBar = { AppTopBar(wide, sessions, currentSession, onDrawer = { drawerOpen = true }) },
+            topBar = { AppTopBar(wide, sessions, currentSession, onDrawer = { drawerOpen = true }, onRefresh = {
+                request(JSONObject().put("type", "session.list"), "list${System.nanoTime()}")
+            }) },
             bottomBar = {
                 InputCapsule(
                     enabled = currentSession != null,
@@ -414,6 +425,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                             search, { search = it },
                             Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                             placeholder = { Text("搜索", color = LocalMuted.current) },
+                            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current) },
                             shape = RoundedCornerShape(14.dp),
                             colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant, focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant, unfocusedBorderColor = Color.Transparent, focusedBorderColor = Color.Transparent),
                             singleLine = true,
@@ -433,18 +445,22 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
 }
 
 @Composable
-fun AppTopBar(wide: Boolean, sessions: List<SessionRow>, current: String?, onDrawer: () -> Unit) {
+fun AppTopBar(wide: Boolean, sessions: List<SessionRow>, current: String?, onDrawer: () -> Unit, onRefresh: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onDrawer) {
-            Icon(Icons.Outlined.Tune, contentDescription = "菜单", tint = LocalText.current)
+            Icon(Icons.Outlined.Menu, contentDescription = "菜单", tint = LocalText.current)
         }
-        if (!wide) {
-            Spacer(Modifier.weight(1f))
-            Text(currentSessionTitle(sessions, current), fontSize = 15.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
-            Spacer(Modifier.weight(1.2f))
-        } else {
-            Text("最近记录", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
-            Spacer(Modifier.weight(1f))
+        Spacer(Modifier.weight(1f))
+        Text(
+            if (wide) "最近记录" else currentSessionTitle(sessions, current),
+            fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current,
+        )
+        Spacer(Modifier.weight(1f))
+        IconButton(onClick = { }) {
+            Icon(Icons.Outlined.Tune, contentDescription = "筛选", tint = LocalText.current)
+        }
+        IconButton(onClick = onRefresh) {
+            Icon(Icons.Outlined.Checklist, contentDescription = "任务", tint = LocalText.current)
         }
         IconButton({ }) {
             Icon(Icons.Outlined.VisibilityOff, contentDescription = "隐私", tint = LocalMuted.current)
