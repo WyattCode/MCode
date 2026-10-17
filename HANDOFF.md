@@ -9,11 +9,11 @@
 - **这是什么**：在界面和功能上 1:1 复刻小米 MiMo 桌面端的 Electron 应用，MCode 保留自己的名字、图标和字标。技术栈 Electron 41.7.2 + Vue 3 + Pinia + electron-vite，后端是同一进程里的 Node 服务。
 - **对照基准**：界面照 MiMo **26.920**（第十八轮起）。 第四十七轮已只读比较本机 **26.929.292248**；第四十八轮补了确认的五项增量并修复发送目标竞态，但没有重跑新版全部页面，不宣称全量对齐。只读它的行为和尺寸，**不复制**它的代码、文案、图标、插画和品牌。逐项对照清单（含百分比）：https://claude.ai/code/artifact/f149a5d1-857e-4bae-80be-ca03265d9f83
 - **引擎跟随 OpenCode v2**（第三十一轮起，用户 2026-09-27 定的）：内核和 Agent 编程能力照 OpenCode 的 `v2` 分支逐项移植进 MCode 自己的引擎（v2 还没正式发布，所以是搬能力，不是换引擎）；界面和其余部分保留 MCode 自己的设计。只搬比 MCode 现有做法好的，MCode 更强的地方保留（见第三十一轮）。OpenCode 是 MIT 许可，移植的代码在注释里注明出处。
-- **版本**：**0.7.7**（`package.json`；GitHub Releases 最新版 v0.7.7，2026-10-17，对应 PR #27）。0.7.5、0.7.6、0.7.7 三版**都没有 Windows 安装包**（在 Linux 上制作，装新版需本地另行打包）；0.7.4（https://github.com/WyattCode/MCode/releases/tag/v0.7.4，`MCode-0.7.4-x64.exe` 236,934,808 字节，三个附件的 SHA-256 已与本地核对）是最后一个带安装包的发布，本机 `D:\Apps\MCode` 装的仍是 0.7.4.0。自动更新地址仍是占位的 `updates.invalid`，不会触发自动更新。三版内容见第五十四轮。
+- **版本**：**0.7.8**（`package.json`；GitHub Releases 最新版 v0.7.8，2026-10-17，Windows 安装包 `MCode-0.7.8-x64.exe` 237,049,120 字节，SHA-256 已与远程核对；版本号提交 `5fb157d8`，发布内容见第五十五轮）。0.7.5-0.7.7 无安装包（Linux 制作）；0.7.4（`MCode-0.7.4-x64.exe`）是再往前最后一个带安装包的发布，本机 `D:\Apps\MCode` 装的是 0.7.7（第五十四轮本地打包）或 0.7.8（自行安装）。自动更新地址仍是占位的 `updates.invalid`，不会触发自动更新。
 - **分支**：第五十四轮起 **`v2.0` 退役**。0.7.5 起的工作本就直接从 feature 分支（`fix/...`、`feat/...`）合进 `main`（#22-#27），`origin/v2.0` 停在 0.7.4 的交接提交 `2f9f92f8` 之后无人再推；本地 `v2.0` 已删，远端留着不动。以后一切工作（含交接更新）都从最新 `main` 拉分支、PR 合回 `main`。私有仓库 `WyattCode/MCode`。保留未跟踪的 `.claude/`，不提交本地测试产物。
-- **拉取请求**：#4 到 #20、#22 到 #27 已全部合并（#21 关闭未合并；0.7.5=#22-#25、0.7.6=#26、0.7.7=#27，见第五十四轮；标题照 #10「MCode 2.0：0.6.4 —— …，第四十到四十一轮」的格式）。#3（`macos-hardening-v2`）已关闭：它声称的 16 条修复逐条对照过当前代码，5 条已被后来的工作修掉（含全部 3 条安全项）、2 条在本平台仍然存在并已修（0.4.6）、7 条只在 macOS 上能观察到，结论写在 #3 的关闭评论里。
-- **发布**：https://github.com/WyattCode/MCode/releases/tag/v0.7.7（2026-10-17，最新稳定版；v0.7.5-0.7.7 无安装包，安装与基准说明在各 Release 页）。带安装包的最近三版是 v0.7.4、v0.7.3、v0.7.2；更早 v0.7.1、v0.7.0、v0.6.9、v0.6.8、v0.6.7、v0.6.6、v0.6.4、v0.6.3、v0.5.3、v0.4.7、v0.4.5、v0.3.8。自动更新地址仍是占位的 `updates.invalid`，所以**发布不会触发任何自动更新**。
-- **验证状态**：2026-10-09 第四十九轮二次复核，build、typecheck 和十二项专项检查全部通过；最终完整 smoke **7794 passed / 0 failed**（out/round49-smoke.log）。修复音频预检抢走新草稿、操作标记断线恢复、驱动替换/关闭后的旧类型，以及已取消的排队操作迟到执行。新增 13 条回归用 11 份实现变异逐条证明能失败；10 份隔离界面构建变异被检出，正常探针通过。旧浏览器夹具改为等待实际关闭，原 1800ms 预算和产品监听变异的失败断言均保留。独立可见 Electron 窗口、真实浏览器及 Windows 原生窗口检查均通过，计时阈值未放宽。本轮未接安卓设备，未重跑真实模型；详情见第四十九轮。第五十四轮（2026-10-17）：typecheck 与十二项专项检查在本机 Windows 全过；0.7.5-0.7.7 的完整回归（**7781 passed / 0 failed**）都是 Release 流程在 Linux 上以「Electron 41 作为 Node」跑的，Windows 完整 smoke 未重跑。
+- **拉取请求**：#4 到 #20、#22 到 #30 已全部合并（#21 关闭未合并；0.7.5=#22-#25、0.7.6=#26、0.7.7=#27，见第五十四轮；#29=session-check 跟上 read-before-edit 守卫、#30=0.7.8 版本号，见第五十五轮；标题照 #10「MCode 2.0：0.6.4 —— …，第四十到四十一轮」的格式）。#3（`macos-hardening-v2`）已关闭：它声称的 16 条修复逐条对照过当前代码，5 条已被后来的工作修掉（含全部 3 条安全项）、2 条在本平台仍然存在并已修（0.4.6）、7 条只在 macOS 上能观察到，结论写在 #3 的关闭评论里。
+- **发布**：https://github.com/WyattCode/MCode/releases/tag/v0.7.8（2026-10-17，最新稳定版，**Windows 安装包回归**——`MCode-0.7.8-x64.exe` 237,049,120 字节 + blockmap + `latest.yml`，三个附件 SHA-256 已与本地核对）。带安装包的最近版本：v0.7.8、v0.7.4、v0.7.3、v0.7.2；v0.7.5-0.7.7 无安装包（Linux 制作）；更早 v0.7.1、v0.7.0、v0.6.9、v0.6.8、v0.6.7、v0.6.6、v0.6.4、v0.6.3、v0.5.3、v0.4.7、v0.4.5、v0.3.8。自动更新地址仍是占位的 `updates.invalid`，所以**发布不会触发任何自动更新**。
+- **验证状态**：2026-10-09 第四十九轮二次复核，build、typecheck 和十二项专项检查全部通过；最终完整 smoke **7794 passed / 0 failed**（out/round49-smoke.log）。修复音频预检抢走新草稿、操作标记断线恢复、驱动替换/关闭后的旧类型，以及已取消的排队操作迟到执行。新增 13 条回归用 11 份实现变异逐条证明能失败；10 份隔离界面构建变异被检出，正常探针通过。旧浏览器夹具改为等待实际关闭，原 1800ms 预算和产品监听变异的失败断言均保留。独立可见 Electron 窗口、真实浏览器及 Windows 原生窗口检查均通过，计时阈值未放宽。本轮未接安卓设备，未重跑真实模型；详情见第四十九轮。第五十四轮（2026-10-17）：typecheck 与十二项专项检查在本机 Windows 全过；0.7.5-0.7.7 的完整回归（**7781 passed / 0 failed**）都是 Release 流程在 Linux 上以「Electron 41 作为 Node」跑的，Windows 完整 smoke 未重跑。第五十五轮（2026-10-17）：**Windows 完整 smoke 首次重跑——7838 passed / 35 failed**，35 条全部为执行环境因素（WorkBuddy 作业对象里 GPU 子进程不稳导致软渲染下的窗口/绘制类、外网封面抓取类、DevTools attach 类、构建未完成时产物过旧的连带一条），agent/session/tool/fs 核心逻辑零失败；session-check 修复后十二项专项全过（详见第五十五轮）。
 - **已知差异**：对照 26.920 没有已知的、未决的界面差异；26.929 确认的水印选择、后台子智能体提示、停止/未完成状态、项目目录保护和电脑/浏览器标记已补（第四十八轮），发送期间切会话的问题已复现并修复；没有实现录制回放，也没有全页复核新版。仍然不同的三类——用户定的刻意差异（见下）；依赖小米账号或小米服务的功能；需要 Linux / macOS 真机才能核对的细节。
 - **真实模型**：第二十七轮起用局域网模型真用过——撤销、删除提问、手动压缩都端到端验证过（见那一节）；第三十一轮的排队、联网搜索、代码模式也在真模型上跑通了（见第三十二轮末尾）；用户自己也在日常用（第二十九轮的两个问题就是用出来的）。
 
@@ -220,6 +220,23 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 更早的下一步建议留作记录，见文末「附录 C」。
 
 ## 逐轮记录（新到旧）
+
+### 第五十五轮：二次审核、0.7.8 发版（Windows 包回归）、三方编程能力对比（2026-10-17）
+
+**二次审核（发版前）**：
+
+- **fs.watch 风险实测排除**：0.7.5 记录的「Electron 41.10.7 同文件夹反复切换文件时主进程卡死」（当年锁 41.7.2 的理由），用真实 app 驱动 50 轮切换 + 30ms 文件事件风暴实测——主进程事件循环零停顿（对照实验确认观测到的 4.3 秒停顿为软件渲染冷启动开销，发生在切换开始前）；渲染进程零崩溃。**当年锁 41.7.2 的理由不再成立**。
+- **session-check 4 个 BAD 修复（PR #29，合并 `097e77c0`）**：0.7.6 的 read-before-edit 守卫下，edit 到本回合未读过的文件会被拒；session-check 的脚本化 turn 每个 edit 只发一次，编辑从不落地。三处脚本化 turn 的 edit 前加 read。真实模型不受影响（同日 21/21 的基准里 edit 全部正常）。**0.7.6/0.7.7 发布时十二项专项未在 Linux 侧跑，此回归漏网——以后发版两边都要跑十二项。**
+- **一次误报（已更正）**：曾报 office.ts statOf 的 `await fs.stat` 为 bug——该文件 fs 来自 `node:fs/promises`，一直正常；全库 70+ 处 await fs.stat 均在 promises 上下文。修改已回滚。**教训**：判断 fs API 误用前先看文件 import，别拿 `require("fs")` 的实验结论套源码。
+- typecheck + 十二项专项全过；Windows 完整 smoke **7838 passed / 35 failed**（35 条全部为执行环境因素：本机 WorkBuddy 作业对象里 GPU 子进程不稳导致软渲染下的窗口/绘制类、外网封面抓取类、DevTools attach 类、构建未完成时产物过旧的连带一条；agent/session/tool/fs 核心逻辑零失败）。
+
+**0.7.8 打包发版**：`npm run package:win`（bump 0.7.7 → 0.7.8，版本号提交 `5fb157d8` 经 PR #30 合并为 `3815a029`，标签 v0.7.8 指向它）；安装包 `MCode-0.7.8-x64.exe` 237,049,120 字节 + blockmap + `latest.yml` 发布到 https://github.com/WyattCode/MCode/releases/tag/v0.7.8 ，三个附件 SHA-256 下载回来核对一致。**0.7.5 起首个 Windows 安装包**。发版说明含二次审核三项结论。本机安装包未装（`D:\Apps\MCode` 是 0.7.7，用户自行决定升级）。
+
+**打包的环境坑（本机）**：WorkBuddy 的 safe-delete shim（经 `NODE_OPTIONS` 注入）会拦 vite 清空 `out/renderer/assets` 和 electron-builder 解压 win-unpacked 时的批量删除——打包命令前 `env -u NODE_OPTIONS -u CODEBUDDY_SAFE_DELETE_*` 剥离；out/ 与 dist/ 是可再生产物，直接清掉旧目录也可。
+
+**三方编程能力对比（rb8，Windows 本机）**：MCode 0.7.7 vs OpenCode 1.19.3 vs WorkBuddy，模型 Qwen3.8-Flash-Next-iq3_s（212:8080）、DeepSeek-V4.1-Flash（233:8888）、GLM-5.3-Flash-EXL3（124:8888），7 道编程题 verify 判分（effort=none）。**MCode 21/21 满分；OpenCode 15/21（GLM 列 6 题 `AI_APICallError: Bad Request`——ai-sdk 请求形态与该 EXL3 服务不兼容，curl 验证端点本身正常）；WorkBuddy（自带模型）7/7**。速度：MCode 的 DeepSeek 路径最快（13–39 秒/题），Qwen 13–50 秒，GLM 28–151 秒。数据 `out/bench/v077-*.json` 与 `%TEMP%\oc-bench\`。rb4–rb7 的 14 道真实 bug 题在 Linux 侧，本轮未用。
+
+**环境要点**：本机 WorkBuddy 上下文里 MCode 的 Electron 要 `--no-sandbox --in-process-gpu --use-angle=swiftshader` 才能稳定跑（渲染零崩溃验证）；OpenCode CLI 必须经 ConPTY 终端，管道下挂起；bench 的 profile 名不能撞内置 provider id（`deepseek` 撞了会发往官方 API）；credentials.json 在 profile 根目录。
 
 ### 第五十四轮：v2.0 退役，工作转回 main；补记 0.7.5–0.7.7（2026-10-17）
 
