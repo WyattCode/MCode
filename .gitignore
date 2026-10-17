@@ -12,3 +12,10 @@ resources/soundfont/
 
 # The bundled Node.js, Python and ripgrep; scripts/runtimes.mjs places and verifies them.
 resources/runtimes/
+
+# MCode Remote - Android build outputs and local SDK paths
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
