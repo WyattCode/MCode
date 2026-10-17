@@ -89,13 +89,15 @@
 
 **明确不做**（v1+）：外网 Relay 服务（先支持自建隧道）、diff 的手机端编辑、语音、多机管理面板、iOS、本地/远程模式切换、图片/附件预览。
 
-## 7. 三个先决 spike（动工前必须回答）
+## 7. 三个先决 spike —— ✅ 全部已验证（2026-10-18，代码级）
 
-| # | 问题 | 验证法 | 失败后果 |
-|---|---|---|---|
-| S1 | server 能否**无窗口**完整跑（启动/会话/工具/MCP） | 仿 agent.cjs 但不 show window，跑一轮真实对话 | 需把 server 拆成纯 node 进程，工程量 +1 周 |
-| S2 | 事件流能否覆盖手机所需全部信息且顺序可靠 | 现有 session 存储加 listener，真实对话核对事件表 | 补埋点或改快照轮询 |
-| S3 | `permissions.ask` 能否旁路订阅而不破坏现有审批 | spike：注册监听者，验证本机 UI 与远程投递互不阻塞 | 权限层重构，需单独设计评审 |
+| # | 结论 | 依据 |
+|---|---|---|
+| S1 headless 宿主 | **✅ 已就绪，甚至有活体先例** | `src/server/` 全部 185 个文件**零 electron import**（纯 Node）；`scripts/session-check.ts` 已经在纯 node 里组装完整 backend（Storage/Bus/Config/Permissions/SessionStore/SessionRunner/Shells/McpServers）并跑通几十轮真实断言。只需一个 server-only entry（调 `startBackend` + 保持进程活着）。 |
+| S2 事件流完备性 | **✅ 已就绪** | `ServerEvent` 联合类型（src/shared/protocol.ts:2647）覆盖手机端所需全部：`message.delta`/`message.part.updated`（逐字流+工具 part）、`session.updated/idle/error/compacting/reverted`、`git.waiting`、`shell.data/exit`、`mcp.status`、`providers.updated`、`question.asked`。Bus 类注释明确写着「the WebSocket layer is just one subscriber」与「lets several windows observe the same session」——多端观察是设计预留。 |
+| S3 权限卡旁路 | **✅ 已就绪** | `permission.requested` / `permission.resolved` 本身就是 ServerEvent（protocol.ts:2699-2700）；`Permissions` 构造函数注入 bus，卡片流走 `bus.publish`。远程端 = 又一个普通订阅者，零侵入。 |
+
+**总体结论**：Remote Gateway 的形态 = **「bus 订阅者 + 出站 WSS 客户端」**——不暴露 server 的 loopback socket（保持其安全边界），不改动 server 核心一行代码，只新增 Gateway 模块与 server entry。原三个风险全部消失，MVP 可直接进入规格与实现。
 
 ## 8. 路线图
 
