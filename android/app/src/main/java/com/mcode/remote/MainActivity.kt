@@ -3,7 +3,6 @@ package com.mcode.remote
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -15,15 +14,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.Send
-import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.GraphicEq
+import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.VisibilityOff
@@ -33,7 +31,6 @@ import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -70,6 +67,7 @@ val LocalSurface = staticCompositionLocalOf { CreamSurface }
 val LocalText = staticCompositionLocalOf { Ink }
 val LocalMuted = staticCompositionLocalOf { InkMuted }
 val LocalPill = staticCompositionLocalOf { CreamPill }
+val LocalLine = staticCompositionLocalOf { CreamLine }
 
 /* ------------------------------------------------------------------ */
 /* Model                                                               */
@@ -145,6 +143,7 @@ class MainActivity : ComponentActivity() {
         const val DEFAULT_URL = "ws://192.168.10.156:7900"
         const val DEFAULT_TOKEN = "mcode-fold-2026"
         const val PREFS = "mcode-remote"
+        const val OPERATOR = "Wyatt"
     }
 
     @OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
@@ -186,12 +185,13 @@ fun MCodeTheme(content: @Composable () -> Unit) {
         LocalText provides text,
         LocalMuted provides muted,
         LocalPill provides pill,
+        LocalLine provides line,
     ) {
         MaterialTheme(colorScheme = scheme, content = content)
     }
 }
 
-/* The Claude starburst is replaced by MCode's own mark (PC artwork). */
+/* MCode's own mark, straight from the desktop build. */
 @Composable
 fun MCodeMark(modifier: Modifier = Modifier) {
     androidx.compose.foundation.Image(
@@ -272,7 +272,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
         for (i in 0 until parts.length()) {
             val part = parts.optJSONObject(i) ?: continue
             if (part.optString("type") == "tool") {
-                items.add(Item.Tool(java.util.UUID.randomUUID().toString(), part.optString("name", "tool"), part.optString("status", ""), part.optString("output", "").replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.filter { !it.isWhitespace() }?.take(90) ?: ""))
+                items.add(Item.Tool(java.util.UUID.randomUUID().toString(), part.optString("name", "tool"), part.optString("status", ""), part.optString("output", "").replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: ""))
             }
         }
     }
@@ -284,7 +284,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
         if (existing !is Item.Msg) return
         when (part.optString("type")) {
             "text" -> items[known] = existing.copy(text = part.optString("text"))
-            "tool" -> items.add(Item.Tool(java.util.UUID.randomUUID().toString(), part.optString("name", "tool"), part.optJSONObject("state")?.optString("status", "") ?: "", part.optString("output", "").replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.filter { !it.isWhitespace() }?.take(90) ?: ""))
+            "tool" -> items.add(Item.Tool(java.util.UUID.randomUUID().toString(), part.optString("name", "tool"), part.optJSONObject("state")?.optString("status", "") ?: "", part.optString("output", "").replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: ""))
         }
     }
 
@@ -384,6 +384,19 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
     }
 
     val wide = widthSize >= WindowWidthSizeClass.Medium
+    val empty = items.isEmpty()
+
+    val inputBar: @Composable () -> Unit = {
+        InputCapsule(
+            enabled = currentSession != null,
+            modelLabel = "本地模型",
+            onSend = { text ->
+                request(JSONObject().put("type", "session.prompt").put("sessionID", currentSession!!).put("text", text).put("delivery", "steer"))
+            },
+            onStop = { currentSession?.let { request(JSONObject().put("type", "session.abort").put("sessionID", it)) } },
+            onNew = { request(JSONObject().put("type", "session.create").put("title", "来自手机")) },
+        )
+    }
 
     ModalNavigationDrawer(
         drawerState = rememberDrawerState(initialValue = if (drawerOpen) DrawerValue.Open else DrawerValue.Closed),
@@ -401,23 +414,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
             }
         },
     ) {
-        val inputBar: @Composable () -> Unit = {
-            InputCapsule(
-                enabled = currentSession != null,
-                modelLabel = "本地模型",
-                onSend = { text ->
-                    request(JSONObject().put("type", "session.prompt").put("sessionID", currentSession!!).put("text", text).put("delivery", "steer"))
-                },
-                onStop = { currentSession?.let { request(JSONObject().put("type", "session.abort").put("sessionID", it)) } },
-                onNew = { request(JSONObject().put("type", "session.create").put("title", "来自手机")) },
-            )
-        }
         if (wide) {
             // Claude's fold layout: the top bar spans, records fill the left
-            // column to the bottom, and the input capsule lives in the right
-            // column under the conversation.
+            // column to the bottom, and the conversation (with its input when
+            // there is one) lives in the right column.
             Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                AppTopBar(wide = true, sessions, currentSession, onDrawer = { drawerOpen = true }, onRefresh = {
+                AppTopBar(wide = true, title = "最近记录", onDrawer = { drawerOpen = true }, onRefresh = {
                     request(JSONObject().put("type", "session.list"), "list${System.nanoTime()}")
                 })
                 Row(Modifier.weight(1f).fillMaxWidth()) {
@@ -434,37 +436,67 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         Spacer(Modifier.height(6.dp))
                         SessionList(sessions, currentSession, search, onSelect = { select(it) }, compact = false, modifier = Modifier.weight(1f))
                     }
-                    Column(Modifier.weight(0.58f).fillMaxHeight()) {
-                        Box(Modifier.weight(1f).fillMaxWidth()) { ConversationBody(items) }
-                        inputBar()
+                    Box(Modifier.weight(0.58f).fillMaxHeight()) {
+                        if (empty) {
+                            WelcomePane(withInput = true, inputBar = inputBar)
+                        } else {
+                            Column(Modifier.fillMaxSize()) {
+                                Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize()) }
+                                inputBar()
+                            }
+                        }
                     }
                 }
             }
         } else {
-            Scaffold(
-                containerColor = MaterialTheme.colorScheme.background,
-                topBar = { AppTopBar(wide = false, sessions, currentSession, onDrawer = { drawerOpen = true }, onRefresh = {
-                    request(JSONObject().put("type", "session.list"), "list${System.nanoTime()}")
-                }) },
-                bottomBar = { inputBar() },
-            ) { padding ->
-                Box(Modifier.padding(padding).fillMaxSize()) { ConversationBody(items) }
+            if (empty) {
+                Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                    AppTopBar(wide = false, title = "MCode", onDrawer = { drawerOpen = true }, onRefresh = {
+                        request(JSONObject().put("type", "session.list"), "list${System.nanoTime()}")
+                    })
+                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                        WelcomePane(withInput = true, inputBar = inputBar)
+                    }
+                }
+            } else {
+                Scaffold(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    topBar = { AppTopBar(wide = false, title = currentSessionTitle(sessions, currentSession), onDrawer = { drawerOpen = true }, onRefresh = {
+                        request(JSONObject().put("type", "session.list"), "list${System.nanoTime()}")
+                    }) },
+                    bottomBar = { inputBar() },
+                ) { padding ->
+                    Box(Modifier.padding(padding).fillMaxSize()) { Timeline(items, Modifier.fillMaxSize()) }
+                }
             }
         }
     }
 }
 
+/* The welcome pane: mark, greeting, and (for a fresh screen) the input. */
 @Composable
-fun AppTopBar(wide: Boolean, sessions: List<SessionRow>, current: String?, onDrawer: () -> Unit, onRefresh: () -> Unit) {
+fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit) {
+    Column(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        MCodeMark(Modifier.size(96.dp))
+        Spacer(Modifier.height(16.dp))
+        Text("欢迎，${MainActivity.OPERATOR}", fontFamily = FontFamily.Serif, fontSize = 27.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+        Spacer(Modifier.height(22.dp))
+        if (withInput) inputBar()
+    }
+}
+
+@Composable
+fun AppTopBar(wide: Boolean, title: String, onDrawer: () -> Unit, onRefresh: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onDrawer) {
             Icon(Icons.Outlined.Menu, contentDescription = "菜单", tint = LocalText.current)
         }
         Spacer(Modifier.weight(1f))
-        Text(
-            if (wide) "最近记录" else currentSessionTitle(sessions, current),
-            fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current,
-        )
+        Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
         Spacer(Modifier.weight(1f))
         IconButton(onClick = { }) {
             Icon(Icons.Outlined.Tune, contentDescription = "筛选", tint = LocalText.current)
@@ -481,23 +513,13 @@ fun AppTopBar(wide: Boolean, sessions: List<SessionRow>, current: String?, onDra
 fun currentSessionTitle(sessions: List<SessionRow>, current: String?): String =
     current?.let { id -> sessions.find { it.id == id }?.title } ?: "MCode"
 
+/* ------------------------------------------------------------------ */
+/* Timeline / lists                                                    */
+/* ------------------------------------------------------------------ */
+
 @Composable
-fun ConversationBody(items: List<Item>) {
-    if (items.isEmpty()) {
-        Column(
-            Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            MCodeMark(Modifier.size(88.dp))
-            Spacer(Modifier.height(18.dp))
-            Text("来思考什么？", fontSize = 22.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
-            Spacer(Modifier.height(6.dp))
-            Text("在下方输入，或从抽屉选择一个会话", fontSize = 13.sp, color = LocalMuted.current)
-        }
-        return
-    }
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+fun Timeline(items: List<Item>, modifier: Modifier) {
+    LazyColumn(modifier.padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         for (item in items) {
             item(key = item.key) {
                 when (item) {
@@ -602,11 +624,6 @@ fun DrawerContent(
                 Text("W", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
             }
             Spacer(Modifier.weight(1f))
-            Box(
-                Modifier.size(44.dp).background(LocalText.current, CircleShape).clickable { },
-                contentAlignment = Alignment.Center,
-            ) { Icon(Icons.Outlined.GraphicEq, contentDescription = "语音", tint = LocalBg.current, modifier = Modifier.size(20.dp)) }
-            Spacer(Modifier.width(10.dp))
             Button(
                 onCreate,
                 shape = RoundedCornerShape(22.dp),
@@ -722,7 +739,7 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String) -> Unit,
                         if (text.isBlank()) {
                             Icon(Icons.Outlined.GraphicEq, contentDescription = "语音输入", tint = LocalBg.current, modifier = Modifier.size(20.dp))
                         } else {
-                            Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "发送", tint = LocalBg.current, modifier = Modifier.size(19.dp))
+                            Icon(Icons.Outlined.Checklist, contentDescription = "发送", tint = LocalBg.current, modifier = Modifier.size(19.dp))
                         }
                     }
                 }
