@@ -105,6 +105,26 @@ let phone: WebSocket
   check("a session created over the channel arrives as a remote.event", Boolean(event.event?.session?.id), event.eventId)
 }
 
+// 4.5 session.get returns the transcript a phone needs for history replay
+{
+  const list = await (async () => {
+    send(phone, { kind: "request", id: "r5", request: { type: "session.list" } })
+    return nextFrame(phone, (f) => f.kind === "response" && f.id === "r5")
+  })()
+  const created = (list.data?.sessions ?? []).find((s: any) => s.title === "remote check")
+  if (!created) {
+    check("session.get returns the transcript for history replay", false, "created session missing from the list")
+  } else {
+    send(phone, { kind: "request", id: "r6", request: { type: "session.get", sessionID: created.id } })
+    const got = await nextFrame(phone, (f) => f.kind === "response" && f.id === "r6")
+    check(
+      "session.get returns the transcript for history replay",
+      got.ok === true && got.data?.session?.id === created.id && Array.isArray(got.data?.messages),
+      got.ok,
+    )
+  }
+}
+
 // 5. events missed while offline are replayed by resume
 {
   const watcher = await connect(TOKEN)

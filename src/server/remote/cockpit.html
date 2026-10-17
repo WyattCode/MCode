@@ -90,7 +90,6 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const state = { ws: null, cursor: 0, sessions: {}, current: null, pending: {}, requestId: 0, titles: {} };
-
 const saveCfg = (url, token) => localStorage.setItem("mcode-remote", JSON.stringify({ url, token }));
 const loadCfg = () => { try { return JSON.parse(localStorage.getItem("mcode-remote") || "{}"); } catch { return {}; } };
 
@@ -112,6 +111,8 @@ function connect(url, token) {
 function handle(f) {
   if (f.kind === "remote.welcome") { state.cursor = f.eventId; frame({ kind: "remote.resume", cursor: f.eventId }); return; }
   if (f.kind === "response") {
+    const pending = state.pending[f.id];
+    if (pending) { delete state.pending[f.id]; pending(f); }
     if (f.id === state.listReq && f.ok) renderSessions(f.data.sessions || [], f.data.running || []);
     if (!f.ok) addLine("errline", "命令失败：" + (f.error || "未知错误"));
     return;
@@ -154,7 +155,21 @@ function refreshSelect(running) {
   sel.onchange = () => select(sel.value);
 }
 
-function select(id) { state.current = id; $("timeline").innerHTML = ""; if (id) frame({ kind: "request", id: "w" + ++state.requestId, request: { type: "session.watch", sessionIDs: [id] } }); }
+function select(id) {
+  state.current = id;
+  $("timeline").innerHTML = "";
+  for (const key of Object.keys(messages)) delete messages[key];
+  if (!id) return;
+  frame({ kind: "request", id: "w" + ++state.requestId, request: { type: "session.watch", sessionIDs: [id] } });
+  // History first, then the live stream rides on top of it.
+  const ticket = "h" + ++state.requestId;
+  state.pending[ticket] = (res) => {
+    if (!res.ok || !Array.isArray(res.data?.messages)) return;
+    for (const m of res.data.messages) upsertMessage(id, m);
+    scroll();
+  };
+  frame({ kind: "request", id: ticket, request: { type: "session.get", sessionID: id } });
+}
 
 function bubble(role, text) {
   const div = document.createElement("div");
