@@ -6,7 +6,7 @@ import { handle } from "../handlers"
 import { sameSecret } from "../socket-guard"
 import { isBlockedPort } from "@shared/blocked-ports"
 import { frameForWindow } from "../config-view"
-import cockpitHtml from "./cockpit.html"
+import { cockpitHtml } from "./cockpit-html"
 import type { Runtime } from "../index"
 
 /** Shells a phone opens are owned by the gateway, not by any window. */
