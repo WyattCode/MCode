@@ -1160,6 +1160,27 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                     Spacer(Modifier.width(14.dp))
                     Text("归档", fontSize = 15.sp, color = LocalText.current)
                 }
+                Row(Modifier.fillMaxWidth().clickable {
+                    // The desktop's 复制为 Markdown: a heading and each turn
+                    // behind 我： / MCode：, nothing else.
+                    val body = buildString {
+                        append("# ").append(row.title.ifBlank { "对话" }).append("\n\n")
+                        for (entry in items) {
+                            if (entry is Item.Msg && entry.text.isNotBlank()) {
+                                append(if (entry.role == "user") "我：" else "MCode：")
+                                append(entry.text.trim()).append("\n\n")
+                            }
+                        }
+                    }.trimEnd()
+                    val board = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    board.setPrimaryClip(android.content.ClipData.newPlainText("MCode", body))
+                    Toast.makeText(context, "已复制对话", Toast.LENGTH_SHORT).show()
+                    sheetTarget = null
+                }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.ContentCopy, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(14.dp))
+                    Text("复制对话", fontSize = 15.sp, color = LocalText.current)
+                }
                 Row(Modifier.fillMaxWidth().clickable { deleteTarget = row; sheetTarget = null }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(14.dp))
