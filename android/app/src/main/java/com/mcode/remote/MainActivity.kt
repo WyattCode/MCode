@@ -90,9 +90,17 @@ private val InkMuted = Color(0xFF6B6862)
 private val Ember = Color(0xFFD97757)
 private val DotBlue = Color(0xFF3B82F6)
 
+/*
+ * Dark, sampled off Claude's own dark empty state on the fold at 450 dpi:
+ * the page is #151515, the composer card #20201F (not the #18191B an earlier
+ * pass recorded), and every soft circle is #313131. The search field is a
+ * shade above the page with a visible #484847 hairline.
+ */
 private val DarkBg = Color(0xFF151515)
-private val DarkSurface = Color(0xFF18191B)
-private val DarkPill = Color(0xFF38393B)
+private val DarkSurface = Color(0xFF20201F)
+private val DarkPill = Color(0xFF313131)
+private val DarkField = Color(0xFF1A1A19)
+private val DarkFieldLine = Color(0xFF484847)
 private val DarkLine = Color(0xFF232323)
 private val DarkText = Color(0xFFF5F4EF)
 private val DarkMuted = Color(0xFF888681)
@@ -103,6 +111,9 @@ val LocalText = staticCompositionLocalOf { Ink }
 val LocalMuted = staticCompositionLocalOf { InkMuted }
 val LocalPill = staticCompositionLocalOf { CreamPill }
 val LocalLine = staticCompositionLocalOf { CreamLine }
+/** The search field's fill and hairline: white on cream, #1A1A19 on #151515. */
+val LocalField = staticCompositionLocalOf { CreamSurface }
+val LocalFieldLine = staticCompositionLocalOf { CreamPill }
 
 /* ------------------------------------------------------------------ */
 /* Model                                                               */
@@ -277,6 +288,8 @@ fun MCodeTheme(content: @Composable () -> Unit) {
         LocalMuted provides muted,
         LocalPill provides pill,
         LocalLine provides line,
+        LocalField provides (if (dark) DarkField else CreamSurface),
+        LocalFieldLine provides (if (dark) DarkFieldLine else CreamPill),
     ) {
         MaterialTheme(colorScheme = scheme, content = content)
     }
@@ -876,7 +889,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         shape = RoundedCornerShape(14.dp),
                         // Claude's search sits on white with a hairline pill
                         // outline, not on the page's own colour with none.
-                        colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.surface, focusedContainerColor = MaterialTheme.colorScheme.surface, unfocusedBorderColor = LocalPill.current, focusedBorderColor = LocalPill.current),
+                        colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = LocalField.current, focusedContainerColor = LocalField.current, unfocusedBorderColor = LocalFieldLine.current, focusedBorderColor = LocalFieldLine.current),
                         singleLine = true,
                     )
                         Spacer(Modifier.height(6.dp))
@@ -1782,12 +1795,22 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
                     // The dark theme flips the ink to the paper colour; measured
                     // off Claude on the fold in both themes.
                     val hasWords = text.isNotBlank() || attachments.isNotEmpty()
+                    /*
+                     * The round button in three states, all sampled off Claude:
+                     * idle-dark is the paper circle #F9F9F7 with the icon in
+                     * ink; idle-light is the ink circle with a paper icon; and
+                     * a box with something in it takes the washed ember in the
+                     * light theme only (dark keeps the paper circle).
+                     */
+                    val dark = isSystemInDarkTheme()
                     val sendBg = when {
-                        hasWords && !isSystemInDarkTheme() -> Color(0xFFE1C0B3)
+                        hasWords && !dark -> Color(0xFFE1C0B3)
+                        dark -> Color(0xFFF9F9F7)
                         else -> LocalText.current
                     }
                     val sendFg = when {
-                        hasWords && !isSystemInDarkTheme() -> Color.White
+                        hasWords && !dark -> Color.White
+                        dark -> Color(0xFF151515)
                         else -> LocalBg.current
                     }
                     Box(
