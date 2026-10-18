@@ -221,6 +221,35 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 第六十八轮：合盖态真机走查 + 深色回归 —— 六态闭环（2026-10-19 凌晨）
+
+- **合盖态（外屏 1168×1712 浅色）**：assistant 直接排版、user 胶囊、裸 + 与麦克风、淡橙发送钮、白输入卡、`#F9F9F7` 背景——Compact 分支全部正确。
+- **合盖态深色**：切 `cmd uimode night yes` 截图后**已还原用户的浅色设置**；assistant 白字直接在 `#151515` 上、user `#38393B` 胶囊、发送钮白圆黑波形（深色翻转正确）、输入卡 `#18191B`。
+- **六态全闭环**：外屏合盖浅/深、内屏竖浅/深、内屏横双栏浅/深，全部真机截图对照 Claude 验证。
+
+### 第六十七轮：分体式双头顶栏 + 0.8.1 发版（2026-10-19 凌晨）
+
+- **PR #74**：宽屏从「一条融合顶栏」改为**每栏自己的头**——列表头（☰ / 最近记录 / 筛选 / 任务）、对话头（会话名省略号 / 隐私眼），分隔线贯穿全高，底部 inset 移到 pane Row。**上一个通过里刻意保留的差异清零。**
+- **Release v0.8.1**：`MCode-0.8.1-x64.exe`（237,054,638 B，SHA-256 `e97f58fa9d4f478580b4585203bac7176ee774e471275a2be2ff1ce37eb59576`）+ `MCode-Remote-0.1.0-debug.apk`（74,603,291 B，SHA-256 `8d80fee11444234e35590ac117c1adee3bcd9e2cab7803638beb20a20a0781c3`），含 #70–#74。
+- 打包坑同前：`CODEBUDDY_SAFE_DELETE_ENABLED=0 npm run package`。
+
+### 第六十六轮：展开态布局对齐（2026-10-19 凌晨）
+
+- **PR #73**：与 Claude 展开态（内屏横置、浅色）并排对照后修四处——①assistant 消息**去掉气泡**直接排版（原 `surfaceVariant` 块；只有 user 保留 pill）；②左栏底部加黑底「+ 新建会话」pill；③+ 与麦克风改裸图标（去圆底）；④宽屏顶栏显示当前会话名（原硬编码「最近记录」）。
+
+### 第六十九轮：语音破案 —— 本机 faster-whisper 引擎 + 手机录音转写（2026-10-19 凌晨）
+
+- **「此设备没有可用的语音识别服务」是真话，不是误报**：`cmd package query-services -a android.speech.RecognitionService` 在这台折叠屏上只有两个候选——小米 `com.xiaomi.mibrain.speech/.asr.AsrService` 与 Claude 自带 `ClaudeRecognitionService`，前者的绑定权限 `com.xiaomi.mibrain.speech.permission.BIND_SPEECH_RECOGNITION_SERVICE` **`prot=signature`**（不签名的第三方永远拿不到），后者用 `BIND_RECOGNITION_SERVICE` 同理。所以 `isRecognitionAvailable()` 返回 false 是正确的——`RecognizerIntent` 外部活动与进程内 `SpeechRecognizer` 两条路都没有可绑定对象，之前两版实现注定失败。
+- **PC 版同样坏**：`voice.transcribe` 只认 provider 的 `/audio/transcriptions`，而本机 qwen(.124)/glm(.233) 都是 chat-only（`/v1/models` 各只回 1 个聊天模型，没有转写模型）；且 `storage/config.json` 的 `voiceModel` 被指成 `ds/deepseek-v4.1-flash`（聊天模型当 ASR 用）→ `voice.precheck` 恒为 `{ok:false, reason:"asrUnavailable"}`。
+- **双引擎（PR #76）**：新增 `src/server/asr.ts`。`local` = 本机 Python 的 faster-whisper（`MCODE_ASR_PYTHON` 可覆盖；临时文件喂音频，因为库读文件；`vad_filter=True` 剪掉按压前后静音，否则小模型会把静音幻觉成「谢谢观看」；空结果抛 `voice.emptyResult` 复用桌面既有文案）。`provider` = 原有 OpenAI 兼容调用，一行未改。`voice.precheck` 对 local 只验解释器与包（无网络探测），对 provider 仍探模型列表。
+- **手机端改写**：MediaRecorder（AAC/MP4/16kHz mono）→ base64 → `voice.transcribe`（`mode:"fast"`、`language:"zh-CN"`、带 `sessionID`）→ 文本填进输入框。点麦克风开始、再点结束；圆钮录音时变停止方块、转写时转圈，麦克风图标录音期间变红；录到空音频（<1.2KB）说「没听清，请再说一次」而不是报错。`rpc()` 加 `timeoutMs` 参数（转写要跑一次 whisper，比协议问答慢）。
+- **真值验证**：win32com SAPI 合成 `你好，这是一次语音识别测试` 存 8kHz wav → 网关 `precheck {"ok":true}` → 转写返回 `你好,這是一次語音識別測試。`（繁体字形是 base 模型的特性，不是链路问题）。**PC 与手机走同一端点、同一请求形状。**
+- **PC 设置页（PR #77）**：语音转写下拉加「本机（faster-whisper）」= `local/base` 并置顶（此前只能手改 config.json）。18 张语言表：zhCN/zhTW 中文、其余 16 张英文。
+- **动效补齐**：时间线每行入场 `alpha 0→1` + `translateY 8dp→0`（tween 180ms，`graphicsLayer` 不触发重组）；运行中回合在末尾挂 Claude 式 **working line**——三点 alpha 行波（`rememberInfiniteTransition`，相位过点时不透明度 0.3→1、抬升 2dp）。
+- **设备认错事件**：`adb devices` 里当时在线的是**另一台小米**（`25079RPDCC/turner`，1880×3008，192.168.10.174），前台是 `com.wyatt.stoneage`，我据此误报用户在玩游戏。折叠屏序列号是 **0186D460499C3540（lhasa）**。为此写了 `.workbuddy/find-fold.py`：按 `ro.serialno` 严格认设备，认不出就明说，绝不拿别的手机当折叠屏。
+- **折叠屏当前掉线**：`192.168.10.155` ping 通（0% 丢包）、mDNS 无广播、30000–50000 端口抽样全闭 → 无线调试已断。**等用户重开调试给新端口**，才能装 #76 的 APK 验「录音→结束→回填」全链路。
+- 状态：main @ `f1ef8a8e`（#76 语音、#77 设置）。
+
 ### 第六十五轮：浅色调色板真机采样对齐 + 发送钮随主题翻转（2026-10-19 凌晨）
 
 - **方法**：adb 直接驱动手机上的 Claude（`com.anthropic.claude`）——系统切浅色后实拍欢迎页与「X-SSH最新交接文档」会话内，逐点采样。
