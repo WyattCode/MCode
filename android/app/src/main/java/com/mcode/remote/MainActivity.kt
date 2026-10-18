@@ -495,7 +495,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
             inject = voiceText,
             onInjected = { voiceText = null },
             onSend = { text ->
-                request(JSONObject().put("type", "session.prompt").put("sessionID", currentSession!!).put("text", text).put("delivery", "steer"))
+                // steer only joins a running turn; an idle session gets a
+                // plain prompt or the server ignores the message outright.
+                val req = JSONObject().put("type", "session.prompt").put("sessionID", currentSession!!).put("text", text)
+                if (sessions.find { it.id == currentSession }?.running == true) req.put("delivery", "steer")
+                request(req)
             },
             onStop = { currentSession?.let { request(JSONObject().put("type", "session.abort").put("sessionID", it)) } },
             onNew = { request(JSONObject().put("type", "session.create").put("title", "来自手机")) },
@@ -595,7 +599,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(r.title, fontSize = 14.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                if (r.directory.isNotBlank()) Text(r.directory.substringAfterLast('/'), fontSize = 11.sp, color = LocalMuted.current, maxLines = 1)
+                                if (r.directory.isNotBlank()) Text(r.directory.substringAfterLast('\\').substringAfterLast('/'), fontSize = 11.sp, color = LocalMuted.current, maxLines = 1)
                             }
                             TextButton({ request(JSONObject().put("type", "session.abort").put("sessionID", r.id)) }) { Text("停止", color = MaterialTheme.colorScheme.error) }
                         }
@@ -622,7 +626,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         Icon(Icons.Outlined.Folder, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(14.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(dir.substringAfterLast('/'), fontSize = 15.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(dir.substringAfterLast('\\').substringAfterLast('/'), fontSize = 15.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(dir, fontSize = 11.sp, color = LocalMuted.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         if (projectFilter == dir) Icon(Icons.Outlined.Check, contentDescription = null, tint = Ember)

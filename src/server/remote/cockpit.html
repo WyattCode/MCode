@@ -134,6 +134,7 @@ function handle(f) {
 function markBusy(busy) {}
 
 function renderSessions(sessions, running) {
+  state.running = running;
   state.sessions = {};
   for (const s of sessions) state.titles[s.id] = s.title || s.id;
   refreshSelect(running);
@@ -249,7 +250,10 @@ $("input").addEventListener("keydown", (ev) => { if (ev.key === "Enter" && !ev.s
 function sendInput() {
   const text = $("input").value.trim();
   if (!text || !state.current) return;
-  request({ type: "session.prompt", sessionID: state.current, text, delivery: "steer" });
+  // steer only joins a running turn; an idle session gets a plain prompt.
+  const req = { type: "session.prompt", sessionID: state.current, text };
+  if ((state.running || []).includes(state.current)) req.delivery = "steer";
+  request(req);
   $("input").value = "";
 }
 $("stop").onclick = () => { if (state.current) request({ type: "session.abort", sessionID: state.current }); };
