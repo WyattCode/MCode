@@ -1416,14 +1416,21 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
             if (withInput) Box(Modifier.align(Alignment.BottomCenter)) { inputBar() }
         }
     } else {
+        /*
+         * Claude's phone empty state sits above the middle, not on it: its
+         * asterisk centres at 43.8% of the pane's height and the greeting at
+         * 49.3%, measured off its own portrait screen. A plain centered column
+         * lands both about 5% low.
+         */
         Column(
             Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 20.dp),
-            verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            Spacer(Modifier.weight(1f))
             mark()
-            Spacer(Modifier.height(22.dp))
-            if (withInput) inputBar()
+            Spacer(Modifier.weight(1f))
+            // 1.14 : 1 puts the block's own centre at 43.8% instead of 50%.
+            Spacer(Modifier.weight(0.14f))
         }
     }
 }
