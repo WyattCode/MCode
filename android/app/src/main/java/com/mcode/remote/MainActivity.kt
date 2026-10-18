@@ -859,14 +859,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         singleLine = true,
                     )
                         Spacer(Modifier.height(6.dp))
-                        SessionList(visibleSessions, currentSession, search, onSelect = { select(it) }, compact = false, modifier = Modifier.weight(1f), onLongPress = { sheetTarget = it })
+                        SessionList(visibleSessions, currentSession, search, onSelect = { select(it) }, compact = false, modifier = Modifier.weight(1f).fillMaxWidth(), onLongPress = { sheetTarget = it })
                         // Claude parks a black "new chat" pill at the foot of
-                        // the list column in the wide layout.
-                        Spacer(Modifier.height(8.dp))
+                        // the list column. It is laid out after the list, so the
+                        // list gets the space first and the pill never covers a
+                        // row (the list's own bottom padding leaves room too).
                         Surface(
                             shape = RoundedCornerShape(24.dp),
                             color = LocalText.current,
-                            modifier = Modifier.align(Alignment.CenterHorizontally).clickable {
+                            modifier = Modifier.padding(top = 8.dp, bottom = 10.dp).align(Alignment.CenterHorizontally).clickable {
                                 request(JSONObject().put("type", "session.create").put("title", "来自手机"))
                             },
                         ) {
@@ -876,7 +877,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                                 Text("新建会话", fontSize = 14.sp, color = LocalBg.current)
                             }
                         }
-                        Spacer(Modifier.height(10.dp))
                     }
                     Box(Modifier.width(1.dp).fillMaxHeight().background(LocalMuted.current.copy(alpha = 0.25f)))
                     Column(Modifier.weight(0.58f).fillMaxHeight()) {
@@ -1274,16 +1274,25 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                         Box(Modifier.fillMaxWidth()) {
                             Column(
                                 Modifier
-                                    .then(if (isUser) Modifier.align(Alignment.CenterEnd).fillMaxWidth(0.85f) else Modifier.fillMaxWidth())
+                                    .then(if (isUser) Modifier.align(Alignment.CenterEnd).fillMaxWidth(0.92f) else Modifier.fillMaxWidth())
                                     // Claude renders assistant turns straight on the
                                     // page - only user turns get a bubble.
                                     .background(
                                         if (isUser) LocalPill.current else Color.Transparent,
                                         RoundedCornerShape(12.dp),
                                     )
-                                    .padding(horizontal = 10.dp, vertical = if (isUser) 10.dp else 2.dp),
+                                    // Claude's assistant prose breathes: 30 px between lines at 450 dpi,
+                                    // and a user turn carries its own pill padding.
+                                    .padding(horizontal = 10.dp, vertical = if (isUser) 10.dp else 5.dp),
                             ) {
-                                Text(item.text.ifEmpty { "…" }, fontSize = 14.sp, color = LocalText.current)
+                                Text(
+                                    item.text.ifEmpty { "…" },
+                                    fontSize = 15.sp,
+                                    // Claude's prose is set with a little more
+                                    // air than the default leading gives.
+                                    lineHeight = 23.sp,
+                                    color = LocalText.current,
+                                )
                             }
                         }
                     }
@@ -1484,11 +1493,18 @@ fun SessionList(sessions: List<SessionRow>, current: String?, query: String, onS
         Text("没有匹配的会话", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(16.dp))
         return
     }
-    LazyColumn(modifier.fillMaxSize()) {
+    // `modifier` already carries the weight the parent gave this list; filling
+    // the whole size on top of it is what made the last row slide under the
+    // new-chat pill.
+    // The pill below is a sibling in the same column, so the list only needs
+    // its own breathing room at the bottom, not a reservation for the pill.
+    LazyColumn(modifier.fillMaxWidth(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = if (compact) 6.dp else 6.dp)) {
         for (s in filtered) {
             item(key = s.id) {
                 Row(
-                    Modifier.fillMaxWidth().combinedClickable(onClick = { onSelect(s.id) }, onLongClick = { onLongPress?.invoke(s) }).padding(horizontal = 14.dp, vertical = if (compact) 8.dp else 11.dp),
+                    // Row pitch measured off Claude on the fold: its two-line rows sit
+                    // 172 px apart at 450 dpi, which is where these paddings land.
+                    Modifier.fillMaxWidth().combinedClickable(onClick = { onSelect(s.id) }, onLongClick = { onLongPress?.invoke(s) }).padding(horizontal = 14.dp, vertical = if (compact) 6.dp else 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (s.running || s.directory.isNotBlank()) {
@@ -1501,8 +1517,24 @@ fun SessionList(sessions: List<SessionRow>, current: String?, query: String, onS
                         Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(34.dp).padding(end = 14.dp, top = 1.dp))
                     }
                     Column(Modifier.weight(1f)) {
-                        Text(s.title.ifEmpty { s.id }.take(if (compact) 34 else 26), fontSize = 15.sp, color = LocalText.current, maxLines = 1)
-                        if (!compact) Text(relTime(s.updated), fontSize = 12.sp, color = LocalMuted.current)
+                        // Claude sets the title and its timestamp tight against
+                        // each other (32 px between the two baselines at 450
+                        // dpi), so the pair reads as one row rather than two.
+                        Text(
+                            s.title.ifEmpty { s.id }.take(if (compact) 34 else 26),
+                            fontSize = 15.sp,
+                            lineHeight = 20.sp,
+                            color = LocalText.current,
+                            maxLines = 1,
+                        )
+                        if (!compact) {
+                            Text(
+                                relTime(s.updated),
+                                fontSize = 12.sp,
+                                lineHeight = 16.sp,
+                                color = LocalMuted.current,
+                            )
+                        }
                     }
                     if (s.running) Box(Modifier.size(7.dp).background(DotBlue, CircleShape))
                 }
