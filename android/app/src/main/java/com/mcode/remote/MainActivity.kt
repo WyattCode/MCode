@@ -339,6 +339,19 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MCodeTheme(content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
+    /*
+     * The clock and battery have to follow the page: white glyphs on the cream
+     * page were invisible, which is what edge-to-edge left behind when the
+     * system bar appearance was never set.
+     */
+    val view = androidx.compose.ui.platform.LocalView.current
+    SideEffect {
+        val window = (view.context as? android.app.Activity)?.window ?: return@SideEffect
+        androidx.core.view.WindowCompat.getInsetsController(window, view).apply {
+            isAppearanceLightStatusBars = !dark
+            isAppearanceLightNavigationBars = !dark
+        }
+    }
     val bg = if (dark) DarkBg else Cream
     val surface = if (dark) DarkSurface else CreamSurface
     val text = if (dark) DarkText else Ink
