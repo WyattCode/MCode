@@ -48,8 +48,8 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.Article
-import androidx.compose.material.icons.outlined.CallSplit
+import androidx.compose.material.icons.automirrored.outlined.Article
+import androidx.compose.material.icons.automirrored.outlined.CallSplit
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.ExpandLess
@@ -574,7 +574,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
      */
     fun beginRecording() {
         val file = java.io.File(context.cacheDir, "voice-${System.currentTimeMillis()}.m4a")
-        val recorder = android.media.MediaRecorder()
+        // API 31 deprecated the no-arg constructor: the context-bound one is
+        // what a recorder should be built from now, and the old one still has
+        // to be used below it.
+        val recorder = if (android.os.Build.VERSION.SDK_INT >= 31) {
+            android.media.MediaRecorder(context)
+        } else {
+            @Suppress("DEPRECATION")
+            android.media.MediaRecorder()
+        }
         try {
             recorder.setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
             recorder.setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
@@ -896,7 +904,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
     }
 
     if (!connectedOnce || showConnect) {
-        ConnectScreen(url, token, onDismiss = { showConnect = false }) { u, t ->
+        ConnectScreen(url, token) { u, t ->
             showConnect = false
             url = u; token = t
             onSave(u, t)
@@ -1055,7 +1063,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
         } else {
             if (empty) {
                 Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                    AppTopBar(wide = false, title = "", filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onTasks = { showTasks = true }, onPrivacy = { privacy = !privacy })
+                    AppTopBar(filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onPrivacy = { privacy = !privacy })
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         WelcomePane(withInput = true, inputBar = inputBar)
                     }
@@ -1064,7 +1072,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
             } else {
                 Scaffold(
                     containerColor = MaterialTheme.colorScheme.background,
-                    topBar = { AppTopBar(wide = false, title = currentSessionTitle(sessions, currentSession), filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onTasks = { showTasks = true }, onPrivacy = { privacy = !privacy }) },
+                    topBar = { AppTopBar(filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onPrivacy = { privacy = !privacy }) },
                     bottomBar = {
                         Column {
                             inputBar()
@@ -1243,7 +1251,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         }
                     }
                 }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.CallSplit, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
+                    Icon(Icons.AutoMirrored.Outlined.CallSplit, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(14.dp))
                     Text("从此处分支", fontSize = 15.sp, color = LocalText.current)
                 }
@@ -1293,12 +1301,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
                 Text("会话设置", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
                 Spacer(Modifier.height(10.dp))
-                val currentRow = sessions.find { it.id == currentSession }
                 // ---- Agent: build / plan ----
+                val rowNow = sessions.find { it.id == currentSession }
                 Text("Agent", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(top = 8.dp, bottom = 2.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     for (agent in listOf("build", "plan")) {
-                        val active = currentRow?.agent == agent
+                        val active = rowNow?.agent == agent
                         Surface(
                             shape = RoundedCornerShape(15.dp),
                             color = if (active) MaterialTheme.colorScheme.primary else LocalPill.current,
@@ -1316,7 +1324,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                 Text("Effort", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(top = 14.dp, bottom = 2.dp))
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     for (effort in listOf("none", "minimal", "low", "medium", "high", "xhigh", "max")) {
-                        val active = currentRow?.effort == effort
+                        val active = rowNow?.effort == effort
                         Surface(
                             shape = RoundedCornerShape(15.dp),
                             color = if (active) MaterialTheme.colorScheme.primary else LocalPill.current,
@@ -1412,7 +1420,7 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
 }
 
 @Composable
-fun AppTopBar(wide: Boolean, title: String, filterActive: Boolean, privacyActive: Boolean, onDrawer: () -> Unit, onFilter: () -> Unit, onTasks: () -> Unit, onPrivacy: () -> Unit) {
+fun AppTopBar(filterActive: Boolean, privacyActive: Boolean, onDrawer: () -> Unit, onFilter: () -> Unit, onPrivacy: () -> Unit) {
     /*
      * Claude's narrow header is deliberately bare: a back arrow, no title, and
      * the ghost on the right. Sampled off its own portrait screenshot - the
@@ -1562,7 +1570,7 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                                 // icon and the phone had none.
                                 Icon(
                                     when (item.name) {
-                                        "read" -> Icons.Outlined.Article
+                                        "read" -> Icons.AutoMirrored.Outlined.Article
                                         "edit", "write", "apply_patch", "patch" -> Icons.Outlined.Edit
                                         "bash", "exec_command", "execute" -> Icons.Outlined.Terminal
                                         "grep", "glob" -> Icons.Outlined.Search
@@ -1859,7 +1867,19 @@ fun SessionList(sessions: List<SessionRow>, current: String?, query: String, onS
                 Row(
                     // Row pitch measured off Claude on the fold: its two-line rows sit
                     // 172 px apart at 450 dpi, which is where these paddings land.
-                    Modifier.fillMaxWidth().combinedClickable(onClick = { onSelect(s.id) }, onLongClick = { onLongPress?.invoke(s) }).padding(horizontal = 14.dp, vertical = if (compact) 6.dp else 8.dp),
+                    // The selected row gets the soft pill: `current` was passed in
+                    // and never read, so the list had no idea where you were.
+                    Modifier
+                        .fillMaxWidth()
+                        .combinedClickable(onClick = { onSelect(s.id) }, onLongClick = { onLongPress?.invoke(s) })
+                        .then(
+                            if (s.id == current) {
+                                Modifier.background(LocalPill.current, RoundedCornerShape(10.dp))
+                            } else {
+                                Modifier
+                            },
+                        )
+                        .padding(horizontal = 14.dp, vertical = if (compact) 6.dp else 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (s.running || s.directory.isNotBlank()) {
@@ -1965,7 +1985,7 @@ fun DrawerItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: Str
 /* ------------------------------------------------------------------ */
 
 @Composable
-fun ConnectScreen(url: String, token: String, onDismiss: () -> Unit, onConnect: (String, String) -> Unit) {
+fun ConnectScreen(url: String, token: String, onConnect: (String, String) -> Unit) {
     var u by remember { mutableStateOf(url) }
     var t by remember { mutableStateOf(token) }
     Column(
