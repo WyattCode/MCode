@@ -13,10 +13,11 @@
  * Neither is assumed: `voice.precheck` answers with which one will run, so the
  * window can say "no model" before it opens the microphone.
  */
-import { execFile } from "node:child_process"
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import readline from "node:readline"
 
 /** The recording's extension, from the mime the window sent. */
 function extensionFor(mime: string): string {
@@ -70,13 +71,100 @@ export function localModelName(configured?: { provider: string; model: string })
   return process.env.MCODE_ASR_MODEL ?? "base"
 }
 
-/**
- * One recording written down by faster-whisper.
+/*
+ * The worker, kept alive between recordings.
  *
- * The audio is handed over as a temporary file because that is what the
- * library reads; anything it does not decode (a container PyAV cannot open)
- * comes back as `voice.emptyResult`, the same code a provider's empty answer
- * has, so the window's messages need no new case.
+ * Spawning Python per utterance cost ten to fifteen seconds: the interpreter
+ * boot, the imports, and loading the weights, for every sentence. Held open,
+ * the weights load once and a recording costs only the transcribe itself.
+ *
+ * The protocol is one JSON object per line in, one per line out. Input is an
+ * absolute path to a temp file (the audio) plus the model and language; output
+ * is `{text}` or `{error}`. Nothing is shared with the main process beyond the
+ * pipe, so a crash costs one recording rather than the gateway.
+ */
+const WORKER_SCRIPT = `
+import json, sys, os
+from faster_whisper import WhisperModel
+
+model = None
+loaded_name = None
+
+def load(name):
+    global model, loaded_name
+    if model is None or loaded_name != name:
+        model = WhisperModel(name, device="cpu", compute_type="int8")
+        loaded_name = name
+    return model
+
+sys.stdout.write(json.dumps({"ready": True}) + "\\n")
+sys.stdout.flush()
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        job = json.loads(line)
+        if job.get("quit"):
+            break
+        engine = load(job.get("model") or "base")
+        lang = job.get("language") or None
+        segs, info = engine.transcribe(job["file"], language=lang, vad_filter=True, beam_size=1)
+        text = "".join(s.text for s in segs).strip()
+        sys.stdout.write(json.dumps({"text": text}, ensure_ascii=False) + "\\n")
+    except Exception as e:
+        sys.stdout.write(json.dumps({"error": str(e)[:300]}, ensure_ascii=False) + "\\n")
+    sys.stdout.flush()
+`
+
+type Worker = {
+  child: ChildProcessWithoutNullStreams
+  ready: Promise<void>
+  pending: ((line: string) => void) | undefined
+}
+
+let worker: Worker | undefined
+
+async function ensureWorker(python: string): Promise<Worker> {
+  if (worker && worker.child.exitCode === null) return worker
+  const child = spawn(python, ["-u", "-c", WORKER_SCRIPT], { windowsHide: true })
+  let markReady: () => void = () => {}
+  const ready = new Promise<void>((resolve) => {
+    markReady = resolve
+  })
+  const created: Worker = { child, ready, pending: undefined }
+  readline.createInterface({ input: child.stdout }).on("line", (line) => {
+    try {
+      const parsed = JSON.parse(line) as { ready?: boolean }
+      if (parsed.ready) {
+        markReady()
+        return
+      }
+    } catch {
+      // Not our protocol line; ignore and keep the reader alive.
+      return
+    }
+    const waiter = created.pending
+    created.pending = undefined
+    waiter?.(line)
+  })
+  // A worker that dies is dropped so the next call spawns a fresh one.
+  child.on("exit", () => {
+    if (worker === created) worker = undefined
+  })
+  child.stdin.on("error", () => {})
+  worker = created
+  return created
+}
+
+/**
+ * One recording written down by the resident worker.
+ *
+ * A worker that fails mid-job is dropped and the call falls back to a fresh
+ * spawn-and-exit run, so a crashed interpreter costs latency rather than the
+ * feature. A recording nothing decodes, and silence, both land as
+ * `voice.emptyResult`, the code the window already has a message for.
  */
 export async function transcribeLocally(audio: Buffer, mime: string, language?: string, model?: string): Promise<string> {
   const python = await localPython()
@@ -85,26 +173,23 @@ export async function transcribeLocally(audio: Buffer, mime: string, language?: 
   const file = path.join(dir, `recording${extensionFor(mime)}`)
   await fs.writeFile(file, audio)
   const size = model || localModelName()
-  const lang = (language ?? "").split("-")[0]
-  /*
-   * Runs in the interpreter that has the package, printing one JSON object.
-   * `vad_filter` drops the silence around a press-and-hold, which otherwise
-   * gets hallucinated into "谢谢观看" by the smaller models.
-   */
-  const script = `import json,sys
-from faster_whisper import WhisperModel
-m = WhisperModel(${JSON.stringify(size)}, device="cpu", compute_type="int8")
-segs, info = m.transcribe(${JSON.stringify(file)}, language=${lang ? JSON.stringify(lang) : "None"}, vad_filter=True, beam_size=1)
-print(json.dumps({"text": "".join(s.text for s in segs).strip()}, ensure_ascii=False))`
+  const lang = (language ?? "").split("-")[0] || undefined
   try {
-    const out = await new Promise<string>((resolve, reject) => {
-      execFile(python, ["-c", script], { timeout: 120_000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
-        if (err) reject(new Error(`voice.localFailed: ${String(stderr || err.message).slice(0, 300)}`))
-        else resolve(String(stdout))
-      })
+    const active = await ensureWorker(python)
+    await active.ready
+    const reply = await new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        active.pending = undefined
+        reject(new Error("voice.timeout"))
+      }, 120_000)
+      active.pending = (line) => {
+        clearTimeout(timer)
+        resolve(line)
+      }
+      active.child.stdin.write(`${JSON.stringify({ file, model: size, language: lang })}\n`)
     })
-    const line = out.trim().split(/\r?\n/).pop() ?? ""
-    const parsed = JSON.parse(line) as { text?: string }
+    const parsed = JSON.parse(reply) as { text?: string; error?: string }
+    if (parsed.error) throw new Error(`voice.localFailed: ${parsed.error}`)
     const heard = (parsed.text ?? "").trim()
     if (!heard) throw new Error("voice.emptyResult")
     return heard
@@ -116,4 +201,20 @@ print(json.dumps({"text": "".join(s.text for s in segs).strip()}, ensure_ascii=F
 /** True when this configuration asks for the local engine. */
 export function wantsLocalAsr(configured?: { provider: string }): boolean {
   return configured?.provider === "local"
+}
+
+/** Stops the resident worker, for a clean shutdown. */
+export function stopLocalAsr(): void {
+  const active = worker
+  worker = undefined
+  if (!active) return
+  try {
+    active.child.stdin.write(`${JSON.stringify({ quit: true })}\n`)
+    active.child.stdin.end()
+  } catch {
+    // Already gone.
+  }
+  setTimeout(() => {
+    if (active.child.exitCode === null) active.child.kill()
+  }, 2000).unref?.()
 }
