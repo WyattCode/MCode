@@ -70,12 +70,12 @@ private val InkMuted = Color(0xFF6B6862)
 private val Ember = Color(0xFFD97757)
 private val DotBlue = Color(0xFF3B82F6)
 
-private val DarkBg = Color(0xFF131211)
-private val DarkSurface = Color(0xFF1E1D1B)
-private val DarkPill = Color(0xFF2A2927)
-private val DarkLine = Color(0xFF35342F)
+private val DarkBg = Color(0xFF151515)
+private val DarkSurface = Color(0xFF18191B)
+private val DarkPill = Color(0xFF38393B)
+private val DarkLine = Color(0xFF232323)
 private val DarkText = Color(0xFFF5F4EF)
-private val DarkMuted = Color(0xFFA8A49B)
+private val DarkMuted = Color(0xFF888681)
 
 val LocalBg = staticCompositionLocalOf { Cream }
 val LocalSurface = staticCompositionLocalOf { CreamSurface }
@@ -563,7 +563,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                             placeholder = { Text("搜索", color = LocalMuted.current) },
                             leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current) },
                             shape = RoundedCornerShape(14.dp),
-                            colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant, focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant, unfocusedBorderColor = Color.Transparent, focusedBorderColor = Color.Transparent),
+                            colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.background, focusedContainerColor = MaterialTheme.colorScheme.background, unfocusedBorderColor = Color.Transparent, focusedBorderColor = Color.Transparent),
                             singleLine = true,
                         )
                         Spacer(Modifier.height(6.dp))
