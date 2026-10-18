@@ -140,7 +140,9 @@ fun toolTitleOf(part: JSONObject): String {
         "read", "edit", "write", "apply_patch", "patch" -> input?.optString("path")
             ?: input?.optString("filePath") ?: input?.optString("file_path")
         "bash", "exec_command" -> input?.optString("description") ?: input?.optString("command") ?: input?.optString("cmd")
-        "grep", "glob" -> input?.optString("pattern")
+        // A search pattern often arrives as `**/name`; the glob part says
+        // nothing on a phone row, so it is dropped.
+        "grep", "glob" -> input?.optString("pattern")?.removePrefix("**/")?.removePrefix("./")
         "webfetch", "websearch" -> input?.optString("url") ?: input?.optString("query")
         else -> null
     }
@@ -167,7 +169,13 @@ fun toolVerbOf(name: String, status: String): String {
     }
     return when (status) {
         "running", "pending", "in_progress" -> "正在$key"
-        "error", "failed" -> "$key 失败"
+        // "读取 失败" was reading as two words; MCode's own label is one.
+        "error", "failed" -> when (key) {
+            "命令" -> "命令执行失败"
+            "读取网页" -> "读取网页失败"
+            "搜索网络" -> "搜索网络失败"
+            else -> "${key}失败"
+        }
         "rejected" -> "已拒绝$key"
         "skipped" -> "未执行：$key"
         "completed", "done", "" -> "已$key"
@@ -634,7 +642,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
         }
     }
 
-    fun upsertMessage(sessionID: String, message: JSONObject) {        if (sessionID != currentSession) return
+    fun upsertMessage(sessionID: String, message: JSONObject) {
+        if (sessionID != currentSession) return
         val id = message.optString("id")
         val role = message.optString("role", "assistant")
         val parts = message.optJSONArray("parts")
@@ -1417,7 +1426,14 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
     }
     // A running turn gets one more row: Claude keeps a working line under the
     // last thing said, so the page does not look finished while it is not.
-    LazyColumn(state = listState, modifier = modifier.padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    LazyColumn(
+        state = listState,
+        modifier = modifier.padding(horizontal = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        // The first turn used to sit flush against the header and read as
+        // clipped; Claude leaves a breath of air above it.
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 10.dp, bottom = 6.dp),
+    ) {
         for (item in items) {
             item(key = item.key) {
                 // Every row fades and rises a little as it lands, which is what
