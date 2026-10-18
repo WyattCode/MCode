@@ -1399,6 +1399,15 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                     }
                     is Item.Tool -> {
                         var open by remember { mutableStateOf(false) }
+                        // A call that is still going and one that broke read
+                        // differently from one that finished quietly.
+                        val failed = item.status == "error" || item.status == "failed"
+                        val busy = item.status == "running" || item.status == "pending" || item.status == "in_progress"
+                        val rowTint = when {
+                            failed -> MaterialTheme.colorScheme.error
+                            busy -> MaterialTheme.colorScheme.primary
+                            else -> LocalMuted.current
+                        }
                         Column(Modifier.padding(start = 10.dp)) {
                             Row(
                                 Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 3.dp),
@@ -1418,14 +1427,14 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                                         else -> Icons.Outlined.Build
                                     },
                                     contentDescription = null,
-                                    tint = LocalMuted.current,
+                                    tint = rowTint,
                                     modifier = Modifier.size(15.dp),
                                 )
                                 Spacer(Modifier.width(7.dp))
                                 Text(
                                     toolVerbOf(item.name, item.status) + if (item.title.isNotBlank()) " ${item.title}" else "",
                                     fontSize = 12.5.sp,
-                                    color = LocalMuted.current,
+                                    color = if (failed || busy) rowTint else LocalMuted.current,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f),
@@ -1440,12 +1449,32 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                                 }
                             }
                             if (open && item.output.isNotBlank()) {
-                                Text(
-                                    item.output,
-                                    fontSize = 11.sp,
-                                    color = LocalMuted.current.copy(alpha = 0.8f),
-                                    modifier = Modifier.padding(start = 22.dp, top = 2.dp, bottom = 4.dp),
-                                )
+                                /*
+                                 * A patch reads as one: added lines on a faint
+                                 * green, removed on a faint red, hunk headers
+                                 * muted. The desktop draws a full diff
+                                 * component; a phone row only has space for
+                                 * the colour, which is the part that makes a
+                                 * patch scannable at all.
+                                 */
+                                val patch = item.output.contains("\n@@") || item.output.startsWith("diff --git") || item.output.startsWith("@@")
+                                Column(Modifier.padding(start = 22.dp, top = 2.dp, bottom = 4.dp)) {
+                                    for (line in item.output.lineSequence().take(60)) {
+                                        val (bg, fg) = when {
+                                            !patch -> Color.Transparent to LocalMuted.current.copy(alpha = 0.8f)
+                                            line.startsWith("+") && !line.startsWith("+++") -> Color(0x1A2E7D32) to Color(0xFF2E7D32)
+                                            line.startsWith("-") && !line.startsWith("---") -> Color(0x1AC62828) to Color(0xFFC62828)
+                                            line.startsWith("@@") -> Color.Transparent to LocalMuted.current
+                                            else -> Color.Transparent to LocalMuted.current.copy(alpha = 0.8f)
+                                        }
+                                        Text(
+                                            line.ifEmpty { " " },
+                                            fontSize = 11.sp,
+                                            color = fg,
+                                            modifier = Modifier.fillMaxWidth().background(bg).padding(horizontal = 3.dp, vertical = 0.5.dp),
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
