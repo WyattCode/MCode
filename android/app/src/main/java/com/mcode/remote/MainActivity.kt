@@ -721,22 +721,28 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
         },
     ) {
         if (wide) {
-            // Claude's fold layout: the top bar spans, records fill the left
-            // column to the bottom, and the conversation (with its input when
-            // there is one) lives in the right column.
-            Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                AppTopBar(wide = true, title = currentSessionTitle(sessions, currentSession), filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onTasks = { showTasks = true }, onPrivacy = { privacy = !privacy })
-                Row(Modifier.weight(1f).fillMaxWidth()) {
-                    Column(Modifier.weight(0.42f).fillMaxHeight()) {
-                        OutlinedTextField(
-                            search, { search = it },
-                            Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                            placeholder = { Text("搜索", color = LocalMuted.current) },
-                            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current) },
-                            shape = RoundedCornerShape(14.dp),
-                            colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.background, focusedContainerColor = MaterialTheme.colorScheme.background, unfocusedBorderColor = Color.Transparent, focusedBorderColor = Color.Transparent),
-                            singleLine = true,
-                        )
+            // Claude's fold layout: each pane owns its header - the list's
+            // (menu, records, filter, tasks) and the conversation's (title,
+            // privacy) - with the divider running the full height between.
+            Row(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))) {
+                Column(Modifier.weight(0.42f).fillMaxHeight()) {
+                    Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        IconButton({ openDrawer() }) { Icon(Icons.Outlined.Menu, contentDescription = "菜单", tint = LocalText.current) }
+                        Text("最近记录", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+                        Spacer(Modifier.weight(1f))
+                        IconButton({ runningOnly = !runningOnly }) { Icon(Icons.Outlined.Tune, contentDescription = "筛选", tint = if (runningOnly) MaterialTheme.colorScheme.primary else LocalText.current) }
+                        IconButton({ showTasks = true }) { Icon(Icons.Outlined.Checklist, contentDescription = "任务", tint = if (runningOnly) MaterialTheme.colorScheme.primary else LocalText.current) }
+                    }
+                    OutlinedTextField(
+                        search, { search = it },
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                        placeholder = { Text("搜索", color = LocalMuted.current) },
+                        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current) },
+                        shape = RoundedCornerShape(14.dp),
+                        colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.background, focusedContainerColor = MaterialTheme.colorScheme.background, unfocusedBorderColor = Color.Transparent, focusedBorderColor = Color.Transparent),
+                        singleLine = true,
+                    )
                         Spacer(Modifier.height(6.dp))
                         SessionList(visibleSessions, currentSession, search, onSelect = { select(it) }, compact = false, modifier = Modifier.weight(1f), onLongPress = { sheetTarget = it })
                         // Claude parks a black "new chat" pill at the foot of
@@ -758,7 +764,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         Spacer(Modifier.height(10.dp))
                     }
                     Box(Modifier.width(1.dp).fillMaxHeight().background(LocalMuted.current.copy(alpha = 0.25f)))
-                    Box(Modifier.weight(0.58f).fillMaxHeight()) {
+                    Column(Modifier.weight(0.58f).fillMaxHeight()) {
+                        Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(currentSessionTitle(sessions, currentSession), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                            IconButton({ privacy = !privacy }) { Icon(if (privacy) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, contentDescription = "隐私", tint = if (privacy) MaterialTheme.colorScheme.primary else LocalText.current) }
+                        }
                         if (empty) {
                             WelcomePane(withInput = true, inputBar = inputBar, inputAtBottom = true)
                         } else {
@@ -769,8 +780,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         }
                     }
                 }
-                Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)))
-            }
         } else {
             if (empty) {
                 Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
