@@ -71,9 +71,9 @@ import java.util.concurrent.TimeUnit
 /* Palette - Claude Code's warm cream and ink                          */
 /* ------------------------------------------------------------------ */
 
-private val Cream = Color(0xFFFAF9F5)
-private val CreamSurface = Color(0xFFFFFFFF)
-private val CreamPill = Color(0xFFF0EEE6)
+private val Cream = Color(0xFFF9F9F7)
+private val CreamSurface = Color(0xFFFEFEFE)
+private val CreamPill = Color(0xFFF0EFEC)
 private val CreamLine = Color(0xFFE4E1D8)
 private val Ink = Color(0xFF1F1E1C)
 private val InkMuted = Color(0xFF6B6862)
@@ -1465,8 +1465,13 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
                         contentAlignment = Alignment.Center,
                     ) { Icon(Icons.Outlined.Mic, contentDescription = "语音输入", tint = LocalText.current, modifier = Modifier.size(19.dp)) }
                     Spacer(Modifier.width(8.dp))
+                    // Claude's composer button flips with the theme: white
+                    // circle / dark arrow in the dark, washed ember / white
+                    // arrow in the light.
+                    val sendBg = if (isSystemInDarkTheme()) LocalText.current else Color(0xFFE1C0B3)
+                    val sendFg = if (isSystemInDarkTheme()) LocalBg.current else Color.White
                     Box(
-                        Modifier.size(44.dp).background(LocalText.current, CircleShape).clickable(enabled = enabled) {
+                        Modifier.size(44.dp).background(sendBg, CircleShape).clickable(enabled = enabled) {
                             if (running) onStop()
                             else if (text.isNotBlank() || attachments.isNotEmpty()) { onSend(text, attachments); text = "" }
                         },
@@ -1475,11 +1480,11 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
                         if (running) {
                             // A running turn turns the round button into stop,
                             // the way the desktop composer does.
-                            Box(Modifier.size(16.dp).background(LocalBg.current, RoundedCornerShape(3.dp)))
+                            Box(Modifier.size(16.dp).background(sendFg, RoundedCornerShape(3.dp)))
                         } else if (text.isBlank() && attachments.isEmpty()) {
-                            Icon(Icons.Outlined.GraphicEq, contentDescription = "语音输入", tint = LocalBg.current, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Outlined.GraphicEq, contentDescription = "语音输入", tint = sendFg, modifier = Modifier.size(20.dp))
                         } else {
-                            Icon(Icons.Filled.ArrowUpward, contentDescription = "发送", tint = LocalBg.current, modifier = Modifier.size(22.dp))
+                            Icon(Icons.Filled.ArrowUpward, contentDescription = "发送", tint = sendFg, modifier = Modifier.size(22.dp))
                         }
                     }
                 }
