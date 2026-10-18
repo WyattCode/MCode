@@ -48,6 +48,7 @@ import { agentsState, deleteAgents, ensureAgents, globalAgentsPath, setAgentsEna
 import { turnFileDiffs } from "./session/turn-diff"
 import type { ShellOwner } from "./shell"
 import { storeNotices } from "./store-notices"
+import { localAsrAvailable, localModelName, transcribeLocally, wantsLocalAsr } from "./asr"
 
 type Handled<T extends Request["type"]> = ResponseMap[T]
 
@@ -882,48 +883,61 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "voice.transcribe": {
       const chosen = runtime.config.get().voiceModel
-      if (!chosen?.provider || !chosen.model) throw new Error("voice.notConfigured")
-      const definition = runtime.config.definition(chosen.provider)
-      const baseURL = definition?.baseURL
-      if (!baseURL) throw new Error("voice.noEndpoint")
-
-      const key = runtime.config.apiKey(chosen.provider)
-      const headers: Record<string, string> = { ...(definition?.headers ?? {}) }
-      if (key) headers.Authorization = `Bearer ${key}`
-
       /*
-       * Multipart, because that is what every OpenAI-compatible transcription
-       * endpoint takes. The bytes arrive base64 over the socket: the protocol
-       * is JSON and a recording is not text.
+       * Two engines behind one request. `local` is faster-whisper on this
+       * machine, which is what a chat-only provider setup has; anything else
+       * is an OpenAI-compatible transcription endpoint. The desktop picks the
+       * engine by configuration, so the window never has to know which ran.
        */
+      const local = wantsLocalAsr(chosen)
+      if (!local && (!chosen?.provider || !chosen.model)) throw new Error("voice.notConfigured")
+      const definition = local ? undefined : runtime.config.definition(chosen!.provider)
+      const baseURL = definition?.baseURL
+      if (!local && !baseURL) throw new Error("voice.noEndpoint")
+
       const bytes = Buffer.from(request.audio, "base64")
       if (!bytes.length) throw new Error("voice.emptyResult")
-      const form = new FormData()
-      form.append("file", new Blob([bytes], { type: request.mime }), voiceFileName(request.mime))
-      form.append("model", chosen.model)
-      if (request.language) form.append("language", request.language.split("-")[0])
 
-      /* Failures leave here as codes the window turns into MiMo's messages, never as raw fetch errors. */
-      const response = await fetch(`${baseURL.replace(/\/$/, "")}/audio/transcriptions`, {
-        method: "POST",
-        headers,
-        body: form,
-        signal: AbortSignal.timeout(VOICE_TRANSCRIBE_TIMEOUT_MS),
-      }).catch((err: unknown) => {
-        throw new Error(voiceFetchFailure(err))
-      })
-      if (!response.ok) {
-        const detail = await response.text().catch(() => "")
-        throw new Error(voiceHttpFailure(response.status, detail))
+      let heard: string
+      if (local) {
+        heard = await transcribeLocally(bytes, request.mime, request.language, localModelName(chosen))
+      } else {
+        const key = runtime.config.apiKey(chosen!.provider)
+        const headers: Record<string, string> = { ...(definition?.headers ?? {}) }
+        if (key) headers.Authorization = `Bearer ${key}`
+
+        /*
+         * Multipart, because that is what every OpenAI-compatible transcription
+         * endpoint takes. The bytes arrive base64 over the socket: the protocol
+         * is JSON and a recording is not text.
+         */
+        const form = new FormData()
+        form.append("file", new Blob([bytes], { type: request.mime }), voiceFileName(request.mime))
+        form.append("model", chosen!.model)
+        if (request.language) form.append("language", request.language.split("-")[0])
+
+        /* Failures leave here as codes the window turns into MiMo's messages, never as raw fetch errors. */
+        const response = await fetch(`${baseURL!.replace(/\/$/, "")}/audio/transcriptions`, {
+          method: "POST",
+          headers,
+          body: form,
+          signal: AbortSignal.timeout(VOICE_TRANSCRIBE_TIMEOUT_MS),
+        }).catch((err: unknown) => {
+          throw new Error(voiceFetchFailure(err))
+        })
+        if (!response.ok) {
+          const detail = await response.text().catch(() => "")
+          throw new Error(voiceHttpFailure(response.status, detail))
+        }
+        // The timeout still runs while the body arrives; a body that is not JSON is an empty answer.
+        const body = (await response.json().catch((err: unknown) => {
+          if (voiceFetchFailure(err) === "voice.timeout") throw new Error("voice.timeout")
+          return {}
+        })) as { text?: string }
+        heard = (body.text ?? "").trim()
+        // As MiMo: nothing heard is said so, rather than the capsule closing on nothing.
+        if (!heard) throw new Error("voice.emptyResult")
       }
-      // The timeout still runs while the body arrives; a body that is not JSON is an empty answer.
-      const body = (await response.json().catch((err: unknown) => {
-        if (voiceFetchFailure(err) === "voice.timeout") throw new Error("voice.timeout")
-        return {}
-      })) as { text?: string }
-      const heard = (body.text ?? "").trim()
-      // As MiMo: nothing heard is said so, rather than the capsule closing on nothing.
-      if (!heard) throw new Error("voice.emptyResult")
 
       const mode = request.mode ?? runtime.config.get().voiceMode ?? "smart"
       if (mode !== "smart") return { text: heard, heard } satisfies Handled<"voice.transcribe">
@@ -985,6 +999,19 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        */
       const chosen = runtime.config.get().voiceModel
       if (!chosen?.provider || !chosen.model) return { ok: false, reason: "asrUnavailable" } satisfies Handled<"voice.precheck">
+      /*
+       * The local engine is asked of this machine rather than of a provider: the
+       * interpreter and the package are the whole check, and neither is a network
+       * call. A provider engine keeps the model-list probe below.
+       */
+      if (wantsLocalAsr(chosen)) {
+        if (!(await localAsrAvailable())) return { ok: false, reason: "asrUnavailable" } satisfies Handled<"voice.precheck">
+        const localMode = request.mode ?? runtime.config.get().voiceMode ?? "smart"
+        if (localMode === "smart" && !(await chatModelFor(runtime, request.sessionID))) {
+          return { ok: false, reason: "chatUnavailable" } satisfies Handled<"voice.precheck">
+        }
+        return { ok: true } satisfies Handled<"voice.precheck">
+      }
       const definition = runtime.config.definition(chosen.provider)
       if (!definition?.baseURL) return { ok: false, reason: "asrUnavailable" } satisfies Handled<"voice.precheck">
 
