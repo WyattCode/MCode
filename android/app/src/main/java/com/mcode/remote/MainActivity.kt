@@ -26,6 +26,7 @@ import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Checklist
@@ -322,6 +323,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
     var voiceText by remember { mutableStateOf<String?>(null) }
     var modelPicker by remember { mutableStateOf(false) }
     var providers by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    var showUsage by remember { mutableStateOf(false) }
+    var usageSummary by remember { mutableStateOf<JSONObject?>(null) }
     /** Parked permission requests per session, replayed from session.list. */
     val pendingPerms = remember { java.util.concurrent.ConcurrentHashMap<String, MutableList<JSONObject>>() }
     /** Parked question cards per session, replayed from question.list. */
@@ -381,6 +384,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                 } ?: emptyList()
             } catch (e: Exception) {
                 println("[remote] provider.list failed: $e")
+            }
+        }
+    }
+
+    fun loadUsage() {
+        usageSummary = null
+        scope.launch {
+            try {
+                val reply = rpc(JSONObject().put("type", "usage.summary").put("days", 30))
+                usageSummary = reply.optJSONObject("data")?.optJSONObject("summary")
+            } catch (e: Exception) {
+                println("[remote] usage.summary failed: $e")
             }
         }
     }
@@ -669,6 +684,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                     onProjects = { showProjects = true; closeDrawer() },
                     onScheduled = { showScheduled = true; closeDrawer() },
                     onTasks = { showTasks = true; closeDrawer() },
+                    onUsage = { loadUsage(); showUsage = true; closeDrawer() },
                     onCode = { closeDrawer() },
                     onLongPress = { sheetTarget = it },
                 )
@@ -865,6 +881,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
     }
 
     /* ---- 模型选择：每个可用 provider 一节，逐行切 session.model ---- */
+    /* ---- 用量：30 天总计、按天、按模型（对齐桌面设置里的用量页） ---- */
+    if (showUsage) {
+        ModalBottomSheet(onDismissRequest = { showUsage = false }, containerColor = MaterialTheme.colorScheme.background) {
+            UsageSheet(summary = usageSummary)
+        }
+    }
+
     if (modelPicker) {
         ModalBottomSheet(onDismissRequest = { modelPicker = false }, containerColor = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
@@ -1034,6 +1057,79 @@ fun Timeline(items: List<Item>, modifier: Modifier, onPerm: (String, String) -> 
     }
 }
 
+/* 用量页：总计卡 + 按天 + 按模型，数字与桌面设置页同源（usage.summary）。 */
+fun fmtTokens(n: Long): String = when {
+    n >= 1_000_000 -> "%.1fM".format(n / 1_000_000.0)
+    n >= 1_000 -> "%.1fK".format(n / 1_000.0)
+    else -> n.toString()
+}
+
+fun fmtCost(usage: JSONObject, priced: Int, unpriced: Int): String {
+    if (priced == 0 && unpriced > 0) return "—"
+    return "$%.2f".format(usage.optDouble("cost", 0.0))
+}
+
+@Composable
+fun UsageRow(key: String, bucket: JSONObject, bold: Boolean = false) {
+    val usage = bucket.optJSONObject("usage") ?: JSONObject()
+    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(key, fontSize = 14.sp, fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Medium, color = LocalText.current)
+            Text(
+                "${fmtTokens(usage.optLong("input"))} in · ${fmtTokens(usage.optLong("output"))} out · ${bucket.optInt("turns")} turns",
+                fontSize = 11.sp, color = LocalMuted.current,
+            )
+        }
+        Text(fmtCost(usage, bucket.optInt("priced"), bucket.optInt("unpriced")), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+    }
+}
+
+@Composable
+fun UsageSheet(summary: JSONObject?) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
+        Text("用量 · 近 30 天", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+        Spacer(Modifier.height(12.dp))
+        if (summary == null) {
+            Text("正在读取…", fontSize = 14.sp, color = LocalMuted.current, modifier = Modifier.padding(vertical = 16.dp))
+            return@Column
+        }
+        val total = summary.optJSONObject("total") ?: JSONObject()
+        Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (summary.optInt("priced") == 0 && summary.optInt("unpriced") > 0) "—"
+                        else "$%.2f".format(total.optDouble("cost", 0.0)),
+                        fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current,
+                    )
+                    Text("${summary.optInt("turns")} turns", fontSize = 11.sp, color = LocalMuted.current)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("${fmtTokens(total.optLong("input"))} in", fontSize = 12.sp, color = LocalMuted.current)
+                    Text("${fmtTokens(total.optLong("output"))} out", fontSize = 12.sp, color = LocalMuted.current)
+                    Text("${fmtTokens(total.optLong("reasoning"))} reasoning", fontSize = 12.sp, color = LocalMuted.current)
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Text("按模型", fontSize = 13.sp, color = LocalMuted.current)
+        summary.optJSONArray("byModel")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val b = arr.optJSONObject(i) ?: continue
+                UsageRow(b.optString("key"), b)
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Text("按天", fontSize = 13.sp, color = LocalMuted.current)
+        summary.optJSONArray("byDay")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val b = arr.optJSONObject(i) ?: continue
+                UsageRow(b.optString("key"), b)
+            }
+        }
+    }
+}
+
 /* Claude's ask card: the question, its options and a typed answer. */
 @Composable
 fun QuestCard(item: Item.Quest, onAnswer: (String, List<String>) -> Unit) {
@@ -1129,6 +1225,7 @@ fun DrawerContent(
     onScheduled: () -> Unit,
     onTasks: () -> Unit,
     onCode: () -> Unit,
+    onUsage: () -> Unit = {},
     onLongPress: ((SessionRow) -> Unit)? = null,
 ) {
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
@@ -1143,6 +1240,8 @@ fun DrawerContent(
             DrawerItem(Icons.Outlined.Schedule, "定时任务") { onScheduled() }
             Spacer(Modifier.height(18.dp))
             DrawerItem(Icons.Outlined.Checklist, "进行中的任务") { onTasks() }
+            Spacer(Modifier.height(18.dp))
+            DrawerItem(Icons.Outlined.BarChart, "用量") { onUsage() }
             Spacer(Modifier.height(18.dp))
             DrawerItem(Icons.Outlined.Settings, "连接设置") { onReconnect() }
             Spacer(Modifier.height(20.dp))
