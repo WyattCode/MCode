@@ -7,9 +7,11 @@ import android.speech.RecognizerIntent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -51,7 +53,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -345,6 +350,22 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
         }
         runCatching { voiceLauncher.launch(intent) }
             .onFailure { Toast.makeText(context, "没有可用的语音识别服务", Toast.LENGTH_SHORT).show() }
+    }
+
+    /** Pending photo attachments: {"path","mime","data"(base64)} ready for session.prompt. */
+    val attachments = remember { mutableStateListOf<JSONObject>() }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(4)) { uris ->
+        for (uri in uris) try {
+            val mime = context.contentResolver.getType(uri) ?: "image/jpeg"
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: continue
+            val name = uri.lastPathSegment?.substringAfterLast('/') ?: "photo.jpg"
+            attachments.add(JSONObject().put("path", name).put("mime", mime).put("data", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)))
+        } catch (_: Exception) {}
+        if (uris.isNotEmpty()) Toast.makeText(context, "已附上 ${uris.size} 张图片", Toast.LENGTH_SHORT).show()
+    }
+    fun pickImages() {
+        runCatching { imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+            .onFailure { Toast.makeText(context, "无法打开照片选择器", Toast.LENGTH_SHORT).show() }
     }
 
     val sessions = remember { mutableStateListOf<SessionRow>() }
@@ -660,12 +681,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
             onInjected = { voiceText = null },
             onModel = { loadProviders(); modelPicker = true },
             running = sessions.find { it.id == currentSession }?.running == true,
-            onSend = { text ->
+            attachments = attachments.toList(),
+            onRemoveAttachment = { attachments.removeAt(it) },
+            pickImages = { pickImages() },
+            onSend = { text, atts ->
                 // steer only joins a running turn; an idle session gets a
                 // plain prompt or the server ignores the message outright.
                 val req = JSONObject().put("type", "session.prompt").put("sessionID", currentSession!!).put("text", text)
+                if (atts.isNotEmpty()) req.put("attachments", org.json.JSONArray(atts.toList()))
                 if (sessions.find { it.id == currentSession }?.running == true) req.put("delivery", "steer")
                 request(req)
+                attachments.clear()
             },
             onStop = { currentSession?.let { request(JSONObject().put("type", "session.abort").put("sessionID", it)) } },
             onNew = { request(JSONObject().put("type", "session.create").put("title", "来自手机")) },
@@ -1372,7 +1398,7 @@ fun ConnectScreen(url: String, token: String, onDismiss: () -> Unit, onConnect: 
 /* ------------------------------------------------------------------ */
 
 @Composable
-fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String) -> Unit, onStop: () -> Unit, onNew: () -> Unit, modifier: Modifier = Modifier, onMic: () -> Unit = {}, onModel: () -> Unit = {}, running: Boolean = false, inject: String? = null, onInjected: () -> Unit = {}) {
+fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSONObject>) -> Unit, onStop: () -> Unit, onNew: () -> Unit, modifier: Modifier = Modifier, onMic: () -> Unit = {}, onModel: () -> Unit = {}, running: Boolean = false, inject: String? = null, onInjected: () -> Unit = {}, pickImages: () -> Unit = {}, attachments: List<JSONObject> = emptyList(), onRemoveAttachment: (Int) -> Unit = {}) {
     var text by remember { mutableStateOf("") }
     LaunchedEffect(inject) { if (!inject.isNullOrEmpty()) { text = inject; onInjected() } }
     Box(modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 10.dp)) {
@@ -1383,6 +1409,29 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String) -> Unit,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
+                if (attachments.isNotEmpty()) {
+                    // Claude shows pending shots as a thumbnail strip above
+                    // the text field, each with an X to remove.
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        attachments.forEachIndexed { index, att ->
+                            Box {
+                                val bytes = android.util.Base64.decode(att.optString("data"), android.util.Base64.DEFAULT)
+                                val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                Image(
+                                    bitmap = bmp.asImageBitmap(),
+                                    contentDescription = att.optString("path", "附件"),
+                                    Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)),
+                                    contentScale = ContentScale.Crop,
+                                )
+                                Box(
+                                    Modifier.size(18.dp).align(Alignment.TopEnd).background(Color.Black.copy(alpha = 0.6f), CircleShape).clickable { onRemoveAttachment(index) },
+                                    contentAlignment = Alignment.Center,
+                                ) { Text("×", fontSize = 11.sp, color = Color.White) }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                }
                 OutlinedTextField(
                     text, { text = it },
                     Modifier.fillMaxWidth(),
@@ -1391,10 +1440,17 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String) -> Unit,
                     maxLines = 4,
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    var plusMenu by remember { mutableStateOf(false) }
                     Box(
-                        Modifier.size(38.dp).background(LocalPill.current, CircleShape).clickable(enabled = enabled) { onNew() },
+                        Modifier.size(38.dp).background(LocalPill.current, CircleShape).clickable(enabled = enabled) { plusMenu = true },
                         contentAlignment = Alignment.Center,
-                    ) { Text("+", fontSize = 19.sp, color = LocalText.current) }
+                    ) {
+                        Text("+", fontSize = 19.sp, color = LocalText.current)
+                        DropdownMenu(expanded = plusMenu, onDismissRequest = { plusMenu = false }) {
+                            DropdownMenuItem(text = { Text("新对话") }, onClick = { plusMenu = false; onNew() })
+                            DropdownMenuItem(text = { Text("照片") }, onClick = { plusMenu = false; pickImages() })
+                        }
+                    }
                     Spacer(Modifier.width(8.dp))
                     Surface(
                         shape = RoundedCornerShape(17.dp),
@@ -1412,7 +1468,7 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String) -> Unit,
                     Box(
                         Modifier.size(44.dp).background(LocalText.current, CircleShape).clickable(enabled = enabled) {
                             if (running) onStop()
-                            else if (text.isNotBlank()) { onSend(text); text = "" }
+                            else if (text.isNotBlank() || attachments.isNotEmpty()) { onSend(text, attachments); text = "" }
                         },
                         contentAlignment = Alignment.Center,
                     ) {
@@ -1420,7 +1476,7 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String) -> Unit,
                             // A running turn turns the round button into stop,
                             // the way the desktop composer does.
                             Box(Modifier.size(16.dp).background(LocalBg.current, RoundedCornerShape(3.dp)))
-                        } else if (text.isBlank()) {
+                        } else if (text.isBlank() && attachments.isEmpty()) {
                             Icon(Icons.Outlined.GraphicEq, contentDescription = "语音输入", tint = LocalBg.current, modifier = Modifier.size(20.dp))
                         } else {
                             Icon(Icons.Filled.ArrowUpward, contentDescription = "发送", tint = LocalBg.current, modifier = Modifier.size(22.dp))
