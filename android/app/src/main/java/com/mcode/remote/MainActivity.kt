@@ -24,6 +24,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
@@ -559,9 +560,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         Spacer(Modifier.height(6.dp))
                         SessionList(visibleSessions, currentSession, search, onSelect = { select(it) }, compact = false, modifier = Modifier.weight(1f), onLongPress = { sheetTarget = it })
                     }
+                    Box(Modifier.width(1.dp).fillMaxHeight().background(LocalMuted.current.copy(alpha = 0.25f)))
                     Box(Modifier.weight(0.58f).fillMaxHeight()) {
                         if (empty) {
-                            WelcomePane(withInput = true, inputBar = inputBar)
+                            WelcomePane(withInput = true, inputBar = inputBar, inputAtBottom = true)
                         } else {
                             Column(Modifier.fillMaxSize()) {
                                 Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp)) }
@@ -854,7 +856,11 @@ fun SessionList(sessions: List<SessionRow>, current: String?, query: String, onS
                     Modifier.fillMaxWidth().combinedClickable(onClick = { onSelect(s.id) }, onLongClick = { onLongPress?.invoke(s) }).padding(horizontal = 14.dp, vertical = if (compact) 8.dp else 11.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("</>", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.width(34.dp))
+                    if (s.running) {
+                        Text("</>", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.width(34.dp))
+                    } else {
+                        Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.width(34.dp).padding(end = 12.dp))
+                    }
                     Column(Modifier.weight(1f)) {
                         Text(s.title.ifEmpty { s.id }.take(if (compact) 34 else 26), fontSize = 15.sp, color = LocalText.current, maxLines = 1)
                         if (!compact) Text(relTime(s.updated), fontSize = 12.sp, color = LocalMuted.current)
