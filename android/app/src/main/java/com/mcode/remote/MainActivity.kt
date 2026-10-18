@@ -1,11 +1,19 @@
 package com.mcode.remote
 
+import android.content.Intent
+import android.content.res.Configuration
 import android.os.Bundle
+import android.speech.RecognizerIntent
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -15,7 +23,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Checklist
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.GraphicEq
@@ -32,9 +44,11 @@ import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.*
@@ -82,7 +96,7 @@ sealed class Item {
     data class Err(val text: String) : Item() { override val key = "err.$text.${hashCode()}" }
 }
 
-data class SessionRow(val id: String, val title: String, val running: Boolean, val updated: Long)
+data class SessionRow(val id: String, val title: String, val running: Boolean, val updated: Long, val directory: String = "", val model: String = "")
 
 class RemoteClient {
     private val http = OkHttpClient.Builder()
@@ -140,6 +154,9 @@ class RemoteClient {
 
 class MainActivity : ComponentActivity() {
     companion object {
+        /** The window's width class, recomputed on fold and split-screen moves. */
+        private val widthSize = mutableStateOf(WindowWidthSizeClass.Compact)
+
         /** Single-operator defaults; overridden by what the connect screen saves. */
         const val DEFAULT_URL = "ws://192.168.10.156:7900"
         const val DEFAULT_TOKEN = "mcode-fold-2026"
@@ -169,13 +186,30 @@ class MainActivity : ComponentActivity() {
         val savedToken = prefs.getString("token", DEFAULT_TOKEN) ?: DEFAULT_TOKEN
         val autoUrl = intent.getStringExtra("connectUrl") ?: savedUrl
         val autoToken = intent.getStringExtra("connectToken") ?: savedToken
+        // Recomputed on fold/unfold instead of recreating the activity, so the
+        // WebSocket and the open conversation survive the transition.
+        widthSize.value = computeWidthClass()
         setContent {
-            val wsc = calculateWindowSizeClass(this)
             MCodeTheme {
-                App(wsc.widthSizeClass, autoUrl, autoToken) { u, t ->
+                App(widthSize.value, autoUrl, autoToken) { u, t ->
                     prefs.edit().putString("url", u).putString("token", t).apply()
                 }
             }
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        widthSize.value = computeWidthClass()
+    }
+
+    /** Material 3's breakpoints, straight off the current window configuration. */
+    private fun computeWidthClass(): WindowWidthSizeClass {
+        val w = resources.configuration.screenWidthDp
+        return when {
+            w >= 840 -> WindowWidthSizeClass.Expanded
+            w >= 600 -> WindowWidthSizeClass.Medium
+            else -> WindowWidthSizeClass.Compact
         }
     }
 }
@@ -236,6 +270,7 @@ fun relTime(updated: Long): String {
 /* App                                                                 */
 /* ------------------------------------------------------------------ */
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onSave: (String, String) -> Unit) {
     val scope = rememberCoroutineScope()
@@ -246,8 +281,33 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
     var url by remember { mutableStateOf(autoUrl) }
     var token by remember { mutableStateOf(autoToken) }
     var showConnect by remember { mutableStateOf(false) }
-    var drawerOpen by remember { mutableStateOf(false) }
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    fun openDrawer() = scope.launch { drawerState.open() }
+    fun closeDrawer() = scope.launch { drawerState.close() }
     var search by remember { mutableStateOf("") }
+    var runningOnly by remember { mutableStateOf(false) }
+    var privacy by remember { mutableStateOf(false) }
+    var projectFilter by remember { mutableStateOf<String?>(null) }
+    var showTasks by remember { mutableStateOf(false) }
+    var showProjects by remember { mutableStateOf(false) }
+    var showScheduled by remember { mutableStateOf(false) }
+    var sheetTarget by remember { mutableStateOf<SessionRow?>(null) }
+    var renameTarget by remember { mutableStateOf<SessionRow?>(null) }
+    var voiceText by remember { mutableStateOf<String?>(null) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    val voiceLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val heard = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+        if (!heard.isNullOrBlank()) voiceText = heard
+    }
+    fun startVoice() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "对 MCode 说话")
+        }
+        runCatching { voiceLauncher.launch(intent) }
+            .onFailure { Toast.makeText(context, "没有可用的语音识别服务", Toast.LENGTH_SHORT).show() }
+    }
 
     val sessions = remember { mutableStateListOf<SessionRow>() }
     val items = remember { mutableStateListOf<Item>() }
@@ -343,7 +403,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                     for (i in 0 until list.length()) {
                         val s = list.optJSONObject(i) ?: continue
                         val sid = s.optString("id")
-                        sessions.add(SessionRow(sid, s.optString("title", sid), sid in running, s.optLong("updated", 0)))
+                        sessions.add(SessionRow(sid, s.optString("title", sid), sid in running, s.optLong("updated", 0), s.optString("directory", ""), s.optJSONObject("model")?.optString("model", "") ?: ""))
                     }
                     sessions.sortByDescending { it.updated }
                     if (currentSession == null && sessions.isNotEmpty()) select(sessions.first().id)
@@ -359,11 +419,21 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         val title = s.optString("title", sid)
                         val updated = s.optLong("updated", 0)
                         val row = sessions.find { it.id == sid }
-                        if (row != null) sessions[sessions.indexOf(row)] = row.copy(title = title, updated = updated)
-                        else sessions.add(SessionRow(sid, title, false, updated))
+                        val directory = s.optString("directory", "")
+                        val model = s.optJSONObject("model")?.optString("model", "") ?: ""
+                        if (row != null) sessions[sessions.indexOf(row)] = row.copy(title = title, updated = updated, directory = directory, model = model)
+                        else sessions.add(SessionRow(sid, title, false, updated, directory, model))
                         sessions.sortByDescending { it.updated }
                     }
-                    "session.deleted" -> sessions.removeAll { it.id == event.optString("sessionID") }
+                    "session.deleted" -> {
+                        val gone = event.optString("sessionID")
+                        sessions.removeAll { it.id == gone }
+                        if (currentSession == gone) {
+                            currentSession = null
+                            items.clear()
+                            messageIndex.clear()
+                        }
+                    }
                     "message.updated" -> upsertMessage(event.optString("sessionID"), event.optJSONObject("message") ?: return)
                     "message.part.updated" -> upsertPart(event.optString("sessionID"), event.optString("messageID"), event.optJSONObject("part") ?: return)
                     "permission.requested" -> {
@@ -401,10 +471,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
     val wide = widthSize >= WindowWidthSizeClass.Medium
     val empty = items.isEmpty()
 
+    // 项目/运行中过滤后的列表；模型 pill 显示当前会话的真实模型。
+    val visibleSessions = sessions.filter { (projectFilter == null || it.directory == projectFilter) && (!runningOnly || it.running) }
+    val currentModel = sessions.find { it.id == currentSession }?.model?.takeIf { it.isNotBlank() } ?: "本地模型"
+
     val inputBar: @Composable () -> Unit = {
         InputCapsule(
             enabled = currentSession != null,
-            modelLabel = "本地模型",
+            modelLabel = currentModel,
+            onMic = { startVoice() },
+            inject = voiceText,
+            onInjected = { voiceText = null },
             onSend = { text ->
                 request(JSONObject().put("type", "session.prompt").put("sessionID", currentSession!!).put("text", text).put("delivery", "steer"))
             },
@@ -414,17 +491,20 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
     }
 
     ModalNavigationDrawer(
-        drawerState = rememberDrawerState(initialValue = if (drawerOpen) DrawerValue.Open else DrawerValue.Closed),
+        drawerState = drawerState,
         drawerContent = {
             ModalDrawerSheet(drawerContainerColor = MaterialTheme.colorScheme.background) {
                 DrawerContent(
                     sessions = sessions,
-                    onSelect = { select(it); drawerOpen = false },
+                    onSelect = { select(it); closeDrawer() },
                     onCreate = {
                         request(JSONObject().put("type", "session.create").put("title", "来自手机"))
-                        drawerOpen = false
+                        closeDrawer()
                     },
-                    onReconnect = { showConnect = true; drawerOpen = false },
+                    onReconnect = { showConnect = true; closeDrawer() },
+                    onProjects = { showProjects = true; closeDrawer() },
+                    onScheduled = { showScheduled = true; closeDrawer() },
+                    onCode = { closeDrawer() },
                 )
             }
         },
@@ -434,9 +514,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
             // column to the bottom, and the conversation (with its input when
             // there is one) lives in the right column.
             Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                AppTopBar(wide = true, title = "最近记录", onDrawer = { drawerOpen = true }, onRefresh = {
-                    request(JSONObject().put("type", "session.list"), "list${System.nanoTime()}")
-                })
+                AppTopBar(wide = true, title = "最近记录", filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onTasks = { showTasks = true }, onPrivacy = { privacy = !privacy })
                 Row(Modifier.weight(1f).fillMaxWidth()) {
                     Column(Modifier.weight(0.42f).fillMaxHeight()) {
                         OutlinedTextField(
@@ -449,14 +527,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                             singleLine = true,
                         )
                         Spacer(Modifier.height(6.dp))
-                        SessionList(sessions, currentSession, search, onSelect = { select(it) }, compact = false, modifier = Modifier.weight(1f))
+                        SessionList(visibleSessions, currentSession, search, onSelect = { select(it) }, compact = false, modifier = Modifier.weight(1f), onLongPress = { sheetTarget = it })
                     }
                     Box(Modifier.weight(0.58f).fillMaxHeight()) {
                         if (empty) {
                             WelcomePane(withInput = true, inputBar = inputBar)
                         } else {
                             Column(Modifier.fillMaxSize()) {
-                                Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize()) }
+                                Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp)) }
                                 inputBar()
                             }
                         }
@@ -467,9 +545,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
         } else {
             if (empty) {
                 Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                    AppTopBar(wide = false, title = "MCode", onDrawer = { drawerOpen = true }, onRefresh = {
-                        request(JSONObject().put("type", "session.list"), "list${System.nanoTime()}")
-                    })
+                    AppTopBar(wide = false, title = "MCode", filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onTasks = { showTasks = true }, onPrivacy = { privacy = !privacy })
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         WelcomePane(withInput = true, inputBar = inputBar)
                     }
@@ -478,9 +554,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
             } else {
                 Scaffold(
                     containerColor = MaterialTheme.colorScheme.background,
-                    topBar = { AppTopBar(wide = false, title = currentSessionTitle(sessions, currentSession), onDrawer = { drawerOpen = true }, onRefresh = {
-                        request(JSONObject().put("type", "session.list"), "list${System.nanoTime()}")
-                    }) },
+                    topBar = { AppTopBar(wide = false, title = currentSessionTitle(sessions, currentSession), filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onTasks = { showTasks = true }, onPrivacy = { privacy = !privacy }) },
                     bottomBar = {
                         Column {
                             inputBar()
@@ -488,10 +562,104 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         }
                     },
                 ) { padding ->
-                    Box(Modifier.padding(padding).fillMaxSize()) { Timeline(items, Modifier.fillMaxSize()) }
+                    Box(Modifier.padding(padding).fillMaxSize()) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp)) }
                 }
             }
         }
+    }
+
+    /* ---- 功能面板：任务 / 项目 / 定时任务 / 会话长按 / 重命名 ---- */
+    if (showTasks) {
+        ModalBottomSheet(onDismissRequest = { showTasks = false }, containerColor = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
+                Text("进行中的任务", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+                Spacer(Modifier.height(12.dp))
+                val running = sessions.filter { it.running }
+                if (running.isEmpty()) {
+                    Text("没有正在运行的任务", fontSize = 14.sp, color = LocalMuted.current)
+                } else {
+                    for (r in running) {
+                        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(r.title, fontSize = 14.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (r.directory.isNotBlank()) Text(r.directory.substringAfterLast('/'), fontSize = 11.sp, color = LocalMuted.current, maxLines = 1)
+                            }
+                            TextButton({ request(JSONObject().put("type", "session.abort").put("sessionID", r.id)) }) { Text("停止", color = MaterialTheme.colorScheme.error) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (showProjects) {
+        ModalBottomSheet(onDismissRequest = { showProjects = false }, containerColor = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
+                Text("项目", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+                Spacer(Modifier.height(12.dp))
+                val projects = sessions.map { it.directory }.filter { it.isNotBlank() }.distinct().sorted()
+                Row(Modifier.fillMaxWidth().clickable { projectFilter = null; showProjects = false }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.Folder, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(14.dp))
+                    Text("全部项目", fontSize = 15.sp, color = LocalText.current)
+                    Spacer(Modifier.weight(1f))
+                    if (projectFilter == null) Icon(Icons.Outlined.Check, contentDescription = null, tint = Ember)
+                }
+                for (dir in projects) {
+                    Row(Modifier.fillMaxWidth().clickable { projectFilter = dir; showProjects = false }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Folder, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(14.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(dir.substringAfterLast('/'), fontSize = 15.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(dir, fontSize = 11.sp, color = LocalMuted.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        if (projectFilter == dir) Icon(Icons.Outlined.Check, contentDescription = null, tint = Ember)
+                    }
+                }
+                if (projects.isEmpty()) Text("会话还没有目录信息", fontSize = 13.sp, color = LocalMuted.current)
+            }
+        }
+    }
+    if (showScheduled) {
+        ModalBottomSheet(onDismissRequest = { showScheduled = false }, containerColor = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
+                Text("定时任务", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+                Spacer(Modifier.height(12.dp))
+                Text("MCode 还没有定时任务。桌面端以后提供自动化时，它们会出现在这里。", fontSize = 14.sp, color = LocalMuted.current)
+            }
+        }
+    }
+    sheetTarget?.let { row ->
+        ModalBottomSheet(onDismissRequest = { sheetTarget = null }, containerColor = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
+                Text(row.title, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(10.dp))
+                Row(Modifier.fillMaxWidth().clickable { renameTarget = row; sheetTarget = null }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.Edit, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(14.dp))
+                    Text("重命名", fontSize = 15.sp, color = LocalText.current)
+                }
+                Row(Modifier.fillMaxWidth().clickable { request(JSONObject().put("type", "session.delete").put("sessionID", row.id)); sheetTarget = null }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(14.dp))
+                    Text("删除", fontSize = 15.sp, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+    }
+    renameTarget?.let { row ->
+        var newTitle by remember(row.id) { mutableStateOf(row.title) }
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text("重命名会话") },
+            text = { OutlinedTextField(newTitle, { newTitle = it }, singleLine = true) },
+            confirmButton = {
+                TextButton({
+                    if (newTitle.isNotBlank()) request(JSONObject().put("type", "session.rename").put("sessionID", row.id).put("title", newTitle.trim()))
+                    renameTarget = null
+                }) { Text("保存") }
+            },
+            dismissButton = { TextButton({ renameTarget = null }) { Text("取消") } },
+        )
     }
 }
 
@@ -512,7 +680,7 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit) {
 }
 
 @Composable
-fun AppTopBar(wide: Boolean, title: String, onDrawer: () -> Unit, onRefresh: () -> Unit) {
+fun AppTopBar(wide: Boolean, title: String, filterActive: Boolean, privacyActive: Boolean, onDrawer: () -> Unit, onFilter: () -> Unit, onTasks: () -> Unit, onPrivacy: () -> Unit) {
     // Same color as the page, and it owns the status-bar inset so the cream
     // runs under the system bar instead of a black strip.
     Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
@@ -524,14 +692,18 @@ fun AppTopBar(wide: Boolean, title: String, onDrawer: () -> Unit, onRefresh: () 
             Spacer(Modifier.weight(1f))
             Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = { }) {
-                Icon(Icons.Outlined.Tune, contentDescription = "筛选", tint = LocalText.current)
+            IconButton(onFilter) {
+                Icon(Icons.Outlined.Tune, contentDescription = "只看运行中", tint = if (filterActive) Ember else LocalText.current)
             }
-            IconButton(onClick = onRefresh) {
-                Icon(Icons.Outlined.Checklist, contentDescription = "任务", tint = LocalText.current)
+            IconButton(onTasks) {
+                Icon(Icons.Outlined.Checklist, contentDescription = "进行中的任务", tint = LocalText.current)
             }
-            IconButton({ }) {
-                Icon(Icons.Outlined.VisibilityOff, contentDescription = "隐私", tint = LocalMuted.current)
+            IconButton(onPrivacy) {
+                Icon(
+                    if (privacyActive) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
+                    contentDescription = "隐私模糊",
+                    tint = if (privacyActive) Ember else LocalMuted.current,
+                )
             }
         }
     }
@@ -607,8 +779,9 @@ fun PermCard(item: Item.Perm, onPerm: (String, String) -> Unit) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun SessionList(sessions: List<SessionRow>, current: String?, query: String, onSelect: (String) -> Unit, compact: Boolean, modifier: Modifier = Modifier) {
+fun SessionList(sessions: List<SessionRow>, current: String?, query: String, onSelect: (String) -> Unit, compact: Boolean, modifier: Modifier = Modifier, onLongPress: ((SessionRow) -> Unit)? = null) {
     val filtered = sessions.filter { it.title.contains(query, true) || it.id.contains(query, true) }
     if (filtered.isEmpty()) {
         Text("没有匹配的会话", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(16.dp))
@@ -618,7 +791,7 @@ fun SessionList(sessions: List<SessionRow>, current: String?, query: String, onS
         for (s in filtered) {
             item(key = s.id) {
                 Row(
-                    Modifier.fillMaxWidth().clickable { onSelect(s.id) }.padding(horizontal = 14.dp, vertical = if (compact) 8.dp else 11.dp),
+                    Modifier.fillMaxWidth().combinedClickable(onClick = { onSelect(s.id) }, onLongClick = { onLongPress?.invoke(s) }).padding(horizontal = 14.dp, vertical = if (compact) 8.dp else 11.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text("</>", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.width(34.dp))
@@ -639,17 +812,20 @@ fun DrawerContent(
     onSelect: (String) -> Unit,
     onCreate: () -> Unit,
     onReconnect: () -> Unit,
+    onProjects: () -> Unit,
+    onScheduled: () -> Unit,
+    onCode: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(Modifier.padding(horizontal = 18.dp)) {
             Spacer(Modifier.height(28.dp))
             Text("MCode", fontFamily = FontFamily.Serif, fontSize = 27.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
             Spacer(Modifier.height(26.dp))
-            DrawerItem(Icons.Outlined.Folder, "项目") { }
+            DrawerItem(Icons.Outlined.Folder, "项目") { onProjects() }
             Spacer(Modifier.height(18.dp))
-            DrawerItem(Icons.Outlined.Code, "Code") { }
+            DrawerItem(Icons.Outlined.Code, "Code") { onCode() }
             Spacer(Modifier.height(18.dp))
-            DrawerItem(Icons.Outlined.Schedule, "定时任务") { }
+            DrawerItem(Icons.Outlined.Schedule, "定时任务") { onScheduled() }
             Spacer(Modifier.height(18.dp))
             DrawerItem(Icons.Outlined.Settings, "连接设置") { onReconnect() }
             Spacer(Modifier.height(20.dp))
@@ -738,8 +914,9 @@ fun ConnectScreen(url: String, token: String, onDismiss: () -> Unit, onConnect: 
 /* ------------------------------------------------------------------ */
 
 @Composable
-fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String) -> Unit, onStop: () -> Unit, onNew: () -> Unit, modifier: Modifier = Modifier) {
+fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String) -> Unit, onStop: () -> Unit, onNew: () -> Unit, modifier: Modifier = Modifier, onMic: () -> Unit = {}, inject: String? = null, onInjected: () -> Unit = {}) {
     var text by remember { mutableStateOf("") }
+    LaunchedEffect(inject) { if (!inject.isNullOrEmpty()) { text = inject; onInjected() } }
     Box(modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 10.dp)) {
         Surface(
             shape = RoundedCornerShape(28.dp),
@@ -766,9 +943,9 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String) -> Unit,
                     }
                     Spacer(Modifier.weight(1f))
                     Box(
-                        Modifier.size(38.dp).background(LocalPill.current, CircleShape).clickable { },
+                        Modifier.size(38.dp).background(LocalPill.current, CircleShape).clickable { onMic() },
                         contentAlignment = Alignment.Center,
-                    ) { Icon(Icons.Outlined.Mic, contentDescription = "语音", tint = LocalText.current, modifier = Modifier.size(19.dp)) }
+                    ) { Icon(Icons.Outlined.Mic, contentDescription = "语音输入", tint = LocalText.current, modifier = Modifier.size(19.dp)) }
                     Spacer(Modifier.width(8.dp))
                     Box(
                         Modifier.size(44.dp).background(LocalText.current, CircleShape).clickable(enabled = enabled) {
