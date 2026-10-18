@@ -1595,6 +1595,51 @@ fun fmtCost(usage: JSONObject, priced: Int, unpriced: Int): String {
     return "$%.2f".format(usage.optDouble("cost", 0.0))
 }
 
+/**
+ * The last fortnight as a bar per day, sized by tokens.
+ *
+ * The desktop's usage page leads with the same shape: a row of bars makes
+ * "was I busy this week" a glance, where a list of numbers is a read. Days
+ * with nothing spent stay as a hairline so the gaps are visible.
+ */
+@Composable
+fun UsageChart(byDay: org.json.JSONArray) {
+    val days = (0 until byDay.length()).mapNotNull { byDay.optJSONObject(it) }
+    if (days.isEmpty()) return
+    val peak = days.maxOf { day ->
+        val u = day.optJSONObject("usage")
+        (u?.optLong("input") ?: 0L) + (u?.optLong("output") ?: 0L)
+    }.coerceAtLeast(1L)
+    Column(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp)) {
+        Row(
+            Modifier.fillMaxWidth().height(56.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            for (day in days) {
+                val u = day.optJSONObject("usage")
+                val tokens = (u?.optLong("input") ?: 0L) + (u?.optLong("output") ?: 0L)
+                val ratio = (tokens.toFloat() / peak).coerceIn(0.04f, 1f)
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxHeight(ratio)
+                        .background(
+                            if (tokens > 0) MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)
+                            else LocalMuted.current.copy(alpha = 0.25f),
+                            RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp),
+                        ),
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(days.first().optString("key").takeLast(5), fontSize = 10.sp, color = LocalMuted.current)
+            Text(days.last().optString("key").takeLast(5), fontSize = 10.sp, color = LocalMuted.current)
+        }
+    }
+}
+
 @Composable
 fun UsageRow(key: String, bucket: JSONObject, bold: Boolean = false) {
     val usage = bucket.optJSONObject("usage") ?: JSONObject()
@@ -1637,6 +1682,7 @@ fun UsageSheet(summary: JSONObject?) {
                 }
             }
         }
+        summary.optJSONArray("byDay")?.let { UsageChart(it) }
         Spacer(Modifier.height(14.dp))
         Text("按模型", fontSize = 13.sp, color = LocalMuted.current)
         summary.optJSONArray("byModel")?.let { arr ->
