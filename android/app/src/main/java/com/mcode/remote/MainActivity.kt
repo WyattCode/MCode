@@ -108,6 +108,17 @@ class RemoteClient {
     var onFrame: (JSONObject) -> Unit = {}
     var onState: (Boolean) -> Unit = {}
 
+    // Responses are matched to their request by id; anyone waiting registers
+    // here before sending. A concurrent map because onMessage runs on OkHttp
+    // threads while the registration happens on the main thread.
+    private val waiters = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.CompletableDeferred<JSONObject>>()
+
+    fun awaitResponse(id: String): kotlinx.coroutines.CompletableDeferred<JSONObject> {
+        val deferred = kotlinx.coroutines.CompletableDeferred<JSONObject>()
+        waiters[id] = deferred
+        return deferred
+    }
+
     fun connect(url: String, token: String) {
         val request = Request.Builder()
             .url(url)
@@ -129,7 +140,7 @@ class RemoteClient {
             override fun onMessage(webSocket: okhttp3.WebSocket, text: String) {
                 try {
                     val frame = JSONObject(text)
-                    println("[remote] frame kind: " + frame.optString("kind"))
+                    waiters.remove(frame.optString("id"))?.complete(frame)
                     onFrame(frame)
                 } catch (e: Exception) {
                     println("[remote] frame error: $e")
@@ -330,11 +341,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
         if (sessionID != currentSession) return
         val id = message.optString("id")
         val role = message.optString("role", "assistant")
-        val parts = message.optJSONArray("parts") ?: return
-        val text = StringBuilder()
-        for (i in 0 until parts.length()) {
-            val part = parts.optJSONObject(i) ?: continue
-            if (part.optString("type") == "text") text.append(part.optString("text")).append("\n")
+        val parts = message.optJSONArray("parts")
+        // Stored transcripts carry the text flat on the message; live events
+        // carry it in parts. Accept both.
+        val text = StringBuilder(message.optString("text", ""))
+        if (parts != null) {
+            for (i in 0 until parts.length()) {
+                val part = parts.optJSONObject(i) ?: continue
+                if (part.optString("type") == "text") text.append(part.optString("text")).append("\n")
+            }
         }
         val known = messageIndex[id]
         if (known != null && known in items.indices) {
@@ -344,10 +359,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
             items.add(Item.Msg(id, role, text.toString().trim().ifEmpty { "…" }))
             messageIndex[id] = items.size - 1
         }
-        for (i in 0 until parts.length()) {
-            val part = parts.optJSONObject(i) ?: continue
-            if (part.optString("type") == "tool") {
-                items.add(Item.Tool(java.util.UUID.randomUUID().toString(), part.optString("name", "tool"), part.optString("status", ""), part.optString("output", "").replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: ""))
+        if (parts != null) {
+            for (i in 0 until parts.length()) {
+                val part = parts.optJSONObject(i) ?: continue
+                if (part.optString("type") == "tool") {
+                    items.add(Item.Tool(java.util.UUID.randomUUID().toString(), part.optString("name", "tool"), part.optString("status", ""), part.optString("output", "").replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: ""))
+                }
             }
         }
     }
@@ -373,14 +390,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
         // History first; the live stream rides on top of it.
         scope.launch {
             val ticket = "h${System.nanoTime()}"
-            val latch = CompletableDeferred<JSONObject>()
-            val previous = client.onFrame
-            client.onFrame = { f ->
-                previous(f)
-                if (f.optString("kind") == "response" && f.optString("id") == ticket) latch.complete(f)
-            }
+            val deferred = client.awaitResponse(ticket)
             request(JSONObject().put("type", "session.get").put("sessionID", id), ticket)
-            val res = runCatching { latch.await() }.getOrNull() ?: return@launch
+            val res = runCatching { deferred.await() }.getOrNull() ?: return@launch
             val messages = res.optJSONObject("data")?.optJSONArray("messages") ?: return@launch
             for (i in 0 until messages.length()) upsertMessage(id, messages.optJSONObject(i) ?: continue)
         }
@@ -505,6 +517,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                     onProjects = { showProjects = true; closeDrawer() },
                     onScheduled = { showScheduled = true; closeDrawer() },
                     onCode = { closeDrawer() },
+                    onLongPress = { sheetTarget = it },
                 )
             }
         },
@@ -815,6 +828,7 @@ fun DrawerContent(
     onProjects: () -> Unit,
     onScheduled: () -> Unit,
     onCode: () -> Unit,
+    onLongPress: ((SessionRow) -> Unit)? = null,
 ) {
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(Modifier.padding(horizontal = 18.dp)) {
@@ -834,7 +848,7 @@ fun DrawerContent(
             Text("最近使用", fontSize = 13.sp, color = LocalMuted.current)
             Spacer(Modifier.height(8.dp))
         }
-        SessionList(sessions, null, "", onSelect, compact = true, modifier = Modifier.weight(1f))
+        SessionList(sessions, null, "", onSelect, compact = true, modifier = Modifier.weight(1f), onLongPress = onLongPress)
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(42.dp).background(Ember, CircleShape), contentAlignment = Alignment.Center) {
                 Text("W", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
