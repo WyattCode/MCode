@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
@@ -318,6 +319,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
     var renameTarget by remember { mutableStateOf<SessionRow?>(null) }
     var deleteTarget by remember { mutableStateOf<SessionRow?>(null) }
     var voiceText by remember { mutableStateOf<String?>(null) }
+    var modelPicker by remember { mutableStateOf(false) }
+    var providers by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     val context = androidx.compose.ui.platform.LocalContext.current
 
     val voiceLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -348,6 +351,31 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
         val id = "r" + System.nanoTime()
         request(request, id)
         return id
+    }
+
+    /** One RPC round trip: register the waiter, send, await the reply. */
+    suspend fun rpc(req: JSONObject): JSONObject {
+        val id = "rpc" + System.nanoTime()
+        val deferred = client.awaitResponse(id)
+        request(req, id)
+        return deferred.await()
+    }
+
+    fun respondPerm(requestId: String, response: String) {
+        scope.launch { rpc(JSONObject().put("type", "permission.respond").put("requestID", requestId).put("response", response)) }
+    }
+
+    fun loadProviders() {
+        scope.launch {
+            try {
+                val reply = rpc(JSONObject().put("type", "provider.list"))
+                providers = reply.optJSONObject("data")?.optJSONArray("providers")?.let { arr ->
+                    (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+                } ?: emptyList()
+            } catch (e: Exception) {
+                println("[remote] provider.list failed: $e")
+            }
+        }
     }
 
     fun upsertMessage(sessionID: String, message: JSONObject) {
@@ -518,6 +546,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
             onMic = { startVoice() },
             inject = voiceText,
             onInjected = { voiceText = null },
+            onModel = { loadProviders(); modelPicker = true },
+            running = sessions.find { it.id == currentSession }?.running == true,
             onSend = { text ->
                 // steer only joins a running turn; an idle session gets a
                 // plain prompt or the server ignores the message outright.
@@ -577,7 +607,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                             WelcomePane(withInput = true, inputBar = inputBar, inputAtBottom = true)
                         } else {
                             Column(Modifier.fillMaxSize()) {
-                                Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp)) }
+                                Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), onPerm = ::respondPerm) }
                                 inputBar()
                             }
                         }
@@ -605,7 +635,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         }
                     },
                 ) { padding ->
-                    Box(Modifier.padding(padding).fillMaxSize()) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp)) }
+                    Box(Modifier.padding(padding).fillMaxSize()) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), onPerm = ::respondPerm) }
                 }
             }
         }
@@ -681,6 +711,27 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                     Spacer(Modifier.width(14.dp))
                     Text("重命名", fontSize = 15.sp, color = LocalText.current)
                 }
+                Row(Modifier.fillMaxWidth().clickable {
+                    request(JSONObject().put("type", "session.compact").put("sessionID", row.id)); sheetTarget = null
+                }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.Checklist, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(14.dp))
+                    Text("压缩对话", fontSize = 15.sp, color = LocalText.current)
+                }
+                Row(Modifier.fillMaxWidth().clickable {
+                    request(JSONObject().put("type", "session.undo").put("sessionID", row.id)); sheetTarget = null
+                }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(14.dp))
+                    Text("撤销上一步", fontSize = 15.sp, color = LocalText.current)
+                }
+                Row(Modifier.fillMaxWidth().clickable {
+                    request(JSONObject().put("type", "session.archive").put("sessionID", row.id).put("archived", true)); sheetTarget = null
+                }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.Folder, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(14.dp))
+                    Text("归档", fontSize = 15.sp, color = LocalText.current)
+                }
                 Row(Modifier.fillMaxWidth().clickable { deleteTarget = row; sheetTarget = null }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(14.dp))
@@ -717,6 +768,46 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
             },
             dismissButton = { TextButton({ renameTarget = null }) { Text("取消") } },
         )
+    }
+
+    /* ---- 模型选择：每个可用 provider 一节，逐行切 session.model ---- */
+    if (modelPicker) {
+        ModalBottomSheet(onDismissRequest = { modelPicker = false }, containerColor = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
+                Text("选择模型", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+                Spacer(Modifier.height(10.dp))
+                if (providers.isEmpty()) {
+                    Text("正在读取可用模型…", fontSize = 14.sp, color = LocalMuted.current, modifier = Modifier.padding(vertical = 16.dp))
+                }
+                for (provider in providers.filter { it.optBoolean("configured") }) {
+                    Text(provider.optString("name", provider.optString("id")), fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
+                    val models = provider.optJSONArray("models") ?: continue
+                    for (i in 0 until models.length()) {
+                        val model = models.optJSONObject(i) ?: continue
+                        val providerId = provider.optString("id")
+                        val modelId = model.optString("id")
+                        val label = model.optString("name", modelId)
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                currentSession?.let { sid ->
+                                    scope.launch {
+                                        try {
+                                            rpc(JSONObject().put("type", "session.model").put("sessionID", sid).put("model", JSONObject().put("provider", providerId).put("model", modelId)))
+                                        } catch (e: Exception) {
+                                            println("[remote] session.model failed: $e")
+                                        }
+                                    }
+                                }
+                                modelPicker = false
+                            }.padding(vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(label, fontSize = 15.sp, color = if (label == currentModel) MaterialTheme.colorScheme.primary else LocalText.current)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -796,7 +887,7 @@ fun currentSessionTitle(sessions: List<SessionRow>, current: String?): String =
 /* ------------------------------------------------------------------ */
 
 @Composable
-fun Timeline(items: List<Item>, modifier: Modifier) {
+fun Timeline(items: List<Item>, modifier: Modifier, onPerm: (String, String) -> Unit = { _, _ -> }) {
     val listState = rememberLazyListState()
     // Follow new items: when a message is sent or a reply/tool event lands,
     // keep the latest content in view the way Claude does.
@@ -840,7 +931,7 @@ fun Timeline(items: List<Item>, modifier: Modifier) {
                             }
                         }
                     }
-                    is Item.Perm -> PermCard(item, onPerm = { _, _ -> })
+                    is Item.Perm -> PermCard(item, onPerm = onPerm)
                     is Item.Err -> Text(item.text, fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(start = 10.dp))
                 }
             }
@@ -1006,7 +1097,7 @@ fun ConnectScreen(url: String, token: String, onDismiss: () -> Unit, onConnect: 
 /* ------------------------------------------------------------------ */
 
 @Composable
-fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String) -> Unit, onStop: () -> Unit, onNew: () -> Unit, modifier: Modifier = Modifier, onMic: () -> Unit = {}, inject: String? = null, onInjected: () -> Unit = {}) {
+fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String) -> Unit, onStop: () -> Unit, onNew: () -> Unit, modifier: Modifier = Modifier, onMic: () -> Unit = {}, onModel: () -> Unit = {}, running: Boolean = false, inject: String? = null, onInjected: () -> Unit = {}) {
     var text by remember { mutableStateOf("") }
     LaunchedEffect(inject) { if (!inject.isNullOrEmpty()) { text = inject; onInjected() } }
     Box(modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 10.dp)) {
@@ -1030,7 +1121,11 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String) -> Unit,
                         contentAlignment = Alignment.Center,
                     ) { Text("+", fontSize = 19.sp, color = LocalText.current) }
                     Spacer(Modifier.width(8.dp))
-                    Surface(shape = RoundedCornerShape(17.dp), color = LocalPill.current) {
+                    Surface(
+                        shape = RoundedCornerShape(17.dp),
+                        color = LocalPill.current,
+                        modifier = Modifier.clickable(enabled = enabled && onModel != {}) { onModel() },
+                    ) {
                         Text(modelLabel, fontSize = 13.sp, color = LocalText.current, modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp))
                     }
                     Spacer(Modifier.weight(1f))
@@ -1041,11 +1136,16 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String) -> Unit,
                     Spacer(Modifier.width(8.dp))
                     Box(
                         Modifier.size(44.dp).background(LocalText.current, CircleShape).clickable(enabled = enabled) {
-                            if (text.isNotBlank()) { onSend(text); text = "" }
+                            if (running) onStop()
+                            else if (text.isNotBlank()) { onSend(text); text = "" }
                         },
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (text.isBlank()) {
+                        if (running) {
+                            // A running turn turns the round button into stop,
+                            // the way the desktop composer does.
+                            Box(Modifier.size(16.dp).background(LocalBg.current, RoundedCornerShape(3.dp)))
+                        } else if (text.isBlank()) {
                             Icon(Icons.Outlined.GraphicEq, contentDescription = "语音输入", tint = LocalBg.current, modifier = Modifier.size(20.dp))
                         } else {
                             Icon(Icons.Filled.ArrowUpward, contentDescription = "发送", tint = LocalBg.current, modifier = Modifier.size(22.dp))
