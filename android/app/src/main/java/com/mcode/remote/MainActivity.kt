@@ -17,12 +17,14 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Checklist
@@ -581,7 +583,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         }
                     }
                 }
-                Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
+                Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)))
             }
         } else {
             if (empty) {
@@ -590,7 +592,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         WelcomePane(withInput = true, inputBar = inputBar)
                     }
-                    Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
+                    Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)))
                 }
             } else {
                 Scaffold(
@@ -599,7 +601,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                     bottomBar = {
                         Column {
                             inputBar()
-                            Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
+                            Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)))
                         }
                     },
                 ) { padding ->
@@ -795,7 +797,13 @@ fun currentSessionTitle(sessions: List<SessionRow>, current: String?): String =
 
 @Composable
 fun Timeline(items: List<Item>, modifier: Modifier) {
-    LazyColumn(modifier.padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val listState = rememberLazyListState()
+    // Follow new items: when a message is sent or a reply/tool event lands,
+    // keep the latest content in view the way Claude does.
+    LaunchedEffect(items.size) {
+        if (items.isNotEmpty()) listState.animateScrollToItem(items.size - 1)
+    }
+    LazyColumn(state = listState, modifier = modifier.padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         for (item in items) {
             item(key = item.key) {
                 when (item) {
@@ -1040,7 +1048,7 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String) -> Unit,
                         if (text.isBlank()) {
                             Icon(Icons.Outlined.GraphicEq, contentDescription = "语音输入", tint = LocalBg.current, modifier = Modifier.size(20.dp))
                         } else {
-                            Icon(Icons.Outlined.Checklist, contentDescription = "发送", tint = LocalBg.current, modifier = Modifier.size(19.dp))
+                            Icon(Icons.Filled.ArrowUpward, contentDescription = "发送", tint = LocalBg.current, modifier = Modifier.size(22.dp))
                         }
                     }
                 }
