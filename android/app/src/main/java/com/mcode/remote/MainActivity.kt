@@ -96,6 +96,7 @@ sealed class Item {
     data class Msg(val id: String, val role: String, var text: String) : Item() { override val key = "msg.$id" }
     data class Tool(val uid: String, val name: String, val status: String, val output: String) : Item() { override val key = "tool.$uid" }
     data class Perm(val requestId: String, val kind: String, val detail: String) : Item() { override val key = "perm.$requestId" }
+    data class Quest(val requestId: String, val request: JSONObject) : Item() { override val key = "quest.$requestId" }
     data class Err(val text: String) : Item() { override val key = "err.$text.${hashCode()}" }
 }
 
@@ -321,6 +322,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
     var voiceText by remember { mutableStateOf<String?>(null) }
     var modelPicker by remember { mutableStateOf(false) }
     var providers by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    /** Parked permission requests per session, replayed from session.list. */
+    val pendingPerms = remember { java.util.concurrent.ConcurrentHashMap<String, MutableList<JSONObject>>() }
+    /** Parked question cards per session, replayed from question.list. */
+    val pendingQuestions = remember { java.util.concurrent.ConcurrentHashMap<String, MutableList<JSONObject>>() }
+    /** Bumped whenever the parked maps change, so the replay effect re-runs. */
+    var replayTick by remember { mutableStateOf(0) }
     val context = androidx.compose.ui.platform.LocalContext.current
 
     val voiceLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -378,8 +385,54 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
         }
     }
 
-    fun upsertMessage(sessionID: String, message: JSONObject) {
-        if (sessionID != currentSession) return
+    fun answerQuestion(requestId: String, answer: List<String>) {
+        scope.launch {
+            try {
+                rpc(JSONObject().put("type", "question.reply").put("requestID", requestId).put("answers", org.json.JSONArray().put(org.json.JSONArray(answer))))
+            } catch (e: Exception) {
+                println("[remote] question.reply failed: $e")
+            }
+        }
+    }
+
+    fun loadPendingQuestions() {
+        scope.launch {
+            try {
+                val reply = rpc(JSONObject().put("type", "question.list"))
+                val arr = reply.optJSONObject("data")?.optJSONArray("questions") ?: return@launch
+
+                for (i in 0 until arr.length()) {
+                    val r = arr.optJSONObject(i) ?: continue
+                    pendingQuestions.getOrPut(r.optString("sessionID")) { mutableListOf() }.add(r)
+                }
+                replayTick++
+
+            } catch (e: Exception) {
+                println("[remote] question.list failed: $e")
+            }
+        }
+    }
+
+    // Whichever of the replay data and the selected session lands first, the
+    // cards land on the timeline once both are in; a light poll because the
+    // parked maps live outside the snapshot system.
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(500)
+            val sid = currentSession ?: continue
+            val known = items.map { it.key }.toSet()
+            for (r in pendingQuestions[sid].orEmpty()) {
+                val card = Item.Quest(r.optString("id"), r)
+                if (card.key !in known) items.add(card)
+            }
+            for (p in pendingPerms[sid].orEmpty()) {
+                val card = Item.Perm(p.optString("id"), p.optString("kind", "tool"), p.optString("title", "") + " " + p.optString("subject", ""))
+                if (card.key !in known) items.add(card)
+            }
+        }
+    }
+
+    fun upsertMessage(sessionID: String, message: JSONObject) {        if (sessionID != currentSession) return
         val id = message.optString("id")
         val role = message.optString("role", "assistant")
         val parts = message.optJSONArray("parts")
@@ -429,6 +482,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
         items.clear()
         messageIndex.clear()
         if (id == null) return
+        // Parked permissions ride along: a turn can be sitting on an answer
+        // while the phone reconnected, and the card must not vanish with the
+        // in-memory timeline (the desktop replays these the same way).
+        for (p in pendingPerms[id].orEmpty()) items.add(Item.Perm(p.optString("id"), p.optString("kind", "tool"), p.optString("title", "") + " " + p.optString("subject", "")))
+        for (r in pendingQuestions[id].orEmpty()) items.add(Item.Quest(r.optString("id"), r))
         frame(JSONObject().put("kind", "request").put("id", "w${System.nanoTime()}")
             .put("request", JSONObject().put("type", "session.watch").put("sessionIDs", org.json.JSONArray().put(id))))
         // History first; the live stream rides on top of it.
@@ -448,6 +506,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                 cursor = f.optLong("eventId", 0)
                 frame(JSONObject().put("kind", "remote.resume").put("cursor", cursor))
                 request(JSONObject().put("type", "session.list"), "list${System.nanoTime()}")
+                loadPendingQuestions()
             }
             "response" -> {
                 val id = f.optString("id")
@@ -462,7 +521,24 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         sessions.add(SessionRow(sid, s.optString("title", sid), sid in running, s.optLong("updated", 0), s.optString("directory", ""), s.optJSONObject("model")?.optString("model", "") ?: ""))
                     }
                     sessions.sortByDescending { it.updated }
+                    // Replay what is parked: sessions waiting on a permission
+                    // keep the tool hanging until someone answers.
+                    pendingPerms.clear()
+                    data.optJSONArray("permissions")?.let { arr ->
+                        for (i in 0 until arr.length()) {
+                            val p = arr.optJSONObject(i) ?: continue
+                            pendingPerms.getOrPut(p.optString("sessionID")) { mutableListOf() }.add(p)
+                        }
+                        replayTick++
+                    }
                     if (currentSession == null && sessions.isNotEmpty()) select(sessions.first().id)
+                    else currentSession?.let { sid ->
+                        val known = items.map { it.key }.toSet()
+                        for (p in pendingPerms[sid].orEmpty()) {
+                            val card = Item.Perm(p.optString("id"), p.optString("kind", "tool"), p.optString("title", "") + " " + p.optString("subject", ""))
+                            if (card.key !in known) items.add(card)
+                        }
+                    }
                 }
             }
             "remote.event" -> {
@@ -494,14 +570,32 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                     "message.part.updated" -> upsertPart(event.optString("sessionID"), event.optString("messageID"), event.optJSONObject("part") ?: return)
                     "permission.requested" -> {
                         val r = event.optJSONObject("request") ?: return
-                        items.add(Item.Perm(r.optString("id"), r.optString("kind", "tool"), r.optString("title", "") + " " + r.optJSONObject("meta")?.optString("path", "")))
+                        pendingPerms.getOrPut(r.optString("sessionID")) { mutableListOf() }.add(r)
+                        items.add(Item.Perm(r.optString("id"), r.optString("kind", "tool"), r.optString("title", "") + " " + r.optString("subject", "")))
                         // Surface the card on the lock screen too: the ongoing
                         // notification flips to "MCode 请求批准" until answered.
                         KeepAliveService.instance?.showPermission(r.optString("title", ""))
                     }
                     "permission.resolved" -> {
-                        items.removeAll { it is Item.Perm && it.requestId == event.optString("requestID") }
+                        val rid = event.optString("requestID")
+                        for (list in pendingPerms.values) list.removeAll { it.optString("id") == rid }
+                        items.removeAll { it is Item.Perm && it.requestId == rid }
                         if (items.none { it is Item.Perm }) KeepAliveService.instance?.restoreKeepAlive()
+                    }
+                    "question.asked" -> {
+                        val r = event.optJSONObject("request") ?: return
+                        pendingQuestions.getOrPut(r.optString("sessionID")) { mutableListOf() }.add(r)
+                        items.add(Item.Quest(r.optString("id"), r))
+                    }
+                    "question.replied" -> {
+                        val rid = event.optString("requestID")
+                        for (list in pendingQuestions.values) list.removeAll { it.optString("id") == rid }
+                        items.removeAll { it is Item.Quest && it.requestId == rid }
+                    }
+                    "question.rejected" -> {
+                        val rid = event.optString("requestID")
+                        for (list in pendingQuestions.values) list.removeAll { it.optString("id") == rid }
+                        items.removeAll { it is Item.Quest && it.requestId == rid }
                     }
                     "session.error" -> items.add(Item.Err(event.optString("error")))
                 }
@@ -607,7 +701,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                             WelcomePane(withInput = true, inputBar = inputBar, inputAtBottom = true)
                         } else {
                             Column(Modifier.fillMaxSize()) {
-                                Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), onPerm = ::respondPerm) }
+                                Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), onPerm = ::respondPerm, onAnswer = ::answerQuestion) }
                                 inputBar()
                             }
                         }
@@ -635,7 +729,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         }
                     },
                 ) { padding ->
-                    Box(Modifier.padding(padding).fillMaxSize()) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), onPerm = ::respondPerm) }
+                    Box(Modifier.padding(padding).fillMaxSize()) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), onPerm = ::respondPerm, onAnswer = ::answerQuestion) }
                 }
             }
         }
@@ -887,7 +981,7 @@ fun currentSessionTitle(sessions: List<SessionRow>, current: String?): String =
 /* ------------------------------------------------------------------ */
 
 @Composable
-fun Timeline(items: List<Item>, modifier: Modifier, onPerm: (String, String) -> Unit = { _, _ -> }) {
+fun Timeline(items: List<Item>, modifier: Modifier, onPerm: (String, String) -> Unit = { _, _ -> }, onAnswer: (String, List<String>) -> Unit = { _, _ -> }) {
     val listState = rememberLazyListState()
     // Follow new items: when a message is sent or a reply/tool event lands,
     // keep the latest content in view the way Claude does.
@@ -932,8 +1026,48 @@ fun Timeline(items: List<Item>, modifier: Modifier, onPerm: (String, String) -> 
                         }
                     }
                     is Item.Perm -> PermCard(item, onPerm = onPerm)
+                    is Item.Quest -> QuestCard(item, onAnswer = onAnswer)
                     is Item.Err -> Text(item.text, fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(start = 10.dp))
                 }
+            }
+        }
+    }
+}
+
+/* Claude's ask card: the question, its options and a typed answer. */
+@Composable
+fun QuestCard(item: Item.Quest, onAnswer: (String, List<String>) -> Unit) {
+    val questions = item.request.optJSONArray("questions") ?: return
+    val q = questions.optJSONObject(0) ?: return
+    Column(Modifier.fillMaxWidth().background(LocalPill.current, RoundedCornerShape(12.dp)).padding(12.dp)) {
+        Text(q.optString("header", "问题"), fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = LocalText.current)
+        Spacer(Modifier.height(4.dp))
+        Text(q.optString("question"), fontSize = 13.sp, color = LocalText.current)
+        Spacer(Modifier.height(10.dp))
+        val opts = q.optJSONArray("options")
+        if (opts != null) for (i in 0 until opts.length()) {
+            val o = opts.optJSONObject(i) ?: continue
+            Surface(
+                Modifier.fillMaxWidth().padding(bottom = 6.dp).clickable { onAnswer(item.requestId, listOf(o.optString("label"))) },
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+            ) {
+                Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                    Text(o.optString("label"), fontSize = 13.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
+                    if (o.optString("description").isNotBlank()) Text(o.optString("description"), fontSize = 11.sp, color = LocalMuted.current)
+                }
+            }
+        }
+        if (q.optBoolean("custom", true)) {
+            var custom by remember { mutableStateOf("") }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    custom, { custom = it },
+                    Modifier.weight(1f),
+                    placeholder = { Text("自行输入…", fontSize = 12.sp, color = LocalMuted.current) },
+                    singleLine = true,
+                )
+                TextButton({ if (custom.isNotBlank()) onAnswer(item.requestId, listOf(custom.trim())) }) { Text("发送") }
             }
         }
     }
