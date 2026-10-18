@@ -18,6 +18,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -101,7 +102,7 @@ sealed class Item {
     data class Err(val text: String) : Item() { override val key = "err.$text.${hashCode()}" }
 }
 
-data class SessionRow(val id: String, val title: String, val running: Boolean, val updated: Long, val directory: String = "", val model: String = "")
+data class SessionRow(val id: String, val title: String, val running: Boolean, val updated: Long, val directory: String = "", val model: String = "", val agent: String = "build", val effort: String = "none")
 
 class RemoteClient {
     private val http = OkHttpClient.Builder()
@@ -533,7 +534,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                     for (i in 0 until list.length()) {
                         val s = list.optJSONObject(i) ?: continue
                         val sid = s.optString("id")
-                        sessions.add(SessionRow(sid, s.optString("title", sid), sid in running, s.optLong("updated", 0), s.optString("directory", ""), s.optJSONObject("model")?.optString("model", "") ?: ""))
+                        sessions.add(SessionRow(sid, s.optString("title", sid), sid in running, s.optLong("updated", 0), s.optString("directory", ""), s.optJSONObject("model")?.optString("model", "") ?: "", s.optString("agent", "build"), s.optString("effort", "none")))
                     }
                     sessions.sortByDescending { it.updated }
                     // Replay what is parked: sessions waiting on a permission
@@ -568,8 +569,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         val row = sessions.find { it.id == sid }
                         val directory = s.optString("directory", "")
                         val model = s.optJSONObject("model")?.optString("model", "") ?: ""
-                        if (row != null) sessions[sessions.indexOf(row)] = row.copy(title = title, updated = updated, directory = directory, model = model)
-                        else sessions.add(SessionRow(sid, title, false, updated, directory, model))
+                        val agent = s.optString("agent", "build")
+                        val effort = s.optString("effort", "none")
+                        if (row != null) sessions[sessions.indexOf(row)] = row.copy(title = title, updated = updated, directory = directory, model = model, agent = agent, effort = effort)
+                        else sessions.add(SessionRow(sid, title, false, updated, directory, model, agent, effort))
                         sessions.sortByDescending { it.updated }
                     }
                     "session.deleted" -> {
@@ -891,8 +894,47 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
     if (modelPicker) {
         ModalBottomSheet(onDismissRequest = { modelPicker = false }, containerColor = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
-                Text("选择模型", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+                Text("会话设置", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
                 Spacer(Modifier.height(10.dp))
+                val currentRow = sessions.find { it.id == currentSession }
+                // ---- Agent: build / plan ----
+                Text("Agent", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(top = 8.dp, bottom = 2.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (agent in listOf("build", "plan")) {
+                        val active = currentRow?.agent == agent
+                        Surface(
+                            shape = RoundedCornerShape(15.dp),
+                            color = if (active) MaterialTheme.colorScheme.primary else LocalPill.current,
+                            modifier = Modifier.clickable(enabled = currentSession != null) {
+                                currentSession?.let { sid ->
+                                    scope.launch { runCatching { rpc(JSONObject().put("type", "session.agent").put("sessionID", sid).put("agent", agent)) } }
+                                }
+                            },
+                        ) {
+                            Text(agent, fontSize = 14.sp, color = if (active) LocalBg.current else LocalText.current, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                        }
+                    }
+                }
+                // ---- Effort: the reasoning dial ----
+                Text("Effort", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(top = 14.dp, bottom = 2.dp))
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (effort in listOf("none", "minimal", "low", "medium", "high", "xhigh", "max")) {
+                        val active = currentRow?.effort == effort
+                        Surface(
+                            shape = RoundedCornerShape(15.dp),
+                            color = if (active) MaterialTheme.colorScheme.primary else LocalPill.current,
+                            modifier = Modifier.clickable(enabled = currentSession != null) {
+                                currentSession?.let { sid ->
+                                    scope.launch { runCatching { rpc(JSONObject().put("type", "session.effort").put("sessionID", sid).put("effort", effort)) } }
+                                }
+                            },
+                        ) {
+                            Text(effort, fontSize = 14.sp, color = if (active) LocalBg.current else LocalText.current, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
+                        }
+                    }
+                }
+                // ---- Model ----
+                Text("模型", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(top = 14.dp, bottom = 2.dp))
                 if (providers.isEmpty()) {
                     Text("正在读取可用模型…", fontSize = 14.sp, color = LocalMuted.current, modifier = Modifier.padding(vertical = 16.dp))
                 }
