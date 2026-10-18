@@ -47,12 +47,18 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Article
+import androidx.compose.material.icons.outlined.Build
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.GraphicEq
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
@@ -119,10 +125,63 @@ val LocalFieldLine = staticCompositionLocalOf { CreamPill }
 /* Model                                                               */
 /* ------------------------------------------------------------------ */
 
+/**
+ * What a tool call was about, named the way the desktop names it.
+ *
+ * The same field order `stepTitle` uses in the renderer: the path for a file
+ * tool, the command for a shell, the pattern for a search, the url for a
+ * fetch - falling back to whatever title the server put on the part.
+ */
+fun toolTitleOf(part: JSONObject): String {
+    val input = part.optJSONObject("input")
+    val named = when (part.optString("name")) {
+        "read", "edit", "write", "apply_patch", "patch" -> input?.optString("path")
+            ?: input?.optString("filePath") ?: input?.optString("file_path")
+        "bash", "exec_command" -> input?.optString("description") ?: input?.optString("command") ?: input?.optString("cmd")
+        "grep", "glob" -> input?.optString("pattern")
+        "webfetch", "websearch" -> input?.optString("url") ?: input?.optString("query")
+        else -> null
+    }
+    val fallback = part.optString("title")
+    return (named?.takeIf { it.isNotBlank() } ?: fallback).take(120)
+}
+
+/**
+ * The verb in front of a tool's title, from MCode's own word list so the phone
+ * says what the desktop says: 已读取 / 正在读取 / 读取失败 / 已拒绝读取 /
+ * 未执行：读取 / 未完成.
+ */
+fun toolVerbOf(name: String, status: String): String {
+    val key = when (name) {
+        "read" -> "读取"
+        "edit", "apply_patch", "patch" -> "编辑"
+        "write" -> "写入"
+        "bash", "exec_command", "execute" -> "命令"
+        "grep", "glob" -> "搜索"
+        "list" -> "列目录"
+        "webfetch" -> "读取网页"
+        "websearch" -> "搜索网络"
+        else -> name
+    }
+    return when (status) {
+        "running", "pending", "in_progress" -> "正在$key"
+        "error", "failed" -> "$key 失败"
+        "rejected" -> "已拒绝$key"
+        "skipped" -> "未执行：$key"
+        "completed", "done", "" -> "已$key"
+        else -> "已$key"
+    }
+}
+
 sealed class Item {
     abstract val key: String
     data class Msg(val id: String, val role: String, var text: String) : Item() { override val key = "msg.$id" }
-    data class Tool(val uid: String, val name: String, val status: String, val output: String) : Item() { override val key = "tool.$uid" }
+    /*
+     * One tool call, the way the desktop's step list draws it: a verb that
+     * says where the call is, and what it was about (`title`). The phone used
+     * to print `· read completed`, which told the reader nothing.
+     */
+    data class Tool(val uid: String, val name: String, val status: String, val output: String, val title: String = "") : Item() { override val key = "tool.$uid" }
     data class Perm(val requestId: String, val kind: String, val detail: String) : Item() { override val key = "perm.$requestId" }
     data class Quest(val requestId: String, val request: JSONObject) : Item() { override val key = "quest.$requestId" }
     data class Err(val text: String) : Item() { override val key = "err.$text.${hashCode()}" }
@@ -599,7 +658,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
             for (i in 0 until parts.length()) {
                 val part = parts.optJSONObject(i) ?: continue
                 if (part.optString("type") == "tool") {
-                    items.add(Item.Tool(java.util.UUID.randomUUID().toString(), part.optString("name", "tool"), part.optString("status", ""), part.optString("output", "").replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: ""))
+                    items.add(Item.Tool(java.util.UUID.randomUUID().toString(), part.optString("name", "tool"), part.optString("status", ""), part.optString("output", "").replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: "", toolTitleOf(part)))
                 }
             }
         }
@@ -612,7 +671,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
         if (existing !is Item.Msg) return
         when (part.optString("type")) {
             "text" -> items[known] = existing.copy(text = part.optString("text"))
-            "tool" -> items.add(Item.Tool(java.util.UUID.randomUUID().toString(), part.optString("name", "tool"), part.optJSONObject("state")?.optString("status", "") ?: "", part.optString("output", "").replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: ""))
+            "tool" -> items.add(Item.Tool(java.util.UUID.randomUUID().toString(), part.optString("name", "tool"), part.optJSONObject("state")?.optString("status", "") ?: "", part.optString("output", "").replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: "", toolTitleOf(part)))
         }
     }
 
@@ -1340,17 +1399,52 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                     }
                     is Item.Tool -> {
                         var open by remember { mutableStateOf(false) }
-                        Column(
-                            Modifier.padding(start = 10.dp).clickable { open = !open },
-                        ) {
-                            Text("· ${item.name} ${item.status}" + if (item.output.isNotBlank() && !open) " ▸" else "", fontSize = 12.sp, color = LocalMuted.current)
-                            if (item.output.isNotBlank()) {
+                        Column(Modifier.padding(start = 10.dp)) {
+                            Row(
+                                Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                // One small glyph per tool family, muted like
+                                // the verb - Claude's step rows lead with an
+                                // icon and the phone had none.
+                                Icon(
+                                    when (item.name) {
+                                        "read" -> Icons.Outlined.Article
+                                        "edit", "write", "apply_patch", "patch" -> Icons.Outlined.Edit
+                                        "bash", "exec_command", "execute" -> Icons.Outlined.Terminal
+                                        "grep", "glob" -> Icons.Outlined.Search
+                                        "list" -> Icons.Outlined.Folder
+                                        "webfetch", "websearch" -> Icons.Outlined.Language
+                                        else -> Icons.Outlined.Build
+                                    },
+                                    contentDescription = null,
+                                    tint = LocalMuted.current,
+                                    modifier = Modifier.size(15.dp),
+                                )
+                                Spacer(Modifier.width(7.dp))
+                                Text(
+                                    toolVerbOf(item.name, item.status) + if (item.title.isNotBlank()) " ${item.title}" else "",
+                                    fontSize = 12.5.sp,
+                                    color = LocalMuted.current,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                if (item.output.isNotBlank()) {
+                                    Icon(
+                                        if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                                        contentDescription = if (open) "收起" else "展开",
+                                        tint = LocalMuted.current,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                }
+                            }
+                            if (open && item.output.isNotBlank()) {
                                 Text(
                                     item.output,
                                     fontSize = 11.sp,
                                     color = LocalMuted.current.copy(alpha = 0.8f),
-                                    maxLines = if (open) Int.MAX_VALUE else 1,
-                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(start = 22.dp, top = 2.dp, bottom = 4.dp),
                                 )
                             }
                         }
