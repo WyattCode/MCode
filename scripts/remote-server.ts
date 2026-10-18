@@ -39,6 +39,20 @@ console.log(`[remote] gateway listening on ${host}:${gateway.port}`)
 for (const ip of shown) console.log(`[remote] pair with: mcode-remote://${ip}:${gateway.port}?token=${token}`)
 console.log("[remote] Ctrl+C to stop. Keep this running; sessions keep their turns alive.")
 
+// Provider auth loads asynchronously; a few seconds in, report what a prompt
+// would actually reach - "No model is available" is otherwise a mystery from
+// a log that only says the backend is ready.
+setTimeout(() => {
+  try {
+    for (const p of backend.runtime.config.providers()) {
+      console.log(`[remote] provider ${p.id} (${p.baseURL}): ${p.configured ? "credentials ok" : "NO CREDENTIALS"}, ${p.models.length} model(s)`)
+    }
+  } catch (err) {
+    console.log(`[remote] provider report failed: ${err instanceof Error ? err.message : err}`)
+  }
+}, 5000)
+
+
 function lanAddresses(): string[] {
   const found: string[] = []
   for (const list of Object.values(os.networkInterfaces())) {
