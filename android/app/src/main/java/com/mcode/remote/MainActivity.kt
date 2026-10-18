@@ -383,10 +383,15 @@ fun MCodeTheme(content: @Composable () -> Unit) {
 /**
  * Claude's asterisk, for the empty pane at phone width.
  *
- * Measured off its own screenshot rather than guessed: twelve spokes off a
- * hub, alternating long and short, equal stroke, round caps, with visible air
- * between them - not four lines struck through the centre, which is what the
- * first attempt drew and why it read as a starfish instead of a spark.
+ * Measured off its own screenshot rather than guessed, twice: the first
+ * attempt drew four lines through the centre (they met, and it read as a
+ * starfish), the second alternated long and short (wrong - it does not).
+ * A radial profile of the real mark, 112 px across at 450 dpi:
+ *
+ *   12 spokes, 30 degrees apart, reaching 0.95-1.12 of the radius between
+ *   them - equal length, within the error of reading a 112 px PNG;
+ *   starting at 0.05 of the radius, so they meet at the centre;
+ *   about 4-5 degrees wide, round-capped.
  */
 @Composable
 fun SparkMark(modifier: Modifier = Modifier, tint: Color = Ember) {
@@ -394,14 +399,18 @@ fun SparkMark(modifier: Modifier = Modifier, tint: Color = Ember) {
         val cx = size.width / 2f
         val cy = size.height / 2f
         val outer = size.minDimension / 2f
-        val stroke = outer * 0.11f
-        // 12 spokes, every other one pulled in a little, and the whole ring
-        // started a few degrees off vertical like Claude's.
-        val lengths = floatArrayOf(0.74f, 0.96f, 0.78f, 1.0f, 0.8f, 0.94f, 0.76f, 0.98f, 0.82f, 0.92f, 0.78f, 0.96f)
+        /*
+         * Fitted, not eyeballed: sweeping stroke width and inner radius against
+         * the real mark's ink coverage (42% of the 112 px box) lands on 0.16 of
+         * the radius and a start at the centre. A 0.05 start left a hole in the
+         * middle that the original does not have.
+         */
+        val stroke = outer * 0.16f
         for (i in 0 until 12) {
-            val angle = Math.toRadians((i * 30.0) - 90.0)
-            val r0 = outer * 0.22f
-            val r1 = outer * lengths[i]
+            // The first spoke sits a little off vertical in the original.
+            val angle = Math.toRadians((i * 30.0) + 12.0)
+            val r0 = 0f
+            val r1 = outer
             drawLine(
                 tint,
                 androidx.compose.ui.geometry.Offset(cx + (Math.cos(angle) * r0).toFloat(), cy + (Math.sin(angle) * r0).toFloat()),
@@ -410,7 +419,6 @@ fun SparkMark(modifier: Modifier = Modifier, tint: Color = Ember) {
                 cap = androidx.compose.ui.graphics.StrokeCap.Round,
             )
         }
-        drawCircle(tint, radius = outer * 0.17f, center = androidx.compose.ui.geometry.Offset(cx, cy))
     }
 }
 
