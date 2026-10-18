@@ -626,6 +626,27 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
         }
     }
 
+    /**
+     * Starts a conversation and opens it.
+     *
+     * `session.create` answers with the new session, and nothing else would
+     * select it: the event stream only carries `session.updated`, which adds
+     * the row without moving the pane. Claude switches to the new
+     * conversation the moment it exists, so this does too.
+     */
+    fun newSession() {
+        scope.launch {
+            try {
+                val reply = rpc(JSONObject().put("type", "session.create").put("title", "来自手机"))
+                val sid = reply.optJSONObject("data")?.optJSONObject("session")?.optString("id").orEmpty()
+                if (sid.isNotBlank()) select(sid)
+            } catch (e: Exception) {
+                println("[remote] session.create failed: $e")
+            }
+        }
+    }
+
+
     fun handle(f: JSONObject) {
         when (f.optString("kind")) {
             "remote.welcome" -> {
@@ -801,7 +822,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                 attachments.clear()
             },
             onStop = { currentSession?.let { request(JSONObject().put("type", "session.abort").put("sessionID", it)) } },
-            onNew = { request(JSONObject().put("type", "session.create").put("title", "来自手机")) },
+            onNew = { newSession() },
         )
     }
 
@@ -813,7 +834,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                     sessions = sessions,
                     onSelect = { select(it); closeDrawer() },
                     onCreate = {
-                        request(JSONObject().put("type", "session.create").put("title", "来自手机"))
+                        newSession()
                         closeDrawer()
                     },
                     onReconnect = { showConnect = true; closeDrawer() },
@@ -868,7 +889,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                             shape = RoundedCornerShape(24.dp),
                             color = LocalText.current,
                             modifier = Modifier.padding(top = 8.dp, bottom = 10.dp).align(Alignment.CenterHorizontally).clickable {
-                                request(JSONObject().put("type", "session.create").put("title", "来自手机"))
+                                newSession()
                             },
                         ) {
                             Row(Modifier.padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
