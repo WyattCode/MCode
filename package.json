@@ -2,7 +2,7 @@
   "name": "mcode",
   "productName": "MCode",
   "desktopName": "mcode.desktop",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "A keyboard-first, command-palette-driven AI coding agent.",
   "author": "MCode",
   "main": "./out/main/index.js",
