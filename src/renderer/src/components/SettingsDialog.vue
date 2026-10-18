@@ -825,6 +825,14 @@ async function enableVoiceSend() {
 
 const voiceModelOptions = computed(() => [
   { value: "", label: t("set.voiceModelNone") },
+  /*
+   * The engine on this machine. A provider row is only a transcription model
+   * when the endpoint actually offers /audio/transcriptions - a chat-only
+   * local server answers the model list but nothing else, and that is what the
+   * precheck reports as asrUnavailable. This row is the setup that always
+   * works, so it sits first.
+   */
+  { value: "local/base", label: t("set.voiceModelLocal") },
   ...app.providers
     .filter((provider) => provider.configured)
     .flatMap((provider) =>
