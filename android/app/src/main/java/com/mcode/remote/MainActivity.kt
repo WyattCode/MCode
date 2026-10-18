@@ -382,9 +382,10 @@ fun MCodeTheme(content: @Composable () -> Unit) {
 /**
  * Claude's asterisk, for the empty pane at phone width.
  *
- * Eight spokes off a hub, drawn rather than iconified: this is the mark in
- * Claude's own empty state ("月光下的对话?"), and no Material glyph is that
- * shape. Ember is the sampled #CC7C5E of theirs.
+ * Measured off its own screenshot rather than guessed: twelve spokes off a
+ * hub, alternating long and short, equal stroke, round caps, with visible air
+ * between them - not four lines struck through the centre, which is what the
+ * first attempt drew and why it read as a starfish instead of a spark.
  */
 @Composable
 fun SparkMark(modifier: Modifier = Modifier, tint: Color = Ember) {
@@ -392,15 +393,23 @@ fun SparkMark(modifier: Modifier = Modifier, tint: Color = Ember) {
         val cx = size.width / 2f
         val cy = size.height / 2f
         val outer = size.minDimension / 2f
-        val inner = outer * 0.18f
-        // Four strokes through the centre give eight spokes.
-        for (i in 0 until 4) {
-            val angle = (Math.PI / 4.0) * i
-            val dx = (Math.cos(angle) * outer).toFloat()
-            val dy = (Math.sin(angle) * outer).toFloat()
-            drawLine(tint, androidx.compose.ui.geometry.Offset(cx - dx, cy - dy), androidx.compose.ui.geometry.Offset(cx + dx, cy + dy), strokeWidth = outer * 0.16f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        val stroke = outer * 0.11f
+        // 12 spokes, every other one pulled in a little, and the whole ring
+        // started a few degrees off vertical like Claude's.
+        val lengths = floatArrayOf(0.74f, 0.96f, 0.78f, 1.0f, 0.8f, 0.94f, 0.76f, 0.98f, 0.82f, 0.92f, 0.78f, 0.96f)
+        for (i in 0 until 12) {
+            val angle = Math.toRadians((i * 30.0) - 90.0)
+            val r0 = outer * 0.22f
+            val r1 = outer * lengths[i]
+            drawLine(
+                tint,
+                androidx.compose.ui.geometry.Offset(cx + (Math.cos(angle) * r0).toFloat(), cy + (Math.sin(angle) * r0).toFloat()),
+                androidx.compose.ui.geometry.Offset(cx + (Math.cos(angle) * r1).toFloat(), cy + (Math.sin(angle) * r1).toFloat()),
+                strokeWidth = stroke,
+                cap = androidx.compose.ui.graphics.StrokeCap.Round,
+            )
         }
-        drawCircle(tint, radius = inner, center = androidx.compose.ui.geometry.Offset(cx, cy))
+        drawCircle(tint, radius = outer * 0.17f, center = androidx.compose.ui.geometry.Offset(cx, cy))
     }
 }
 
