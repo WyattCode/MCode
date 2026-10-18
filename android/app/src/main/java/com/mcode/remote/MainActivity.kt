@@ -56,6 +56,7 @@ import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Schedule
@@ -1834,12 +1835,37 @@ fun QuestCard(item: Item.Quest, onAnswer: (String, List<String>) -> Unit) {
 }
 
 @Composable
+/**
+ * What a permission request is asking to do, in MCode's own words.
+ *
+ * The card used to print the protocol's `kind` - "权限请求：bash" - which is
+ * a wire identifier, not something to show a reader. These are the desktop's
+ * permission verbs.
+ */
+fun permVerbOf(kind: String): String = when (kind) {
+    "bash" -> "执行命令"
+    "edit" -> "修改文件"
+    "write" -> "写入文件"
+    "outside" -> "访问工作目录外的文件"
+    "webfetch" -> "访问网络"
+    else -> "执行操作"
+}
+
+@Composable
 fun PermCard(item: Item.Perm, onPerm: (String, String) -> Unit) {
     Column(
-        Modifier.fillMaxWidth().background(LocalPill.current, RoundedCornerShape(12.dp)).padding(10.dp),
+        Modifier.fillMaxWidth().background(LocalPill.current, RoundedCornerShape(12.dp)).padding(12.dp),
     ) {
-        Text("权限请求：${item.kind}", fontWeight = FontWeight.Medium, fontSize = 14.sp, color = LocalText.current)
-        if (item.detail.isNotBlank()) Text(item.detail, fontSize = 12.sp, color = LocalMuted.current)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.Lock, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(7.dp))
+            Text(permVerbOf(item.kind), fontWeight = FontWeight.Medium, fontSize = 14.sp, color = LocalText.current)
+        }
+        if (item.detail.isNotBlank()) {
+            // The subject sits under the verb, monospaced-ish so a path or a
+            // command reads as one.
+            Text(item.detail, fontSize = 12.sp, color = LocalMuted.current, modifier = Modifier.padding(top = 4.dp, start = 23.dp))
+        }
         Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button({ onPerm(item.requestId, "once") }, Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = LocalText.current)) { Text("允许一次", color = LocalBg.current) }
             Button({ onPerm(item.requestId, "always") }, Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = LocalPill.current)) { Text("总是", color = LocalText.current) }
