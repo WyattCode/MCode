@@ -48,6 +48,8 @@ import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Article
+import androidx.compose.material.icons.outlined.CallSplit
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
@@ -409,6 +411,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
     var renameTarget by remember { mutableStateOf<SessionRow?>(null) }
     var deleteTarget by remember { mutableStateOf<SessionRow?>(null) }
     var voiceText by remember { mutableStateOf<String?>(null) }
+    /** The turn whose long-press sheet is open (复制 / 从此处分支). */
+    var messageTarget by remember { mutableStateOf<Item.Msg?>(null) }
     var modelPicker by remember { mutableStateOf(false) }
     var providers by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var showUsage by remember { mutableStateOf(false) }
@@ -984,7 +988,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                                 WelcomePane(withInput = true, inputBar = inputBar, inputAtBottom = true)
                             } else {
                                 Column(Modifier.fillMaxSize()) {
-                                    Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onAnswer = ::answerQuestion) }
+                                    Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onAnswer = ::answerQuestion, onMessage = { messageTarget = it }) }
                                     inputBar()
                                 }
                             }
@@ -1011,7 +1015,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         }
                     },
                 ) { padding ->
-                    Box(Modifier.padding(padding).fillMaxSize()) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onAnswer = ::answerQuestion) }
+                    Box(Modifier.padding(padding).fillMaxSize()) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onAnswer = ::answerQuestion, onMessage = { messageTarget = it }) }
                 }
             }
         }
@@ -1112,6 +1116,58 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                     Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(14.dp))
                     Text("删除…", fontSize = 15.sp, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+    }
+    /*
+     * A turn's long press: copy its words, or branch the conversation from
+     * here the way the desktop's 从此处分支 does - the same session.fork with
+     * this message as the cut, so the new conversation carries everything up
+     * to and including it.
+     */
+    messageTarget?.let { msg ->
+        ModalBottomSheet(onDismissRequest = { messageTarget = null }, containerColor = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
+                Text(msg.text.take(80), fontSize = 13.sp, color = LocalMuted.current, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(10.dp))
+                Row(Modifier.fillMaxWidth().clickable {
+                    val board = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    board.setPrimaryClip(android.content.ClipData.newPlainText("MCode", msg.text))
+                    Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+                    messageTarget = null
+                }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.ContentCopy, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(14.dp))
+                    Text("复制", fontSize = 15.sp, color = LocalText.current)
+                }
+                Row(Modifier.fillMaxWidth().clickable {
+                    val sid = currentSession
+                    val mid = msg.id
+                    messageTarget = null
+                    if (sid != null && mid.isNotBlank()) {
+                        scope.launch {
+                            try {
+                                val reply = rpc(
+                                    JSONObject().put("type", "session.fork")
+                                        .put("sessionID", sid)
+                                        .put("messageID", mid)
+                                        .put("titleSuffix", true),
+                                )
+                                val newID = reply.optJSONObject("data")?.optJSONObject("session")?.optString("id").orEmpty()
+                                if (newID.isNotBlank()) {
+                                    select(newID)
+                                    Toast.makeText(context, "已从此处创建分支", Toast.LENGTH_SHORT).show()
+                                }
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "分支失败：${e.message?.take(40) ?: ""}", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+                }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.CallSplit, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(14.dp))
+                    Text("从此处分支", fontSize = 15.sp, color = LocalText.current)
                 }
             }
         }
@@ -1350,8 +1406,9 @@ fun currentSessionTitle(sessions: List<SessionRow>, current: String?): String =
 /* Timeline / lists                                                    */
 /* ------------------------------------------------------------------ */
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, onPerm: (String, String) -> Unit = { _, _ -> }, onAnswer: (String, List<String>) -> Unit = { _, _ -> }) {
+fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, onPerm: (String, String) -> Unit = { _, _ -> }, onAnswer: (String, List<String>) -> Unit = { _, _ -> }, onMessage: (Item.Msg) -> Unit = {}) {
     val listState = rememberLazyListState()
     // Follow new items: when a message is sent or a reply/tool event lands,
     // keep the latest content in view the way Claude does.
@@ -1384,7 +1441,10 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                                     )
                                     // Claude's assistant prose breathes: 30 px between lines at 450 dpi,
                                     // and a user turn carries its own pill padding.
-                                    .padding(horizontal = 10.dp, vertical = if (isUser) 10.dp else 5.dp),
+                                    .padding(horizontal = 10.dp, vertical = if (isUser) 10.dp else 5.dp)
+                                    // Claude's turns answer a long press with
+                                    // 复制 / 从此处分支; both are here now.
+                                    .combinedClickable(onClick = {}, onLongClick = { onMessage(item) }),
                             ) {
                                 Text(
                                     item.text.ifEmpty { "…" },
