@@ -12,6 +12,13 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Image
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -29,6 +36,7 @@ import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
@@ -55,6 +63,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -339,19 +348,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
     var replayTick by remember { mutableStateOf(0) }
     val context = androidx.compose.ui.platform.LocalContext.current
 
-    val voiceLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        val heard = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
-        if (!heard.isNullOrBlank()) voiceText = heard
-    }
-    fun startVoice() {
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "对 MCode 说话")
-        }
-        runCatching { voiceLauncher.launch(intent) }
-            .onFailure { Toast.makeText(context, "没有可用的语音识别服务", Toast.LENGTH_SHORT).show() }
-    }
-
     /** Pending photo attachments: {"path","mime","data"(base64)} ready for session.prompt. */
     val attachments = remember { mutableStateListOf<JSONObject>() }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(4)) { uris ->
@@ -386,12 +382,104 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
     }
 
     /** One RPC round trip: register the waiter, send, await the reply. */
-    suspend fun rpc(req: JSONObject): JSONObject {
+    suspend fun rpc(req: JSONObject, timeoutMs: Long = 20_000): JSONObject {
         val id = "rpc" + System.nanoTime()
         val deferred = client.awaitResponse(id)
         request(req, id)
-        return deferred.await()
+        // Transcription runs a whisper pass on the PC and takes longer than a
+        // protocol question does; the caller names how long it may wait.
+        return kotlinx.coroutines.withTimeout(timeoutMs) { deferred.await() }
     }
+
+    var recording by remember { mutableStateOf<android.media.MediaRecorder?>(null) }
+    var recordFile by remember { mutableStateOf<java.io.File?>(null) }
+    var voiceBusy by remember { mutableStateOf(false) }
+
+    fun finishVoice() {
+        val recorder = recording ?: return
+        recording = null
+        val file = recordFile
+        recordFile = null
+        runCatching { recorder.stop() }
+        recorder.release()
+        if (file == null || !file.exists() || file.length() < 1200) {
+            // A tap that caught nothing is a miss, not a failure.
+            file?.delete()
+            voiceBusy = false
+            Toast.makeText(context, "没听清，请再说一次", Toast.LENGTH_SHORT).show()
+            return
+        }
+        voiceBusy = true
+        scope.launch {
+            try {
+                val bytes = withContext(Dispatchers.IO) { file.readBytes() }
+                file.delete()
+                val reply = rpc(
+                    JSONObject()
+                        .put("type", "voice.transcribe")
+                        .put("audio", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))
+                        .put("mime", "audio/mp4")
+                        .put("mode", "fast")
+                        .put("language", "zh-CN")
+                        .put("sessionID", currentSession),
+                    90_000,
+                )
+                val heard = reply.optJSONObject("data")?.optString("text").orEmpty()
+                if (heard.isNotBlank()) voiceText = heard
+                else Toast.makeText(context, "没听清，请再说一次", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "语音识别失败：${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
+            } finally {
+                voiceBusy = false
+            }
+        }
+    }
+
+    /*
+     * First tap asks for the microphone; the grant comes back here and the
+     * recording starts, so the ask and the recorder stay in one place.
+     */
+    fun beginRecording() {
+        val file = java.io.File(context.cacheDir, "voice-${System.currentTimeMillis()}.m4a")
+        val recorder = android.media.MediaRecorder()
+        try {
+            recorder.setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
+            recorder.setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
+            recorder.setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
+            recorder.setAudioSamplingRate(16_000)
+            recorder.setAudioEncodingBitRate(48_000)
+            recorder.setOutputFile(file.absolutePath)
+            recorder.prepare()
+            recorder.start()
+            recording = recorder
+            recordFile = file
+            Toast.makeText(context, "录音中，再点一下结束", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            runCatching { recorder.release() }
+            file.delete()
+            Toast.makeText(context, "无法开始录音：${e.message?.take(40) ?: ""}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) beginRecording()
+        else Toast.makeText(context, "需要麦克风才能语音输入", Toast.LENGTH_LONG).show()
+    }
+
+    fun startVoice() {
+        if (voiceBusy) return
+        if (recording != null) { finishVoice(); return }  // second tap stops
+        if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            micPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        beginRecording()
+    }
+
+    /* Split from startVoice so the permission launcher, declared below it, can
+       start the recording without referring back: the two halves never form a
+       cycle in the local-function namespace. */
+
 
     fun respondPerm(requestId: String, response: String) {
         scope.launch { rpc(JSONObject().put("type", "permission.respond").put("requestID", requestId).put("response", response)) }
@@ -677,6 +765,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
             enabled = currentSession != null,
             modelLabel = currentModel,
             onMic = { startVoice() },
+            listening = recording != null,
+            transcribing = voiceBusy,
             inject = voiceText,
             onInjected = { voiceText = null },
             onModel = { loadProviders(); modelPicker = true },
@@ -774,7 +864,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                             WelcomePane(withInput = true, inputBar = inputBar, inputAtBottom = true)
                         } else {
                             Column(Modifier.fillMaxSize()) {
-                                Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), onPerm = ::respondPerm, onAnswer = ::answerQuestion) }
+                                Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onAnswer = ::answerQuestion) }
                                 inputBar()
                             }
                         }
@@ -800,7 +890,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         }
                     },
                 ) { padding ->
-                    Box(Modifier.padding(padding).fillMaxSize()) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), onPerm = ::respondPerm, onAnswer = ::answerQuestion) }
+                    Box(Modifier.padding(padding).fillMaxSize()) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onAnswer = ::answerQuestion) }
                 }
             }
         }
@@ -1098,16 +1188,24 @@ fun currentSessionTitle(sessions: List<SessionRow>, current: String?): String =
 /* ------------------------------------------------------------------ */
 
 @Composable
-fun Timeline(items: List<Item>, modifier: Modifier, onPerm: (String, String) -> Unit = { _, _ -> }, onAnswer: (String, List<String>) -> Unit = { _, _ -> }) {
+fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, onPerm: (String, String) -> Unit = { _, _ -> }, onAnswer: (String, List<String>) -> Unit = { _, _ -> }) {
     val listState = rememberLazyListState()
     // Follow new items: when a message is sent or a reply/tool event lands,
     // keep the latest content in view the way Claude does.
     LaunchedEffect(items.size) {
         if (items.isNotEmpty()) listState.animateScrollToItem(items.size - 1)
     }
+    // A running turn gets one more row: Claude keeps a working line under the
+    // last thing said, so the page does not look finished while it is not.
     LazyColumn(state = listState, modifier = modifier.padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         for (item in items) {
             item(key = item.key) {
+                // Every row fades and rises a little as it lands, which is what
+                // makes a streamed reply read as arriving rather than repainting.
+                var shown by remember { mutableStateOf(false) }
+                LaunchedEffect(Unit) { shown = true }
+                val appear by animateFloatAsState(if (shown) 1f else 0f, tween(180), label = "row-in")
+                Box(Modifier.graphicsLayer { alpha = appear; translationY = (1f - appear) * 8.dp.toPx() }) {
                 when (item) {
                     is Item.Msg -> {
                         val isUser = item.role == "user"
@@ -1148,7 +1246,43 @@ fun Timeline(items: List<Item>, modifier: Modifier, onPerm: (String, String) -> 
                     is Item.Quest -> QuestCard(item, onAnswer = onAnswer)
                     is Item.Err -> Text(item.text, fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(start = 10.dp))
                 }
+                }
             }
+        }
+        if (running) {
+            item(key = "working") { WorkingLine() }
+        }
+    }
+}
+
+/**
+ * Claude's working line: three dots that breathe while a turn is in flight.
+ *
+ * The desktop keeps a working mark under the last thing said so the page never
+ * looks finished mid-turn; this is the same idea at phone size.
+ */
+@Composable
+fun WorkingLine() {
+    val transition = rememberInfiniteTransition(label = "working")
+    val phase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 3f,
+        animationSpec = infiniteRepeatable(tween(1200, easing = LinearEasing), RepeatMode.Restart),
+        label = "phase",
+    )
+    Row(Modifier.padding(start = 10.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        for (i in 0 until 3) {
+            // Each dot is brightest when the phase passes it, which reads as a
+            // wave rather than three blinking lights.
+            val distance = kotlin.math.abs(((phase - i) % 3f + 3f) % 3f)
+            val lift = (1f - (distance.coerceAtMost(1f))).coerceIn(0f, 1f)
+            Box(
+                Modifier
+                    .padding(end = 5.dp)
+                    .size(6.dp)
+                    .graphicsLayer { alpha = 0.3f + 0.7f * lift; translationY = -2.dp.toPx() * lift }
+                    .background(LocalMuted.current, CircleShape),
+            )
         }
     }
 }
@@ -1426,7 +1560,7 @@ fun ConnectScreen(url: String, token: String, onDismiss: () -> Unit, onConnect: 
 /* ------------------------------------------------------------------ */
 
 @Composable
-fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSONObject>) -> Unit, onStop: () -> Unit, onNew: () -> Unit, modifier: Modifier = Modifier, onMic: () -> Unit = {}, onModel: () -> Unit = {}, running: Boolean = false, inject: String? = null, onInjected: () -> Unit = {}, pickImages: () -> Unit = {}, attachments: List<JSONObject> = emptyList(), onRemoveAttachment: (Int) -> Unit = {}) {
+fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSONObject>) -> Unit, onStop: () -> Unit, onNew: () -> Unit, modifier: Modifier = Modifier, onMic: () -> Unit = {}, onModel: () -> Unit = {}, running: Boolean = false, inject: String? = null, onInjected: () -> Unit = {}, pickImages: () -> Unit = {}, attachments: List<JSONObject> = emptyList(), onRemoveAttachment: (Int) -> Unit = {}, listening: Boolean = false, transcribing: Boolean = false) {
     var text by remember { mutableStateOf("") }
     LaunchedEffect(inject) { if (!inject.isNullOrEmpty()) { text = inject; onInjected() } }
     Box(modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 10.dp)) {
@@ -1489,10 +1623,28 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
                         Text(modelLabel, fontSize = 13.sp, color = LocalText.current, modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp))
                     }
                     Spacer(Modifier.weight(1f))
+                    // Listening and transcribing own the round button: Claude
+                    // turns it into the stop/timepiece while the microphone is
+                    // open, so a second tap closes the recording.
+                    if (transcribing) {
+                        androidx.compose.material3.CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = LocalMuted.current,
+                        )
+                        Spacer(Modifier.width(14.dp))
+                    }
                     Box(
-                        Modifier.clickable { onMic() },
+                        Modifier.clickable(enabled = !transcribing) { onMic() },
                         contentAlignment = Alignment.Center,
-                    ) { Icon(Icons.Outlined.Mic, contentDescription = "语音输入", tint = LocalMuted.current, modifier = Modifier.size(21.dp).padding(horizontal = 2.dp)) }
+                    ) {
+                        Icon(
+                            if (listening) Icons.Filled.Stop else Icons.Outlined.Mic,
+                            contentDescription = if (listening) "结束录音" else "语音输入",
+                            tint = if (listening) Color(0xFFE0574A) else LocalMuted.current,
+                            modifier = Modifier.size(if (listening) 22.dp else 21.dp).padding(horizontal = 2.dp),
+                        )
+                    }
                     Spacer(Modifier.width(8.dp))
                     // Claude's composer button flips with the theme: white
                     // circle / dark arrow in the dark, washed ember / white
@@ -1500,8 +1652,9 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
                     val sendBg = if (isSystemInDarkTheme()) LocalText.current else Color(0xFFE1C0B3)
                     val sendFg = if (isSystemInDarkTheme()) LocalBg.current else Color.White
                     Box(
-                        Modifier.size(44.dp).background(sendBg, CircleShape).clickable(enabled = enabled) {
+                        Modifier.size(44.dp).background(sendBg, CircleShape).clickable(enabled = enabled && !transcribing) {
                             if (running) onStop()
+                            else if (listening) onMic()
                             else if (text.isNotBlank() || attachments.isNotEmpty()) { onSend(text, attachments); text = "" }
                         },
                         contentAlignment = Alignment.Center,
@@ -1509,6 +1662,16 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
                         if (running) {
                             // A running turn turns the round button into stop,
                             // the way the desktop composer does.
+                            Box(Modifier.size(16.dp).background(sendFg, RoundedCornerShape(3.dp)))
+                        } else if (transcribing) {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                                color = sendFg,
+                            )
+                        } else if (listening) {
+                            // MiMo's live capsule: the button becomes the stop
+                            // square while a recording is in flight.
                             Box(Modifier.size(16.dp).background(sendFg, RoundedCornerShape(3.dp)))
                         } else if (text.isBlank() && attachments.isEmpty()) {
                             Icon(Icons.Outlined.GraphicEq, contentDescription = "语音输入", tint = sendFg, modifier = Modifier.size(20.dp))
