@@ -35,6 +35,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.BarChart
@@ -758,12 +759,28 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
 
     // 项目/运行中过滤后的列表；模型 pill 显示当前会话的真实模型。
     val visibleSessions = sessions.filter { (projectFilter == null || it.directory == projectFilter) && (!runningOnly || it.running) }
-    val currentModel = sessions.find { it.id == currentSession }?.model?.takeIf { it.isNotBlank() } ?: "本地模型"
+    val currentRow = sessions.find { it.id == currentSession }
+    val currentModel = currentRow?.model?.takeIf { it.isNotBlank() } ?: "本地模型"
+    /*
+     * Claude's pill carries the model and what it is thinking with ("Sonnet 5.5
+     * 中等"), so the same two facts belong in ours. Effort is only named when
+     * the session has one picked - "none" reads as absent, not as a level.
+     */
+    val effortLabel = when (currentRow?.effort) {
+        "minimal" -> "最少"
+        "low" -> "低"
+        "medium" -> "中等"
+        "high" -> "高"
+        "xhigh" -> "很高"
+        "max" -> "最高"
+        else -> ""
+    }
+    val currentModelLabel = if (effortLabel.isNotEmpty()) "$currentModel $effortLabel" else currentModel
 
     val inputBar: @Composable () -> Unit = {
         InputCapsule(
             enabled = currentSession != null,
-            modelLabel = currentModel,
+            modelLabel = currentModelLabel,
             onMic = { startVoice() },
             listening = recording != null,
             transcribing = voiceBusy,
@@ -814,15 +831,21 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
             // Claude's fold layout: each pane owns its header - the list's
             // (menu, records, filter, tasks) and the conversation's (title,
             // privacy) - with the divider running the full height between.
-            Row(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))) {
+            // Only the navigation bar shortens the row: the keyboard belongs to the
+            // conversation pane, and having it shrink the list too was pulling
+            // the new-chat pill up into the middle of the column.
+            Row(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom))) {
                 Column(Modifier.weight(0.42f).fillMaxHeight()) {
                     Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
                     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         IconButton({ openDrawer() }) { Icon(Icons.Outlined.Menu, contentDescription = "菜单", tint = LocalText.current) }
-                        Text("最近记录", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
-                        Spacer(Modifier.weight(1f))
-                        IconButton({ runningOnly = !runningOnly }) { Icon(Icons.Outlined.Tune, contentDescription = "筛选", tint = if (runningOnly) MaterialTheme.colorScheme.primary else LocalText.current) }
-                        IconButton({ showTasks = true }) { Icon(Icons.Outlined.Checklist, contentDescription = "任务", tint = if (runningOnly) MaterialTheme.colorScheme.primary else LocalText.current) }
+                        // Claude centres the title in the column and keeps the
+                        // two glyphs (tune, list) at its right.
+                        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                            Text("最近记录", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+                        }
+                        IconButton({ runningOnly = !runningOnly }) { Icon(Icons.Outlined.Tune, contentDescription = "筛选", tint = LocalText.current) }
+                        IconButton({ showTasks = true }) { Icon(Icons.Outlined.Checklist, contentDescription = "任务", tint = LocalText.current) }
                     }
                     OutlinedTextField(
                         search, { search = it },
@@ -830,7 +853,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         placeholder = { Text("搜索", color = LocalMuted.current) },
                         leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current) },
                         shape = RoundedCornerShape(14.dp),
-                        colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.background, focusedContainerColor = MaterialTheme.colorScheme.background, unfocusedBorderColor = Color.Transparent, focusedBorderColor = Color.Transparent),
+                        // Claude's search sits on white with a hairline pill
+                        // outline, not on the page's own colour with none.
+                        colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.surface, focusedContainerColor = MaterialTheme.colorScheme.surface, unfocusedBorderColor = LocalPill.current, focusedBorderColor = LocalPill.current),
                         singleLine = true,
                     )
                         Spacer(Modifier.height(6.dp))
@@ -858,14 +883,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
                         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(currentSessionTitle(sessions, currentSession), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                            IconButton({ privacy = !privacy }) { Icon(if (privacy) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, contentDescription = "隐私", tint = if (privacy) MaterialTheme.colorScheme.primary else LocalText.current) }
+                            IconButton({ privacy = !privacy }) { GhostGlyph(active = privacy, size = 22.dp) }
                         }
-                        if (empty) {
-                            WelcomePane(withInput = true, inputBar = inputBar, inputAtBottom = true)
-                        } else {
-                            Column(Modifier.fillMaxSize()) {
-                                Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onAnswer = ::answerQuestion) }
-                                inputBar()
+                        // The conversation pane, and only it, rides above the IME.
+                        Column(Modifier.weight(1f).fillMaxWidth().windowInsetsPadding(WindowInsets.ime.only(WindowInsetsSides.Bottom))) {
+                            if (empty) {
+                                WelcomePane(withInput = true, inputBar = inputBar, inputAtBottom = true)
+                            } else {
+                                Column(Modifier.fillMaxSize()) {
+                                    Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onAnswer = ::answerQuestion) }
+                                    inputBar()
+                                }
                             }
                         }
                     }
@@ -1178,6 +1206,40 @@ fun AppTopBar(wide: Boolean, title: String, filterActive: Boolean, privacyActive
 }
 
 /* Claude's empty state greets the operator by name: Wyatt 回来了！ */
+/**
+ * The little sheet ghost Claude parks in the conversation header.
+ *
+ * Drawn rather than iconified: the shape is a rounded dome with two eyes and a
+ * scalloped hem, and no Material glyph has that silhouette. `active` tints it
+ * with the accent while the privacy blur is on, which is what the eye used to
+ * be for.
+ */
+@Composable
+fun GhostGlyph(active: Boolean, size: androidx.compose.ui.unit.Dp) {
+    val tint = if (active) Ember else LocalText.current
+    androidx.compose.foundation.Canvas(Modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
+        val stroke = w * 0.10f
+        val path = androidx.compose.ui.graphics.Path().apply {
+            moveTo(w * 0.16f, h * 0.92f)
+            lineTo(w * 0.16f, h * 0.42f)
+            // The dome: two thirds of a circle across the top.
+            cubicTo(w * 0.16f, h * 0.14f, w * 0.84f, h * 0.14f, w * 0.84f, h * 0.42f)
+            lineTo(w * 0.84f, h * 0.92f)
+            // Three scallops along the hem, drawn back towards the start.
+            cubicTo(w * 0.72f, h * 0.80f, w * 0.66f, h * 0.80f, w * 0.62f, h * 0.92f)
+            cubicTo(w * 0.56f, h * 0.80f, w * 0.50f, h * 0.80f, w * 0.46f, h * 0.92f)
+            cubicTo(w * 0.40f, h * 0.80f, w * 0.34f, h * 0.80f, w * 0.30f, h * 0.92f)
+            close()
+        }
+        drawPath(path, tint, style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
+        // Two eyes.
+        drawCircle(tint, radius = w * 0.055f, center = androidx.compose.ui.geometry.Offset(w * 0.36f, h * 0.50f))
+        drawCircle(tint, radius = w * 0.055f, center = androidx.compose.ui.geometry.Offset(w * 0.64f, h * 0.50f))
+    }
+}
+
 fun greeting(): String = "${MainActivity.OPERATOR} 回来了！"
 
 fun currentSessionTitle(sessions: List<SessionRow>, current: String?): String =
@@ -1429,10 +1491,14 @@ fun SessionList(sessions: List<SessionRow>, current: String?, query: String, onS
                     Modifier.fillMaxWidth().combinedClickable(onClick = { onSelect(s.id) }, onLongClick = { onLongPress?.invoke(s) }).padding(horizontal = 14.dp, vertical = if (compact) 8.dp else 11.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (s.running) {
-                        Text("</>", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.width(34.dp))
+                    if (s.running || s.directory.isNotBlank()) {
+                        // A running session wears the <> mark, and so does any
+                        // session that belongs to a project folder - Claude
+                        // draws the same split. A plain conversation keeps the
+                        // speech bubble.
+                        Icon(Icons.Outlined.Code, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(34.dp).padding(end = 14.dp, top = 1.dp))
                     } else {
-                        Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.width(34.dp).padding(end = 12.dp))
+                        Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(34.dp).padding(end = 14.dp, top = 1.dp))
                     }
                     Column(Modifier.weight(1f)) {
                         Text(s.title.ifEmpty { s.id }.take(if (compact) 34 else 26), fontSize = 15.sp, color = LocalText.current, maxLines = 1)
@@ -1603,12 +1669,14 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     var plusMenu by remember { mutableStateOf(false) }
-                    // Claude's + and mic are bare icons, no circle behind.
+                    // Claude's + and mic both sit in a soft pill circle; the
+                    // round button on the right is ink until there is something
+                    // to send, then the theme's accent.
                     Box(
-                        Modifier.clickable(enabled = enabled) { plusMenu = true },
+                        Modifier.size(36.dp).background(LocalPill.current, CircleShape).clickable(enabled = enabled) { plusMenu = true },
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text("+", fontSize = 24.sp, color = LocalMuted.current, modifier = Modifier.padding(horizontal = 6.dp))
+                        Icon(Icons.Filled.Add, contentDescription = "新对话或照片", tint = LocalText.current, modifier = Modifier.size(20.dp))
                         DropdownMenu(expanded = plusMenu, onDismissRequest = { plusMenu = false }) {
                             DropdownMenuItem(text = { Text("新对话") }, onClick = { plusMenu = false; onNew() })
                             DropdownMenuItem(text = { Text("照片") }, onClick = { plusMenu = false; pickImages() })
@@ -1620,7 +1688,9 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
                         color = LocalPill.current,
                         modifier = Modifier.clickable(enabled = enabled && onModel != {}) { onModel() },
                     ) {
-                        Text(modelLabel, fontSize = 13.sp, color = LocalText.current, modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp))
+                        // Claude's pill names the model and its effort
+                        // ("Sonnet 5.5 中等"); ours names what this app has.
+                        Text(modelLabel, fontSize = 13.sp, color = LocalText.current, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
                     }
                     Spacer(Modifier.weight(1f))
                     // Listening and transcribing own the round button: Claude
@@ -1635,22 +1705,30 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
                         Spacer(Modifier.width(14.dp))
                     }
                     Box(
-                        Modifier.clickable(enabled = !transcribing) { onMic() },
+                        Modifier.size(36.dp).background(if (listening) Color(0x1FE0574A) else LocalPill.current, CircleShape).clickable(enabled = !transcribing) { onMic() },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             if (listening) Icons.Filled.Stop else Icons.Outlined.Mic,
                             contentDescription = if (listening) "结束录音" else "语音输入",
                             tint = if (listening) Color(0xFFE0574A) else LocalMuted.current,
-                            modifier = Modifier.size(if (listening) 22.dp else 21.dp).padding(horizontal = 2.dp),
+                            modifier = Modifier.size(20.dp),
                         )
                     }
                     Spacer(Modifier.width(8.dp))
-                    // Claude's composer button flips with the theme: white
-                    // circle / dark arrow in the dark, washed ember / white
-                    // arrow in the light.
-                    val sendBg = if (isSystemInDarkTheme()) LocalText.current else Color(0xFFE1C0B3)
-                    val sendFg = if (isSystemInDarkTheme()) LocalBg.current else Color.White
+                    // Claude's round button is ink while the box is empty (a waveform on
+                    // black) and takes the accent once there is something to send.
+                    // The dark theme flips the ink to the paper colour; measured
+                    // off Claude on the fold in both themes.
+                    val hasWords = text.isNotBlank() || attachments.isNotEmpty()
+                    val sendBg = when {
+                        hasWords && !isSystemInDarkTheme() -> Color(0xFFE1C0B3)
+                        else -> LocalText.current
+                    }
+                    val sendFg = when {
+                        hasWords && !isSystemInDarkTheme() -> Color.White
+                        else -> LocalBg.current
+                    }
                     Box(
                         Modifier.size(44.dp).background(sendBg, CircleShape).clickable(enabled = enabled && !transcribing) {
                             if (running) onStop()
