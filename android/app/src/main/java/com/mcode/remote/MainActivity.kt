@@ -35,6 +35,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Stop
@@ -378,6 +379,31 @@ fun MCodeTheme(content: @Composable () -> Unit) {
 }
 
 /* MCode's own mark, straight from the desktop build. */
+/**
+ * Claude's asterisk, for the empty pane at phone width.
+ *
+ * Eight spokes off a hub, drawn rather than iconified: this is the mark in
+ * Claude's own empty state ("月光下的对话?"), and no Material glyph is that
+ * shape. Ember is the sampled #CC7C5E of theirs.
+ */
+@Composable
+fun SparkMark(modifier: Modifier = Modifier, tint: Color = Ember) {
+    androidx.compose.foundation.Canvas(modifier) {
+        val cx = size.width / 2f
+        val cy = size.height / 2f
+        val outer = size.minDimension / 2f
+        val inner = outer * 0.18f
+        // Four strokes through the centre give eight spokes.
+        for (i in 0 until 4) {
+            val angle = (Math.PI / 4.0) * i
+            val dx = (Math.cos(angle) * outer).toFloat()
+            val dy = (Math.sin(angle) * outer).toFloat()
+            drawLine(tint, androidx.compose.ui.geometry.Offset(cx - dx, cy - dy), androidx.compose.ui.geometry.Offset(cx + dx, cy + dy), strokeWidth = outer * 0.16f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        }
+        drawCircle(tint, radius = inner, center = androidx.compose.ui.geometry.Offset(cx, cy))
+    }
+}
+
 @Composable
 fun MCodeMark(modifier: Modifier = Modifier) {
     androidx.compose.foundation.Image(
@@ -1320,9 +1346,17 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
      * than centred. Measured off its own screenshot.
      */
     val mark = @Composable {
-        MCodeMark(Modifier.size(40.dp))
-        Spacer(Modifier.height(14.dp))
-        Text(greeting(), fontSize = 24.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
+        // Claude's phone empty pane is its asterisk over 月光下的对话?; the
+        // two-pane pane greets by name. Both are sampled from its own screens.
+        if (inputAtBottom) {
+            MCodeMark(Modifier.size(40.dp))
+            Spacer(Modifier.height(14.dp))
+            Text(greeting(), fontSize = 24.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
+        } else {
+            SparkMark(Modifier.size(46.dp))
+            Spacer(Modifier.height(16.dp))
+            Text("月光下的对话?", fontSize = 24.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
+        }
     }
     if (inputAtBottom) {
         // Claude's wide empty state: the mark and greeting sit above the
@@ -1349,37 +1383,28 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
 
 @Composable
 fun AppTopBar(wide: Boolean, title: String, filterActive: Boolean, privacyActive: Boolean, onDrawer: () -> Unit, onFilter: () -> Unit, onTasks: () -> Unit, onPrivacy: () -> Unit) {
-    // Claude's portrait header carries only the ghost; tune and the task
-    // list appear with the two-pane layout.
-    val showTools = wide
-    // Same color as the page, and it owns the status-bar inset so the cream
-    // runs under the system bar instead of a black strip.
+    /*
+     * Claude's narrow header is deliberately bare: a back arrow, no title, and
+     * the ghost on the right. Sampled off its own portrait screenshot - the
+     * phone layout carried a hamburger, the session name and a crossed-out eye,
+     * none of which Claude shows at this width.
+     */
     Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
         Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Row(Modifier.weight(0.42f), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onDrawer) {
-                    Icon(Icons.Outlined.Menu, contentDescription = "菜单", tint = LocalText.current)
-                }
-                Spacer(Modifier.weight(1f))
-                Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
-                if (showTools) {
-                    IconButton(onFilter) {
-                        Icon(Icons.Outlined.Tune, contentDescription = "只看运行中", tint = if (filterActive) Ember else LocalText.current)
-                    }
-                    IconButton(onTasks) {
-                        Icon(Icons.Outlined.Checklist, contentDescription = "进行中的任务", tint = LocalText.current)
-                    }
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onDrawer) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = LocalText.current)
+            }
+            Spacer(Modifier.weight(1f))
+            if (filterActive) {
+                IconButton(onFilter) {
+                    Icon(Icons.Outlined.Tune, contentDescription = "只看运行中", tint = Ember)
                 }
             }
-            Spacer(Modifier.weight(0.58f))
-            IconButton(onPrivacy) {
-                Icon(
-                    if (privacyActive) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
-                    contentDescription = "隐私模糊",
-                    tint = if (privacyActive) Ember else LocalMuted.current,
-                )
-            }
+            IconButton(onPrivacy) { GhostGlyph(active = privacyActive, size = 22.dp) }
         }
     }
 }
