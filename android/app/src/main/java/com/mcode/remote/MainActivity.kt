@@ -725,7 +725,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
             // column to the bottom, and the conversation (with its input when
             // there is one) lives in the right column.
             Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                AppTopBar(wide = true, title = "最近记录", filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onTasks = { showTasks = true }, onPrivacy = { privacy = !privacy })
+                AppTopBar(wide = true, title = currentSessionTitle(sessions, currentSession), filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onTasks = { showTasks = true }, onPrivacy = { privacy = !privacy })
                 Row(Modifier.weight(1f).fillMaxWidth()) {
                     Column(Modifier.weight(0.42f).fillMaxHeight()) {
                         OutlinedTextField(
@@ -739,6 +739,23 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         )
                         Spacer(Modifier.height(6.dp))
                         SessionList(visibleSessions, currentSession, search, onSelect = { select(it) }, compact = false, modifier = Modifier.weight(1f), onLongPress = { sheetTarget = it })
+                        // Claude parks a black "new chat" pill at the foot of
+                        // the list column in the wide layout.
+                        Spacer(Modifier.height(8.dp))
+                        Surface(
+                            shape = RoundedCornerShape(24.dp),
+                            color = LocalText.current,
+                            modifier = Modifier.align(Alignment.CenterHorizontally).clickable {
+                                request(JSONObject().put("type", "session.create").put("title", "来自手机"))
+                            },
+                        ) {
+                            Row(Modifier.padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("+", fontSize = 16.sp, color = LocalBg.current)
+                                Spacer(Modifier.width(6.dp))
+                                Text("新建会话", fontSize = 14.sp, color = LocalBg.current)
+                            }
+                        }
+                        Spacer(Modifier.height(10.dp))
                     }
                     Box(Modifier.width(1.dp).fillMaxHeight().background(LocalMuted.current.copy(alpha = 0.25f)))
                     Box(Modifier.weight(0.58f).fillMaxHeight()) {
@@ -1089,11 +1106,13 @@ fun Timeline(items: List<Item>, modifier: Modifier, onPerm: (String, String) -> 
                             Column(
                                 Modifier
                                     .then(if (isUser) Modifier.align(Alignment.CenterEnd).fillMaxWidth(0.85f) else Modifier.fillMaxWidth())
+                                    // Claude renders assistant turns straight on the
+                                    // page - only user turns get a bubble.
                                     .background(
-                                        if (isUser) LocalPill.current else MaterialTheme.colorScheme.surfaceVariant,
+                                        if (isUser) LocalPill.current else Color.Transparent,
                                         RoundedCornerShape(12.dp),
                                     )
-                                    .padding(10.dp),
+                                    .padding(horizontal = 10.dp, vertical = if (isUser) 10.dp else 2.dp),
                             ) {
                                 Text(item.text.ifEmpty { "…" }, fontSize = 14.sp, color = LocalText.current)
                             }
@@ -1441,11 +1460,12 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     var plusMenu by remember { mutableStateOf(false) }
+                    // Claude's + and mic are bare icons, no circle behind.
                     Box(
-                        Modifier.size(38.dp).background(LocalPill.current, CircleShape).clickable(enabled = enabled) { plusMenu = true },
+                        Modifier.clickable(enabled = enabled) { plusMenu = true },
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text("+", fontSize = 19.sp, color = LocalText.current)
+                        Text("+", fontSize = 24.sp, color = LocalMuted.current, modifier = Modifier.padding(horizontal = 6.dp))
                         DropdownMenu(expanded = plusMenu, onDismissRequest = { plusMenu = false }) {
                             DropdownMenuItem(text = { Text("新对话") }, onClick = { plusMenu = false; onNew() })
                             DropdownMenuItem(text = { Text("照片") }, onClick = { plusMenu = false; pickImages() })
@@ -1461,9 +1481,9 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
                     }
                     Spacer(Modifier.weight(1f))
                     Box(
-                        Modifier.size(38.dp).background(LocalPill.current, CircleShape).clickable { onMic() },
+                        Modifier.clickable { onMic() },
                         contentAlignment = Alignment.Center,
-                    ) { Icon(Icons.Outlined.Mic, contentDescription = "语音输入", tint = LocalText.current, modifier = Modifier.size(19.dp)) }
+                    ) { Icon(Icons.Outlined.Mic, contentDescription = "语音输入", tint = LocalMuted.current, modifier = Modifier.size(21.dp).padding(horizontal = 2.dp)) }
                     Spacer(Modifier.width(8.dp))
                     // Claude's composer button flips with the theme: white
                     // circle / dark arrow in the dark, washed ember / white
