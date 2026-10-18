@@ -1164,16 +1164,24 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
 /* The welcome pane: mark, greeting, and (for a fresh screen) the input. */
 @Composable
 fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBottom: Boolean = false) {
+    /*
+     * Claude's empty pane is quiet: a small mark (112 px across at 450 dpi,
+     * about 40 dp) with the greeting under it, parked above the middle rather
+     * than centred. Measured off its own screenshot.
+     */
     val mark = @Composable {
-        MCodeMark(Modifier.size(96.dp))
-        Spacer(Modifier.height(16.dp))
-        Text(greeting(), fontSize = 27.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+        MCodeMark(Modifier.size(40.dp))
+        Spacer(Modifier.height(14.dp))
+        Text(greeting(), fontSize = 24.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
     }
     if (inputAtBottom) {
-        // Claude's wide empty state: the greeting floats mid-pane while the
-        // input capsule sits on the bottom edge.
+        // Claude's wide empty state: the mark and greeting sit above the
+        // middle, the input capsule on the bottom edge.
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) { mark() }
+            Column(
+                Modifier.align(Alignment.TopCenter).padding(top = 96.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) { mark() }
             if (withInput) Box(Modifier.align(Alignment.BottomCenter)) { inputBar() }
         }
     } else {
