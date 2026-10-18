@@ -214,14 +214,24 @@ class MainActivity : ComponentActivity() {
         widthSize.value = computeWidthClass()
     }
 
-    /** Material 3's breakpoints, straight off the current window configuration. */
+    /**
+     * The width class off the display's real metrics. The activity's own
+     * configuration stays stale for a self-handled change, and the fold's two
+     * panels report different natural orientations - the window metrics are
+     * the only source that is right in both cases.
+     */
     private fun computeWidthClass(): WindowWidthSizeClass {
-        val w = resources.configuration.screenWidthDp
-        return when {
-            w >= 840 -> WindowWidthSizeClass.Expanded
-            w >= 600 -> WindowWidthSizeClass.Medium
-            else -> WindowWidthSizeClass.Compact
-        }
+        val metrics = androidx.window.layout.WindowMetricsCalculator.getOrCreate()
+            .computeMaximumWindowMetrics(this)
+        val widthDp = (metrics.bounds.width() / resources.displayMetrics.density).toInt()
+        return widthClassOf(widthDp)
+    }
+
+    /** Material 3's breakpoints, straight off a window width in dp. */
+    private fun widthClassOf(widthDp: Int): WindowWidthSizeClass = when {
+        widthDp >= 840 -> WindowWidthSizeClass.Expanded
+        widthDp >= 600 -> WindowWidthSizeClass.Medium
+        else -> WindowWidthSizeClass.Compact
     }
 }
 
@@ -480,7 +490,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
         return
     }
 
-    val wide = widthSize >= WindowWidthSizeClass.Medium
+    // Claude keeps the single-pane layout in portrait even on the big inner
+    // screen; only the expanded width class (the fold in landscape) goes two-pane.
+    val wide = widthSize >= WindowWidthSizeClass.Expanded
     val empty = items.isEmpty()
 
     // 项目/运行中过滤后的列表；模型 pill 显示当前会话的真实模型。
@@ -520,6 +532,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                     onReconnect = { showConnect = true; closeDrawer() },
                     onProjects = { showProjects = true; closeDrawer() },
                     onScheduled = { showScheduled = true; closeDrawer() },
+                    onTasks = { showTasks = true; closeDrawer() },
                     onCode = { closeDrawer() },
                     onLongPress = { sheetTarget = it },
                 )
@@ -562,7 +575,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
         } else {
             if (empty) {
                 Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                    AppTopBar(wide = false, title = "MCode", filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onTasks = { showTasks = true }, onPrivacy = { privacy = !privacy })
+                    AppTopBar(wide = false, title = "", filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onTasks = { showTasks = true }, onPrivacy = { privacy = !privacy })
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         WelcomePane(withInput = true, inputBar = inputBar)
                     }
@@ -682,39 +695,58 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
 
 /* The welcome pane: mark, greeting, and (for a fresh screen) the input. */
 @Composable
-fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit) {
-    Column(
-        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 20.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
+fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBottom: Boolean = false) {
+    val mark = @Composable {
         MCodeMark(Modifier.size(96.dp))
         Spacer(Modifier.height(16.dp))
-        Text("欢迎，${MainActivity.OPERATOR}", fontFamily = FontFamily.Serif, fontSize = 27.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
-        Spacer(Modifier.height(22.dp))
-        if (withInput) inputBar()
+        Text(greeting(), fontFamily = FontFamily.Serif, fontSize = 27.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+    }
+    if (inputAtBottom) {
+        // Claude's wide empty state: the greeting floats mid-pane while the
+        // input capsule sits on the bottom edge.
+        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) { mark() }
+            if (withInput) Box(Modifier.align(Alignment.BottomCenter)) { inputBar() }
+        }
+    } else {
+        Column(
+            Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 20.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            mark()
+            Spacer(Modifier.height(22.dp))
+            if (withInput) inputBar()
+        }
     }
 }
 
 @Composable
 fun AppTopBar(wide: Boolean, title: String, filterActive: Boolean, privacyActive: Boolean, onDrawer: () -> Unit, onFilter: () -> Unit, onTasks: () -> Unit, onPrivacy: () -> Unit) {
+    // Claude's portrait header carries only the ghost; tune and the task
+    // list appear with the two-pane layout.
+    val showTools = wide
     // Same color as the page, and it owns the status-bar inset so the cream
     // runs under the system bar instead of a black strip.
     Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
         Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onDrawer) {
-                Icon(Icons.Outlined.Menu, contentDescription = "菜单", tint = LocalText.current)
+            Row(Modifier.weight(0.42f), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onDrawer) {
+                    Icon(Icons.Outlined.Menu, contentDescription = "菜单", tint = LocalText.current)
+                }
+                Spacer(Modifier.weight(1f))
+                Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+                if (showTools) {
+                    IconButton(onFilter) {
+                        Icon(Icons.Outlined.Tune, contentDescription = "只看运行中", tint = if (filterActive) Ember else LocalText.current)
+                    }
+                    IconButton(onTasks) {
+                        Icon(Icons.Outlined.Checklist, contentDescription = "进行中的任务", tint = LocalText.current)
+                    }
+                }
             }
-            Spacer(Modifier.weight(1f))
-            Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
-            Spacer(Modifier.weight(1f))
-            IconButton(onFilter) {
-                Icon(Icons.Outlined.Tune, contentDescription = "只看运行中", tint = if (filterActive) Ember else LocalText.current)
-            }
-            IconButton(onTasks) {
-                Icon(Icons.Outlined.Checklist, contentDescription = "进行中的任务", tint = LocalText.current)
-            }
+            Spacer(Modifier.weight(0.58f))
             IconButton(onPrivacy) {
                 Icon(
                     if (privacyActive) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
@@ -724,6 +756,17 @@ fun AppTopBar(wide: Boolean, title: String, filterActive: Boolean, privacyActive
             }
         }
     }
+}
+
+/* Claude greets by the time of day: 早上好/下午好/晚上好, Wyatt. */
+fun greeting(): String {
+    val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+    val word = when (hour) {
+        in 5..11 -> "早上好"
+        in 12..17 -> "下午好"
+        else -> "晚上好"
+    }
+    return "$word，${MainActivity.OPERATOR}"
 }
 
 fun currentSessionTitle(sessions: List<SessionRow>, current: String?): String =
@@ -831,6 +874,7 @@ fun DrawerContent(
     onReconnect: () -> Unit,
     onProjects: () -> Unit,
     onScheduled: () -> Unit,
+    onTasks: () -> Unit,
     onCode: () -> Unit,
     onLongPress: ((SessionRow) -> Unit)? = null,
 ) {
@@ -844,6 +888,8 @@ fun DrawerContent(
             DrawerItem(Icons.Outlined.Code, "Code") { onCode() }
             Spacer(Modifier.height(18.dp))
             DrawerItem(Icons.Outlined.Schedule, "定时任务") { onScheduled() }
+            Spacer(Modifier.height(18.dp))
+            DrawerItem(Icons.Outlined.Checklist, "进行中的任务") { onTasks() }
             Spacer(Modifier.height(18.dp))
             DrawerItem(Icons.Outlined.Settings, "连接设置") { onReconnect() }
             Spacer(Modifier.height(20.dp))
