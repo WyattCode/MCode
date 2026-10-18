@@ -1796,6 +1796,27 @@ onBeforeUnmount(() => {
                 <span class="knob" />
               </button>
             </div>
+
+            <!-- MCode Remote: the gateway switch lives in the config's remote
+                 field; the desktop main process starts and stops the gateway
+                 as it flips. -->
+            <div class="line" data-remote-row>
+              <div class="line-text">
+                <div class="line-title">{{ t("set.remote") }}</div>
+                <div class="line-sub">{{ t("set.remoteSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.remote?.enabled ?? false }"
+                role="switch"
+                :aria-checked="app.config?.remote?.enabled ?? false"
+                :aria-label="t('set.remote')"
+                data-remote-toggle
+                @click="app.patchConfig({ remote: { ...(app.config?.remote ?? {}), enabled: !(app.config?.remote?.enabled ?? false) } })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
           </div>
 
           <!-- MiMo's 权限 section: its full access gate alone. -->
