@@ -47,7 +47,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -71,10 +70,10 @@ private val InkMuted = Color(0xFF6B6862)
 private val Ember = Color(0xFFD97757)
 private val DotBlue = Color(0xFF3B82F6)
 
-private val DarkBg = Color(0xFF26251F)
-private val DarkSurface = Color(0xFF33322B)
-private val DarkPill = Color(0xFF3B3A33)
-private val DarkLine = Color(0xFF45443C)
+private val DarkBg = Color(0xFF131211)
+private val DarkSurface = Color(0xFF1E1D1B)
+private val DarkPill = Color(0xFF2A2927)
+private val DarkLine = Color(0xFF35342F)
 private val DarkText = Color(0xFFF5F4EF)
 private val DarkMuted = Color(0xFFA8A49B)
 
@@ -367,8 +366,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
             val existing = items[known]
             if (existing is Item.Msg) items[known] = existing.copy(text = text.toString().trim())
         } else {
-            items.add(Item.Msg(id, role, text.toString().trim().ifEmpty { "…" }))
-            messageIndex[id] = items.size - 1
+            val body = text.toString().trim()
+            if (body.isNotEmpty() || role == "user") {
+                items.add(Item.Msg(id, role, body.ifEmpty { "…" }))
+                messageIndex[id] = items.size - 1
+            }
         }
         if (parts != null) {
             for (i in 0 until parts.length()) {
@@ -701,7 +703,7 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
     val mark = @Composable {
         MCodeMark(Modifier.size(96.dp))
         Spacer(Modifier.height(16.dp))
-        Text(greeting(), fontFamily = FontFamily.Serif, fontSize = 27.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+        Text(greeting(), fontSize = 27.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
     }
     if (inputAtBottom) {
         // Claude's wide empty state: the greeting floats mid-pane while the
@@ -760,16 +762,8 @@ fun AppTopBar(wide: Boolean, title: String, filterActive: Boolean, privacyActive
     }
 }
 
-/* Claude greets by the time of day: 早上好/下午好/晚上好, Wyatt. */
-fun greeting(): String {
-    val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-    val word = when (hour) {
-        in 5..11 -> "早上好"
-        in 12..17 -> "下午好"
-        else -> "晚上好"
-    }
-    return "$word，${MainActivity.OPERATOR}"
-}
+/* Claude's empty state greets the operator by name: Wyatt 回来了！ */
+fun greeting(): String = "${MainActivity.OPERATOR} 回来了！"
 
 fun currentSessionTitle(sessions: List<SessionRow>, current: String?): String =
     current?.let { id -> sessions.find { it.id == id }?.title } ?: "MCode"
@@ -796,7 +790,6 @@ fun Timeline(items: List<Item>, modifier: Modifier) {
                                     )
                                     .padding(10.dp),
                             ) {
-                                Text(if (isUser) "你" else "MCode", fontSize = 11.sp, color = LocalMuted.current)
                                 Text(item.text.ifEmpty { "…" }, fontSize = 14.sp, color = LocalText.current)
                             }
                         }
@@ -887,7 +880,7 @@ fun DrawerContent(
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(Modifier.padding(horizontal = 18.dp)) {
             Spacer(Modifier.height(28.dp))
-            Text("MCode", fontFamily = FontFamily.Serif, fontSize = 27.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+            Text("MCode", fontSize = 27.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
             Spacer(Modifier.height(26.dp))
             DrawerItem(Icons.Outlined.Folder, "项目") { onProjects() }
             Spacer(Modifier.height(18.dp))
