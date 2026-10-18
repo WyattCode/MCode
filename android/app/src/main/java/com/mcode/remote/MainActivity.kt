@@ -314,6 +314,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
     var showScheduled by remember { mutableStateOf(false) }
     var sheetTarget by remember { mutableStateOf<SessionRow?>(null) }
     var renameTarget by remember { mutableStateOf<SessionRow?>(null) }
+    var deleteTarget by remember { mutableStateOf<SessionRow?>(null) }
     var voiceText by remember { mutableStateOf<String?>(null) }
     val context = androidx.compose.ui.platform.LocalContext.current
 
@@ -464,8 +465,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                     "permission.requested" -> {
                         val r = event.optJSONObject("request") ?: return
                         items.add(Item.Perm(r.optString("id"), r.optString("kind", "tool"), r.optString("title", "") + " " + r.optJSONObject("meta")?.optString("path", "")))
+                        // Surface the card on the lock screen too: the ongoing
+                        // notification flips to "MCode 请求批准" until answered.
+                        KeepAliveService.instance?.showPermission(r.optString("title", ""))
                     }
-                    "permission.resolved" -> items.removeAll { it is Item.Perm && it.requestId == event.optString("requestID") }
+                    "permission.resolved" -> {
+                        items.removeAll { it is Item.Perm && it.requestId == event.optString("requestID") }
+                        if (items.none { it is Item.Perm }) KeepAliveService.instance?.restoreKeepAlive()
+                    }
                     "session.error" -> items.add(Item.Err(event.optString("error")))
                 }
             }
@@ -672,13 +679,27 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                     Spacer(Modifier.width(14.dp))
                     Text("重命名", fontSize = 15.sp, color = LocalText.current)
                 }
-                Row(Modifier.fillMaxWidth().clickable { request(JSONObject().put("type", "session.delete").put("sessionID", row.id)); sheetTarget = null }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().clickable { deleteTarget = row; sheetTarget = null }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(14.dp))
-                    Text("删除", fontSize = 15.sp, color = MaterialTheme.colorScheme.error)
+                    Text("删除…", fontSize = 15.sp, color = MaterialTheme.colorScheme.error)
                 }
             }
         }
+    }
+    deleteTarget?.let { row ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("删除会话？") },
+            text = { Text("「${row.title}」及其对话记录将被永久移除。") },
+            confirmButton = {
+                TextButton({
+                    request(JSONObject().put("type", "session.delete").put("sessionID", row.id))
+                    deleteTarget = null
+                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton({ deleteTarget = null }) { Text("取消") } },
+        )
     }
     renameTarget?.let { row ->
         var newTitle by remember(row.id) { mutableStateOf(row.title) }
