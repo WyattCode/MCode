@@ -3705,6 +3705,23 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
     }
     val rows = remember(items.toList()) { stepsOf(rowsOf(items)) }
     /*
+     * The turn the two glyphs belong to.
+     *
+     * Claude puts copy and read-aloud under the last reply only, not under every
+     * one: the transcript is a history, and a pair of buttons repeating down it
+     * is noise. This is the id of the newest assistant message that has words -
+     * a step's body counts as one - and it moves as a turn streams.
+     */
+    val lastReplied = remember(rows) {
+        rows.asReversed().firstNotNullOfOrNull { row ->
+            when (row) {
+                is Step -> (row.body as? Item.Msg)?.takeIf { it.text.isNotBlank() }?.id
+                is Item.Msg -> row.takeIf { it.role != "user" && it.text.isNotBlank() }?.id
+                else -> null
+            }
+        }
+    }
+    /*
      * Whether the timeline should keep following new lines.
      *
      * Claude stops following the moment the reader scrolls up - it does not
@@ -3865,10 +3882,16 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                                 if (isUser) {
                                     if (item.text.isNotBlank()) Text(
                                         item.text.ifEmpty { "…" },
-                                        fontSize = 15.sp,
-                                        // Claude's prose is set with a little more
-                                        // air than the default leading gives.
-                                        lineHeight = 23.sp,
+                                        /*
+                                         * The same 17sp/26sp the reply uses, as
+                                         * Claude sets them: a bubble is the same
+                                         * body copy on a tinted plate, not a
+                                         * smaller aside. 15sp here read as a
+                                         * caption beside the 17sp it now shares
+                                         * a page with.
+                                         */
+                                        fontSize = 17.sp,
+                                        lineHeight = 26.sp,
                                         color = LocalBubbleText.current,
                                     )
                                     /*
@@ -3900,7 +3923,7 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                                      */
                                     val context = androidx.compose.ui.platform.LocalContext.current
                                     var copied by remember(item.id) { mutableStateOf(false) }
-                                    Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    if (item.id == lastReplied) Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                                         Box(
                                             Modifier.size(34.dp).clickable {
                                                 val board = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -3949,7 +3972,7 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                                  */
                                 Text(
                                     runSummary(item),
-                                    fontSize = 12.5.sp,
+                                    fontSize = 15.sp,
                                     color = LocalMuted.current,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
@@ -5464,7 +5487,7 @@ private fun RunRow(item: ToolRun) {
         ) {
             Text(
                 runSummary(item),
-                fontSize = 12.5.sp,
+                fontSize = 15.sp,
                 color = LocalMuted.current,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

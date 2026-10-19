@@ -291,7 +291,7 @@ fun MarkdownBody(source: String, modifier: Modifier = Modifier, dark: Boolean = 
             val last = index == blocks.lastIndex
             when (block) {
                 is MdBlock.Heading -> {
-                    val size = when (block.level) { 1, 2 -> 20.sp; 3, 4 -> 16.sp; else -> 14.sp }
+                    val size = when (block.level) { 1, 2 -> 24.sp; 3, 4 -> 19.sp; else -> 17.sp }
                     val top = when (block.level) { 1 -> 0.dp; 2 -> 18.dp; 3, 4 -> 16.dp; else -> 12.dp }
                     MdLine(
                         block.text, size = size, weight = FontWeight.SemiBold, color = textColor,
@@ -343,9 +343,9 @@ private fun MdLine(
     source: String,
     color: Color,
     modifier: Modifier = Modifier,
-    size: androidx.compose.ui.unit.TextUnit = 15.sp,
+    size: androidx.compose.ui.unit.TextUnit = 17.sp,
     weight: FontWeight? = null,
-    lineHeight: androidx.compose.ui.unit.TextUnit = 23.sp,
+    lineHeight: androidx.compose.ui.unit.TextUnit = 26.sp,
 ) {
     val context = LocalContext.current
     val inline = remember(source, color) { MdText.inline(source, LinkBlue) }
@@ -433,8 +433,8 @@ private fun CodeBox(lang: String, code: String, dark: Boolean, modifier: Modifie
         Text(
             code,
             fontFamily = FontFamily.Monospace,
-            fontSize = 12.5.sp,
-            lineHeight = 20.sp,
+            fontSize = 14.sp,
+            lineHeight = 22.sp,
             color = LocalText.current,
             softWrap = true,
             modifier = Modifier
@@ -457,12 +457,15 @@ private fun ListBox(block: MdBlock.ListBlock, color: Color, modifier: Modifier =
             Row(Modifier.fillMaxWidth().padding(start = (item.depth * 16).dp, bottom = 6.dp)) {
                 Text(
                     marker,
-                    fontSize = 15.sp,
-                    // 19sp, not 23: Claude's prose measures 53px per line on
-                    // the pad (19sp at 400dpi), and the extra leading here made
-                    // the same paragraph a third taller and the thread longer
-                    // to read than the original.
-                    lineHeight = 19.sp,
+                    /*
+                     * 18sp/27sp, measured off Claude's own reply on this pad:
+                     * one CJK glyph's ink is 36px and its line pitch is 107px,
+                     * which is 18sp at 400dpi with 1.5 leading. The 15sp/19sp
+                     * this used to be made a glyph 29px and set the paragraph a
+                     * fifth shorter and far tighter than the original.
+                     */
+                    fontSize = 17.sp,
+                    lineHeight = 26.sp,
                     color = if (item.task && !item.checked) LocalMuted.current else color,
                     modifier = Modifier.width(if (block.ordered) 24.dp else 16.dp),
                 )
@@ -514,8 +517,8 @@ private fun TableBox(block: MdBlock.Table, color: Color, muted: Color, modifier:
                 for (index in 0 until columns) {
                     Text(
                         row.getOrNull(index) ?: "",
-                        fontSize = 13.5.sp,
-                        lineHeight = 20.sp,
+                        fontSize = 15.sp,
+                        lineHeight = 22.sp,
                         color = color,
                         modifier = Modifier.width(widths[index]).padding(horizontal = 10.dp, vertical = 8.dp),
                     )
