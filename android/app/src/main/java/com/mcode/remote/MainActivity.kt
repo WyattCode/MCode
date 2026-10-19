@@ -1321,24 +1321,49 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             // conversation pane, and having it shrink the list too was pulling
             // the new-chat pill up into the middle of the column.
             Row(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom))) {
-                Column(Modifier.weight(0.42f).fillMaxHeight()) {
+                /*
+                 * Claude's split is 900 of 3408 px on the pad - 26.4% - not the
+                 * 42% this used to take. Both panes share the page's own colour
+                 * and no rule runs between them; only the composer's white card
+                 * marks where the conversation begins.
+                 */
+                Column(Modifier.weight(0.2641f).fillMaxHeight().fillMaxWidth()) {
                     Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        IconButton({ openDrawer() }) { Icon(Icons.Outlined.Menu, contentDescription = "菜单", tint = LocalText.current) }
-                        // Claude centres the title in the column and keeps the
-                        // two glyphs (tune, list) at its right.
-                        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                            Text("最近记录", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        /*
+                         * Claude's list header: menu at the far left, the title
+                         * centred, the two glyphs at the right. They are plain
+                         * 36dp targets rather than IconButtons, whose 48dp
+                         * minimum width ate the column and left the title one
+                         * character wide.
+                         */
+                        Box(Modifier.size(44.dp).clickable { openDrawer() }, contentAlignment = Alignment.Center) {
+                            Icon(Icons.Outlined.Menu, contentDescription = "菜单", tint = LocalText.current, modifier = Modifier.size(20.dp))
                         }
-                        IconButton({ runningOnly = !runningOnly }) { Icon(Icons.Outlined.Tune, contentDescription = "筛选", tint = LocalText.current) }
-                        IconButton({ showTasks = true }) { Icon(Icons.Outlined.Checklist, contentDescription = "任务", tint = LocalText.current) }
+                        Text(
+                            "最近记录",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = LocalText.current,
+                            maxLines = 1,
+                            softWrap = false,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Box(Modifier.size(38.dp).clickable { runningOnly = !runningOnly }, contentAlignment = Alignment.Center) {
+                            Icon(Icons.Outlined.Tune, contentDescription = "筛选", tint = LocalText.current, modifier = Modifier.size(18.dp))
+                        }
+                        Box(Modifier.size(38.dp).clickable { showTasks = true }, contentAlignment = Alignment.Center) {
+                            Icon(Icons.Outlined.Checklist, contentDescription = "任务", tint = LocalText.current, modifier = Modifier.size(18.dp))
+                        }
                     }
                     OutlinedTextField(
                         search, { search = it },
-                        Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                        placeholder = { Text("搜索", color = LocalMuted.current) },
-                        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current) },
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp).height(45.dp),
+                        placeholder = { Text("搜索", color = LocalMuted.current, fontSize = 14.sp) },
+                        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(17.dp)) },
                         shape = RoundedCornerShape(14.dp),
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
                         // Claude's search sits on white with a hairline pill
                         // outline, not on the page's own colour with none.
                         colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = LocalField.current, focusedContainerColor = LocalField.current, unfocusedBorderColor = LocalFieldLine.current, focusedBorderColor = LocalFieldLine.current),
@@ -1364,12 +1389,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             }
                         }
                     }
-                    Box(Modifier.width(1.dp).fillMaxHeight().background(LocalMuted.current.copy(alpha = 0.25f)))
-                    Column(Modifier.weight(0.58f).fillMaxHeight()) {
+                    Column(Modifier.weight(0.7359f).fillMaxHeight().fillMaxWidth()) {
                         Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(currentSessionTitle(sessions, currentSession), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                            IconButton({ privacy = !privacy }) { GhostGlyph(active = privacy, size = 22.dp) }
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            // The conversation's own title sits at the start of
+                            // its pane, as Claude's does; only the list column
+                            // centres its heading.
+                            Text(currentSessionTitle(sessions, currentSession), fontSize = 15.sp, fontWeight = FontWeight.Medium, color = LocalText.current, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 8.dp))
+                            IconButton({ privacy = !privacy }, Modifier.size(38.dp)) { GhostGlyph(active = privacy, size = 21.dp) }
                         }
                         // The conversation pane, and only it, rides above the IME.
                         Column(Modifier.weight(1f).fillMaxWidth().windowInsetsPadding(WindowInsets.ime.only(WindowInsetsSides.Bottom))) {
@@ -1716,21 +1743,30 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
         // Claude's phone empty pane is its asterisk over 月光下的对话?; the
         // two-pane pane greets by name. Both are sampled from its own screens.
         if (inputAtBottom) {
-            MCodeMark(Modifier.size(40.dp))
+            // Claude's pad empty pane carries the same asterisk its phone pane
+            // does, drawn rather than a bitmap: the packaged mark is a raster
+            // and read as two grey triangles at this size.
+            SparkMark(Modifier.size(44.dp))
             Spacer(Modifier.height(14.dp))
-            Text(greeting(), fontSize = 24.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
+            Text(greeting(), fontSize = 44.sp, fontWeight = FontWeight.Normal, color = LocalText.current)
         } else {
             SparkMark(Modifier.size(46.dp))
             Spacer(Modifier.height(16.dp))
-            Text("月光下的对话?", fontSize = 24.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
+            // Claude sets its empty-state phrase large - 144px tall on the pad,
+            // about 44sp - with nothing else around it.
+            Text(greeting(), fontSize = 44.sp, fontWeight = FontWeight.Normal, color = LocalText.current)
         }
     }
     if (inputAtBottom) {
-        // Claude's wide empty state: the mark and greeting sit above the
-        // middle, the input capsule on the bottom edge.
+        /*
+         * Claude's wide empty state sits in the middle of the pane, not near its
+         * top: on the pad its asterisk centre is at 41% of the height and the
+         * phrase at 50%, so the block reads as centred. A fixed 96dp from the
+         * top put it a third of a screen too high.
+         */
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             Column(
-                Modifier.align(Alignment.TopCenter).padding(top = 96.dp),
+                Modifier.align(Alignment.Center).padding(bottom = 24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) { mark() }
             if (withInput) Box(Modifier.align(Alignment.BottomCenter)) { inputBar() }
@@ -1818,7 +1854,21 @@ fun GhostGlyph(active: Boolean, size: androidx.compose.ui.unit.Dp) {
     }
 }
 
-fun greeting(): String = "${MainActivity.OPERATOR} 回来了！"
+/**
+ * Claude's empty pane greets by the hour, not by name.
+ *
+ * Measured off its own pad screen at 21:03: 「晚间随想」, set at roughly 48sp
+ * with nothing around it. The list is the same four-character phrase per part
+ * of the day that the desktop's empty pane uses.
+ */
+fun greeting(): String = when (java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)) {
+    in 5..8 -> "清晨随笔"
+    in 9..11 -> "上午闲话"
+    in 12..13 -> "午后漫谈"
+    in 14..17 -> "下午絮语"
+    in 18..22 -> "晚间随想"
+    else -> "深夜独白"
+}
 
 fun currentSessionTitle(sessions: List<SessionRow>, current: String?): String =
     current?.let { id -> sessions.find { it.id == id }?.title } ?: "MCode"
@@ -2486,7 +2536,7 @@ fun SessionList(sessions: List<SessionRow>, current: String?, query: String, onS
                                 Modifier
                             },
                         )
-                        .padding(horizontal = 14.dp, vertical = if (compact) 6.dp else 8.dp),
+                        .padding(horizontal = 14.dp, vertical = if (compact) 8.dp else 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (s.running || s.directory.isNotBlank()) {
