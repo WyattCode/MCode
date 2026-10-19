@@ -1773,6 +1773,20 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) { mark() }
             if (withInput) Box(Modifier.align(Alignment.BottomCenter)) { inputBar() }
+            // Claude floats a small language pill at the composer's right, level
+            // with its lower half: 40dp by 33dp, #E8EAEE, the keyboard's own
+            // language in it. It sits outside the card, not in it.
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 6.dp, bottom = 34.dp)
+                    .size(width = 72.dp, height = 58.dp)
+                    .background(if (LocalBg.current == DarkBg) Color(0xFF2E2E2E) else Color(0xFFE8EAEE), RoundedCornerShape(18.dp))
+                    .clickable { },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("En", fontSize = 17.sp, color = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF61646A))
+            }
         }
     } else {
         /*
