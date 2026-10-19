@@ -2706,6 +2706,10 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
         Surface(
             shape = RoundedCornerShape(20.dp),
             color = MaterialTheme.colorScheme.surface,
+            // Claude's card carries a hairline: 220,220,220 on the pad, two
+            // pixels wide at 400dpi, which is what separates a white plate from
+            // a page that is almost as white.
+            border = androidx.compose.foundation.BorderStroke(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFDCDCDC)),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
