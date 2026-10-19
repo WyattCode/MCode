@@ -1307,6 +1307,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     onScheduled = { showScheduled = true; closeDrawer() },
                     onTasks = { showTasks = true; closeDrawer() },
                     onUsage = { loadUsage(); showUsage = true; closeDrawer() },
+                    // The drawer's search closes the drawer and focuses the
+                    // list's field; on a phone the list is the page behind it.
+                    onSearch = { closeDrawer() },
                     onCode = { closeDrawer() },
                     onLongPress = { sheetTarget = it },
                 )
@@ -2603,12 +2606,20 @@ fun DrawerContent(
     onTasks: () -> Unit,
     onCode: () -> Unit,
     onUsage: () -> Unit = {},
+    onSearch: () -> Unit = {},
     onLongPress: ((SessionRow) -> Unit)? = null,
 ) {
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(Modifier.padding(horizontal = 18.dp)) {
             Spacer(Modifier.height(28.dp))
-            Text("MCode", fontSize = 27.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+            // Claude's drawer opens with its name at 32sp and a search glyph at
+            // the far right of the same line, which opens the list's search.
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("MCode", fontSize = 32.sp, fontWeight = FontWeight.Normal, color = LocalText.current, modifier = Modifier.weight(1f))
+                Box(Modifier.size(36.dp).clickable { onSearch() }, contentAlignment = Alignment.Center) {
+                    Icon(Icons.Outlined.Search, contentDescription = "搜索", tint = LocalText.current, modifier = Modifier.size(22.dp))
+                }
+            }
             Spacer(Modifier.height(26.dp))
             DrawerItem(Icons.Outlined.Folder, "项目") { onProjects() }
             Spacer(Modifier.height(18.dp))
