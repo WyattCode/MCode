@@ -46,6 +46,7 @@ import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.automirrored.outlined.Article
@@ -882,6 +883,20 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 if (at >= 0) items[at] = row else items.add(row)
             }
         }
+        /*
+         * A turn that broke has no text at all, so it used to arrive as an
+         * empty message and be dropped: the question stayed on screen with
+         * nothing after it and no sign that anything had gone wrong. The
+         * desktop draws an error card for exactly this.
+         */
+        val failure = message.optString("error").ifEmpty {
+            if (message.optString("finish") == "error" || message.optString("finish") == "max_tokens") "这次回复没有完成" else ""
+        }
+        if (failure.isNotBlank()) {
+            val key = "err.$id"
+            val place = items.indexOfFirst { it.key == key }
+            if (place >= 0) items[place] = Item.Err(failure) else items.add(Item.Err(failure))
+        }
     }
 
     fun upsertPart(sessionID: String, messageID: String, part: JSONObject) {
@@ -1112,6 +1127,27 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     val currentRow = sessions.find { it.id == currentSession }
     val currentModel = currentRow?.model?.takeIf { it.isNotBlank() } ?: "本地模型"
     /*
+     * A session stores the model's id (`qwen3.8-flash-next-iq3_s`); the name
+     * the provider gives it (`Qwen3.8-Flash-Next`) is what the model picker
+     * shows and what the desktop puts in its pill. Look the name up in what the
+     * picker already loaded, so both places agree.
+     */
+    val displayModel = remember(currentModel, providers) {
+        var found = currentModel
+        for (provider in providers) {
+            val models = provider.optJSONArray("models") ?: continue
+            for (index in 0 until models.length()) {
+                val model = models.optJSONObject(index) ?: continue
+                if (model.optString("id") == currentModel) {
+                    found = model.optString("name").ifBlank { currentModel }
+                    break
+                }
+            }
+            if (found != currentModel) break
+        }
+        found
+    }
+    /*
      * Claude's pill carries the model and what it is thinking with ("Sonnet 5.5
      * 中等"), so the same two facts belong in ours. Effort is only named when
      * the session has one picked - "none" reads as absent, not as a level.
@@ -1125,7 +1161,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         "max" -> "最高"
         else -> ""
     }
-    val currentModelLabel = if (effortLabel.isNotEmpty()) "$currentModel $effortLabel" else currentModel
+    val currentModelLabel = if (effortLabel.isNotEmpty()) "$displayModel $effortLabel" else displayModel
 
     val inputBar: @Composable () -> Unit = {
         InputCapsule(
@@ -1550,6 +1586,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     scope.launch {
                                         try {
                                             rpc(JSONObject().put("type", "session.model").put("sessionID", sid).put("model", JSONObject().put("provider", providerId).put("model", modelId)))
+                                            // The picker closes on the press, so without this the
+                                            // pill keeps the old name until some other event
+                                            // happens to refresh the row.
+                                            val at = sessions.indexOfFirst { it.id == sid }
+                                            if (at >= 0) sessions[at] = sessions[at].copy(model = modelId)
                                         } catch (e: Exception) {
                                             println("[remote] session.model failed: $e")
                                         }
@@ -1559,7 +1600,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             }.padding(vertical = 11.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(label, fontSize = 15.sp, color = if (label == currentModel) MaterialTheme.colorScheme.primary else LocalText.current)
+                            Text(label, fontSize = 15.sp, color = if (modelId == currentModel) MaterialTheme.colorScheme.primary else LocalText.current)
                         }
                     }
                 }
@@ -1906,7 +1947,28 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                     }
                     is Item.Perm -> PermCard(item, onPerm = onPerm)
                     is Item.Quest -> QuestCard(item, onAnswer = onAnswer)
-                    is Item.Err -> Text(item.text, fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(start = 10.dp))
+                    is Item.Err -> {
+                        // A broken turn is a card, not a red line lost in the
+                        // prose: the desktop gives it its own surface and its
+                        // own weight, so a failure is as visible as a reply.
+                        Row(
+                            Modifier
+                                .padding(start = 2.dp, top = 4.dp)
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Outlined.ErrorOutline,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(15.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(item.text, fontSize = 13.sp, lineHeight = 19.sp, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
                 }
                 }
             }
