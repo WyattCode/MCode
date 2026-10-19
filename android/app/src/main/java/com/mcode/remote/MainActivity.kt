@@ -395,12 +395,15 @@ class MainActivity : ComponentActivity() {
         val savedToken = prefs.getString("token", DEFAULT_TOKEN) ?: DEFAULT_TOKEN
         val autoUrl = intent.getStringExtra("connectUrl") ?: savedUrl
         val autoToken = intent.getStringExtra("connectToken") ?: savedToken
+        val lastSession = prefs.getString("session", null)
         // Recomputed on fold/unfold instead of recreating the activity, so the
         // WebSocket and the open conversation survive the transition.
         widthSize.value = computeWidthClass()
         setContent {
             MCodeTheme {
-                App(widthSize.value, autoUrl, autoToken) { u, t ->
+                App(widthSize.value, autoUrl, autoToken, lastSession, onRemember = { id ->
+                    prefs.edit().putString("session", id).apply()
+                }) { u, t ->
                     prefs.edit().putString("url", u).putString("token", t).apply()
                 }
             }
@@ -548,7 +551,7 @@ fun relTime(updated: Long): String {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onSave: (String, String) -> Unit) {
+fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, lastSession: String? = null, onRemember: (String?) -> Unit = {}, onSave: (String, String) -> Unit) {
     val scope = rememberCoroutineScope()
     val client = remember { RemoteClient() }
 
@@ -904,6 +907,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
 
     fun select(id: String?) {
         currentSession = id
+        // What the reader was last in stays open across restarts: Claude
+        // reopens the conversation you left, not whichever conversation
+        // happened to move most recently.
+        onRemember(id)
         // Bumped before the request goes out: a history that comes back after
         // the reader has moved on belongs to a conversation that is no longer
         // on screen, and writing it in would put one thread's turns under
@@ -988,8 +995,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         }
                         replayTick++
                     }
-                    if (currentSession == null && sessions.isNotEmpty()) select(sessions.first().id)
-                    else currentSession?.let { sid ->
+                    if (currentSession == null && sessions.isNotEmpty()) {
+                        // The conversation the reader left, if it is still
+                        // there; otherwise the most recent one.
+                        val remembered = lastSession?.takeIf { wanted -> sessions.any { it.id == wanted } }
+                        select(remembered ?: sessions.first().id)
+                    } else currentSession?.let { sid ->
                         val known = items.map { it.key }.toSet()
                         for (p in pendingPerms[sid].orEmpty()) {
                             val card = Item.Perm(p.optString("id"), p.optString("kind", "tool"), p.optString("title", "") + " " + p.optString("subject", ""))
