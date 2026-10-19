@@ -667,6 +667,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var fileStack by remember { mutableStateOf(listOf("")) }
     val fileEntries = remember { mutableStateListOf<Pair<String, Boolean>>() }
     var filePreview by remember { mutableStateOf<Pair<String, String>?>(null) }
+    /**
+     * The changes rail: which files a turn touched, and the patch for the one
+     * being read. The desktop keeps this beside the conversation all the time;
+     * on a phone it belongs in a sheet reached from the header.
+     */
+    var showChanges by remember { mutableStateOf(false) }
+    val changedFiles = remember { mutableStateListOf<String>() }
+    var changePatch by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var changeBranch by remember { mutableStateOf("") }
     var usageSummary by remember { mutableStateOf<JSONObject?>(null) }
     /** Parked permission requests per session, replayed from session.list. */
     val pendingPerms = remember { java.util.concurrent.ConcurrentHashMap<String, MutableList<JSONObject>>() }
@@ -1624,6 +1633,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                         text = { Text("项目文件") },
                                         onClick = { headerMenu = false; showFiles = true; fileStack = listOf("") },
                                     )
+                                    DropdownMenuItem(
+                                        text = { Text("本次改动") },
+                                        onClick = { headerMenu = false; showChanges = true },
+                                    )
                                 }
                             }
                         }
@@ -1744,6 +1757,110 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             Spacer(Modifier.width(10.dp))
                             Text(name, fontSize = 14.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    /*
+     * The changes rail. A turn that edited files is the thing most worth
+     * checking from a phone, and until now the only way was to ask the model
+     * what it had done.
+     */
+    if (showChanges) {
+        val root = sessions.find { it.id == currentSession }?.directory.orEmpty()
+        LaunchedEffect(root) {
+            changedFiles.clear()
+            val r = runCatching { rpc(JSONObject().put("type", "git.status").put("directory", root)) }.getOrNull()
+            val data = r?.optJSONObject("data") ?: return@LaunchedEffect
+            changeBranch = data.optString("branch")
+            data.optJSONArray("changed")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val f = arr.optString(i)
+                    if (f.isNotBlank()) changedFiles.add(f)
+                }
+            }
+        }
+        ModalBottomSheet(onDismissRequest = { showChanges = false }, containerColor = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("本次改动", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+                    Spacer(Modifier.width(8.dp))
+                    if (changeBranch.isNotBlank()) {
+                        Text(changeBranch, fontSize = 12.sp, color = LocalMuted.current)
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                if (changedFiles.isEmpty()) {
+                    Text("没有未提交的改动", fontSize = 13.sp, color = LocalMuted.current)
+                } else {
+                    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 460.dp)) {
+                        items(changedFiles.size) { i ->
+                            val file = changedFiles[i]
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        scope.launch {
+                                            val r = runCatching {
+                                                rpc(JSONObject().put("type", "git.diff").put("directory", root).put("file", file))
+                                            }.getOrNull() ?: return@launch
+                                            changePatch = file to (r.optJSONObject("data")?.optString("patch").orEmpty())
+                                        }
+                                    }
+                                    .padding(vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    file,
+                                    fontSize = 13.sp,
+                                    color = LocalText.current,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(14.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /*
+     * The patch itself, in its own sheet for the same reason the file preview
+     * is: a bottom sheet measures once, and content added later is clipped.
+     * Added lines are green and removed red, as the desktop colours them.
+     */
+    changePatch?.let { (file, patch) ->
+        ModalBottomSheet(onDismissRequest = { changePatch = null }, containerColor = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 25.dp)) {
+                Text(file, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = LocalText.current, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(10.dp))
+                LazyColumn(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 520.dp)
+                        .background(LocalPill.current, RoundedCornerShape(10.dp))
+                        .padding(10.dp),
+                ) {
+                    val lines = patch.lineSequence().take(400).toList()
+                    items(lines.size) { i ->
+                        val line = lines[i]
+                        val tint = when {
+                            line.startsWith("+") && !line.startsWith("+++") -> Color(0xFF2E7D32)
+                            line.startsWith("-") && !line.startsWith("---") -> Color(0xFFC62828)
+                            else -> LocalText.current
+                        }
+                        Text(
+                            line.ifEmpty { " " },
+                            fontSize = 10.5.sp,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            color = tint,
+                            softWrap = true,
+                        )
                     }
                 }
             }
