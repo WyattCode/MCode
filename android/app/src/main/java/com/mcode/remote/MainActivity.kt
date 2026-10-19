@@ -131,6 +131,8 @@ val LocalMuted = staticCompositionLocalOf { InkMuted }
 val LocalPill = staticCompositionLocalOf { CreamPill }
 /** The user's own turn: a shade under the page in dark (13,13,13 on the pad), not above it. */
 val LocalBubble = staticCompositionLocalOf { CreamPill }
+/** Type on the reader's own turn: ink on paper, because the bubble is paper in both themes. */
+val LocalBubbleText = staticCompositionLocalOf { Ink }
 val LocalLine = staticCompositionLocalOf { CreamLine }
 /** The search field's fill and hairline: white on cream, #1A1A19 on #151515. */
 val LocalField = staticCompositionLocalOf { CreamSurface }
@@ -503,7 +505,11 @@ fun MCodeTheme(content: @Composable () -> Unit) {
         LocalText provides text,
         LocalMuted provides muted,
         LocalPill provides pill,
+        // In dark the reader's turn sits *under* the page (13,13,13 against
+        // 21,21,21), not on paper: a white patch measured earlier turned out to
+        // be the text-selection highlight from a long press.
         LocalBubble provides (if (dark) Color(0xFF0D0D0D) else CreamPill),
+        LocalBubbleText provides (if (dark) DarkText else Ink),
         LocalLine provides line,
         LocalField provides (if (dark) DarkField else CreamSurface),
         LocalFieldLine provides (if (dark) DarkFieldLine else CreamPill),
@@ -2148,7 +2154,14 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                                     .then(
                                         if (isUser) Modifier
                                             .align(Alignment.CenterEnd)
-                                            .fillMaxWidth(0.88f)
+                                            /*
+                                             * Claude's bubble hugs its words and
+                                             * only grows when they need room; a
+                                             * fixed share of the pane turned
+                                             * "hello" into a full-width slab. The
+                                             * cap is a maximum, not a width.
+                                             */
+                                            .widthIn(max = 560.dp)
                                             .padding(end = 12.dp)
                                         else Modifier.fillMaxWidth()
                                     )
@@ -2187,7 +2200,7 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                                         // Claude's prose is set with a little more
                                         // air than the default leading gives.
                                         lineHeight = 23.sp,
-                                        color = LocalText.current,
+                                        color = LocalBubbleText.current,
                                     )
                                 } else if (item.text.isNotBlank()) {
                                     MarkdownBody(
