@@ -624,6 +624,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var renameTarget by remember { mutableStateOf<SessionRow?>(null) }
     /** Bumped when the reader taps the conversation's title; the timeline obeys. */
     var toTopTicks by remember { mutableStateOf(0) }
+    /**
+     * The slash commands this folder offers.
+     *
+     * The desktop reads them from `command.list` and opens a filtered menu when
+     * the box starts with `/`; the phone had no way to reach them at all, so a
+     * command that exists everywhere else on the product was untypable here.
+     */
+    val commands = remember { mutableStateListOf<Pair<String, String>>() }
     var deleteTarget by remember { mutableStateOf<SessionRow?>(null) }
     var voiceText by remember { mutableStateOf<String?>(null) }
     /** The turn whose long-press sheet is open (复制 / 从此处分支). */
@@ -1298,6 +1306,22 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     }
     val currentModelLabel = if (effortLabel.isNotEmpty()) "$displayModel $effortLabel" else displayModel
 
+    // The folder decides which commands exist, so this follows the session.
+    val commandDir = sessions.find { it.id == currentSession }?.directory.orEmpty()
+    LaunchedEffect(commandDir) {
+        commands.clear()
+        val ticket = "cmd${System.nanoTime()}"
+        val deferred = client.awaitResponse(ticket)
+        request(JSONObject().put("type", "command.list").put("directory", commandDir), ticket)
+        val res = runCatching { deferred.await() }.getOrNull() ?: return@LaunchedEffect
+        val arr = res.optJSONObject("data")?.optJSONArray("commands") ?: return@LaunchedEffect
+        for (i in 0 until arr.length()) {
+            val c = arr.optJSONObject(i) ?: continue
+            val name = c.optString("name")
+            if (name.isNotBlank()) commands.add(name to c.optString("description", ""))
+        }
+    }
+
     val inputBar: @Composable () -> Unit = {
         InputCapsule(
             enabled = currentSession != null,
@@ -1312,6 +1336,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             attachments = attachments.toList(),
             onRemoveAttachment = { attachments.removeAt(it) },
             pickImages = { pickImages() },
+            commands = commands.toList(),
             onSend = { text, atts ->
                 // steer only joins a running turn; an idle session gets a
                 // plain prompt or the server ignores the message outright.
@@ -3093,7 +3118,7 @@ fun ConnectScreen(url: String, token: String, onConnect: (String, String) -> Uni
 /* ------------------------------------------------------------------ */
 
 @Composable
-fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSONObject>) -> Unit, onStop: () -> Unit, onNew: () -> Unit, modifier: Modifier = Modifier, onMic: () -> Unit = {}, onModel: () -> Unit = {}, running: Boolean = false, inject: String? = null, onInjected: () -> Unit = {}, pickImages: () -> Unit = {}, attachments: List<JSONObject> = emptyList(), onRemoveAttachment: (Int) -> Unit = {}, listening: Boolean = false, transcribing: Boolean = false) {
+fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSONObject>) -> Unit, onStop: () -> Unit, onNew: () -> Unit, modifier: Modifier = Modifier, onMic: () -> Unit = {}, onModel: () -> Unit = {}, running: Boolean = false, inject: String? = null, onInjected: () -> Unit = {}, pickImages: () -> Unit = {}, attachments: List<JSONObject> = emptyList(), onRemoveAttachment: (Int) -> Unit = {}, listening: Boolean = false, transcribing: Boolean = false, commands: List<Pair<String, String>> = emptyList()) {
     var text by remember { mutableStateOf("") }
     LaunchedEffect(inject) { if (!inject.isNullOrEmpty()) { text = inject; onInjected() } }
     /*
@@ -3102,7 +3127,55 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
      * it sits on the page as a white plate, not as a floating sheet. This used
      * to run the full width of the pane at 28dp with an 8dp shadow.
      */
+    /*
+     * The slash menu floats above the card rather than growing inside it: the
+     * desktop's opens upward over the conversation, and pushing the field down
+     * to make room moved the thing being typed away from the finger.
+     */
+    val slashText = text.trimStart()
+    val slashMenu = if (slashText.startsWith("/") && commands.isNotEmpty() && !slashText.contains(' ')) {
+        val query = slashText.drop(1)
+        commands.filter { it.first.contains(query, ignoreCase = true) }.take(6)
+    } else {
+        emptyList()
+    }
     Box(modifier.fillMaxWidth().padding(start = 118.dp, end = 113.dp, top = 8.dp, bottom = 8.dp)) {
+        if (slashMenu.isNotEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = LocalPill.current,
+                shadowElevation = 6.dp,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .fillMaxWidth()
+                    .offset { androidx.compose.ui.unit.IntOffset(0, -slashMenu.size * 150 - 24) },
+            ) {
+                Column(Modifier.padding(vertical = 4.dp)) {
+                    for ((name, desc) in slashMenu) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { text = "/$name " }
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("/$name", fontSize = 13.sp, color = LocalText.current)
+                            if (desc.isNotBlank()) {
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    desc,
+                                    fontSize = 12.sp,
+                                    color = LocalMuted.current,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
         Surface(
             shape = RoundedCornerShape(20.dp),
             color = MaterialTheme.colorScheme.surface,
