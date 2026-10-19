@@ -124,6 +124,8 @@ val LocalSurface = staticCompositionLocalOf { CreamSurface }
 val LocalText = staticCompositionLocalOf { Ink }
 val LocalMuted = staticCompositionLocalOf { InkMuted }
 val LocalPill = staticCompositionLocalOf { CreamPill }
+/** The user's own turn: a shade under the page in dark (13,13,13 on the pad), not above it. */
+val LocalBubble = staticCompositionLocalOf { CreamPill }
 val LocalLine = staticCompositionLocalOf { CreamLine }
 /** The search field's fill and hairline: white on cream, #1A1A19 on #151515. */
 val LocalField = staticCompositionLocalOf { CreamSurface }
@@ -496,6 +498,7 @@ fun MCodeTheme(content: @Composable () -> Unit) {
         LocalText provides text,
         LocalMuted provides muted,
         LocalPill provides pill,
+        LocalBubble provides (if (dark) Color(0xFF0D0D0D) else CreamPill),
         LocalLine provides line,
         LocalField provides (if (dark) DarkField else CreamSurface),
         LocalFieldLine provides (if (dark) DarkFieldLine else CreamPill),
@@ -2017,7 +2020,7 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                                     // Claude renders assistant turns straight on the
                                     // page - only user turns get a bubble.
                                     .background(
-                                        if (isUser) LocalPill.current else Color.Transparent,
+                                        if (isUser) LocalBubble.current else Color.Transparent,
                                         RoundedCornerShape(12.dp),
                                     )
                                     // Claude's assistant prose breathes: 30 px between lines at 450 dpi,
