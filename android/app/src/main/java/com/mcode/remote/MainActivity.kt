@@ -622,6 +622,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var showTasks by remember { mutableStateOf(false) }
     var showProjects by remember { mutableStateOf(false) }
     var showScheduled by remember { mutableStateOf(false) }
+    /**
+     * The scheduled tasks the server pushes as `automation.tasks`.
+     *
+     * The page used to say "MCode has no scheduled tasks yet" as a permanent
+     * sentence, which was a guess: the server has had them all along and simply
+     * broadcasts them to whoever is listening.
+     */
+    val automations = remember { mutableStateListOf<Triple<String, String, Long>>() }
     var sheetTarget by remember { mutableStateOf<SessionRow?>(null) }
     var renameTarget by remember { mutableStateOf<SessionRow?>(null) }
     /** Bumped when the reader taps the conversation's title; the timeline obeys. */
@@ -1229,6 +1237,20 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                      */
                     "session.idle" -> {
                         setRunning(event.optString("sessionID"), false)
+                    }
+                    "automation.tasks" -> {
+                        automations.clear()
+                        val arr = event.optJSONArray("tasks") ?: return
+                        for (i in 0 until arr.length()) {
+                            val t = arr.optJSONObject(i) ?: continue
+                            automations.add(
+                                Triple(
+                                    t.optString("id"),
+                                    t.optString("title"),
+                                    t.optLong("nextAt", 0L),
+                                ),
+                            )
+                        }
                     }
                     "session.deleted" -> {
                         val gone = event.optString("sessionID")
@@ -2102,7 +2124,42 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
                 Text("定时任务", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
                 Spacer(Modifier.height(12.dp))
-                Text("MCode 还没有定时任务。桌面端以后提供自动化时，它们会出现在这里。", fontSize = 14.sp, color = LocalMuted.current)
+                if (automations.isEmpty()) {
+                    // Claude's own empty page, at its sizes: an icon, a title and
+                    // the sentence under it.
+                    Column(
+                        Modifier.fillMaxWidth().padding(top = 40.dp, bottom = 28.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Icon(
+                            Icons.Outlined.Schedule,
+                            contentDescription = null,
+                            tint = LocalMuted.current.copy(alpha = 0.55f),
+                            modifier = Modifier.size(57.dp),
+                        )
+                        Spacer(Modifier.height(18.dp))
+                        Text("暂无定时任务", fontSize = 15.sp, color = LocalText.current)
+                        Spacer(Modifier.height(8.dp))
+                        Text("让 MCode 按计划运行任务。", fontSize = 13.sp, color = LocalMuted.current)
+                    }
+                } else {
+                    for ((_, title, nextAt) in automations) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(Icons.Outlined.Schedule, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(title, fontSize = 14.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (nextAt > 0L) {
+                                    val when_ = android.text.format.DateFormat.format("MM-dd HH:mm", nextAt).toString()
+                                    Text("下次：$when_", fontSize = 11.sp, color = LocalMuted.current)
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
