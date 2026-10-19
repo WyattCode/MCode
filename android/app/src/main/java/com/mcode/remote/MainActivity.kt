@@ -1570,6 +1570,30 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                         text = { Text("重命名") },
                                         onClick = { headerMenu = false; renameTarget = sessions.find { it.id == currentSession } },
                                     )
+                                    /*
+                                     * The desktop's undo: take the last turn's file
+                                     * edits back. It had no phone counterpart at
+                                     * all, so a turn that broke a file could only
+                                     * be repaired by hand.
+                                     */
+                                    DropdownMenuItem(
+                                        text = { Text("撤销上一回合的改动") },
+                                        onClick = {
+                                            headerMenu = false
+                                            currentSession?.let { sid ->
+                                                request(JSONObject().put("type", "session.undo").put("sessionID", sid))
+                                            }
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("重做撤销") },
+                                        onClick = {
+                                            headerMenu = false
+                                            currentSession?.let { sid ->
+                                                request(JSONObject().put("type", "session.redo").put("sessionID", sid))
+                                            }
+                                        },
+                                    )
                                     DropdownMenuItem(
                                         text = { Text(if (runningOnly) "显示全部会话" else "只看运行中") },
                                         onClick = { headerMenu = false; runningOnly = !runningOnly },
