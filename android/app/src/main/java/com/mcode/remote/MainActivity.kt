@@ -1310,6 +1310,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
 
     ModalNavigationDrawer(
         drawerState = drawerState,
+        /*
+         * Claude's scrim is a light veil, not a blackout: 169,169,168 over a
+         * 249,249,247 page, which leaves the conversation readable behind the
+         * sheet. Material's default darkens the page to nearly black and made
+         * the drawer look like a separate screen.
+         */
+        scrimColor = if (LocalBg.current == DarkBg) Color(0xD9000000) else Color(0x52000000),
         drawerContent = {
             ModalDrawerSheet(drawerContainerColor = MaterialTheme.colorScheme.background) {
                 DrawerContent(
