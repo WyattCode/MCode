@@ -157,33 +157,128 @@ fun toolTitleOf(part: JSONObject): String {
  * says what the desktop says: 已读取 / 正在读取 / 读取失败 / 已拒绝读取 /
  * 未执行：读取 / 未完成.
  */
+/**
+ * What a tool call is doing, in the desktop's own words.
+ *
+ * These are the strings `toolLabel.done/running/error/rejected/skipped.*`
+ * carries in `lib/i18n.ts`, copied rather than rebuilt: the phone used to
+ * assemble its own (`"已" + "命令"` became 已命令, which is not Chinese), and a
+ * second wording would drift from the desktop the first time either changed.
+ */
 fun toolVerbOf(name: String, status: String): String {
-    val key = when (name) {
-        "read" -> "读取"
-        "edit", "apply_patch", "patch" -> "编辑"
-        "write" -> "写入"
-        "bash", "exec_command", "execute" -> "命令"
-        "grep", "glob" -> "搜索"
-        "list" -> "列目录"
-        "webfetch" -> "读取网页"
-        "websearch" -> "搜索网络"
-        else -> name
+    val base = when (name) {
+        "read" -> "read"
+        "edit", "apply_patch", "patch" -> "edit"
+        "write" -> "write"
+        "bash", "exec_command" -> "bash"
+        "execute" -> "execute"
+        "grep" -> "grep"
+        "glob" -> "glob"
+        "list" -> "list"
+        "webfetch" -> "webfetch"
+        "websearch" -> "websearch"
+        "app" -> "app"
+        "todowrite" -> "todowrite"
+        "skill" -> "skill"
+        "skill_search" -> "skill_search"
+        "present_files" -> "present_files"
+        "pdf_locate" -> "pdf_locate"
+        else -> ""
     }
-    return when (status) {
-        "running", "pending", "in_progress" -> "正在$key"
-        // "读取 失败" was reading as two words; MCode's own label is one.
-        "error", "failed" -> when (key) {
-            "命令" -> "命令执行失败"
-            "读取网页" -> "读取网页失败"
-            "搜索网络" -> "搜索网络失败"
-            else -> "${key}失败"
-        }
-        "rejected" -> "已拒绝$key"
-        "skipped" -> "未执行：$key"
-        "completed", "done", "" -> "已$key"
-        else -> "已$key"
+    val doing = when (status) {
+        "running", "pending", "in_progress" -> "running"
+        "error", "failed" -> "error"
+        "rejected" -> "rejected"
+        "skipped" -> "skipped"
+        else -> "done"
     }
+    val label = TOOL_LABELS["$doing.$base"] ?: TOOL_LABELS["$doing.read"]
+    return label ?: name.ifEmpty { "工具" }
 }
+
+/** The desktop's tool labels, verbatim (zhCN table). */
+private val TOOL_LABELS = mapOf(
+    "done.read" to "已读取",
+    "done.edit" to "已编辑",
+    "done.write" to "已写入",
+    "done.bash" to "已执行命令",
+    "done.grep" to "已搜索",
+    "done.glob" to "已搜索",
+    "done.list" to "已列目录",
+    "done.webfetch" to "已读取网页",
+    "done.websearch" to "已搜索网络",
+    "done.execute" to "已运行代码模式脚本",
+    "done.app" to "已操作应用",
+    "done.todowrite" to "更新待办",
+    "done.skill" to "使用技能",
+    "done.skill_search" to "搜索技能",
+    "done.present_files" to "展示文件",
+    "done.pdf_locate" to "定位 PDF",
+    "running.read" to "正在读取",
+    "running.edit" to "正在编辑",
+    "running.write" to "正在写入",
+    "running.bash" to "正在执行命令",
+    "running.grep" to "正在搜索",
+    "running.glob" to "正在搜索",
+    "running.list" to "正在列目录",
+    "running.webfetch" to "正在读取网页",
+    "running.websearch" to "正在搜索网络",
+    "running.execute" to "正在运行代码模式脚本",
+    "running.app" to "正在操作应用",
+    "running.todowrite" to "正在更新待办",
+    "running.skill" to "正在使用技能",
+    "running.skill_search" to "正在搜索技能",
+    "running.present_files" to "正在展示文件",
+    "running.pdf_locate" to "正在定位 PDF",
+    "error.read" to "读取失败",
+    "error.edit" to "编辑失败",
+    "error.write" to "写入失败",
+    "error.bash" to "命令执行失败",
+    "error.grep" to "搜索失败",
+    "error.glob" to "搜索失败",
+    "error.list" to "列目录失败",
+    "error.webfetch" to "读取网页失败",
+    "error.websearch" to "搜索网络失败",
+    "error.execute" to "代码模式脚本失败",
+    "error.app" to "操作应用失败",
+    "error.todowrite" to "待办更新失败",
+    "error.skill" to "技能执行失败",
+    "error.skill_search" to "技能搜索失败",
+    "error.present_files" to "展示文件失败",
+    "error.pdf_locate" to "PDF 定位失败",
+    "rejected.read" to "已拒绝读取",
+    "rejected.edit" to "已拒绝编辑",
+    "rejected.write" to "已拒绝写入",
+    "rejected.bash" to "已拒绝执行",
+    "rejected.grep" to "已拒绝搜索",
+    "rejected.glob" to "已拒绝搜索",
+    "rejected.list" to "已拒绝列目录",
+    "rejected.webfetch" to "已拒绝读取网页",
+    "rejected.websearch" to "已拒绝搜索网络",
+    "rejected.execute" to "已拒绝运行代码模式脚本",
+    "rejected.app" to "已拒绝操作应用",
+    "rejected.todowrite" to "已拒绝更新待办",
+    "rejected.skill" to "已拒绝使用技能",
+    "rejected.skill_search" to "已拒绝搜索技能",
+    "rejected.present_files" to "已拒绝展示文件",
+    "rejected.pdf_locate" to "已拒绝定位 PDF",
+    "skipped.read" to "未执行：读取",
+    "skipped.edit" to "未执行：编辑",
+    "skipped.write" to "未执行：写入",
+    "skipped.bash" to "未执行：命令",
+    "skipped.grep" to "未执行：搜索",
+    "skipped.glob" to "未执行：搜索",
+    "skipped.list" to "未执行：列目录",
+    "skipped.webfetch" to "未执行：读取网页",
+    "skipped.websearch" to "未执行：搜索网络",
+    "skipped.execute" to "未执行：代码模式脚本",
+    "skipped.app" to "未执行：操作应用",
+    "skipped.todowrite" to "未执行：更新待办",
+    "skipped.skill" to "未执行：使用技能",
+    "skipped.skill_search" to "未执行：搜索技能",
+    "skipped.present_files" to "未执行：展示文件",
+    "skipped.pdf_locate" to "未执行：定位 PDF",
+)
 
 sealed class Item {
     abstract val key: String
@@ -511,6 +606,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
     val messageIndex = remember { mutableStateMapOf<String, Int>() }
     var currentSession by remember { mutableStateOf<String?>(null) }
     var cursor by remember { mutableStateOf(0L) }
+    /** Counts selections, so a history reply for an abandoned one is dropped. */
+    var selectSeq by remember { mutableStateOf(0) }
 
     /**
      * Marks a conversation as working, or done.
@@ -807,6 +904,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
 
     fun select(id: String?) {
         currentSession = id
+        // Bumped before the request goes out: a history that comes back after
+        // the reader has moved on belongs to a conversation that is no longer
+        // on screen, and writing it in would put one thread's turns under
+        // another thread's title.
+        selectSeq++
+        val seq = selectSeq
         items.clear()
         messageIndex.clear()
         if (id == null) return
@@ -823,7 +926,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
             val deferred = client.awaitResponse(ticket)
             request(JSONObject().put("type", "session.get").put("sessionID", id), ticket)
             val res = runCatching { deferred.await() }.getOrNull() ?: return@launch
+            if (seq != selectSeq) return@launch
             val messages = res.optJSONObject("data")?.optJSONArray("messages") ?: return@launch
+            items.clear()
+            messageIndex.clear()
+            for (p in pendingPerms[id].orEmpty()) items.add(Item.Perm(p.optString("id"), p.optString("kind", "tool"), p.optString("title", "") + " " + p.optString("subject", "")))
+            for (r in pendingQuestions[id].orEmpty()) items.add(Item.Quest(r.optString("id"), r))
             for (i in 0 until messages.length()) upsertMessage(id, messages.optJSONObject(i) ?: continue)
         }
     }
@@ -1626,8 +1734,12 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
     val listState = rememberLazyListState()
     // Follow new items: when a message is sent or a reply/tool event lands,
     // keep the latest content in view the way Claude does.
+    //
+    // The target is a zero-height trailer rather than the last row: a row that
+    // is taller than the screen lands with its top at the bottom edge, and a
+    // history that arrives all at once would end up showing its beginning.
     LaunchedEffect(items.size) {
-        if (items.isNotEmpty()) listState.animateScrollToItem(items.size - 1)
+        if (items.isNotEmpty()) listState.scrollToItem(items.size)
     }
     // A running turn gets one more row: Claude keeps a working line under the
     // last thing said, so the page does not look finished while it is not.
@@ -1791,6 +1903,8 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
         if (running) {
             item(key = "working") { WorkingLine() }
         }
+        // The scroll target (see the LaunchedEffect above).
+        item(key = "__bottom") { Box(Modifier.height(0.dp)) }
     }
 }
 
