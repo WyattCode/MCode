@@ -613,6 +613,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var showScheduled by remember { mutableStateOf(false) }
     var sheetTarget by remember { mutableStateOf<SessionRow?>(null) }
     var renameTarget by remember { mutableStateOf<SessionRow?>(null) }
+    /** Bumped when the reader taps the conversation's title; the timeline obeys. */
+    var toTopTicks by remember { mutableStateOf(0) }
     var deleteTarget by remember { mutableStateOf<SessionRow?>(null) }
     var voiceText by remember { mutableStateOf<String?>(null) }
     /** The turn whose long-press sheet is open (复制 / 从此处分支). */
@@ -1420,7 +1422,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             Box(Modifier.size(44.dp).clickable { openDrawer() }, contentAlignment = Alignment.Center) {
                                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = LocalText.current, modifier = Modifier.size(20.dp))
                             }
-                            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Column(
+                                Modifier.weight(1f).clickable { toTopTicks++ },
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
                                 Text(currentSessionTitle(sessions, currentSession), fontSize = 16.sp, fontWeight = FontWeight.Medium, color = LocalText.current, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                                 val where = sessions.find { it.id == currentSession }?.directory.orEmpty()
                                 if (where.isNotBlank()) {
@@ -1469,7 +1474,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 WelcomePane(withInput = true, inputBar = inputBar, inputAtBottom = true)
                             } else {
                                 Column(Modifier.fillMaxSize()) {
-                                    Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onPermReason = ::respondPermReason, onAnswer = ::answerQuestion, onMessage = { messageTarget = it }) }
+                                    Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onPermReason = ::respondPermReason, onAnswer = ::answerQuestion, onMessage = { messageTarget = it }, toTop = toTopTicks) }
                                     inputBar()
                                 }
                             }
@@ -1496,7 +1501,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         }
                     },
                 ) { padding ->
-                    Box(Modifier.padding(padding).fillMaxSize()) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onPermReason = ::respondPermReason, onAnswer = ::answerQuestion, onMessage = { messageTarget = it }) }
+                    Box(Modifier.padding(padding).fillMaxSize()) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onPermReason = ::respondPermReason, onAnswer = ::answerQuestion, onMessage = { messageTarget = it }, toTop = toTopTicks) }
                 }
             }
         }
@@ -2060,7 +2065,7 @@ fun runSummary(run: ToolRun): String {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, onPerm: (String, String) -> Unit = { _, _ -> }, onPermReason: (String, String) -> Unit = { _, _ -> }, onAnswer: (String, List<String>) -> Unit = { _, _ -> }, onMessage: (Item.Msg) -> Unit = {}) {
+fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, onPerm: (String, String) -> Unit = { _, _ -> }, onPermReason: (String, String) -> Unit = { _, _ -> }, onAnswer: (String, List<String>) -> Unit = { _, _ -> }, onMessage: (Item.Msg) -> Unit = {}, toTop: Int = 0) {
     val listState = rememberLazyListState()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     // Follow new items: when a message is sent or a reply/tool event lands,
@@ -2095,6 +2100,15 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
      * itself), and set back on when the end is reached again.
      */
     var follows by remember { mutableStateOf(true) }
+    // Tapping the conversation's title scrolls back to its first line, the way
+    // Claude's header does; every bump of the counter is one request.
+    LaunchedEffect(toTop) {
+        if (toTop > 0) {
+            follows = false
+            listState.animateScrollToItem(0)
+        }
+    }
+
     val atEnd by remember {
         derivedStateOf {
             val info = listState.layoutInfo
