@@ -3691,10 +3691,16 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
                      * it is clear the words wait their turn instead of steering
                      * the running reply.
                      */
+                    /*
+                     * Claude's idle line reads 「输入 / 以使用命令」 - it teaches the
+                     * slash commands right where they would be typed - and
+                     * its own grey is 123,121,116, a step lighter than the
+                     * muted used for labels elsewhere on the page.
+                     */
                     placeholder = {
                         Text(
-                            if (running) "将消息加入队列…" else "与 MCode 对话…",
-                            color = LocalMuted.current,
+                            if (running) "将消息加入队列…" else "输入 / 以使用命令",
+                            color = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF7B7974),
                         )
                     },
                     colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent),

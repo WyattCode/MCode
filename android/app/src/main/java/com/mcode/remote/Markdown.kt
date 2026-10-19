@@ -458,7 +458,11 @@ private fun ListBox(block: MdBlock.ListBlock, color: Color, modifier: Modifier =
                 Text(
                     marker,
                     fontSize = 15.sp,
-                    lineHeight = 23.sp,
+                    // 19sp, not 23: Claude's prose measures 53px per line on
+                    // the pad (19sp at 400dpi), and the extra leading here made
+                    // the same paragraph a third taller and the thread longer
+                    // to read than the original.
+                    lineHeight = 19.sp,
                     color = if (item.task && !item.checked) LocalMuted.current else color,
                     modifier = Modifier.width(if (block.ordered) 24.dp else 16.dp),
                 )
