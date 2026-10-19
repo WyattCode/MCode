@@ -1449,6 +1449,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                              * conversation is attached to under it, then the
                              * clock and the overflow at the right.
                              */
+                            /*
+                             * Read once for the whole header: the title needs the
+                             * folder, and the clock's amber ring needs to know a
+                             * turn is in flight (and how to stop it).
+                             */
+                            val runningNow = sessions.find { it.id == currentSession }?.running == true
+                            val stopHere: (String) -> Unit = { sid ->
+                                request(JSONObject().put("type", "session.abort").put("sessionID", sid))
+                            }
                             Box(Modifier.size(44.dp).clickable { openDrawer() }, contentAlignment = Alignment.Center) {
                                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = LocalText.current, modifier = Modifier.size(20.dp))
                             }
@@ -1470,6 +1479,25 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             }
                             Box(Modifier.size(40.dp).clickable { showTasks = true }, contentAlignment = Alignment.Center) {
                                 Icon(Icons.Outlined.Schedule, contentDescription = "任务", tint = LocalText.current, modifier = Modifier.size(19.dp))
+                            }
+                            /*
+                             * While a turn is in flight Claude puts an amber ring
+                             * beside the clock - 239,181,68, 16dp across - instead
+                             * of leaving the header still. It reads as work in
+                             * progress and as the way to stop it, which is what the
+                             * running turn needs from the top of the screen.
+                             */
+                            if (runningNow) {
+                                Box(
+                                    Modifier.size(40.dp).clickable { currentSession?.let { stopHere(it) } },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    androidx.compose.material3.CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = Color(0xFFEFB544),
+                                    )
+                                }
                             }
                             /*
                              * Claude closes this header with the overflow rather
