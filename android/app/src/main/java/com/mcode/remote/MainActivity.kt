@@ -21,6 +21,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -2075,7 +2076,14 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
         }
     }
     LaunchedEffect(atEnd) { if (atEnd) follows = true }
-    LaunchedEffect(rows.size, pending, running) {
+    /*
+     * Sending your own message always returns to the end, even after reading
+     * back: Claude does the same, and without it a prompt typed while scrolled
+     * up disappeared below the fold with only the working line in sight.
+     */
+    val myTurns = items.count { it is Item.Msg && it.role == "user" }
+    LaunchedEffect(myTurns) { if (myTurns > 0) follows = true }
+    LaunchedEffect(rows.size, pending, running, follows) {
         val last = rows.size + if (running) 0 else -1
         if (last >= 0 && follows) listState.animateScrollToItem(last)
     }
@@ -3024,12 +3032,21 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
                      * light theme only (dark keeps the paper circle).
                      */
                     val dark = isSystemInDarkTheme()
+                    /*
+                     * Four states, sampled off Claude on the pad: a running turn
+                     * takes the same soft pill as the + and the mic (240,239,236)
+                     * with an ink rectangle in it - not the ink disc used for
+                     * sending, which read as "press to send" while there was
+                     * nothing to send.
+                     */
                     val sendBg = when {
+                        running -> LocalPill.current
                         hasWords && !dark -> Color(0xFFE1C0B3)
                         dark -> Color(0xFFF9F9F7)
                         else -> LocalText.current
                     }
                     val sendFg = when {
+                        running -> LocalText.current
                         hasWords && !dark -> Color.White
                         dark -> Color(0xFF151515)
                         else -> LocalBg.current
@@ -3043,9 +3060,13 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
                         contentAlignment = Alignment.Center,
                     ) {
                         if (running) {
-                            // A running turn turns the round button into stop,
-                            // the way the desktop composer does.
-                            Box(Modifier.size(16.dp).background(sendFg, RoundedCornerShape(3.dp)))
+                            // An outlined square, not a filled one: Claude's stop
+                            // is a 1.5dp ink rectangle inside the soft circle.
+                            Box(
+                                Modifier
+                                    .size(15.dp)
+                                    .border(1.5.dp, sendFg, RoundedCornerShape(2.dp)),
+                            )
                         } else if (transcribing) {
                             androidx.compose.material3.CircularProgressIndicator(
                                 modifier = Modifier.size(20.dp),
