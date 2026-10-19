@@ -39,6 +39,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.BarChart
@@ -300,7 +301,7 @@ private fun nextErrId(): Int = ++errCounter
 
 sealed class Item {
     abstract val key: String
-    data class Msg(val id: String, val role: String, var text: String, val images: List<String> = emptyList(), val at: Long = 0L) : Item() { override val key = "msg.$id" }
+    data class Msg(val id: String, val role: String, var text: String, val images: List<String> = emptyList(), val at: Long = 0L, val steered: Boolean = false) : Item() { override val key = "msg.$id" }
 
     /**
      * Claude's wave divider: a wavy rule across the pane with the clock in the
@@ -632,6 +633,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * command that exists everywhere else on the product was untypable here.
      */
     val commands = remember { mutableStateListOf<Pair<String, String>>() }
+    /**
+     * Prompts waiting for the running turn to end, oldest first.
+     *
+     * The desktop keeps `SessionInfo.queued` and shows it above the composer,
+     * each line withdrawable or promotable. The phone sent a queued message and
+     * then lost sight of it: nothing said it had been queued, and there was no
+     * way to take it back short of resetting the turn.
+     */
+    val queuedPrompts = remember { mutableStateListOf<Pair<String, String>>() }
     var deleteTarget by remember { mutableStateOf<SessionRow?>(null) }
     var voiceText by remember { mutableStateOf<String?>(null) }
     /** The turn whose long-press sheet is open (复制 / 从此处分支). */
@@ -941,7 +951,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 val whole = text.toString().trim()
                 val settled = message.optString("finish").isNotBlank() || (message.optJSONObject("time")?.optLong("completed", 0L) ?: 0L) > 0L
                 val next = if (settled || whole.length >= existing.text.length) whole else existing.text
-                items[known] = existing.copy(text = next, images = images)
+                items[known] = existing.copy(text = next, images = images, steered = message.optBoolean("steered"))
             }
         } else {
             val body = text.toString().trim()
@@ -960,7 +970,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         items.add(Item.Gap("gap.${previous.id}.$id", label))
                     }
                 }
-                items.add(Item.Msg(id, role, body.ifEmpty { if (images.isEmpty()) "…" else "" }, images, at))
+                items.add(Item.Msg(id, role, body.ifEmpty { if (images.isEmpty()) "…" else "" }, images, at, message.optBoolean("steered")))
                 messageIndex[id] = items.size - 1
             }
         }
@@ -1072,6 +1082,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             request(JSONObject().put("type", "session.get").put("sessionID", id), ticket)
             val res = runCatching { deferred.await() }.getOrNull() ?: return@launch
             if (seq != selectSeq) return@launch
+            queuedPrompts.clear()
+            val q = res.optJSONObject("data")?.optJSONObject("session")?.optJSONArray("queued")
+            if (q != null) {
+                for (k in 0 until q.length()) {
+                    val item = q.optJSONObject(k) ?: continue
+                    queuedPrompts.add(item.optString("id") to item.optString("text"))
+                }
+            }
             val messages = res.optJSONObject("data")?.optJSONArray("messages") ?: return@launch
             items.clear()
             messageIndex.clear()
@@ -1337,6 +1355,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             onRemoveAttachment = { attachments.removeAt(it) },
             pickImages = { pickImages() },
             commands = commands.toList(),
+            queued = queuedPrompts.toList(),
+            onQueueRemove = { id ->
+                queuedPrompts.removeAll { it.first == id }
+                request(JSONObject().put("type", "session.queue.remove").put("sessionID", currentSession!!).put("id", id))
+            },
+            onQueueSend = { id ->
+                request(JSONObject().put("type", "session.queue.send").put("sessionID", currentSession!!).put("id", id))
+            },
             onSend = { text, atts ->
                 // steer only joins a running turn; an idle session gets a
                 // plain prompt or the server ignores the message outright.
@@ -2304,6 +2330,21 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                                         lineHeight = 23.sp,
                                         color = LocalBubbleText.current,
                                     )
+                                    /*
+                                     * A mid-turn message gets the desktop's note
+                                     * under it - 「已插话 · 会尽快处理」 - because a bubble
+                                     * that simply appeared inside a running turn
+                                     * gave no sign whether the model had heard it
+                                     * or would act on it.
+                                     */
+                                    if (item.steered) {
+                                        Text(
+                                            "已插话 · 会尽快处理",
+                                            fontSize = 11.sp,
+                                            color = LocalMuted.current,
+                                            modifier = Modifier.align(Alignment.End).padding(top = 4.dp),
+                                        )
+                                    }
                                 } else if (item.text.isNotBlank()) {
                                     MarkdownBody(
                                         item.text,
@@ -3118,7 +3159,7 @@ fun ConnectScreen(url: String, token: String, onConnect: (String, String) -> Uni
 /* ------------------------------------------------------------------ */
 
 @Composable
-fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSONObject>) -> Unit, onStop: () -> Unit, onNew: () -> Unit, modifier: Modifier = Modifier, onMic: () -> Unit = {}, onModel: () -> Unit = {}, running: Boolean = false, inject: String? = null, onInjected: () -> Unit = {}, pickImages: () -> Unit = {}, attachments: List<JSONObject> = emptyList(), onRemoveAttachment: (Int) -> Unit = {}, listening: Boolean = false, transcribing: Boolean = false, commands: List<Pair<String, String>> = emptyList()) {
+fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSONObject>) -> Unit, onStop: () -> Unit, onNew: () -> Unit, modifier: Modifier = Modifier, onMic: () -> Unit = {}, onModel: () -> Unit = {}, running: Boolean = false, inject: String? = null, onInjected: () -> Unit = {}, pickImages: () -> Unit = {}, attachments: List<JSONObject> = emptyList(), onRemoveAttachment: (Int) -> Unit = {}, listening: Boolean = false, transcribing: Boolean = false, commands: List<Pair<String, String>> = emptyList(), queued: List<Pair<String, String>> = emptyList(), onQueueRemove: (String) -> Unit = {}, onQueueSend: (String) -> Unit = {}) {
     var text by remember { mutableStateOf("") }
     LaunchedEffect(inject) { if (!inject.isNullOrEmpty()) { text = inject; onInjected() } }
     /*
@@ -3186,6 +3227,43 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
+                /*
+                 * Queued prompts, oldest first, above the field: a line each with
+                 * the words, a send-now arrow and an × to withdraw. The desktop
+                 * shows them the same way, and without them a message typed
+                 * during a turn looked swallowed.
+                 */
+                if (queued.isNotEmpty()) {
+                    Column(Modifier.padding(bottom = 6.dp)) {
+                        for ((id, words) in queued) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    words,
+                                    fontSize = 13.sp,
+                                    color = LocalMuted.current,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Box(
+                                    Modifier.size(28.dp).clickable { onQueueSend(id) },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(Icons.Filled.ArrowUpward, contentDescription = "立即发送", tint = LocalMuted.current, modifier = Modifier.size(15.dp))
+                                }
+                                Box(
+                                    Modifier.size(28.dp).clickable { onQueueRemove(id) },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(Icons.Filled.Close, contentDescription = "撤回", tint = LocalMuted.current, modifier = Modifier.size(15.dp))
+                                }
+                            }
+                        }
+                    }
+                }
                 if (attachments.isNotEmpty()) {
                     // Claude shows pending shots as a thumbnail strip above
                     // the text field, each with an X to remove.
