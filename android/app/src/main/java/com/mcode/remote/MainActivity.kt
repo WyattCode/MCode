@@ -1396,12 +1396,33 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     }
                     Column(Modifier.weight(0.7359f).fillMaxHeight().fillMaxWidth()) {
                         Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            // The conversation's own title sits at the start of
-                            // its pane, as Claude's does; only the list column
-                            // centres its heading.
-                            Text(currentSessionTitle(sessions, currentSession), fontSize = 15.sp, fontWeight = FontWeight.Medium, color = LocalText.current, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 8.dp))
-                            IconButton({ privacy = !privacy }, Modifier.size(38.dp)) { GhostGlyph(active = privacy, size = 21.dp) }
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            /*
+                             * Claude's conversation header: a back arrow at the
+                             * pane's left edge, the title centred with what the
+                             * conversation is attached to under it, then the
+                             * clock and the overflow at the right.
+                             */
+                            Box(Modifier.size(44.dp).clickable { select(null) }, contentAlignment = Alignment.Center) {
+                                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = LocalText.current, modifier = Modifier.size(20.dp))
+                            }
+                            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(currentSessionTitle(sessions, currentSession), fontSize = 16.sp, fontWeight = FontWeight.Medium, color = LocalText.current, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                                val where = sessions.find { it.id == currentSession }?.directory.orEmpty()
+                                if (where.isNotBlank()) {
+                                    Text(
+                                        where.substringAfterLast('\\').substringAfterLast('/'),
+                                        fontSize = 11.sp,
+                                        color = LocalMuted.current,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                    )
+                                }
+                            }
+                            Box(Modifier.size(40.dp).clickable { showTasks = true }, contentAlignment = Alignment.Center) {
+                                Icon(Icons.Outlined.Schedule, contentDescription = "任务", tint = LocalText.current, modifier = Modifier.size(19.dp))
+                            }
+                            IconButton({ privacy = !privacy }, Modifier.size(40.dp)) { GhostGlyph(active = privacy, size = 21.dp) }
                         }
                         // The conversation pane, and only it, rides above the IME.
                         Column(Modifier.weight(1f).fillMaxWidth().windowInsetsPadding(WindowInsets.ime.only(WindowInsetsSides.Bottom))) {
