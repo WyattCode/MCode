@@ -81,6 +81,7 @@ import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -723,6 +724,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     fun openDrawer() = scope.launch { drawerState.open() }
     fun closeDrawer() = scope.launch { drawerState.close() }
     var search by remember { mutableStateOf("") }
+    /**
+     * Whether the list's search field is showing.
+     *
+     * Claude's header carries a magnifier, not a box: the field is a mode the
+     * reader enters, and it covers nothing until then. The drawer's magnifier
+     * sets this too, which is what that glyph was always meant to do.
+     */
+    var searching by remember { mutableStateOf(false) }
     var runningOnly by remember { mutableStateOf(false) }
     var privacy by remember { mutableStateOf(false) }
     var projectFilter by remember { mutableStateOf<String?>(null) }
@@ -1811,25 +1820,59 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                             modifier = Modifier.weight(1f),
                         )
+                        /*
+                         * Claude's header ends with a magnifier and a filter,
+                         * and the search field is not on the page until it is
+                         * asked for: a permanent 45dp box over a list of rows
+                         * takes the space of two rows to do nothing. The
+                         * magnifier opens it; the field then sits above the list
+                         * with a close glyph that puts it away.
+                         */
+                        Box(Modifier.size(38.dp).clickable { searching = !searching; if (!searching) search = "" }, contentAlignment = Alignment.Center) {
+                            Icon(
+                                if (searching) Icons.Filled.Close else Icons.Outlined.Search,
+                                contentDescription = if (searching) "关闭搜索" else "搜索",
+                                tint = LocalText.current,
+                                modifier = Modifier.size(19.dp),
+                            )
+                        }
                         Box(Modifier.size(38.dp).clickable { runningOnly = !runningOnly }, contentAlignment = Alignment.Center) {
-                            Icon(Icons.Outlined.Tune, contentDescription = "筛选", tint = LocalText.current, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Outlined.Tune, contentDescription = "筛选", tint = if (runningOnly) MaterialTheme.colorScheme.primary else LocalText.current, modifier = Modifier.size(18.dp))
                         }
                         Box(Modifier.size(38.dp).clickable { showTasks = true }, contentAlignment = Alignment.Center) {
                             Icon(Icons.Outlined.Checklist, contentDescription = "任务", tint = LocalText.current, modifier = Modifier.size(18.dp))
                         }
                     }
-                    OutlinedTextField(
-                        search, { search = it },
-                        Modifier.fillMaxWidth().padding(horizontal = 12.dp).height(45.dp),
-                        placeholder = { Text("搜索", color = LocalMuted.current, fontSize = 14.sp) },
-                        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(17.dp)) },
-                        shape = RoundedCornerShape(14.dp),
-                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
-                        // Claude's search sits on white with a hairline pill
-                        // outline, not on the page's own colour with none.
-                        colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = LocalField.current, focusedContainerColor = LocalField.current, unfocusedBorderColor = LocalFieldLine.current, focusedBorderColor = LocalFieldLine.current),
-                        singleLine = true,
-                    )
+                    /*
+                     * The field appears only while searching, and takes the
+                     * focus as it does - a magnifier that opened a box the
+                     * reader then had to tap again would be two gestures for one
+                     * intent.
+                     */
+                    if (searching) {
+                        val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+                        LaunchedEffect(searching) {
+                            if (searching) withContext(kotlinx.coroutines.Dispatchers.Main) { runCatching { focus.requestFocus() } }
+                        }
+                        OutlinedTextField(
+                            search, { search = it },
+                            /*
+                             * `heightIn`, not `height`: a fixed 45dp box with a
+                             * 14sp field and Material's own inner padding left the
+                             * placeholder clipped - 「搜索」 rendered as a cut-off
+                             * glyph pair.
+                             */
+                            Modifier.fillMaxWidth().padding(horizontal = 12.dp).heightIn(min = 45.dp).focusRequester(focus),
+                            placeholder = { Text("搜索", color = LocalMuted.current, fontSize = 14.sp) },
+                            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(17.dp)) },
+                            shape = RoundedCornerShape(14.dp),
+                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
+                            // Claude's search sits on white with a hairline pill
+                            // outline, not on the page's own colour with none.
+                            colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = LocalField.current, focusedContainerColor = LocalField.current, unfocusedBorderColor = LocalFieldLine.current, focusedBorderColor = LocalFieldLine.current),
+                            singleLine = true,
+                        )
+                    }
                         Spacer(Modifier.height(6.dp))
                         SessionList(visibleSessions, currentSession, search, onSelect = { select(it) }, compact = false, modifier = Modifier.weight(1f).fillMaxWidth(), onLongPress = { sheetTarget = it })
                         // Claude parks a black "new chat" pill at the foot of
