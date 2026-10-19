@@ -54,6 +54,7 @@ import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.automirrored.outlined.CallSplit
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
@@ -76,6 +77,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
@@ -2027,6 +2029,7 @@ fun runSummary(run: ToolRun): String {
 @Composable
 fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, onPerm: (String, String) -> Unit = { _, _ -> }, onPermReason: (String, String) -> Unit = { _, _ -> }, onAnswer: (String, List<String>) -> Unit = { _, _ -> }, onMessage: (Item.Msg) -> Unit = {}) {
     val listState = rememberLazyListState()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     // Follow new items: when a message is sent or a reply/tool event lands,
     // keep the latest content in view the way Claude does.
     //
@@ -2049,15 +2052,39 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
         cards.withIndex().associate { (i, card) -> card.requestId to (i + 1 to cards.size) }
     }
     val rows = remember(items.toList()) { rowsOf(items) }
+    /*
+     * Whether the timeline should keep following new lines.
+     *
+     * Claude stops following the moment the reader scrolls up - it does not
+     * yank them back every time a tool row lands - and offers a round button at
+     * the bottom edge to return. `follows` is set false only on a real drag
+     * (a programmatic scroll raises no DragInteraction, so this cannot unluck
+     * itself), and set back on when the end is reached again.
+     */
+    var follows by remember { mutableStateOf(true) }
+    val atEnd by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull() ?: return@derivedStateOf true
+            last.index >= info.totalItemsCount - 1
+        }
+    }
+    LaunchedEffect(listState) {
+        listState.interactionSource.interactions.collect { interaction ->
+            if (interaction is androidx.compose.foundation.interaction.DragInteraction.Start) follows = false
+        }
+    }
+    LaunchedEffect(atEnd) { if (atEnd) follows = true }
     LaunchedEffect(rows.size, pending, running) {
         val last = rows.size + if (running) 0 else -1
-        if (last >= 0) listState.animateScrollToItem(last)
+        if (last >= 0 && follows) listState.animateScrollToItem(last)
     }
     // A running turn gets one more row: Claude keeps a working line under the
     // last thing said, so the page does not look finished while it is not.
+    Box(modifier) {
     LazyColumn(
         state = listState,
-        modifier = modifier.padding(horizontal = 12.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
         // The first turn used to sit flush against the header and read as
         // clipped; Claude leaves a breath of air above it.
@@ -2169,19 +2196,26 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                                 Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 3.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
+                                /*
+                                 * Claude puts the chevron right after the words, not
+                                 * at the far edge of the pane: the summary reads as
+                                 * one phrase, and the glyph is part of it. A weighted
+                                 * Text pushed it out to x=3350, a pane away from the
+                                 * sentence it belongs to.
+                                 */
                                 Text(
                                     runSummary(item),
                                     fontSize = 12.5.sp,
                                     color = LocalMuted.current,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f),
+                                    modifier = Modifier.weight(1f, fill = false),
                                 )
                                 Icon(
                                     Icons.AutoMirrored.Outlined.KeyboardArrowRight,
                                     contentDescription = if (open) "收起" else "展开",
                                     tint = LocalMuted.current,
-                                    modifier = Modifier.size(15.dp).graphicsLayer { rotationZ = if (open) 90f else 0f },
+                                    modifier = Modifier.size(14.dp).graphicsLayer { rotationZ = if (open) 90f else 0f },
                                 )
                             }
                             if (open) {
@@ -2228,6 +2262,35 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
         }
         // The scroll target (see the LaunchedEffect above).
         item(key = "__bottom") { Box(Modifier.height(0.dp)) }
+    }
+    /*
+     * Claude's way back: a 43dp white disc at the foot of the pane with the ink
+     * arrow in it, shown only while the reader is above the end. It sits just
+     * over the last line, so a turn arriving while someone reads back does not
+     * hide underneath it.
+     */
+    if (!atEnd) {
+        Box(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 10.dp)
+                .size(43.dp)
+                .shadow(3.dp, CircleShape)
+                .background(if (LocalBg.current == DarkBg) Color(0xFF2E2E2E) else Color(0xFFFEFEFE), CircleShape)
+                .clickable {
+                    follows = true
+                    scope.launch { listState.animateScrollToItem(rows.size + if (running) 0 else -1) }
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Outlined.ArrowDownward,
+                contentDescription = "回到底部",
+                tint = LocalText.current,
+                modifier = Modifier.size(17.dp),
+            )
+        }
+    }
     }
 }
 
@@ -2884,7 +2947,18 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
                 OutlinedTextField(
                     text, { text = it },
                     Modifier.fillMaxWidth(),
-                    placeholder = { Text("与 MCode 对话…", color = LocalMuted.current) },
+                    /*
+                     * Claude's phone composer says what a send will do: while a
+                     * turn is in flight the line becomes 「将消息加入队列…」, so
+                     * it is clear the words wait their turn instead of steering
+                     * the running reply.
+                     */
+                    placeholder = {
+                        Text(
+                            if (running) "将消息加入队列…" else "与 MCode 对话…",
+                            color = LocalMuted.current,
+                        )
+                    },
                     colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent),
                     maxLines = 4,
                 )
