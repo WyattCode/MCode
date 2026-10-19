@@ -58,6 +58,7 @@ import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.automirrored.outlined.CallSplit
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.ExpandLess
@@ -341,7 +342,113 @@ sealed class Item {
     }
 }
 
-data class SessionRow(val id: String, val title: String, val running: Boolean, val updated: Long, val directory: String = "", val model: String = "", val agent: String = "build", val effort: String = "none")
+/**
+ * 追求目標: the goal a conversation is being judged against, as `session.goal`
+ * stores it (`SessionGoal` minus what no reader on a phone needs).
+ */
+data class GoalInfo(
+    val condition: String,
+    val startedAt: Long,
+    val attempts: Int = 1,
+    /** Set once the judge has answered: met, or out of reach / out of tries. */
+    val doneStatus: String? = null,
+    val doneReason: String = "",
+    val doneAt: Long = 0L,
+)
+
+data class SessionRow(
+    val id: String,
+    val title: String,
+    val running: Boolean,
+    val updated: Long,
+    val directory: String = "",
+    val model: String = "",
+    val agent: String = "build",
+    val effort: String = "none",
+    /** 追求目標: the switch is on, so the next message sent becomes the goal. */
+    val goalMode: Boolean = false,
+    val goal: GoalInfo? = null,
+    /** Where the model will reach for files: ask / auto / full, as `session.access` names them. */
+    val access: String = "full",
+)
+
+/**
+ * The three levels a conversation may run at, and which one it is at.
+ *
+ * A conversation's own level is only half the answer: one that never set a
+ * level follows the app's default, which `shared/access.ts` derives from the
+ * permission map (`accessLevel` = auto, or nothing left asking = full). Reading
+ * only the session's field made every conversation without one look like
+ * "全部允许", which is a claim the desktop never makes.
+ */
+private fun accessOf(row: SessionRow?, config: JSONObject?): String {
+    row?.access?.takeIf { it in setOf("ask", "auto", "full") }?.let { own ->
+        // Its own full access lapses once full access is not allowed.
+        if (own != "full" || config?.optBoolean("allowFullAccess") != false) return own
+    }
+    if (config == null) return "full"
+    if (config.optString("accessLevel") == "auto") return "auto"
+    val map = config.optJSONObject("permissions")
+    val asking = listOf("read", "edit", "glob", "grep", "list", "bash", "webfetch", "outside", "mcp").any { map?.optString(it) == "ask" }
+    if (map == null || asking) return "ask"
+    return if (config.optString("accessLevel") == "full" && !config.optBoolean("allowFullAccess", true)) "ask" else "full"
+}
+
+/**
+ * A pty's output, minus the sequences a Text cannot obey.
+ *
+ * CSI (`ESC [ … letter`), OSC (`ESC ] … BEL`, which is how every shell sets its
+ * window title), and the two-byte escapes in between. Carriage returns go too,
+ * but a `\r` that is rewriting a line - a progress bar - is what a terminal
+ * would fold onto itself; keeping only what follows the last `\r` on a line
+ * gives the same visible result for the one shape this pane shows.
+ */
+private fun stripAnsi(raw: String): String {
+    val csi = Regex("\u001B\\[[0-9;?]*[ -/]*[@-~]")
+    val osc = Regex("\u001B\\][^\u0007\u001B]*(\u0007|\u001B\\\\)")
+    val other = Regex("\u001B[@-Z\\\\-_]")
+    return raw.replace(osc, "").replace(csi, "").replace(other, "")
+        .lineSequence()
+        .joinToString("\n") { line -> if ('\r' in line) line.substringAfterLast('\r') else line }
+}
+
+/**
+ * One `SessionInfo` as a list row.
+ *
+ * `session.list` and `session.updated` carry the same object, and the phone read
+ * the fields twice in two places - which is how the goal and the access level
+ * ended up on the server but never on a row. One reader, so a field added here
+ * reaches both.
+ */
+private fun rowOf(s: JSONObject, running: Boolean): SessionRow {
+    val goal = s.optJSONObject("goal")?.let { g ->
+        val condition = g.optString("condition")
+        if (condition.isBlank()) null else {
+            val done = g.optJSONObject("done")
+            GoalInfo(
+                condition = condition,
+                startedAt = g.optLong("startedAt", 0L),
+                attempts = g.optInt("attempts", 1),
+                doneStatus = done?.optString("status"),
+                doneReason = done?.optString("reason").orEmpty(),
+                doneAt = done?.optLong("at", 0L) ?: 0L,
+            )
+        }
+    }
+    return SessionRow(
+        id = s.optString("id"),
+        title = s.optString("title", s.optString("id")),
+        running = running,
+        updated = s.optLong("updated", 0),
+        directory = s.optString("directory", ""),
+        model = s.optJSONObject("model")?.optString("model", "") ?: "",
+        agent = s.optString("agent", "build"),
+        effort = s.optString("effort", "none"),
+        goalMode = s.optBoolean("goalMode", false),
+        goal = goal,
+        access = s.optString("access", ""),
+    )
+}
 
 class RemoteClient {
     private val http = OkHttpClient.Builder()
@@ -623,6 +730,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var showProjects by remember { mutableStateOf(false) }
     var showScheduled by remember { mutableStateOf(false) }
     /**
+     * 技能与插件: the desktop's plugins page, which lists the folder's skills
+     * and its MCP servers side by side and lets either be switched off.
+     */
+    var showPlugins by remember { mutableStateOf(false) }
+    /** The plugins page's two halves, as `mcp.list` and `skill.list` returned them. */
+    val pluginServers = remember { mutableStateListOf<JSONObject>() }
+    val pluginSkills = remember { mutableStateListOf<JSONObject>() }
+    var pluginError by remember { mutableStateOf("") }
+    /** Which switch is mid-write: "mcp:name" or "skill:name". One at a time, as the desktop holds it. */
+    var pluginBusy by remember { mutableStateOf("") }
+    /**
      * The scheduled tasks the server pushes as `automation.tasks`.
      *
      * The page used to say "MCode has no scheduled tasks yet" as a permanent
@@ -657,6 +775,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * default way a conversation is run, so the phone should say it too.
      */
     var smartMode by remember { mutableStateOf(false) }
+    /**
+     * 追求目標: the switch in the plus menu. It is the conversation's setting,
+     * not the phone's, so it is read back from the row and written through
+     * `session.goalMode` - a message sent while it is on becomes the goal.
+     */
+    var goalMode by remember { mutableStateOf(false) }
+    /** The goal sheet being edited (its condition), or null. */
+    var goalEdit by remember { mutableStateOf<String?>(null) }
     var deleteTarget by remember { mutableStateOf<SessionRow?>(null) }
     var voiceText by remember { mutableStateOf<String?>(null) }
     /** The turn whose long-press sheet is open (复制 / 从此处分支). */
@@ -664,6 +790,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var modelPicker by remember { mutableStateOf(false) }
     var providers by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var showUsage by remember { mutableStateOf(false) }
+    /**
+     * The application's own settings, which the access level falls back to: a
+     * conversation without a level of its own runs at the map's default, and
+     * the map is only readable from `config.get`.
+     */
+    var appConfig by remember { mutableStateOf<JSONObject?>(null) }
     /**
      * The project browser.
      *
@@ -673,6 +805,20 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * path inside it, and `path` the stack of crumbs walked down.
      */
     var showFiles by remember { mutableStateOf(false) }
+    /**
+     * The terminal drawer.
+     *
+     * The desktop keeps a pty in a drawer at the foot of the conversation; the
+     * gateway hands a phone the same `shell.open`/`shell.input` requests with
+     * the owner "remote", so the phone can carry one of its own. Its output
+     * streams as `shell.data` - which the gateway holds back from the frame
+     * buffer, so the phone reads it live rather than on resume.
+     */
+    var showTerminal by remember { mutableStateOf(false) }
+    /** The pty this drawer opened; kept while the sheet is up so its history survives a close. */
+    var terminalId by remember { mutableStateOf<String?>(null) }
+    var terminalText by remember { mutableStateOf("") }
+    var terminalInput by remember { mutableStateOf("") }
     var fileStack by remember { mutableStateOf(listOf("")) }
     val fileEntries = remember { mutableStateListOf<Pair<String, Boolean>>() }
     var filePreview by remember { mutableStateOf<Pair<String, String>?>(null) }
@@ -688,6 +834,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     /** Branches offered under the change list; the desktop's branch chip does the same from the home screen. */
     val branches = remember { mutableStateListOf<String>() }
     var showBranches by remember { mutableStateOf(false) }
+    /** The commit card's message and its in-flight flag. */
+    var commitMessage by remember { mutableStateOf("") }
+    var commitBusy by remember { mutableStateOf(false) }
+    /** The changes panel's two "there is nothing to show" cases, which are not the same as "nothing changed". */
+    var changesNoRepo by remember { mutableStateOf(false) }
+    var changesNoGit by remember { mutableStateOf(false) }
     var usageSummary by remember { mutableStateOf<JSONObject?>(null) }
     /** Parked permission requests per session, replayed from session.list. */
     val pendingPerms = remember { java.util.concurrent.ConcurrentHashMap<String, MutableList<JSONObject>>() }
@@ -696,6 +848,25 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     /** Bumped whenever the parked maps change, so the replay effect re-runs. */
     var replayTick by remember { mutableStateOf(0) }
     val context = androidx.compose.ui.platform.LocalContext.current
+
+    /**
+     * What was typed but not sent, per conversation.
+     *
+     * The desktop keeps a draft for each conversation and puts it back on
+     * return, and so across a restart (`lib/composer-drafts.ts`). The phone kept
+     * one string for the whole box, which meant a half-written message to one
+     * conversation was carried into the next one - and lost entirely if the app
+     * was closed. Held here rather than in the composer because the composer is
+     * remounted as the session changes, and written to the same preferences the
+     * last session id already uses.
+     */
+    val drafts = remember { mutableStateMapOf<String, String>() }
+    val draftStore = context.getSharedPreferences("mcode-remote-drafts", android.content.Context.MODE_PRIVATE)
+    LaunchedEffect(Unit) {
+        for ((key, value) in draftStore.all) {
+            if (key.startsWith("draft.") && value is String && value.isNotEmpty()) drafts[key.removePrefix("draft.")] = value
+        }
+    }
 
     /** Pending photo attachments: {"path","mime","data"(base64)} ready for session.prompt. */
     val attachments = remember { mutableStateListOf<JSONObject>() }
@@ -1122,7 +1293,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             val res = runCatching { deferred.await() }.getOrNull() ?: return@launch
             if (seq != selectSeq) return@launch
             queuedPrompts.clear()
-            smartMode = res.optJSONObject("data")?.optJSONObject("session")?.optBoolean("smart") ?: false
+            val info = res.optJSONObject("data")?.optJSONObject("session")
+            smartMode = info?.optBoolean("smart") ?: false
+            // 追求目標 and the access level are the conversation's own, and
+            // `session.get` is where the freshest copy arrives: `session.list`
+            // was read before this selection and may name another session.
+            info?.let { row ->
+                goalMode = row.optBoolean("goalMode", false)
+                val fresh = rowOf(row, sessions.find { it.id == id }?.running == true)
+                val at = sessions.indexOfFirst { it.id == id }
+                if (at >= 0) sessions[at] = fresh else sessions.add(fresh)
+            }
             val q = res.optJSONObject("data")?.optJSONObject("session")?.optJSONArray("queued")
             if (q != null) {
                 for (k in 0 until q.length()) {
@@ -1185,7 +1366,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     for (i in 0 until list.length()) {
                         val s = list.optJSONObject(i) ?: continue
                         val sid = s.optString("id")
-                        sessions.add(SessionRow(sid, s.optString("title", sid), sid in running, s.optLong("updated", 0), s.optString("directory", ""), s.optJSONObject("model")?.optString("model", "") ?: "", s.optString("agent", "build"), s.optString("effort", "none")))
+                        sessions.add(rowOf(s, sid in running))
                     }
                     sessions.sortByDescending { it.updated }
                     // Replay what is parked: sessions waiting on a permission
@@ -1219,15 +1400,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     "session.updated" -> {
                         val s = event.optJSONObject("session") ?: return
                         val sid = s.optString("id")
-                        val title = s.optString("title", sid)
-                        val updated = s.optLong("updated", 0)
-                        val row = sessions.find { it.id == sid }
-                        val directory = s.optString("directory", "")
-                        val model = s.optJSONObject("model")?.optString("model", "") ?: ""
-                        val agent = s.optString("agent", "build")
-                        val effort = s.optString("effort", "none")
-                        if (row != null) sessions[sessions.indexOf(row)] = row.copy(title = title, updated = updated, directory = directory, model = model, agent = agent, effort = effort)
-                        else sessions.add(SessionRow(sid, title, false, updated, directory, model, agent, effort))
+                        // A running flag is the list's, not the session's, so it
+                        // is carried across rather than read from this event.
+                        val next = rowOf(s, sessions.find { it.id == sid }?.running == true)
+                        val at = sessions.indexOfFirst { it.id == sid }
+                        if (at >= 0) sessions[at] = next else sessions.add(next)
                         sessions.sortByDescending { it.updated }
                     }
                     /*
@@ -1306,6 +1483,28 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         items.removeAll { it is Item.Quest && it.requestId == rid }
                     }
                     "session.error" -> items.add(Item.Err(event.optString("error")))
+                    /*
+                     * The desktop changed a setting - the permission map among
+                     * them - and the phone's access pill reads that map, so it
+                     * is kept current rather than read once at connect.
+                     */
+                    "config.updated" -> appConfig = event.optJSONObject("config")
+                    /*
+                     * The terminal drawer's own pty, if one is open. Kept to the
+                     * last 8000 characters: a chatty command can print megabytes
+                     * and a Text of that size is a frame that never draws.
+                     */
+                    "shell.data" -> {
+                        if (event.optString("shellID") == terminalId) {
+                            terminalText = (terminalText + event.optString("data")).takeLast(8000)
+                        }
+                    }
+                    "shell.exit" -> {
+                        if (event.optString("shellID") == terminalId) {
+                            terminalText += "\n[进程已结束]\n"
+                            terminalId = null
+                        }
+                    }
                 }
             }
         }
@@ -1319,6 +1518,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
 
     LaunchedEffect(Unit) {
         if (autoUrl.isNotBlank() && autoToken.isNotBlank()) client.connect(autoUrl, autoToken)
+    }
+
+    /*
+     * The app's settings, for the one question a conversation's own fields
+     * cannot answer: at what access level a conversation without a level of
+     * its own runs. Read once when the socket comes up, and again whenever the
+     * desktop writes the config.
+     */
+    LaunchedEffect(connected) {
+        if (!connected) return@LaunchedEffect
+        appConfig = runCatching { rpc(JSONObject().put("type", "config.get")) }.getOrNull()
+            ?.optJSONObject("data")?.optJSONObject("config")
     }
 
     if (!connectedOnce || showConnect) {
@@ -1383,8 +1594,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
 
     // The folder decides which commands exist, so this follows the session.
     val commandDir = sessions.find { it.id == currentSession }?.directory.orEmpty()
+    /**
+     * The folder's skills, by name, for the plus menu's 技能 submenu.
+     *
+     * `command.list` is what the slash menu already reads; it carries each
+     * entry's `source`, so a skill is the ones marked `skill` rather than a
+     * second round trip to `skill.list`.
+     */
+    val skills = remember { mutableStateListOf<String>() }
     LaunchedEffect(commandDir) {
         commands.clear()
+        skills.clear()
         val ticket = "cmd${System.nanoTime()}"
         val deferred = client.awaitResponse(ticket)
         request(JSONObject().put("type", "command.list").put("directory", commandDir), ticket)
@@ -1394,6 +1614,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             val c = arr.optJSONObject(i) ?: continue
             val name = c.optString("name")
             if (name.isNotBlank()) commands.add(name to c.optString("description", ""))
+            if (name.isNotBlank() && c.optString("source") == "skill") skills.add(name)
         }
     }
 
@@ -1413,6 +1634,64 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             pickImages = { pickImages() },
             commands = commands.toList(),
             queued = queuedPrompts.toList(),
+            // The plus menu's own rows, which the desktop has and the phone did not.
+            onFiles = { showFiles = true; fileStack = listOf("") },
+            onTerminal = { showTerminal = true },
+            goalMode = goalMode,
+            onToggleGoalMode = {
+                val next = !goalMode
+                goalMode = next
+                currentSession?.let { sid ->
+                    scope.launch {
+                        runCatching {
+                            rpc(JSONObject().put("type", "session.goalMode").put("sessionID", sid).put("on", next))
+                        }.onFailure {
+                            // A write that fails puts the switch back, as the
+                            // desktop's does, rather than lying about it.
+                            goalMode = !next
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "无法开启目标模式", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                }
+            },
+            skills = skills.toList(),
+            goal = currentRow?.goal,
+            onGoalRemove = {
+                currentSession?.let { sid ->
+                    scope.launch {
+                        runCatching { rpc(JSONObject().put("type", "session.goal").put("sessionID", sid).put("condition", JSONObject.NULL)) }
+                        runCatching { rpc(JSONObject().put("type", "session.goalMode").put("sessionID", sid).put("on", false)) }
+                        withContext(Dispatchers.Main) { goalMode = false }
+                    }
+                }
+            },
+            onGoalResend = {
+                val condition = currentRow?.goal?.condition
+                if (!condition.isNullOrBlank() && currentSession != null) {
+                    scope.launch {
+                        runCatching {
+                            rpc(JSONObject().put("type", "session.goal").put("sessionID", currentSession).put("condition", condition))
+                            rpc(JSONObject().put("type", "session.prompt").put("sessionID", currentSession).put("text", condition))
+                            withContext(Dispatchers.Main) { setRunning(currentSession!!, true) }
+                        }
+                    }
+                }
+            },
+            onGoalEdit = { goalEdit = currentRow?.goal?.condition ?: "" },
+            draftKey = currentSession.orEmpty(),
+            draft = drafts[currentSession.orEmpty()].orEmpty(),
+            onDraftChange = { words ->
+                val key = currentSession.orEmpty()
+                if (key.isEmpty()) return@InputCapsule
+                if (words.isEmpty()) drafts.remove(key) else drafts[key] = words
+                // Written on the same beat as the desktop's 300ms, and cleared
+                // outright when the box is emptied so a stale line cannot come
+                // back after a restart.
+                if (words.isEmpty()) draftStore.edit().remove("draft.$key").apply()
+                else draftStore.edit().putString("draft.$key", words).apply()
+            },
             onQueueRemove = { id ->
                 queuedPrompts.removeAll { it.first == id }
                 request(JSONObject().put("type", "session.queue.remove").put("sessionID", currentSession!!).put("id", id))
@@ -1427,12 +1706,22 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 val req = JSONObject().put("type", "session.prompt").put("sessionID", sid).put("text", text)
                 if (atts.isNotEmpty()) req.put("attachments", org.json.JSONArray(atts.toList()))
                 if (sessions.find { it.id == sid }?.running == true) req.put("delivery", "steer")
+                /*
+                 * 追求目标: with the switch on, what was typed becomes the goal
+                 * the turn is judged against - the words as typed, which is
+                 * what `session.prompt`'s own `goal` field takes.
+                 */
+                if (goalMode && text.isNotBlank()) req.put("goal", text.trim())
                 request(req)
                 // The round button turns into stop the moment the prompt
                 // leaves, the way Claude's does, rather than waiting for the
                 // first reply part to come back.
                 setRunning(sid, true)
                 attachments.clear()
+                // A sent message is no longer a draft; without this the words
+                // came back in the box on the next visit.
+                drafts.remove(sid)
+                draftStore.edit().remove("draft.$sid").apply()
             },
             onStop = { currentSession?.let { request(JSONObject().put("type", "session.abort").put("sessionID", it)) } },
             onNew = { newSession() },
@@ -1466,7 +1755,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     // list's field; on a phone the list is the page behind it.
                     onSearch = { closeDrawer() },
                     onSeeAll = { openDrawer() },
-                    onCode = { closeDrawer() },
+                    onPlugins = { showPlugins = true; closeDrawer() },
                     onLongPress = { sheetTarget = it },
                 )
             }
@@ -1706,6 +1995,123 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     }
 
     /*
+     * The terminal drawer.
+     *
+     * `shell.open` gives a pty in the conversation's folder; `shell.data`
+     * streams what it prints, and `shell.input` types into it. The desktop keeps
+     * this at the foot of the conversation permanently; on a tablet it is a
+     * sheet, because a pty that shares the screen with the transcript shrinks
+     * both. The gateway forwards the output of the shells a phone opened and
+     * holds back every other window's, so what arrives here is this pane's own.
+     */
+    if (showTerminal) {
+        val root = sessions.find { it.id == currentSession }?.directory.orEmpty()
+        /*
+         * Opened fully rather than at Material's half height: this sheet is a
+         * terminal with a field under it, and half-expanded cut the field off
+         * the bottom of the screen - the pane could be read and not typed into.
+         */
+        val termSheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { showTerminal = false },
+            sheetState = termSheet,
+            containerColor = MaterialTheme.colorScheme.background,
+        ) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("终端", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        root.substringAfterLast('\\').substringAfterLast('/').ifBlank { "~" },
+                        fontSize = 11.sp,
+                        color = LocalMuted.current,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Box(
+                        Modifier.size(30.dp).clickable {
+                            // A terminal that has printed nothing and been
+                            // typed into nothing is simply thrown away.
+                            if (terminalText.isNotBlank()) {
+                                terminalText = ""
+                                terminalId = null
+                            }
+                        },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Outlined.DeleteOutline, contentDescription = "清屏", tint = LocalMuted.current, modifier = Modifier.size(16.dp))
+                    }
+                    Box(Modifier.size(30.dp).clickable { showTerminal = false }, contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.Close, contentDescription = "关闭", tint = LocalMuted.current, modifier = Modifier.size(17.dp))
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                // Opened on first show and kept while the sheet is up: a pty
+                // restarted every time the drawer opens loses its history and
+                // its working directory.
+                LaunchedEffect(root) {
+                    if (terminalId != null) return@LaunchedEffect
+                    val opened = runCatching {
+                        rpc(JSONObject().put("type", "shell.open").put("directory", root).put("cols", 100).put("rows", 40))
+                    }.getOrNull() ?: return@LaunchedEffect
+                    val id = opened.optJSONObject("data")?.optString("shellID").orEmpty()
+                    if (id.isBlank()) return@LaunchedEffect
+                    terminalId = id
+                    val attached = runCatching { rpc(JSONObject().put("type", "shell.attach").put("shellID", id)) }.getOrNull()
+                    val seen = attached?.optJSONObject("data")?.optString("data").orEmpty()
+                    if (seen.isNotBlank()) terminalText = seen.takeLast(8000)
+                }
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(360.dp)
+                        .background(if (LocalBg.current == DarkBg) Color(0xFF0D0D0D) else Color(0xFF1B1B1B), RoundedCornerShape(10.dp))
+                        .padding(8.dp),
+                ) {
+                        // A pty speaks in escape sequences: colours, cursor moves, and the
+                        // `]0;title` a PowerShell prompt sets. A Text cannot act
+                        // on any of them, so they are stripped rather than shown
+                        // as `[?9001h[?1004h` at the head of every session.
+                        val lines = stripAnsi(terminalText).lineSequence().toList().takeLast(400)
+                        LazyColumn(Modifier.fillMaxSize()) {
+                        items(lines.size.coerceAtLeast(1)) { i ->
+                            Text(
+                                lines.getOrElse(i) { "" }.ifEmpty { " " },
+                                fontSize = 11.sp,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                color = Color(0xFFE6E6E0),
+                                softWrap = true,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    terminalInput,
+                    { terminalInput = it },
+                    Modifier.fillMaxWidth(),
+                    placeholder = { Text("输入命令后回车", fontSize = 13.sp, color = LocalMuted.current) },
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+                    shape = RoundedCornerShape(10.dp),
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(
+                        {
+                            val id = terminalId ?: return@TextButton
+                            val line = terminalInput + "\r"
+                            request(JSONObject().put("type", "shell.input").put("shellID", id).put("data", line))
+                            terminalInput = ""
+                        },
+                    ) { Text("运行") }
+                }
+            }
+        }
+    }
+
+    /*
      * The project browser: the folder walked one level at a time, text files
      * shown as they are. The desktop has this as a permanent rail; on a tablet
      * it belongs in a sheet, opened from the header, and it is the shortest way
@@ -1801,6 +2207,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             val r = runCatching { rpc(JSONObject().put("type", "git.status").put("directory", root)) }.getOrNull()
             val data = r?.optJSONObject("data") ?: return@LaunchedEffect
             changeBranch = data.optString("branch")
+            /*
+             * A folder that is not a repository has no changes, and saying only
+             * that is a lie of omission: the reader closes the panel believing
+             * the tree is clean. `repo: false` is the answer, and it is shown.
+             */
+            changesNoRepo = data.has("repo") && !data.optBoolean("repo")
+            changesNoGit = data.has("installed") && !data.optBoolean("installed")
             branches.clear()
             runCatching { rpc(JSONObject().put("type", "git.branches").put("directory", root)) }
                 .getOrNull()
@@ -1819,7 +2232,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 }
             }
         }
-        ModalBottomSheet(onDismissRequest = { showChanges = false }, containerColor = MaterialTheme.colorScheme.background) {
+        /*
+         * Fully expanded: with changes in the tree this sheet carries a file
+         * list and a commit card under it, and half a screen cut the card off.
+         */
+        val changesSheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { showChanges = false },
+            sheetState = changesSheet,
+            containerColor = MaterialTheme.colorScheme.background,
+        ) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("本次改动", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
@@ -1883,7 +2305,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 }
                 Spacer(Modifier.height(10.dp))
                 if (changedFiles.isEmpty()) {
-                    Text("没有未提交的改动", fontSize = 13.sp, color = LocalMuted.current)
+                    Text(
+                        when {
+                            changesNoGit -> "这台电脑上没有 git"
+                            changesNoRepo -> "这个文件夹不是 git 仓库"
+                            else -> "没有未提交的改动"
+                        },
+                        fontSize = 13.sp,
+                        color = LocalMuted.current,
+                    )
                 } else {
                     LazyColumn(Modifier.fillMaxWidth().heightIn(max = 460.dp)) {
                         items(changedFiles.size) { i ->
@@ -1912,6 +2342,86 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 )
                                 Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(14.dp))
                             }
+                        }
+                    }
+                }
+                /*
+                 * Committing, which the desktop's changes rail has and the phone
+                 * did not: `git.commitMessage` writes the message (the model's,
+                 * over the fallback), and `git.commit` takes it. A phone that can
+                 * read the diff but not close it out is half the rail.
+                 */
+                if (changedFiles.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    val message = commitMessage
+                    OutlinedTextField(
+                        message,
+                        { commitMessage = it },
+                        Modifier.fillMaxWidth(),
+                        placeholder = { Text("提交说明", fontSize = 13.sp, color = LocalMuted.current) },
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
+                        maxLines = 3,
+                        shape = RoundedCornerShape(10.dp),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        if (commitBusy) {
+                            androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = LocalMuted.current)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        TextButton(
+                            {
+                                commitBusy = true
+                                scope.launch {
+                                    val written = runCatching {
+                                        rpc(
+                                            JSONObject().put("type", "git.commitMessage").put("directory", root)
+                                                .put("paths", org.json.JSONArray(changedFiles.toList())),
+                                            60_000,
+                                        )
+                                    }.getOrNull()?.optJSONObject("data")?.optString("message").orEmpty()
+                                    if (written.isNotBlank()) {
+                                        commitMessage = written
+                                        withContext(Dispatchers.Main) { Toast.makeText(context, "已生成提交说明", Toast.LENGTH_SHORT).show() }
+                                    } else {
+                                        withContext(Dispatchers.Main) { Toast.makeText(context, "没能生成提交说明", Toast.LENGTH_SHORT).show() }
+                                    }
+                                    withContext(Dispatchers.Main) { commitBusy = false }
+                                }
+                            },
+                            enabled = !commitBusy,
+                        ) { Text("生成说明") }
+                        Spacer(Modifier.weight(1f))
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = LocalText.current,
+                            modifier = Modifier.clickable(enabled = !commitBusy && commitMessage.isNotBlank() && changedFiles.isNotEmpty()) {
+                                commitBusy = true
+                                scope.launch {
+                                    val res = runCatching {
+                                        rpc(
+                                            JSONObject().put("type", "git.commit").put("directory", root)
+                                                .put("message", commitMessage.trim())
+                                                .put("includeUnstaged", true),
+                                            60_000,
+                                        )
+                                    }.getOrNull()
+                                    val ok = res?.optJSONObject("data")?.optBoolean("ok") == true
+                                    val hash = res?.optJSONObject("data")?.optString("hash").orEmpty()
+                                    withContext(Dispatchers.Main) {
+                                        commitBusy = false
+                                        if (ok) {
+                                            Toast.makeText(context, "已提交 ${hash.take(8)}", Toast.LENGTH_SHORT).show()
+                                            changedFiles.clear()
+                                            commitMessage = ""
+                                        } else {
+                                            Toast.makeText(context, res?.optJSONObject("data")?.optString("error").orEmpty().ifBlank { "提交失败" }, Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                }
+                            },
+                        ) {
+                            Text("提交", fontSize = 14.sp, color = LocalBg.current, modifier = Modifier.padding(horizontal = 18.dp, vertical = 9.dp))
                         }
                     }
                 }
@@ -2163,6 +2673,152 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             }
         }
     }
+    /*
+     * 技能与插件: the desktop's plugins page.
+     *
+     * Two halves read side by side, as MiMo's page reads them: MCP servers
+     * (`mcp.list`) and the folder's skills (`skill.list`). A skill's switch
+     * writes `disabledSkills` through `config.set`, which is exactly what the
+     * desktop's own page does; a server's switch is `mcp.toggle`. Either half
+     * answering alone is shown rather than the whole page failing.
+     */
+    if (showPlugins) {
+        val dir = sessions.find { it.id == currentSession }?.directory.orEmpty()
+        LaunchedEffect(dir, showPlugins) {
+            pluginSkills.clear()
+            pluginServers.clear()
+            pluginError = ""
+            val listed = runCatching { rpc(JSONObject().put("type", "mcp.list")) }.getOrNull()
+            listed?.optJSONObject("data")?.optJSONArray("servers")?.let { arr ->
+                for (i in 0 until arr.length()) arr.optJSONObject(i)?.let { pluginServers.add(it) }
+            }
+            val readFail = listed == null
+            val skillsRes = runCatching { rpc(JSONObject().put("type", "skill.list").put("directory", dir)) }.getOrNull()
+            skillsRes?.optJSONObject("data")?.optJSONArray("skills")?.let { arr ->
+                for ((i, item) in (0 until arr.length()).withIndex()) {
+                    val skill = arr.optJSONObject(i) ?: continue
+                    pluginSkills.add(skill)
+                }
+            }
+            if (readFail && skillsRes == null) pluginError = "读取插件失败"
+        }
+        ModalBottomSheet(onDismissRequest = { showPlugins = false }, containerColor = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("技能与插件", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+                    Spacer(Modifier.weight(1f))
+                    if (pluginBusy.isNotBlank()) {
+                        androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = LocalMuted.current)
+                    } else {
+                        Box(Modifier.size(30.dp).clickable { showPlugins = false; showPlugins = true }, contentAlignment = Alignment.Center) {
+                            Icon(Icons.Outlined.Refresh, contentDescription = "刷新", tint = LocalMuted.current, modifier = Modifier.size(17.dp))
+                        }
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    if (pluginError.isNotBlank()) pluginError else "在这里开关本项目的技能与 MCP 服务。",
+                    fontSize = 12.sp,
+                    color = if (pluginError.isNotBlank()) MaterialTheme.colorScheme.error else LocalMuted.current,
+                )
+                Spacer(Modifier.height(10.dp))
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 520.dp)) {
+                    if (pluginServers.isNotEmpty()) {
+                        item { SectionLabel("MCP 服务") }
+                        items(pluginServers.size) { index ->
+                            val server = pluginServers[index]
+                            val name = server.optString("name")
+                            val status = server.optString("status")
+                            val on = status != "disabled"
+                            PluginRow(
+                                title = name,
+                                subtitle = when (status) {
+                                    "ready" -> "已连接 · ${server.optInt("tools")} 个工具"
+                                    "disabled" -> "已停用"
+                                    "failed" -> server.optString("error").ifBlank { "连接失败" }
+                                    else -> status.ifBlank { "未连接" }
+                                },
+                                on = on,
+                                busy = pluginBusy == "mcp:$name",
+                            ) {
+                                pluginBusy = "mcp:$name"
+                                scope.launch {
+                                    val res = runCatching { rpc(JSONObject().put("type", "mcp.toggle").put("name", name), 60_000) }.getOrNull()
+                                    res?.optJSONObject("data")?.optJSONArray("servers")?.let { arr ->
+                                        val next = mutableListOf<JSONObject>()
+                                        for (i in 0 until arr.length()) arr.optJSONObject(i)?.let { next.add(it) }
+                                        withContext(Dispatchers.Main) {
+                                            pluginServers.clear()
+                                            pluginServers.addAll(next)
+                                        }
+                                    }
+                                    withContext(Dispatchers.Main) { pluginBusy = "" }
+                                }
+                            }
+                        }
+                        item { Spacer(Modifier.height(6.dp)) }
+                    }
+                    if (pluginSkills.isNotEmpty()) {
+                        item { SectionLabel("技能") }
+                        items(pluginSkills.size) { index ->
+                            val skill = pluginSkills[index]
+                            val name = skill.optString("name")
+                            val enabled = skill.optBoolean("enabled", true)
+                            val title = skill.optJSONObject("localizations")?.optJSONObject("zh-CN")?.optString("displayName").orEmpty().ifBlank { name }
+                            PluginRow(
+                                title = title,
+                                subtitle = skill.optString("description"),
+                                on = enabled,
+                                busy = pluginBusy == "skill:$name",
+                            ) {
+                                val next = !enabled
+                                pluginBusy = "skill:$name"
+                                scope.launch {
+                                    /*
+                                     * MiMo's write: `disabledSkills` is the whole
+                                     * list of off ones, so what goes back is the
+                                     * old list with this name taken out or put in
+                                     * - read fresh, because another window may
+                                     * have changed it since this page opened.
+                                     */
+                                    val cfg = runCatching { rpc(JSONObject().put("type", "config.get")) }.getOrNull()
+                                    val before = cfg?.optJSONObject("data")?.optJSONObject("config")?.optJSONArray("disabledSkills")
+                                    val list = mutableListOf<String>()
+                                    if (before != null) for (i in 0 until before.length()) before.optString(i).takeIf { it.isNotBlank() }?.let { list.add(it) }
+                                    list.removeAll { it == name }
+                                    if (!next) list.add(name)
+                                    val patch = JSONObject().put("disabledSkills", org.json.JSONArray(list))
+                                    val ok = runCatching {
+                                        rpc(JSONObject().put("type", "config.set").put("patch", patch))
+                                    }.isSuccess
+                                    withContext(Dispatchers.Main) {
+                                        pluginBusy = ""
+                                        if (ok) {
+                                            val at = pluginSkills.indexOfFirst { it.optString("name") == name }
+                                            if (at >= 0) pluginSkills[at] = JSONObject(pluginSkills[at].toString()).put("enabled", next)
+                                        } else {
+                                            Toast.makeText(context, "开关没能保存", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (pluginServers.isEmpty() && pluginSkills.isEmpty() && pluginError.isBlank()) {
+                        item {
+                            Column(Modifier.fillMaxWidth().padding(top = 40.dp, bottom = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(Icons.Outlined.Build, contentDescription = null, tint = LocalMuted.current.copy(alpha = 0.55f), modifier = Modifier.size(56.dp))
+                                Spacer(Modifier.height(16.dp))
+                                Text("暂无插件", fontSize = 15.sp, color = LocalText.current)
+                                Spacer(Modifier.height(6.dp))
+                                Text("这个文件夹还没有可用的技能或 MCP 服务。", fontSize = 13.sp, color = LocalMuted.current)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     sheetTarget?.let { row ->
         ModalBottomSheet(onDismissRequest = { sheetTarget = null }, containerColor = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
@@ -2305,6 +2961,47 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         )
     }
 
+    /*
+     * 追求目标: rewriting an answered goal. The desktop edits the bar's line in
+     * place; a phone's soft keyboard over a single-line bar would hide the text
+     * being corrected, so it is a dialog.
+     */
+    goalEdit?.let { opening ->
+        var draft by remember(opening) { mutableStateOf(opening) }
+        AlertDialog(
+            onDismissRequest = { goalEdit = null },
+            title = { Text("编辑目标", fontSize = 16.sp) },
+            text = {
+                OutlinedTextField(
+                    draft,
+                    { draft = it },
+                    Modifier.fillMaxWidth(),
+                    placeholder = { Text("目标是什么", fontSize = 13.sp, color = LocalMuted.current) },
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
+                    shape = RoundedCornerShape(10.dp),
+                )
+            },
+            confirmButton = {
+                TextButton({
+                    val next = draft.trim()
+                    if (next.isNotBlank() && currentSession != null) {
+                        scope.launch {
+                            runCatching {
+                                rpc(JSONObject().put("type", "session.goal").put("sessionID", currentSession).put("condition", next))
+                            }.onFailure {
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "没能保存目标", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    }
+                    goalEdit = null
+                }) { Text("保存") }
+            },
+            dismissButton = { TextButton({ goalEdit = null }) { Text("取消") } },
+        )
+    }
+
     /* ---- 模型选择：每个可用 provider 一节，逐行切 session.model ---- */
     /* ---- 用量：30 天总计、按天、按模型（对齐桌面设置里的用量页） ---- */
     if (showUsage) {
@@ -2314,8 +3011,25 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     }
 
     if (modelPicker) {
-        ModalBottomSheet(onDismissRequest = { modelPicker = false }, containerColor = MaterialTheme.colorScheme.background) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
+        /*
+         * Fully expanded: the settings are longer than half a screen once the
+         * model list is in, and a half-height sheet put the last providers
+         * below the fold with no way to reach them - Material's sheet scrolls
+         * only its own content, and this one is a plain Column.
+         */
+        val settingsSheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { modelPicker = false },
+            sheetState = settingsSheet,
+            containerColor = MaterialTheme.colorScheme.background,
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 32.dp),
+            ) {
                 Text("会话设置", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
                 Spacer(Modifier.height(10.dp))
                 // ---- Agent: build / plan ----
@@ -2337,6 +3051,42 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         }
                     }
                 }
+                // ---- 权限级别: the desktop's access pill, ask / auto / full ----
+                /*
+                 * The one setting that decides whether a turn stops to ask at
+                 * all. It has been on the wire since the phone was written
+                 * (`session.access`) and had no control here, so a phone could
+                 * only answer cards the desktop's level produced.
+                 */
+                Text("权限", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(top = 14.dp, bottom = 2.dp))
+                /*
+                 * Full access is offered only once settings allow it - or while
+                 * it is already on, so it can be left - which is the desktop's
+                 * own rule (`ACCESS_LEVELS.filter`). Offering it regardless let
+                 * a phone hand out a level the app had switched off.
+                 */
+                val canFull = appConfig?.optBoolean("allowFullAccess") != false || accessOf(rowNow, appConfig) == "full"
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for ((level, word) in listOf("ask" to "每次询问", "auto" to "自动允许", "full" to "全部允许")) {
+                        if (level == "full" && !canFull) continue
+                        val active = accessOf(rowNow, appConfig) == level
+                        Surface(
+                            shape = RoundedCornerShape(15.dp),
+                            color = if (active) MaterialTheme.colorScheme.primary else LocalPill.current,
+                            modifier = Modifier.clickable(enabled = currentSession != null) {
+                                currentSession?.let { sid ->
+                                    scope.launch {
+                                        runCatching { rpc(JSONObject().put("type", "session.access").put("sessionID", sid).put("access", level)) }
+                                        val at2 = sessions.indexOfFirst { it.id == sid }
+                                    if (at2 >= 0) sessions[at2] = sessions[at2].copy(access = level, goalMode = sessions[at2].goalMode)
+                                    }
+                                }
+                            },
+                        ) {
+                            Text(word, fontSize = 13.sp, color = if (active) LocalBg.current else LocalText.current, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                        }
+                    }
+                }
                 // ---- Effort: the reasoning dial ----
                 Text("Effort", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(top = 14.dp, bottom = 2.dp))
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2354,6 +3104,23 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             Text(effort, fontSize = 14.sp, color = if (active) LocalBg.current else LocalText.current, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
                         }
                     }
+                }
+                // ---- 追求目标: the switch, beside the settings it shares a menu with ----
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 14.dp).clickable(enabled = currentSession != null) {
+                        val next = !goalMode
+                        goalMode = next
+                        currentSession?.let { sid ->
+                            scope.launch { runCatching { rpc(JSONObject().put("type", "session.goalMode").put("sessionID", sid).put("on", next)) } }
+                        }
+                    },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("追求目标", fontSize = 14.sp, color = LocalText.current)
+                        Text("持续推进，直到目标彻底达成", fontSize = 11.sp, color = LocalMuted.current)
+                    }
+                    GoalSwitch(goalMode)
                 }
                 // ---- Model ----
                 Text("模型", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(top = 14.dp, bottom = 2.dp))
@@ -3659,7 +4426,7 @@ fun DrawerContent(
     onProjects: () -> Unit,
     onScheduled: () -> Unit,
     onTasks: () -> Unit,
-    onCode: () -> Unit,
+    onPlugins: () -> Unit = {},
     onUsage: () -> Unit = {},
     onSearch: () -> Unit = {},
     onSeeAll: () -> Unit = {},
@@ -3682,7 +4449,13 @@ fun DrawerContent(
             Spacer(Modifier.height(26.dp))
             DrawerItem(Icons.Outlined.Folder, "项目") { onProjects() }
             Spacer(Modifier.height(18.dp))
-            DrawerItem(Icons.Outlined.Code, "Code") { onCode() }
+            /*
+             * The desktop's plugins page - skills and MCP servers side by
+             * side - had no phone counterpart at all: this row said "Code" and
+             * closed the drawer, which is a row that does nothing dressed as a
+             * row that does something.
+             */
+            DrawerItem(Icons.Outlined.Build, "技能与插件") { onPlugins() }
             Spacer(Modifier.height(18.dp))
             DrawerItem(Icons.Outlined.Schedule, "定时任务") { onScheduled() }
             Spacer(Modifier.height(18.dp))
@@ -3742,6 +4515,234 @@ fun DrawerItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: Str
 }
 
 /* ------------------------------------------------------------------ */
+/* 技能与插件 - one page's rows                                       */
+/* ------------------------------------------------------------------ */
+
+/** A heading inside the plugins list, at the size the desktop's sections use. */
+@Composable
+private fun SectionLabel(text: String) {
+    Text(text, fontSize = 12.sp, color = LocalMuted.current, modifier = Modifier.padding(top = 6.dp, bottom = 6.dp))
+}
+
+/**
+ * One plugin row: what it is, what state it is in, and a switch at the far end.
+ *
+ * The switch is drawn rather than a Material `Switch`, for the same reason the
+ * goal's is: MiMo's is a 38dp track, and Material's comes with its own ripples
+ * and thumb sizes that no amount of colouring makes look like this page.
+ */
+@Composable
+private fun PluginRow(title: String, subtitle: String, on: Boolean, busy: Boolean, onToggle: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 14.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (subtitle.isNotBlank()) {
+                Text(subtitle, fontSize = 11.5.sp, color = LocalMuted.current, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        Spacer(Modifier.width(10.dp))
+        Box(Modifier.size(width = 38.dp, height = 22.dp).clickable(enabled = !busy) { onToggle() }) {
+            GoalSwitch(on)
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* 追求目标 - the bar, its switch, and the plus menu's rows            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * MiMo's goal bar above the composer.
+ *
+ * One line: a target mark, the state in bold ("进行中" / "已暂停" / "已完成" /
+ * "受阻"), how long it has been running, then the goal itself. What the right
+ * end offers depends on whether the goal is still being pursued - a live goal
+ * can be dropped or its turn stopped, an answered one can be rewritten, run
+ * again, or put away. The bar is one line tall until the reader asks for more,
+ * because a long goal would otherwise take the whole composer.
+ */
+@Composable
+fun GoalBar(
+    goal: GoalInfo,
+    running: Boolean,
+    modifier: Modifier = Modifier,
+    onRemove: () -> Unit = {},
+    onResend: () -> Unit = {},
+    onEdit: () -> Unit = {},
+) {
+    // The four words the desktop's bar says, in its order of precedence.
+    val status = goal.doneStatus ?: if (running) "active" else "paused"
+    val live = goal.doneStatus == null
+    val label = when (status) {
+        "active" -> "进行中"
+        "paused" -> "已暂停"
+        "complete" -> "已完成"
+        else -> "受阻"
+    }
+    val accent = when (status) {
+        "active" -> MaterialTheme.colorScheme.primary
+        "complete" -> Color(0xFF2E7D32)
+        "blocked" -> MaterialTheme.colorScheme.error
+        else -> LocalMuted.current
+    }
+    var expanded by remember(goal.condition) { mutableStateOf(false) }
+    /*
+     * The clock, MiMo's: counting while the goal is being pursued and frozen at
+     * what it took once it is answered. Only the second reading matters
+     * afterwards, so the ticker stops as soon as the goal ends.
+     */
+    var now by remember(goal.condition) { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(status) {
+        while (status == "active") {
+            now = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+    val end = if (goal.doneAt > 0L) goal.doneAt else now
+    val seconds = ((end - goal.startedAt).coerceAtLeast(0L) / 1000).toInt()
+    val elapsed = if (goal.startedAt <= 0L) "" else if (seconds < 60) "${seconds}s" else "${seconds / 60}m ${seconds % 60}s"
+
+    Column(
+        modifier
+            .fillMaxWidth()
+            .background(LocalPill.current, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TargetMark(accent, Modifier.size(14.dp))
+            Spacer(Modifier.width(8.dp))
+            Row(Modifier.weight(1f).clickable { expanded = !expanded }, verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    buildString {
+                        append(label)
+                        if (elapsed.isNotEmpty()) append(" · ").append(elapsed)
+                        if (goal.attempts > 1) append(" · 第 ").append(goal.attempts).append(" 次")
+                        append("  ")
+                        append(goal.condition)
+                    },
+                    fontSize = 12.sp,
+                    color = LocalText.current,
+                    maxLines = if (expanded) 8 else 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            if (!live) {
+                GoalAction(Icons.Outlined.Edit, "编辑目标", onEdit)
+                GoalAction(Icons.Outlined.PlayArrow, "重新执行", onResend)
+                GoalAction(Icons.Filled.Close, "关闭", onRemove)
+            } else {
+                GoalAction(Icons.Outlined.DeleteOutline, "退出目标模式", onRemove)
+            }
+        }
+        // What the judge said, once there is something to quote: the desktop
+        // shows it as the bar's tooltip, and a phone has no hover.
+        if (!live && goal.doneReason.isNotBlank() && expanded) {
+            Spacer(Modifier.height(4.dp))
+            Text(goal.doneReason, fontSize = 11.sp, color = LocalMuted.current)
+        }
+    }
+}
+
+/** A target: three rings, the way MiMo draws one. */
+@Composable
+private fun TargetMark(color: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val r = size.minDimension / 2
+        val stroke = size.minDimension * 0.14f
+        drawCircle(color, radius = r - stroke / 2, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
+        drawCircle(color, radius = r * 0.52f, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
+        drawCircle(color, radius = r * 0.16f)
+    }
+}
+
+@Composable
+private fun GoalAction(icon: androidx.compose.ui.graphics.vector.ImageVector, what: String, onClick: () -> Unit) {
+    Box(Modifier.size(28.dp).clickable { onClick() }, contentAlignment = Alignment.Center) {
+        Icon(icon, contentDescription = what, tint = LocalMuted.current, modifier = Modifier.size(15.dp))
+    }
+}
+
+/** The plus menu's 追求目标 switch: a track and a knob, as the desktop draws it. */
+@Composable
+fun GoalSwitch(on: Boolean) {
+    val track = if (on) MaterialTheme.colorScheme.primary else LocalMuted.current.copy(alpha = 0.3f)
+    Box(Modifier.width(38.dp).height(22.dp).background(track, RoundedCornerShape(11.dp)), contentAlignment = Alignment.CenterStart) {
+        Box(
+            Modifier
+                .padding(horizontal = 2.dp)
+                .offset { androidx.compose.ui.unit.IntOffset(if (on) 16.dp.roundToPx() else 0, 0) }
+                .size(18.dp)
+                .background(if (on || LocalBg.current == DarkBg) Color.White else Color.White, CircleShape),
+        )
+    }
+}
+
+/** One row of the plus menu: a glyph, what it does, and how it ends. */
+@Composable
+private fun PlusRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled) { onClick() }
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = if (enabled) LocalText.current else LocalMuted.current.copy(alpha = 0.5f), modifier = Modifier.size(17.dp))
+        Spacer(Modifier.width(10.dp))
+        Text(label, fontSize = 14.sp, color = if (enabled) LocalText.current else LocalMuted.current.copy(alpha = 0.5f))
+    }
+}
+
+/**
+ * The plus menu's 技能 submenu: MiMo opens a search box over the project's
+ * skills, and picking one writes `/<name>` into the box - which is exactly
+ * what the desktop's addSkill does, since a skill is named in the message.
+ */
+@Composable
+private fun SkillPicker(skills: List<String>, onDismiss: () -> Unit, onPick: (String) -> Unit) {
+    var query by remember { mutableStateOf("") }
+    val shown = remember(query, skills) {
+        val needle = query.trim().lowercase()
+        if (needle.isEmpty()) skills else skills.filter { it.lowercase().contains(needle) }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("技能", fontSize = 16.sp) },
+        text = {
+            Column(Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    query,
+                    { query = it },
+                    Modifier.fillMaxWidth(),
+                    placeholder = { Text("搜索技能", fontSize = 13.sp, color = LocalMuted.current) },
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
+                    shape = RoundedCornerShape(10.dp),
+                )
+                Spacer(Modifier.height(6.dp))
+                if (shown.isEmpty()) {
+                    Text("没有匹配的技能", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(vertical = 10.dp))
+                } else {
+                    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 340.dp)) {
+                        items(shown.size) { i ->
+                            val name = shown[i]
+                            Row(
+                                Modifier.fillMaxWidth().clickable { onPick(name) }.padding(vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text("/$name", fontSize = 14.sp, color = LocalText.current)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onDismiss) { Text("取消") } },
+    )
+}
+
+/* ------------------------------------------------------------------ */
 /* Connect                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -3794,8 +4795,54 @@ fun ConnectScreen(url: String, token: String, onConnect: (String, String) -> Uni
 /* ------------------------------------------------------------------ */
 
 @Composable
-fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSONObject>) -> Unit, onStop: () -> Unit, onNew: () -> Unit, modifier: Modifier = Modifier, onMic: () -> Unit = {}, onModel: () -> Unit = {}, running: Boolean = false, inject: String? = null, onInjected: () -> Unit = {}, pickImages: () -> Unit = {}, attachments: List<JSONObject> = emptyList(), onRemoveAttachment: (Int) -> Unit = {}, listening: Boolean = false, transcribing: Boolean = false, commands: List<Pair<String, String>> = emptyList(), queued: List<Pair<String, String>> = emptyList(), onQueueRemove: (String) -> Unit = {}, onQueueSend: (String) -> Unit = {}) {
-    var text by remember { mutableStateOf("") }
+fun InputCapsule(
+    enabled: Boolean,
+    modelLabel: String,
+    onSend: (String, List<JSONObject>) -> Unit,
+    onStop: () -> Unit,
+    onNew: () -> Unit,
+    modifier: Modifier = Modifier,
+    onMic: () -> Unit = {},
+    onModel: () -> Unit = {},
+    running: Boolean = false,
+    inject: String? = null,
+    onInjected: () -> Unit = {},
+    pickImages: () -> Unit = {},
+    attachments: List<JSONObject> = emptyList(),
+    onRemoveAttachment: (Int) -> Unit = {},
+    listening: Boolean = false,
+    transcribing: Boolean = false,
+    commands: List<Pair<String, String>> = emptyList(),
+    queued: List<Pair<String, String>> = emptyList(),
+    onQueueRemove: (String) -> Unit = {},
+    onQueueSend: (String) -> Unit = {},
+    /* The plus menu's other rows, as the desktop's has them. */
+    onFiles: () -> Unit = {},
+    onTerminal: () -> Unit = {},
+    goalMode: Boolean = false,
+    onToggleGoalMode: () -> Unit = {},
+    /** The folder's skills, by name, for the plus menu's 技能 submenu. */
+    skills: List<String> = emptyList(),
+    /** 追求目标: the goal being pursued, drawn above the card as MiMo's bar is. */
+    goal: GoalInfo? = null,
+    onGoalRemove: () -> Unit = {},
+    onGoalResend: () -> Unit = {},
+    onGoalEdit: () -> Unit = {},
+    /** Which conversation this box belongs to, so its draft can be put back. */
+    draftKey: String = "",
+    draft: String = "",
+    onDraftChange: (String) -> Unit = {},
+) {
+    /*
+     * The draft is the caller's: one per conversation, kept across a switch and
+     * a restart, which is what the desktop's `composer-drafts.ts` does. Held in
+     * the app rather than here because this composable is remounted whenever
+     * the session changes - which is exactly when a local `remember` loses the
+     * words.
+     */
+    var text by remember(draftKey) { mutableStateOf(draft) }
+    LaunchedEffect(draftKey) { text = draft }
+    LaunchedEffect(text) { onDraftChange(text) }
     LaunchedEffect(inject) { if (!inject.isNullOrEmpty()) { text = inject; onInjected() } }
     /*
      * Claude's composer card is inset from its pane on both sides - 59dp on the
@@ -3851,6 +4898,28 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
                     }
                 }
             }
+        }
+        /*
+         * The bar and the card in one column inside the floating Box: the slash
+         * menu is the Box's other child and must stay absolutely placed above
+         * the whole block rather than pushing it down.
+         */
+        Column(Modifier.fillMaxWidth()) {
+        /*
+         * 追求目标: MiMo's bar, above the card and inside the same inset, so the
+         * goal and the words that set it read as one block. The desktop has had
+         * this all along; the phone could set no goal at all, so a conversation
+         * being pushed toward a condition looked exactly like one that was not.
+         */
+        if (goal != null) {
+            GoalBar(
+                goal = goal,
+                running = running,
+                modifier = Modifier.padding(bottom = 6.dp),
+                onRemove = onGoalRemove,
+                onResend = onGoalResend,
+                onEdit = onGoalEdit,
+            )
         }
         Surface(
             shape = RoundedCornerShape(20.dp),
@@ -3948,6 +5017,7 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     var plusMenu by remember { mutableStateOf(false) }
+                    var skillPicker by remember { mutableStateOf(false) }
                     // Claude's + and mic both sit in a soft pill circle; the
                     // round button on the right is ink until there is something
                     // to send, then the theme's accent.
@@ -3955,11 +5025,56 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
                         Modifier.size(36.dp).background(LocalPill.current, CircleShape).clickable(enabled = enabled) { plusMenu = true },
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(Icons.Filled.Add, contentDescription = "新对话或照片", tint = LocalText.current, modifier = Modifier.size(20.dp))
-                        DropdownMenu(expanded = plusMenu, onDismissRequest = { plusMenu = false }) {
-                            DropdownMenuItem(text = { Text("新对话") }, onClick = { plusMenu = false; onNew() })
-                            DropdownMenuItem(text = { Text("照片") }, onClick = { plusMenu = false; pickImages() })
+                        Icon(Icons.Filled.Add, contentDescription = "更多", tint = LocalText.current, modifier = Modifier.size(20.dp))
+                        /*
+                         * The desktop's plus menu, in the same order: files,
+                         * then the terminal, then 追求目标 as a switch rather
+                         * than a command, then the skills submenu. The phone had
+                         * "new chat" and "photo" here and nothing else, so the
+                         * two things the desktop's menu is actually for - aiming
+                         * a turn at a goal, and reaching a skill by name - were
+                         * unreachable from a tablet.
+                         */
+                        DropdownMenu(
+                            expanded = plusMenu,
+                            onDismissRequest = { plusMenu = false },
+                            modifier = Modifier.width(272.dp).background(MaterialTheme.colorScheme.surface),
+                        ) {
+                            PlusRow(Icons.AutoMirrored.Outlined.Article, "附件文件", enabled) { plusMenu = false; onFiles() }
+                            PlusRow(Icons.Outlined.Code, "打开终端", enabled) { plusMenu = false; onTerminal() }
+                            HorizontalDivider(Modifier.padding(vertical = 6.dp), color = LocalMuted.current.copy(alpha = 0.15f))
+                            // 追求目标: a switch, not a command - what is typed next
+                            // becomes the goal and the turn is judged against it.
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable(enabled = enabled) { onToggleGoalMode() }
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("追求目标", fontSize = 14.sp, color = LocalText.current)
+                                    Text("持续推进，直到目标彻底达成", fontSize = 11.sp, color = LocalMuted.current, maxLines = 1)
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                GoalSwitch(on = goalMode)
+                            }
+                            HorizontalDivider(Modifier.padding(vertical = 6.dp), color = LocalMuted.current.copy(alpha = 0.15f))
+                            PlusRow(Icons.Outlined.Build, "技能", enabled && skills.isNotEmpty()) { plusMenu = false; skillPicker = true }
+                            HorizontalDivider(Modifier.padding(vertical = 6.dp), color = LocalMuted.current.copy(alpha = 0.15f))
+                            PlusRow(Icons.Filled.Add, "新对话", enabled) { plusMenu = false; onNew() }
+                            PlusRow(Icons.Outlined.Visibility, "照片", enabled) { plusMenu = false; pickImages() }
                         }
+                    }
+                    if (skillPicker) {
+                        SkillPicker(
+                            skills = skills,
+                            onDismiss = { skillPicker = false },
+                            onPick = { name ->
+                                skillPicker = false
+                                text = (if (text.isBlank()) "" else text.trimEnd() + " ") + "/$name "
+                            },
+                        )
                     }
                     Spacer(Modifier.width(8.dp))
                     Surface(
@@ -4061,6 +5176,7 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
                     }
                 }
             }
+        }
         }
     }
 }
