@@ -64,6 +64,7 @@ import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
@@ -1429,7 +1430,32 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             Box(Modifier.size(40.dp).clickable { showTasks = true }, contentAlignment = Alignment.Center) {
                                 Icon(Icons.Outlined.Schedule, contentDescription = "任务", tint = LocalText.current, modifier = Modifier.size(19.dp))
                             }
-                            IconButton({ privacy = !privacy }, Modifier.size(40.dp)) { GhostGlyph(active = privacy, size = 21.dp) }
+                            /*
+                             * Claude closes this header with the overflow rather
+                             * than a glyph of its own; the actions that used to
+                             * sit here (the privacy blur among them) belong in
+                             * that menu, which is where the phone keeps the ones
+                             * with no room of their own.
+                             */
+                            var headerMenu by remember { mutableStateOf(false) }
+                            Box(Modifier.size(40.dp).clickable { headerMenu = true }, contentAlignment = Alignment.Center) {
+                                Icon(Icons.Outlined.MoreVert, contentDescription = "更多", tint = LocalText.current, modifier = Modifier.size(20.dp))
+                                DropdownMenu(expanded = headerMenu, onDismissRequest = { headerMenu = false }) {
+                                    DropdownMenuItem(
+                                        text = { Text(if (privacy) "关闭隐私模糊" else "隐私模糊") },
+                                        leadingIcon = { GhostGlyph(active = privacy, size = 18.dp) },
+                                        onClick = { privacy = !privacy; headerMenu = false },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("重命名") },
+                                        onClick = { headerMenu = false; renameTarget = sessions.find { it.id == currentSession } },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(if (runningOnly) "显示全部会话" else "只看运行中") },
+                                        onClick = { headerMenu = false; runningOnly = !runningOnly },
+                                    )
+                                }
+                            }
                         }
                         // The conversation pane, and only it, rides above the IME.
                         Column(Modifier.weight(1f).fillMaxWidth().windowInsetsPadding(WindowInsets.ime.only(WindowInsetsSides.Bottom))) {
@@ -2112,7 +2138,20 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                         Box(Modifier.fillMaxWidth()) {
                             Column(
                                 Modifier
-                                    .then(if (isUser) Modifier.align(Alignment.CenterEnd).fillMaxWidth(0.92f) else Modifier.fillMaxWidth())
+                                    /*
+                                     * Claude leaves the reader's own turn clear of
+                                     * the pane's right edge - 260px on the pad,
+                                     * where this ran to within 30. The cap keeps
+                                     * a long prompt from becoming a wall, and the
+                                     * inset keeps the bubble off the frame.
+                                     */
+                                    .then(
+                                        if (isUser) Modifier
+                                            .align(Alignment.CenterEnd)
+                                            .fillMaxWidth(0.88f)
+                                            .padding(end = 12.dp)
+                                        else Modifier.fillMaxWidth()
+                                    )
                                     // Claude renders assistant turns straight on the
                                     // page - only user turns get a bubble.
                                     .background(
