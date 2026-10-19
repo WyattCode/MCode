@@ -20,6 +20,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -299,7 +300,15 @@ private fun nextErrId(): Int = ++errCounter
 
 sealed class Item {
     abstract val key: String
-    data class Msg(val id: String, val role: String, var text: String, val images: List<String> = emptyList()) : Item() { override val key = "msg.$id" }
+    data class Msg(val id: String, val role: String, var text: String, val images: List<String> = emptyList(), val at: Long = 0L) : Item() { override val key = "msg.$id" }
+
+    /**
+     * Claude's wave divider: a wavy rule across the pane with the clock in the
+     * middle, marking where a later stretch of the conversation begins. It is
+     * inserted between turns that are more than five minutes apart, which is
+     * the gap at which the transcript stops reading as one sitting.
+     */
+    data class Gap(val id: String, val label: String) : Item() { override val key = "gap.$id" }
     /*
      * One tool call, the way the desktop's step list draws it: a verb that
      * says where the call is, and what it was about (`title`). The phone used
@@ -929,7 +938,21 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         } else {
             val body = text.toString().trim()
             if (body.isNotEmpty() || role == "user" || images.isNotEmpty()) {
-                items.add(Item.Msg(id, role, body.ifEmpty { if (images.isEmpty()) "…" else "" }, images))
+                /*
+                 * A later sitting gets the wave divider: Claude puts one where
+                 * the conversation resumes after a gap, with the clock in the
+                 * middle. Five minutes is where a transcript stops reading as
+                 * one stretch; a shorter pause needs no mark.
+                 */
+                val at = message.optJSONObject("time")?.optLong("created", 0L) ?: 0L
+                if (role == "user" && at > 0L) {
+                    val previous = items.lastOrNull { it is Item.Msg } as? Item.Msg
+                    if (previous != null && previous.at > 0L && at - previous.at > 5 * 60_000L) {
+                        val label = android.text.format.DateFormat.format("HH:mm", at).toString()
+                        items.add(Item.Gap("gap.${previous.id}.$id", label))
+                    }
+                }
+                items.add(Item.Msg(id, role, body.ifEmpty { if (images.isEmpty()) "…" else "" }, images, at))
                 messageIndex[id] = items.size - 1
             }
         }
@@ -2312,6 +2335,7 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                         PermCard(item.copy(queueTotal = total, queuePosition = at), onPerm = onPerm, onPermReason = onPermReason)
                     }
                     is Item.Quest -> QuestCard(item, onAnswer = onAnswer)
+                    is Item.Gap -> GapRule(item.label)
                     is Item.Err -> {
                         // A broken turn is a card, not a red line lost in the
                         // prose: the desktop gives it its own surface and its
@@ -2388,6 +2412,53 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
  * The desktop keeps a working mark under the last thing said so the page never
  * looks finished mid-turn; this is the same idea at phone size.
  */
+/**
+ * The wave rule Claude draws between sittings.
+ *
+ * Measured off its own divider on the pad: 9px tall at 400dpi (about 3dp), a
+ * 183,183,181 hairline that undulates across the pane, broken in the middle for
+ * the clock. A straight rule would read as a section break in a document; the
+ * wave is what makes it read as time passing.
+ */
+/** One wavy rule: quadratic humps at the pitch measured off Claude's divider. */
+@Composable
+private fun WaveLine(ink: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier.height(9.dp)) {
+        val amp = size.height / 3f
+        val mid = size.height / 2f
+        val step = with(density) { 9.dp.toPx() }
+        val path = androidx.compose.ui.graphics.Path()
+        path.moveTo(0f, mid)
+        var x = 0f
+        var up = true
+        while (x < size.width) {
+            val nx = (x + step).coerceAtMost(size.width)
+            path.quadraticBezierTo((x + nx) / 2f, if (up) mid - amp * 2f else mid + amp * 2f, nx, mid)
+            up = !up
+            x = nx
+        }
+        drawPath(path, ink, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5f))
+    }
+}
+
+@Composable
+fun GapRule(label: String) {
+    val ink = if (LocalBg.current == DarkBg) Color(0xFF4A4A48) else Color(0xFFB7B7B5)
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        WaveLine(ink, Modifier.weight(1f))
+        Text(
+            label,
+            fontSize = 11.sp,
+            color = LocalMuted.current,
+            modifier = Modifier.padding(horizontal = 8.dp),
+        )
+        WaveLine(ink, Modifier.weight(1f))
+    }
+}
+
 @Composable
 fun WorkingLine() {
     val transition = rememberInfiniteTransition(label = "working")
