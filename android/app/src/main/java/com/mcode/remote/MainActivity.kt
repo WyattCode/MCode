@@ -2693,11 +2693,16 @@ fun ConnectScreen(url: String, token: String, onConnect: (String, String) -> Uni
 fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSONObject>) -> Unit, onStop: () -> Unit, onNew: () -> Unit, modifier: Modifier = Modifier, onMic: () -> Unit = {}, onModel: () -> Unit = {}, running: Boolean = false, inject: String? = null, onInjected: () -> Unit = {}, pickImages: () -> Unit = {}, attachments: List<JSONObject> = emptyList(), onRemoveAttachment: (Int) -> Unit = {}, listening: Boolean = false, transcribing: Boolean = false) {
     var text by remember { mutableStateOf("") }
     LaunchedEffect(inject) { if (!inject.isNullOrEmpty()) { text = inject; onInjected() } }
-    Box(modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 10.dp)) {
+    /*
+     * Claude's composer card is inset from its pane on both sides - 59dp on the
+     * pad, about a quarter of the pane - with 20dp corners and no drop shadow;
+     * it sits on the page as a white plate, not as a floating sheet. This used
+     * to run the full width of the pane at 28dp with an 8dp shadow.
+     */
+    Box(modifier.fillMaxWidth().padding(start = 118.dp, end = 113.dp, top = 8.dp, bottom = 8.dp)) {
         Surface(
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(20.dp),
             color = MaterialTheme.colorScheme.surface,
-            shadowElevation = 8.dp,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
