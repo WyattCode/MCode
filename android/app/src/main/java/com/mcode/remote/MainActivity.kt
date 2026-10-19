@@ -613,9 +613,9 @@ fun MCodeTheme(content: @Composable () -> Unit) {
     val pill = if (dark) DarkPill else CreamPill
     val line = if (dark) DarkLine else CreamLine
     val scheme = if (dark) {
-        darkColorScheme(background = bg, surface = DarkSurface, onBackground = DarkText, onSurface = DarkText, primary = Ember, secondary = DarkPill, onSecondary = DarkText, surfaceVariant = DarkPill, onSurfaceVariant = DarkMuted, outline = DarkLine)
+        darkColorScheme(background = bg, surface = DarkSurface, onBackground = DarkText, onSurface = DarkText, primary = Ember, secondary = DarkPill, onSecondary = DarkText, surfaceVariant = DarkPill, onSurfaceVariant = DarkMuted, outline = DarkLine, surfaceTint = Color.Transparent)
     } else {
-        lightColorScheme(background = bg, surface = CreamSurface, onBackground = Ink, onSurface = Ink, primary = Ember, secondary = CreamPill, onSecondary = Ink, surfaceVariant = CreamPill, onSurfaceVariant = InkMuted, outline = CreamLine)
+        lightColorScheme(background = bg, surface = CreamSurface, onBackground = Ink, onSurface = Ink, primary = Ember, secondary = CreamPill, onSecondary = Ink, surfaceVariant = CreamPill, onSurfaceVariant = InkMuted, outline = CreamLine, surfaceTint = Color.Transparent)
     }
     CompositionLocalProvider(
         LocalBg provides bg,
@@ -2925,6 +2925,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         var busy by remember(id) { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { if (!busy) keyTarget = null },
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = LocalText.current,
+            textContentColor = LocalText.current,
             title = { Text(name, fontSize = 16.sp) },
             text = {
                 Column(Modifier.fillMaxWidth()) {
@@ -3105,6 +3108,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     deleteTarget?.let { row ->
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = LocalText.current,
+            textContentColor = LocalText.current,
             title = { Text("删除会话？") },
             text = { Text("「${row.title}」及其对话记录将被永久移除。") },
             confirmButton = {
@@ -3120,6 +3126,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         var newTitle by remember(row.id) { mutableStateOf(row.title) }
         AlertDialog(
             onDismissRequest = { renameTarget = null },
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = LocalText.current,
+            textContentColor = LocalText.current,
             title = { Text("重命名会话") },
             text = { OutlinedTextField(newTitle, { newTitle = it }, singleLine = true) },
             confirmButton = {
@@ -3141,6 +3150,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         var draft by remember(opening) { mutableStateOf(opening) }
         AlertDialog(
             onDismissRequest = { goalEdit = null },
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = LocalText.current,
+            textContentColor = LocalText.current,
             title = { Text("编辑目标", fontSize = 16.sp) },
             text = {
                 OutlinedTextField(
@@ -4018,6 +4030,29 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
         }
         if (running) {
             item(key = "working") { WorkingLine() }
+        }
+        /*
+         * Claude's other foot-of-transcript line: 「N 个运行中的任务」 in its link
+         * blue, a count of the side work the turn has running. The protocol has
+         * no such number - a task is a tool call's own registry, not a session
+         * field - so this counts what the transcript can see: tool calls still
+         * marked running. It is offered only when there is one, and reads the
+         * same way rather than inventing a total.
+         */
+        val liveCalls = items.filterIsInstance<Item.Tool>().count { it.status == "running" }
+        if (liveCalls > 0) {
+            item(key = "tasks") {
+                Row(
+                    Modifier.fillMaxWidth().clickable { }.padding(start = 10.dp, top = 4.dp, bottom = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "$liveCalls 个运行中的任务",
+                        fontSize = 13.sp,
+                        color = if (LocalBg.current == DarkBg) Color(0xFF7FA8E8) else Color(0xFF4A6FA5),
+                    )
+                }
+            }
         }
         // The scroll target (see the LaunchedEffect above).
         item(key = "__bottom") { Box(Modifier.height(0.dp)) }
@@ -4908,6 +4943,11 @@ private fun SkillPicker(skills: List<String>, onDismiss: () -> Unit, onPick: (St
     }
     AlertDialog(
         onDismissRequest = onDismiss,
+        // The dialog's own surface, not Material's: in dark that is a brown
+        // tint nobody chose, and it showed as a warm box on a near-black page.
+        containerColor = MaterialTheme.colorScheme.surface,
+        titleContentColor = LocalText.current,
+        textContentColor = LocalText.current,
         title = { Text("技能", fontSize = 16.sp) },
         text = {
             Column(Modifier.fillMaxWidth()) {
@@ -4924,7 +4964,18 @@ private fun SkillPicker(skills: List<String>, onDismiss: () -> Unit, onPick: (St
                 if (shown.isEmpty()) {
                     Text("没有匹配的技能", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(vertical = 10.dp))
                 } else {
-                    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 340.dp)) {
+                    /*
+                     * A fixed height rather than `heightIn`: an AlertDialog's text
+                     * slot is measured with loose constraints, so a LazyColumn in
+                     * it takes its content height and the last rows drew outside
+                     * the dialog's surface (it showed as text hanging under the
+                     * rounded corner). A bounded list scrolls instead.
+                     */
+                    LazyColumn(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(300.dp),
+                    ) {
                         items(shown.size) { i ->
                             val name = shown[i]
                             Row(
