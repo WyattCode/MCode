@@ -78,7 +78,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -290,7 +292,16 @@ sealed class Item {
      * to print `· read completed`, which told the reader nothing.
      */
     data class Tool(val uid: String, val name: String, val status: String, val output: String, val title: String = "") : Item() { override val key = "tool.$uid" }
-    data class Perm(val requestId: String, val kind: String, val detail: String) : Item() { override val key = "perm.$requestId" }
+    /*
+     * A permission request, carried whole: the card decides what to show from
+     * the request itself (its command or subject, whether it carries a diff,
+     * whether it is a delete that must be asked every time), the way the
+     * desktop's PermissionDialog does. Passing a pre-flattened string lost the
+     * diff and the forced flag.
+     */
+    data class Perm(val requestId: String, val request: JSONObject, val queueTotal: Int = 1) : Item() {
+        override val key = "perm.$requestId"
+    }
     data class Quest(val requestId: String, val request: JSONObject) : Item() { override val key = "quest.$requestId" }
     data class Err(val text: String) : Item() { override val key = "err.$text.${hashCode()}" }
 }
@@ -750,6 +761,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         scope.launch { rpc(JSONObject().put("type", "permission.respond").put("requestID", requestId).put("response", response)) }
     }
 
+    /**
+     * A refusal with a reason: the server hands the sentence to the model, so
+     * it knows what to do differently rather than just that it was stopped.
+     */
+    fun respondPermReason(requestId: String, reason: String) {
+        val req = JSONObject().put("type", "permission.respond").put("requestID", requestId).put("response", "reject")
+        if (reason.isNotBlank()) req.put("reason", reason)
+        scope.launch { rpc(req) }
+    }
+
     fun loadProviders() {
         scope.launch {
             try {
@@ -816,7 +837,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 if (card.key !in known) items.add(card)
             }
             for (p in pendingPerms[sid].orEmpty()) {
-                val card = Item.Perm(p.optString("id"), p.optString("kind", "tool"), p.optString("title", "") + " " + p.optString("subject", ""))
+                val card = Item.Perm(p.optString("id"), p, pendingPerms[p.optString("sessionID")].orEmpty().size)
                 if (card.key !in known) items.add(card)
             }
         }
@@ -938,7 +959,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         // Parked permissions ride along: a turn can be sitting on an answer
         // while the phone reconnected, and the card must not vanish with the
         // in-memory timeline (the desktop replays these the same way).
-        for (p in pendingPerms[id].orEmpty()) items.add(Item.Perm(p.optString("id"), p.optString("kind", "tool"), p.optString("title", "") + " " + p.optString("subject", "")))
+        for (p in pendingPerms[id].orEmpty()) items.add(Item.Perm(p.optString("id"), p, pendingPerms[p.optString("sessionID")].orEmpty().size))
         for (r in pendingQuestions[id].orEmpty()) items.add(Item.Quest(r.optString("id"), r))
         frame(JSONObject().put("kind", "request").put("id", "w${System.nanoTime()}")
             .put("request", JSONObject().put("type", "session.watch").put("sessionIDs", org.json.JSONArray().put(id))))
@@ -952,7 +973,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             val messages = res.optJSONObject("data")?.optJSONArray("messages") ?: return@launch
             items.clear()
             messageIndex.clear()
-            for (p in pendingPerms[id].orEmpty()) items.add(Item.Perm(p.optString("id"), p.optString("kind", "tool"), p.optString("title", "") + " " + p.optString("subject", "")))
+            for (p in pendingPerms[id].orEmpty()) items.add(Item.Perm(p.optString("id"), p, pendingPerms[p.optString("sessionID")].orEmpty().size))
             for (r in pendingQuestions[id].orEmpty()) items.add(Item.Quest(r.optString("id"), r))
             for (i in 0 until messages.length()) upsertMessage(id, messages.optJSONObject(i) ?: continue)
         }
@@ -986,6 +1007,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 frame(JSONObject().put("kind", "remote.resume").put("cursor", cursor))
                 request(JSONObject().put("type", "session.list"), "list${System.nanoTime()}")
                 loadPendingQuestions()
+                // The pill names the model, and the name lives in the provider
+                // list; without this it would show the raw id until the reader
+                // happened to open the picker.
+                loadProviders()
             }
             "response" -> {
                 val id = f.optString("id")
@@ -1018,7 +1043,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     } else currentSession?.let { sid ->
                         val known = items.map { it.key }.toSet()
                         for (p in pendingPerms[sid].orEmpty()) {
-                            val card = Item.Perm(p.optString("id"), p.optString("kind", "tool"), p.optString("title", "") + " " + p.optString("subject", ""))
+                            val card = Item.Perm(p.optString("id"), p, pendingPerms[p.optString("sessionID")].orEmpty().size)
                             if (card.key !in known) items.add(card)
                         }
                     }
@@ -1064,7 +1089,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     "permission.requested" -> {
                         val r = event.optJSONObject("request") ?: return
                         pendingPerms.getOrPut(r.optString("sessionID")) { mutableListOf() }.add(r)
-                        items.add(Item.Perm(r.optString("id"), r.optString("kind", "tool"), r.optString("title", "") + " " + r.optString("subject", "")))
+                        items.add(Item.Perm(r.optString("id"), r, pendingPerms[r.optString("sessionID")].orEmpty().size))
                         // Surface the card on the lock screen too: the ongoing
                         // notification flips to "MCode 请求批准" until answered.
                         KeepAliveService.instance?.showPermission(r.optString("title", ""))
@@ -1282,7 +1307,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 WelcomePane(withInput = true, inputBar = inputBar, inputAtBottom = true)
                             } else {
                                 Column(Modifier.fillMaxSize()) {
-                                    Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onAnswer = ::answerQuestion, onMessage = { messageTarget = it }) }
+                                    Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onPermReason = ::respondPermReason, onAnswer = ::answerQuestion, onMessage = { messageTarget = it }) }
                                     inputBar()
                                 }
                             }
@@ -1309,7 +1334,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         }
                     },
                 ) { padding ->
-                    Box(Modifier.padding(padding).fillMaxSize()) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onAnswer = ::answerQuestion, onMessage = { messageTarget = it }) }
+                    Box(Modifier.padding(padding).fillMaxSize()) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onPermReason = ::respondPermReason, onAnswer = ::answerQuestion, onMessage = { messageTarget = it }) }
                 }
             }
         }
@@ -1782,7 +1807,7 @@ fun ImageBox(url: String) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, onPerm: (String, String) -> Unit = { _, _ -> }, onAnswer: (String, List<String>) -> Unit = { _, _ -> }, onMessage: (Item.Msg) -> Unit = {}) {
+fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, onPerm: (String, String) -> Unit = { _, _ -> }, onPermReason: (String, String) -> Unit = { _, _ -> }, onAnswer: (String, List<String>) -> Unit = { _, _ -> }, onMessage: (Item.Msg) -> Unit = {}) {
     val listState = rememberLazyListState()
     // Follow new items: when a message is sent or a reply/tool event lands,
     // keep the latest content in view the way Claude does.
@@ -1945,7 +1970,7 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                             }
                         }
                     }
-                    is Item.Perm -> PermCard(item, onPerm = onPerm)
+                    is Item.Perm -> PermCard(item, onPerm = onPerm, onPermReason = onPermReason)
                     is Item.Quest -> QuestCard(item, onAnswer = onAnswer)
                     is Item.Err -> {
                         // A broken turn is a card, not a red line lost in the
@@ -2181,6 +2206,8 @@ fun QuestCard(item: Item.Quest, onAnswer: (String, List<String>) -> Unit) {
  */
 fun permVerbOf(kind: String): String = when (kind) {
     "bash" -> "执行命令"
+    // A delete is asked every time and says so, the way the desktop words it.
+    "bashDelete" -> "执行删除命令"
     "edit" -> "修改文件"
     "write" -> "写入文件"
     "outside" -> "访问工作目录外的文件"
@@ -2189,24 +2216,163 @@ fun permVerbOf(kind: String): String = when (kind) {
 }
 
 @Composable
-fun PermCard(item: Item.Perm, onPerm: (String, String) -> Unit) {
+fun PermCard(item: Item.Perm, onPerm: (String, String) -> Unit, onPermReason: (String, String) -> Unit = { _, _ -> }) {
+    val request = item.request
+    val kind = request.optString("kind", "tool")
+    val forced = request.optBoolean("forced", false)
+    val isBash = kind == "bash"
+    val subject = request.optString("subject")
+    val preview = request.optString("preview")
+    val isDiff = preview.startsWith("--- a/")
+
+    // The model's one-line account of what the command is for. For a request
+    // the verb cannot name (an MCP tool, a read) it is the request's title, so
+    // nothing it said is lost.
+    val title = request.optString("title")
+    val chip = when {
+        isBash && title.isNotBlank() && title != "Run command" -> title
+        permVerbOf(kind) == "" && title.isNotBlank() -> title
+        kind == "bash" || kind == "edit" || kind == "write" || kind == "outside" || kind == "webfetch" -> ""
+        else -> title
+    }
+
+    // A command is shown in full, capped so a runaway argument cannot flood the
+    // card. One line is shown at a time; anything longer folds behind a toggle.
+    val full = (if (isBash) "$ $subject" else subject).take(3000)
+    val firstLine = full.substringBefore('\n')
+    val lossy = full.contains('\n') || firstLine.length > 120
+    var showFull by remember(item.requestId) { mutableStateOf(false) }
+    var showDiff by remember(item.requestId) { mutableStateOf(false) }
+    var reasoning by remember(item.requestId) { mutableStateOf(false) }
+    var reason by remember(item.requestId) { mutableStateOf("") }
+
     Column(
-        Modifier.fillMaxWidth().background(LocalPill.current, RoundedCornerShape(12.dp)).padding(12.dp),
+        Modifier.fillMaxWidth().background(LocalSurface.current, RoundedCornerShape(20.dp)).padding(14.dp),
     ) {
+        // Head: shield, "请求执行命令", the model's chip, and the queue count.
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.Lock, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(16.dp))
+            Icon(Icons.Outlined.Lock, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(15.dp))
             Spacer(Modifier.width(7.dp))
-            Text(permVerbOf(item.kind), fontWeight = FontWeight.Medium, fontSize = 14.sp, color = LocalText.current)
+            Text(
+                "请求" + permVerbOf(if (forced) "bashDelete" else kind),
+                fontWeight = FontWeight.Medium,
+                fontSize = 14.sp,
+                color = LocalText.current,
+            )
+            if (chip.isNotBlank()) {
+                Spacer(Modifier.width(7.dp))
+                Text(chip, fontSize = 12.sp, color = LocalMuted.current, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            }
+            Spacer(Modifier.weight(1f))
+            if (item.queueTotal > 1) {
+                Text("1/${item.queueTotal}", fontSize = 12.sp, color = LocalMuted.current)
+            }
         }
-        if (item.detail.isNotBlank()) {
-            // The subject sits under the verb, monospaced-ish so a path or a
-            // command reads as one.
-            Text(item.detail, fontSize = 12.sp, color = LocalMuted.current, modifier = Modifier.padding(top = 4.dp, start = 23.dp))
+        if (full.isNotBlank()) {
+            Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.Top) {
+                Text(
+                    if (lossy && !showFull) firstLine.take(120) + if (firstLine.length > 120) "…" else "" else full,
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = LocalMuted.current,
+                    modifier = Modifier.weight(1f),
+                )
+                if (lossy) {
+                    Text(
+                        if (showFull) "收起命令" else "查看完整命令",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 8.dp).clickable { showFull = !showFull },
+                    )
+                }
+            }
         }
-        Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button({ onPerm(item.requestId, "once") }, Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = LocalText.current)) { Text("允许一次", color = LocalBg.current) }
-            Button({ onPerm(item.requestId, "always") }, Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = LocalPill.current)) { Text("总是", color = LocalText.current) }
-            Button({ onPerm(item.requestId, "reject") }, Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("拒绝", color = Color.White) }
+        if (isDiff) {
+            Text(
+                (if (showDiff) "▾ 收起改动" else "▸ 查看改动"),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 6.dp).clickable { showDiff = !showDiff },
+            )
+            if (showDiff) DiffLines(preview, Modifier.padding(top = 4.dp))
+        }
+        if (forced) {
+            Text("删除类操作不可逆，每次执行都需单独确认", fontSize = 11.5.sp, color = LocalMuted.current, modifier = Modifier.padding(top = 6.dp))
+        }
+        // Actions, in the desktop's order: refuse, refuse with a reason, always,
+        // then the filled "this time" on the end.
+        Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PermButton("拒绝", false, Modifier.weight(1f)) { onPerm(item.requestId, "reject") }
+            PermButton("拒绝并说明", true, Modifier.weight(1.3f)) { reasoning = !reasoning }
+            if (!forced) PermButton("总是允许", false, Modifier.weight(1f)) { onPerm(item.requestId, "always") }
+            PermButton("本次允许", false, Modifier.weight(1f), primary = true) { onPerm(item.requestId, "once") }
+        }
+        if (reasoning) {
+            Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .background(LocalPill.current, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 9.dp),
+                ) {
+                    if (reason.isEmpty()) {
+                        Text("说明拒绝原因(反馈给模型)", fontSize = 13.sp, color = LocalMuted.current)
+                    }
+                    BasicTextField(
+                        reason,
+                        { reason = it },
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, color = LocalText.current),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                Spacer(Modifier.width(6.dp))
+                PermButton("提交", false, Modifier) { onPermReason(item.requestId, reason.trim()) }
+            }
+        }
+    }
+}
+
+/** One button in a permission card: quiet by default, filled for the primary. */
+@Composable
+private fun PermButton(label: String, muted: Boolean, modifier: Modifier, primary: Boolean = false, onClick: () -> Unit) {
+    Box(
+        modifier
+            .clip(RoundedCornerShape(9.dp))
+            .background(if (primary) LocalText.current else LocalPill.current)
+            .clickable { onClick() }
+            .padding(vertical = 9.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            fontSize = 12.5.sp,
+            fontWeight = if (primary) FontWeight.Medium else FontWeight.Normal,
+            color = if (primary) LocalBg.current else if (muted) LocalMuted.current else LocalText.current,
+            maxLines = 1,
+        )
+    }
+}
+
+/** A diff, coloured the way the desktop colours one: added green, removed red. */
+@Composable
+private fun DiffLines(diff: String, modifier: Modifier = Modifier) {
+    Column(modifier.fillMaxWidth().background(LocalPill.current.copy(alpha = 0.5f), RoundedCornerShape(8.dp)).padding(8.dp)) {
+        for (line in diff.lineSequence().take(80)) {
+            val (bg, fg) = when {
+                line.startsWith("+") && !line.startsWith("+++") -> Color(0x1A2E7D32) to Color(0xFF2E7D32)
+                line.startsWith("-") && !line.startsWith("---") -> Color(0x1AC62828) to Color(0xFFC62828)
+                line.startsWith("@@") -> Color.Transparent to LocalMuted.current
+                else -> Color.Transparent to LocalMuted.current.copy(alpha = 0.8f)
+            }
+            Text(
+                line.ifEmpty { " " },
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                color = fg,
+                modifier = Modifier.fillMaxWidth().background(bg).padding(horizontal = 3.dp, vertical = 1.dp),
+            )
         }
     }
 }
