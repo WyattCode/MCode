@@ -623,6 +623,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var cursor by remember { mutableStateOf(0L) }
     /** Counts selections, so a history reply for an abandoned one is dropped. */
     var selectSeq by remember { mutableStateOf(0) }
+    /** Each streamed part's kind, from the `message.part.updated` before its deltas. */
+    val partKinds = remember { java.util.HashMap<String, String>() }
 
     /**
      * Marks a conversation as working, or done.
@@ -880,7 +882,19 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         } ?: emptyList()
         if (known != null && known in items.indices) {
             val existing = items[known]
-            if (existing is Item.Msg) items[known] = existing.copy(text = text.toString().trim(), images = images)
+            if (existing is Item.Msg) {
+                /*
+                 * Whole-message updates and deltas both feed the same block, and
+                 * an update that was assembled before the last delta landed is
+                 * shorter than what is already on screen. Taking the longer of
+                 * the two stops a streamed reply from flicking backwards, and a
+                 * finished message still wins because it is the whole text.
+                 */
+                val whole = text.toString().trim()
+                val settled = message.optString("finish").isNotBlank() || (message.optJSONObject("time")?.optLong("completed", 0L) ?: 0L) > 0L
+                val next = if (settled || whole.length >= existing.text.length) whole else existing.text
+                items[known] = existing.copy(text = next, images = images)
+            }
         } else {
             val body = text.toString().trim()
             if (body.isNotEmpty() || role == "user" || images.isNotEmpty()) {
@@ -920,8 +934,34 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         }
     }
 
+    /**
+     * A slice of a reply's text, appended to the message it belongs to.
+     *
+     * The reply streams as deltas that name only a part id, so the part's kind
+     * has to be known first: a reasoning part arrives just before its first
+     * delta and says it is `reasoning`. The phone used to fold every delta into
+     * the message text, which printed the model's thinking as if it had said it.
+     */
+    fun appendDelta(sessionID: String, messageID: String, partID: String, text: String) {
+        if (sessionID != currentSession || messageID.isBlank() || text.isEmpty()) return
+        if (partKinds[partID] == "reasoning") return
+        val known = messageIndex[messageID]
+        if (known != null && known in items.indices) {
+            val existing = items[known]
+            if (existing is Item.Msg) items[known] = existing.copy(text = existing.text + text)
+            return
+        }
+        items.add(Item.Msg(messageID, "assistant", text))
+        messageIndex[messageID] = items.size - 1
+        setRunning(sessionID, true)
+    }
+
     fun upsertPart(sessionID: String, messageID: String, part: JSONObject) {
         if (sessionID != currentSession) return
+        // Remembered before the deltas that name it arrive, so a reasoning part
+        // is never mistaken for prose.
+        val partID = part.optString("id")
+        if (partID.isNotBlank()) partKinds[partID] = part.optString("type")
         val known = messageIndex[messageID] ?: return
         val existing = items[known]
         if (existing !is Item.Msg) return
@@ -1085,6 +1125,19 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         }
                     }
                     "message.updated" -> upsertMessage(event.optString("sessionID"), event.optJSONObject("message") ?: return)
+                    /*
+                     * The reply arrives as deltas, not as whole parts: text
+                     * streams through `message.delta` and only a tool part is
+                     * re-sent complete when its status changes. Without this the
+                     * phone showed no words at all while a turn was running and
+                     * then jumped straight to the finished message.
+                     */
+                    "message.delta" -> appendDelta(
+                        event.optString("sessionID"),
+                        event.optString("messageID"),
+                        event.optString("partID"),
+                        event.optString("text"),
+                    )
                     "message.part.updated" -> upsertPart(event.optString("sessionID"), event.optString("messageID"), event.optJSONObject("part") ?: return)
                     "permission.requested" -> {
                         val r = event.optJSONObject("request") ?: return
