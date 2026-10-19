@@ -17,6 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -420,16 +421,24 @@ private fun CodeBox(lang: String, code: String, dark: Boolean, modifier: Modifie
             }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(line))
+        /*
+         * A long line wraps instead of scrolling sideways.
+         *
+         * Sideways scrolling in a phone transcript is a poor affordance: the
+         * swipe has to start inside one card, fights the vertical scroll of the
+         * thread, and gives no sign that it is even possible - the line simply
+         * ended and read as cut off. Claude wraps a long line inside the card,
+         * keeping its indent so it still reads as code.
+         */
         Text(
             code,
             fontFamily = FontFamily.Monospace,
             fontSize = 12.5.sp,
             lineHeight = 20.sp,
             color = LocalText.current,
-            softWrap = false,
+            softWrap = true,
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
                 .padding(horizontal = 12.dp, vertical = 10.dp),
         )
     }
