@@ -187,7 +187,7 @@ fun toolVerbOf(name: String, status: String): String {
 
 sealed class Item {
     abstract val key: String
-    data class Msg(val id: String, val role: String, var text: String) : Item() { override val key = "msg.$id" }
+    data class Msg(val id: String, val role: String, var text: String, val images: List<String> = emptyList()) : Item() { override val key = "msg.$id" }
     /*
      * One tool call, the way the desktop's step list draws it: a verb that
      * says where the call is, and what it was about (`title`). The phone used
@@ -512,6 +512,20 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
     var currentSession by remember { mutableStateOf<String?>(null) }
     var cursor by remember { mutableStateOf(0L) }
 
+    /**
+     * Marks a conversation as working, or done.
+     *
+     * The row list is the single source of truth for that (the composer and the
+     * timeline both read it), so a change is written back into the row rather
+     * than kept beside it.
+     */
+    fun setRunning(sessionID: String, running: Boolean) {
+        val at = sessions.indexOfFirst { it.id == sessionID }
+        if (at < 0) return
+        if (sessions[at].running == running) return
+        sessions[at] = sessions[at].copy(running = running)
+    }
+
     fun frame(json: JSONObject) = client.send(json.toString())
 
     fun request(request: JSONObject, id: String) {
@@ -722,22 +736,50 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
             }
         }
         val known = messageIndex[id]
+        /*
+         * A turn is under way while its reply is unfinished, which is the same
+         * rule the desktop uses: the phone had no notion of a running turn at
+         * all, so the working line and the stop button never appeared.
+         */
+        if (role == "assistant" && id.isNotBlank()) {
+            val finished = message.optString("finish").isNotBlank() || message.optJSONObject("time")?.optLong("completed", 0L)?.let { it > 0L } == true
+            setRunning(sessionID, !finished)
+        }
+        // A picture the user sent is part of the question: the desktop draws it
+        // above the bubble and lets it be opened, so the phone keeps the data
+        // URLs and does the same rather than showing an empty turn.
+        val images = message.optJSONArray("attachments")?.let { arr ->
+            (0 until arr.length()).mapNotNull { index ->
+                val att = arr.optJSONObject(index) ?: return@mapNotNull null
+                val mime = att.optString("mime", "")
+                val data = att.optString("data", "")
+                if (!mime.startsWith("image/") || data.isBlank()) null else "data:$mime;base64,$data"
+            }
+        } ?: emptyList()
         if (known != null && known in items.indices) {
             val existing = items[known]
-            if (existing is Item.Msg) items[known] = existing.copy(text = text.toString().trim())
+            if (existing is Item.Msg) items[known] = existing.copy(text = text.toString().trim(), images = images)
         } else {
             val body = text.toString().trim()
-            if (body.isNotEmpty() || role == "user") {
-                items.add(Item.Msg(id, role, body.ifEmpty { "…" }))
+            if (body.isNotEmpty() || role == "user" || images.isNotEmpty()) {
+                items.add(Item.Msg(id, role, body.ifEmpty { if (images.isEmpty()) "…" else "" }, images))
                 messageIndex[id] = items.size - 1
             }
         }
         if (parts != null) {
             for (i in 0 until parts.length()) {
                 val part = parts.optJSONObject(i) ?: continue
-                if (part.optString("type") == "tool") {
-                    items.add(Item.Tool(java.util.UUID.randomUUID().toString(), part.optString("name", "tool"), part.optString("status", ""), part.optString("output", "").replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: "", toolTitleOf(part)))
-                }
+                if (part.optString("type") != "tool") continue
+                // One row per call, keyed by the call's own id: a streamed turn
+                // sends the same part many times as it moves pending -> running
+                // -> completed, and appending each would stack a tower of rows.
+                val callID = part.optString("callID").ifEmpty { part.optString("id") }
+                val uid = if (callID.isNotBlank()) callID else java.util.UUID.randomUUID().toString()
+                val status = part.optJSONObject("state")?.optString("status", "")?.ifEmpty { null } ?: part.optString("status", "")
+                val output = part.optString("output").ifEmpty { part.optJSONObject("state")?.optString("output", "") ?: "" }
+                val row = Item.Tool(uid, part.optString("name", "tool"), status, output.replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: "", toolTitleOf(part))
+                val at = items.indexOfFirst { it is Item.Tool && it.uid == uid }
+                if (at >= 0) items[at] = row else items.add(row)
             }
         }
     }
@@ -749,7 +791,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
         if (existing !is Item.Msg) return
         when (part.optString("type")) {
             "text" -> items[known] = existing.copy(text = part.optString("text"))
-            "tool" -> items.add(Item.Tool(java.util.UUID.randomUUID().toString(), part.optString("name", "tool"), part.optJSONObject("state")?.optString("status", "") ?: "", part.optString("output", "").replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: "", toolTitleOf(part)))
+            "tool" -> {
+                // Same rule as a whole message: a call streams in many times,
+                // so the row is found by its call id and replaced in place.
+                val callID = part.optString("callID").ifEmpty { part.optString("id") }
+                val uid = if (callID.isNotBlank()) callID else java.util.UUID.randomUUID().toString()
+                val status = part.optJSONObject("state")?.optString("status", "")?.ifEmpty { null } ?: part.optString("status", "")
+                val output = part.optString("output").ifEmpty { part.optJSONObject("state")?.optString("output", "") ?: "" }
+                val row = Item.Tool(uid, part.optString("name", "tool"), status, output.replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: "", toolTitleOf(part))
+                val at = items.indexOfFirst { it is Item.Tool && it.uid == uid }
+                if (at >= 0) items[at] = row else items.add(row)
+            }
         }
     }
 
@@ -855,6 +907,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
                         if (row != null) sessions[sessions.indexOf(row)] = row.copy(title = title, updated = updated, directory = directory, model = model, agent = agent, effort = effort)
                         else sessions.add(SessionRow(sid, title, false, updated, directory, model, agent, effort))
                         sessions.sortByDescending { it.updated }
+                    }
+                    /*
+                     * The turn is over: the working line has to go and the
+                     * round button has to become send again. Without this the
+                     * phone sat showing a working line for ever.
+                     */
+                    "session.idle" -> {
+                        setRunning(event.optString("sessionID"), false)
                     }
                     "session.deleted" -> {
                         val gone = event.optString("sessionID")
@@ -965,10 +1025,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, onS
             onSend = { text, atts ->
                 // steer only joins a running turn; an idle session gets a
                 // plain prompt or the server ignores the message outright.
-                val req = JSONObject().put("type", "session.prompt").put("sessionID", currentSession!!).put("text", text)
+                val sid = currentSession!!
+                val req = JSONObject().put("type", "session.prompt").put("sessionID", sid).put("text", text)
                 if (atts.isNotEmpty()) req.put("attachments", org.json.JSONArray(atts.toList()))
-                if (sessions.find { it.id == currentSession }?.running == true) req.put("delivery", "steer")
+                if (sessions.find { it.id == sid }?.running == true) req.put("delivery", "steer")
                 request(req)
+                // The round button turns into stop the moment the prompt
+                // leaves, the way Claude's does, rather than waiting for the
+                // first reply part to come back.
+                setRunning(sid, true)
                 attachments.clear()
             },
             onStop = { currentSession?.let { request(JSONObject().put("type", "session.abort").put("sessionID", it)) } },
@@ -1507,6 +1572,54 @@ fun currentSessionTitle(sessions: List<SessionRow>, current: String?): String =
 /* Timeline / lists                                                    */
 /* ------------------------------------------------------------------ */
 
+/**
+ * A picture in a turn.
+ *
+ * Sent pictures travel as data URLs, so the bitmap comes from the bytes rather
+ * than a file: a tap opens it full-screen on black, which is the one thing a
+ * 64dp thumbnail cannot do.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun ImageBox(url: String) {
+    val bitmap = remember(url) {
+        runCatching {
+            val comma = url.indexOf(',')
+            val bytes = android.util.Base64.decode(url.substring(comma + 1), android.util.Base64.DEFAULT)
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        }.getOrNull()
+    }
+    var open by remember { mutableStateOf(false) }
+    if (bitmap == null) return
+    Image(
+        bitmap.asImageBitmap(),
+        contentDescription = "图片",
+        contentScale = ContentScale.Crop,
+        modifier = Modifier
+            .size(64.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { open = true },
+    )
+    if (open) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = { open = false }) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color(0xB8000000))
+                    .clickable { open = false },
+                contentAlignment = Alignment.Center,
+            ) {
+                Image(
+                    bitmap.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxWidth().padding(20.dp),
+                )
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, onPerm: (String, String) -> Unit = { _, _ -> }, onAnswer: (String, List<String>) -> Unit = { _, _ -> }, onMessage: (Item.Msg) -> Unit = {}) {
@@ -1554,14 +1667,36 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                                     // 复制 / 从此处分支; both are here now.
                                     .combinedClickable(onClick = {}, onLongClick = { onMessage(item) }),
                             ) {
-                                Text(
-                                    item.text.ifEmpty { "…" },
-                                    fontSize = 15.sp,
-                                    // Claude's prose is set with a little more
-                                    // air than the default leading gives.
-                                    lineHeight = 23.sp,
-                                    color = LocalText.current,
-                                )
+                                // A picture arrives above the words it was sent
+                                // with, the way the desktop draws it.
+                                if (item.images.isNotEmpty()) {
+                                    Row(
+                                        Modifier.padding(bottom = if (item.text.isBlank()) 0.dp else 6.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        for (url in item.images.take(3)) {
+                                            ImageBox(url)
+                                        }
+                                    }
+                                }
+                                // Claude sets a reply the way the desktop does:
+                                // headings, real code boxes, lists. A user turn
+                                // is their own words and is never parsed.
+                                if (isUser) {
+                                    if (item.text.isNotBlank()) Text(
+                                        item.text.ifEmpty { "…" },
+                                        fontSize = 15.sp,
+                                        // Claude's prose is set with a little more
+                                        // air than the default leading gives.
+                                        lineHeight = 23.sp,
+                                        color = LocalText.current,
+                                    )
+                                } else if (item.text.isNotBlank()) {
+                                    MarkdownBody(
+                                        item.text,
+                                        dark = LocalBg.current == DarkBg,
+                                    )
+                                }
                             }
                         }
                     }
