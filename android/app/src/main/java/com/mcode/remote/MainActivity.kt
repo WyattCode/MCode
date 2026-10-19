@@ -307,7 +307,7 @@ sealed class Item {
      * desktop's PermissionDialog does. Passing a pre-flattened string lost the
      * diff and the forced flag.
      */
-    data class Perm(val requestId: String, val request: JSONObject, val queueTotal: Int = 1) : Item() {
+    data class Perm(val requestId: String, val request: JSONObject, val queueTotal: Int = 1, val queuePosition: Int = 1) : Item() {
         override val key = "perm.$requestId"
     }
     data class Quest(val requestId: String, val request: JSONObject) : Item() { override val key = "quest.$requestId" }
@@ -2039,6 +2039,15 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
     val pending = items.count { it is Item.Perm }
     // Consecutive tool calls are folded into one summary row before drawing, so
     // the row count is not the item count and the scroll target has to follow it.
+    /*
+     * Each pending card says where it sits in the queue - 1/3, 2/3 - rather than
+     * always 1/N. Three requests that arrive together each showed "1/3" here,
+     * which reads as one request and no progress.
+     */
+    val permIndex = remember(items.toList()) {
+        val cards = items.filterIsInstance<Item.Perm>()
+        cards.withIndex().associate { (i, card) -> card.requestId to (i + 1 to cards.size) }
+    }
     val rows = remember(items.toList()) { rowsOf(items) }
     LaunchedEffect(rows.size, pending, running) {
         val last = rows.size + if (running) 0 else -1
@@ -2183,7 +2192,10 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                         }
                     }
                     is Item.Tool -> ToolRow(item)
-                    is Item.Perm -> PermCard(item, onPerm = onPerm, onPermReason = onPermReason)
+                    is Item.Perm -> {
+                        val (at, total) = permIndex[item.requestId] ?: (1 to 1)
+                        PermCard(item.copy(queueTotal = total, queuePosition = at), onPerm = onPerm, onPermReason = onPermReason)
+                    }
                     is Item.Quest -> QuestCard(item, onAnswer = onAnswer)
                     is Item.Err -> {
                         // A broken turn is a card, not a red line lost in the
@@ -2434,8 +2446,15 @@ fun permVerbOf(kind: String): String = when (kind) {
     "write" -> "写入文件"
     "outside" -> "访问工作目录外的文件"
     "webfetch" -> "访问网络"
+    // Reads are asked for too once the bucket is set that way, and "执行操作"
+    // told the reader nothing about what was about to be touched.
+    "read" -> "读取文件"
+    "list" -> "查看目录"
+    "grep", "glob" -> "搜索文件"
+    "mcp" -> "调用工具"
     else -> "执行操作"
 }
+
 
 @Composable
 fun PermCard(item: Item.Perm, onPerm: (String, String) -> Unit, onPermReason: (String, String) -> Unit = { _, _ -> }) {
@@ -2451,11 +2470,17 @@ fun PermCard(item: Item.Perm, onPerm: (String, String) -> Unit, onPermReason: (S
     // the verb cannot name (an MCP tool, a read) it is the request's title, so
     // nothing it said is lost.
     val title = request.optString("title")
+    // A request the verb cannot name shows the request's own title; a bare
+    // tool name is not a title, so it is named here instead of printed raw.
+    // A request the verb already names needs no chip; one it cannot name shows
+    // the request's own words. A bare tool name is not a title, so it never
+    // reaches the card - 「请求执行操作 glob」 told the reader nothing.
+    val hasVerb = kind in setOf("bash", "edit", "write", "outside", "webfetch", "read", "list", "grep", "glob", "mcp")
     val chip = when {
         isBash && title.isNotBlank() && title != "Run command" -> title
-        permVerbOf(kind) == "" && title.isNotBlank() -> title
-        kind == "bash" || kind == "edit" || kind == "write" || kind == "outside" || kind == "webfetch" -> ""
-        else -> title
+        hasVerb -> ""
+        title.isNotBlank() && title != kind -> title
+        else -> ""
     }
 
     // A command is shown in full, capped so a runaway argument cannot flood the
@@ -2487,7 +2512,7 @@ fun PermCard(item: Item.Perm, onPerm: (String, String) -> Unit, onPermReason: (S
             }
             Spacer(Modifier.weight(1f))
             if (item.queueTotal > 1) {
-                Text("1/${item.queueTotal}", fontSize = 12.sp, color = LocalMuted.current)
+                Text("${item.queuePosition}/${item.queueTotal}", fontSize = 12.sp, color = LocalMuted.current)
             }
         }
         if (full.isNotBlank()) {
