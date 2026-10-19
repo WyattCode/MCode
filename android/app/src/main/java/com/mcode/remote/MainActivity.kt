@@ -53,6 +53,7 @@ import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.automirrored.outlined.CallSplit
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
@@ -2110,6 +2111,44 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                                         item.text,
                                         dark = LocalBg.current == DarkBg,
                                     )
+                                    /*
+                                     * Claude ends a reply with two quiet glyphs -
+                                     * copy, then read aloud - at 149,147,143 on
+                                     * the pad, 127px wide for the pair. They were
+                                     * only reachable by long-pressing the turn
+                                     * here, which nothing on screen said.
+                                     */
+                                    val context = androidx.compose.ui.platform.LocalContext.current
+                                    var copied by remember(item.id) { mutableStateOf(false) }
+                                    Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            Modifier.size(34.dp).clickable {
+                                                val board = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                                board.setPrimaryClip(android.content.ClipData.newPlainText("MCode", item.text))
+                                                copied = true
+                                                android.widget.Toast.makeText(context, "已复制", android.widget.Toast.LENGTH_SHORT).show()
+                                            },
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Icon(
+                                                Icons.Outlined.ContentCopy,
+                                                contentDescription = "复制",
+                                                tint = if (copied) Color(0xFF2E7D32) else LocalMuted.current,
+                                                modifier = Modifier.size(16.dp),
+                                            )
+                                        }
+                                        Box(
+                                            Modifier.size(34.dp).clickable { onMessage(item) },
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Icon(
+                                                Icons.Outlined.PlayArrow,
+                                                contentDescription = "更多操作",
+                                                tint = LocalMuted.current,
+                                                modifier = Modifier.size(16.dp),
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
