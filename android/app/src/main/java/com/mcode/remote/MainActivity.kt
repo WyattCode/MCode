@@ -2350,7 +2350,14 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
      * over the last line, so a turn arriving while someone reads back does not
      * hide underneath it.
      */
-    if (!atEnd) {
+    /*
+     * The disc floats over the transcript, so it must not sit on top of the
+     * one row that is waiting for the reader: a pending approval. While one is
+     * on screen (a card, or its 「拒绝并说明」 field open under it) the disc is a tap
+     * that might approve or explain instead of scrolling, and it covered the
+     * card's own buttons. It steps aside until the queue is clear.
+     */
+    if (!atEnd && items.none { it is Item.Perm }) {
         Box(
             Modifier
                 .align(Alignment.BottomCenter)
