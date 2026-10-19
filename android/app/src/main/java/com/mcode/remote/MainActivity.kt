@@ -676,6 +676,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     val changedFiles = remember { mutableStateListOf<String>() }
     var changePatch by remember { mutableStateOf<Pair<String, String>?>(null) }
     var changeBranch by remember { mutableStateOf("") }
+    /** Branches offered under the change list; the desktop's branch chip does the same from the home screen. */
+    val branches = remember { mutableStateListOf<String>() }
+    var showBranches by remember { mutableStateOf(false) }
     var usageSummary by remember { mutableStateOf<JSONObject?>(null) }
     /** Parked permission requests per session, replayed from session.list. */
     val pendingPerms = remember { java.util.concurrent.ConcurrentHashMap<String, MutableList<JSONObject>>() }
@@ -1775,6 +1778,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             val r = runCatching { rpc(JSONObject().put("type", "git.status").put("directory", root)) }.getOrNull()
             val data = r?.optJSONObject("data") ?: return@LaunchedEffect
             changeBranch = data.optString("branch")
+            branches.clear()
+            runCatching { rpc(JSONObject().put("type", "git.branches").put("directory", root)) }
+                .getOrNull()
+                ?.optJSONObject("data")
+                ?.optJSONArray("branches")
+                ?.let { arr ->
+                    for (i in 0 until arr.length()) {
+                        val b = arr.optString(i)
+                        if (b.isNotBlank()) branches.add(b)
+                    }
+                }
             data.optJSONArray("changed")?.let { arr ->
                 for (i in 0 until arr.length()) {
                     val f = arr.optString(i)
@@ -1788,7 +1802,60 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     Text("本次改动", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
                     Spacer(Modifier.width(8.dp))
                     if (changeBranch.isNotBlank()) {
-                        Text(changeBranch, fontSize = 12.sp, color = LocalMuted.current)
+                        Row(
+                            Modifier.clickable { showBranches = !showBranches },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(changeBranch, fontSize = 12.sp, color = LocalMuted.current)
+                            Icon(
+                                Icons.Outlined.ExpandMore,
+                                contentDescription = "\u5207\u6362\u5206\u652f",
+                                tint = LocalMuted.current,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                    }
+                }
+                if (showBranches && branches.isNotEmpty()) {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                            .background(LocalPill.current, RoundedCornerShape(10.dp))
+                            .padding(vertical = 4.dp),
+                    ) {
+                        for (b in branches) {
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        showBranches = false
+                                        scope.launch {
+                                            runCatching {
+                                                rpc(
+                                                    JSONObject()
+                                                        .put("type", "git.checkout")
+                                                        .put("directory", root)
+                                                        .put("branch", b),
+                                                )
+                                            }
+                                            changeBranch = b
+                                        }
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    b,
+                                    fontSize = 13.sp,
+                                    color = if (b == changeBranch) LocalText.current else LocalMuted.current,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                if (b == changeBranch) {
+                                    Icon(Icons.Outlined.Check, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(14.dp))
+                                }
+                            }
+                        }
                     }
                 }
                 Spacer(Modifier.height(10.dp))
