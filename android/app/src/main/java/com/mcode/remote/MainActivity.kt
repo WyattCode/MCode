@@ -283,6 +283,10 @@ private val TOOL_LABELS = mapOf(
     "skipped.pdf_locate" to "未执行：定位 PDF",
 )
 
+/** Monotone ids for error rows, so two of them can never collide. */
+private var errCounter = 0
+private fun nextErrId(): Int = ++errCounter
+
 sealed class Item {
     abstract val key: String
     data class Msg(val id: String, val role: String, var text: String, val images: List<String> = emptyList()) : Item() { override val key = "msg.$id" }
@@ -303,7 +307,17 @@ sealed class Item {
         override val key = "perm.$requestId"
     }
     data class Quest(val requestId: String, val request: JSONObject) : Item() { override val key = "quest.$requestId" }
-    data class Err(val text: String) : Item() { override val key = "err.$text.${hashCode()}" }
+    /*
+     * A failure, keyed by the message it belongs to.
+     *
+     * It used to be keyed by a hash of the text, and two turns that failed the
+     * same way produced the same key - which LazyColumn refuses, crashing the
+     * app on open whenever a conversation held the same error twice. A counter
+     * keeps `session.error` (which has no message of its own) unique as well.
+     */
+    data class Err(val text: String, val uid: String = "e${nextErrId()}") : Item() {
+        override val key = "err.$uid"
+    }
 }
 
 data class SessionRow(val id: String, val title: String, val running: Boolean, val updated: Long, val directory: String = "", val model: String = "", val agent: String = "build", val effort: String = "none")
@@ -930,7 +944,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         if (failure.isNotBlank()) {
             val key = "err.$id"
             val place = items.indexOfFirst { it.key == key }
-            if (place >= 0) items[place] = Item.Err(failure) else items.add(Item.Err(failure))
+            if (place >= 0) items[place] = Item.Err(failure, id) else items.add(Item.Err(failure, id))
         }
     }
 
@@ -1013,9 +1027,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             val messages = res.optJSONObject("data")?.optJSONArray("messages") ?: return@launch
             items.clear()
             messageIndex.clear()
+            for (i in 0 until messages.length()) upsertMessage(id, messages.optJSONObject(i) ?: continue)
+            // Parked cards go after the transcript, not before it: a turn waiting
+            // on an answer is the newest thing that happened, and putting the
+            // card above the history scrolled it out of sight.
             for (p in pendingPerms[id].orEmpty()) items.add(Item.Perm(p.optString("id"), p, pendingPerms[p.optString("sessionID")].orEmpty().size))
             for (r in pendingQuestions[id].orEmpty()) items.add(Item.Quest(r.optString("id"), r))
-            for (i in 0 until messages.length()) upsertMessage(id, messages.optJSONObject(i) ?: continue)
         }
     }
 
@@ -1868,8 +1885,16 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
     // The target is a zero-height trailer rather than the last row: a row that
     // is taller than the screen lands with its top at the bottom edge, and a
     // history that arrives all at once would end up showing its beginning.
-    LaunchedEffect(items.size) {
-        if (items.isNotEmpty()) listState.scrollToItem(items.size)
+    // A pending permission card counts as news even when the row count does not
+    // change, which is what left an approval sitting below the fold; so does a
+    // turn starting or ending, since the working line adds and removes a row.
+    val pending = items.count { it is Item.Perm }
+    LaunchedEffect(items.size, pending, running) {
+        // Scroll to the last row that actually exists: the working line sits
+        // after the items only while a turn is running, and asking for one row
+        // past the end lands on nothing and animates back up.
+        val last = items.size + if (running) 0 else -1
+        if (last >= 0) listState.animateScrollToItem(last)
     }
     // A running turn gets one more row: Claude keeps a working line under the
     // last thing said, so the page does not look finished while it is not.
