@@ -1971,6 +1971,57 @@ fun ImageBox(url: String) {
     }
 }
 
+/**
+ * A run of consecutive tool calls, or a single one.
+ *
+ * Claude does not print one row per call: it prints a single call on its own,
+ * and folds a run of them into one summary line - 「已运行 13 条命令, 已使用 7 个
+ * 工具（1 个失败）, 读取了 4 个文件 ›」 - which opens in place. A long turn with
+ * twenty calls is then one line instead of twenty, which is the difference
+ * between a readable transcript and a wall.
+ */
+data class ToolRun(val items: List<Item.Tool>, val key: String)
+
+/** Turns the flat list into rows, folding neighbouring tool calls together. */
+fun rowsOf(items: List<Item>): List<Any> {
+    val out = mutableListOf<Any>()
+    var run = mutableListOf<Item.Tool>()
+    fun flush() {
+        if (run.isEmpty()) return
+        out.add(if (run.size == 1) run.first() else ToolRun(run.toList(), "run.${run.first().uid}"))
+        run = mutableListOf()
+    }
+    for (item in items) {
+        if (item is Item.Tool) run.add(item)
+        else {
+            flush()
+            out.add(item)
+        }
+    }
+    flush()
+    return out
+}
+
+/** Claude's summary of a run: what was run, how much of it broke, what was read. */
+fun runSummary(run: ToolRun): String {
+    val commands = run.items.count { it.name == "bash" || it.name == "exec_command" || it.name == "execute" }
+    val reads = run.items.count { it.name == "read" || it.name == "list" || it.name == "grep" || it.name == "glob" }
+    val writings = run.items.count { it.name == "edit" || it.name == "write" || it.name == "patch" || it.name == "apply_patch" }
+    val failed = run.items.count { it.status == "error" || it.status == "failed" }
+    val parts = mutableListOf<String>()
+    if (commands > 0) parts.add("已运行 $commands 条命令")
+    val others = run.items.size - commands - reads - writings
+    if (others > 0) {
+        val failedNote = if (failed > 0) "（$failed 个失败）" else ""
+        parts.add("已使用 ${others + writings} 个工具$failedNote")
+    } else if (writings > 0) {
+        val failedNote = if (failed > 0) "（$failed 个失败）" else ""
+        parts.add("已编辑 $writings 个文件$failedNote")
+    }
+    if (reads > 0) parts.add("读取了 $reads 个文件")
+    return parts.joinToString(", ").ifBlank { "已使用 ${run.items.size} 个工具" }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, onPerm: (String, String) -> Unit = { _, _ -> }, onPermReason: (String, String) -> Unit = { _, _ -> }, onAnswer: (String, List<String>) -> Unit = { _, _ -> }, onMessage: (Item.Msg) -> Unit = {}) {
@@ -1985,11 +2036,11 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
     // change, which is what left an approval sitting below the fold; so does a
     // turn starting or ending, since the working line adds and removes a row.
     val pending = items.count { it is Item.Perm }
-    LaunchedEffect(items.size, pending, running) {
-        // Scroll to the last row that actually exists: the working line sits
-        // after the items only while a turn is running, and asking for one row
-        // past the end lands on nothing and animates back up.
-        val last = items.size + if (running) 0 else -1
+    // Consecutive tool calls are folded into one summary row before drawing, so
+    // the row count is not the item count and the scroll target has to follow it.
+    val rows = remember(items.toList()) { rowsOf(items) }
+    LaunchedEffect(rows.size, pending, running) {
+        val last = rows.size + if (running) 0 else -1
         if (last >= 0) listState.animateScrollToItem(last)
     }
     // A running turn gets one more row: Claude keeps a working line under the
@@ -2002,8 +2053,8 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
         // clipped; Claude leaves a breath of air above it.
         contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 10.dp, bottom = 6.dp),
     ) {
-        for (item in items) {
-            item(key = item.key) {
+        for (item in rows) {
+            item(key = (item as? ToolRun)?.key ?: (item as Item).key) {
                 // Every row fades and rises a little as it lands, which is what
                 // makes a streamed reply read as arriving rather than repainting.
                 var shown by remember { mutableStateOf(false) }
@@ -2063,87 +2114,36 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                             }
                         }
                     }
-                    is Item.Tool -> {
+                    is ToolRun -> {
                         var open by remember { mutableStateOf(false) }
-                        // A call that is still going and one that broke read
-                        // differently from one that finished quietly.
-                        val failed = item.status == "error" || item.status == "failed"
-                        val busy = item.status == "running" || item.status == "pending" || item.status == "in_progress"
-                        val rowTint = when {
-                            failed -> MaterialTheme.colorScheme.error
-                            busy -> MaterialTheme.colorScheme.primary
-                            else -> LocalMuted.current
-                        }
                         Column(Modifier.padding(start = 10.dp)) {
                             Row(
                                 Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 3.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                // One small glyph per tool family, muted like
-                                // the verb - Claude's step rows lead with an
-                                // icon and the phone had none.
-                                Icon(
-                                    when (item.name) {
-                                        "read" -> Icons.AutoMirrored.Outlined.Article
-                                        "edit", "write", "apply_patch", "patch" -> Icons.Outlined.Edit
-                                        "bash", "exec_command", "execute" -> Icons.Outlined.Terminal
-                                        "grep", "glob" -> Icons.Outlined.Search
-                                        "list" -> Icons.Outlined.Folder
-                                        "webfetch", "websearch" -> Icons.Outlined.Language
-                                        else -> Icons.Outlined.Build
-                                    },
-                                    contentDescription = null,
-                                    tint = rowTint,
-                                    modifier = Modifier.size(15.dp),
-                                )
-                                Spacer(Modifier.width(7.dp))
                                 Text(
-                                    toolVerbOf(item.name, item.status) + if (item.title.isNotBlank()) " ${item.title}" else "",
+                                    runSummary(item),
                                     fontSize = 12.5.sp,
-                                    color = if (failed || busy) rowTint else LocalMuted.current,
+                                    color = LocalMuted.current,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f),
                                 )
-                                if (item.output.isNotBlank()) {
-                                    Icon(
-                                        if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
-                                        contentDescription = if (open) "收起" else "展开",
-                                        tint = LocalMuted.current,
-                                        modifier = Modifier.size(16.dp),
-                                    )
-                                }
+                                Icon(
+                                    Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                                    contentDescription = if (open) "收起" else "展开",
+                                    tint = LocalMuted.current,
+                                    modifier = Modifier.size(15.dp).graphicsLayer { rotationZ = if (open) 90f else 0f },
+                                )
                             }
-                            if (open && item.output.isNotBlank()) {
-                                /*
-                                 * A patch reads as one: added lines on a faint
-                                 * green, removed on a faint red, hunk headers
-                                 * muted. The desktop draws a full diff
-                                 * component; a phone row only has space for
-                                 * the colour, which is the part that makes a
-                                 * patch scannable at all.
-                                 */
-                                val patch = item.output.contains("\n@@") || item.output.startsWith("diff --git") || item.output.startsWith("@@")
-                                Column(Modifier.padding(start = 22.dp, top = 2.dp, bottom = 4.dp)) {
-                                    for (line in item.output.lineSequence().take(60)) {
-                                        val (bg, fg) = when {
-                                            !patch -> Color.Transparent to LocalMuted.current.copy(alpha = 0.8f)
-                                            line.startsWith("+") && !line.startsWith("+++") -> Color(0x1A2E7D32) to Color(0xFF2E7D32)
-                                            line.startsWith("-") && !line.startsWith("---") -> Color(0x1AC62828) to Color(0xFFC62828)
-                                            line.startsWith("@@") -> Color.Transparent to LocalMuted.current
-                                            else -> Color.Transparent to LocalMuted.current.copy(alpha = 0.8f)
-                                        }
-                                        Text(
-                                            line.ifEmpty { " " },
-                                            fontSize = 11.sp,
-                                            color = fg,
-                                            modifier = Modifier.fillMaxWidth().background(bg).padding(horizontal = 3.dp, vertical = 0.5.dp),
-                                        )
-                                    }
-                                }
+                            if (open) {
+                                // The run opens in place: each call keeps the row
+                                // it would have had on its own.
+                                for (call in item.items) ToolRow(call)
                             }
                         }
                     }
+                    is Item.Tool -> ToolRow(item)
                     is Item.Perm -> PermCard(item, onPerm = onPerm, onPermReason = onPermReason)
                     is Item.Quest -> QuestCard(item, onAnswer = onAnswer)
                     is Item.Err -> {
@@ -2924,6 +2924,90 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
                             Icon(Icons.Filled.ArrowUpward, contentDescription = "发送", tint = sendFg, modifier = Modifier.size(22.dp))
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One tool call.
+ *
+ * Pulled out of the timeline so a run of calls can reuse it when it opens: the
+ * row is identical whether it stands alone or sits inside a summary.
+ */
+@Composable
+fun ToolRow(item: Item.Tool) {
+    var open by remember { mutableStateOf(false) }
+    // A call that is still going and one that broke read differently from one
+    // that finished quietly.
+    val failed = item.status == "error" || item.status == "failed"
+    val busy = item.status == "running" || item.status == "pending" || item.status == "in_progress"
+    val rowTint = when {
+        failed -> MaterialTheme.colorScheme.error
+        busy -> MaterialTheme.colorScheme.primary
+        else -> LocalMuted.current
+    }
+    Column(Modifier.padding(start = 10.dp)) {
+        Row(
+            Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                when (item.name) {
+                    "read" -> Icons.AutoMirrored.Outlined.Article
+                    "edit", "write", "apply_patch", "patch" -> Icons.Outlined.Edit
+                    "bash", "exec_command", "execute" -> Icons.Outlined.Terminal
+                    "grep", "glob" -> Icons.Outlined.Search
+                    "list" -> Icons.Outlined.Folder
+                    "webfetch", "websearch" -> Icons.Outlined.Language
+                    else -> Icons.Outlined.Build
+                },
+                contentDescription = null,
+                tint = rowTint,
+                modifier = Modifier.size(15.dp),
+            )
+            Spacer(Modifier.width(7.dp))
+            Text(
+                toolVerbOf(item.name, item.status) + if (item.title.isNotBlank()) " ${item.title}" else "",
+                fontSize = 12.5.sp,
+                color = if (failed || busy) rowTint else LocalMuted.current,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (item.output.isNotBlank()) {
+                Icon(
+                    if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                    contentDescription = if (open) "收起" else "展开",
+                    tint = LocalMuted.current,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+        if (open && item.output.isNotBlank()) {
+            /*
+             * A patch reads as one: added lines on a faint green, removed on a
+             * faint red, hunk headers muted. The desktop draws a full diff
+             * component; a phone row only has space for the colour, which is
+             * the part that makes a patch scannable at all.
+             */
+            val patch = item.output.contains("\n@@") || item.output.startsWith("diff --git") || item.output.startsWith("@@")
+            Column(Modifier.padding(start = 22.dp, top = 2.dp, bottom = 4.dp)) {
+                for (line in item.output.lineSequence().take(60)) {
+                    val (bg, fg) = when {
+                        !patch -> Color.Transparent to LocalMuted.current.copy(alpha = 0.8f)
+                        line.startsWith("+") && !line.startsWith("+++") -> Color(0x1A2E7D32) to Color(0xFF2E7D32)
+                        line.startsWith("-") && !line.startsWith("---") -> Color(0x1AC62828) to Color(0xFFC62828)
+                        line.startsWith("@@") -> Color.Transparent to LocalMuted.current
+                        else -> Color.Transparent to LocalMuted.current.copy(alpha = 0.8f)
+                    }
+                    Text(
+                        line.ifEmpty { " " },
+                        fontSize = 11.sp,
+                        color = fg,
+                        modifier = Modifier.fillMaxWidth().background(bg).padding(horizontal = 3.dp, vertical = 0.5.dp),
+                    )
                 }
             }
         }
