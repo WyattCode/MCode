@@ -4095,7 +4095,15 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
             }
         }
         if (running) {
-            item(key = "working") { WorkingLine() }
+            item(key = "working") {
+                /*
+                 * The verb of the tool that is running, if one is: the row above
+                 * already name it, and repeating "thinking" under a command that is
+                 * executing is the least useful thing the line could say.
+                 */
+                val busy = items.filterIsInstance<Item.Tool>().lastOrNull { it.status == "running" }
+                WorkingLine(if (busy != null) toolVerbOf(busy.name, "running") + "…" else "思考中…")
+            }
         }
         /*
          * Claude's other foot-of-transcript line: 「N 个运行中的任务」 in its link
@@ -4215,7 +4223,7 @@ fun GapRule(label: String) {
 }
 
 @Composable
-fun WorkingLine() {
+fun WorkingLine(label: String = "思考中…") {
     val transition = rememberInfiniteTransition(label = "working")
     val phase by transition.animateFloat(
         initialValue = 0f,
@@ -4229,10 +4237,15 @@ fun WorkingLine() {
      * This used to be three grey dots alone, which said nothing about what was
      * happening.
      */
-    val ink = Color(0xFFBC6D4F)
+    val ink = Color(0xFFBD6F50)
+    /*
+     * Claude's order is dots first, then the words - 「... Deliberating…」 - not
+     * the other way round, and the words change with what the turn is doing:
+     * a tool that is running names its own verb (正在读取…), and a turn with no
+     * tool says it is thinking. A fixed 「思考中」 while a command was actually
+     * executing told the reader less than the row above it already did.
+     */
     Row(Modifier.padding(start = 10.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("思考中", fontSize = 13.sp, color = ink)
-        Spacer(Modifier.width(2.dp))
         for (i in 0 until 3) {
             // Each dot is brightest when the phase passes it, which reads as a
             // wave rather than three blinking lights.
@@ -4241,11 +4254,13 @@ fun WorkingLine() {
             Box(
                 Modifier
                     .padding(end = 3.dp)
-                    .size(3.dp)
+                    .size(3.5.dp)
                     .graphicsLayer { alpha = 0.35f + 0.65f * lift; translationY = -1.5.dp.toPx() * lift }
                     .background(ink, CircleShape),
             )
         }
+        Spacer(Modifier.width(9.dp))
+        Text(label, fontSize = 15.sp, color = ink)
     }
 }
 
