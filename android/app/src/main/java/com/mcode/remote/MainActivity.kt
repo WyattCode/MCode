@@ -1746,15 +1746,16 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
             // Claude's pad empty pane carries the same asterisk its phone pane
             // does, drawn rather than a bitmap: the packaged mark is a raster
             // and read as two grey triangles at this size.
-            SparkMark(Modifier.size(44.dp))
+            SparkMark(Modifier.size(36.dp))
             Spacer(Modifier.height(14.dp))
-            Text(greeting(), fontSize = 44.sp, fontWeight = FontWeight.Normal, color = LocalText.current)
+            Text(greeting(), fontSize = 18.sp, fontWeight = FontWeight.Normal, color = LocalText.current)
         } else {
             SparkMark(Modifier.size(46.dp))
             Spacer(Modifier.height(16.dp))
-            // Claude sets its empty-state phrase large - 144px tall on the pad,
-            // about 44sp - with nothing else around it.
-            Text(greeting(), fontSize = 44.sp, fontWeight = FontWeight.Normal, color = LocalText.current)
+            // Claude's phrase is 50px of glyph on the pad - 18sp, not the 44
+            // this was set to after a first read of its line box (144px, which
+            // is leading, not the type size).
+            Text(greeting(), fontSize = 18.sp, fontWeight = FontWeight.Normal, color = LocalText.current)
         }
     }
     if (inputAtBottom) {
@@ -1766,7 +1767,9 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
          */
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             Column(
-                Modifier.align(Alignment.Center).padding(bottom = 24.dp),
+                // Claude's asterisk centres at 41% of the pane and its phrase
+                // at 48%; a plain centre lands both about 150px low.
+                Modifier.align(Alignment.Center).padding(bottom = 124.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) { mark() }
             if (withInput) Box(Modifier.align(Alignment.BottomCenter)) { inputBar() }
