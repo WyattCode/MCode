@@ -1403,7 +1403,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                              * conversation is attached to under it, then the
                              * clock and the overflow at the right.
                              */
-                            Box(Modifier.size(44.dp).clickable { select(null) }, contentAlignment = Alignment.Center) {
+                            Box(Modifier.size(44.dp).clickable { openDrawer() }, contentAlignment = Alignment.Center) {
                                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = LocalText.current, modifier = Modifier.size(20.dp))
                             }
                             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -2192,7 +2192,16 @@ fun WorkingLine() {
         animationSpec = infiniteRepeatable(tween(1200, easing = LinearEasing), RepeatMode.Restart),
         label = "phase",
     )
+    /*
+     * Claude's working mark is a sentence, not a row of dots: 「思考中…」 in the
+     * ember tone (188,109,79 on the pad) with three dots breathing after it.
+     * This used to be three grey dots alone, which said nothing about what was
+     * happening.
+     */
+    val ink = Color(0xFFBC6D4F)
     Row(Modifier.padding(start = 10.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("思考中", fontSize = 13.sp, color = ink)
+        Spacer(Modifier.width(2.dp))
         for (i in 0 until 3) {
             // Each dot is brightest when the phase passes it, which reads as a
             // wave rather than three blinking lights.
@@ -2200,10 +2209,10 @@ fun WorkingLine() {
             val lift = (1f - (distance.coerceAtMost(1f))).coerceIn(0f, 1f)
             Box(
                 Modifier
-                    .padding(end = 5.dp)
-                    .size(6.dp)
-                    .graphicsLayer { alpha = 0.3f + 0.7f * lift; translationY = -2.dp.toPx() * lift }
-                    .background(LocalMuted.current, CircleShape),
+                    .padding(end = 3.dp)
+                    .size(3.dp)
+                    .graphicsLayer { alpha = 0.35f + 0.65f * lift; translationY = -1.5.dp.toPx() * lift }
+                    .background(ink, CircleShape),
             )
         }
     }
