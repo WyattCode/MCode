@@ -43,6 +43,7 @@ import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Checklist
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Visibility
@@ -1310,6 +1311,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     // The drawer's search closes the drawer and focuses the
                     // list's field; on a phone the list is the page behind it.
                     onSearch = { closeDrawer() },
+                    onSeeAll = { openDrawer() },
                     onCode = { closeDrawer() },
                     onLongPress = { sheetTarget = it },
                 )
@@ -2607,9 +2609,13 @@ fun DrawerContent(
     onCode: () -> Unit,
     onUsage: () -> Unit = {},
     onSearch: () -> Unit = {},
+    onSeeAll: () -> Unit = {},
     onLongPress: ((SessionRow) -> Unit)? = null,
 ) {
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    // Claude's drawer is a shade below the page it covers: 243,243,240 against
+    // the page's 249,249,247, which is what makes it read as a sheet laid over
+    // the conversation rather than as the page itself sliding across.
+    Column(Modifier.fillMaxSize().background(if (LocalBg.current == DarkBg) Color(0xFF1C1C1B) else Color(0xFFF3F3F0))) {
         Column(Modifier.padding(horizontal = 18.dp)) {
             Spacer(Modifier.height(28.dp))
             // Claude's drawer opens with its name at 32sp and a search glyph at
@@ -2638,7 +2644,24 @@ fun DrawerContent(
             Text("最近使用", fontSize = 13.sp, color = LocalMuted.current)
             Spacer(Modifier.height(8.dp))
         }
-        SessionList(sessions, null, "", onSelect, compact = true, modifier = Modifier.weight(1f), onLongPress = onLongPress)
+        /*
+         * Claude's drawer shows the three most recent conversations and then a
+         * 「查看全部 ›」 row that opens the full list, so the drawer always fits
+         * on one screen however long the history is.
+         */
+        Column(Modifier.weight(1f)) {
+            SessionList(sessions.take(3), null, "", onSelect, compact = true, modifier = Modifier.fillMaxWidth(), onLongPress = onLongPress)
+            if (sessions.size > 3) {
+                Row(
+                    Modifier.fillMaxWidth().clickable { onSeeAll() }.padding(horizontal = 18.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("查看全部", fontSize = 14.sp, color = LocalMuted.current)
+                    Spacer(Modifier.width(4.dp))
+                    Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(16.dp))
+                }
+            }
+        }
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(42.dp).background(Ember, CircleShape), contentAlignment = Alignment.Center) {
                 Text("W", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
