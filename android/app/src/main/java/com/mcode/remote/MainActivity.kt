@@ -642,6 +642,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * way to take it back short of resetting the turn.
      */
     val queuedPrompts = remember { mutableStateListOf<Pair<String, String>>() }
+    /**
+     * Whether the session lets the app choose the model ("Smart" on the
+     * desktop's model pill). It changes what the pill says, and it is the
+     * default way a conversation is run, so the phone should say it too.
+     */
+    var smartMode by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<SessionRow?>(null) }
     var voiceText by remember { mutableStateOf<String?>(null) }
     /** The turn whose long-press sheet is open (复制 / 从此处分支). */
@@ -649,6 +655,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var modelPicker by remember { mutableStateOf(false) }
     var providers by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var showUsage by remember { mutableStateOf(false) }
+    /**
+     * The project browser.
+     *
+     * The desktop keeps a whole right-hand rail - files, changes, review,
+     * subagents, terminal, version history - and a tablet has the room for at
+     * least the first of them. `root` is the folder being listed, `sub` the
+     * path inside it, and `path` the stack of crumbs walked down.
+     */
+    var showFiles by remember { mutableStateOf(false) }
+    var fileStack by remember { mutableStateOf(listOf("")) }
+    val fileEntries = remember { mutableStateListOf<Pair<String, Boolean>>() }
+    var filePreview by remember { mutableStateOf<Pair<String, String>?>(null) }
     var usageSummary by remember { mutableStateOf<JSONObject?>(null) }
     /** Parked permission requests per session, replayed from session.list. */
     val pendingPerms = remember { java.util.concurrent.ConcurrentHashMap<String, MutableList<JSONObject>>() }
@@ -1083,6 +1101,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             val res = runCatching { deferred.await() }.getOrNull() ?: return@launch
             if (seq != selectSeq) return@launch
             queuedPrompts.clear()
+            smartMode = res.optJSONObject("data")?.optJSONObject("session")?.optBoolean("smart") ?: false
             val q = res.optJSONObject("data")?.optJSONObject("session")?.optJSONArray("queued")
             if (q != null) {
                 for (k in 0 until q.length()) {
@@ -1322,7 +1341,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         "max" -> "最高"
         else -> ""
     }
-    val currentModelLabel = if (effortLabel.isNotEmpty()) "$displayModel $effortLabel" else displayModel
+    // "Smart" replaces the model's name when the session lets the app pick one,
+    // which is what the desktop's pill does.
+    val shownModel = if (smartMode) "Smart" else displayModel
+    val currentModelLabel = if (effortLabel.isNotEmpty()) "$shownModel $effortLabel" else shownModel
 
     // The folder decides which commands exist, so this follows the session.
     val commandDir = sessions.find { it.id == currentSession }?.directory.orEmpty()
@@ -1598,6 +1620,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                         text = { Text(if (runningOnly) "显示全部会话" else "只看运行中") },
                                         onClick = { headerMenu = false; runningOnly = !runningOnly },
                                     )
+                                    DropdownMenuItem(
+                                        text = { Text("项目文件") },
+                                        onClick = { headerMenu = false; showFiles = true; fileStack = listOf("") },
+                                    )
                                 }
                             }
                         }
@@ -1635,6 +1661,123 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     },
                 ) { padding ->
                     Box(Modifier.padding(padding).fillMaxSize()) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onPermReason = ::respondPermReason, onAnswer = ::answerQuestion, onMessage = { messageTarget = it }, toTop = toTopTicks) }
+                }
+            }
+        }
+    }
+
+    /*
+     * The project browser: the folder walked one level at a time, text files
+     * shown as they are. The desktop has this as a permanent rail; on a tablet
+     * it belongs in a sheet, opened from the header, and it is the shortest way
+     * to answer "what is actually in this repository" from a phone.
+     */
+    if (showFiles) {
+        val root = sessions.find { it.id == currentSession }?.directory.orEmpty()
+        val sub = fileStack.last()
+        LaunchedEffect(root, sub) {
+            fileEntries.clear()
+            filePreview = null
+            val ticket = "fs${System.nanoTime()}"
+            val deferred = client.awaitResponse(ticket)
+            request(JSONObject().put("type", "file.listDir").put("directory", root).put("sub", sub), ticket)
+            val res = runCatching { deferred.await() }.getOrNull() ?: return@LaunchedEffect
+            val arr = res.optJSONObject("data")?.optJSONArray("entries") ?: return@LaunchedEffect
+            val list = mutableListOf<Pair<String, Boolean>>()
+            for (i in 0 until arr.length()) {
+                val e = arr.optJSONObject(i) ?: continue
+                list.add(e.optString("name") to (e.optString("type") == "dir"))
+            }
+            fileEntries.addAll(list.sortedWith(compareByDescending<Pair<String, Boolean>> { it.second }.thenBy { it.first }))
+        }
+        ModalBottomSheet(onDismissRequest = { showFiles = false }, containerColor = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (fileStack.size > 1) {
+                        Box(Modifier.size(36.dp).clickable { fileStack = fileStack.dropLast(1) }, contentAlignment = Alignment.Center) {
+                            Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "上一级", tint = LocalText.current, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                    Text(
+                        "/" + sub,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = LocalText.current,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(start = if (fileStack.size > 1) 4.dp else 0.dp),
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                LazyColumn(Modifier.weight(1f, fill = false).heightIn(max = 460.dp)) {
+                    items(fileEntries.size) { index ->
+                        val (name, isDir) = fileEntries[index]
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    if (isDir) {
+                                        fileStack = fileStack + if (sub.isBlank()) name else "$sub/$name"
+                                    } else {
+                                        val rel = if (sub.isBlank()) name else "$sub/$name"
+                                        // `rpc` is the same round trip the rest of
+                                        // this screen uses; the hand-rolled ticket
+                                        // here never came back.
+                                        scope.launch {
+                                            val r = runCatching {
+                                                rpc(JSONObject().put("type", "file.read").put("root", root).put("rel", rel))
+                                            }.getOrNull() ?: return@launch
+                                            val body = r.optJSONObject("data")?.optString("content").orEmpty()
+                                            filePreview = rel to body
+                                        }
+                                    }
+                                }
+                                .padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                if (isDir) Icons.Outlined.Folder else Icons.AutoMirrored.Outlined.Article,
+                                contentDescription = null,
+                                tint = LocalMuted.current,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(name, fontSize = 14.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /*
+     * A file opens in its own sheet rather than at the bottom of the folder
+     * list: a bottom sheet measures its height when it opens, so the preview
+     * added later was clipped away. This is also how the desktop shows one -
+     * a reading surface of its own.
+     */
+    filePreview?.let { (name, body) ->
+        ModalBottomSheet(onDismissRequest = { filePreview = null }, containerColor = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 25.dp)) {
+                Text(name, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = LocalText.current, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(10.dp))
+                LazyColumn(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 520.dp)
+                        .background(LocalPill.current, RoundedCornerShape(10.dp))
+                        .padding(10.dp),
+                ) {
+                    val lines = body.lineSequence().take(300).toList()
+                    items(lines.size) { i ->
+                        Text(
+                            lines[i].ifEmpty { " " },
+                            fontSize = 11.sp,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            color = LocalText.current,
+                            softWrap = true,
+                        )
+                    }
                 }
             }
         }
