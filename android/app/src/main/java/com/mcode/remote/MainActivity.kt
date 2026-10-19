@@ -2045,8 +2045,13 @@ fun ImageBox(url: String) {
         bitmap.asImageBitmap(),
         contentDescription = "图片",
         contentScale = ContentScale.Crop,
+        /*
+         * 84dp, not 64: Claude's own thumbnail is about 235px wide on the pad,
+         * which is 84dp at 400dpi, with the same 12dp corners. A 64dp square
+         * read as an icon rather than as the picture that was sent.
+         */
         modifier = Modifier
-            .size(64.dp)
+            .size(84.dp)
             .clip(RoundedCornerShape(12.dp))
             .clickable { open = true },
     )
