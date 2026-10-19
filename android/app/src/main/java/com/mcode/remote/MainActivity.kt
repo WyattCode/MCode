@@ -2644,6 +2644,69 @@ fun rowsOf(items: List<Item>): List<Any> {
     return out
 }
 
+/**
+ * One step of a turn: the assistant's words and the calls it made right after.
+ *
+ * Claude threads a rounded rule down the left of that pair - 3.6dp wide,
+ * 216,216,214, capped at both ends - so a paragraph and the tool rows under it
+ * read as one move rather than as loose lines. Nothing in the phone's flat list
+ * said those rows belonged to the words above them.
+ *
+ * User turns are never wrapped: their bubble is already a block of its own.
+ */
+data class Step(val body: Any?, val calls: MutableList<Any>, val key: String)
+
+/** Folds the flat rows into steps: prose plus the tool rows that follow it. */
+fun stepsOf(rows: List<Any>): List<Any> {
+    fun isCall(r: Any) = r is Item.Tool || r is ToolRun
+
+    /*
+     * A step is the assistant's words and the calls it made, whichever side of
+     * the words they arrived on.
+     *
+     * The server's order varies: sometimes the calls are flushed first and the
+     * prose that describes them follows, sometimes the reverse. Both belong to
+     * one step, and Claude draws one rule beside the pair. Folding only forward
+     * left most steps unwrapped; folding only backward left the others.
+     */
+    val out = mutableListOf<Any>()
+    var i = 0
+    while (i < rows.size) {
+        val row = rows[i]
+        if (isCall(row)) {
+            // Calls belong to the nearest assistant prose in this stretch - the
+            // paragraph they were made for, not to the user's prompt above them.
+            val owner = out.indexOfLast { it is Item.Msg && it.role != "user" || it is Step }
+            if (owner >= 0) {
+                val existing = out[owner]
+                if (existing is Step) {
+                    existing.calls.add(row)
+                } else if (existing is Item.Msg) {
+                    out[owner] = Step(existing, mutableListOf<Any>(row), "step.${existing.id}")
+                }
+                i++
+                continue
+            }
+        }
+        val isAssistantProse = row is Item.Msg && row.role != "user"
+        if (!isAssistantProse) {
+            out.add(row)
+            i++
+            continue
+        }
+        val calls = mutableListOf<Any>()
+        var j = i + 1
+        while (j < rows.size && isCall(rows[j])) {
+            calls.add(rows[j])
+            j++
+        }
+        out.add(if (calls.isEmpty()) row else Step(row, calls, "step.${(row as Item.Msg).id}"))
+        i = j
+    }
+    return out
+}
+
+
 /** Claude's summary of a run: what was run, how much of it broke, what was read. */
 fun runSummary(run: ToolRun): String {
     val commands = run.items.count { it.name == "bash" || it.name == "exec_command" || it.name == "execute" }
@@ -2690,7 +2753,7 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
         val cards = items.filterIsInstance<Item.Perm>()
         cards.withIndex().associate { (i, card) -> card.requestId to (i + 1 to cards.size) }
     }
-    val rows = remember(items.toList()) { rowsOf(items) }
+    val rows = remember(items.toList()) { stepsOf(rowsOf(items)) }
     /*
      * Whether the timeline should keep following new lines.
      *
@@ -2746,7 +2809,7 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
         contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 10.dp, bottom = 6.dp),
     ) {
         for (item in rows) {
-            item(key = (item as? ToolRun)?.key ?: (item as Item).key) {
+            item(key = (item as? ToolRun)?.key ?: (item as? Step)?.key ?: (item as Item).key) {
                 // Every row fades and rises a little as it lands, which is what
                 // makes a streamed reply read as arriving rather than repainting.
                 var shown by remember { mutableStateOf(false) }
@@ -2754,6 +2817,47 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                 val appear by animateFloatAsState(if (shown) 1f else 0f, tween(180), label = "row-in")
                 Box(Modifier.graphicsLayer { alpha = appear; translationY = (1f - appear) * 8.dp.toPx() }) {
                 when (item) {
+                    /*
+                     * A step: the rule down the left, then the words and the
+                     * calls it made inside it. The rule is the only thing that
+                     * says those rows belong together.
+                     */
+                    /*
+                     * `IntrinsicSize.Min` is what lets the rule stretch: in a Row
+                     * whose children size themselves, `fillMaxHeight` has no
+                     * height to fill - the bar collapsed to nothing and the step
+                     * looked exactly like a bare reply.
+                     */
+                    is Step -> {
+                        /*
+                         * The rule is drawn behind the content, not beside it:
+                         * a Box in a Row sizes to its own content, and a rule
+                         * with no content of its own measured zero - which is
+                         * why the first attempt showed nothing at all.
+                         */
+                        val rail = if (LocalBg.current == DarkBg) Color(0xFF3A3A38) else Color(0xFFD8D8D6)
+                        Box(Modifier.fillMaxWidth()) {
+                            Canvas(Modifier.matchParentSize()) {
+                                val x = 1.8.dp.toPx()
+                                drawLine(
+                                    color = rail,
+                                    start = androidx.compose.ui.geometry.Offset(x, 4.dp.toPx()),
+                                    end = androidx.compose.ui.geometry.Offset(x, size.height - 4.dp.toPx()),
+                                    strokeWidth = 3.5.dp.toPx(),
+                                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                )
+                            }
+                            Column(Modifier.fillMaxWidth().padding(start = 14.dp)) {
+                                (item.body as? Item.Msg)?.let { StepBody(it) }
+                                for (call in item.calls) {
+                                    when (call) {
+                                        is Item.Tool -> ToolRow(call)
+                                        is ToolRun -> RunRow(call)
+                                    }
+                                }
+                            }
+                        }
+                    }
                     is Item.Msg -> {
                         val isUser = item.role == "user"
                         Box(Modifier.fillMaxWidth()) {
@@ -3967,6 +4071,49 @@ fun InputCapsule(enabled: Boolean, modelLabel: String, onSend: (String, List<JSO
  * Pulled out of the timeline so a run of calls can reuse it when it opens: the
  * row is identical whether it stands alone or sits inside a summary.
  */
+/** The words of a step. Split out so a step and a bare reply draw them alike. */
+@Composable
+private fun StepBody(item: Item.Msg) {
+    if (item.text.isBlank()) return
+    Box(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 5.dp),
+        ) {
+            MarkdownBody(item.text, dark = LocalBg.current == DarkBg)
+        }
+    }
+}
+
+/** A folded run inside a step: the same summary row the timeline draws. */
+@Composable
+private fun RunRow(item: ToolRun) {
+    var open by remember { mutableStateOf(false) }
+    Column(Modifier.padding(start = 10.dp)) {
+        Row(
+            Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                runSummary(item),
+                fontSize = 12.5.sp,
+                color = LocalMuted.current,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            Icon(
+                Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                contentDescription = if (open) "收起" else "展开",
+                tint = LocalMuted.current,
+                modifier = Modifier.size(14.dp).graphicsLayer { rotationZ = if (open) 90f else 0f },
+            )
+        }
+        if (open) for (call in item.items) ToolRow(call)
+    }
+}
+
 @Composable
 fun ToolRow(item: Item.Tool) {
     var open by remember { mutableStateOf(false) }
