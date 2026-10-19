@@ -734,6 +734,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * and its MCP servers side by side and lets either be switched off.
      */
     var showPlugins by remember { mutableStateOf(false) }
+    /**
+     * 模型服务: the providers and their keys.
+     *
+     * This is the one screen a phone needs that no other reaches: a turn whose
+     * key has expired fails with a sentence and nothing else, and the only way
+     * to fix it was the desktop. `provider.auth` writes the key where the
+     * desktop's own dialog does - through the credentials store, never into
+     * `config.json`, which is the mistake that made a pasted key look saved and
+     * never work.
+     */
+    var showProviders by remember { mutableStateOf(false) }
+    var keyTarget by remember { mutableStateOf<JSONObject?>(null) }
     /** The plugins page's two halves, as `mcp.list` and `skill.list` returned them. */
     val pluginServers = remember { mutableStateListOf<JSONObject>() }
     val pluginSkills = remember { mutableStateListOf<JSONObject>() }
@@ -1756,6 +1768,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     onSearch = { closeDrawer() },
                     onSeeAll = { openDrawer() },
                     onPlugins = { showPlugins = true; closeDrawer() },
+                    onProviders = { loadProviders(); showProviders = true; closeDrawer() },
                     onLongPress = { sheetTarget = it },
                 )
             }
@@ -1961,7 +1974,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 WelcomePane(withInput = true, inputBar = inputBar, inputAtBottom = true)
                             } else {
                                 Column(Modifier.fillMaxSize()) {
-                                    Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onPermReason = ::respondPermReason, onAnswer = ::answerQuestion, onMessage = { messageTarget = it }, toTop = toTopTicks) }
+                                    Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onPermReason = ::respondPermReason, onAnswer = ::answerQuestion, onMessage = { messageTarget = it }, toTop = toTopTicks, onFixKey = { loadProviders(); showProviders = true }) }
                                     inputBar()
                                 }
                             }
@@ -1988,7 +2001,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         }
                     },
                 ) { padding ->
-                    Box(Modifier.padding(padding).fillMaxSize()) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onPermReason = ::respondPermReason, onAnswer = ::answerQuestion, onMessage = { messageTarget = it }, toTop = toTopTicks) }
+                    Box(Modifier.padding(padding).fillMaxSize()) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onPermReason = ::respondPermReason, onAnswer = ::answerQuestion, onMessage = { messageTarget = it }, toTop = toTopTicks, onFixKey = { loadProviders(); showProviders = true }) }
                 }
             }
         }
@@ -2819,6 +2832,164 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             }
         }
     }
+    /*
+     * 模型服务: which provider serves this conversation, and its key.
+     *
+     * The desktop keeps this in its settings; the phone's connection sheet only
+     * had the gateway's address. A key that has expired is the single most
+     * common reason a turn fails here - it arrives as a sentence in the
+     * transcript and nothing else - so the screen that repairs it belongs on
+     * the phone too. `provider.auth` writes through the credentials store and
+     * into `credentials.json` sealed by safeStorage, which is where the backend
+     * actually reads it from; writing `customProviders[].apiKey` in the config
+     * is the trap this avoids.
+     */
+    if (showProviders) {
+        val providerSheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { showProviders = false },
+            sheetState = providerSheet,
+            containerColor = MaterialTheme.colorScheme.background,
+        ) {
+            Column(
+                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp),
+            ) {
+                Text("模型服务", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "密钥保存在这台电脑上，只用来向服务商发起请求。",
+                    fontSize = 12.sp,
+                    color = LocalMuted.current,
+                )
+                Spacer(Modifier.height(12.dp))
+                if (providers.isEmpty()) {
+                    Text("正在读取…", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(vertical = 20.dp))
+                }
+                /*
+                 * Connected first, then the rest in the server's own order.
+                 *
+                 * The list is 31 entries and the three that this machine
+                 * actually reaches - its own OpenAI-compatible endpoints - sort
+                 * last by `order`, so a phone opened this page and showed thirty
+                 * "未连接" rows before the one it was looking for. The desktop
+                 * never has to scroll past them; a sheet does.
+                 */
+                val ordered = providers.sortedWith(
+                    compareByDescending<JSONObject> { it.optBoolean("configured") }.thenBy { it.optInt("order", 100) },
+                )
+                for (provider in ordered) {
+                    val id = provider.optString("id")
+                    val name = provider.optString("name", id)
+                    val configured = provider.optBoolean("configured")
+                    val fromEnv = provider.optString("environment")
+                    val models = provider.optJSONArray("models")?.length() ?: 0
+                    Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(name, fontSize = 15.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                when {
+                                    fromEnv.isNotBlank() -> "由环境变量 $fromEnv 提供"
+                                    configured -> "已连接 · $models 个模型"
+                                    else -> "未连接"
+                                },
+                                fontSize = 11.5.sp,
+                                color = if (configured) Color(0xFF2E7D32) else LocalMuted.current,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        if (fromEnv.isBlank()) {
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = LocalPill.current,
+                                modifier = Modifier.clickable { keyTarget = provider },
+                            ) {
+                                Text(
+                                    if (configured) "更换密钥" else "填写密钥",
+                                    fontSize = 13.sp,
+                                    color = LocalText.current,
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    keyTarget?.let { provider ->
+        val id = provider.optString("id")
+        val name = provider.optString("name", id)
+        var key by remember(id) { mutableStateOf("") }
+        var busy by remember(id) { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { if (!busy) keyTarget = null },
+            title = { Text(name, fontSize = 16.sp) },
+            text = {
+                Column(Modifier.fillMaxWidth()) {
+                    Text("粘贴 API 密钥", fontSize = 12.sp, color = LocalMuted.current)
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(
+                        key,
+                        { key = it },
+                        Modifier.fillMaxWidth(),
+                        placeholder = { Text("sk-…", fontSize = 13.sp, color = LocalMuted.current) },
+                        singleLine = true,
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+                        shape = RoundedCornerShape(10.dp),
+                    )
+                    if (provider.optString("baseURL").isNotBlank()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(provider.optString("baseURL"), fontSize = 11.sp, color = LocalMuted.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    if (busy) {
+                        Spacer(Modifier.height(10.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = LocalMuted.current)
+                            Spacer(Modifier.width(8.dp))
+                            Text("正在验证…", fontSize = 12.sp, color = LocalMuted.current)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !busy && key.isNotBlank(),
+                    onClick = {
+                        busy = true
+                        scope.launch {
+                            val result = runCatching {
+                                rpc(
+                                    JSONObject().put("type", "provider.auth").put("provider", id).put("apiKey", key.trim()),
+                                    // The provider is probed before the reply, so this waits
+                                    // longer than a settings read does.
+                                    90_000,
+                                )
+                            }
+                            withContext(Dispatchers.Main) {
+                                busy = false
+                                result.onSuccess { reply ->
+                                    providers = reply.optJSONObject("data")?.optJSONArray("providers")?.let { arr ->
+                                        (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+                                    } ?: providers
+                                    // The model list can change with the key, and the
+                                    // composer's pill reads it.
+                                    loadProviders()
+                                    keyTarget = null
+                                    Toast.makeText(context, "已保存 $name 的密钥", Toast.LENGTH_SHORT).show()
+                                }.onFailure { err ->
+                                    Toast.makeText(context, "保存失败：${err.message?.take(80) ?: "未知错误"}", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    },
+                ) { Text("保存") }
+            },
+            dismissButton = { TextButton({ if (!busy) keyTarget = null }) { Text("取消") } },
+        )
+    }
     sheetTarget?.let { row ->
         ModalBottomSheet(onDismissRequest = { sheetTarget = null }, containerColor = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
@@ -3496,7 +3667,7 @@ fun runSummary(run: ToolRun): String {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, onPerm: (String, String) -> Unit = { _, _ -> }, onPermReason: (String, String) -> Unit = { _, _ -> }, onAnswer: (String, List<String>) -> Unit = { _, _ -> }, onMessage: (Item.Msg) -> Unit = {}, toTop: Int = 0) {
+fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, onPerm: (String, String) -> Unit = { _, _ -> }, onPermReason: (String, String) -> Unit = { _, _ -> }, onAnswer: (String, List<String>) -> Unit = { _, _ -> }, onMessage: (Item.Msg) -> Unit = {}, toTop: Int = 0, onFixKey: () -> Unit = {}) {
     val listState = rememberLazyListState()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     // Follow new items: when a message is sent or a reply/tool event lands,
@@ -3797,22 +3968,48 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                         // A broken turn is a card, not a red line lost in the
                         // prose: the desktop gives it its own surface and its
                         // own weight, so a failure is as visible as a reply.
-                        Row(
+                        val aboutKey = remember(item.uid) {
+                            val lower = item.text.lowercase()
+                            listOf("api key", "apikey", "invalid key", "unauthorized", "401", "authentication", "forbidden", "credit", "密钥", "额度", "认证")
+                                .any { it in lower }
+                        }
+                        Column(
                             Modifier
                                 .padding(start = 2.dp, top = 4.dp)
                                 .fillMaxWidth()
                                 .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
                                 .padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(
-                                Icons.Outlined.ErrorOutline,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(15.dp),
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(item.text, fontSize = 13.sp, lineHeight = 19.sp, color = MaterialTheme.colorScheme.error)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Outlined.ErrorOutline,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(15.dp),
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(item.text, fontSize = 13.sp, lineHeight = 19.sp, color = MaterialTheme.colorScheme.error)
+                            }
+                            /*
+                             * The failure the phone could name but not repair: an
+                             * expired key arrives as a sentence, and the screen
+                             * that fixes it was only on the desktop. The row is
+                             * offered only when the words are about a key, so it
+                             * is not a permanent button under every failure.
+                             */
+                            if (aboutKey) {
+                                Spacer(Modifier.height(6.dp))
+                                Row(
+                                    Modifier.padding(start = 23.dp).clip(RoundedCornerShape(14.dp))
+                                        .clickable { onFixKey() }
+                                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(Icons.Outlined.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(13.dp))
+                                    Spacer(Modifier.width(5.dp))
+                                    Text("检查 API 密钥", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                                }
+                            }
                         }
                     }
                 }
@@ -4427,6 +4624,7 @@ fun DrawerContent(
     onScheduled: () -> Unit,
     onTasks: () -> Unit,
     onPlugins: () -> Unit = {},
+    onProviders: () -> Unit = {},
     onUsage: () -> Unit = {},
     onSearch: () -> Unit = {},
     onSeeAll: () -> Unit = {},
@@ -4462,6 +4660,8 @@ fun DrawerContent(
             DrawerItem(Icons.Outlined.Checklist, "进行中的任务") { onTasks() }
             Spacer(Modifier.height(18.dp))
             DrawerItem(Icons.Outlined.BarChart, "用量") { onUsage() }
+            Spacer(Modifier.height(18.dp))
+            DrawerItem(Icons.Outlined.Lock, "模型服务") { onProviders() }
             Spacer(Modifier.height(18.dp))
             DrawerItem(Icons.Outlined.Settings, "连接设置") { onReconnect() }
             Spacer(Modifier.height(20.dp))
