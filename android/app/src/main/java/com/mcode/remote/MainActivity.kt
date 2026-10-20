@@ -437,7 +437,25 @@ private fun nextErrId(): Int = ++errCounter
 
 sealed class Item {
     abstract val key: String
-    data class Msg(val id: String, val role: String, var text: String, val images: List<String> = emptyList(), val at: Long = 0L, val steered: Boolean = false, val files: List<String> = emptyList()) : Item() { override val key = "msg.$id" }
+    /**
+     * One turn's words.
+     *
+     * `finish` is the engine's sentence on how the turn ended -
+     * `end_turn`, `max_tokens`, `aborted`, `error` or `refusal` - and the phone
+     * only ever asked whether it was blank. A reply cut at the model's limit
+     * therefore arrived looking like a finished answer: the words simply
+     * stopped, and nothing said they had been truncated.
+     */
+    data class Msg(
+        val id: String,
+        val role: String,
+        var text: String,
+        val images: List<String> = emptyList(),
+        val at: Long = 0L,
+        val steered: Boolean = false,
+        val files: List<String> = emptyList(),
+        val finish: String = "",
+    ) : Item() { override val key = "msg.$id" }
 
     /**
      * Claude's wave divider: a wavy rule across the pane with the clock in the
@@ -1590,7 +1608,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 val whole = text.toString().trim()
                 val settled = message.optString("finish").isNotBlank() || (message.optJSONObject("time")?.optLong("completed", 0L) ?: 0L) > 0L
                 val next = if (settled || whole.length >= existing.text.length) whole else existing.text
-                items[known] = existing.copy(text = next, images = images, files = sentFiles, steered = message.optBoolean("steered"))
+                items[known] = existing.copy(
+                    text = next,
+                    images = images,
+                    files = sentFiles,
+                    steered = message.optBoolean("steered"),
+                    finish = message.optString("finish", existing.finish),
+                )
             }
         } else {
             val body = text.toString().trim()
@@ -1617,7 +1641,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                  * file`), so the phone does the same and lets it be tapped.
                  */
                 val fallback = if (images.isEmpty() && sentFiles.isEmpty()) "…" else ""
-                items.add(Item.Msg(id, role, body.ifEmpty { fallback }, images, at, message.optBoolean("steered"), sentFiles))
+                items.add(
+                    Item.Msg(
+                        id, role, body.ifEmpty { fallback }, images, at,
+                        message.optBoolean("steered"), sentFiles,
+                        finish = message.optString("finish"),
+                    ),
+                )
                 messageIndex[id] = items.size - 1
             }
         }
@@ -4466,6 +4496,31 @@ fun GhostGlyph(active: Boolean, size: androidx.compose.ui.unit.Dp) {
  * of the day that the desktop's empty pane uses.
  */
 /**
+ * A line under a turn that ended for a reason worth saying.
+ *
+ * The desktop has one for each of these (`error.detail`, the 继续 hint); on the
+ * phone they were all silence, so a truncated reply and a complete one looked
+ * the same.
+ */
+@Composable
+fun TurnNote(text: String) {
+    Row(
+        Modifier.padding(top = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        MiIcon(
+            "M10 6.5v4M10 13.5v.01",
+            modifier = Modifier.size(12.dp),
+            viewBox = 20f,
+            strokeWidth = 1.6f,
+            tint = LocalMuted.current,
+        )
+        Spacer(Modifier.width(5.dp))
+        Text(text, fontSize = 12.sp, color = LocalMuted.current, lineHeight = 17.sp)
+    }
+}
+
+/**
  * `stream.loadingConvo`: 80 above and below, 13sp, in the body's grey, centred
  * (`MessageStream.vue`'s `.thread-loading`). It stands in for the empty state
  * while a conversation's history is still being read.
@@ -5405,11 +5460,33 @@ fun Timeline(
                                             modifier = Modifier.align(Alignment.End).padding(top = 4.dp),
                                         )
                                     }
-                                } else if (item.text.isNotBlank()) {
-                                    MarkdownBody(
-                                        item.text,
-                                        dark = LocalBg.current == DarkBg,
-                                    )
+                                } else {
+                                    if (item.text.isNotBlank()) {
+                                        MarkdownBody(
+                                            item.text,
+                                            dark = LocalBg.current == DarkBg,
+                                        )
+                                    }
+                                    /*
+                                     * `finish` says how the turn ended, and the
+                                     * values that matter are the ones where the
+                                     * turn did NOT end cleanly: `max_tokens` ran
+                                     * out of room mid-sentence, `refusal`
+                                     * declined, `error` broke, `aborted` was
+                                     * stopped. All of them used to arrive as an
+                                     * ordinary reply that simply stopped - and
+                                     * an `error` or `aborted` turn often carries
+                                     * no text at all, so the note has to sit
+                                     * outside the body's own check or it would
+                                     * never draw for exactly those cases.
+                                     */
+                                    when (item.finish) {
+                                        "max_tokens" -> TurnNote("回复已达长度上限，内容被截断。发送「继续」可以让它接着说。")
+                                        "refusal" -> TurnNote("模型拒绝了这个请求。")
+                                        "error" -> TurnNote("这一轮出错了。")
+                                        "aborted" -> TurnNote("这一轮被中断。")
+                                        else -> Unit
+                                    }
                                     /*
                                      * Claude ends a reply with two quiet glyphs -
                                      * copy, then read aloud - at 149,147,143 on
