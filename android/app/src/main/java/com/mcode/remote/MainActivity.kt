@@ -746,8 +746,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var privacy by remember { mutableStateOf(false) }
     var projectFilter by remember { mutableStateOf<String?>(null) }
     var showTasks by remember { mutableStateOf(false) }
-    var showProjects by remember { mutableStateOf(false) }
-    var showScheduled by remember { mutableStateOf(false) }
     /**
      * 技能与插件: the desktop's plugins page, which lists the folder's skills
      * and its MCP servers side by side and lets either be switched off.
@@ -2661,156 +2659,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             }
         }
     }
-    if (showProjects) {
-        ModalBottomSheet(onDismissRequest = { showProjects = false }, containerColor = MaterialTheme.colorScheme.background) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
-                Text("项目", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
-                Spacer(Modifier.height(12.dp))
-                val projects = sessions.map { it.directory }.filter { it.isNotBlank() }.distinct().sorted()
-                Row(Modifier.fillMaxWidth().clickable { projectFilter = null; showProjects = false }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.Folder, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(14.dp))
-                    Text("全部项目", fontSize = 15.sp, color = LocalText.current)
-                    Spacer(Modifier.weight(1f))
-                    if (projectFilter == null) Icon(Icons.Outlined.Check, contentDescription = null, tint = Ember)
-                }
-                for (dir in projects) {
-                    Row(Modifier.fillMaxWidth().clickable { projectFilter = dir; showProjects = false }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Folder, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(14.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(dir.substringAfterLast('\\').substringAfterLast('/'), fontSize = 15.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(dir, fontSize = 11.sp, color = LocalMuted.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        if (projectFilter == dir) Icon(Icons.Outlined.Check, contentDescription = null, tint = Ember)
-                    }
-                }
-                /*
-                 * Claude's empty state is a large outlined folder with two
-                 * lines under it - 「暂无项目」 then a sentence saying what will
-                 * appear there. This printed one small grey line, which reads
-                 * as an error rather than as a page waiting to be filled.
-                 */
-                /*
-                 * Claude parks a black 「+ 新建项目」 capsule at the foot of its
-                 * project page. Here it opens a field for a folder path, which
-                 * is what `project.add` takes - the desktop's picker is a native
-                 * dialog and has no phone equivalent.
-                 */
-                var adding by remember { mutableStateOf(false) }
-                var newPath by remember { mutableStateOf("") }
-                if (adding) {
-                    Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(
-                            newPath,
-                            { newPath = it },
-                            Modifier.weight(1f),
-                            placeholder = { Text("D:\\Projects\\my-app", fontSize = 13.sp, color = LocalMuted.current) },
-                            singleLine = true,
-                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
-                            shape = RoundedCornerShape(10.dp),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        TextButton(
-                            {
-                                val dir = newPath.trim()
-                                if (dir.isNotBlank()) {
-                                    scope.launch {
-                                        runCatching {
-                                            rpc(JSONObject().put("type", "project.add").put("directory", dir).put("used", false))
-                                        }
-                                        adding = false
-                                        newPath = ""
-                                        showProjects = false
-                                    }
-                                }
-                            },
-                        ) { Text("添加") }
-                    }
-                } else {
-                    Surface(
-                        shape = RoundedCornerShape(24.dp),
-                        color = LocalText.current,
-                        modifier = Modifier
-                            .padding(top = 14.dp)
-                            .align(Alignment.CenterHorizontally)
-                            .clickable { adding = true },
-                    ) {
-                        Row(Modifier.padding(horizontal = 18.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("+", fontSize = 16.sp, color = LocalBg.current)
-                            Spacer(Modifier.width(6.dp))
-                            Text("新建项目", fontSize = 14.sp, color = LocalBg.current)
-                        }
-                    }
-                }
-                if (projects.isEmpty()) {
-                    Column(
-                        Modifier.fillMaxWidth().padding(top = 40.dp, bottom = 28.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Icon(
-                            Icons.Outlined.FolderOpen,
-                            contentDescription = null,
-                            tint = LocalMuted.current.copy(alpha = 0.55f),
-                            modifier = Modifier.size(63.dp),
-                        )
-                        Spacer(Modifier.height(18.dp))
-                        Text("暂无项目", fontSize = 15.sp, color = LocalText.current)
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "您创建或加入的项目将显示在此处。",
-                            fontSize = 13.sp,
-                            color = LocalMuted.current,
-                        )
-                    }
-                }
-            }
-        }
-    }
-    if (showScheduled) {
-        ModalBottomSheet(onDismissRequest = { showScheduled = false }, containerColor = MaterialTheme.colorScheme.background) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
-                Text("定时任务", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
-                Spacer(Modifier.height(12.dp))
-                if (automations.isEmpty()) {
-                    // Claude's own empty page, at its sizes: an icon, a title and
-                    // the sentence under it.
-                    Column(
-                        Modifier.fillMaxWidth().padding(top = 40.dp, bottom = 28.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Icon(
-                            Icons.Outlined.Schedule,
-                            contentDescription = null,
-                            tint = LocalMuted.current.copy(alpha = 0.55f),
-                            modifier = Modifier.size(57.dp),
-                        )
-                        Spacer(Modifier.height(18.dp))
-                        Text("暂无定时任务", fontSize = 15.sp, color = LocalText.current)
-                        Spacer(Modifier.height(8.dp))
-                        Text("让 MCode 按计划运行任务。", fontSize = 13.sp, color = LocalMuted.current)
-                    }
-                } else {
-                    for ((_, title, nextAt) in automations) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(Icons.Outlined.Schedule, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(title, fontSize = 14.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                if (nextAt > 0L) {
-                                    val when_ = android.text.format.DateFormat.format("MM-dd HH:mm", nextAt).toString()
-                                    Text("下次：$when_", fontSize = 11.sp, color = LocalMuted.current)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+
+
     /*
      * 技能与插件: the desktop's plugins page.
      *
@@ -2820,6 +2670,54 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * desktop's own page does; a server's switch is `mcp.toggle`. Either half
      * answering alone is shown rather than the whole page failing.
      */
+    /*
+     * On a phone there is no column to swap, so the same two pages open over
+     * the conversation - the identical composables, with the identical data, so
+     * the two layouts cannot drift apart the way a second implementation would.
+     */
+    if (!wide && leftMode != LeftMode.Sessions) {
+        val pageSheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { leftMode = LeftMode.Sessions },
+            sheetState = pageSheet,
+            containerColor = MaterialTheme.colorScheme.background,
+        ) {
+            Column(Modifier.fillMaxWidth().fillMaxHeight(0.86f).padding(horizontal = 16.dp).padding(bottom = 12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (leftMode == LeftMode.Projects) "项目" else "定时任务",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = LocalText.current,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Box(Modifier.size(32.dp).clickable { leftMode = LeftMode.Sessions }, contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.Close, contentDescription = "关闭", tint = LocalMuted.current, modifier = Modifier.size(18.dp))
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                if (leftMode == LeftMode.Projects) {
+                    ProjectsPane(
+                        projects = projects,
+                        filter = projectFilter,
+                        adding = projectAdding,
+                        onAdding = { projectAdding = it },
+                        onPick = { projectFilter = it; leftMode = LeftMode.Sessions },
+                        onAdd = { dir ->
+                            scope.launch {
+                                runCatching { rpc(JSONObject().put("type", "project.add").put("directory", dir).put("used", false)) }
+                                refreshCommandsTick++
+                                projectAdding = false
+                            }
+                        },
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                    )
+                } else {
+                    ScheduledPane(tasks = automations.toList(), modifier = Modifier.weight(1f).fillMaxWidth())
+                }
+            }
+        }
+    }
     if (showPlugins) {
         val dir = sessions.find { it.id == currentSession }?.directory.orEmpty()
         LaunchedEffect(dir, showPlugins) {
