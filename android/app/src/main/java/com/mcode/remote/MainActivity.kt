@@ -1078,6 +1078,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * was on screen could only be found by scrolling and guessing.
      */
     val unseen = remember { mutableStateListOf<String>() }
+    /**
+     * A conversation whose history is still on its way.
+     *
+     * `stream.loadingConvo` - 「正在加载对话…」 - is what the desktop shows over
+     * an empty thread while `session.get` is out. The phone drew the empty
+     * state instead, so opening a conversation with turns in it showed the
+     * greeting for as long as the read took, as if the conversation were new.
+     */
+    var loadingThread by remember { mutableStateOf(false) }
     /** Parked question cards per session, replayed from question.list. */
     val pendingQuestions = remember { java.util.concurrent.ConcurrentHashMap<String, MutableList<JSONObject>>() }
     /** Bumped whenever the parked maps change, so the replay effect re-runs. */
@@ -1591,6 +1600,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         val seq = selectSeq
         items.clear()
         messageIndex.clear()
+        loadingThread = id != null
         if (id == null) return
         // Parked permissions ride along: a turn can be sitting on an answer
         // while the phone reconnected, and the card must not vanish with the
@@ -1606,6 +1616,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             request(JSONObject().put("type", "session.get").put("sessionID", id), ticket)
             val res = runCatching { deferred.await() }.getOrNull() ?: return@launch
             if (seq != selectSeq) return@launch
+            loadingThread = false
             queuedPrompts.clear()
             val info = res.optJSONObject("data")?.optJSONObject("session")
             smartMode = info?.optBoolean("smart") ?: false
@@ -2773,7 +2784,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         }
                         // The conversation pane, and only it, rides above the IME.
                         Column(Modifier.weight(1f).fillMaxWidth().windowInsetsPadding(WindowInsets.ime.only(WindowInsetsSides.Bottom))) {
-                            if (empty) {
+                            if (empty && loadingThread) {
+                                ThreadLoading()
+                            } else if (empty) {
                                 WelcomePane(withInput = true, inputBar = inputBar, inputAtBottom = true)
                             } else {
                                 Column(Modifier.fillMaxSize()) {
@@ -4107,6 +4120,18 @@ fun GhostGlyph(active: Boolean, size: androidx.compose.ui.unit.Dp) {
  * with nothing around it. The list is the same four-character phrase per part
  * of the day that the desktop's empty pane uses.
  */
+/**
+ * `stream.loadingConvo`: 80 above and below, 13sp, in the body's grey, centred
+ * (`MessageStream.vue`'s `.thread-loading`). It stands in for the empty state
+ * while a conversation's history is still being read.
+ */
+@Composable
+fun ThreadLoading() {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text("正在加载对话…", fontSize = 13.sp, color = LocalMuted.current)
+    }
+}
+
 fun greeting(): String = when (java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)) {
     in 5..8 -> "清晨随笔"
     in 9..11 -> "上午闲话"
@@ -5136,22 +5161,61 @@ fun Timeline(
                             listOf("api key", "apikey", "invalid key", "unauthorized", "401", "authentication", "forbidden", "credit", "密钥", "额度", "认证")
                                 .any { it in lower }
                         }
+                        /*
+                         * `.err-card`: the raised surface, a hairline, a 16
+                         * corner, 12/14 of inset - and the card's own text
+                         * colour for both the sentence and its 20px mark
+                         * ("MiMo's 20px alert in the card's own text colour,
+                         * not red"). The phone filled it with the error
+                         * container and painted the words red, which made a
+                         * failed turn look like a blocking alert in the middle
+                         * of a transcript that had otherwise gone fine.
+                         */
                         Column(
                             Modifier
-                                .padding(start = 2.dp, top = 4.dp)
+                                .padding(start = 2.dp, top = 12.dp)
                                 .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                                .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(16.dp))
+                                .border(
+                                    1.dp,
+                                    if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFF1F1F1),
+                                    RoundedCornerShape(16.dp),
+                                )
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Outlined.ErrorOutline,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(15.dp),
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text(item.text, fontSize = 13.sp, lineHeight = 19.sp, color = MaterialTheme.colorScheme.error)
+                                /*
+                                 * `.err-icon`: a circled exclamation on a 20
+                                 * grid - r 7.5, a 1.7 stroke, the bar from
+                                 * 5.9 to 10.7 and a dot at 13.7. Not a warning
+                                 * triangle: the desktop's mark is the same one
+                                 * it uses for "this failed", in the card's own
+                                 * ink.
+                                 */
+                                val errInk = LocalText.current
+                                androidx.compose.foundation.Canvas(Modifier.size(20.dp)) {
+                                    val k = size.width / 20f
+                                    drawCircle(
+                                        errInk,
+                                        radius = 7.5f * k,
+                                        center = androidx.compose.ui.geometry.Offset(10f * k, 10f * k),
+                                        style = androidx.compose.ui.graphics.drawscope.Stroke(1.7f * k),
+                                    )
+                                    drawLine(
+                                        errInk,
+                                        androidx.compose.ui.geometry.Offset(10f * k, 5.9f * k),
+                                        androidx.compose.ui.geometry.Offset(10f * k, 10.7f * k),
+                                        strokeWidth = 1.7f * k,
+                                        cap = StrokeCap.Round,
+                                    )
+                                    drawCircle(
+                                        errInk,
+                                        radius = 1f * k,
+                                        center = androidx.compose.ui.geometry.Offset(10f * k, 13.7f * k),
+                                    )
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Text(item.text, fontSize = 14.sp, lineHeight = 23.8.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
                             }
                             /*
                              * The failure the phone could name but not repair: an
