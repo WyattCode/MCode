@@ -138,6 +138,53 @@ private val InkMuted = Color(0xFF6B6862)
 private val Ember = Color(0xFFCC7C5E)
 
 /**
+ * A row of one of the app's menus, on the desktop's own measurements.
+ *
+ * `AppMenu.vue`: 28 tall, 12 in from each edge, a 4 corner, 13sp at the body's
+ * weight. Material's `DropdownMenuItem` is 48 tall with a 14sp label and 16 of
+ * inset, which on a tablet made every menu read as a list of large buttons
+ * rather than as the compact menu the desktop shows. `leading` is the 18dp mark
+ * the desktop puts at the head of a row; `trailing` is the shortcut hint it
+ * prints at the end.
+ */
+@Composable
+fun MenuRow(
+    label: String,
+    onClick: () -> Unit,
+    /** The mark at the row's end - the desktop puts it there, not at the head. */
+    icon: (@Composable () -> Unit)? = null,
+    trailing: String? = null,
+    danger: Boolean = false,
+) {
+    val ink = if (danger) MaterialTheme.colorScheme.error else LocalText.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 28.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, fontSize = 13.sp, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        if (trailing != null) {
+            Spacer(Modifier.width(12.dp))
+            Text(trailing, fontSize = 11.sp, color = LocalMuted.current)
+        }
+        if (icon != null) {
+            /*
+             * `.row` is `space-between` with the svg 4 OUT of the end
+             * (`margin-inline-end: -4px`), so the mark hangs against the menu's
+             * own edge rather than sitting in a leading column. A leading icon
+             * also pushed every label right by 26, which no desktop menu does.
+             */
+            Spacer(Modifier.width(10.dp))
+            Box(Modifier.size(16.dp), contentAlignment = Alignment.Center) { icon() }
+        }
+    }
+}
+
+/**
  * One of the desktop's own icons, drawn from its `d` string.
  *
  * The phone used Material's nearest lookalike for each of these - a speech
@@ -2693,51 +2740,33 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             Box(Modifier.size(40.dp).clickable { headerMenu = true }, contentAlignment = Alignment.Center) {
                                 Icon(Icons.Outlined.MoreVert, contentDescription = "更多", tint = LocalText.current, modifier = Modifier.size(20.dp))
                                 DropdownMenu(expanded = headerMenu, onDismissRequest = { headerMenu = false }) {
-                                    DropdownMenuItem(
-                                        text = { Text(if (privacy) "关闭隐私模糊" else "隐私模糊") },
-                                        leadingIcon = { GhostGlyph(active = privacy, size = 18.dp) },
+                                    MenuRow(
+                                        label = if (privacy) "关闭隐私模糊" else "隐私模糊",
                                         onClick = { privacy = !privacy; headerMenu = false },
+                                        icon = { GhostGlyph(active = privacy, size = 15.dp) },
                                     )
-                                    DropdownMenuItem(
-                                        text = { Text("重命名") },
-                                        onClick = { headerMenu = false; renameTarget = sessions.find { it.id == currentSession } },
-                                    )
+                                    MenuRow(label = "重命名", onClick = { headerMenu = false; renameTarget = sessions.find { it.id == currentSession } })
                                     /*
                                      * The desktop's undo: take the last turn's file
                                      * edits back. It had no phone counterpart at
                                      * all, so a turn that broke a file could only
                                      * be repaired by hand.
                                      */
-                                    DropdownMenuItem(
-                                        text = { Text("撤销上一回合的改动") },
-                                        onClick = {
+                                    MenuRow(label = "撤销上一回合的改动", onClick = {
                                             headerMenu = false
                                             currentSession?.let { sid ->
                                                 request(JSONObject().put("type", "session.undo").put("sessionID", sid))
                                             }
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("重做撤销") },
-                                        onClick = {
+                                        })
+                                    MenuRow(label = "重做撤销", onClick = {
                                             headerMenu = false
                                             currentSession?.let { sid ->
                                                 request(JSONObject().put("type", "session.redo").put("sessionID", sid))
                                             }
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(if (runningOnly) "显示全部会话" else "只看运行中") },
-                                        onClick = { headerMenu = false; runningOnly = !runningOnly },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("项目文件") },
-                                        onClick = { headerMenu = false; showFiles = true; fileStack = listOf("") },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("本次改动") },
-                                        onClick = { headerMenu = false; showChanges = true },
-                                    )
+                                        })
+                                    MenuRow(label = if (runningOnly) "显示全部会话" else "只看运行中", onClick = { headerMenu = false; runningOnly = !runningOnly })
+                                    MenuRow(label = "项目文件", onClick = { headerMenu = false; showFiles = true; fileStack = listOf("") })
+                                    MenuRow(label = "本次改动", onClick = { headerMenu = false; showChanges = true })
                                 }
                             }
                         }
@@ -3990,28 +4019,53 @@ fun AppTopBar(filterActive: Boolean, privacyActive: Boolean, onDrawer: () -> Uni
      */
     Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
         Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+        /*
+         * `.top` is 52 tall with 18 at each end and 13 above; `.ico` inside it
+         * is a 24 box with a 7 corner and a 14-18 glyph, and `brand-actions`
+         * puts 8 between the marks. Material's IconButton brings a 48dp box and
+         * a 24dp glyph - twice the desktop's box and half again its mark - so
+         * the row drew as four large targets where the desktop has four small
+         * ones. The touch targets stay 40 here (a 24dp box is not something a
+         * finger can hit) but the glyphs are the desktop's sizes.
+         */
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp),
+            Modifier.fillMaxWidth().height(52.dp).padding(start = 10.dp, end = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            IconButton(onDrawer) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = LocalText.current)
+            Box(
+                Modifier.size(40.dp).clickable { onDrawer() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = LocalText.current, modifier = Modifier.size(18.dp))
             }
             Spacer(Modifier.weight(1f))
             if (filterActive) {
-                IconButton(onFilter) {
-                    Icon(Icons.Outlined.Tune, contentDescription = "只看运行中", tint = Ember)
+                Box(
+                    Modifier.size(40.dp).clickable { onFilter() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Outlined.Tune, contentDescription = "只看运行中", tint = Ember, modifier = Modifier.size(18.dp))
                 }
             }
             // Ctrl+F's magnifier, the same one the wide header carries.
-            IconButton(onFind) {
+            Box(
+                Modifier.size(40.dp).clickable { onFind() },
+                contentAlignment = Alignment.Center,
+            ) {
                 Icon(
                     Icons.Outlined.Search,
                     contentDescription = if (findOpen) "关闭查找" else "在对话中查找",
                     tint = if (findOpen) Ember else LocalText.current,
+                    modifier = Modifier.size(18.dp),
                 )
             }
-            IconButton(onPrivacy) { GhostGlyph(active = privacyActive, size = 22.dp) }
+            Box(
+                Modifier.size(40.dp).clickable { onPrivacy() },
+                contentAlignment = Alignment.Center,
+            ) {
+                GhostGlyph(active = privacyActive, size = 18.dp)
+            }
         }
     }
 }
@@ -6328,22 +6382,16 @@ fun ProjectsScreen(
                             onDismissRequest = { menuFor = null },
                             modifier = Modifier.width(180.dp).background(MaterialTheme.colorScheme.surface),
                         ) {
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = { Text("重命名项目", fontSize = 14.sp, color = ink) },
-                                onClick = {
-                                    menuFor = null
-                                    renameFor = row.directory
-                                    renameDraft = row.name
-                                },
-                            )
+                            MenuRow(label = "重命名项目", onClick = {
+                                menuFor = null
+                                renameFor = row.directory
+                                renameDraft = row.name
+                            })
                             HorizontalDivider(color = muted.copy(alpha = 0.12f))
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = { Text("移除", fontSize = 14.sp, color = MaterialTheme.colorScheme.error) },
-                                onClick = {
-                                    menuFor = null
-                                    onRemove(row.directory)
-                                },
-                            )
+                            MenuRow(label = "移除", danger = true, onClick = {
+                                menuFor = null
+                                onRemove(row.directory)
+                            })
                         }
                     }
                 }
@@ -7710,6 +7758,14 @@ fun InputCapsule(
             // pixels wide at 400dpi, which is what separates a white plate from
             // a page that is almost as white.
             border = androidx.compose.foundation.BorderStroke(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFDCDCDC)),
+            /*
+             * `.box` carries `--shadow-md`: a 1px drop in light, and in dark
+             * three lifts at once - 2/4, 1/2 and a half-pixel white inner edge
+             * that is what actually separates the card from a page a shade
+             * lighter than it. Elevation alone gives the drop; the white inner
+             * line has to be drawn.
+             */
+            shadowElevation = if (LocalBg.current == DarkBg) 4.dp else 2.dp,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(Modifier.padding(horizontal = 0.dp, vertical = 0.dp)) {
