@@ -52,6 +52,45 @@ def shot(name):
     return out
 
 
+def keep_awake():
+    """
+    Holds the pad on: no screen timeout, no lock screen, no screensaver.
+
+    The pad used to fall asleep mid-test, and its lock screen took a password
+    that adb cannot type - so every run lost minutes waiting for a human, and a
+    screenshot of a sleeping screen is black whether the app is working or not.
+    `stay_on_while_plugged_in` is 7 (AC + USB + wireless) rather than 15 so a
+    pad on a charger with the screen dimmed stays on too.
+
+    `locksettings set-disabled true` is the half that matters and the half that
+    is easy to miss: the timeout alone still leaves a swipe-to-unlock screen.
+    Restore with `locksettings set-disabled false`.
+    """
+    for args in (
+        ("settings", "put", "system", "screen_off_timeout", "2147483647"),
+        ("settings", "put", "global", "stay_on_while_plugged_in", "7"),
+        ("settings", "put", "secure", "screensaver_enabled", "0"),
+        ("settings", "put", "secure", "screensaver_activate_on_sleep", "0"),
+        ("locksettings", "set-disabled", "true"),
+    ):
+        sh(*args)
+    return {
+        "timeout": sh("settings", "get", "system", "screen_off_timeout").stdout.strip(),
+        "stay_on": sh("settings", "get", "global", "stay_on_while_plugged_in").stdout.strip(),
+        "screensaver": sh("settings", "get", "secure", "screensaver_enabled").stdout.strip(),
+    }
+
+
+def wake():
+    """Brings the screen up. KEYCODE_POWER rather than KEYCODE_WAKEUP: the latter
+    is ignored often enough on this pad that a run silently read a black screen."""
+    state = sh("dumpsys", "power").stdout
+    if "mWakefulness=Awake" not in state:
+        sh("input", "keyevent", "KEYCODE_POWER")
+        time.sleep(2.0)
+    return sh("dumpsys", "power").stdout.split("mWakefulness=")[-1].split("\n")[0].strip()
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1]
     if cmd == "shot":
@@ -60,5 +99,9 @@ if __name__ == "__main__":
         tap(int(sys.argv[2]), int(sys.argv[3]), float(sys.argv[4]) if len(sys.argv) > 4 else 0.8)
     elif cmd == "sh":
         print(sh(*sys.argv[2:]).stdout)
+    elif cmd == "awake":
+        print(keep_awake())
+    elif cmd == "wake":
+        print(wake())
     else:
         print(ensure())
