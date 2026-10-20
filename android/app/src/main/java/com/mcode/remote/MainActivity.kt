@@ -7,7 +7,6 @@ import android.speech.RecognizerIntent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -94,6 +93,7 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -795,6 +795,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var artFacets by remember { mutableStateOf<JSONObject?>(null) }
     var artBuilding by remember { mutableStateOf(false) }
     var artQuery by remember { mutableStateOf("") }
+    var artifactsFailed by remember { mutableStateOf(false) }
+    /** Bumped by the page's 重试, which re-reads the first page. */
+    var refreshArtifacts by remember { mutableStateOf(0) }
     var runningOnly by remember { mutableStateOf(false) }
     var privacy by remember { mutableStateOf(false) }
     var projectFilter by remember { mutableStateOf<String?>(null) }
@@ -943,20 +946,44 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         }
     }
 
-    /** Pending photo attachments: {"path","mime","data"(base64)} ready for session.prompt. */
+    /** Pending attachments: {"path","mime","data"} ready for session.prompt. */
     val attachments = remember { mutableStateListOf<JSONObject>() }
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(4)) { uris ->
+    /*
+     * The desktop's row is 添加照片和文件 and its picker takes any file: a
+     * text one travels as its text, everything else as base64 - by the
+     * extension table in `shared/attachment-kind.ts`, which is the table the
+     * message builder reads on the other side. This picker was ImageOnly, so a
+     * `.md` or a `.csv` on the phone could not be attached at all.
+     */
+    /** A display name for a picked document, as the picker's uri itself does not carry one. */
+    fun queryName(uri: android.net.Uri): String? {
+        if (uri.scheme == "content") {
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val at = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (at >= 0 && cursor.moveToFirst()) return cursor.getString(at)
+            }
+        }
+        return uri.lastPathSegment?.substringAfterLast('/')
+    }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        var attached = 0
         for (uri in uris) try {
-            val mime = context.contentResolver.getType(uri) ?: "image/jpeg"
-            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: continue
-            val name = uri.lastPathSegment?.substringAfterLast('/') ?: "photo.jpg"
-            attachments.add(JSONObject().put("path", name).put("mime", mime).put("data", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)))
+            val name = queryName(uri) ?: continue
+            val mime = context.contentResolver.getType(uri) ?: ""
+            val textual = mime.startsWith("text/") || textualName(name)
+            val data = if (textual) {
+                context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) } ?: continue
+            } else {
+                context.contentResolver.openInputStream(uri)?.use { android.util.Base64.encodeToString(it.readBytes(), android.util.Base64.NO_WRAP) } ?: continue
+            }
+            attachments.add(JSONObject().put("path", name).put("mime", mime.ifBlank { if (textual) "text/plain" else "application/octet-stream" }).put("data", data))
+            attached += 1
         } catch (_: Exception) {}
-        if (uris.isNotEmpty()) Toast.makeText(context, "已附上 ${uris.size} 张图片", Toast.LENGTH_SHORT).show()
+        if (attached > 0) Toast.makeText(context, "已附上 $attached 个文件", Toast.LENGTH_SHORT).show()
     }
     fun pickImages() {
-        runCatching { imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
-            .onFailure { Toast.makeText(context, "无法打开照片选择器", Toast.LENGTH_SHORT).show() }
+        runCatching { filePicker.launch(arrayOf("*/*")) }
+            .onFailure { Toast.makeText(context, "无法打开文件选择器", Toast.LENGTH_SHORT).show() }
     }
 
     val sessions = remember { mutableStateListOf<SessionRow>() }
@@ -1613,6 +1640,82 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         return
     }
 
+    /*
+     * The page's first read: `artifact.list` for the chosen facet, newest first.
+     * A failed read is a state of its own - the desktop says 加载产物索引失败 and
+     * offers 重试 rather than drawing an empty page, because an empty page and a
+     * broken index look identical otherwise.
+     */
+    LaunchedEffect(leftMode, artCategory, refreshArtifacts) {
+        if (leftMode != LeftMode.Artifacts) return@LaunchedEffect
+        artifactsLoading = true
+        artifactsFailed = false
+        val ask = JSONObject().put("type", "artifact.list").put("limit", 50)
+        if (artCategory.isNotEmpty()) ask.put("category", artCategory)
+        val reply = runCatching { rpc(ask, 45_000) }.getOrNull()
+        val data = reply?.optJSONObject("data")
+        artifacts.clear()
+        data?.optJSONArray("artifacts")?.let { list ->
+            for (i in 0 until list.length()) list.optJSONObject(i)?.let { artifacts.add(it) }
+        }
+        // The facet counts cover files this page has not loaded, so they are the
+        // server's, not a count of what is here.
+        if (artCategory.isEmpty()) artFacets = data?.optJSONObject("facets")
+        artBuilding = data?.optBoolean("building") ?: false
+        artifactsFailed = data == null
+        artifactsLoading = false
+    }
+
+    /**
+     * Open one row of 作品.
+     *
+     * `artifact.list` names a file either project-relative or absolute, and
+     * `file.read` refuses a `rel` that is not relative to its `root` - it
+     * answers "outside: the path is not relative to its root". So an absolute
+     * path is split at its own last separator and read against that directory,
+     * which is the same file by a different pair of arguments.
+     */
+    fun openArtifact(root: String, rel: String) {
+        scope.launch {
+            val absolute = rel.length > 2 && rel[1] == ':' || rel.startsWith("/")
+            val ask = if (absolute) {
+                val cut = maxOf(rel.lastIndexOf('/'), rel.lastIndexOf('\\'))
+                JSONObject().put("type", "file.read")
+                    .put("root", if (cut > 0) rel.substring(0, cut) else root)
+                    .put("rel", if (cut > 0) rel.substring(cut + 1) else rel)
+            } else {
+                JSONObject().put("type", "file.read").put("root", root).put("rel", rel)
+            }
+            ask.put("preview", true)
+            val r = runCatching { rpc(ask, 30_000) }.getOrNull()
+            val body = r?.optJSONObject("data")?.optString("content").orEmpty()
+            if (body.isNotBlank()) filePreview = rel.substringAfterLast('/').substringAfterLast('\\') to body
+        }
+    }
+
+    /*
+     * 产物中心 is a page of its own, not a pane: the desktop renders it in place
+     * of the whole workspace (`App.vue` swaps `view` to "artifacts"), with the
+     * conversation list and the transcript both gone. Built that way here too,
+     * which is also why it needs no column-mode of its own.
+     */
+    if (leftMode == LeftMode.Artifacts) {
+        ArtifactsScreen(
+            groups = artifacts.toList(),
+            loading = artifactsLoading,
+            failed = artifactsFailed,
+            facets = artFacets,
+            category = artCategory,
+            query = artQuery,
+            onQuery = { artQuery = it },
+            onCategory = { artCategory = it },
+            onRefresh = { refreshArtifacts++ },
+            onOpen = { root, rel -> openArtifact(root, rel) },
+            onClose = { leftMode = LeftMode.Sessions },
+        )
+        return
+    }
+
     // Claude keeps the single-pane layout in portrait even on the big inner
     // screen; only the expanded width class (the fold in landscape) goes two-pane.
     val wide = widthSize >= WindowWidthSizeClass.Expanded
@@ -1685,33 +1788,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             val name = c.optString("name")
             if (name.isNotBlank()) commands.add(name to c.optString("description", ""))
             if (name.isNotBlank() && c.optString("source") == "skill") skills.add(name)
-        }
-    }
-
-    /**
-     * Open one row of 作品.
-     *
-     * `artifact.list` names a file either project-relative or absolute, and
-     * `file.read` refuses a `rel` that is not relative to its `root` - it
-     * answers "outside: the path is not relative to its root". So an absolute
-     * path is split at its own last separator and read against that directory,
-     * which is the same file by a different pair of arguments.
-     */
-    fun openArtifact(root: String, rel: String) {
-        scope.launch {
-            val absolute = rel.length > 2 && rel[1] == ':' || rel.startsWith("/")
-            val ask = if (absolute) {
-                val cut = maxOf(rel.lastIndexOf('/'), rel.lastIndexOf('\\'))
-                JSONObject().put("type", "file.read")
-                    .put("root", if (cut > 0) rel.substring(0, cut) else root)
-                    .put("rel", if (cut > 0) rel.substring(cut + 1) else rel)
-            } else {
-                JSONObject().put("type", "file.read").put("root", root).put("rel", rel)
-            }
-            ask.put("preview", true)
-            val r = runCatching { rpc(ask, 30_000) }.getOrNull()
-            val body = r?.optJSONObject("data")?.optString("content").orEmpty()
-            if (body.isNotBlank()) filePreview = rel.substringAfterLast('/').substringAfterLast('\\') to body
         }
     }
 
@@ -1821,7 +1897,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 draftStore.edit().remove("draft.$sid").apply()
             },
             onStop = { currentSession?.let { request(JSONObject().put("type", "session.abort").put("sessionID", it)) } },
-            onNew = { newSession() },
         )
     }
 
@@ -1967,32 +2042,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         )
                     }
                         Spacer(Modifier.height(6.dp))
-                        /*
-                         * Two pages, not four: the conversation list, and the
-                         * artifact centre the desktop's column also carries.
-                         * The desktop has no projects page (a project is a
-                         * grouping inside the list), no scheduled-tasks page (a
-                         * scheduled run is a message in a conversation) and no
-                         * running-tasks page; all three were added here because
-                         * Claude's app has equivalents, which is not the test.
-                         */
-                        when (leftMode) {
-                            LeftMode.Sessions ->
-                                SessionList(visibleSessions, currentSession, search, onSelect = { select(it) }, compact = false, modifier = Modifier.weight(1f).fillMaxWidth(), onLongPress = { sheetTarget = it })
-                            LeftMode.Artifacts ->
-                                ArtifactsPane(
-                                    groups = filterArtifacts(artifacts.toList(), artQuery),
-                                    loading = artifactsLoading,
-                                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                                    category = artCategory,
-                                    facets = artFacets,
-                                    building = artBuilding,
-                                    onCategory = { artCategory = it },
-                                    onOpen = { root, rel -> openArtifact(root, rel) },
-                                    query = artQuery,
-                                    onQuery = { artQuery = it },
-                                )
-                        }
+                        SessionList(visibleSessions, currentSession, search, onSelect = { select(it) }, compact = false, modifier = Modifier.weight(1f).fillMaxWidth(), onLongPress = { sheetTarget = it })
                         /*
                          * Claude's foot-of-column capsule, which follows the
                          * mode: 新建会话 on the list, 新建项目 on the projects
@@ -4513,35 +4563,6 @@ fun FootCapsule(label: String, enabled: Boolean = true, modifier: Modifier = Mod
  * with one. The rows come from the `automation.tasks` event the server
  * broadcasts; there is no request that lists them, so this page listens.
  */
-/**
- * The artifacts page filtered by what was typed in its field.
- *
- * The match is on the file's path or the conversation's title, case-insensitive,
- * and a group whose title matches keeps all its files - searching for the
- * conversation that made something is as natural as searching for the file.
- */
-fun filterArtifacts(groups: List<JSONObject>, query: String): List<JSONObject> {
-    val needle = query.trim().lowercase()
-    if (needle.isEmpty()) return groups
-    val out = mutableListOf<JSONObject>()
-    for (group in groups) {
-        val title = group.optString("title")
-        val files = group.optJSONArray("files")
-        val kept = org.json.JSONArray()
-        if (files != null) {
-            for (i in 0 until files.length()) {
-                val file = files.optJSONObject(i) ?: continue
-                if (file.optString("path").lowercase().contains(needle)) kept.put(file)
-            }
-        }
-        if (kept.length() > 0 || title.lowercase().contains(needle)) {
-            val copy = JSONObject(group.toString())
-            copy.put("files", if (title.lowercase().contains(needle) && kept.length() == 0) files ?: kept else kept)
-            out.add(copy)
-        }
-    }
-    return out
-}
 
 /**
  * 作品: what the app has made, grouped by the conversation that made it.
@@ -4551,189 +4572,409 @@ fun filterArtifacts(groups: List<JSONObject>, query: String): List<JSONObject> {
  * entry says `exists: false` - because the point of the page is to remember
  * that this was produced, not only to hand it over again.
  */
+
+/** The text extensions `shared/attachment-kind.ts` names; the same list the server reads when the message is built. */
+private val TEXTUAL_EXTENSIONS = setOf(
+    "txt", "text", "md", "markdown", "mdx", "rst", "adoc", "asciidoc", "org", "tex", "bib",
+    "html", "htm", "xhtml", "xml", "vue", "svelte", "astro", "css", "scss", "sass", "less", "styl",
+    "js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts",
+    "py", "pyi", "pyw", "rb", "go", "rs", "java", "kt", "kts", "gradle", "swift", "scala", "clj", "cljs",
+    "c", "h", "cc", "cpp", "cxx", "hh", "hpp", "hxx", "m", "mm", "cs", "fs", "php", "pl", "pm", "lua", "r",
+    "dart", "ex", "exs", "erl", "hs", "jl", "nim", "zig", "v", "vb", "groovy", "sql", "graphql", "gql", "proto",
+    "sh", "bash", "zsh", "fish", "ps1", "psm1", "bat", "cmd", "awk", "sed", "mk", "cmake", "makefile", "dockerfile",
+    "json", "jsonc", "json5", "yaml", "yml", "toml", "ini", "cfg", "conf", "properties", "env", "editorconfig",
+    "npmrc", "nvmrc", "babelrc", "eslintrc", "prettierrc", "gitignore", "gitattributes", "dockerignore",
+    "csv", "tsv", "log", "diff", "patch", "lock", "tf", "tfvars", "hcl", "tfstate", "plist", "srt", "vtt",
+)
+
+/** Whether a file's name says it reads as text, by the desktop's own extension table. */
+private fun textualName(file: String): Boolean {
+    val name = file.substringAfterLast('/').substringAfterLast('\\')
+    val dot = name.lastIndexOf('.')
+    val ext = if (dot > 0) name.substring(dot + 1).lowercase() else name.removePrefix(".").lowercase()
+    return ext in TEXTUAL_EXTENSIONS
+}
+
+/* ------------------------------------------------------------------ */
+/* 产物中心 - the desktop's own page for what the app has produced     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The artifact badge: a colour and a glyph per kind, as MiMo's tiles wear them.
+ *
+ * Its colours are the desktop's (`lib/artifact-kind.ts`), unchanged between the
+ * two themes there, and its tints are that colour at 12%.
+ */
+internal data class Badge(val label: String, val fg: Color, val glyph: (DrawScope) -> Unit)
+
+private fun badgeOf(path: String): Badge {
+    /*
+     * The desktop's own table (`lib/artifact-kind.ts`), not a guess of it: its
+     * eight kinds, its eight colours, and its own words. A .ts or .sh is
+     * 「文件」 there rather than 文档, and .md is 文本 rather than Word - the kind
+     * is decided by what the tile says, so a table that disagrees makes the same
+     * file wear one badge on the desktop and another here.
+     */
+    val ext = path.substringAfterLast('.', "").lowercase()
+    // MiMo's page: a sheet with a folded corner and three ruled lines.
+    fun page(color: Color, label: String) = Badge(label, color) { s ->
+        val w = s.size.width; val h = s.size.height
+        val st = androidx.compose.ui.graphics.drawscope.Stroke(w * 0.062f)
+        val ink = color
+        // The outline: down the left, round the fold at the top right, to the foot.
+        val body = androidx.compose.ui.graphics.Path().apply {
+            moveTo(w * 0.24f, h * 0.1f)
+            lineTo(w * 0.62f, h * 0.1f)
+            lineTo(w * 0.78f, h * 0.28f)
+            lineTo(w * 0.78f, h * 0.9f)
+            lineTo(w * 0.24f, h * 0.9f)
+            close()
+        }
+        s.drawPath(body, ink, style = st)
+        s.drawLine(ink, androidx.compose.ui.geometry.Offset(w * 0.62f, h * 0.1f), androidx.compose.ui.geometry.Offset(w * 0.62f, h * 0.28f), w * 0.055f)
+        s.drawLine(ink, androidx.compose.ui.geometry.Offset(w * 0.62f, h * 0.28f), androidx.compose.ui.geometry.Offset(w * 0.78f, h * 0.28f), w * 0.055f)
+        for (i in 0..2) {
+            val y = h * (0.46f + i * 0.15f)
+            s.drawLine(ink, androidx.compose.ui.geometry.Offset(w * 0.34f, y), androidx.compose.ui.geometry.Offset(w * (if (i == 2) 0.56f else 0.68f), y), w * 0.05f)
+        }
+    }
+    return when (ext) {
+        "doc", "docx" -> page(Color(0xFF2B6CB0), "Word")
+        "ppt", "pptx" -> Badge("PPT", Color(0xFFC43E1C)) { s ->
+            val w = s.size.width; val h = s.size.height
+            val st = androidx.compose.ui.graphics.drawscope.Stroke(w * 0.06f)
+            s.drawRoundRect(Color(0xFFC43E1C), androidx.compose.ui.geometry.Offset(w * 0.14f, h * 0.14f),
+                androidx.compose.ui.geometry.Size(w * 0.72f, h * 0.46f),
+                androidx.compose.ui.geometry.CornerRadius(w * 0.06f), style = st)
+            val stand = androidx.compose.ui.graphics.Path().apply {
+                moveTo(w * 0.24f, h * 0.88f); lineTo(w * 0.44f, h * 0.62f)
+                lineTo(w * 0.56f, h * 0.62f); lineTo(w * 0.76f, h * 0.88f)
+            }
+            s.drawPath(stand, Color(0xFFC43E1C), style = st)
+        }
+        "xls", "xlsx", "csv" -> Badge("Excel", Color(0xFF21A366)) { s ->
+            val w = s.size.width; val h = s.size.height
+            val st = androidx.compose.ui.graphics.drawscope.Stroke(w * 0.062f)
+            val body = androidx.compose.ui.graphics.Path().apply {
+                moveTo(w * 0.24f, h * 0.1f); lineTo(w * 0.62f, h * 0.1f)
+                lineTo(w * 0.78f, h * 0.28f); lineTo(w * 0.78f, h * 0.9f)
+                lineTo(w * 0.24f, h * 0.9f); close()
+            }
+            s.drawPath(body, Color(0xFF21A366), style = st)
+            // Two columns of cells, which is what makes a sheet a sheet.
+            for (i in 0..1) {
+                val y = h * (0.5f + i * 0.16f)
+                s.drawLine(Color(0xFF21A366), androidx.compose.ui.geometry.Offset(w * 0.34f, y), androidx.compose.ui.geometry.Offset(w * 0.44f, y), w * 0.05f)
+                s.drawLine(Color(0xFF21A366), androidx.compose.ui.geometry.Offset(w * 0.54f, y), androidx.compose.ui.geometry.Offset(w * 0.64f, y), w * 0.05f)
+            }
+        }
+        "pdf" -> Badge("PDF", Color(0xFFD93831)) { s ->
+            val w = s.size.width; val h = s.size.height
+            val st = androidx.compose.ui.graphics.drawscope.Stroke(w * 0.062f)
+            // MiMo's PDF mark is the corner-cut page with a letter standing in the notch.
+            val body = androidx.compose.ui.graphics.Path().apply {
+                moveTo(w * 0.5f, h * 0.92f); lineTo(w * 0.78f, h * 0.92f)
+                lineTo(w * 0.78f, h * 0.28f); lineTo(w * 0.56f, h * 0.08f)
+                lineTo(w * 0.24f, h * 0.08f); lineTo(w * 0.24f, h * 0.34f)
+            }
+            s.drawPath(body, Color(0xFFD93831), style = st)
+            val t = androidx.compose.ui.graphics.Path().apply {
+                moveTo(w * 0.12f, h * 0.6f); lineTo(w * 0.44f, h * 0.6f)
+                moveTo(w * 0.28f, h * 0.6f); lineTo(w * 0.28f, h * 0.9f)
+                moveTo(w * 0.22f, h * 0.9f); lineTo(w * 0.34f, h * 0.9f)
+            }
+            s.drawPath(t, Color(0xFFD93831), style = androidx.compose.ui.graphics.drawscope.Stroke(w * 0.055f))
+        }
+        "md", "markdown", "txt", "rtf" -> page(Color(0xFF4B5563), "文本")
+        "html", "htm" -> Badge("落地页", Color(0xFF2F6FED)) { s ->
+            val w = s.size.width; val h = s.size.height
+            val st = androidx.compose.ui.graphics.drawscope.Stroke(w * 0.06f)
+            s.drawCircle(Color(0xFF2F6FED), w * 0.4f, androidx.compose.ui.geometry.Offset(w / 2, h / 2), style = st)
+            // MiMo's globe: the equator and the two meridians.
+            s.drawLine(Color(0xFF2F6FED), androidx.compose.ui.geometry.Offset(w * 0.1f, h / 2), androidx.compose.ui.geometry.Offset(w * 0.9f, h / 2), w * 0.055f)
+            val rim = androidx.compose.ui.graphics.Path().apply {
+                moveTo(w * 0.31f, h * 0.14f)
+                cubicTo(w * 0.52f, h * 0.2f, w * 0.52f, h * 0.8f, w * 0.31f, h * 0.86f)
+                moveTo(w * 0.69f, h * 0.14f)
+                cubicTo(w * 0.48f, h * 0.2f, w * 0.48f, h * 0.8f, w * 0.69f, h * 0.86f)
+            }
+            s.drawPath(rim, Color(0xFF2F6FED), style = st)
+        }
+        "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "ico" -> Badge("图片", Color(0xFF0E9488)) { s ->
+            val w = s.size.width; val h = s.size.height
+            val st = androidx.compose.ui.graphics.drawscope.Stroke(w * 0.062f)
+            s.drawRoundRect(Color(0xFF0E9488), androidx.compose.ui.geometry.Offset(w * 0.14f, h * 0.14f),
+                androidx.compose.ui.geometry.Size(w * 0.72f, h * 0.72f),
+                androidx.compose.ui.geometry.CornerRadius(w * 0.09f), style = st)
+            s.drawCircle(Color(0xFF0E9488), w * 0.075f, androidx.compose.ui.geometry.Offset(w * 0.36f, h * 0.36f))
+            val hill = androidx.compose.ui.graphics.Path().apply {
+                moveTo(w * 0.16f, h * 0.78f); lineTo(w * 0.4f, h * 0.52f)
+                lineTo(w * 0.58f, h * 0.68f); lineTo(w * 0.66f, h * 0.6f)
+                lineTo(w * 0.86f, h * 0.78f)
+            }
+            s.drawPath(hill, Color(0xFF0E9488), style = st)
+        }
+        else -> page(Color(0xFF8C8C86), "文件")
+    }
+}
+
+/** One artifact as the page lists it: flattened out of the groups the server sends. */
+internal data class ArtRow(
+    val key: String,
+    val path: String,
+    val name: String,
+    val at: Long,
+    val root: String,
+    val badge: Badge,
+)
+
+/** Every file from every conversation, newest write first - the desktop's order. */
+internal fun artifactRows(groups: List<JSONObject>): List<ArtRow> {
+    val out = mutableListOf<ArtRow>()
+    for (g in groups) {
+        val sessionID = g.optString("sessionID")
+        val root = g.optString("directory")
+        val files = g.optJSONArray("files") ?: continue
+        for (i in 0 until files.length()) {
+            val f = files.optJSONObject(i) ?: continue
+            // A file that is gone has nothing to preview, and the desktop's page
+            // leaves it out rather than showing a row that cannot be opened.
+            if (!f.optBoolean("exists", true)) continue
+            val path = f.optString("path")
+            if (path.isBlank()) continue
+            out.add(
+                ArtRow(
+                    key = "$sessionID:$path",
+                    path = path,
+                    name = path.substringAfterLast('/').substringAfterLast('\\'),
+                    at = f.optLong("at", 0L),
+                    root = root,
+                    badge = badgeOf(path),
+                ),
+            )
+        }
+    }
+    return out.sortedByDescending { it.at }
+}
+
+/** MiMo's floored tile time: just now, minutes, hours, days under a week, then the date. */
+fun artifactWhen(at: Long, now: Long): String {
+    if (at <= 0L) return ""
+    val seconds = ((now - at) / 1000).coerceAtLeast(0)
+    if (seconds < 60) return "刚刚"
+    val minutes = seconds / 60
+    if (minutes < 60) return "${minutes} 分钟前"
+    val hours = minutes / 60
+    if (hours < 24) return "${hours} 小时前"
+    val days = hours / 24
+    if (days < 7) return "${days} 天前"
+    return android.text.format.DateFormat.format("yyyy/M/d", at).toString()
+}
+
+/**
+ * 产物中心, as the desktop builds it: a 980px column with the title, a line under
+ * it, a search field, the four facet chips with the server's counts, a grid/list
+ * toggle at the end of the same row, then tiles three across.
+ *
+ * This had been a pane inside the left column, grouped by conversation. The
+ * desktop's is a page of its own and groups by nothing: every file from every
+ * conversation, newest write first, because the question it answers is "what did
+ * I make" rather than "what did that conversation make".
+ */
 @Composable
-fun ArtifactsPane(
+fun ArtifactsScreen(
     groups: List<JSONObject>,
     loading: Boolean,
-    modifier: Modifier = Modifier,
-    category: String = "",
-    facets: JSONObject? = null,
-    building: Boolean = false,
-    onCategory: (String) -> Unit = {},
-    onOpen: (String, String) -> Unit = { _, _ -> },
-    query: String = "",
-    onQuery: (String) -> Unit = {},
+    failed: Boolean,
+    facets: JSONObject?,
+    category: String,
+    query: String,
+    onQuery: (String) -> Unit,
+    onCategory: (String) -> Unit,
+    onRefresh: () -> Unit,
+    onOpen: (String, String) -> Unit,
+    onClose: () -> Unit,
 ) {
-    if (loading && groups.isEmpty()) {
-        Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = LocalMuted.current)
+    var grid by remember { mutableStateOf(true) }
+    val rows = remember(groups) { artifactRows(groups) }
+    val needle = query.trim().lowercase()
+    /*
+     * The search matches the file's *name*, which is what the desktop's own
+     * filter tests (`file.split(/[\\/]/).pop()`): typing "test" finds
+     * connect.test.ts, and typing a folder that happens to be in every path
+     * finds nothing in particular.
+     */
+    val shown = if (needle.isEmpty()) rows else rows.filter { it.name.lowercase().contains(needle) }
+    val now = remember { System.currentTimeMillis() }
+
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(44.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = LocalText.current, modifier = Modifier.size(20.dp))
+            }
         }
-        return
-    }
-    if (groups.isEmpty()) {
-        Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Icon(Icons.Outlined.FolderOpen, contentDescription = null, tint = LocalMuted.current.copy(alpha = 0.6f), modifier = Modifier.size(46.dp))
-            Spacer(Modifier.height(16.dp))
-            Text("暂无作品", fontSize = 15.sp, color = LocalText.current)
-            Spacer(Modifier.height(8.dp))
-            Text("对话产出的文件会出现在这里。", fontSize = 13.sp, color = LocalMuted.current)
-        }
-        return
-    }
-    Column(modifier) {
-        /*
-         * Claude's artifacts page keeps its search field on the page - unlike
-         * 最近记录, where the magnifier opens one - because this page's whole
-         * job is finding one file among many. Measured off its own screen: a
-         * 45dp pill inset 12dp from the pane, a magnifier at its left, and
-         * 「搜索 Artifacts」 as the placeholder.
-         */
-        OutlinedTextField(
-            query,
-            onQuery,
-            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).heightIn(min = 45.dp),
-            placeholder = { Text("搜索作品", fontSize = 14.sp, color = LocalMuted.current) },
-            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(17.dp)) },
-            shape = RoundedCornerShape(22.dp),
-            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
-            colors = OutlinedTextFieldDefaults.colors(
-                unfocusedContainerColor = LocalField.current,
-                focusedContainerColor = LocalField.current,
-                unfocusedBorderColor = LocalFieldLine.current,
-                focusedBorderColor = LocalFieldLine.current,
-            ),
-            singleLine = true,
-        )
-        /*
-         * MiMo's facets: the tabs are counted by the server (`facets`), not by
-         * what this page happens to hold - so 文档 says 5 because five documents
-         * exist, not because five were loaded into the list.
-         */
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 10.dp).horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        LazyColumn(
+            Modifier.fillMaxWidth().weight(1f),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 40.dp, end = 40.dp, top = 14.dp, bottom = 40.dp),
         ) {
-            for ((key, label, count) in listOf(
-                Triple("", "全部", facets?.optInt("total") ?: 0),
-                Triple("doc", "文档", facets?.optInt("doc") ?: 0),
-                Triple("app", "应用", facets?.optInt("app") ?: 0),
-                Triple("other", "其他", facets?.optInt("other") ?: 0),
-            )) {
-                val active = category == key
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = if (active) MaterialTheme.colorScheme.primary else LocalPill.current,
-                    modifier = Modifier.clickable { onCategory(key) },
-                ) {
-                    Text(
-                        "$label $count",
-                        fontSize = 12.sp,
-                        color = if (active) LocalBg.current else LocalText.current,
-                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
-                    )
-                }
-            }
-            if (building) {
-                Spacer(Modifier.width(4.dp))
-                androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(13.dp), strokeWidth = 1.8.dp, color = LocalMuted.current)
-            }
-        }
-        Spacer(Modifier.height(4.dp))
-        LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
-        for ((index, group) in groups.withIndex()) {
-            val title = group.optString("title").ifBlank { "对话" }
-            val files = group.optJSONArray("files")
-            val count = files?.length() ?: 0
-            item(key = "g$index") {
+            item {
+                Text("产物中心", fontSize = 24.sp, lineHeight = 30.sp, color = LocalText.current)
+                Spacer(Modifier.height(6.dp))
                 Text(
-                    "$title · $count 个文件",
-                    fontSize = 11.5.sp,
+                    "这里汇总了你在 MCode 里生成过的全部产物，可预览、下载或回到对话继续",
+                    fontSize = 13.sp,
+                    lineHeight = 20.sp,
                     color = LocalMuted.current,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 4.dp),
                 )
-            }
-            if (files != null) {
-                items(count) { i ->
-                    val file = files.optJSONObject(i) ?: return@items
-                    val path = file.optString("path")
-                    val exists = file.optBoolean("exists", true)
-                    val root = group.optString("directory")
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            // A file that is gone has nowhere to open, so its row
-                            // is not a target: a tap that did nothing would read
-                            // as the app being broken.
-                            .clickable(enabled = exists && root.isNotBlank()) { onOpen(root, path) }
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
+                Spacer(Modifier.height(16.dp))
+                // The search field: 36dp tall on the desktop, a hairline pill.
+                OutlinedTextField(
+                    query,
+                    onQuery,
+                    Modifier.fillMaxWidth().heightIn(min = 36.dp),
+                    placeholder = { Text("搜索产物", fontSize = 13.sp, color = LocalMuted.current) },
+                    leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(15.dp)) },
+                    shape = RoundedCornerShape(8.dp),
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        unfocusedContainerColor = LocalField.current,
+                        focusedContainerColor = LocalField.current,
+                        unfocusedBorderColor = LocalFieldLine.current,
+                        focusedBorderColor = LocalFieldLine.current,
+                    ),
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for ((key, label, count) in listOf(
+                            Triple("", "全部", facets?.optInt("total") ?: 0),
+                            Triple("doc", "文档", facets?.optInt("doc") ?: 0),
+                            Triple("app", "应用", facets?.optInt("app") ?: 0),
+                            Triple("other", "其他", facets?.optInt("other") ?: 0),
+                        )) {
+                            val on = category == key
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (on) LocalPill.current else Color.Transparent,
+                                modifier = Modifier.clickable { onCategory(key) },
+                            ) {
+                                Row(Modifier.padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(label, fontSize = 14.sp, color = if (on) LocalText.current else LocalMuted.current)
+                                    if (!loading) {
+                                        Spacer(Modifier.width(5.dp))
+                                        Text("$count", fontSize = 12.sp, color = LocalMuted.current)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // MiMo's two layouts, at the end of the filter row.
+                    Box(Modifier.size(30.dp).clickable { grid = !grid }, contentAlignment = Alignment.Center) {
                         Icon(
-                            if (exists) Icons.AutoMirrored.Outlined.Article else Icons.Outlined.ErrorOutline,
-                            contentDescription = null,
-                            tint = if (exists) LocalMuted.current else LocalMuted.current.copy(alpha = 0.5f),
-                            modifier = Modifier.size(15.dp),
+                            if (grid) Icons.AutoMirrored.Outlined.Article else Icons.Outlined.Folder,
+                            contentDescription = if (grid) "列表视图" else "网格视图",
+                            tint = LocalMuted.current,
+                            modifier = Modifier.size(16.dp),
                         )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+            }
+            if (failed) {
+                item {
+                    Row(Modifier.fillMaxWidth().padding(vertical = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("加载产物索引失败", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
                         Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                path.substringAfterLast('\\').substringAfterLast('/'),
-                                fontSize = 13.sp,
-                                color = if (exists) LocalText.current else LocalMuted.current,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                if (exists) path else "已不在了 · $path",
-                                fontSize = 10.sp,
-                                color = LocalMuted.current,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                        TextButton(onRefresh) { Text("重试", fontSize = 13.sp) }
+                    }
+                }
+            } else if (loading && shown.isEmpty()) {
+                item {
+                    Box(Modifier.fillMaxWidth().padding(vertical = 40.dp), contentAlignment = Alignment.Center) {
+                        androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = LocalMuted.current)
+                    }
+                }
+            } else if (shown.isEmpty()) {
+                item {
+                    Text("还没有任何产物，去对话里生成一些吧。", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(vertical = 32.dp))
+                }
+            } else if (grid) {
+                // Three across with 14 between, as MiMo lays its grid.
+                for (chunk in shown.chunked(3)) {
+                    item {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            for (row in chunk) {
+                                ArtifactTile(row, now, Modifier.weight(1f)) { onOpen(row.root, row.path) }
+                            }
+                            repeat(3 - chunk.size) { Spacer(Modifier.weight(1f)) }
+                        }
+                        Spacer(Modifier.height(14.dp))
+                    }
+                }
+            } else {
+                for (row in shown) {
+                    item {
+                        Row(
+                            Modifier.fillMaxWidth().clickable { onOpen(row.root, row.path) }.padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            BadgeMark(row.badge, 26.dp)
+                            Spacer(Modifier.width(12.dp))
+                            Text(row.name, fontSize = 14.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                            Text(artifactWhen(row.at, now), fontSize = 12.sp, color = LocalMuted.current)
                         }
                     }
                 }
             }
         }
+        Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)))
+    }
+}
+
+/** MiMo's tile: a well with the mark and its kind, the name under it, the age and conversation at the foot. */
+@Composable
+private fun ArtifactTile(row: ArtRow, now: Long, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Column(
+        modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE4E1D8), RoundedCornerShape(14.dp))
+            .clickable { onClick() },
+    ) {
+        Box(
+            Modifier.fillMaxWidth().height(96.dp).background(LocalBg.current),
+            contentAlignment = Alignment.Center,
+        ) {
+            Canvas(Modifier.size(38.dp)) { row.badge.glyph(this) }
+            Row(
+                Modifier.align(Alignment.BottomStart).padding(8.dp)
+                    .background(row.badge.fg.copy(alpha = 0.12f), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(5.dp).background(row.badge.fg, CircleShape))
+                Spacer(Modifier.width(4.dp))
+                Text(row.badge.label, fontSize = 10.sp, color = row.badge.fg)
+            }
+        }
+        Column(Modifier.padding(horizontal = 11.dp, vertical = 9.dp)) {
+            Text(row.name, fontSize = 13.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(2.dp))
+            Text(artifactWhen(row.at, now), fontSize = 11.sp, color = LocalMuted.current)
         }
     }
+}
+
+@Composable
+private fun BadgeMark(badge: Badge, size: androidx.compose.ui.unit.Dp) {
+    Canvas(Modifier.size(size)) { badge.glyph(this) }
 }
 
 /* ------------------------------------------------------------------ */
 /* 技能与插件 - one page's rows                                       */
 /* ------------------------------------------------------------------ */
-
-/** A heading inside the plugins list, at the size the desktop's sections use. */
-@Composable
-private fun SectionLabel(text: String) {
-    Text(text, fontSize = 12.sp, color = LocalMuted.current, modifier = Modifier.padding(top = 6.dp, bottom = 6.dp))
-}
-
-/**
- * One plugin row: what it is, what state it is in, and a switch at the far end.
- *
- * The switch is drawn rather than a Material `Switch`, for the same reason the
- * goal's is: MiMo's is a 38dp track, and Material's comes with its own ripples
- * and thumb sizes that no amount of colouring makes look like this page.
- */
-@Composable
-private fun PluginRow(title: String, subtitle: String, on: Boolean, busy: Boolean, onToggle: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 14.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (subtitle.isNotBlank()) {
-                Text(subtitle, fontSize = 11.5.sp, color = LocalMuted.current, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-        }
-        Spacer(Modifier.width(10.dp))
-        Box(Modifier.size(width = 38.dp, height = 22.dp).clickable(enabled = !busy) { onToggle() }) {
-            GoalSwitch(on)
-        }
-    }
-}
 
 /* ------------------------------------------------------------------ */
 /* 追求目标 - the bar, its switch, and the plus menu's rows            */
@@ -5004,7 +5245,6 @@ fun InputCapsule(
     modelLabel: String,
     onSend: (String, List<JSONObject>) -> Unit,
     onStop: () -> Unit,
-    onNew: () -> Unit,
     modifier: Modifier = Modifier,
     onMic: () -> Unit = {},
     onModel: () -> Unit = {},
@@ -5254,7 +5494,7 @@ fun InputCapsule(
                             onDismissRequest = { plusMenu = false },
                             modifier = Modifier.width(272.dp).background(MaterialTheme.colorScheme.surface),
                         ) {
-                            PlusRow(Icons.AutoMirrored.Outlined.Article, "附件文件", enabled) { plusMenu = false; onFiles() }
+                            PlusRow(Icons.AutoMirrored.Outlined.Article, "添加照片和文件", enabled) { plusMenu = false; onFiles() }
                             PlusRow(Icons.Outlined.Code, "打开终端", enabled) { plusMenu = false; onTerminal() }
                             HorizontalDivider(Modifier.padding(vertical = 6.dp), color = LocalMuted.current.copy(alpha = 0.15f))
                             // 追求目标: a switch, not a command - what is typed next
@@ -5275,9 +5515,6 @@ fun InputCapsule(
                             }
                             HorizontalDivider(Modifier.padding(vertical = 6.dp), color = LocalMuted.current.copy(alpha = 0.15f))
                             PlusRow(Icons.Outlined.Build, "技能", enabled && skills.isNotEmpty()) { plusMenu = false; skillPicker = true }
-                            HorizontalDivider(Modifier.padding(vertical = 6.dp), color = LocalMuted.current.copy(alpha = 0.15f))
-                            PlusRow(Icons.Filled.Add, "新对话", enabled) { plusMenu = false; onNew() }
-                            PlusRow(Icons.Outlined.Visibility, "照片", enabled) { plusMenu = false; pickImages() }
                         }
                     }
                     if (skillPicker) {
