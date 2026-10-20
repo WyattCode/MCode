@@ -98,9 +98,12 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -752,6 +755,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     fun openDrawer() = scope.launch { drawerState.open() }
     fun closeDrawer() = scope.launch { drawerState.close() }
     var search by remember { mutableStateOf("") }
+    /*
+     * What the transcripts say, not just what the titles say.
+     *
+     * The desktop's overlay searches three sources at once - titles, message
+     * bodies (`search.messages`) and the files conversations wrote - and the
+     * phone's box only filtered titles, so a word inside a reply could not be
+     * found from the list at all.
+     */
+    var foundHits by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    var searchingBodies by remember { mutableStateOf(false) }
     /**
      * Whether the list's search field is showing.
      *
@@ -840,6 +853,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var renameTarget by remember { mutableStateOf<SessionRow?>(null) }
     /** Bumped when the reader taps the conversation's title; the timeline obeys. */
     var toTopTicks by remember { mutableStateOf(0) }
+    /*
+     * Find in the conversation. The desktop opens its bar on Ctrl+F and paints
+     * the matches through the browser's highlight registry (`lib/find.ts`);
+     * the phone had no way to look inside a long transcript at all. Closed by
+     * default, and holding its own needle so the conversation list's filter
+     * and this one never share a word.
+     */
+    var findOpen by remember { mutableStateOf(false) }
+    var findQuery by remember { mutableStateOf("") }
+    var findStep by remember { mutableStateOf(0) }
     /**
      * The slash commands this folder offers.
      *
@@ -1050,6 +1073,31 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         // Transcription runs a whisper pass on the PC and takes longer than a
         // protocol question does; the caller names how long it may wait.
         return kotlinx.coroutines.withTimeout(timeoutMs) { deferred.await() }
+    }
+
+    /*
+     * Bodies are asked for a moment after typing stops, so a keystroke already
+     * superseded does not spend a round trip, and the answer is written only if
+     * the needle it was asked for is still the needle in the box.
+     */
+    LaunchedEffect(search) {
+        val needle = search.trim()
+        if (needle.isBlank()) {
+            foundHits = emptyList()
+            searchingBodies = false
+            return@LaunchedEffect
+        }
+        searchingBodies = true
+        kotlinx.coroutines.delay(180)
+        if (search.trim() != needle) return@LaunchedEffect
+        val reply = runCatching {
+            rpc(JSONObject().put("type", "search.messages").put("query", needle).put("limit", 30))
+        }.getOrNull()
+        if (search.trim() != needle) return@LaunchedEffect
+        foundHits = reply?.optJSONObject("data")?.optJSONArray("hits")?.let { arr ->
+            (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+        } ?: emptyList()
+        searchingBodies = false
     }
 
     var recording by remember { mutableStateOf<android.media.MediaRecorder?>(null) }
@@ -1768,6 +1816,30 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
 
     // 项目/运行中过滤后的列表；模型 pill 显示当前会话的真实模型。
     val visibleSessions = sessions.filter { (projectFilter == null || it.directory == projectFilter) && (!runningOnly || it.running) }
+    /*
+     * How many times the needle appears in this conversation, and in which
+     * message each hit sits - the two things the card's `cur/total` and the
+     * stepping both need. The desktop counts text nodes under the pane; the
+     * transcript's own strings are the same text here.
+     */
+    val findMatches: List<Pair<Int, Int>> = remember(items.toList(), findQuery) {
+        val needle = findQuery
+        if (needle.isBlank()) emptyList() else buildList {
+            for ((index, item) in items.toList().withIndex()) {
+                val body = when (item) {
+                    is Item.Msg -> item.text
+                    is Item.Tool -> item.title + " " + item.output
+                    else -> ""
+                }
+                var at = body.indexOf(needle, 0, ignoreCase = true)
+                while (at >= 0) {
+                    add(index to at)
+                    at = body.indexOf(needle, at + needle.length, ignoreCase = true)
+                }
+            }
+        }
+    }
+    val findCount = findMatches.size
     val currentRow = sessions.find { it.id == currentSession }
     val currentModel = currentRow?.model?.takeIf { it.isNotBlank() } ?: "本地模型"
     /*
@@ -2145,6 +2217,57 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             singleLine = true,
                         )
                     }
+                        /*
+                         * The body hits sit between the field and the list, the
+                         * way the desktop's overlay puts its 消息 group above
+                         * the rest: the words are what the reader is hunting,
+                         * and the conversations that hold them come second.
+                         */
+                        if (searching && search.isNotBlank() && foundHits.isNotEmpty()) {
+                            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                                Text(
+                                    "消息",
+                                    fontSize = 11.sp,
+                                    color = LocalMuted.current,
+                                    modifier = Modifier.padding(start = 2.dp, top = 2.dp, bottom = 3.dp),
+                                )
+                                for (hit in foundHits.take(6)) {
+                                    val sid = hit.optString("sessionID")
+                                    val text = hit.optString("text")
+                                    val title = sessions.find { it.id == sid }?.title.orEmpty()
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(9.dp))
+                                            .clickable { select(sid); searching = false }
+                                            .padding(horizontal = 6.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Column(Modifier.weight(1f)) {
+                                            if (title.isNotBlank()) Text(title, fontSize = 12.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            /*
+                                             * The server hands back one line around the
+                                             * words with `ranges` marking them, so the
+                                             * mark is drawn from those rather than
+                                             * searched for again.
+                                             */
+                                            val marked = buildAnnotatedString {
+                                                append(text)
+                                                hit.optJSONArray("ranges")?.let { ranges ->
+                                                    for (k in 0 until ranges.length()) {
+                                                        val r = ranges.optJSONObject(k) ?: continue
+                                                        val s0 = r.optInt("start", 0).coerceIn(0, text.length)
+                                                        val e0 = r.optInt("end", 0).coerceIn(s0, text.length)
+                                                        addStyle(androidx.compose.ui.text.SpanStyle(background = Color(0x8CF6C77A)), s0, e0)
+                                                    }
+                                                }
+                                            }
+                                            Text(marked, fontSize = 12.sp, color = LocalMuted.current, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         Spacer(Modifier.height(6.dp))
                         SessionList(visibleSessions, currentSession, search, onSelect = { select(it) }, compact = false, modifier = Modifier.weight(1f).fillMaxWidth(), onLongPress = { sheetTarget = it })
                         /*
@@ -2199,6 +2322,23 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             }
                             Box(Modifier.size(44.dp).clickable { openDrawer() }, contentAlignment = Alignment.Center) {
                                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = LocalText.current, modifier = Modifier.size(20.dp))
+                            }
+                            /*
+                             * Ctrl+F, as a magnifier: the desktop has the chord
+                             * and no button for it, but a tablet has no keyboard
+                             * to press it on - and a long transcript is exactly
+                             * where one wants it.
+                             */
+                            Box(
+                                Modifier.size(38.dp).clickable { findOpen = !findOpen; if (!findOpen) findQuery = "" },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Search,
+                                    contentDescription = if (findOpen) "关闭查找" else "在对话中查找",
+                                    tint = if (findOpen) MaterialTheme.colorScheme.primary else LocalText.current,
+                                    modifier = Modifier.size(18.dp),
+                                )
                             }
                             Column(
                                 Modifier.weight(1f).clickable { toTopTicks++ },
@@ -2300,7 +2440,37 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 WelcomePane(withInput = true, inputBar = inputBar, inputAtBottom = true)
                             } else {
                                 Column(Modifier.fillMaxSize()) {
-                                    Box(Modifier.weight(1f)) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onPermReason = ::respondPermReason, onAnswer = ::answerQuestion, onMessage = { messageTarget = it }, toTop = toTopTicks, onFixKey = { loadProviders(); showProviders = true }) }
+                                    Box(Modifier.weight(1f)) {
+                                        Timeline(
+                                            items,
+                                            Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp),
+                                            running = sessions.find { it.id == currentSession }?.running == true,
+                                            onPerm = ::respondPerm,
+                                            onPermReason = ::respondPermReason,
+                                            onAnswer = ::answerQuestion,
+                                            onMessage = { messageTarget = it },
+                                            toTop = toTopTicks,
+                                            onFixKey = { loadProviders(); showProviders = true },
+                                            find = if (findOpen) findQuery else "",
+                                            findStep = findStep,
+                                        )
+                                        /*
+                                         * The card hangs over the pane's top trailing
+                                         * corner, 9 into it - the desktop puts it 54
+                                         * below the pane's own top and 20 in from
+                                         * its end, and the header here already
+                                         * takes those first 54.
+                                         */
+                                        if (findOpen) FindCard(
+                                            query = findQuery,
+                                            onQuery = { findQuery = it; findStep = 0 },
+                                            count = findCount,
+                                            active = if (findCount == 0) 0 else Math.floorMod(findStep, findCount),
+                                            onStep = { step -> findStep = findStep + step },
+                                            onClose = { findOpen = false; findQuery = "" },
+                                            modifier = Modifier.align(Alignment.TopEnd).padding(top = 9.dp, end = 20.dp),
+                                        )
+                                    }
                                     inputBar()
                                 }
                             }
@@ -2310,7 +2480,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         } else {
             if (empty) {
                 Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                    AppTopBar(filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onPrivacy = { privacy = !privacy })
+                    AppTopBar(filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onPrivacy = { privacy = !privacy }, findOpen = findOpen, onFind = { findOpen = !findOpen; if (!findOpen) findQuery = "" })
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         WelcomePane(withInput = true, inputBar = inputBar)
                     }
@@ -2319,7 +2489,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             } else {
                 Scaffold(
                     containerColor = MaterialTheme.colorScheme.background,
-                    topBar = { AppTopBar(filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onPrivacy = { privacy = !privacy }) },
+                    topBar = { AppTopBar(filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onPrivacy = { privacy = !privacy }, findOpen = findOpen, onFind = { findOpen = !findOpen; if (!findOpen) findQuery = "" }) },
                     bottomBar = {
                         Column {
                             inputBar()
@@ -2327,7 +2497,30 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         }
                     },
                 ) { padding ->
-                    Box(Modifier.padding(padding).fillMaxSize()) { Timeline(items, Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp), running = sessions.find { it.id == currentSession }?.running == true, onPerm = ::respondPerm, onPermReason = ::respondPermReason, onAnswer = ::answerQuestion, onMessage = { messageTarget = it }, toTop = toTopTicks, onFixKey = { loadProviders(); showProviders = true }) }
+                    Box(Modifier.padding(padding).fillMaxSize()) {
+                        Timeline(
+                            items,
+                            Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp),
+                            running = sessions.find { it.id == currentSession }?.running == true,
+                            onPerm = ::respondPerm,
+                            onPermReason = ::respondPermReason,
+                            onAnswer = ::answerQuestion,
+                            onMessage = { messageTarget = it },
+                            toTop = toTopTicks,
+                            onFixKey = { loadProviders(); showProviders = true },
+                            find = if (findOpen) findQuery else "",
+                            findStep = findStep,
+                        )
+                        if (findOpen) FindCard(
+                            query = findQuery,
+                            onQuery = { findQuery = it; findStep = 0 },
+                            count = findCount,
+                            active = if (findCount == 0) 0 else Math.floorMod(findStep, findCount),
+                            onStep = { step -> findStep = findStep + step },
+                            onClose = { findOpen = false; findQuery = "" },
+                            modifier = Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 12.dp),
+                        )
+                    }
                 }
             }
         }
@@ -3366,7 +3559,7 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
 }
 
 @Composable
-fun AppTopBar(filterActive: Boolean, privacyActive: Boolean, onDrawer: () -> Unit, onFilter: () -> Unit, onPrivacy: () -> Unit) {
+fun AppTopBar(filterActive: Boolean, privacyActive: Boolean, onDrawer: () -> Unit, onFilter: () -> Unit, onPrivacy: () -> Unit, findOpen: Boolean = false, onFind: () -> Unit = {}) {
     /*
      * Claude's narrow header is deliberately bare: a back arrow, no title, and
      * the ghost on the right. Sampled off its own portrait screenshot - the
@@ -3387,6 +3580,14 @@ fun AppTopBar(filterActive: Boolean, privacyActive: Boolean, onDrawer: () -> Uni
                 IconButton(onFilter) {
                     Icon(Icons.Outlined.Tune, contentDescription = "只看运行中", tint = Ember)
                 }
+            }
+            // Ctrl+F's magnifier, the same one the wide header carries.
+            IconButton(onFind) {
+                Icon(
+                    Icons.Outlined.Search,
+                    contentDescription = if (findOpen) "关闭查找" else "在对话中查找",
+                    tint = if (findOpen) Ember else LocalText.current,
+                )
             }
             IconButton(onPrivacy) { GhostGlyph(active = privacyActive, size = 22.dp) }
         }
@@ -3651,9 +3852,121 @@ fun runSummary(run: ToolRun): String {
     return parts.joinToString(", ").ifBlank { "已使用 ${run.items.size} 个工具" }
 }
 
+/**
+ * Find in the conversation, as MiMo draws it.
+ *
+ * The desktop's card (`FindBar.vue`): 54 above the pane's top edge and 20 in
+ * from its end, a 15 unit glass, a field 180 wide, the count, previous, next and
+ * close, on a 10 corner with a one-pixel weak border and a soft drop shadow. The
+ * count is MiMo's own: `cur/total`, `0/0` before anything is selected, 无匹配
+ * once a needle finds nothing, and `cur/total(未展开 N)` when some matches sit in
+ * a fold that is not on screen - the phone draws no folds, so the last of those
+ * never occurs here.
+ */
+@Composable
+fun FindCard(
+    query: String,
+    onQuery: (String) -> Unit,
+    count: Int,
+    active: Int,
+    onStep: (Int) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val dark = LocalBg.current == DarkBg
+    // Read outside the Canvas lambdas: a draw scope is not composable, so a
+    // `Local…current` inside it compiles to a call nothing can make there.
+    val ink = LocalText.current
+    Row(
+        modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (dark) Color(0xFF181818) else Color(0xFFFFFEFD))
+            .border(1.dp, if (dark) Color(0xFF2C2C2B) else Color(0xFFE4E1D8), RoundedCornerShape(10.dp))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // The glass: a circle and its handle at a 2 unit stroke in a 24 square.
+        Canvas(Modifier.size(15.dp)) {
+            val w = size.width
+            drawCircle(ink, radius = w * (7f / 24f), center = androidx.compose.ui.geometry.Offset(w * (11f / 24f), w * (11f / 24f)), style = androidx.compose.ui.graphics.drawscope.Stroke(w * (2f / 24f)))
+            drawLine(ink, androidx.compose.ui.geometry.Offset(w * (16f / 24f), w * (16f / 24f)), androidx.compose.ui.geometry.Offset(w * (20f / 24f), w * (20f / 24f)), strokeWidth = w * (2f / 24f), cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        }
+        Spacer(Modifier.width(6.dp))
+        BasicTextField(
+            value = query,
+            onValueChange = onQuery,
+            singleLine = true,
+            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, color = LocalText.current),
+            cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+            modifier = Modifier.width(180.dp),
+            decorationBox = { inner ->
+                Box {
+                    if (query.isEmpty()) Text("在对话中查找", fontSize = 13.sp, color = LocalMuted.current)
+                    inner()
+                }
+            },
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            when {
+                count == 0 && query.isNotBlank() -> "无匹配"
+                else -> "${if (count == 0) 0 else active + 1}/$count"
+            },
+            fontSize = 11.sp,
+            color = LocalMuted.current,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            modifier = Modifier.widthIn(min = 42.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        // The two chevrons and the cross, each a 22 box with a 15 glyph.
+        for ((glyph, enabled, action) in listOf(
+            Triple("up", count > 0, { onStep(-1) }),
+            Triple("down", count > 0, { onStep(1) }),
+            Triple("close", true, { onClose() }),
+        )) {
+            Box(
+                Modifier
+                    .size(22.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable(enabled = enabled, onClick = action),
+                contentAlignment = Alignment.Center,
+            ) {
+                Canvas(Modifier.size(15.dp)) {
+                    val w = size.width
+                    val tint = ink.copy(alpha = if (enabled) 1f else 0.4f)
+                    val stroke = androidx.compose.ui.graphics.drawscope.Stroke(w * (2f / 24f), cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round)
+                    val p = androidx.compose.ui.graphics.Path().apply {
+                        when (glyph) {
+                            "up" -> { moveTo(w * (6f / 24f), w * (15f / 24f)); lineTo(w * (12f / 24f), w * (9f / 24f)); lineTo(w * (18f / 24f), w * (15f / 24f)) }
+                            "down" -> { moveTo(w * (6f / 24f), w * (9f / 24f)); lineTo(w * (12f / 24f), w * (15f / 24f)); lineTo(w * (18f / 24f), w * (9f / 24f)) }
+                            else -> { moveTo(w * (6f / 24f), w * (6f / 24f)); lineTo(w * (18f / 24f), w * (18f / 24f)); moveTo(w * (18f / 24f), w * (6f / 24f)); lineTo(w * (6f / 24f), w * (18f / 24f)) }
+                        }
+                    }
+                    drawPath(p, tint, style = stroke)
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, onPerm: (String, String) -> Unit = { _, _ -> }, onPermReason: (String, String) -> Unit = { _, _ -> }, onAnswer: (String, List<String>) -> Unit = { _, _ -> }, onMessage: (Item.Msg) -> Unit = {}, toTop: Int = 0, onFixKey: () -> Unit = {}) {
+fun Timeline(
+    items: List<Item>,
+    modifier: Modifier,
+    running: Boolean = false,
+    onPerm: (String, String) -> Unit = { _, _ -> },
+    onPermReason: (String, String) -> Unit = { _, _ -> },
+    onAnswer: (String, List<String>) -> Unit = { _, _ -> },
+    onMessage: (Item.Msg) -> Unit = {},
+    toTop: Int = 0,
+    onFixKey: () -> Unit = {},
+    /** The needle being looked for; empty means no search is open. */
+    find: String = "",
+    /** Which match is the current one, counting from the conversation's start. */
+    findStep: Int = 0,
+) {
     val listState = rememberLazyListState()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     // Follow new items: when a message is sent or a reply/tool event lands,
@@ -3721,6 +4034,46 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
         }
     }
 
+    /*
+     * The message holding the match being looked at, and which occurrence
+     * inside it. Stepping to it scrolls the row into view - the desktop's
+     * `scrollIntoView`, which is the whole point of a find bar in a long
+     * transcript.
+     */
+    val hits = remember(items.toList(), find) {
+        if (find.isBlank()) emptyList() else buildList {
+            for ((index, item) in items.toList().withIndex()) {
+                val body = when (item) {
+                    is Item.Msg -> item.text
+                    is Item.Tool -> item.title + " " + item.output
+                    else -> ""
+                }
+                var at = body.indexOf(find, 0, ignoreCase = true)
+                while (at >= 0) {
+                    add(index)
+                    at = body.indexOf(find, at + find.length, ignoreCase = true)
+                }
+            }
+        }
+    }
+    val hitIndex = if (hits.isEmpty()) 0 else Math.floorMod(findStep, hits.size)
+    val hitAt = hits.getOrNull(hitIndex) ?: -1
+    val hitOrdinal = if (hitAt < 0) 0 else hits.take(hitIndex).count { it == hitAt }
+    LaunchedEffect(find, findStep) {
+        if (find.isBlank() || hitAt < 0) return@LaunchedEffect
+        // The row's own place in the drawn list, which skips the working line.
+        val row = rows.indexOfFirst {
+            when (it) {
+                is Item.Msg -> (it as Item).key == (items.getOrNull(hitAt) as? Item)?.key
+                is Step -> ((it.body as? Item)?.key) == (items.getOrNull(hitAt) as? Item)?.key
+                else -> false
+            }
+        }
+        if (row >= 0) {
+            follows = false
+            listState.animateScrollToItem(row)
+        }
+    }
     val atEnd by remember {
         derivedStateOf {
             val info = listState.layoutInfo
@@ -3748,6 +4101,15 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
     // A running turn gets one more row: Claude keeps a working line under the
     // last thing said, so the page does not look finished while it is not.
     Box(modifier) {
+    /*
+     * The needle reaches every `Text` under this pane through the local, the
+     * way the desktop's highlight registry reaches every text node. The
+     * ordinal is per message, so the highlight inside a line can tell whether
+     * it holds the match being stepped to.
+     */
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalFind provides if (find.isBlank()) null else FindNeedle(find, hitOrdinal),
+    ) {
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
@@ -4118,6 +4480,7 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                 modifier = Modifier.size(17.dp),
             )
         }
+    }
     }
     }
 }

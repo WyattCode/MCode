@@ -338,6 +338,46 @@ fun MarkdownBody(source: String, modifier: Modifier = Modifier, dark: Boolean = 
  * Links are handled by hand: the text keeps its own ranges, and a tap is
  * turned into an offset in the laid-out line, so the right URL opens.
  */
+/*
+ * Find-in-view's needle, as a composition local.
+ *
+ * The desktop paints its matches with the browser's Custom Highlight API, so
+ * every text node under the pane is covered without any one component knowing
+ * about the search. Compose has no such registry; a local is the nearest thing
+ * - a `Text` looks the needle up, paints the spans itself, and no call site has
+ * to pass anything down. `null` means "no search open", which is the state on
+ * every ordinary render.
+ */
+data class FindNeedle(val query: String, val active: Int)
+
+val LocalFind = androidx.compose.runtime.compositionLocalOf<FindNeedle?> { null }
+
+/**
+ * The needle's spans, as the desktop's browser highlight paints them: every
+ * match tinted, the one being looked at picked out more strongly. Only a
+ * background is added, so a link's colour and a heading's weight survive.
+ */
+fun findSpans(source: String, query: String, active: Int): androidx.compose.ui.text.AnnotatedString {
+    val out = androidx.compose.ui.text.AnnotatedString.Builder(source)
+    if (query.isBlank()) return out.toAnnotatedString()
+    var at = 0
+    var hit = 0
+    while (true) {
+        val found = source.indexOf(query, at, ignoreCase = true)
+        if (found < 0) break
+        out.addStyle(
+            androidx.compose.ui.text.SpanStyle(
+                background = if (hit == active) Color(0xFFF6C77A) else Color(0x59F6C77A),
+            ),
+            found,
+            found + query.length,
+        )
+        at = found + query.length
+        hit++
+    }
+    return out.toAnnotatedString()
+}
+
 @Composable
 private fun MdLine(
     source: String,
@@ -350,10 +390,23 @@ private fun MdLine(
     val context = LocalContext.current
     val inline = remember(source, color) { MdText.inline(source, LinkBlue) }
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
-    val annotated = remember(inline, weight) {
-        if (weight == null) inline.text else buildAnnotatedString {
+    val needle = LocalFind.current
+    /*
+     * The needle's tint goes on after the line's own spans (a bold heading, a
+     * link's colour) so a match inside one is still visible: the highlight is a
+     * background, and only `color` would be fought over.
+     */
+    val annotated = remember(inline, weight, needle?.query, needle?.active) {
+        val plain = if (weight == null) inline.text else buildAnnotatedString {
             append(inline.text)
             addStyle(SpanStyle(fontWeight = weight), 0, inline.text.length)
+        }
+        if (needle == null || needle.query.isBlank()) plain
+        else buildAnnotatedString {
+            append(plain)
+            for (span in findSpans(inline.text.toString(), needle.query, needle.active).spanStyles) {
+                addStyle(span.item, span.start, span.end)
+            }
         }
     }
     Text(
