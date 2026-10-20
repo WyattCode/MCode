@@ -1835,6 +1835,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     onSeeAll = { openDrawer() },
                     onPlugins = { showPlugins = true; closeDrawer() },
                     onArtifacts = { leftMode = LeftMode.Artifacts; closeDrawer() },
+                    currentPage = leftMode,
                     onProviders = { loadProviders(); showProviders = true; closeDrawer() },
                     onLongPress = { sheetTarget = it },
                 )
@@ -4871,6 +4872,8 @@ fun DrawerContent(
     onPlugins: () -> Unit = {},
     onProviders: () -> Unit = {},
     onArtifacts: () -> Unit = {},
+    /** Which column page is open, so the drawer can mark the row for it. */
+    currentPage: LeftMode = LeftMode.Sessions,
     onUsage: () -> Unit = {},
     onSearch: () -> Unit = {},
     onSeeAll: () -> Unit = {},
@@ -4891,8 +4894,8 @@ fun DrawerContent(
                 }
             }
             Spacer(Modifier.height(26.dp))
-            DrawerItem(Icons.Outlined.Folder, "项目") { onProjects() }
-            Spacer(Modifier.height(18.dp))
+            DrawerItem(Icons.Outlined.Folder, "项目", active = currentPage == LeftMode.Projects) { onProjects() }
+            Spacer(Modifier.height(26.dp))
             /*
              * The desktop's plugins page - skills and MCP servers side by
              * side - had no phone counterpart at all: this row said "Code" and
@@ -4900,17 +4903,17 @@ fun DrawerContent(
              * row that does something.
              */
             DrawerItem(Icons.Outlined.Build, "技能与插件") { onPlugins() }
-            Spacer(Modifier.height(18.dp))
-            DrawerItem(Icons.Outlined.FolderOpen, "作品") { onArtifacts() }
-            Spacer(Modifier.height(18.dp))
-            DrawerItem(Icons.Outlined.Schedule, "定时任务") { onScheduled() }
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(26.dp))
+            DrawerItem(Icons.Outlined.FolderOpen, "作品", active = currentPage == LeftMode.Artifacts) { onArtifacts() }
+            Spacer(Modifier.height(26.dp))
+            DrawerItem(Icons.Outlined.Schedule, "定时任务", active = currentPage == LeftMode.Scheduled) { onScheduled() }
+            Spacer(Modifier.height(26.dp))
             DrawerItem(Icons.Outlined.Checklist, "进行中的任务") { onTasks() }
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(26.dp))
             DrawerItem(Icons.Outlined.BarChart, "用量") { onUsage() }
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(26.dp))
             DrawerItem(Icons.Outlined.Lock, "模型服务") { onProviders() }
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(26.dp))
             DrawerItem(Icons.Outlined.Settings, "连接设置") { onReconnect() }
             Spacer(Modifier.height(20.dp))
             HorizontalDivider(color = LocalMuted.current.copy(alpha = 0.18f))
@@ -4951,9 +4954,33 @@ fun DrawerContent(
 }
 
 @Composable
-fun DrawerItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
+fun DrawerItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    active: Boolean = false,
+    onClick: () -> Unit,
+) {
+    /*
+     * Claude marks the page the app is on: the row wears a soft pill
+     * (240,239,236 on the drawer's 243,243,240) and a step of horizontal inset,
+     * so the drawer says where the reader already is rather than only where
+     * they could go. Without it every row looked equally unvisited, and opening
+     * 定时任务 read as if nothing had happened.
+     */
     Row(
-        Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 8.dp),
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = if (active) 0.dp else 0.dp)
+            .then(
+                if (active) {
+                    Modifier
+                        .background(if (LocalBg.current == DarkBg) Color(0xFF2B2B2A) else Color(0xFFF0EFEC), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 10.dp, vertical = 9.dp)
+                } else {
+                    Modifier.padding(vertical = 8.dp)
+                },
+            )
+            .clickable { onClick() },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(icon, contentDescription = label, tint = LocalText.current, modifier = Modifier.size(22.dp))
@@ -5139,12 +5166,19 @@ private fun ProjectPickRow(title: String, directory: String?, active: Boolean, o
 @Composable
 fun ScheduledPane(tasks: List<Triple<String, String, Long>>, modifier: Modifier = Modifier) {
     if (tasks.isEmpty()) {
+        /*
+         * Measured off Claude's own empty page: the clock's ink is 60px tall at
+         * 400dpi (24dp), the title's 35px (14sp) and the line under it 35px as
+         * well - the same size, not a smaller one - with 24dp and 16dp between
+         * the three. This used to be a 44dp glyph over 15/13sp, which read as a
+         * list of labels rather than as a page waiting to be filled.
+         */
         Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Icon(Icons.Outlined.Schedule, contentDescription = null, tint = LocalMuted.current.copy(alpha = 0.6f), modifier = Modifier.size(44.dp))
+            Icon(Icons.Outlined.Schedule, contentDescription = null, tint = LocalMuted.current.copy(alpha = 0.75f), modifier = Modifier.size(24.dp))
+            Spacer(Modifier.height(24.dp))
+            Text("暂无定时任务", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
             Spacer(Modifier.height(16.dp))
-            Text("暂无定时任务", fontSize = 15.sp, color = LocalText.current)
-            Spacer(Modifier.height(8.dp))
-            Text("让 MCode 按计划运行任务。", fontSize = 13.sp, color = LocalMuted.current)
+            Text("让 MCode 按计划运行任务。", fontSize = 14.sp, color = LocalMuted.current)
         }
     } else {
         LazyColumn(modifier) {
