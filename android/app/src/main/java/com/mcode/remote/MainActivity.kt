@@ -324,7 +324,7 @@ private fun nextErrId(): Int = ++errCounter
 
 sealed class Item {
     abstract val key: String
-    data class Msg(val id: String, val role: String, var text: String, val images: List<String> = emptyList(), val at: Long = 0L, val steered: Boolean = false) : Item() { override val key = "msg.$id" }
+    data class Msg(val id: String, val role: String, var text: String, val images: List<String> = emptyList(), val at: Long = 0L, val steered: Boolean = false, val files: List<String> = emptyList()) : Item() { override val key = "msg.$id" }
 
     /**
      * Claude's wave divider: a wavy rule across the pane with the clock in the
@@ -1239,6 +1239,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 if (!mime.startsWith("image/") || data.isBlank()) null else "data:$mime;base64,$data"
             }
         } ?: emptyList()
+        val sentFiles = message.optJSONArray("attachments")?.let { arr ->
+            (0 until arr.length()).mapNotNull { index ->
+                val att = arr.optJSONObject(index) ?: return@mapNotNull null
+                if (att.optString("mime", "").startsWith("image/")) null else att.optString("path", "").ifBlank { null }
+            }
+        } ?: emptyList()
         if (known != null && known in items.indices) {
             val existing = items[known]
             if (existing is Item.Msg) {
@@ -1252,7 +1258,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 val whole = text.toString().trim()
                 val settled = message.optString("finish").isNotBlank() || (message.optJSONObject("time")?.optLong("completed", 0L) ?: 0L) > 0L
                 val next = if (settled || whole.length >= existing.text.length) whole else existing.text
-                items[known] = existing.copy(text = next, images = images, steered = message.optBoolean("steered"))
+                items[known] = existing.copy(text = next, images = images, files = sentFiles, steered = message.optBoolean("steered"))
             }
         } else {
             val body = text.toString().trim()
@@ -1271,7 +1277,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         items.add(Item.Gap("gap.${previous.id}.$id", label))
                     }
                 }
-                items.add(Item.Msg(id, role, body.ifEmpty { if (images.isEmpty()) "…" else "" }, images, at, message.optBoolean("steered")))
+                /*
+                 * A question made only of a file had no words at all, and this
+                 * block used to print a lone ellipsis for it - the file itself
+                 * was dropped when the attachments were read. The desktop draws
+                 * a sheet icon and the file name above the bubble (`sent-tile
+                 * file`), so the phone does the same and lets it be tapped.
+                 */
+                val fallback = if (images.isEmpty() && sentFiles.isEmpty()) "…" else ""
+                items.add(Item.Msg(id, role, body.ifEmpty { fallback }, images, at, message.optBoolean("steered"), sentFiles))
                 messageIndex[id] = items.size - 1
             }
         }
@@ -1801,6 +1815,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             inject = voiceText,
             onInjected = { voiceText = null },
             onModel = { loadProviders(); modelPicker = true },
+            access0 = accessOf(sessions.find { it.id == currentSession }, appConfig),
+            fullAllowed = appConfig?.optBoolean("allowFullAccess") != false || accessOf(sessions.find { it.id == currentSession }, appConfig) == "full",
+            onAccess = { level ->
+                currentSession?.let { sid ->
+                    scope.launch {
+                        runCatching { rpc(JSONObject().put("type", "session.access").put("sessionID", sid).put("access", level)) }
+                        val at = sessions.indexOfFirst { it.id == sid }
+                        if (at >= 0) sessions[at] = sessions[at].copy(access = level)
+                    }
+                }
+            },
             running = sessions.find { it.id == currentSession }?.running == true,
             attachments = attachments.toList(),
             onRemoveAttachment = { attachments.removeAt(it) },
@@ -3313,6 +3338,39 @@ fun ImageBox(url: String) {
 }
 
 /**
+ * A document the reader sent, drawn the way the desktop draws one.
+ *
+ * `sent-tile file` on the desktop is the sheet glyph and the name on a plate,
+ * beside the words it was sent with. The phone had the attach chip in the
+ * composer only; once sent, a document left no mark at all.
+ */
+@Composable
+fun SentFileChip(name: String) {
+    Row(
+        Modifier
+            .background(LocalPill.current, RoundedCornerShape(10.dp))
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.AutoMirrored.Outlined.Article,
+            contentDescription = null,
+            tint = LocalMuted.current,
+            modifier = Modifier.size(15.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            name.substringAfterLast('/'),
+            fontSize = 13.sp,
+            color = LocalText.current,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 200.dp),
+        )
+    }
+}
+
+/**
  * A run of consecutive tool calls, or a single one.
  *
  * Claude does not print one row per call: it prints a single call on its own,
@@ -3623,6 +3681,21 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
                                         for (url in item.images.take(3)) {
                                             ImageBox(url)
                                         }
+                                    }
+                                }
+                                /*
+                                 * A document travels above the words too, as the
+                                 * desktop draws it: a sheet, the file's name, and
+                                 * the whole thing tappable. Without this a
+                                 * question that was only a file showed an
+                                 * ellipsis.
+                                 */
+                                if (item.files.isNotEmpty()) {
+                                    Row(
+                                        Modifier.padding(bottom = if (item.text.isBlank()) 0.dp else 6.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        for (name in item.files.take(3)) SentFileChip(name)
                                     }
                                 }
                                 // Claude sets a reply the way the desktop does:
@@ -5239,6 +5312,160 @@ fun ConnectScreen(url: String, token: String, onConnect: (String, String) -> Uni
 /* Input capsule                                                       */
 /* ------------------------------------------------------------------ */
 
+/*
+ * The desktop's access pill: a hand, a pencil or a shield, the level's own
+ * words, and a caret.
+ *
+ * The three glyphs are the paths `Composer.vue` draws (`ACCESS_ICONS`), in
+ * their own 16 or 18 unit boxes, rather than a Material stand-in: the hand is
+ * what the desktop shows for 「默认权限」 and no Material icon is that hand.
+ * A level of `full` wears the ember, as the desktop's `.pill.access.full` does,
+ * because a session that never stops to ask should not look ordinary.
+ */
+@Composable
+fun AccessGlyphs(level: String, tint: Color, size: androidx.compose.ui.unit.Dp = 15.dp) {
+    val box = if ((level == "auto" || level == "full")) 18f else 16f
+    Canvas(Modifier.size(size)) {
+        val k = this.size.width / box
+        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(if (level == "ask") 1f * k else if (level == "auto") 1.13f * k else 1.03f * k)
+        val p = androidx.compose.ui.graphics.Path()
+        fun m(x: Float, y: Float) = p.moveTo(x * k, y * k)
+        fun l(x: Float, y: Float) = p.lineTo(x * k, y * k)
+        fun c(x1: Float, y1: Float, x2: Float, y2: Float, x3: Float, y3: Float) = p.cubicTo(x1 * k, y1 * k, x2 * k, y2 * k, x3 * k, y3 * k)
+        when (level) {
+            // The hand: three fingers, then the palm and the thumb.
+            "ask" -> {
+                m(6.16f, 9.25f); l(6.16f, 4.45f)
+                c(6.16f, 4.03f, 6.5f, 3.69f, 6.92f, 3.69f); c(7.34f, 3.69f, 7.68f, 4.03f, 7.68f, 4.45f)
+                l(7.68f, 8.26f)
+                m(7.68f, 4.45f); l(7.68f, 3.44f)
+                c(7.68f, 3.02f, 8.02f, 2.68f, 8.44f, 2.68f); c(8.86f, 2.68f, 9.2f, 3.02f, 9.2f, 3.44f)
+                l(9.2f, 8.26f)
+                m(9.2f, 4.2f)
+                c(9.2f, 3.78f, 9.55f, 3.44f, 9.97f, 3.44f); c(10.38f, 3.44f, 10.73f, 3.78f, 10.73f, 4.2f)
+                l(10.73f, 8.26f)
+                m(10.73f, 5.72f)
+                c(10.73f, 5.3f, 11.07f, 4.96f, 11.49f, 4.96f); c(11.9f, 4.96f, 12.25f, 5.3f, 12.25f, 5.72f)
+                l(12.25f, 10.03f)
+                c(12.25f, 11.86f, 10.77f, 13.34f, 8.95f, 13.34f)
+                c(7.81f, 13.34f, 6.99f, 13.02f, 6.33f, 12.45f)
+                c(5.69f, 11.89f, 5.2f, 11.05f, 4.76f, 10.03f)
+                c(4.32f, 9.04f, 4.08f, 8.41f, 3.92f, 8.02f)
+                c(3.85f, 7.8f, 3.96f, 7.42f, 4.3f, 7.41f)
+                c(5.07f, 7.37f, 5.87f, 7.95f, 6.16f, 9.1f)
+            }
+            // The pencil under a stroke: 帮我审批.
+            "auto" -> {
+                m(9f, 14.67f); l(15f, 14.67f)
+                m(12f, 3.67f)
+                c(12.2f, 3.4f, 12.6f, 3.35f, 12.87f, 3.55f); c(13.3f, 3.87f, 13.5f, 4.4f, 13.4f, 4.85f)
+                l(5.67f, 14f); l(3f, 14.67f); l(3.67f, 12f)
+                l(12f, 3.67f)
+                p.close()
+            }
+            // The shield with its exclamation: 完全访问.
+            else -> {
+                m(9f, 2.94f); l(14.45f, 5.97f); l(14.45f, 9.6f)
+                c(14.45f, 12.63f, 12.15f, 14.75f, 9f, 15.05f)
+                c(5.85f, 14.75f, 3.55f, 12.63f, 3.55f, 9.6f)
+                l(3.55f, 5.97f); p.close()
+                m(9f, 6.58f); l(9f, 9f)
+                m(9f, 11.42f); l(9.01f, 11.42f)
+            }
+        }
+        drawPath(p, tint, style = stroke)
+    }
+}
+
+/**
+ * The access pill, as the desktop draws it under a conversation.
+ *
+ * The level was reachable here only through the settings sheet, which meant a
+ * reader who was being asked too often had to leave the words they were
+ * writing to change it. On the desktop it is the pill beside the plus.
+ */
+@Composable
+fun AccessPill(level: String, onPick: (String) -> Unit, fullAllowed: Boolean = true) {
+    var open by remember { mutableStateOf(false) }
+    val word = when (level) {
+        "auto" -> "帮我审批"
+        "full" -> "完全访问"
+        else -> "默认权限"
+    }
+    val tint = if (level == "full") MaterialTheme.colorScheme.primary else LocalText.current
+    val caret = LocalMuted.current
+    Box {
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(17.dp))
+                .background(LocalPill.current)
+                .clickable { open = true }
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AccessGlyphs(level, tint)
+            Spacer(Modifier.width(6.dp))
+            Text(word, fontSize = 13.sp, color = tint)
+            /*
+             * The desktop's caret is a 16 unit chevron at the weaker text
+             * colour, not a Material arrow: a filled triangle would read as a
+             * spinner's neighbour rather than as "this opens".
+             */
+            Spacer(Modifier.width(2.dp))
+            Canvas(Modifier.size(14.dp)) {
+                val w = size.width
+                val p = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(w * 0.31f, w * 0.41f)
+                    lineTo(w * 0.5f, w * 0.59f)
+                    lineTo(w * 0.69f, w * 0.41f)
+                }
+                drawPath(p, caret, style = androidx.compose.ui.graphics.drawscope.Stroke(w * 0.0625f))
+            }
+        }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            modifier = Modifier.width(280.dp).background(MaterialTheme.colorScheme.surface),
+        ) {
+            for ((value, name, hint) in listOf(
+                Triple("ask", "默认权限", "读取工作区内的文件、抓取网页无需询问；新建、修改文件或运行命令前会先请你确认"),
+                Triple("auto", "帮我审批", "项目内的文件改动和常规命令无需确认；删除命令与高风险操作仍会请你确认"),
+                Triple("full", "完全访问", "不经批准即可修改工作区外的文件、运行联网命令，存在安全风险，请谨慎开启"),
+            )) {
+                if (value == "full" && !fullAllowed) continue
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { open = false; onPick(value) }
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    AccessGlyphs(value, if (value == level) MaterialTheme.colorScheme.primary else LocalText.current, 17.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            name,
+                            fontSize = 14.sp,
+                            color = if (value == level) MaterialTheme.colorScheme.primary else LocalText.current,
+                        )
+                        Text(hint, fontSize = 11.sp, lineHeight = 15.sp, color = LocalMuted.current)
+                    }
+                    // MiMo's check at the far end of the chosen row.
+                    if (value == level) {
+                        Spacer(Modifier.width(8.dp))
+                        Icon(
+                            Icons.Outlined.Check,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun InputCapsule(
     enabled: Boolean,
@@ -5272,6 +5499,10 @@ fun InputCapsule(
     onGoalRemove: () -> Unit = {},
     onGoalResend: () -> Unit = {},
     onGoalEdit: () -> Unit = {},
+    /** The desktop's access pill, ask / auto / full, and whether full may be offered. */
+    access0: String = "ask",
+    onAccess: (String) -> Unit = {},
+    fullAllowed: Boolean = true,
     /** Which conversation this box belongs to, so its draft can be put back. */
     draftKey: String = "",
     draft: String = "",
@@ -5518,7 +5749,13 @@ fun InputCapsule(
                             onDismissRequest = { plusMenu = false },
                             modifier = Modifier.width(272.dp).background(MaterialTheme.colorScheme.surface),
                         ) {
-                            PlusRow(Icons.AutoMirrored.Outlined.Article, "添加照片和文件", enabled) { plusMenu = false; onFiles() }
+                            // The desktop's row opens the system file dialog and
+                            // attaches what is picked. This one opened the
+                            // repository browser instead - a reading surface, not
+                            // a picker - so choosing a file looked like it did
+                            // nothing at all. `onFiles` stays on the header menu,
+                            // where browsing the project is what is wanted.
+                            PlusRow(Icons.AutoMirrored.Outlined.Article, "添加照片和文件", enabled) { plusMenu = false; pickImages() }
                             PlusRow(Icons.Outlined.Code, "打开终端", enabled) { plusMenu = false; onTerminal() }
                             HorizontalDivider(Modifier.padding(vertical = 6.dp), color = LocalMuted.current.copy(alpha = 0.15f))
                             // 追求目标: a switch, not a command - what is typed next
@@ -5551,6 +5788,11 @@ fun InputCapsule(
                             },
                         )
                     }
+                    Spacer(Modifier.width(8.dp))
+                    // The desktop's middle pill. It sat only in the settings
+                    // sheet here, so a reader being asked too often had to leave
+                    // the words they were writing to change it.
+                    AccessPill(access0, onAccess, fullAllowed)
                     Spacer(Modifier.width(8.dp))
                     Surface(
                         shape = RoundedCornerShape(17.dp),
