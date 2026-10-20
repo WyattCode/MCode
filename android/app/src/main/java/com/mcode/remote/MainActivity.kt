@@ -5909,7 +5909,9 @@ fun DrawerContent(
             Spacer(Modifier.height(20.dp))
             HorizontalDivider(color = LocalMuted.current.copy(alpha = 0.18f))
             Spacer(Modifier.height(18.dp))
-            Text("最近使用", fontSize = 13.sp, color = LocalMuted.current)
+            // `.section-head`: 12 at weight 500, in the body's grey. This read
+            // 13 at the default weight, which is a size and a voice off.
+            Text("最近使用", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = LocalMuted.current)
             Spacer(Modifier.height(8.dp))
         }
         /*
