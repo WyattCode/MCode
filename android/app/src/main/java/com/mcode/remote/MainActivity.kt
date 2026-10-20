@@ -798,12 +798,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var runningOnly by remember { mutableStateOf(false) }
     var privacy by remember { mutableStateOf(false) }
     var projectFilter by remember { mutableStateOf<String?>(null) }
-    var showTasks by remember { mutableStateOf(false) }
     /**
      * 技能与插件: the desktop's plugins page, which lists the folder's skills
      * and its MCP servers side by side and lets either be switched off.
      */
-    var showPlugins by remember { mutableStateOf(false) }
     /**
      * 模型服务: the providers and their keys.
      *
@@ -817,11 +815,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var showProviders by remember { mutableStateOf(false) }
     var keyTarget by remember { mutableStateOf<JSONObject?>(null) }
     /** The plugins page's two halves, as `mcp.list` and `skill.list` returned them. */
-    val pluginServers = remember { mutableStateListOf<JSONObject>() }
-    val pluginSkills = remember { mutableStateListOf<JSONObject>() }
     var pluginError by remember { mutableStateOf("") }
     /** Which switch is mid-write: "mcp:name" or "skill:name". One at a time, as the desktop holds it. */
-    var pluginBusy by remember { mutableStateOf("") }
     /**
      * The scheduled tasks the server pushes as `automation.tasks`.
      *
@@ -871,7 +866,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var messageTarget by remember { mutableStateOf<Item.Msg?>(null) }
     var modelPicker by remember { mutableStateOf(false) }
     var providers by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
-    var showUsage by remember { mutableStateOf(false) }
     /**
      * The application's own settings, which the access level falls back to: a
      * conversation without a level of its own runs at the map's default, and
@@ -922,7 +916,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     /** The changes panel's two "there is nothing to show" cases, which are not the same as "nothing changed". */
     var changesNoRepo by remember { mutableStateOf(false) }
     var changesNoGit by remember { mutableStateOf(false) }
-    var usageSummary by remember { mutableStateOf<JSONObject?>(null) }
     /** Parked permission requests per session, replayed from session.list. */
     val pendingPerms = remember { java.util.concurrent.ConcurrentHashMap<String, MutableList<JSONObject>>() }
     /** Parked question cards per session, replayed from question.list. */
@@ -1136,17 +1129,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         }
     }
 
-    fun loadUsage() {
-        usageSummary = null
-        scope.launch {
-            try {
-                val reply = rpc(JSONObject().put("type", "usage.summary").put("days", 30))
-                usageSummary = reply.optJSONObject("data")?.optJSONObject("summary")
-            } catch (e: Exception) {
-                println("[remote] usage.summary failed: $e")
-            }
-        }
-    }
 
     fun answerQuestion(requestId: String, answer: List<String>) {
         scope.launch {
@@ -1862,18 +1844,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         closeDrawer()
                     },
                     onReconnect = { showConnect = true; closeDrawer() },
-                    onProjects = { leftMode = LeftMode.Projects; closeDrawer() },
-                    onScheduled = { leftMode = LeftMode.Scheduled; closeDrawer() },
-                    onTasks = { showTasks = true; closeDrawer() },
-                    onUsage = { loadUsage(); showUsage = true; closeDrawer() },
+
                     // The drawer's search closes the drawer and focuses the
                     // list's field; on a phone the list is the page behind it.
                     onSearch = { closeDrawer() },
                     onSeeAll = { openDrawer() },
-                    onPlugins = { showPlugins = true; closeDrawer() },
+                    onNewTask = { newSession(); closeDrawer() },
                     onArtifacts = { leftMode = LeftMode.Artifacts; closeDrawer() },
                     currentPage = leftMode,
-                    onProviders = { loadProviders(); showProviders = true; closeDrawer() },
                     onLongPress = { sheetTarget = it },
                 )
             }
@@ -1929,12 +1907,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             )
                         }
                         Text(
-                            when (leftMode) {
-                                LeftMode.Sessions -> "最近记录"
-                                LeftMode.Projects -> "项目"
-                                LeftMode.Scheduled -> "定时任务"
-                                LeftMode.Artifacts -> "作品"
-                            },
+                            if (leftMode == LeftMode.Artifacts) "产物中心" else "最近记录",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Medium,
                             color = LocalText.current,
@@ -1961,9 +1934,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         }
                         Box(Modifier.size(38.dp).clickable { runningOnly = !runningOnly }, contentAlignment = Alignment.Center) {
                             Icon(Icons.Outlined.Tune, contentDescription = "筛选", tint = if (runningOnly) MaterialTheme.colorScheme.primary else LocalText.current, modifier = Modifier.size(18.dp))
-                        }
-                        Box(Modifier.size(38.dp).clickable { showTasks = true }, contentAlignment = Alignment.Center) {
-                            Icon(Icons.Outlined.Checklist, contentDescription = "任务", tint = LocalText.current, modifier = Modifier.size(18.dp))
                         }
                     }
                     /*
@@ -1998,37 +1968,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     }
                         Spacer(Modifier.height(6.dp))
                         /*
-                         * The column carries one of three pages, as Claude's
-                         * does: the conversation list, the projects, and the
-                         * scheduled tasks. They are not sheets over the
-                         * transcript - the right pane stays exactly where it is
-                         * and keeps answering, which is the whole reason the
-                         * projects page can exist beside a live conversation.
+                         * Two pages, not four: the conversation list, and the
+                         * artifact centre the desktop's column also carries.
+                         * The desktop has no projects page (a project is a
+                         * grouping inside the list), no scheduled-tasks page (a
+                         * scheduled run is a message in a conversation) and no
+                         * running-tasks page; all three were added here because
+                         * Claude's app has equivalents, which is not the test.
                          */
                         when (leftMode) {
                             LeftMode.Sessions ->
                                 SessionList(visibleSessions, currentSession, search, onSelect = { select(it) }, compact = false, modifier = Modifier.weight(1f).fillMaxWidth(), onLongPress = { sheetTarget = it })
-                            LeftMode.Projects ->
-                                ProjectsPane(
-                                    projects = projects,
-                                    filter = projectFilter,
-                                    adding = projectAdding,
-                                    onAdding = { projectAdding = it },
-                                    onPick = { projectFilter = it; leftMode = LeftMode.Sessions },
-                                    onAdd = { dir ->
-                                        scope.launch {
-                                            runCatching { rpc(JSONObject().put("type", "project.add").put("directory", dir).put("used", false)) }
-                                            refreshCommandsTick++
-                                            projectAdding = false
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                                )
-                            LeftMode.Scheduled ->
-                                ScheduledPane(
-                                    tasks = automations.toList(),
-                                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                                )
                             LeftMode.Artifacts ->
                                 ArtifactsPane(
                                     groups = filterArtifacts(artifacts.toList(), artQuery),
@@ -2051,31 +2001,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          * the capsule never covers a row.
                          */
                         FootCapsule(
-                            label = when (leftMode) {
-                                LeftMode.Sessions -> "+ 新建会话"
-                                LeftMode.Projects -> "+ 新建项目"
-                                LeftMode.Scheduled -> "+ 新建任务"
-                                LeftMode.Artifacts -> "+ 新建会话"
-                            },
+                            /*
+                             * The desktop's capsule reads 新建任务 and makes a
+                             * conversation wherever the list is showing; it is
+                             * one row with one job, not a menu whose words change.
+                             */
+                            label = "+ 新建会话",
                             modifier = Modifier.align(Alignment.CenterHorizontally),
-                            enabled = when (leftMode) {
-                                LeftMode.Sessions -> true
-                                LeftMode.Projects -> true
-                                // A schedule is made by asking the model to make
-                                // one; there is no protocol request that takes a
-                                // cron expression, so this opens the box instead
-                                // of pretending to be a form.
-                                LeftMode.Scheduled -> true
-                                LeftMode.Artifacts -> true
-                            },
-                            onClick = {
-                                when (leftMode) {
-                                    LeftMode.Sessions -> newSession()
-                                    LeftMode.Projects -> projectAdding = true
-                                    LeftMode.Scheduled -> Toast.makeText(context, "让 MCode 按计划安排一次任务，它会把定时建好", Toast.LENGTH_LONG).show()
-                                    LeftMode.Artifacts -> newSession()
-                                }
-                            },
+                            onClick = { newSession() },
                         )
                     }
                     /*
@@ -2128,9 +2061,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                         softWrap = false,
                                     )
                                 }
-                            }
-                            Box(Modifier.size(40.dp).clickable { showTasks = true }, contentAlignment = Alignment.Center) {
-                                Icon(Icons.Outlined.Schedule, contentDescription = "任务", tint = LocalText.current, modifier = Modifier.size(19.dp))
                             }
                             /*
                              * While a turn is in flight Claude puts an amber ring
@@ -2756,271 +2686,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     }
 
     /* ---- 功能面板：任务 / 项目 / 定时任务 / 会话长按 / 重命名 ---- */
-    if (showTasks) {
-        ModalBottomSheet(onDismissRequest = { showTasks = false }, containerColor = MaterialTheme.colorScheme.background) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
-                Text("进行中的任务", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
-                Spacer(Modifier.height(12.dp))
-                val running = sessions.filter { it.running }
-                if (running.isEmpty()) {
-                    Text("没有正在运行的任务", fontSize = 14.sp, color = LocalMuted.current)
-                } else {
-                    for (r in running) {
-                        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(r.title, fontSize = 14.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                if (r.directory.isNotBlank()) Text(r.directory.substringAfterLast('\\').substringAfterLast('/'), fontSize = 11.sp, color = LocalMuted.current, maxLines = 1)
-                            }
-                            TextButton({ request(JSONObject().put("type", "session.abort").put("sessionID", r.id)) }) { Text("停止", color = MaterialTheme.colorScheme.error) }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-
-    /*
-     * 技能与插件: the desktop's plugins page.
-     *
-     * Two halves read side by side, as MiMo's page reads them: MCP servers
-     * (`mcp.list`) and the folder's skills (`skill.list`). A skill's switch
-     * writes `disabledSkills` through `config.set`, which is exactly what the
-     * desktop's own page does; a server's switch is `mcp.toggle`. Either half
-     * answering alone is shown rather than the whole page failing.
-     */
-    /*
-     * Read when the page is opened rather than at connect: `artifact.list`
-     * walks the artifact stores, which is not work to do for a reader who
-     * never asks.
-     */
-    LaunchedEffect(leftMode, artCategory) {
-        if (leftMode != LeftMode.Artifacts) return@LaunchedEffect
-        artifactsLoading = true
-        val ask = JSONObject().put("type", "artifact.list").put("limit", 40)
-        if (artCategory.isNotEmpty()) ask.put("category", artCategory)
-        /*
-         * `query` is NOT sent: measured against the live gateway, artifact.list
-         * accepts the field and ignores it - "testenv" (a path that exists) and
-         * "zzzznotfound" both came back with nothing, same as any other word.
-         * The filter therefore runs here over what the server did send, which is
-         * the only way the field can honestly promise anything.
-         */
-        val reply = runCatching { rpc(ask, 45_000) }.getOrNull()
-        val data = reply?.optJSONObject("data")
-        artifacts.clear()
-        data?.optJSONArray("artifacts")?.let { list ->
-            for (i in 0 until list.length()) list.optJSONObject(i)?.let { artifacts.add(it) }
-        }
-        // The facets are the server's own counts; a filtered answer still
-        // carries the unfiltered ones, so they are only taken with no filter.
-        if (artCategory.isEmpty()) artFacets = data?.optJSONObject("facets")
-        artBuilding = data?.optBoolean("building") ?: false
-        artifactsLoading = false
-    }
-
-    /*
-     * On a phone there is no column to swap, so the same two pages open over
-     * the conversation - the identical composables, with the identical data, so
-     * the two layouts cannot drift apart the way a second implementation would.
-     */
-    if (!wide && leftMode != LeftMode.Sessions) {
-        val pageSheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ModalBottomSheet(
-            onDismissRequest = { leftMode = LeftMode.Sessions },
-            sheetState = pageSheet,
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            Column(Modifier.fillMaxWidth().fillMaxHeight(0.86f).padding(horizontal = 16.dp).padding(bottom = 12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        when (leftMode) {
-                            LeftMode.Projects -> "项目"
-                            LeftMode.Scheduled -> "定时任务"
-                            else -> "作品"
-                        },
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = LocalText.current,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Box(Modifier.size(32.dp).clickable { leftMode = LeftMode.Sessions }, contentAlignment = Alignment.Center) {
-                        Icon(Icons.Filled.Close, contentDescription = "关闭", tint = LocalMuted.current, modifier = Modifier.size(18.dp))
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                if (leftMode == LeftMode.Artifacts) {
-                    ArtifactsPane(
-                        groups = filterArtifacts(artifacts.toList(), artQuery),
-                        loading = artifactsLoading,
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                        category = artCategory,
-                        facets = artFacets,
-                        building = artBuilding,
-                        onCategory = { artCategory = it },
-                        onOpen = { root, rel -> openArtifact(root, rel) },
-                        query = artQuery,
-                        onQuery = { artQuery = it },
-                    )
-                } else if (leftMode == LeftMode.Projects) {
-                    ProjectsPane(
-                        projects = projects,
-                        filter = projectFilter,
-                        adding = projectAdding,
-                        onAdding = { projectAdding = it },
-                        onPick = { projectFilter = it; leftMode = LeftMode.Sessions },
-                        onAdd = { dir ->
-                            scope.launch {
-                                runCatching { rpc(JSONObject().put("type", "project.add").put("directory", dir).put("used", false)) }
-                                refreshCommandsTick++
-                                projectAdding = false
-                            }
-                        },
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                    )
-                } else {
-                    ScheduledPane(tasks = automations.toList(), modifier = Modifier.weight(1f).fillMaxWidth())
-                }
-            }
-        }
-    }
-    if (showPlugins) {
-        val dir = sessions.find { it.id == currentSession }?.directory.orEmpty()
-        LaunchedEffect(dir, showPlugins) {
-            pluginSkills.clear()
-            pluginServers.clear()
-            pluginError = ""
-            val listed = runCatching { rpc(JSONObject().put("type", "mcp.list")) }.getOrNull()
-            listed?.optJSONObject("data")?.optJSONArray("servers")?.let { arr ->
-                for (i in 0 until arr.length()) arr.optJSONObject(i)?.let { pluginServers.add(it) }
-            }
-            val readFail = listed == null
-            val skillsRes = runCatching { rpc(JSONObject().put("type", "skill.list").put("directory", dir)) }.getOrNull()
-            skillsRes?.optJSONObject("data")?.optJSONArray("skills")?.let { arr ->
-                for ((i, item) in (0 until arr.length()).withIndex()) {
-                    val skill = arr.optJSONObject(i) ?: continue
-                    pluginSkills.add(skill)
-                }
-            }
-            if (readFail && skillsRes == null) pluginError = "读取插件失败"
-        }
-        ModalBottomSheet(onDismissRequest = { showPlugins = false }, containerColor = MaterialTheme.colorScheme.background) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("技能与插件", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
-                    Spacer(Modifier.weight(1f))
-                    if (pluginBusy.isNotBlank()) {
-                        androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = LocalMuted.current)
-                    } else {
-                        Box(Modifier.size(30.dp).clickable { showPlugins = false; showPlugins = true }, contentAlignment = Alignment.Center) {
-                            Icon(Icons.Outlined.Refresh, contentDescription = "刷新", tint = LocalMuted.current, modifier = Modifier.size(17.dp))
-                        }
-                    }
-                }
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    if (pluginError.isNotBlank()) pluginError else "在这里开关本项目的技能与 MCP 服务。",
-                    fontSize = 12.sp,
-                    color = if (pluginError.isNotBlank()) MaterialTheme.colorScheme.error else LocalMuted.current,
-                )
-                Spacer(Modifier.height(10.dp))
-                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 520.dp)) {
-                    if (pluginServers.isNotEmpty()) {
-                        item { SectionLabel("MCP 服务") }
-                        items(pluginServers.size) { index ->
-                            val server = pluginServers[index]
-                            val name = server.optString("name")
-                            val status = server.optString("status")
-                            val on = status != "disabled"
-                            PluginRow(
-                                title = name,
-                                subtitle = when (status) {
-                                    "ready" -> "已连接 · ${server.optInt("tools")} 个工具"
-                                    "disabled" -> "已停用"
-                                    "failed" -> server.optString("error").ifBlank { "连接失败" }
-                                    else -> status.ifBlank { "未连接" }
-                                },
-                                on = on,
-                                busy = pluginBusy == "mcp:$name",
-                            ) {
-                                pluginBusy = "mcp:$name"
-                                scope.launch {
-                                    val res = runCatching { rpc(JSONObject().put("type", "mcp.toggle").put("name", name), 60_000) }.getOrNull()
-                                    res?.optJSONObject("data")?.optJSONArray("servers")?.let { arr ->
-                                        val next = mutableListOf<JSONObject>()
-                                        for (i in 0 until arr.length()) arr.optJSONObject(i)?.let { next.add(it) }
-                                        withContext(Dispatchers.Main) {
-                                            pluginServers.clear()
-                                            pluginServers.addAll(next)
-                                        }
-                                    }
-                                    withContext(Dispatchers.Main) { pluginBusy = "" }
-                                }
-                            }
-                        }
-                        item { Spacer(Modifier.height(6.dp)) }
-                    }
-                    if (pluginSkills.isNotEmpty()) {
-                        item { SectionLabel("技能") }
-                        items(pluginSkills.size) { index ->
-                            val skill = pluginSkills[index]
-                            val name = skill.optString("name")
-                            val enabled = skill.optBoolean("enabled", true)
-                            val title = skill.optJSONObject("localizations")?.optJSONObject("zh-CN")?.optString("displayName").orEmpty().ifBlank { name }
-                            PluginRow(
-                                title = title,
-                                subtitle = skill.optString("description"),
-                                on = enabled,
-                                busy = pluginBusy == "skill:$name",
-                            ) {
-                                val next = !enabled
-                                pluginBusy = "skill:$name"
-                                scope.launch {
-                                    /*
-                                     * MiMo's write: `disabledSkills` is the whole
-                                     * list of off ones, so what goes back is the
-                                     * old list with this name taken out or put in
-                                     * - read fresh, because another window may
-                                     * have changed it since this page opened.
-                                     */
-                                    val cfg = runCatching { rpc(JSONObject().put("type", "config.get")) }.getOrNull()
-                                    val before = cfg?.optJSONObject("data")?.optJSONObject("config")?.optJSONArray("disabledSkills")
-                                    val list = mutableListOf<String>()
-                                    if (before != null) for (i in 0 until before.length()) before.optString(i).takeIf { it.isNotBlank() }?.let { list.add(it) }
-                                    list.removeAll { it == name }
-                                    if (!next) list.add(name)
-                                    val patch = JSONObject().put("disabledSkills", org.json.JSONArray(list))
-                                    val ok = runCatching {
-                                        rpc(JSONObject().put("type", "config.set").put("patch", patch))
-                                    }.isSuccess
-                                    withContext(Dispatchers.Main) {
-                                        pluginBusy = ""
-                                        if (ok) {
-                                            val at = pluginSkills.indexOfFirst { it.optString("name") == name }
-                                            if (at >= 0) pluginSkills[at] = JSONObject(pluginSkills[at].toString()).put("enabled", next)
-                                        } else {
-                                            Toast.makeText(context, "开关没能保存", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (pluginServers.isEmpty() && pluginSkills.isEmpty() && pluginError.isBlank()) {
-                        item {
-                            Column(Modifier.fillMaxWidth().padding(top = 40.dp, bottom = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(Icons.Outlined.Build, contentDescription = null, tint = LocalMuted.current.copy(alpha = 0.55f), modifier = Modifier.size(56.dp))
-                                Spacer(Modifier.height(16.dp))
-                                Text("暂无插件", fontSize = 15.sp, color = LocalText.current)
-                                Spacer(Modifier.height(6.dp))
-                                Text("这个文件夹还没有可用的技能或 MCP 服务。", fontSize = 13.sp, color = LocalMuted.current)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
     /*
      * 模型服务: which provider serves this conversation, and its key.
      *
@@ -3033,155 +2698,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * actually reads it from; writing `customProviders[].apiKey` in the config
      * is the trap this avoids.
      */
-    if (showProviders) {
-        val providerSheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ModalBottomSheet(
-            onDismissRequest = { showProviders = false },
-            sheetState = providerSheet,
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            Column(
-                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp),
-            ) {
-                Text("模型服务", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "密钥保存在这台电脑上，只用来向服务商发起请求。",
-                    fontSize = 12.sp,
-                    color = LocalMuted.current,
-                )
-                Spacer(Modifier.height(12.dp))
-                if (providers.isEmpty()) {
-                    Text("正在读取…", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(vertical = 20.dp))
-                }
-                /*
-                 * Connected first, then the rest in the server's own order.
-                 *
-                 * The list is 31 entries and the three that this machine
-                 * actually reaches - its own OpenAI-compatible endpoints - sort
-                 * last by `order`, so a phone opened this page and showed thirty
-                 * "未连接" rows before the one it was looking for. The desktop
-                 * never has to scroll past them; a sheet does.
-                 */
-                val ordered = providers.sortedWith(
-                    compareByDescending<JSONObject> { it.optBoolean("configured") }.thenBy { it.optInt("order", 100) },
-                )
-                for (provider in ordered) {
-                    val id = provider.optString("id")
-                    val name = provider.optString("name", id)
-                    val configured = provider.optBoolean("configured")
-                    val fromEnv = provider.optString("environment")
-                    val models = provider.optJSONArray("models")?.length() ?: 0
-                    Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(name, fontSize = 15.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                when {
-                                    fromEnv.isNotBlank() -> "由环境变量 $fromEnv 提供"
-                                    configured -> "已连接 · $models 个模型"
-                                    else -> "未连接"
-                                },
-                                fontSize = 11.5.sp,
-                                color = if (configured) Color(0xFF2E7D32) else LocalMuted.current,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        Spacer(Modifier.width(10.dp))
-                        if (fromEnv.isBlank()) {
-                            Surface(
-                                shape = RoundedCornerShape(16.dp),
-                                color = LocalPill.current,
-                                modifier = Modifier.clickable { keyTarget = provider },
-                            ) {
-                                Text(
-                                    if (configured) "更换密钥" else "填写密钥",
-                                    fontSize = 13.sp,
-                                    color = LocalText.current,
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    keyTarget?.let { provider ->
-        val id = provider.optString("id")
-        val name = provider.optString("name", id)
-        var key by remember(id) { mutableStateOf("") }
-        var busy by remember(id) { mutableStateOf(false) }
-        AlertDialog(
-            onDismissRequest = { if (!busy) keyTarget = null },
-            containerColor = MaterialTheme.colorScheme.surface,
-            titleContentColor = LocalText.current,
-            textContentColor = LocalText.current,
-            title = { Text(name, fontSize = 16.sp) },
-            text = {
-                Column(Modifier.fillMaxWidth()) {
-                    Text("粘贴 API 密钥", fontSize = 12.sp, color = LocalMuted.current)
-                    Spacer(Modifier.height(6.dp))
-                    OutlinedTextField(
-                        key,
-                        { key = it },
-                        Modifier.fillMaxWidth(),
-                        placeholder = { Text("sk-…", fontSize = 13.sp, color = LocalMuted.current) },
-                        singleLine = true,
-                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
-                        shape = RoundedCornerShape(10.dp),
-                    )
-                    if (provider.optString("baseURL").isNotBlank()) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(provider.optString("baseURL"), fontSize = 11.sp, color = LocalMuted.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    if (busy) {
-                        Spacer(Modifier.height(10.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = LocalMuted.current)
-                            Spacer(Modifier.width(8.dp))
-                            Text("正在验证…", fontSize = 12.sp, color = LocalMuted.current)
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = !busy && key.isNotBlank(),
-                    onClick = {
-                        busy = true
-                        scope.launch {
-                            val result = runCatching {
-                                rpc(
-                                    JSONObject().put("type", "provider.auth").put("provider", id).put("apiKey", key.trim()),
-                                    // The provider is probed before the reply, so this waits
-                                    // longer than a settings read does.
-                                    90_000,
-                                )
-                            }
-                            withContext(Dispatchers.Main) {
-                                busy = false
-                                result.onSuccess { reply ->
-                                    providers = reply.optJSONObject("data")?.optJSONArray("providers")?.let { arr ->
-                                        (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
-                                    } ?: providers
-                                    // The model list can change with the key, and the
-                                    // composer's pill reads it.
-                                    loadProviders()
-                                    keyTarget = null
-                                    Toast.makeText(context, "已保存 $name 的密钥", Toast.LENGTH_SHORT).show()
-                                }.onFailure { err ->
-                                    Toast.makeText(context, "保存失败：${err.message?.take(80) ?: "未知错误"}", Toast.LENGTH_LONG).show()
-                                }
-                            }
-                        }
-                    },
-                ) { Text("保存") }
-            },
-            dismissButton = { TextButton({ if (!busy) keyTarget = null }) { Text("取消") } },
-        )
-    }
     sheetTarget?.let { row ->
         ModalBottomSheet(onDismissRequest = { sheetTarget = null }, containerColor = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
@@ -3376,12 +2892,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
 
     /* ---- 模型选择：每个可用 provider 一节，逐行切 session.model ---- */
     /* ---- 用量：30 天总计、按天、按模型（对齐桌面设置里的用量页） ---- */
-    if (showUsage) {
-        ModalBottomSheet(onDismissRequest = { showUsage = false }, containerColor = MaterialTheme.colorScheme.background) {
-            UsageSheet(summary = usageSummary)
-        }
-    }
-
     if (modelPicker) {
         /*
          * Fully expanded: the settings are longer than half a screen once the
@@ -4422,112 +3932,6 @@ fun fmtCost(usage: JSONObject, priced: Int, unpriced: Int): String {
     return "$%.2f".format(usage.optDouble("cost", 0.0))
 }
 
-/**
- * The last fortnight as a bar per day, sized by tokens.
- *
- * The desktop's usage page leads with the same shape: a row of bars makes
- * "was I busy this week" a glance, where a list of numbers is a read. Days
- * with nothing spent stay as a hairline so the gaps are visible.
- */
-@Composable
-fun UsageChart(byDay: org.json.JSONArray) {
-    val days = (0 until byDay.length()).mapNotNull { byDay.optJSONObject(it) }
-    if (days.isEmpty()) return
-    val peak = days.maxOf { day ->
-        val u = day.optJSONObject("usage")
-        (u?.optLong("input") ?: 0L) + (u?.optLong("output") ?: 0L)
-    }.coerceAtLeast(1L)
-    Column(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp)) {
-        Row(
-            Modifier.fillMaxWidth().height(56.dp),
-            horizontalArrangement = Arrangement.spacedBy(3.dp),
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            for (day in days) {
-                val u = day.optJSONObject("usage")
-                val tokens = (u?.optLong("input") ?: 0L) + (u?.optLong("output") ?: 0L)
-                val ratio = (tokens.toFloat() / peak).coerceIn(0.04f, 1f)
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .fillMaxHeight(ratio)
-                        .background(
-                            if (tokens > 0) MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)
-                            else LocalMuted.current.copy(alpha = 0.25f),
-                            RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp),
-                        ),
-                )
-            }
-        }
-        Spacer(Modifier.height(4.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(days.first().optString("key").takeLast(5), fontSize = 10.sp, color = LocalMuted.current)
-            Text(days.last().optString("key").takeLast(5), fontSize = 10.sp, color = LocalMuted.current)
-        }
-    }
-}
-
-@Composable
-fun UsageRow(key: String, bucket: JSONObject, bold: Boolean = false) {
-    val usage = bucket.optJSONObject("usage") ?: JSONObject()
-    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(key, fontSize = 14.sp, fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Medium, color = LocalText.current)
-            Text(
-                "${fmtTokens(usage.optLong("input"))} in · ${fmtTokens(usage.optLong("output"))} out · ${bucket.optInt("turns")} turns",
-                fontSize = 11.sp, color = LocalMuted.current,
-            )
-        }
-        Text(fmtCost(usage, bucket.optInt("priced"), bucket.optInt("unpriced")), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
-    }
-}
-
-@Composable
-fun UsageSheet(summary: JSONObject?) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
-        Text("用量 · 近 30 天", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
-        Spacer(Modifier.height(12.dp))
-        if (summary == null) {
-            Text("正在读取…", fontSize = 14.sp, color = LocalMuted.current, modifier = Modifier.padding(vertical = 16.dp))
-            return@Column
-        }
-        val total = summary.optJSONObject("total") ?: JSONObject()
-        Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        if (summary.optInt("priced") == 0 && summary.optInt("unpriced") > 0) "—"
-                        else "$%.2f".format(total.optDouble("cost", 0.0)),
-                        fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current,
-                    )
-                    Text("${summary.optInt("turns")} turns", fontSize = 11.sp, color = LocalMuted.current)
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("${fmtTokens(total.optLong("input"))} in", fontSize = 12.sp, color = LocalMuted.current)
-                    Text("${fmtTokens(total.optLong("output"))} out", fontSize = 12.sp, color = LocalMuted.current)
-                    Text("${fmtTokens(total.optLong("reasoning"))} reasoning", fontSize = 12.sp, color = LocalMuted.current)
-                }
-            }
-        }
-        summary.optJSONArray("byDay")?.let { UsageChart(it) }
-        Spacer(Modifier.height(14.dp))
-        Text("按模型", fontSize = 13.sp, color = LocalMuted.current)
-        summary.optJSONArray("byModel")?.let { arr ->
-            for (i in 0 until arr.length()) {
-                val b = arr.optJSONObject(i) ?: continue
-                UsageRow(b.optString("key"), b)
-            }
-        }
-        Spacer(Modifier.height(10.dp))
-        Text("按天", fontSize = 13.sp, color = LocalMuted.current)
-        summary.optJSONArray("byDay")?.let { arr ->
-            for (i in 0 until arr.length()) {
-                val b = arr.optJSONObject(i) ?: continue
-                UsageRow(b.optString("key"), b)
-            }
-        }
-    }
-}
 
 /* Claude's ask card: the question, its options and a typed answer. */
 @Composable
@@ -4887,15 +4291,10 @@ fun DrawerContent(
     onSelect: (String) -> Unit,
     onCreate: () -> Unit,
     onReconnect: () -> Unit,
-    onProjects: () -> Unit,
-    onScheduled: () -> Unit,
-    onTasks: () -> Unit,
-    onPlugins: () -> Unit = {},
-    onProviders: () -> Unit = {},
+    onNewTask: () -> Unit = {},
     onArtifacts: () -> Unit = {},
     /** Which column page is open, so the drawer can mark the row for it. */
     currentPage: LeftMode = LeftMode.Sessions,
-    onUsage: () -> Unit = {},
     onSearch: () -> Unit = {},
     onSeeAll: () -> Unit = {},
     onLongPress: ((SessionRow) -> Unit)? = null,
@@ -4915,27 +4314,35 @@ fun DrawerContent(
                 }
             }
             Spacer(Modifier.height(12.dp))
-            DrawerItem(Icons.Outlined.Folder, "项目", active = currentPage == LeftMode.Projects) { onProjects() }
-            Spacer(Modifier.height(12.dp))
             /*
-             * The desktop's plugins page - skills and MCP servers side by
-             * side - had no phone counterpart at all: this row said "Code" and
-             * closed the drawer, which is a row that does nothing dressed as a
-             * row that does something.
+             * The desktop's side column has exactly two navigation rows - 新建任务
+             * and 产物中心 - and this list had six.
+             *
+             * 项目, 技能与插件, 定时任务, 进行中的任务 and 用量 were all added here
+             * because Claude's app has equivalents, which is the wrong reason:
+             * the question is what MCode's own window offers. It offers a plugins
+             * page the user asked to be hidden (Sidebar.vue: "MiMo's plugins row
+             * sits between these two; the user asked for it hidden"), no
+             * scheduled-tasks page at all (a scheduled run is a message in a
+             * conversation, not a page), no 进行中的任务 page, and usage only as a
+             * section inside Settings. 模型服务 is likewise Settings, not the rail.
+             *
+             * What is left is what the desktop actually puts in its column: the
+             * artifact centre, and the conversation list below it. 连接设置 stays
+             * because a remote app needs a way back to its own address, which the
+             * desktop has no equivalent of.
              */
-            DrawerItem(Icons.Outlined.Extension, "技能与插件") { onPlugins() }
+            /*
+             * The desktop's two rows, in its order: 新建任务 (a speech bubble
+             * with a plus, its own glyph in the rail) then 产物中心. 新建任务
+             * leaves the drawer and opens a new conversation; it is the only
+             * row the desktop's rail has besides the artifact centre.
+             */
+            DrawerItem(Icons.Outlined.ChatBubbleOutline, "新建任务") {
+                onNewTask()
+            }
             Spacer(Modifier.height(12.dp))
-            DrawerItem(Icons.AutoMirrored.Outlined.Article, "作品", active = currentPage == LeftMode.Artifacts) { onArtifacts() }
-            Spacer(Modifier.height(12.dp))
-            DrawerItem(Icons.Outlined.Schedule, "定时任务", active = currentPage == LeftMode.Scheduled) { onScheduled() }
-            Spacer(Modifier.height(12.dp))
-            DrawerItem(Icons.Outlined.Checklist, "进行中的任务") { onTasks() }
-            Spacer(Modifier.height(12.dp))
-            DrawerItem(Icons.Outlined.BarChart, "用量") { onUsage() }
-            Spacer(Modifier.height(12.dp))
-            DrawerItem(Icons.Outlined.Lock, "模型服务") { onProviders() }
-            Spacer(Modifier.height(12.dp))
-            DrawerItem(Icons.Outlined.Settings, "连接设置") { onReconnect() }
+            DrawerItem(Icons.AutoMirrored.Outlined.Article, "产物中心", active = currentPage == LeftMode.Artifacts) { onArtifacts() }
             Spacer(Modifier.height(20.dp))
             HorizontalDivider(color = LocalMuted.current.copy(alpha = 0.18f))
             Spacer(Modifier.height(18.dp))
@@ -5070,7 +4477,7 @@ fun ColumnDivider(fraction: Float, totalWidthPx: Int, onChange: (Float) -> Unit)
 }
 
 /** Which page the left column is showing. Claude switches between them in place. */
-enum class LeftMode { Sessions, Projects, Scheduled, Artifacts }
+enum class LeftMode { Sessions, Artifacts }
 
 /**
  * The black capsule at the foot of the column.
@@ -5100,133 +4507,12 @@ fun FootCapsule(label: String, enabled: Boolean = true, modifier: Modifier = Mod
  * list is filtered to marked. Picking one goes back to the list filtered to it,
  * which is what the same tap does on the desktop's side column.
  */
-@Composable
-fun ProjectsPane(
-    projects: List<String>,
-    filter: String?,
-    adding: Boolean,
-    onAdding: (Boolean) -> Unit,
-    onPick: (String?) -> Unit,
-    onAdd: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(modifier) {
-        if (adding) {
-            var path by remember { mutableStateOf("") }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    path,
-                    { path = it },
-                    Modifier.weight(1f),
-                    placeholder = { Text("D:////Projects////my-app", fontSize = 12.sp, color = LocalMuted.current) },
-                    singleLine = true,
-                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp),
-                    shape = RoundedCornerShape(10.dp),
-                )
-                TextButton({ if (path.isNotBlank()) onAdd(path.trim()) }) { Text("添加", fontSize = 13.sp) }
-            }
-        }
-        if (projects.isEmpty()) {
-            Column(Modifier.fillMaxWidth().weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                ProjectGlyph(63.dp)
-                Spacer(Modifier.height(18.dp))
-                Text("暂无项目", fontSize = 15.sp, color = LocalText.current)
-                Spacer(Modifier.height(8.dp))
-                Text("您创建或加入的项目将显示在此处。", fontSize = 13.sp, color = LocalMuted.current)
-            }
-        } else {
-            LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
-                item {
-                    ProjectPickRow("全部项目", null, filter == null) { onPick(null) }
-                }
-                items(projects.size) { i ->
-                    val dir = projects[i]
-                    ProjectPickRow(
-                        dir.substringAfterLast('\\').substringAfterLast('/'),
-                        dir,
-                        filter == dir,
-                    ) { onPick(dir) }
-                }
-            }
-        }
-    }
-}
-
 /** The outline Claude draws for an empty projects page: a folder, no fill, 63dp. */
-@Composable
-private fun ProjectGlyph(size: androidx.compose.ui.unit.Dp) {
-    Canvas(Modifier.size(size)) {
-        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(width = size.toPx() * 0.055f)
-        val ink = Color(0xFF9A968E)
-        val w = this.size.width
-        val h = this.size.height
-        // Two bars above a rounded tray, which is Claude's shape rather than a
-        // generic folder: a narrow lid, a wider one, then the body.
-        drawRoundRect(ink, topLeft = androidx.compose.ui.geometry.Offset(w * 0.34f, h * 0.10f), size = androidx.compose.ui.geometry.Size(w * 0.32f, h * 0.045f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(h * 0.02f), style = stroke)
-        drawRoundRect(ink, topLeft = androidx.compose.ui.geometry.Offset(w * 0.26f, h * 0.24f), size = androidx.compose.ui.geometry.Size(w * 0.48f, h * 0.045f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(h * 0.02f), style = stroke)
-        drawRoundRect(ink, topLeft = androidx.compose.ui.geometry.Offset(w * 0.20f, h * 0.38f), size = androidx.compose.ui.geometry.Size(w * 0.60f, h * 0.50f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(h * 0.10f), style = stroke)
-    }
-}
-
-@Composable
-private fun ProjectPickRow(title: String, directory: String?, active: Boolean, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(Icons.Outlined.Folder, contentDescription = null, tint = if (active) LocalText.current else LocalMuted.current, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 14.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (directory != null) {
-                Text(directory, fontSize = 10.5.sp, color = LocalMuted.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        }
-        if (active) Icon(Icons.Outlined.Check, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(15.dp))
-    }
-}
-
 /**
  * Claude's scheduled-tasks page: a clock, 「暂无定时任务」, and what the app will do
  * with one. The rows come from the `automation.tasks` event the server
  * broadcasts; there is no request that lists them, so this page listens.
  */
-@Composable
-fun ScheduledPane(tasks: List<Triple<String, String, Long>>, modifier: Modifier = Modifier) {
-    if (tasks.isEmpty()) {
-        /*
-         * Measured off Claude's own empty page: the clock's ink is 60px tall at
-         * 400dpi (24dp), the title's 35px (14sp) and the line under it 35px as
-         * well - the same size, not a smaller one - with 24dp and 16dp between
-         * the three. This used to be a 44dp glyph over 15/13sp, which read as a
-         * list of labels rather than as a page waiting to be filled.
-         */
-        Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Icon(Icons.Outlined.Schedule, contentDescription = null, tint = LocalMuted.current.copy(alpha = 0.75f), modifier = Modifier.size(24.dp))
-            Spacer(Modifier.height(24.dp))
-            Text("暂无定时任务", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
-            Spacer(Modifier.height(16.dp))
-            Text("让 MCode 按计划运行任务。", fontSize = 14.sp, color = LocalMuted.current)
-        }
-    } else {
-        LazyColumn(modifier) {
-            items(tasks.size) { i ->
-                val (_, title, nextAt) = tasks[i]
-                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.Schedule, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(17.dp))
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(title, fontSize = 14.sp, color = LocalText.current, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        if (nextAt > 0L) {
-                            Text("下次：" + android.text.format.DateFormat.format("MM-dd HH:mm", nextAt), fontSize = 11.sp, color = LocalMuted.current)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 /**
  * The artifacts page filtered by what was typed in its field.
  *
