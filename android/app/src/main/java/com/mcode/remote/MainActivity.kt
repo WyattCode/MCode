@@ -3040,6 +3040,124 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * a reading surface of its own.
      */
     filePreview?.let { (name, body) ->
+    /*
+     * 模型服务: which provider serves this conversation, and its key.
+     *
+     * 「检查 API 密钥」 under a failed turn set `showProviders`, and nothing read
+     * it - the row led nowhere, which is the one thing a repair button must not
+     * do. This is what it should have opened: the providers the desktop's
+     * settings page lists, whether each has a key, and a field to paste one.
+     *
+     * `provider.auth` is the call that matters. It writes through the
+     * credentials store into `credentials.json`, which is where the backend
+     * reads a key from; writing `customProviders[].apiKey` in the config - the
+     * tempting shortcut - leaves a key that looks saved and never works.
+     */
+    if (showProviders) {
+        var keyDraft by remember { mutableStateOf("") }
+        var keyFor by remember { mutableStateOf("") }
+        var busyKey by remember { mutableStateOf(false) }
+        ModalBottomSheet(onDismissRequest = { showProviders = false; keyFor = "" }, containerColor = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+                Text("模型服务", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
+                Text(
+                    "这一轮用到的密钥，在这里替换。",
+                    fontSize = 12.sp,
+                    color = LocalMuted.current,
+                    modifier = Modifier.padding(top = 2.dp, bottom = 10.dp),
+                )
+                if (providers.isEmpty()) {
+                    Text("还没有可用的服务", fontSize = 13.sp, color = LocalMuted.current)
+                }
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                    items(providers.size) { index ->
+                        val provider = providers[index]
+                        val id = provider.optString("id")
+                        val name = provider.optString("name", id)
+                        val configured = provider.optBoolean("configured")
+                        val signedIn = provider.optBoolean("authenticated")
+                        val editing = keyFor == id
+                        Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(name, fontSize = 14.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        when {
+                                            signedIn -> "已登录"
+                                            configured -> "已配置密钥"
+                                            else -> "未配置密钥"
+                                        },
+                                        fontSize = 11.sp,
+                                        color = if (configured || signedIn) LocalMuted.current else MaterialTheme.colorScheme.error,
+                                    )
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = LocalPill.current,
+                                    modifier = Modifier.clickable {
+                                        keyFor = if (editing) "" else id
+                                        keyDraft = ""
+                                    },
+                                ) {
+                                    Text(
+                                        if (editing) "取消" else if (configured) "替换密钥" else "填入密钥",
+                                        fontSize = 12.sp,
+                                        color = LocalText.current,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                    )
+                                }
+                            }
+                            if (editing) {
+                                Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    OutlinedTextField(
+                                        keyDraft, { keyDraft = it },
+                                        Modifier.weight(1f),
+                                        placeholder = { Text("粘贴 API 密钥", fontSize = 12.sp, color = LocalMuted.current) },
+                                        shape = RoundedCornerShape(10.dp),
+                                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp),
+                                        singleLine = true,
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            unfocusedContainerColor = LocalField.current,
+                                            focusedContainerColor = LocalField.current,
+                                            unfocusedBorderColor = LocalFieldLine.current,
+                                            focusedBorderColor = LocalFieldLine.current,
+                                        ),
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    TextButton(
+                                        enabled = keyDraft.isNotBlank() && !busyKey,
+                                        onClick = {
+                                            val key = keyDraft.trim()
+                                            busyKey = true
+                                            scope.launch {
+                                                val reply = runCatching {
+                                                    rpc(JSONObject().put("type", "provider.auth").put("provider", id).put("apiKey", key))
+                                                }.getOrNull()
+                                                busyKey = false
+                                                val fresh = reply?.optJSONObject("data")?.optJSONArray("providers")?.let { arr ->
+                                                    (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+                                                }
+                                                if (fresh != null) {
+                                                    providers = fresh
+                                                    keyFor = ""
+                                                    keyDraft = ""
+                                                    Toast.makeText(context, "$name 的密钥已保存", Toast.LENGTH_SHORT).show()
+                                                } else {
+                                                    Toast.makeText(context, "密钥没有保存成功", Toast.LENGTH_LONG).show()
+                                                }
+                                            }
+                                        },
+                                    ) { Text(if (busyKey) "保存中…" else "保存", fontSize = 13.sp) }
+                                }
+                            }
+                        }
+                        if (index != providers.lastIndex) HorizontalDivider(color = LocalMuted.current.copy(alpha = 0.12f))
+                    }
+                }
+            }
+        }
+    }
+
         ModalBottomSheet(onDismissRequest = { filePreview = null }, containerColor = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 25.dp)) {
                 Text(name, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = LocalText.current, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -4212,6 +4330,19 @@ fun FindCard(
                 Modifier
                     .size(22.dp)
                     .clip(RoundedCornerShape(6.dp))
+                    /*
+                     * A drawn glyph carries no words, so the button has to name
+                     * itself: without this the three controls were invisible to
+                     * a screen reader and to uiautomator alike - the whole card
+                     * read as a strip of pictures.
+                     */
+                    .semantics {
+                        contentDescription = when (glyph) {
+                            "up" -> "上一个"
+                            "down" -> "下一个"
+                            else -> "关闭查找"
+                        }
+                    }
                     .clickable(enabled = enabled, onClick = action),
                 contentAlignment = Alignment.Center,
             ) {
@@ -5463,7 +5594,10 @@ fun PluginsScreen(
     }
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        // The status bar is drawn over the page, so the header has to step under
+        // it - without this the title sat on top of the clock and the arrow.
+        Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(38.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = LocalText.current, modifier = Modifier.size(20.dp))
             }
