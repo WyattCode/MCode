@@ -82,6 +82,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -732,6 +735,24 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * sets this too, which is what that glyph was always meant to do.
      */
     var searching by remember { mutableStateOf(false) }
+    /**
+     * The split between the two panes, as a fraction of the window.
+     *
+     * Claude's is 0.2641 - 900 of 3408 - and its divider can be dragged, so the
+     * number is the reader's once they touch it. Kept in memory rather than
+     * prefs for now: the default is the measured value, and a drag survives
+     * every rebuild of this screen because it is hoisted here.
+     */
+    /*
+     * 0.2714, not the 0.2641 a `weight` reading gives: 925 of 3408 px is where
+     * Claude's left pane actually ends, and the 900 this used to use was the
+     * divider's own left edge measured as if the divider took no space. With a
+     * real 24dp handle between the panes the difference showed as the list
+     * being a millimetre narrow and the conversation starting early.
+     */
+    var leftFraction by remember { mutableStateOf(0.2714f) }
+    /** The window's width in pixels, which is what a drag's fraction divides by. */
+    var paneWidthPx by remember { mutableStateOf(0) }
     /**
      * What the left column is showing, as Claude's pane switches between them:
      * the conversation list, the projects, and the scheduled tasks.
@@ -1819,14 +1840,20 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             // Only the navigation bar shortens the row: the keyboard belongs to the
             // conversation pane, and having it shrink the list too was pulling
             // the new-chat pill up into the middle of the column.
-            Row(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom))) {
+            Row(
+                Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+                    .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom))
+                    .onSizeChanged { paneWidthPx = it.width },
+            ) {
                 /*
                  * Claude's split is 900 of 3408 px on the pad - 26.4% - not the
                  * 42% this used to take. Both panes share the page's own colour
                  * and no rule runs between them; only the composer's white card
                  * marks where the conversation begins.
                  */
-                Column(Modifier.weight(0.2641f).fillMaxHeight().fillMaxWidth()) {
+                Column(Modifier.weight(leftFraction).fillMaxHeight().fillMaxWidth()) {
                     Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
                     Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         /*
@@ -2011,7 +2038,21 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             },
                         )
                     }
-                    Column(Modifier.weight(0.7359f).fillMaxHeight().fillMaxWidth()) {
+                    /*
+                     * Claude's divider is not a rule but a handle: a 4dp wide,
+                     * 48dp tall rounded bar in (216,216,214), centred in the
+                     * pane's height, which the reader drags to trade width
+                     * between the two sides. There is no line at all - the two
+                     * panes share the page colour - so without this the split
+                     * cannot be moved and, more to the point, does not look
+                     * like it can be.
+                     */
+                    ColumnDivider(
+                        fraction = leftFraction,
+                        totalWidthPx = paneWidthPx,
+                        onChange = { leftFraction = it },
+                    )
+                    Column(Modifier.weight(1f - leftFraction).fillMaxHeight().fillMaxWidth()) {
                         Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
                         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             /*
@@ -4900,6 +4941,54 @@ fun DrawerItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: Str
 /* ------------------------------------------------------------------ */
 /* The left column's three pages                                       */
 /* ------------------------------------------------------------------ */
+
+/**
+ * The draggable divider between the two panes.
+ *
+ * Measured off Claude on the pad: the bar is 10px across at 400dpi - 4dp - and
+ * 120px tall - 48dp - in (216,216,214), vertically centred in the pane and not
+ * at all attached to the top or bottom edge. The touch target is wider than the
+ * bar (24dp) because a 4dp handle is not something a finger can find.
+ */
+@Composable
+fun ColumnDivider(fraction: Float, totalWidthPx: Int, onChange: (Float) -> Unit) {
+    val bar = if (LocalBg.current == DarkBg) Color(0xFF3E3E3C) else Color(0xFFD8D8D6)
+    /*
+     * `pointerInput(Unit)` captures its lambda once, so a `fraction` read inside
+     * it is the value from the first composition - every drag would compute from
+     * the same starting point and the handle would jump back. The current
+     * fraction and the callback are read through state holders instead, which is
+     * what makes a drag continuous.
+     */
+    val live = rememberUpdatedState(fraction)
+    val emit = rememberUpdatedState(onChange)
+    Box(
+        Modifier
+            .width(24.dp)
+            .fillMaxHeight()
+            .pointerInput(Unit) {
+                detectDragGestures { change, drag ->
+                    change.consume()
+                    /*
+                     * Divided by the *window*, not by this handle: a drag of
+                     * 100px is 3% of a 3408px window and 400% of a 24dp handle,
+                     * and dividing by the handle made every drag snap to the
+                     * clamp.
+                     */
+                    if (totalWidthPx <= 0) return@detectDragGestures
+                    emit.value((live.value + drag.x / totalWidthPx).coerceIn(0.18f, 0.46f))
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .width(4.dp)
+                .height(48.dp)
+                .background(bar, RoundedCornerShape(2.dp)),
+        )
+    }
+}
 
 /** Which page the left column is showing. Claude switches between them in place. */
 enum class LeftMode { Sessions, Projects, Scheduled, Artifacts }
