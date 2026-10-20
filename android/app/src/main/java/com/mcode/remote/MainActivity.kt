@@ -2167,7 +2167,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
              *
              * It retries on a backoff, and the banner says so meanwhile.
              */
-            retryDelay = 1000L
+            /*
+             * Set only when there is no wait pending. Every failed retry fires
+             * `onFailure` again, and assigning unconditionally reset the wait
+             * to one second each time - so the backoff never actually grew and
+             * a gateway that stayed down was hammered once a second forever.
+             */
+            if (retryDelay == null) retryDelay = 1000L
         }
     }
 
@@ -2176,11 +2182,27 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * gateway that is restarting, short enough that a reader who unlocked the
      * pad again finds the app already back.
      */
-    LaunchedEffect(connected, retryDelay) {
-        val wait = retryDelay ?: return@LaunchedEffect
-        if (connected) return@LaunchedEffect
-        kotlinx.coroutines.delay(wait)
-        if (!connected && url.isNotBlank() && token.isNotBlank()) {
+    /*
+     * A loop, not one shot keyed on the delay.
+     *
+     * Keyed on `(connected, retryDelay)`, this ran once per distinct wait - and
+     * once the wait had grown to its 15s cap it stopped changing, so the effect
+     * was never re-launched and the retries simply stopped. A gateway that came
+     * back after that cap never saw the app again until it was restarted.
+     *
+     * The loop keeps going while the screen is up and the socket is down;
+     * `connected` flipping true is what ends a cycle's wait, and the effect is
+     * re-keyed on `connected` so a fresh drop starts a fresh one.
+     */
+    LaunchedEffect(connected) {
+        if (connected) {
+            retryDelay = null
+            return@LaunchedEffect
+        }
+        while (!connected && url.isNotBlank() && token.isNotBlank()) {
+            val wait = retryDelay ?: 1000L
+            kotlinx.coroutines.delay(wait)
+            if (connected) break
             client.connect(url, token)
             retryDelay = minOf(wait * 2, 15_000L)
         }
