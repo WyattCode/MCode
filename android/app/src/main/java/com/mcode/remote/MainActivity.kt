@@ -5424,22 +5424,46 @@ fun InputCapsule(
                 }
                 if (attachments.isNotEmpty()) {
                     // Claude shows pending shots as a thumbnail strip above
-                    // the text field, each with an X to remove.
+                    // the text field, each with an X to remove. A picture is a
+                    // thumbnail; a text file has no pixels to decode - its data
+                    // is the text itself - so it is a named chip instead, which
+                    // is also how the desktop draws one.
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         attachments.forEachIndexed { index, att ->
-                            Box {
-                                val bytes = android.util.Base64.decode(att.optString("data"), android.util.Base64.DEFAULT)
-                                val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                                Image(
-                                    bitmap = bmp.asImageBitmap(),
-                                    contentDescription = att.optString("path", "附件"),
-                                    Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)),
-                                    contentScale = ContentScale.Crop,
-                                )
-                                Box(
-                                    Modifier.size(18.dp).align(Alignment.TopEnd).background(Color.Black.copy(alpha = 0.6f), CircleShape).clickable { onRemoveAttachment(index) },
-                                    contentAlignment = Alignment.Center,
-                                ) { Text("×", fontSize = 11.sp, color = Color.White) }
+                            val name = att.optString("path", "附件")
+                            val mime = att.optString("mime", "")
+                            if (mime.startsWith("image/")) {
+                                Box {
+                                    val bytes = android.util.Base64.decode(att.optString("data"), android.util.Base64.DEFAULT)
+                                    val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                    Image(
+                                        bitmap = bmp.asImageBitmap(),
+                                        contentDescription = name,
+                                        Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)),
+                                        contentScale = ContentScale.Crop,
+                                    )
+                                    Box(
+                                        Modifier.size(18.dp).align(Alignment.TopEnd).background(Color.Black.copy(alpha = 0.6f), CircleShape).clickable { onRemoveAttachment(index) },
+                                        contentAlignment = Alignment.Center,
+                                    ) { Text("×", fontSize = 11.sp, color = Color.White) }
+                                }
+                            } else {
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = LocalPill.current,
+                                    modifier = Modifier.height(40.dp),
+                                ) {
+                                    Row(Modifier.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.AutoMirrored.Outlined.Article, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(14.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(name, fontSize = 12.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Spacer(Modifier.width(6.dp))
+                                        Box(
+                                            Modifier.size(16.dp).clickable { onRemoveAttachment(index) },
+                                            contentAlignment = Alignment.Center,
+                                        ) { Text("×", fontSize = 12.sp, color = LocalMuted.current) }
+                                    }
+                                }
                             }
                         }
                     }
