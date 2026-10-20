@@ -7133,16 +7133,28 @@ fun GoalSwitch(on: Boolean) {
 /** One row of the plus menu: a glyph, what it does, and how it ends. */
 @Composable
 private fun PlusRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
+    /*
+     * `Composer.vue`'s `.item`: 28 tall, 0/12 of inset, an 11 corner, 13sp at
+     * 440, an 8 gap and a 14 mark. This drew 17/10/14 with 9 of padding and no
+     * corner, so the plus menu read as a list of loose rows rather than as the
+     * set of tight tiles the desktop shows.
+     */
+    val ink = if (enabled) LocalText.current else LocalMuted.current.copy(alpha = 0.5f)
     Row(
         Modifier
             .fillMaxWidth()
+            // The corner needs the inset inside it, or a 0/12 row's hover would
+            // paint a square into a rounded menu.
+            .padding(horizontal = 6.dp)
+            .height(28.dp)
+            .clip(RoundedCornerShape(11.dp))
             .clickable(enabled = enabled) { onClick() }
-            .padding(horizontal = 12.dp, vertical = 9.dp),
+            .padding(horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Icon(icon, contentDescription = null, tint = if (enabled) LocalText.current else LocalMuted.current.copy(alpha = 0.5f), modifier = Modifier.size(17.dp))
-        Spacer(Modifier.width(10.dp))
-        Text(label, fontSize = 14.sp, color = if (enabled) LocalText.current else LocalMuted.current.copy(alpha = 0.5f))
+        Icon(icon, contentDescription = null, tint = ink, modifier = Modifier.size(14.dp))
+        Text(label, fontSize = 13.sp, fontWeight = FontWeight(440), color = ink)
     }
 }
 
@@ -7929,24 +7941,34 @@ fun InputCapsule(
                             // where browsing the project is what is wanted.
                             PlusRow(Icons.AutoMirrored.Outlined.Article, "添加照片和文件", enabled) { plusMenu = false; pickImages() }
                             PlusRow(Icons.Outlined.Code, "打开终端", enabled) { plusMenu = false; onTerminal() }
-                            HorizontalDivider(Modifier.padding(vertical = 6.dp), color = LocalMuted.current.copy(alpha = 0.15f))
+                            // `.plus-menu .rule`: 4 above and below, 6 at each end.
+                            HorizontalDivider(Modifier.padding(horizontal = 6.dp, vertical = 4.dp), color = LocalMuted.current.copy(alpha = 0.12f))
                             // 追求目标: a switch, not a command - what is typed next
                             // becomes the goal and the turn is judged against it.
                             Row(
                                 Modifier
                                     .fillMaxWidth()
+                                    .padding(horizontal = 6.dp)
+                                    .clip(RoundedCornerShape(11.dp))
                                     .clickable(enabled = enabled) { onToggleGoalMode() }
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    .padding(horizontal = 6.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
+                                /*
+                                 * `.item.goal-row`: 6 above and below with 2
+                                 * between the two lines; the label is the
+                                 * menu's own 13 and the sub-line 11.5 over 15.
+                                 */
                                 Column(Modifier.weight(1f)) {
-                                    Text("追求目标", fontSize = 14.sp, color = LocalText.current)
-                                    Text("持续推进，直到目标彻底达成", fontSize = 11.sp, color = LocalMuted.current, maxLines = 1)
+                                    Text("追求目标", fontSize = 13.sp, fontWeight = FontWeight(440), color = LocalText.current)
+                                    Spacer(Modifier.height(2.dp))
+                                    Text("持续推进，直到目标彻底达成", fontSize = 11.5.sp, lineHeight = 15.sp, color = LocalMuted.current, maxLines = 1)
                                 }
                                 Spacer(Modifier.width(10.dp))
                                 GoalSwitch(on = goalMode)
                             }
-                            HorizontalDivider(Modifier.padding(vertical = 6.dp), color = LocalMuted.current.copy(alpha = 0.15f))
+                            // `.plus-menu .rule`: 4 above and below, 6 at each end.
+                            HorizontalDivider(Modifier.padding(horizontal = 6.dp, vertical = 4.dp), color = LocalMuted.current.copy(alpha = 0.12f))
                             PlusRow(Icons.Outlined.Build, "技能", enabled && skills.isNotEmpty()) { plusMenu = false; skillPicker = true }
                         }
                     }
