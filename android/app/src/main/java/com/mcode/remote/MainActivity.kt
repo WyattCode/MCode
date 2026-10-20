@@ -1005,6 +1005,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var selectSeq by remember { mutableStateOf(0) }
     /** Each streamed part's kind, from the `message.part.updated` before its deltas. */
     val partKinds = remember { java.util.HashMap<String, String>() }
+    /**
+     * What the last turn spent, for the composer's context ring.
+     *
+     * The desktop reads this off the transcript (`session-context.ts`) and draws
+     * a ring left of the model pill; the phone kept no usage at all, so the one
+     * figure that tells a reader their window is filling had no home here. The
+     * newest assistant message's `usage` is the number the desktop's reader ends
+     * on as well.
+     */
+    var contextUsed by remember { mutableStateOf(0) }
+    var contextLimit by remember { mutableStateOf(0) }
 
     /**
      * Marks a conversation as working, or done.
@@ -1237,6 +1248,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         if (role == "assistant" && id.isNotBlank()) {
             val finished = message.optString("finish").isNotBlank() || message.optJSONObject("time")?.optLong("completed", 0L)?.let { it > 0L } == true
             setRunning(sessionID, !finished)
+            /*
+             * MiMo's figure leaves reasoning out: the prompt, the cache reads
+             * and writes, and the output. A message without usage (a stored
+             * one from before this build, or a reply still streaming) leaves
+             * the last number alone rather than resetting it to zero.
+             */
+            message.optJSONObject("usage")?.let { u ->
+                val used = u.optInt("input", 0) + u.optInt("cacheRead", 0) + u.optInt("cacheWrite", 0) + u.optInt("output", 0)
+                if (used > 0) contextUsed = used
+            }
         }
         // A picture the user sent is part of the question: the desktop draws it
         // above the bubble and lets it be opened, so the phone keeps the data
@@ -1771,6 +1792,28 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         found
     }
     /*
+     * The window this conversation's model reports, from the same provider list
+     * the picker draws. The desktop falls back to the model's `contextWindow`
+     * when the transcript carries no limit of its own (`contextUsage` in
+     * Composer.vue); a model nobody has told it about leaves the ring empty and
+     * the card says only what was spent.
+     */
+    val contextWindow = remember(currentModel, providers) {
+        var found = 0
+        for (provider in providers) {
+            val models = provider.optJSONArray("models") ?: continue
+            for (index in 0 until models.length()) {
+                val model = models.optJSONObject(index) ?: continue
+                if (model.optString("id") == currentModel) {
+                    found = model.optInt("contextWindow", 0)
+                    break
+                }
+            }
+            if (found > 0) break
+        }
+        found
+    }
+    /*
      * Claude's pill carries the model and what it is thinking with ("Sonnet 5.5
      * 中等"), so the same two facts belong in ours. Effort is only named when
      * the session has one picked - "none" reads as absent, not as a level.
@@ -1819,6 +1862,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         InputCapsule(
             enabled = currentSession != null,
             modelLabel = currentModelLabel,
+            contextUsed = contextUsed,
+            contextLimit = if (contextWindow > 0) contextWindow else contextLimit,
             onMic = { startVoice() },
             listening = recording != null,
             transcribing = voiceBusy,
@@ -5451,6 +5496,55 @@ fun ConnectScreen(url: String, token: String, onConnect: (String, String) -> Uni
  * A level of `full` wears the ember, as the desktop's `.pill.access.full` does,
  * because a session that never stops to ask should not look ordinary.
  */
+/**
+ * A token count as the desktop writes one: 1.2k, 34k, 1.1M.
+ *
+ * `compactTokens` in `lib/format.ts`, the same rounding - the ring's card and
+ * the usage pages should not disagree about what a number looks like.
+ */
+fun compactTokens(n: Int): String = when {
+    n >= 1_000_000 -> String.format("%.1fM", n / 1_000_000.0).replace(".0M", "M")
+    n >= 1_000 -> String.format("%.1fk", n / 1_000.0).replace(".0k", "k")
+    else -> "$n"
+}
+
+/**
+ * How full the model's context is, drawn as a ring - the composer's usage mark.
+ *
+ * MiMo 26.920's ring, measured off the desktop (`ContextRing.vue`): drawn in a
+ * 16 unit square shown at 18dp, a circle of radius 6 under a 2.4 stroke, so
+ * 6.75 and 2.7 on screen, turned so the arc starts at the top. The track is the
+ * weak border and the arc the muted text.
+ */
+@Composable
+fun ContextRing(used: Int, limit: Int, size: androidx.compose.ui.unit.Dp = 18.dp) {
+    val percent = if (limit <= 0 || used <= 0) 0 else {
+        val share = (used.toFloat() / limit) * 100f
+        // A whole percent, at least one, and no arc past the window - the
+        // desktop's own clamp.
+        if (used > limit) 0 else maxOf(1, Math.round(share))
+    }
+    val track = if (LocalBg.current == DarkBg) Color(0xFF2E2E2E) else Color(0xFFE4E1D8)
+    val arc = LocalMuted.current
+    Canvas(Modifier.size(size)) {
+        val k = this.size.width / 16f
+        val stroke = 2.4f * k
+        val inset = stroke / 2f
+        drawCircle(track, radius = 6f * k, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke), center = androidx.compose.ui.geometry.Offset(8f * k, 8f * k))
+        if (percent > 0) {
+            drawArc(
+                color = arc,
+                startAngle = -90f,
+                sweepAngle = 360f * (percent / 100f),
+                useCenter = false,
+                topLeft = androidx.compose.ui.geometry.Offset((8f - 6f) * k + inset / 2, (8f - 6f) * k + inset / 2),
+                size = androidx.compose.ui.geometry.Size((12f * k) - inset, (12f * k) - inset),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round),
+            )
+        }
+    }
+}
+
 @Composable
 fun AccessGlyphs(level: String, tint: Color, size: androidx.compose.ui.unit.Dp = 15.dp) {
     val box = if ((level == "auto" || level == "full")) 18f else 16f
@@ -5651,6 +5745,9 @@ fun AccessPill(level: String, onPick: (String) -> Unit, fullAllowed: Boolean = t
 fun InputCapsule(
     enabled: Boolean,
     modelLabel: String,
+    /** What the last turn spent, and the model's window - the desktop's ring. */
+    contextUsed: Int = 0,
+    contextLimit: Int = 0,
     onSend: (String, List<JSONObject>) -> Unit,
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
@@ -6065,6 +6162,46 @@ fun InputCapsule(
                     // the words they were writing to change it.
                     AccessPill(access0, onAccess, fullAllowed)
                     Spacer(Modifier.width(8.dp))
+                    /*
+                     * The ring, left of the model the way the desktop has it.
+                     * Like the desktop, nothing is drawn until a turn has spent
+                     * something: an empty conversation has nothing to measure.
+                     */
+                    if (contextUsed > 0) {
+                        /*
+                         * Pressing the ring keeps the figures up, as the
+                         * desktop's tooltip does on a click: the ring alone
+                         * says "somewhere here" and never how much.
+                         */
+                        var ctxCard by remember { mutableStateOf(false) }
+                        Box {
+                            Row(
+                                Modifier.clip(RoundedCornerShape(9.dp)).clickable { ctxCard = true }.padding(3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) { ContextRing(contextUsed, contextLimit, 18.dp) }
+                            DropdownMenu(
+                                expanded = ctxCard,
+                                onDismissRequest = { ctxCard = false },
+                                modifier = Modifier.width(220.dp).background(MaterialTheme.colorScheme.surface),
+                            ) {
+                                Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                                    Text("上下文用量", fontSize = 12.sp, color = LocalMuted.current)
+                                    Spacer(Modifier.height(4.dp))
+                                    val pct = if (contextLimit > 0) Math.round(contextUsed * 100.0 / contextLimit).toInt() else 0
+                                    Text(
+                                        if (contextLimit > 0) "已用 $pct%（剩余 ${100 - pct}%）" else "已用 ${compactTokens(contextUsed)}",
+                                        fontSize = 14.sp,
+                                        color = LocalText.current,
+                                    )
+                                    if (contextLimit > 0) {
+                                        Spacer(Modifier.height(2.dp))
+                                        Text("已用 ${compactTokens(contextUsed)}，共 ${compactTokens(contextLimit)}", fontSize = 12.sp, color = LocalMuted.current)
+                                    }
+                                }
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                    }
                     Surface(
                         shape = RoundedCornerShape(17.dp),
                         color = LocalPill.current,
