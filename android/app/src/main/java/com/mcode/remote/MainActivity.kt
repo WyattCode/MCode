@@ -1825,6 +1825,30 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             inject = voiceText,
             onInjected = { voiceText = null },
             onModel = { loadProviders(); modelPicker = true },
+            directory = sessions.find { it.id == currentSession }?.directory.orEmpty(),
+            atListDir = { dir ->
+                val r = runCatching { rpc(JSONObject().put("type", "file.listDir").put("directory", dir).put("sub", "")) }.getOrNull()
+                val arr = r?.optJSONObject("data")?.optJSONArray("entries")
+                val list = mutableListOf<Pair<String, Boolean>>()
+                if (arr != null) for (i in 0 until arr.length()) {
+                    val e = arr.optJSONObject(i) ?: continue
+                    list.add(e.optString("name") to (e.optString("type") == "dir"))
+                }
+                list.sortedWith(compareByDescending<Pair<String, Boolean>> { it.second }.thenBy { it.first }).take(8)
+            },
+            atSearch = { dir, query ->
+                val r = runCatching {
+                    rpc(JSONObject().put("type", "file.search").put("directory", dir).put("query", query).put("limit", 8))
+                }.getOrNull()
+                val arr = r?.optJSONObject("data")?.optJSONArray("entries")
+                val list = mutableListOf<Pair<String, String>>()
+                if (arr != null) for (i in 0 until arr.length()) {
+                    val e = arr.optJSONObject(i) ?: continue
+                    val rel = e.optString("rel")
+                    if (rel.isNotBlank()) list.add(e.optString("name") to rel)
+                }
+                list
+            },
             access0 = accessOf(sessions.find { it.id == currentSession }, appConfig),
             fullAllowed = appConfig?.optBoolean("allowFullAccess") != false || accessOf(sessions.find { it.id == currentSession }, appConfig) == "full",
             onAccess = { level ->
@@ -5660,6 +5684,12 @@ fun InputCapsule(
     access0: String = "ask",
     onAccess: (String) -> Unit = {},
     fullAllowed: Boolean = true,
+    /** The open folder, for the @ menu's file search. */
+    directory: String = "",
+    /** The folder's first entries, as (name, isDir) - the @ menu before a letter is typed. */
+    atListDir: suspend (String) -> List<Pair<String, Boolean>> = { emptyList() },
+    /** `file.search` as (name, relative path) - the desktop's own lookup for a mention. */
+    atSearch: suspend (String, String) -> List<Pair<String, String>> = { _, _ -> emptyList() },
     /** Which conversation this box belongs to, so its draft can be put back. */
     draftKey: String = "",
     draft: String = "",
@@ -5695,6 +5725,37 @@ fun InputCapsule(
         emptyList()
     }
     /*
+     * The desktop's @ menu: the folder's entries as you type after an @, then
+     * `file.search` once there is something to search for.
+     *
+     * Without it a file could only be named on the phone by typing out its whole
+     * relative path - and a path typed from memory is a path that is wrong. The
+     * desktop has opened this menu over its box since before the phone existed
+     * (`Composer.vue`, `loadAt` / `searchAt`).
+     */
+    val root = directory
+    val atSpan = run {
+        val head = text.substringBeforeLast('@', "")
+        if (!text.contains('@')) return@run null
+        val after = text.substringAfterLast('@')
+        // A mention ends at a space; another @ inside it is a mention of its own.
+        if (after.contains(' ')) null else after
+    }
+    var atEntries by remember { mutableStateOf<List<Pair<String, Boolean>>>(emptyList()) }
+    var atHits by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    LaunchedEffect(atSpan, root) {
+        val query = atSpan ?: return@LaunchedEffect
+        if (root.isBlank()) return@LaunchedEffect
+        if (query.isBlank()) {
+            atEntries = atListDir(root).take(6)
+        } else {
+            // The desktop waits out a pause before searching; a keystroke that
+            // has already been superseded should not spend a round trip.
+            kotlinx.coroutines.delay(180)
+            atHits = atSearch(root, query).take(6)
+        }
+    }
+    /*
      * Claude's composer is a little off centre: on the pad its card runs
      * x=1034..3333 in a pane from 925 to 3408 - 44dp of air on the left and
      * 30dp on the right, a card 920dp wide. Measured on the card's clean top
@@ -5705,6 +5766,59 @@ fun InputCapsule(
      * right and 74dp from it on the left.
      */
     Box(modifier.fillMaxWidth().padding(start = 44.dp, end = 30.dp, top = 8.dp, bottom = 8.dp)) {
+        /*
+         * The @ menu, over the box exactly where the slash menu sits: a file
+         * named and chosen here goes into the words as its relative path, which
+         * is what the desktop's mention does.
+         */
+        val atRows: List<Pair<String, String>> = if (atSpan != null) {
+            if (atSpan.isBlank()) atEntries.map { (name, dir) -> name to (if (dir) "$name/" else name) }
+            else atHits.map { (name, rel) -> name to rel }
+        } else emptyList()
+        if (atRows.isNotEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = LocalPill.current,
+                shadowElevation = 6.dp,
+                // The offset is in dp, and the rows are capped at six: a pixel
+                // count per row put an eight-row menu above the top of the
+                // window, where half of it could not be reached.
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .fillMaxWidth()
+                    .offset(y = -((atRows.size.coerceAtMost(6) * 40) + 10).dp),
+            ) {
+                Column(Modifier.padding(vertical = 4.dp)) {
+                    for ((name, insert) in atRows) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    /*
+                                     * The half-typed mention is replaced by the
+                                     * chosen path, not appended to it: keeping
+                                     * "@lic" and adding "LICENSE" would leave a
+                                     * path that names nothing.
+                                     */
+                                    val before = text.substringBeforeLast('@')
+                                    text = before + "@" + insert + (if (insert.endsWith("/")) "" else " ")
+                                }
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                if (insert.endsWith("/")) Icons.Outlined.Folder else Icons.AutoMirrored.Outlined.Article,
+                                contentDescription = null,
+                                tint = LocalMuted.current,
+                                modifier = Modifier.size(15.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(name, fontSize = 13.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
+        }
         if (slashMenu.isNotEmpty()) {
             Surface(
                 shape = RoundedCornerShape(12.dp),
@@ -5713,7 +5827,7 @@ fun InputCapsule(
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .fillMaxWidth()
-                    .offset { androidx.compose.ui.unit.IntOffset(0, -slashMenu.size * 150 - 24) },
+                    .offset(y = -((slashMenu.size * 40) + 10).dp),
             ) {
                 Column(Modifier.padding(vertical = 4.dp)) {
                     for ((name, desc) in slashMenu) {
