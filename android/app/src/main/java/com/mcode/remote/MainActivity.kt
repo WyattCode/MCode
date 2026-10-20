@@ -907,6 +907,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * down can be told apart from one that was already there.
      */
     var lastSeenAt by remember { mutableStateOf(0L) }
+    /**
+     * The newest `updated` this screen had already shown for each conversation.
+     *
+     * The reconnect pass compares against `lastSeenAt`, which only moves when the
+     * list is re-read - so a conversation the reader had OPENED and read during
+     * a later stretch was still compared against the older figure and came back
+     * marked unread. Comparing against what was on screen for that conversation
+     * answers the actual question: is this newer than what the reader saw?
+     */
+    val seenUpdated = remember { java.util.HashMap<String, Long>() }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     fun openDrawer() = scope.launch { drawerState.open() }
     fun closeDrawer() = scope.launch { drawerState.close() }
@@ -1495,6 +1505,19 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * it.
      */
     fun clearPerm(requestId: String) {
+        /*
+         * The card in the transcript goes with the entry here.
+         *
+         * Usually `permission.resolved` / `question.replied` removes it - but the
+         * server's own `respond` returns early when the request is no longer
+         * pending (`if (!pending) return` in permission.ts) and publishes
+         * nothing in that case, which happens the moment the desk answered the
+         * same request first or a reconnect replays a stale card. The reply the
+         * phone sent still succeeded, so nothing else would ever take the card
+         * off the screen.
+         */
+        items.removeAll { (it is Item.Perm && it.requestId == requestId) || (it is Item.Quest && it.requestId == requestId) }
+        if (items.none { it is Item.Perm }) KeepAliveService.instance?.restoreKeepAlive()
         val keys = pendingPerms.keys.toList()
         for (key in keys) {
             pendingPerms[key]?.removeAll { it.optString("id") == requestId }
@@ -1868,7 +1891,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
 
     fun select(id: String?) {
         currentSession = id
-        if (id != null) unseen.remove(id)
+        if (id != null) {
+            unseen.remove(id)
+            sessions.find { it.id == id }?.let { seenUpdated[id] = it.updated }
+        }
         // What the reader was last in stays open across restarts: Claude
         // reopens the conversation you left, not whichever conversation
         // happened to move most recently.
@@ -2034,10 +2060,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     // marked unread, including ones the reader had just left.
                     if (lastSeenAt > 0) {
                         for (row in sessions) {
-                            if (!row.running && row.id != currentSession && row.id != gone && row.updated > lastSeenAt) {
+                            val seen = seenUpdated[row.id] ?: lastSeenAt
+                            if (!row.running && row.id != currentSession && row.id != gone && row.updated > seen) {
                                 if (row.id !in unseen) unseen.add(row.id)
                             }
                         }
+                    }
+                    for (row in sessions) {
+                        val seen = seenUpdated[row.id] ?: 0L
+                        if (row.updated > seen) seenUpdated[row.id] = row.updated
                     }
                     lastSeenAt = System.currentTimeMillis()
                     if (currentSession == null && sessions.isNotEmpty()) {
