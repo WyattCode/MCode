@@ -2778,61 +2778,30 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("本次改动", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current)
                     Spacer(Modifier.width(8.dp))
+                    /*
+                     * The branch's own picker rather than a bare list: search, a
+                     * new branch, the dirty-tree question, and the four ways a
+                     * checkout can come back.
+                     */
                     if (changeBranch.isNotBlank()) {
-                        Row(
-                            Modifier.clickable { showBranches = !showBranches },
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(changeBranch, fontSize = 12.sp, color = LocalMuted.current)
-                            Icon(
-                                Icons.Outlined.ExpandMore,
-                                contentDescription = "\u5207\u6362\u5206\u652f",
-                                tint = LocalMuted.current,
-                                modifier = Modifier.size(14.dp),
-                            )
-                        }
-                    }
-                }
-                if (showBranches && branches.isNotEmpty()) {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp)
-                            .background(LocalPill.current, RoundedCornerShape(10.dp))
-                            .padding(vertical = 4.dp),
-                    ) {
-                        for (b in branches) {
-                            Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        showBranches = false
-                                        scope.launch {
-                                            runCatching {
-                                                rpc(
-                                                    JSONObject()
-                                                        .put("type", "git.checkout")
-                                                        .put("directory", root)
-                                                        .put("branch", b),
-                                                )
-                                            }
-                                            changeBranch = b
-                                        }
-                                    }
-                                    .padding(horizontal = 12.dp, vertical = 9.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    b,
-                                    fontSize = 13.sp,
-                                    color = if (b == changeBranch) LocalText.current else LocalMuted.current,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                if (b == changeBranch) {
-                                    Icon(Icons.Outlined.Check, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(14.dp))
-                                }
-                            }
-                        }
+                        BranchPicker(
+                            current = changeBranch,
+                            branches = branches.toList(),
+                            checkoutBranch = { branch, force, create ->
+                                runCatching {
+                                    rpc(
+                                        JSONObject()
+                                            .put("type", "git.checkout")
+                                            .put("directory", root)
+                                            .put("branch", branch)
+                                            .put("force", force)
+                                            .put("create", create),
+                                    )
+                                }.getOrNull()?.optJSONObject("data")
+                            },
+                            onSwitched = { changeBranch = it },
+                            onMessage = { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() },
+                        )
                     }
                 }
                 Spacer(Modifier.height(10.dp))
@@ -3850,6 +3819,255 @@ fun runSummary(run: ToolRun): String {
     }
     if (reads > 0) parts.add("读取了 $reads 个文件")
     return parts.joinToString(", ").ifBlank { "已使用 ${run.items.size} 个工具" }
+}
+
+/**
+ * The branch chip and its menu, as the desktop draws them (BranchPicker.vue).
+ *
+ * A chip with the branch's own glyph, its name, and a caret; pressing it opens
+ * a menu with a search field, the local branches (the checked one ticked), a
+ * rule, then 创建并检出新分支… A new name is created and checked out in place.
+ *
+ * Switching is not one call. The server refuses a checkout over uncommitted
+ * changes with `dirty: true` and does not say so as an error - the desktop asks
+ * 「工作区有未提交改动，切到 X 会把改动一并带过去，可能产生冲突。」 and then forces
+ * it. Three other answers are named individually: the branch is checked out in
+ * another worktree, the name already exists, and the name is not a valid ref.
+ *
+ * This replaced an unnamed list inside the changes sheet, which had no search,
+ * no way to make a branch, and treated a refused checkout as a success because
+ * it wrote the new name into the header whatever the server said.
+ */
+@Composable
+fun BranchPicker(
+    current: String,
+    branches: List<String>,
+    /** `git.checkout`, handed in: this composable has no client of its own. */
+    checkoutBranch: suspend (branch: String, force: Boolean, create: Boolean) -> JSONObject?,
+    onSwitched: (String) -> Unit,
+    onMessage: (String) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    var creating by remember { mutableStateOf(false) }
+    var draft by remember { mutableStateOf("") }
+    var pending by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    fun checkout(branch: String, force: Boolean = false) {
+        if (branch == current && !force) {
+            open = false
+            return
+        }
+        scope.launch {
+            busy = true
+            val reply = checkoutBranch(branch, force, false)
+            busy = false
+            if (reply == null) {
+                onMessage("切换分支失败")
+                return@launch
+            }
+            when {
+                reply.optBoolean("ok") -> {
+                    open = false
+                    onSwitched(reply.optString("branch", branch))
+                    onMessage(if (reply.optBoolean("conflicts")) "分支已切换但产生了冲突，请先解决冲突" else "已切换到 $branch")
+                }
+                // Not an error: the tree is dirty, and the reader is asked.
+                reply.optBoolean("dirty") -> {
+                    open = false
+                    pending = branch
+                }
+                reply.optJSONObject("worktree") != null -> {
+                    open = false
+                    onMessage("该分支已被工作树 ${reply.optJSONObject("worktree")?.optString("name").orEmpty()} 检出，请到该工作树操作")
+                }
+                reply.optString("code") == "branch-exists" -> onMessage("分支 $branch 已经存在")
+                reply.optString("code") == "branch-invalid" -> onMessage("分支名不合法")
+                else -> onMessage(reply.optString("error").ifBlank { "切换分支失败" })
+            }
+        }
+    }
+
+    fun create() {
+        val name = draft.trim()
+        if (name.isBlank()) return
+        scope.launch {
+            busy = true
+            val reply = checkoutBranch(name, false, true)
+            busy = false
+            if (reply?.optBoolean("ok") == true) {
+                // MiMo leaves the menu up and redraws it with the new branch
+                // ticked; only the field goes.
+                creating = false
+                draft = ""
+                onSwitched(name)
+                onMessage("已创建并切换到 $name")
+            } else {
+                when (reply?.optString("code")) {
+                    "branch-exists" -> onMessage("分支 $name 已经存在")
+                    "branch-invalid" -> onMessage("分支名不合法")
+                    else -> onMessage(reply?.optString("error").orEmpty().ifBlank { "创建分支失败" })
+                }
+            }
+        }
+    }
+
+    val matches = if (query.isBlank()) branches else branches.filter { it.contains(query, ignoreCase = true) }
+    // Read once for the draw scopes below: a Canvas lambda is not composable.
+    val muted = LocalMuted.current
+    val ink = LocalText.current
+
+    Box {
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(15.dp))
+                .background(LocalPill.current)
+                .clickable { open = true }
+                .padding(horizontal = 10.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // The branch's own glyph: two commits and the line that joins them.
+            Canvas(Modifier.size(13.dp)) {
+                val w = size.width
+                val st = androidx.compose.ui.graphics.drawscope.Stroke(w * (1.2f / 16f))
+                drawCircle(ink, w * (1.6f / 16f), androidx.compose.ui.geometry.Offset(w * (4.5f / 16f), w * (3.5f / 16f)), style = st)
+                drawCircle(ink, w * (1.6f / 16f), androidx.compose.ui.geometry.Offset(w * (4.5f / 16f), w * (12.5f / 16f)), style = st)
+                drawCircle(ink, w * (1.6f / 16f), androidx.compose.ui.geometry.Offset(w * (11.5f / 16f), w * (5.5f / 16f)), style = st)
+                drawLine(ink, androidx.compose.ui.geometry.Offset(w * (4.5f / 16f), w * (5.1f / 16f) ), androidx.compose.ui.geometry.Offset(w * (4.5f / 16f), w * (10.7f / 16f)), w * (1.2f / 16f))
+                drawLine(ink, androidx.compose.ui.geometry.Offset(w * (11.5f / 16f), w * (7.1f / 16f)), androidx.compose.ui.geometry.Offset(w * (6.1f / 16f), w * (11f / 16f)), w * (1.2f / 16f))
+            }
+            Spacer(Modifier.width(4.dp))
+            Text(current.ifBlank { "分支" }, fontSize = 12.sp, color = muted, maxLines = 1)
+            Canvas(Modifier.size(12.dp)) {
+                val w = size.width
+                val p = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(w * (5f / 16f), w * (6.5f / 16f))
+                    lineTo(w * (8f / 16f), w * (9.5f / 16f))
+                    lineTo(w * (11f / 16f), w * (6.5f / 16f))
+                }
+                drawPath(p, muted, style = androidx.compose.ui.graphics.drawscope.Stroke(w * (1f / 16f)))
+            }
+        }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false; creating = false; query = "" },
+            modifier = Modifier.width(300.dp).background(MaterialTheme.colorScheme.surface),
+        ) {
+            /*
+             * The search field, focused on open the way MiMo focuses it: a menu
+             * of a repository's branches can run long.
+             */
+            val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+            LaunchedEffect(open) { if (open) runCatching { focus.requestFocus() } }
+            OutlinedTextField(
+                query, { query = it },
+                Modifier.fillMaxWidth().padding(horizontal = 8.dp).focusRequester(focus),
+                placeholder = { Text("搜索分支…", fontSize = 12.sp, color = LocalMuted.current) },
+                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(14.dp)) },
+                shape = RoundedCornerShape(9.dp),
+                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp),
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    unfocusedContainerColor = LocalField.current,
+                    focusedContainerColor = LocalField.current,
+                    unfocusedBorderColor = LocalFieldLine.current,
+                    focusedBorderColor = LocalFieldLine.current,
+                ),
+            )
+            Spacer(Modifier.height(4.dp))
+            Column(Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState())) {
+                if (branches.isEmpty()) {
+                    Text("无本地分支", fontSize = 12.sp, color = LocalMuted.current, modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp))
+                } else if (matches.isEmpty()) {
+                    Text("无匹配的分支", fontSize = 12.sp, color = LocalMuted.current, modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp))
+                }
+                for ((index, branch) in matches.withIndex()) {
+                    // Only the visible stretch is drawn, so a repository with a
+                    // hundred branches does not build a hundred rows at once.
+                    if (index < 60) Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = !busy) { checkout(branch) }
+                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            branch,
+                            fontSize = 13.sp,
+                            color = if (branch == current) LocalText.current else LocalText.current.copy(alpha = 0.8f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (branch == current) {
+                            Canvas(Modifier.size(14.dp)) {
+                                val w = size.width
+                                val p = androidx.compose.ui.graphics.Path().apply {
+                                    moveTo(w * (3.5f / 16f), w * (8.2f / 16f))
+                                    lineTo(w * (6.4f / 16f), w * (11.1f / 16f))
+                                    lineTo(w * (12.5f / 16f), w * (5f / 16f))
+                                }
+                                drawPath(p, ink, style = androidx.compose.ui.graphics.drawscope.Stroke(w * 0.09f, cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
+                            }
+                        }
+                    }
+                }
+            }
+            HorizontalDivider(Modifier.padding(vertical = 4.dp), color = LocalMuted.current.copy(alpha = 0.15f))
+            if (!creating) {
+                Row(
+                    Modifier.fillMaxWidth().clickable { creating = true }.padding(horizontal = 12.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("创建并检出新分支…", fontSize = 13.sp, color = LocalText.current)
+                }
+            } else {
+                val field = remember { androidx.compose.ui.focus.FocusRequester() }
+                LaunchedEffect(creating) { runCatching { field.requestFocus() } }
+                BasicTextField(
+                    draft,
+                    { draft = it },
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, color = LocalText.current),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { create() }),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Done),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp).focusRequester(field),
+                    decorationBox = { inner ->
+                        Box {
+                            if (draft.isEmpty()) Text("新分支名，回车创建", fontSize = 13.sp, color = LocalMuted.current)
+                            inner()
+                        }
+                    },
+                )
+            }
+        }
+    }
+    /*
+     * The dirty tree is asked about, not forced through: the desktop's own
+     * wording, and its two answers.
+     */
+    pending?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pending = null },
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = LocalText.current,
+            textContentColor = LocalText.current,
+            title = { Text("切换分支？", fontSize = 16.sp) },
+            text = { Text("工作区有未提交改动，切到 $target 会把改动一并带过去，可能产生冲突。", fontSize = 14.sp, lineHeight = 22.sp) },
+            confirmButton = {
+                TextButton({
+                    pending = null
+                    checkout(target, force = true)
+                }) { Text("仍然切换") }
+            },
+            dismissButton = { TextButton({ pending = null }) { Text("取消", color = LocalText.current) } },
+        )
+    }
 }
 
 /**
