@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Image
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -4859,11 +4860,20 @@ fun Timeline(
     ) {
         for (item in rows) {
             item(key = (item as? ToolRun)?.key ?: (item as? Step)?.key ?: (item as Item).key) {
-                // Every row fades and rises a little as it lands, which is what
-                // makes a streamed reply read as arriving rather than repainting.
+                /*
+                 * `@keyframes msg-in` (MessageStream.vue): 0.2s on
+                 * `cubic-bezier(0.2, 0.7, 0.2, 1)`, rising 8 from below as it
+                 * fades in. The phone used Compose's default easing over 180ms,
+                 * which starts slower and settles harder - the same travel, a
+                 * different feel, and this is the motion a reader watches most.
+                 */
                 var shown by remember { mutableStateOf(false) }
                 LaunchedEffect(Unit) { shown = true }
-                val appear by animateFloatAsState(if (shown) 1f else 0f, tween(180), label = "row-in")
+                val appear by animateFloatAsState(
+                    if (shown) 1f else 0f,
+                    tween(durationMillis = 200, easing = CubicBezierEasing(0.2f, 0.7f, 0.2f, 1f)),
+                    label = "row-in",
+                )
                 Box(Modifier.graphicsLayer { alpha = appear; translationY = (1f - appear) * 8.dp.toPx() }) {
                 when (item) {
                     /*
@@ -8216,14 +8226,16 @@ private fun StepBody(item: Item.Msg) {
 @Composable
 private fun RunRow(item: ToolRun) {
     var open by remember { mutableStateOf(false) }
-    Column(Modifier.padding(start = 10.dp)) {
+    // `.hstep`, as ToolRow wears it: 23 in, 5 above and below, 14 over 22.4.
+    Column(Modifier.padding(start = 23.dp)) {
         Row(
-            Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 3.dp),
+            Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 runSummary(item),
-                fontSize = 15.sp,
+                fontSize = 14.sp,
+                lineHeight = 22.4.sp,
                 color = LocalMuted.current,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -8252,9 +8264,15 @@ fun ToolRow(item: Item.Tool) {
         busy -> MaterialTheme.colorScheme.primary
         else -> LocalMuted.current
     }
-    Column(Modifier.padding(start = 10.dp)) {
+    /*
+     * `.hstep`: 14 over a 22.4 line, 5 above and below, indented 23 from the
+     * step's rail. This drew 13 with 3 of padding and a 10 indent, which is
+     * both a size and a rhythm off - the rows sat tighter than the prose they
+     * sit between.
+     */
+    Column(Modifier.padding(start = 23.dp)) {
         Row(
-            Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 3.dp),
+            Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             /*
@@ -8283,6 +8301,17 @@ fun ToolRow(item: Item.Tool) {
                 )
             }
         }
+        /*
+         * `.hs-collapse`: the rows grow from nothing and fade in over 0.18s on
+         * the same curve as the message entrance. The phone swapped the block
+         * in at once, so a tool's output appeared as a jump rather than as the
+         * row opening.
+         */
+        val reveal by animateFloatAsState(
+            if (open && item.output.isNotBlank()) 1f else 0f,
+            tween(durationMillis = 180, easing = CubicBezierEasing(0.2f, 0.7f, 0.2f, 1f)),
+            label = "step-open",
+        )
         if (open && item.output.isNotBlank()) {
             /*
              * A patch reads as one: added lines on a faint green, removed on a
@@ -8291,7 +8320,13 @@ fun ToolRow(item: Item.Tool) {
              * the part that makes a patch scannable at all.
              */
             val patch = item.output.contains("\n@@") || item.output.startsWith("diff --git") || item.output.startsWith("@@")
-            Column(Modifier.padding(start = 22.dp, top = 2.dp, bottom = 4.dp)) {
+            // The fade carries the reveal; the height arrives with the content
+            // because the Column sizes to what it holds.
+            Column(
+                Modifier
+                    .padding(start = 22.dp, top = 2.dp, bottom = 4.dp)
+                    .graphicsLayer { alpha = reveal },
+            ) {
                 for (line in item.output.lineSequence().take(60)) {
                     val (bg, fg) = when {
                         !patch -> Color.Transparent to LocalMuted.current.copy(alpha = 0.8f)
