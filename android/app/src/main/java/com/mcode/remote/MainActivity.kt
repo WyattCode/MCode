@@ -732,6 +732,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * sets this too, which is what that glyph was always meant to do.
      */
     var searching by remember { mutableStateOf(false) }
+    /**
+     * What the left column is showing, as Claude's pane switches between them:
+     * the conversation list, the projects, and the scheduled tasks.
+     */
+    var leftMode by remember { mutableStateOf(LeftMode.Sessions) }
+    var projectAdding by remember { mutableStateOf(false) }
+    /** Bumped to re-read the project list after one is added. */
+    var refreshCommandsTick by remember { mutableStateOf(0) }
+    /** `config.projects` - every folder the app treats as a project, newest first. */
+    val projects = remember { mutableStateListOf<String>() }
     var runningOnly by remember { mutableStateOf(false) }
     var privacy by remember { mutableStateOf(false) }
     var projectFilter by remember { mutableStateOf<String?>(null) }
@@ -1547,10 +1557,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * its own runs. Read once when the socket comes up, and again whenever the
      * desktop writes the config.
      */
-    LaunchedEffect(connected) {
+    LaunchedEffect(connected, refreshCommandsTick) {
         if (!connected) return@LaunchedEffect
-        appConfig = runCatching { rpc(JSONObject().put("type", "config.get")) }.getOrNull()
+        val read = runCatching { rpc(JSONObject().put("type", "config.get")) }.getOrNull()
             ?.optJSONObject("data")?.optJSONObject("config")
+        appConfig = read
+        // Claude's projects page lists `config.projects`, newest added first.
+        projects.clear()
+        read?.optJSONArray("projects")?.let { arr ->
+            for (i in 0 until arr.length()) arr.optString(i).takeIf { it.isNotBlank() }?.let { projects.add(it) }
+        }
     }
 
     if (!connectedOnce || showConnect) {
@@ -1768,8 +1784,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         closeDrawer()
                     },
                     onReconnect = { showConnect = true; closeDrawer() },
-                    onProjects = { showProjects = true; closeDrawer() },
-                    onScheduled = { showScheduled = true; closeDrawer() },
+                    onProjects = { leftMode = LeftMode.Projects; closeDrawer() },
+                    onScheduled = { leftMode = LeftMode.Scheduled; closeDrawer() },
                     onTasks = { showTasks = true; closeDrawer() },
                     onUsage = { loadUsage(); showUsage = true; closeDrawer() },
                     // The drawer's search closes the drawer and focuses the
@@ -1807,11 +1823,31 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          * minimum width ate the column and left the title one
                          * character wide.
                          */
-                        Box(Modifier.size(44.dp).clickable { openDrawer() }, contentAlignment = Alignment.Center) {
-                            Icon(Icons.Outlined.Menu, contentDescription = "菜单", tint = LocalText.current, modifier = Modifier.size(20.dp))
+                        /*
+                         * On the list this is the drawer's menu; on the other
+                         * two pages it is the way back to the list, which is
+                         * what Claude's own header puts at that corner once a
+                         * page has been opened.
+                         */
+                        Box(
+                            Modifier.size(44.dp).clickable {
+                                if (leftMode == LeftMode.Sessions) openDrawer() else leftMode = LeftMode.Sessions
+                            },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                if (leftMode == LeftMode.Sessions) Icons.Outlined.Menu else Icons.AutoMirrored.Outlined.ArrowBack,
+                                contentDescription = if (leftMode == LeftMode.Sessions) "菜单" else "返回列表",
+                                tint = LocalText.current,
+                                modifier = Modifier.size(20.dp),
+                            )
                         }
                         Text(
-                            "最近记录",
+                            when (leftMode) {
+                                LeftMode.Sessions -> "最近记录"
+                                LeftMode.Projects -> "项目"
+                                LeftMode.Scheduled -> "定时任务"
+                            },
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Medium,
                             color = LocalText.current,
@@ -1874,24 +1910,70 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         )
                     }
                         Spacer(Modifier.height(6.dp))
-                        SessionList(visibleSessions, currentSession, search, onSelect = { select(it) }, compact = false, modifier = Modifier.weight(1f).fillMaxWidth(), onLongPress = { sheetTarget = it })
-                        // Claude parks a black "new chat" pill at the foot of
-                        // the list column. It is laid out after the list, so the
-                        // list gets the space first and the pill never covers a
-                        // row (the list's own bottom padding leaves room too).
-                        Surface(
-                            shape = RoundedCornerShape(24.dp),
-                            color = LocalText.current,
-                            modifier = Modifier.padding(top = 8.dp, bottom = 10.dp).align(Alignment.CenterHorizontally).clickable {
-                                newSession()
-                            },
-                        ) {
-                            Row(Modifier.padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text("+", fontSize = 16.sp, color = LocalBg.current)
-                                Spacer(Modifier.width(6.dp))
-                                Text("新建会话", fontSize = 14.sp, color = LocalBg.current)
-                            }
+                        /*
+                         * The column carries one of three pages, as Claude's
+                         * does: the conversation list, the projects, and the
+                         * scheduled tasks. They are not sheets over the
+                         * transcript - the right pane stays exactly where it is
+                         * and keeps answering, which is the whole reason the
+                         * projects page can exist beside a live conversation.
+                         */
+                        when (leftMode) {
+                            LeftMode.Sessions ->
+                                SessionList(visibleSessions, currentSession, search, onSelect = { select(it) }, compact = false, modifier = Modifier.weight(1f).fillMaxWidth(), onLongPress = { sheetTarget = it })
+                            LeftMode.Projects ->
+                                ProjectsPane(
+                                    projects = projects,
+                                    filter = projectFilter,
+                                    adding = projectAdding,
+                                    onAdding = { projectAdding = it },
+                                    onPick = { projectFilter = it; leftMode = LeftMode.Sessions },
+                                    onAdd = { dir ->
+                                        scope.launch {
+                                            runCatching { rpc(JSONObject().put("type", "project.add").put("directory", dir).put("used", false)) }
+                                            refreshCommandsTick++
+                                            projectAdding = false
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                                )
+                            LeftMode.Scheduled ->
+                                ScheduledPane(
+                                    tasks = automations.toList(),
+                                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                                )
                         }
+                        /*
+                         * Claude's foot-of-column capsule, which follows the
+                         * mode: 新建会话 on the list, 新建项目 on the projects
+                         * page, 新建任务 on the scheduled one. It is laid out
+                         * after the list so the list takes the space first and
+                         * the capsule never covers a row.
+                         */
+                        FootCapsule(
+                            label = when (leftMode) {
+                                LeftMode.Sessions -> "+ 新建会话"
+                                LeftMode.Projects -> "+ 新建项目"
+                                LeftMode.Scheduled -> "+ 新建任务"
+                            },
+                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                            enabled = when (leftMode) {
+                                LeftMode.Sessions -> true
+                                LeftMode.Projects -> true
+                                // A schedule is made by asking the model to make
+                                // one; there is no protocol request that takes a
+                                // cron expression, so this opens the box instead
+                                // of pretending to be a form.
+                                LeftMode.Scheduled -> true
+                            },
+                            onClick = {
+                                when (leftMode) {
+                                    LeftMode.Sessions -> newSession()
+                                    LeftMode.Projects -> projectAdding = true
+                                    LeftMode.Scheduled -> Toast.makeText(context, "让 MCode 按计划安排一次任务，它会把定时建好", Toast.LENGTH_LONG).show()
+                                }
+                            },
+                        )
                     }
                     Column(Modifier.weight(0.7359f).fillMaxHeight().fillMaxWidth()) {
                         Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
@@ -4827,6 +4909,161 @@ fun DrawerItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: Str
         Icon(icon, contentDescription = label, tint = LocalText.current, modifier = Modifier.size(22.dp))
         Spacer(Modifier.width(18.dp))
         Text(label, fontSize = 16.sp, color = LocalText.current)
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* The left column's three pages                                       */
+/* ------------------------------------------------------------------ */
+
+/** Which page the left column is showing. Claude switches between them in place. */
+enum class LeftMode { Sessions, Projects, Scheduled }
+
+/**
+ * The black capsule at the foot of the column.
+ *
+ * Its words follow the page - 新建会话, 新建项目, 新建任务 - which is the whole
+ * reason it is shared: three pages, one control, and what it does is named by
+ * the page it sits on.
+ */
+@Composable
+fun FootCapsule(label: String, enabled: Boolean = true, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = if (enabled) LocalText.current else LocalMuted.current.copy(alpha = 0.4f),
+        modifier = Modifier.padding(top = 8.dp, bottom = 10.dp).then(modifier).clickable(enabled = enabled) { onClick() },
+    ) {
+        Row(Modifier.padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(label, fontSize = 14.sp, color = LocalBg.current)
+        }
+    }
+}
+
+/**
+ * Claude's projects page, in the left column.
+ *
+ * An outlined folder, 「暂无项目」 and the sentence under it when there is
+ * nothing; otherwise every folder the app treats as a project, with the one the
+ * list is filtered to marked. Picking one goes back to the list filtered to it,
+ * which is what the same tap does on the desktop's side column.
+ */
+@Composable
+fun ProjectsPane(
+    projects: List<String>,
+    filter: String?,
+    adding: Boolean,
+    onAdding: (Boolean) -> Unit,
+    onPick: (String?) -> Unit,
+    onAdd: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier) {
+        if (adding) {
+            var path by remember { mutableStateOf("") }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    path,
+                    { path = it },
+                    Modifier.weight(1f),
+                    placeholder = { Text("D:////Projects////my-app", fontSize = 12.sp, color = LocalMuted.current) },
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp),
+                    shape = RoundedCornerShape(10.dp),
+                )
+                TextButton({ if (path.isNotBlank()) onAdd(path.trim()) }) { Text("添加", fontSize = 13.sp) }
+            }
+        }
+        if (projects.isEmpty()) {
+            Column(Modifier.fillMaxWidth().weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                ProjectGlyph(63.dp)
+                Spacer(Modifier.height(18.dp))
+                Text("暂无项目", fontSize = 15.sp, color = LocalText.current)
+                Spacer(Modifier.height(8.dp))
+                Text("您创建或加入的项目将显示在此处。", fontSize = 13.sp, color = LocalMuted.current)
+            }
+        } else {
+            LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
+                item {
+                    ProjectPickRow("全部项目", null, filter == null) { onPick(null) }
+                }
+                items(projects.size) { i ->
+                    val dir = projects[i]
+                    ProjectPickRow(
+                        dir.substringAfterLast('\\').substringAfterLast('/'),
+                        dir,
+                        filter == dir,
+                    ) { onPick(dir) }
+                }
+            }
+        }
+    }
+}
+
+/** The outline Claude draws for an empty projects page: a folder, no fill, 63dp. */
+@Composable
+private fun ProjectGlyph(size: androidx.compose.ui.unit.Dp) {
+    Canvas(Modifier.size(size)) {
+        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(width = size.toPx() * 0.055f)
+        val ink = Color(0xFF9A968E)
+        val w = this.size.width
+        val h = this.size.height
+        // Two bars above a rounded tray, which is Claude's shape rather than a
+        // generic folder: a narrow lid, a wider one, then the body.
+        drawRoundRect(ink, topLeft = androidx.compose.ui.geometry.Offset(w * 0.34f, h * 0.10f), size = androidx.compose.ui.geometry.Size(w * 0.32f, h * 0.045f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(h * 0.02f), style = stroke)
+        drawRoundRect(ink, topLeft = androidx.compose.ui.geometry.Offset(w * 0.26f, h * 0.24f), size = androidx.compose.ui.geometry.Size(w * 0.48f, h * 0.045f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(h * 0.02f), style = stroke)
+        drawRoundRect(ink, topLeft = androidx.compose.ui.geometry.Offset(w * 0.20f, h * 0.38f), size = androidx.compose.ui.geometry.Size(w * 0.60f, h * 0.50f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(h * 0.10f), style = stroke)
+    }
+}
+
+@Composable
+private fun ProjectPickRow(title: String, directory: String?, active: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Outlined.Folder, contentDescription = null, tint = if (active) LocalText.current else LocalMuted.current, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 14.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (directory != null) {
+                Text(directory, fontSize = 10.5.sp, color = LocalMuted.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        if (active) Icon(Icons.Outlined.Check, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(15.dp))
+    }
+}
+
+/**
+ * Claude's scheduled-tasks page: a clock, 「暂无定时任务」, and what the app will do
+ * with one. The rows come from the `automation.tasks` event the server
+ * broadcasts; there is no request that lists them, so this page listens.
+ */
+@Composable
+fun ScheduledPane(tasks: List<Triple<String, String, Long>>, modifier: Modifier = Modifier) {
+    if (tasks.isEmpty()) {
+        Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Icon(Icons.Outlined.Schedule, contentDescription = null, tint = LocalMuted.current.copy(alpha = 0.6f), modifier = Modifier.size(44.dp))
+            Spacer(Modifier.height(16.dp))
+            Text("暂无定时任务", fontSize = 15.sp, color = LocalText.current)
+            Spacer(Modifier.height(8.dp))
+            Text("让 MCode 按计划运行任务。", fontSize = 13.sp, color = LocalMuted.current)
+        }
+    } else {
+        LazyColumn(modifier) {
+            items(tasks.size) { i ->
+                val (_, title, nextAt) = tasks[i]
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.Schedule, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(title, fontSize = 14.sp, color = LocalText.current, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        if (nextAt > 0L) {
+                            Text("下次：" + android.text.format.DateFormat.format("MM-dd HH:mm", nextAt), fontSize = 11.sp, color = LocalMuted.current)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
