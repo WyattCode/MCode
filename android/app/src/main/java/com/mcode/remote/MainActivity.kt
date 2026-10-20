@@ -1965,6 +1965,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     facets = artFacets,
                                     building = artBuilding,
                                     onCategory = { artCategory = it },
+                                    onOpen = { root, rel ->
+                                        scope.launch {
+                                            val r = runCatching {
+                                                rpc(JSONObject().put("type", "file.read").put("root", root).put("rel", rel).put("preview", true), 30_000)
+                                            }.getOrNull()
+                                            val body = r?.optJSONObject("data")?.optString("content").orEmpty()
+                                            if (body.isNotBlank()) filePreview = rel to body
+                                        }
+                                    },
                                 )
                         }
                         /*
@@ -2761,6 +2770,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         facets = artFacets,
                         building = artBuilding,
                         onCategory = { artCategory = it },
+                        onOpen = { root, rel ->
+                            scope.launch {
+                                val r = runCatching {
+                                    rpc(JSONObject().put("type", "file.read").put("root", root).put("rel", rel).put("preview", true), 30_000)
+                                }.getOrNull()
+                                val body = r?.optJSONObject("data")?.optString("content").orEmpty()
+                                if (body.isNotBlank()) filePreview = rel to body
+                            }
+                        },
                     )
                 } else if (leftMode == LeftMode.Projects) {
                     ProjectsPane(
@@ -5051,6 +5069,7 @@ fun ArtifactsPane(
     facets: JSONObject? = null,
     building: Boolean = false,
     onCategory: (String) -> Unit = {},
+    onOpen: (String, String) -> Unit = { _, _ -> },
 ) {
     if (loading && groups.isEmpty()) {
         Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -5125,8 +5144,15 @@ fun ArtifactsPane(
                     val file = files.optJSONObject(i) ?: return@items
                     val path = file.optString("path")
                     val exists = file.optBoolean("exists", true)
+                    val root = group.optString("directory")
                     Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        Modifier
+                            .fillMaxWidth()
+                            // A file that is gone has nowhere to open, so its row
+                            // is not a target: a tap that did nothing would read
+                            // as the app being broken.
+                            .clickable(enabled = exists && root.isNotBlank()) { onOpen(root, path) }
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
