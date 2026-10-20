@@ -64,6 +64,7 @@ import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.GraphicEq
+import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Menu
@@ -1705,6 +1706,33 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         }
     }
 
+    /**
+     * Open one row of 作品.
+     *
+     * `artifact.list` names a file either project-relative or absolute, and
+     * `file.read` refuses a `rel` that is not relative to its `root` - it
+     * answers "outside: the path is not relative to its root". So an absolute
+     * path is split at its own last separator and read against that directory,
+     * which is the same file by a different pair of arguments.
+     */
+    fun openArtifact(root: String, rel: String) {
+        scope.launch {
+            val absolute = rel.length > 2 && rel[1] == ':' || rel.startsWith("/")
+            val ask = if (absolute) {
+                val cut = maxOf(rel.lastIndexOf('/'), rel.lastIndexOf('\\'))
+                JSONObject().put("type", "file.read")
+                    .put("root", if (cut > 0) rel.substring(0, cut) else root)
+                    .put("rel", if (cut > 0) rel.substring(cut + 1) else rel)
+            } else {
+                JSONObject().put("type", "file.read").put("root", root).put("rel", rel)
+            }
+            ask.put("preview", true)
+            val r = runCatching { rpc(ask, 30_000) }.getOrNull()
+            val body = r?.optJSONObject("data")?.optString("content").orEmpty()
+            if (body.isNotBlank()) filePreview = rel.substringAfterLast('/').substringAfterLast('\\') to body
+        }
+    }
+
     val inputBar: @Composable () -> Unit = {
         InputCapsule(
             enabled = currentSession != null,
@@ -2010,15 +2038,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     facets = artFacets,
                                     building = artBuilding,
                                     onCategory = { artCategory = it },
-                                    onOpen = { root, rel ->
-                                        scope.launch {
-                                            val r = runCatching {
-                                                rpc(JSONObject().put("type", "file.read").put("root", root).put("rel", rel).put("preview", true), 30_000)
-                                            }.getOrNull()
-                                            val body = r?.optJSONObject("data")?.optString("content").orEmpty()
-                                            if (body.isNotBlank()) filePreview = rel to body
-                                        }
-                                    },
+                                    onOpen = { root, rel -> openArtifact(root, rel) },
                                     query = artQuery,
                                     onQuery = { artQuery = it },
                                 )
@@ -2838,15 +2858,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         facets = artFacets,
                         building = artBuilding,
                         onCategory = { artCategory = it },
-                        onOpen = { root, rel ->
-                            scope.launch {
-                                val r = runCatching {
-                                    rpc(JSONObject().put("type", "file.read").put("root", root).put("rel", rel).put("preview", true), 30_000)
-                                }.getOrNull()
-                                val body = r?.optJSONObject("data")?.optString("content").orEmpty()
-                                if (body.isNotBlank()) filePreview = rel to body
-                            }
-                        },
+                        onOpen = { root, rel -> openArtifact(root, rel) },
                         query = artQuery,
                         onQuery = { artQuery = it },
                     )
@@ -4902,27 +4914,27 @@ fun DrawerContent(
                     Icon(Icons.Outlined.Search, contentDescription = "搜索", tint = LocalText.current, modifier = Modifier.size(22.dp))
                 }
             }
-            Spacer(Modifier.height(26.dp))
+            Spacer(Modifier.height(12.dp))
             DrawerItem(Icons.Outlined.Folder, "项目", active = currentPage == LeftMode.Projects) { onProjects() }
-            Spacer(Modifier.height(26.dp))
+            Spacer(Modifier.height(12.dp))
             /*
              * The desktop's plugins page - skills and MCP servers side by
              * side - had no phone counterpart at all: this row said "Code" and
              * closed the drawer, which is a row that does nothing dressed as a
              * row that does something.
              */
-            DrawerItem(Icons.Outlined.Build, "技能与插件") { onPlugins() }
-            Spacer(Modifier.height(26.dp))
-            DrawerItem(Icons.Outlined.FolderOpen, "作品", active = currentPage == LeftMode.Artifacts) { onArtifacts() }
-            Spacer(Modifier.height(26.dp))
+            DrawerItem(Icons.Outlined.Extension, "技能与插件") { onPlugins() }
+            Spacer(Modifier.height(12.dp))
+            DrawerItem(Icons.AutoMirrored.Outlined.Article, "作品", active = currentPage == LeftMode.Artifacts) { onArtifacts() }
+            Spacer(Modifier.height(12.dp))
             DrawerItem(Icons.Outlined.Schedule, "定时任务", active = currentPage == LeftMode.Scheduled) { onScheduled() }
-            Spacer(Modifier.height(26.dp))
+            Spacer(Modifier.height(12.dp))
             DrawerItem(Icons.Outlined.Checklist, "进行中的任务") { onTasks() }
-            Spacer(Modifier.height(26.dp))
+            Spacer(Modifier.height(12.dp))
             DrawerItem(Icons.Outlined.BarChart, "用量") { onUsage() }
-            Spacer(Modifier.height(26.dp))
+            Spacer(Modifier.height(12.dp))
             DrawerItem(Icons.Outlined.Lock, "模型服务") { onProviders() }
-            Spacer(Modifier.height(26.dp))
+            Spacer(Modifier.height(12.dp))
             DrawerItem(Icons.Outlined.Settings, "连接设置") { onReconnect() }
             Spacer(Modifier.height(20.dp))
             HorizontalDivider(color = LocalMuted.current.copy(alpha = 0.18f))
@@ -5666,7 +5678,7 @@ fun ConnectScreen(url: String, token: String, onConnect: (String, String) -> Uni
         Text("来思考什么？", fontSize = 21.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
         Spacer(Modifier.height(8.dp))
         Text("连接本机的 MCode 后在手机上查看、批准与发号施令", fontSize = 13.sp, color = LocalMuted.current, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-        Spacer(Modifier.height(26.dp))
+        Spacer(Modifier.height(12.dp))
         OutlinedTextField(
             u, { u = it },
             Modifier.fillMaxWidth(),
