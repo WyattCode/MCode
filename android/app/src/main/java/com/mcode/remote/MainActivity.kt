@@ -777,6 +777,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var artCategory by remember { mutableStateOf("") }
     var artFacets by remember { mutableStateOf<JSONObject?>(null) }
     var artBuilding by remember { mutableStateOf(false) }
+    var artQuery by remember { mutableStateOf("") }
     var runningOnly by remember { mutableStateOf(false) }
     var privacy by remember { mutableStateOf(false) }
     var projectFilter by remember { mutableStateOf<String?>(null) }
@@ -1985,7 +1986,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 )
                             LeftMode.Artifacts ->
                                 ArtifactsPane(
-                                    groups = artifacts.toList(),
+                                    groups = filterArtifacts(artifacts.toList(), artQuery),
                                     loading = artifactsLoading,
                                     modifier = Modifier.weight(1f).fillMaxWidth(),
                                     category = artCategory,
@@ -2001,6 +2002,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             if (body.isNotBlank()) filePreview = rel to body
                                         }
                                     },
+                                    query = artQuery,
+                                    onQuery = { artQuery = it },
                                 )
                         }
                         /*
@@ -2759,6 +2762,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         artifactsLoading = true
         val ask = JSONObject().put("type", "artifact.list").put("limit", 40)
         if (artCategory.isNotEmpty()) ask.put("category", artCategory)
+        /*
+         * `query` is NOT sent: measured against the live gateway, artifact.list
+         * accepts the field and ignores it - "testenv" (a path that exists) and
+         * "zzzznotfound" both came back with nothing, same as any other word.
+         * The filter therefore runs here over what the server did send, which is
+         * the only way the field can honestly promise anything.
+         */
         val reply = runCatching { rpc(ask, 45_000) }.getOrNull()
         val data = reply?.optJSONObject("data")
         artifacts.clear()
@@ -2804,7 +2814,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 Spacer(Modifier.height(8.dp))
                 if (leftMode == LeftMode.Artifacts) {
                     ArtifactsPane(
-                        groups = artifacts.toList(),
+                        groups = filterArtifacts(artifacts.toList(), artQuery),
                         loading = artifactsLoading,
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                         category = artCategory,
@@ -2820,6 +2830,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 if (body.isNotBlank()) filePreview = rel to body
                             }
                         },
+                        query = artQuery,
+                        onQuery = { artQuery = it },
                     )
                 } else if (leftMode == LeftMode.Projects) {
                     ProjectsPane(
@@ -5142,6 +5154,36 @@ fun ScheduledPane(tasks: List<Triple<String, String, Long>>, modifier: Modifier 
 }
 
 /**
+ * The artifacts page filtered by what was typed in its field.
+ *
+ * The match is on the file's path or the conversation's title, case-insensitive,
+ * and a group whose title matches keeps all its files - searching for the
+ * conversation that made something is as natural as searching for the file.
+ */
+fun filterArtifacts(groups: List<JSONObject>, query: String): List<JSONObject> {
+    val needle = query.trim().lowercase()
+    if (needle.isEmpty()) return groups
+    val out = mutableListOf<JSONObject>()
+    for (group in groups) {
+        val title = group.optString("title")
+        val files = group.optJSONArray("files")
+        val kept = org.json.JSONArray()
+        if (files != null) {
+            for (i in 0 until files.length()) {
+                val file = files.optJSONObject(i) ?: continue
+                if (file.optString("path").lowercase().contains(needle)) kept.put(file)
+            }
+        }
+        if (kept.length() > 0 || title.lowercase().contains(needle)) {
+            val copy = JSONObject(group.toString())
+            copy.put("files", if (title.lowercase().contains(needle) && kept.length() == 0) files ?: kept else kept)
+            out.add(copy)
+        }
+    }
+    return out
+}
+
+/**
  * 作品: what the app has made, grouped by the conversation that made it.
  *
  * `artifact.list` answers one entry per conversation with its files, newest
@@ -5159,6 +5201,8 @@ fun ArtifactsPane(
     building: Boolean = false,
     onCategory: (String) -> Unit = {},
     onOpen: (String, String) -> Unit = { _, _ -> },
+    query: String = "",
+    onQuery: (String) -> Unit = {},
 ) {
     if (loading && groups.isEmpty()) {
         Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -5177,6 +5221,29 @@ fun ArtifactsPane(
         return
     }
     Column(modifier) {
+        /*
+         * Claude's artifacts page keeps its search field on the page - unlike
+         * 最近记录, where the magnifier opens one - because this page's whole
+         * job is finding one file among many. Measured off its own screen: a
+         * 45dp pill inset 12dp from the pane, a magnifier at its left, and
+         * 「搜索 Artifacts」 as the placeholder.
+         */
+        OutlinedTextField(
+            query,
+            onQuery,
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).heightIn(min = 45.dp),
+            placeholder = { Text("搜索作品", fontSize = 14.sp, color = LocalMuted.current) },
+            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(17.dp)) },
+            shape = RoundedCornerShape(22.dp),
+            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
+            colors = OutlinedTextFieldDefaults.colors(
+                unfocusedContainerColor = LocalField.current,
+                focusedContainerColor = LocalField.current,
+                unfocusedBorderColor = LocalFieldLine.current,
+                focusedBorderColor = LocalFieldLine.current,
+            ),
+            singleLine = true,
+        )
         /*
          * MiMo's facets: the tabs are counted by the server (`facets`), not by
          * what this page happens to hold - so 文档 says 5 because five documents
