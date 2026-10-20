@@ -1584,6 +1584,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         while (true) {
             kotlinx.coroutines.delay(500)
             val sid = currentSession ?: continue
+            /*
+             * Only the questions and permissions are looked at, and the set is
+             * built from a transcript that is usually much longer than they
+             * are. Two empty maps is the common case - a running turn with
+             * nothing parked - and it used to rebuild a set of every row's key
+             * twice a second for nothing.
+             */
+            val parked = pendingQuestions[sid].orEmpty() + pendingPerms[sid].orEmpty()
+            if (parked.isEmpty()) continue
             val known = items.map { it.key }.toSet()
             for (r in pendingQuestions[sid].orEmpty()) {
                 val card = Item.Quest(r.optString("id"), r)
@@ -1920,8 +1929,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 val reply = rpc(ask)
                 val sid = reply.optJSONObject("data")?.optJSONObject("session")?.optString("id").orEmpty()
                 if (sid.isNotBlank()) select(sid)
+                else Toast.makeText(context, "新建会话失败", Toast.LENGTH_LONG).show()
             } catch (e: Exception) {
-                println("[remote] session.create failed: $e")
+                // A new conversation that does not appear looks like a dead
+                // button; the reason has to be said out loud.
+                Toast.makeText(context, "新建会话失败：${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -4322,7 +4334,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             val at = sessions.indexOfFirst { it.id == sid }
                                             if (at >= 0) sessions[at] = sessions[at].copy(model = modelId)
                                         } catch (e: Exception) {
-                                            println("[remote] session.model failed: $e")
+                                            /*
+                                             * The picker closes on the press, so a
+                                             * refused switch left the pill showing
+                                             * the model the reader thought they had
+                                             * chosen - and the next turn went to the
+                                             * old one with no word about it.
+                                             */
+                                            Toast.makeText(context, "切换模型失败：${e.message?.take(60) ?: "未知错误"}", Toast.LENGTH_LONG).show()
                                         }
                                     }
                                 }
