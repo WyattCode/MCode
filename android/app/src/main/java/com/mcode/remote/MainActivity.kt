@@ -3974,20 +3974,14 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) { mark() }
             if (withInput) Box(Modifier.align(Alignment.BottomCenter)) { inputBar() }
-            // Claude floats a small language pill at the composer's right, level
-            // with its lower half: 40dp by 33dp, #E8EAEE, the keyboard's own
-            // language in it. It sits outside the card, not in it.
-            Box(
-                Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 6.dp, bottom = 34.dp)
-                    .size(width = 72.dp, height = 58.dp)
-                    .background(if (LocalBg.current == DarkBg) Color(0xFF2E2E2E) else Color(0xFFE8EAEE), RoundedCornerShape(18.dp))
-                    .clickable { },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("En", fontSize = 17.sp, color = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF61646A))
-            }
+            /*
+             * The language pill is gone. It was copied from Claude's own phone
+             * composer, where a soft 「En」 tile floats at the right of the card
+             * - but there it belongs to the keyboard the app ships, and here it
+             * sat on top of the send button, inert (`clickable { }`, no
+             * action), covering the one control the row exists for. The
+             * desktop has no such pill at all.
+             */
         }
     } else {
         /*
@@ -5506,7 +5500,15 @@ fun PermCard(item: Item.Perm, onPerm: (String, String) -> Unit, onPermReason: (S
     var reason by remember(item.requestId) { mutableStateOf("") }
 
     Column(
-        Modifier.fillMaxWidth().background(LocalSurface.current, RoundedCornerShape(20.dp)).padding(14.dp),
+        /*
+         * `.err-card` / the permission dock: a 16 corner with 12 above and
+         * below and 14 at the sides. This carried a 20 corner, so the card read
+         * as a softer, rounder thing than every other panel on the page.
+         */
+        Modifier
+            .fillMaxWidth()
+            .background(LocalSurface.current, RoundedCornerShape(16.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
         // Head: shield, "请求执行命令", the model's chip, and the queue count.
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -8070,13 +8072,33 @@ fun InputCapsule(
                         else -> LocalBg.current
                     }
                     Box(
-                        Modifier.size(44.dp).background(sendBg, CircleShape).clickable(enabled = enabled && !transcribing) {
+                        /*
+                         * `.send` is a 28 square with a 6 corner, not a circle:
+                         * the desktop's send is a rounded tile, and a 44dp disc
+                         * here read as a different control - the same size as
+                         * the plus and the mic beside it, which are circles.
+                         * The touch target stays 44 through the padding-free
+                         * box; only the painted shape follows the desktop.
+                         */
+                        Modifier.size(44.dp).clickable(enabled = enabled && !transcribing) {
                             if (running) onStop()
                             else if (listening) onMic()
                             else if (text.isNotBlank() || attachments.isNotEmpty()) { onSend(text, attachments); text = "" }
                         },
                         contentAlignment = Alignment.Center,
                     ) {
+                        /*
+                         * The painted tile: 28 square with a 6 corner, the
+                         * desktop's `.send`, with the mark at 16 - which is
+                         * what the icon sizes on the reference row come to
+                         * against a 28 box.
+                         */
+                        Box(
+                            Modifier
+                                .size(28.dp)
+                                .background(sendBg, RoundedCornerShape(6.dp)),
+                            contentAlignment = Alignment.Center,
+                        ) {
                         if (running) {
                             // An outlined square, not a filled one: Claude's stop
                             // is a 1.5dp ink rectangle inside the soft circle.
@@ -8098,7 +8120,8 @@ fun InputCapsule(
                         } else if (text.isBlank() && attachments.isEmpty()) {
                             Icon(Icons.Outlined.GraphicEq, contentDescription = "语音输入", tint = sendFg, modifier = Modifier.size(20.dp))
                         } else {
-                            Icon(Icons.Filled.ArrowUpward, contentDescription = "发送", tint = sendFg, modifier = Modifier.size(22.dp))
+                            Icon(Icons.Filled.ArrowUpward, contentDescription = "发送", tint = sendFg, modifier = Modifier.size(16.dp))
+                        }
                         }
                     }
                 }
