@@ -221,6 +221,70 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 ## 逐轮记录（新到旧）
 
+### 第七十轮：视觉精修 + 二次审核 —— 28 个提交（2026-10-21 凌晨）
+
+本轮两段：前半按 PC 的 CSS 逐数字对齐界面，后半回头审自己的改动。**后半找到的问题全部出在前半**，共 7 个。
+
+**对齐方法**：不再凭记忆，直接打开 `src/renderer/src/styles/tokens.css` 和各组件 CSS 抄数字。发现大量偏差（此前都在估）。
+
+- **正文列**：`.inner` 764 宽 + 左右 28；手机原是全宽 + 12，实际行宽约 2.5 倍。已 `widthIn(max=812)` 居中。
+- **用户气泡**：`.user-bubble` 圆角 16 / 内边距 9,13 / 最大 78% / 字重 500；原 12 / 10,10 / 固定 560。
+- **工具行**：`.hstep` 14sp/22.4/上下 5/缩进 23；原 13/3/10。**有三处渲染实现，必须同改**（ToolRow、Item.ToolRun 的 runSummary、RunRow）。
+- **会话行**：34 最小高 + 上下 6 + 行间 2（原 14 padding 无 gap）；标题 14sp/500（原 15/默认）；`convo-cell` 46px 单元内 14px 图标（原 34dp）。
+- **抽屉行**：`.row` 38 最小 / 圆角 8 / 内边距 14 / 间距 14 / 14sp 500（原 12/18/16sp）。
+- **菜单**：`AppMenu.vue` 160 宽 / 圆角 6 / 行高 28 / 12 内边距 / 13sp。Material `DropdownMenuItem` 是 48/14/16——差一倍。新增 `MenuRow`，9 处替换。**图标在行尾（`space-between` + 负 4px），不是行首**。
+- **顶栏**：`.top` 52 高 / `.ico` 24 盒 / 图标 14-18（原 Material IconButton 48 盒 + 24 图标）。触控盒保留 40dp。
+- **输入卡**：`.box` 圆角 10（原 20）/ `.input` 13sp/20/最小 60 / 控件行 44 高。
+- **发送按钮**：`.send` 是 28 方形圆角 6（原 44 圆形，与 + / 麦克风同形状）。外层保留 44 热区。
+- **错误卡**：`.err-card` 是**卡片底色 + 正文色字 + 同色图标**（CSS 注释写了两遍 "not red"）；原 errorContainer 红底红字。图标是**圆圈感叹号**，不是三角警告。
+- **图标**：新增 `MiIcon` 用 androidx `PathParser` 解析 PC 的 `d` 字符串。已复刻：新建任务（气泡+尾巴+加号 24/2）、产物中心（托盘 20/1.2）、会话行对话气泡与 `<>` 分支、技能行拼图块（12 网格）+ 子菜单箭头。
+- **动效**：PC 主曲线 `cubic-bezier(0.2, 0.7, 0.2, 1)`（12 处），Compose 默认 `(0.4,0,0.2,1)` 明显更钝。消息入场 0.2s、工具行展开 0.18s 都改用它。
+- **深色**：页 #151515 → 选中 #313131 → 卡 #20201F，与 PC 三级同构；7 处硬编码浅色全有深色分支。**diff 配色是真 bug**——PC 深色用更亮的 `#a3da9f`/`#ffb3a4`，手机两套主题共用深绿深红，深色下几乎不可读。
+
+**审核找到的 7 个 bug**（全部出自本轮前半）：
+
+1. `loadingThread` 只在成功路径清 → `session.get` 超时后界面永久停在「正在加载对话…」。改 `finally`。
+2. `waiters` 只收到回包才 remove → 超时请求永久残留。加 `forgetResponse`，6 处 `finally`。
+3. `pendingPerms` 从不清理 → **已批准的权限重开会话又显示为待确认**。加 `clearPerm`。
+4. 四处 `currentSession!!` → 切会话后点击 NPE；goalResend 在两次 rpc 后重读可能标错会话。
+5. `session.deleted` 残留 `unseen` / `pendingPerms` / `pendingQuestions`。
+6. `rpc` 从不检查 `ok` → 服务端拒绝与空结果在界面上完全一样。改记 `lastError` + 头部红条（不抛异常，因大量调用无 catch）。
+7. `messageIndex` 存位置但 items 会中间插入 → 加 `rowOfMessage` 校验并修正。
+
+**自查我的改动又找到 7 个**（连续四轮）：
+
+- **重连退避根本不会退避、还会彻底放弃**：`onState(false)` 无条件重置 1s；`LaunchedEffect(connected, retryDelay)` 以 retryDelay 为 key，涨到 15s 上限后不再重启 → 重试永久停止。实测：最后重试 07:06:31，07:07:46 仍断线而网关全程监听。改 `LaunchedEffect(connected)` + while 循环。
+- **多 text part 覆盖**：PC 的 `replyText` 用 `\n\n` 连接全部 text part；手机 `copy(text = part.text)` 覆盖 → 用过工具的回复只显示后半段。
+- **历史路径没填 `partTexts`**：只改实时路径 → 打开旧会话再继续对话时，**整个气泡历史正文被抹掉**。两条路径都写同一 store，分隔符统一 `\n\n`。
+- **`clearPerm` 不移除界面卡片**：服务端 `respond()` 里 `if (!pending) return` 静默返回且不发 `resolved` 事件（桌面端先答过 / 重连重放旧卡片）→ 卡片永久留在页面。
+- **未读误报**：重连补标用 `lastSeenAt`，但它只在整份列表重建时更新 → 中途看过的会话重连后被标未读。
+- **`seenUpdated` 从不清理 + 当前会话记录不跟随**：会话删除后条目残留；正在看的会话每轮在更新但只记录打开那一刻 → 重连可能把**正在读的会话**标未读。
+
+**方法论**（写进 `.workbuddy/memory/`）：
+
+- `LaunchedEffect(keys)` 的 key 不能放「effect 自己会改、且会收敛」的状态——一旦收敛就不再触发。这种 bug 只在「持续失败超过上限时长」时暴露，短测发现不了。
+- 「X 发生了 → 等事件 Y 来清理」的模式要问「Y 一定来吗」。
+- 一份数据有两条写入路径（实时 / 历史）时，加共享 store 必须两边都改。
+- 按状态索引的 map 必查：① 会话删除时清 ② 当前会话是否特殊处理 ③ 是否有第二条写入路径。
+- 改 UI 提示逻辑前先用日志确认「数据有没有到达渲染层」，再怀疑渲染条件（本轮连续三次猜渲染逻辑都没生效，直到打印计数为 0 才定位到**根本不建 Item**）。
+
+**验证**：全部改动编译通过并装机；真机截图核对列表、会话、正文列宽、气泡、工具行、菜单、顶栏、发送按钮、深色 diff；断线重连端到端（杀网关 → 退避 2/4/8/15s 不停 → 重启网关 25 秒内自动恢复、断线条消失、零误报未读）。
+
+**状态**：分支 `feat/remote-markdown`，比 `origin/main` 领先 100 个提交（Remote 全部历史 + 本轮 28 个），未合入 main；未打包、未发版。交接文档顺带修正了第六十九轮排错位置的问题。
+
+### 第六十九轮：语音破案 —— 本机 faster-whisper 引擎 + 手机录音转写（2026-10-19 凌晨）
+
+- **「此设备没有可用的语音识别服务」是真话，不是误报**：`cmd package query-services -a android.speech.RecognitionService` 在这台折叠屏上只有两个候选——小米 `com.xiaomi.mibrain.speech/.asr.AsrService` 与 Claude 自带 `ClaudeRecognitionService`，前者的绑定权限 `com.xiaomi.mibrain.speech.permission.BIND_SPEECH_RECOGNITION_SERVICE` **`prot=signature`**（不签名的第三方永远拿不到），后者用 `BIND_RECOGNITION_SERVICE` 同理。所以 `isRecognitionAvailable()` 返回 false 是正确的——`RecognizerIntent` 外部活动与进程内 `SpeechRecognizer` 两条路都没有可绑定对象，之前两版实现注定失败。
+- **PC 版同样坏**：`voice.transcribe` 只认 provider 的 `/audio/transcriptions`，而本机 qwen(.124)/glm(.233) 都是 chat-only（`/v1/models` 各只回 1 个聊天模型，没有转写模型）；且 `storage/config.json` 的 `voiceModel` 被指成 `ds/deepseek-v4.1-flash`（聊天模型当 ASR 用）→ `voice.precheck` 恒为 `{ok:false, reason:"asrUnavailable"}`。
+- **双引擎（PR #76）**：新增 `src/server/asr.ts`。`local` = 本机 Python 的 faster-whisper（`MCODE_ASR_PYTHON` 可覆盖；临时文件喂音频，因为库读文件；`vad_filter=True` 剪掉按压前后静音，否则小模型会把静音幻觉成「谢谢观看」；空结果抛 `voice.emptyResult` 复用桌面既有文案）。`provider` = 原有 OpenAI 兼容调用，一行未改。`voice.precheck` 对 local 只验解释器与包（无网络探测），对 provider 仍探模型列表。
+- **手机端改写**：MediaRecorder（AAC/MP4/16kHz mono）→ base64 → `voice.transcribe`（`mode:"fast"`、`language:"zh-CN"`、带 `sessionID`）→ 文本填进输入框。点麦克风开始、再点结束；圆钮录音时变停止方块、转写时转圈，麦克风图标录音期间变红；录到空音频（<1.2KB）说「没听清，请再说一次」而不是报错。`rpc()` 加 `timeoutMs` 参数（转写要跑一次 whisper，比协议问答慢）。
+- **真值验证**：win32com SAPI 合成 `你好，这是一次语音识别测试` 存 8kHz wav → 网关 `precheck {"ok":true}` → 转写返回 `你好,這是一次語音識別測試。`（繁体字形是 base 模型的特性，不是链路问题）。**PC 与手机走同一端点、同一请求形状。**
+- **PC 设置页（PR #77）**：语音转写下拉加「本机（faster-whisper）」= `local/base` 并置顶（此前只能手改 config.json）。18 张语言表：zhCN/zhTW 中文、其余 16 张英文。
+- **动效补齐**：时间线每行入场 `alpha 0→1` + `translateY 8dp→0`（tween 180ms，`graphicsLayer` 不触发重组）；运行中回合在末尾挂 Claude 式 **working line**——三点 alpha 行波（`rememberInfiniteTransition`，相位过点时不透明度 0.3→1、抬升 2dp）。
+- **设备认错事件**：`adb devices` 里当时在线的是**另一台小米**（`25079RPDCC/turner`，1880×3008，192.168.10.174），前台是 `com.wyatt.stoneage`，我据此误报用户在玩游戏。折叠屏序列号是 **0186D460499C3540（lhasa）**。为此写了 `.workbuddy/find-fold.py`：按 `ro.serialno` 严格认设备，认不出就明说，绝不拿别的手机当折叠屏。
+- **折叠屏当前掉线**：`192.168.10.155` ping 通（0% 丢包）、mDNS 无广播、30000–50000 端口抽样全闭 → 无线调试已断。**等用户重开调试给新端口**，才能装 #76 的 APK 验「录音→结束→回填」全链路。
+- 状态：main @ `f1ef8a8e`（#76 语音、#77 设置）。
+
 ### 第六十八轮：合盖态真机走查 + 深色回归 —— 六态闭环（2026-10-19 凌晨）
 
 - **合盖态（外屏 1168×1712 浅色）**：assistant 直接排版、user 胶囊、裸 + 与麦克风、淡橙发送钮、白输入卡、`#F9F9F7` 背景——Compact 分支全部正确。
@@ -236,19 +300,6 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 ### 第六十六轮：展开态布局对齐（2026-10-19 凌晨）
 
 - **PR #73**：与 Claude 展开态（内屏横置、浅色）并排对照后修四处——①assistant 消息**去掉气泡**直接排版（原 `surfaceVariant` 块；只有 user 保留 pill）；②左栏底部加黑底「+ 新建会话」pill；③+ 与麦克风改裸图标（去圆底）；④宽屏顶栏显示当前会话名（原硬编码「最近记录」）。
-
-### 第六十九轮：语音破案 —— 本机 faster-whisper 引擎 + 手机录音转写（2026-10-19 凌晨）
-
-- **「此设备没有可用的语音识别服务」是真话，不是误报**：`cmd package query-services -a android.speech.RecognitionService` 在这台折叠屏上只有两个候选——小米 `com.xiaomi.mibrain.speech/.asr.AsrService` 与 Claude 自带 `ClaudeRecognitionService`，前者的绑定权限 `com.xiaomi.mibrain.speech.permission.BIND_SPEECH_RECOGNITION_SERVICE` **`prot=signature`**（不签名的第三方永远拿不到），后者用 `BIND_RECOGNITION_SERVICE` 同理。所以 `isRecognitionAvailable()` 返回 false 是正确的——`RecognizerIntent` 外部活动与进程内 `SpeechRecognizer` 两条路都没有可绑定对象，之前两版实现注定失败。
-- **PC 版同样坏**：`voice.transcribe` 只认 provider 的 `/audio/transcriptions`，而本机 qwen(.124)/glm(.233) 都是 chat-only（`/v1/models` 各只回 1 个聊天模型，没有转写模型）；且 `storage/config.json` 的 `voiceModel` 被指成 `ds/deepseek-v4.1-flash`（聊天模型当 ASR 用）→ `voice.precheck` 恒为 `{ok:false, reason:"asrUnavailable"}`。
-- **双引擎（PR #76）**：新增 `src/server/asr.ts`。`local` = 本机 Python 的 faster-whisper（`MCODE_ASR_PYTHON` 可覆盖；临时文件喂音频，因为库读文件；`vad_filter=True` 剪掉按压前后静音，否则小模型会把静音幻觉成「谢谢观看」；空结果抛 `voice.emptyResult` 复用桌面既有文案）。`provider` = 原有 OpenAI 兼容调用，一行未改。`voice.precheck` 对 local 只验解释器与包（无网络探测），对 provider 仍探模型列表。
-- **手机端改写**：MediaRecorder（AAC/MP4/16kHz mono）→ base64 → `voice.transcribe`（`mode:"fast"`、`language:"zh-CN"`、带 `sessionID`）→ 文本填进输入框。点麦克风开始、再点结束；圆钮录音时变停止方块、转写时转圈，麦克风图标录音期间变红；录到空音频（<1.2KB）说「没听清，请再说一次」而不是报错。`rpc()` 加 `timeoutMs` 参数（转写要跑一次 whisper，比协议问答慢）。
-- **真值验证**：win32com SAPI 合成 `你好，这是一次语音识别测试` 存 8kHz wav → 网关 `precheck {"ok":true}` → 转写返回 `你好,這是一次語音識別測試。`（繁体字形是 base 模型的特性，不是链路问题）。**PC 与手机走同一端点、同一请求形状。**
-- **PC 设置页（PR #77）**：语音转写下拉加「本机（faster-whisper）」= `local/base` 并置顶（此前只能手改 config.json）。18 张语言表：zhCN/zhTW 中文、其余 16 张英文。
-- **动效补齐**：时间线每行入场 `alpha 0→1` + `translateY 8dp→0`（tween 180ms，`graphicsLayer` 不触发重组）；运行中回合在末尾挂 Claude 式 **working line**——三点 alpha 行波（`rememberInfiniteTransition`，相位过点时不透明度 0.3→1、抬升 2dp）。
-- **设备认错事件**：`adb devices` 里当时在线的是**另一台小米**（`25079RPDCC/turner`，1880×3008，192.168.10.174），前台是 `com.wyatt.stoneage`，我据此误报用户在玩游戏。折叠屏序列号是 **0186D460499C3540（lhasa）**。为此写了 `.workbuddy/find-fold.py`：按 `ro.serialno` 严格认设备，认不出就明说，绝不拿别的手机当折叠屏。
-- **折叠屏当前掉线**：`192.168.10.155` ping 通（0% 丢包）、mDNS 无广播、30000–50000 端口抽样全闭 → 无线调试已断。**等用户重开调试给新端口**，才能装 #76 的 APK 验「录音→结束→回填」全链路。
-- 状态：main @ `f1ef8a8e`（#76 语音、#77 设置）。
 
 ### 第六十五轮：浅色调色板真机采样对齐 + 发送钮随主题翻转（2026-10-19 凌晨）
 

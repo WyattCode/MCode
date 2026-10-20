@@ -116,9 +116,23 @@ export async function startRemoteGateway(runtime: Runtime, options: RemoteGatewa
   const buffer: BufferedEvent[] = []
 
   const unsubscribe = runtime.bus.subscribe((event: ServerEvent) => {
-    // Terminal streams belong to the window that owns the shell; a phone
-    // neither renders nor asks for them. Everything else the phone may see.
-    if (event.type === "shell.data" || event.type === "shell.exit") return
+    /*
+     * Terminal streams belong to the window that owns the shell. A phone can
+     * now open one of its own (the composer's 打开终端), and that one's output
+     * is for it - so it goes out live, to every phone, but is never buffered:
+     * a resume replays conversation events, and replaying a terminal's whole
+     * scrollback into a fresh pane would duplicate what `shell.attach` just
+     * gave it.
+     */
+    if (event.type === "shell.data" || event.type === "shell.exit") {
+      if (runtime.shells.ownerOf(event.shellID) !== REMOTE_SHELL_OWNER) return
+      lastEventId += 1
+      const json = JSON.stringify({ kind: "remote.event", eventId: lastEventId, event })
+      for (const client of phones) {
+        if (client.readyState === client.OPEN) client.send(json)
+      }
+      return
+    }
     lastEventId += 1
     // Same masking the window gets: no unmasked secrets leave the backend.
     const frame = frameForWindow({ kind: "event", event })

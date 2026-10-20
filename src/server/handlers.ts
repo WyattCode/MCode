@@ -1766,7 +1766,17 @@ export async function readPreview(resolved: string): Promise<Handled<"file.read"
   const oversized = async () => (await fs.stat(resolved).catch(() => undefined))?.size ?? 0
   if (VIDEO_EXTENSIONS.has(path.extname(resolved).toLowerCase())) {
     if ((await oversized()) > MEDIA_LIMIT) return { ...empty, kind: "binary", tooBig: true }
-    return { ...empty, kind: "binary", video: true }
+    /*
+     * The bytes ride along now. The desktop never reads them - its files tab
+     * plays the video from its own disk through the local preview server, and
+     * `mediaAddress` returns before looking at anything past `video` - but a
+     * reader on the far side of the gateway has no disk to play from, and the
+     * base64 channel the pictures and sounds already use is the one way it
+     * gets the file at all. The same 25 MB ceiling applies.
+     */
+    const mime = mimeFor(resolved) ?? "application/octet-stream"
+    const bytes = await fs.readFile(resolved)
+    return { ...empty, kind: "binary", video: true, mime, data: bytes.toString("base64") }
   }
   const kind = kindFor(resolved, Buffer.alloc(0))
   /*
