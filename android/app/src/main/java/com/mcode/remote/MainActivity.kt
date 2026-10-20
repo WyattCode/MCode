@@ -83,8 +83,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -5009,6 +5013,8 @@ fun DrawerItem(
 @Composable
 fun ColumnDivider(fraction: Float, totalWidthPx: Int, onChange: (Float) -> Unit) {
     val bar = if (LocalBg.current == DarkBg) Color(0xFF3E3E3C) else Color(0xFFD8D8D6)
+    var paneWidth by remember { mutableStateOf(totalWidthPx) }
+    LaunchedEffect(totalWidthPx) { paneWidth = totalWidthPx }
     /*
      * `pointerInput(Unit)` captures its lambda once, so a `fraction` read inside
      * it is the value from the first composition - every drag would compute from
@@ -5020,21 +5026,26 @@ fun ColumnDivider(fraction: Float, totalWidthPx: Int, onChange: (Float) -> Unit)
     val emit = rememberUpdatedState(onChange)
     Box(
         Modifier
-            .width(24.dp)
+            .width(32.dp)
             .fillMaxHeight()
-            .pointerInput(Unit) {
-                detectDragGestures { change, drag ->
-                    change.consume()
-                    /*
-                     * Divided by the *window*, not by this handle: a drag of
-                     * 100px is 3% of a 3408px window and 400% of a 24dp handle,
-                     * and dividing by the handle made every drag snap to the
-                     * clamp.
-                     */
-                    if (totalWidthPx <= 0) return@detectDragGestures
-                    emit.value((live.value + drag.x / totalWidthPx).coerceIn(0.18f, 0.46f))
-                }
-            },
+            // A description so the handle is a node a driver can find, and so
+            // a screen reader can say what it is. A bare Box is not in the tree
+            // at all, which is also why `adb input swipe` had nothing to land on.
+            .semantics { contentDescription = "调整分栏宽度" }
+            /*
+             * `draggable`, not a hand-rolled `pointerInput`: the handle sits
+             * between two panes that both consume pointer events, and a raw
+             * pointerInput never saw a single event here - three swipes across
+             * the handle moved the split by zero. `draggable` installs a
+             * proper gesture node that takes part in the hit test, so the
+             * parent's scroll cannot claim the drag first.
+             */
+            .draggable(
+                orientation = androidx.compose.foundation.gestures.Orientation.Horizontal,
+                state = rememberDraggableState { delta ->
+                    if (paneWidth > 0) emit.value((live.value + delta / paneWidth).coerceIn(0.18f, 0.46f))
+                },
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Box(
