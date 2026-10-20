@@ -5757,7 +5757,18 @@ fun InputCapsule(
     } else {
         emptyList()
     }
-    Box(modifier.fillMaxWidth().padding(start = 118.dp, end = 113.dp, top = 8.dp, bottom = 8.dp)) {
+    /*
+     * Claude's composer is not centred in its pane: measured on the pad its card
+     * runs x=1323..3365 of a pane that ends at 3408, which is 159dp of air on
+     * the left and 172px - just under 17dp - on the right. The asymmetry is
+     * where the right-hand rail would sit if this window had one, and it is why
+     * the card reads as pushed toward the conversation's text column.
+     *
+     * This used to be 118/113, near enough symmetric, which put the field a
+     * finger's width left of where Claude's sits and made the card look centred
+     * on the pane rather than aligned to the reply column.
+     */
+    Box(modifier.fillMaxWidth().padding(start = 159.dp, end = 17.dp, top = 8.dp, bottom = 8.dp)) {
         if (slashMenu.isNotEmpty()) {
             Surface(
                 shape = RoundedCornerShape(12.dp),
