@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
@@ -5387,6 +5388,13 @@ fun AccessGlyphs(level: String, tint: Color, size: androidx.compose.ui.unit.Dp =
 @Composable
 fun AccessPill(level: String, onPick: (String) -> Unit, fullAllowed: Boolean = true) {
     var open by remember { mutableStateOf(false) }
+    /*
+     * Skipping every question is asked about once, as the desktop does
+     * (`chooseAccess`: `next === "full"` sets `confirmingFull`). A level that
+     * never stops to ask is the one thing here that cannot be undone by
+     * another tap in the same breath, so the tap alone should not do it.
+     */
+    var confirmingFull by remember { mutableStateOf(false) }
     val word = when (level) {
         "auto" -> "帮我审批"
         "full" -> "完全访问"
@@ -5436,7 +5444,10 @@ fun AccessPill(level: String, onPick: (String) -> Unit, fullAllowed: Boolean = t
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .clickable { open = false; onPick(value) }
+                        .clickable {
+                            open = false
+                            if (value == "full") confirmingFull = true else onPick(value)
+                        }
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.Top,
                 ) {
@@ -5463,6 +5474,48 @@ fun AccessPill(level: String, onPick: (String) -> Unit, fullAllowed: Boolean = t
                 }
             }
         }
+    }
+    /*
+     * MiMo's own confirm, as `FullAccessDialog.vue` draws it: a 16sp title with
+     * a close, the description at 14sp on a 1.65 line, then a plain 取消 and a
+     * light red confirm led by a warning triangle. Nothing is focused when it
+     * opens, so Enter cannot turn full access on by accident.
+     */
+    if (confirmingFull) {
+        AlertDialog(
+            onDismissRequest = { confirmingFull = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = LocalText.current,
+            textContentColor =
+                if (LocalBg.current == DarkBg) Color(0xFFC8BdBA) else Color(0xFF3F3D39),
+            title = { Text("确定要切换到完全访问模式吗？", fontSize = 16.sp, fontWeight = FontWeight.Normal) },
+            text = {
+                Text(
+                    "完全访问允许 MCode 在未经你批准的情况下访问互联网并编辑你计算机上的任何文件。这会带来数据丢失和提示注入等风险。删除文件的命令也不会再单独询问。",
+                    fontSize = 14.sp,
+                    lineHeight = 23.sp,
+                )
+            },
+            confirmButton = {
+                TextButton({
+                    confirmingFull = false
+                    onPick("full")
+                }) {
+                    Icon(
+                        Icons.Filled.Warning,
+                        contentDescription = null,
+                        tint = if (LocalBg.current == DarkBg) Color(0xFFFF9B7F) else Color(0xFFD93025),
+                        modifier = Modifier.size(15.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "开启完全访问",
+                        color = if (LocalBg.current == DarkBg) Color(0xFFFF9B7F) else Color(0xFFD93025),
+                    )
+                }
+            },
+            dismissButton = { TextButton({ confirmingFull = false }) { Text("取消", color = LocalText.current) } },
+        )
     }
 }
 
