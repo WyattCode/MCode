@@ -114,7 +114,12 @@ private val CreamPill = Color(0xFFF0EFEC)
 private val CreamLine = Color(0xFFE4E1D8)
 private val Ink = Color(0xFF1F1E1C)
 private val InkMuted = Color(0xFF6B6862)
-private val Ember = Color(0xFFD97757)
+/*
+ * The mark's own orange, measured off Claude's empty pane on the fold:
+ * (204,124,94) where this used #D97757 = (217,119,87) - the same family but a
+ * redder, less dusty tone, which showed most at the 40dp mark.
+ */
+private val Ember = Color(0xFFCC7C5E)
 /*
  * The dot at the end of a conversation row, measured off Claude on the fold:
  * 22px across at its 450dpi (7.8dp), grey (139,137,132) when the conversation
@@ -3530,11 +3535,11 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
             // Claude's pad empty pane carries the same asterisk its phone pane
             // does, drawn rather than a bitmap: the packaged mark is a raster
             // and read as two grey triangles at this size.
-            SparkMark(Modifier.size(36.dp))
+            SparkMark(Modifier.size(40.dp))
             Spacer(Modifier.height(14.dp))
             Text(greeting(), fontSize = 18.sp, fontWeight = FontWeight.Normal, color = LocalText.current)
         } else {
-            SparkMark(Modifier.size(46.dp))
+            SparkMark(Modifier.size(40.dp))
             Spacer(Modifier.height(16.dp))
             // Claude's phrase is 50px of glyph on the pad - 18sp, not the 44
             // this was set to after a first read of its line box (144px, which
