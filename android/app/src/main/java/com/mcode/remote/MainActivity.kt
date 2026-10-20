@@ -826,6 +826,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * 技能与插件: the desktop's plugins page, which lists the folder's skills
      * and its MCP servers side by side and lets either be switched off.
      */
+    val pluginServers = remember { mutableStateListOf<JSONObject>() }
+    val pluginSkills = remember { mutableStateListOf<JSONObject>() }
+    var pluginsLoading by remember { mutableStateOf(false) }
+    var pluginsFailed by remember { mutableStateOf(false) }
+    var refreshPlugins by remember { mutableStateOf(0) }
     /**
      * 模型服务: the providers and their keys.
      *
@@ -1792,6 +1797,65 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * conversation list and the transcript both gone. Built that way here too,
      * which is also why it needs no column-mode of its own.
      */
+    /*
+     * The plugins page reads both lists together: `mcp.list` for the servers
+     * and `skill.list` for the folder's skills. Neither is fatal on its own -
+     * a folder with no skills is the ordinary case, and a server that will not
+     * start is reported inside its own card rather than as a page failure.
+     */
+    LaunchedEffect(leftMode, refreshPlugins) {
+        if (leftMode != LeftMode.Plugins) return@LaunchedEffect
+        pluginsLoading = true
+        pluginsFailed = false
+        val dir = sessions.find { it.id == currentSession }?.directory.orEmpty()
+        val mcp = runCatching { rpc(JSONObject().put("type", "mcp.list")) }.getOrNull()
+        val sk = runCatching { rpc(JSONObject().put("type", "skill.list").put("directory", dir)) }.getOrNull()
+        pluginServers.clear()
+        mcp?.optJSONObject("data")?.optJSONArray("servers")?.let { arr ->
+            for (i in 0 until arr.length()) arr.optJSONObject(i)?.let { pluginServers.add(it) }
+        }
+        pluginSkills.clear()
+        sk?.optJSONObject("data")?.optJSONArray("skills")?.let { arr ->
+            for (i in 0 until arr.length()) arr.optJSONObject(i)?.let { pluginSkills.add(it) }
+        }
+        pluginsFailed = mcp == null && sk == null
+        pluginsLoading = false
+    }
+
+    if (leftMode == LeftMode.Plugins) {
+        PluginsScreen(
+            servers = pluginServers.toList(),
+            skills = pluginSkills.toList(),
+            loading = pluginsLoading,
+            failed = pluginsFailed,
+            onRefresh = { refreshPlugins++ },
+            onToggleSkill = { name, enabled ->
+                scope.launch {
+                    /*
+                     * `disabledSkills` is the field the loader reads, and the
+                     * desktop toggles it the same way: read the config, change
+                     * the one list, write it back.
+                     */
+                    val config = runCatching { rpc(JSONObject().put("type", "config.get")) }
+                        .getOrNull()?.optJSONObject("data")?.optJSONObject("config")
+                    val off = config?.optJSONArray("disabledSkills")?.let { arr ->
+                        (0 until arr.length()).mapNotNull { arr.optString(it).ifBlank { null } }.toMutableList()
+                    } ?: mutableListOf()
+                    if (enabled) off.remove(name) else if (name !in off) off.add(name)
+                    runCatching {
+                        rpc(
+                            JSONObject().put("type", "config.set")
+                                .put("patch", JSONObject().put("disabledSkills", org.json.JSONArray(off))),
+                        )
+                    }
+                    refreshPlugins++
+                }
+            },
+            onClose = { leftMode = LeftMode.Sessions },
+        )
+        return
+    }
+
     if (leftMode == LeftMode.Artifacts) {
         ArtifactsScreen(
             groups = artifacts.toList(),
@@ -2102,6 +2166,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     onSeeAll = { openDrawer() },
                     onNewTask = { newSession(); closeDrawer() },
                     onArtifacts = { leftMode = LeftMode.Artifacts; closeDrawer() },
+                    onPlugins = { leftMode = LeftMode.Plugins; closeDrawer() },
                     currentPage = leftMode,
                     onLongPress = { sheetTarget = it },
                 )
@@ -5171,6 +5236,7 @@ fun DrawerContent(
     onReconnect: () -> Unit,
     onNewTask: () -> Unit = {},
     onArtifacts: () -> Unit = {},
+    onPlugins: () -> Unit = {},
     /** Which column page is open, so the drawer can mark the row for it. */
     currentPage: LeftMode = LeftMode.Sessions,
     onSearch: () -> Unit = {},
@@ -5221,6 +5287,10 @@ fun DrawerContent(
             }
             Spacer(Modifier.height(12.dp))
             DrawerItem(Icons.AutoMirrored.Outlined.Article, "产物中心", active = currentPage == LeftMode.Artifacts) { onArtifacts() }
+            // 插件: the desktop's page for MCP servers and skills, which the
+            // phone had no way to reach at all - so a skill could not be turned
+            // off, and a server that failed to start could not be seen.
+            DrawerItem(Icons.Outlined.Extension, "插件", active = currentPage == LeftMode.Plugins) { onPlugins() }
             Spacer(Modifier.height(20.dp))
             HorizontalDivider(color = LocalMuted.current.copy(alpha = 0.18f))
             Spacer(Modifier.height(18.dp))
@@ -5354,8 +5424,199 @@ fun ColumnDivider(fraction: Float, totalWidthPx: Int, onChange: (Float) -> Unit)
     }
 }
 
+/**
+ * 插件, the desktop's page for what the model can reach: MCP servers and skills.
+ *
+ * Built as its own whole page like 产物中心, because that is how the desktop
+ * does it - `PluginsView.vue` replaces the workspace rather than sitting in a
+ * column. The layout is that page's: 插件 at 24sp, its subtitle, a search field
+ * and a filter, then 已安装 over a list of cards. An MCP card names the server
+ * and how many tools it offers (共 N 个工具), with its failure in the server's
+ * own words under the name; a skill card names the skill and says whether it is
+ * 内置技能 or 技能.
+ *
+ * A skill's switch is the one thing that writes: `config.set` on
+ * `disabledSkills`, which is the field the loader reads - the desktop's own
+ * toggle (`PluginsView.vue`) writes the same list.
+ */
+@Composable
+fun PluginsScreen(
+    servers: List<JSONObject>,
+    skills: List<JSONObject>,
+    loading: Boolean,
+    failed: Boolean,
+    onRefresh: () -> Unit,
+    onToggleSkill: (String, Boolean) -> Unit,
+    onClose: () -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    // 全部 / 已启用 / 已停用, the desktop's three status filters.
+    var status by remember { mutableStateOf("all") }
+
+    fun keep(name: String, enabled: Boolean): Boolean {
+        if (query.isNotBlank() && !name.contains(query, ignoreCase = true)) return false
+        return when (status) {
+            "on" -> enabled
+            "off" -> !enabled
+            else -> true
+        }
+    }
+
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(38.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = LocalText.current, modifier = Modifier.size(20.dp))
+            }
+            Spacer(Modifier.width(6.dp))
+            Text("插件", fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current, modifier = Modifier.weight(1f))
+            // The desktop's refresh glyph.
+            Box(Modifier.size(38.dp).clickable { onRefresh() }, contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.Refresh, contentDescription = "刷新列表", tint = LocalMuted.current, modifier = Modifier.size(18.dp))
+            }
+        }
+        Text(
+            "在 MCode 中使用你连接的工具与技能。",
+            fontSize = 13.sp,
+            color = LocalMuted.current,
+            modifier = Modifier.padding(horizontal = 22.dp).padding(top = 2.dp, bottom = 12.dp),
+        )
+        OutlinedTextField(
+            query, { query = it },
+            Modifier.fillMaxWidth().padding(horizontal = 18.dp),
+            placeholder = { Text("搜索插件和技能", fontSize = 13.sp, color = LocalMuted.current) },
+            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(16.dp)) },
+            shape = RoundedCornerShape(12.dp),
+            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
+            singleLine = true,
+            colors = OutlinedTextFieldDefaults.colors(
+                unfocusedContainerColor = LocalField.current,
+                focusedContainerColor = LocalField.current,
+                unfocusedBorderColor = LocalFieldLine.current,
+                focusedBorderColor = LocalFieldLine.current,
+            ),
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.padding(horizontal = 18.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for ((value, word) in listOf("all" to "全部", "on" to "已启用", "off" to "已停用")) {
+                val active = status == value
+                Surface(
+                    shape = RoundedCornerShape(15.dp),
+                    color = if (active) MaterialTheme.colorScheme.primary else LocalPill.current,
+                    modifier = Modifier.clickable { status = value },
+                ) {
+                    Text(
+                        word,
+                        fontSize = 13.sp,
+                        color = if (active) LocalBg.current else LocalText.current,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        if (failed) {
+            Text("无法读取本机已安装的插件和技能", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp))
+            return@Column
+        }
+        val shownServers = servers.filter { keep(it.optString("name"), it.optString("status") !in setOf("disabled", "off")) }
+        val shownSkills = skills.filter { keep(it.optString("name"), it.optBoolean("enabled", true)) }
+        if (!loading && shownServers.isEmpty() && shownSkills.isEmpty()) {
+            Text(
+                if (query.isNotBlank() || status != "all") "没有匹配的插件或技能" else "暂无已安装的插件",
+                fontSize = 13.sp,
+                color = LocalMuted.current,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+            )
+            return@Column
+        }
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 18.dp, end = 18.dp, bottom = 24.dp)) {
+            if (shownServers.isNotEmpty()) {
+                item(key = "mcpHead") {
+                    Text("已安装", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(top = 4.dp, bottom = 6.dp))
+                }
+                items(shownServers.size) { index ->
+                    val server = shownServers[index]
+                    val name = server.optString("name")
+                    val tools = server.optInt("tools", 0)
+                    val error = server.optString("error")
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 6.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .border(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE4E1D8), RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(name, fontSize = 14.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                if (error.isNotBlank()) error else if (tools > 0) "共 $tools 个工具" else "插件",
+                                fontSize = 12.sp,
+                                color = if (error.isNotBlank()) MaterialTheme.colorScheme.error else LocalMuted.current,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            }
+            if (shownSkills.isNotEmpty()) {
+                item(key = "skillHead") {
+                    Text(
+                        if (shownServers.isEmpty()) "已安装" else "技能",
+                        fontSize = 13.sp,
+                        color = LocalMuted.current,
+                        modifier = Modifier.padding(top = 8.dp, bottom = 6.dp),
+                    )
+                }
+                items(shownSkills.size) { index ->
+                    val skill = shownSkills[index]
+                    val name = skill.optString("name")
+                    val description = skill.optString("description")
+                    val enabled = skill.optBoolean("enabled", true)
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 6.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .border(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE4E1D8), RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(name, fontSize = 14.sp, color = LocalText.current, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                if (description.isNotBlank()) description else if (skill.optBoolean("builtin")) "内置技能" else "技能",
+                                fontSize = 12.sp,
+                                color = LocalMuted.current,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        /*
+                         * The switch. A built-in skill can be turned off as well
+                         * as a user one - `disabledSkills` is the same list - but
+                         * a skill that cannot be uninstalled is still a skill the
+                         * model reads, so only `enabled` is offered here.
+                         */
+                        Switch(
+                            checked = enabled,
+                            onCheckedChange = { onToggleSkill(name, it) },
+                            modifier = Modifier.size(width = 44.dp, height = 26.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 /** Which page the left column is showing. Claude switches between them in place. */
-enum class LeftMode { Sessions, Artifacts }
+enum class LeftMode { Sessions, Artifacts, Plugins }
 
 /**
  * The black capsule at the foot of the column.
