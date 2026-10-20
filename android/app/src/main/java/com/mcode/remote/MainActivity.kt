@@ -4909,8 +4909,12 @@ fun Timeline(
                                          * caption beside the 17sp it now shares
                                          * a page with.
                                          */
+                                        // `.user-bubble` sets 500: the reader's
+                                        // words carry the same weight they do on
+                                        // the desktop's tinted plate.
                                         fontSize = 17.sp,
                                         lineHeight = 26.sp,
+                                        fontWeight = FontWeight.Medium,
                                         color = LocalBubbleText.current,
                                     )
                                     /*
@@ -4977,9 +4981,10 @@ fun Timeline(
                     }
                     is ToolRun -> {
                         var open by remember { mutableStateOf(false) }
-                        Column(Modifier.padding(start = 10.dp)) {
+                        // `.hstep`'s indent and rhythm, as ToolRow below has it.
+                        Column(Modifier.padding(start = 23.dp)) {
                             Row(
-                                Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 3.dp),
+                                Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 5.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 /*
@@ -4991,7 +4996,8 @@ fun Timeline(
                                  */
                                 Text(
                                     runSummary(item),
-                                    fontSize = 15.sp,
+                                    fontSize = 14.sp,
+                                    lineHeight = 22.4.sp,
                                     color = LocalMuted.current,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
