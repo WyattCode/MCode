@@ -878,6 +878,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var url by remember { mutableStateOf(autoUrl) }
     var token by remember { mutableStateOf(autoToken) }
     var showConnect by remember { mutableStateOf(false) }
+    /** The pending backoff before a reconnect, or null when connected. */
+    var retryDelay by remember { mutableStateOf<Long?>(null) }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     fun openDrawer() = scope.launch { drawerState.open() }
     fun closeDrawer() = scope.launch { drawerState.close() }
@@ -1929,7 +1931,38 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
 
     client.onState = { up ->
         connected = up
-        if (up) connectedOnce = true
+        if (up) {
+            connectedOnce = true
+            retryDelay = null
+        } else if (connectedOnce) {
+            /*
+             * The socket dropped after it had been up.
+             *
+             * There was no reconnect at all: `onFailure` set `connected` false
+             * and stopped, so one Wi-Fi hiccup or one gateway restart left the
+             * app dead until the reader went into 连接设置 and pressed connect
+             * by hand - with the list just sitting there empty, which looks
+             * like an empty account rather than a lost link.
+             *
+             * It retries on a backoff, and the banner says so meanwhile.
+             */
+            retryDelay = 1000L
+        }
+    }
+
+    /*
+     * The backoff: 1s, 2s, 4s, 8s, then every 15s. Long enough not to hammer a
+     * gateway that is restarting, short enough that a reader who unlocked the
+     * pad again finds the app already back.
+     */
+    LaunchedEffect(connected, retryDelay) {
+        val wait = retryDelay ?: return@LaunchedEffect
+        if (connected) return@LaunchedEffect
+        kotlinx.coroutines.delay(wait)
+        if (!connected && url.isNotBlank() && token.isNotBlank()) {
+            client.connect(url, token)
+            retryDelay = minOf(wait * 2, 15_000L)
+        }
     }
     client.onFrame = { f -> handle(f) }
 
@@ -2578,6 +2611,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                  */
                 Column(Modifier.weight(leftFraction).fillMaxHeight().fillMaxWidth()) {
                     Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+                    // The wide layout's own header, so the lost-link notice has
+                    // to be hung here as well as under `AppTopBar`.
+                    if (!connected) OfflineStrip()
                     Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         /*
                          * Claude's list header: menu at the far left, the title
@@ -2953,7 +2989,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         } else {
             if (empty) {
                 Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                    AppTopBar(filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onPrivacy = { privacy = !privacy }, findOpen = findOpen, onFind = { findOpen = !findOpen; if (!findOpen) findQuery = "" })
+                    AppTopBar(filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onPrivacy = { privacy = !privacy }, findOpen = findOpen, onFind = { findOpen = !findOpen; if (!findOpen) findQuery = "" }, connected = connected)
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         WelcomePane(withInput = true, inputBar = inputBar)
                     }
@@ -2962,7 +2998,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             } else {
                 Scaffold(
                     containerColor = MaterialTheme.colorScheme.background,
-                    topBar = { AppTopBar(filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onPrivacy = { privacy = !privacy }, findOpen = findOpen, onFind = { findOpen = !findOpen; if (!findOpen) findQuery = "" }) },
+                    topBar = { AppTopBar(filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onPrivacy = { privacy = !privacy }, findOpen = findOpen, onFind = { findOpen = !findOpen; if (!findOpen) findQuery = "" }, connected = connected) },
                     bottomBar = {
                         Column {
                             inputBar()
@@ -4144,8 +4180,48 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
     }
 }
 
+/**
+ * The strip a lost link puts under the header.
+ *
+ * The wide layout draws its own header and never calls `AppTopBar`, so the
+ * notice had to be a piece both can hang under themselves - on the pad, which
+ * is the only place this app runs, the bar's copy was never reached at all.
+ */
 @Composable
-fun AppTopBar(filterActive: Boolean, privacyActive: Boolean, onDrawer: () -> Unit, onFilter: () -> Unit, onPrivacy: () -> Unit, findOpen: Boolean = false, onFind: () -> Unit = {}) {
+fun OfflineStrip() {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(if (LocalBg.current == DarkBg) Color(0xFF2A2118) else Color(0xFFFDF3E3))
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        androidx.compose.material3.CircularProgressIndicator(
+            modifier = Modifier.size(12.dp),
+            strokeWidth = 1.6.dp,
+            color = LocalMuted.current,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "连接已断开，正在重连…",
+            fontSize = 12.sp,
+            color = if (LocalBg.current == DarkBg) Color(0xFFE8C89A) else Color(0xFF7A5B2E),
+        )
+    }
+}
+
+@Composable
+fun AppTopBar(
+    filterActive: Boolean,
+    privacyActive: Boolean,
+    onDrawer: () -> Unit,
+    onFilter: () -> Unit,
+    onPrivacy: () -> Unit,
+    findOpen: Boolean = false,
+    onFind: () -> Unit = {},
+    /** False while the socket is down; the strip under the bar says so. */
+    connected: Boolean = true,
+) {
     /*
      * Claude's narrow header is deliberately bare: a back arrow, no title, and
      * the ghost on the right. Sampled off its own portrait screenshot - the
@@ -4202,6 +4278,13 @@ fun AppTopBar(filterActive: Boolean, privacyActive: Boolean, onDrawer: () -> Uni
                 GhostGlyph(active = privacyActive, size = 18.dp)
             }
         }
+        /*
+         * A lost link says so. Without this the only symptom was a list that
+         * was suddenly empty, which reads as "no conversations" rather than
+         * "not connected" - and the reader had no way to tell the app was
+         * already trying to come back.
+         */
+        if (!connected) OfflineStrip()
     }
 }
 
