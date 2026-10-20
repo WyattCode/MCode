@@ -478,6 +478,7 @@ class RemoteClient {
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .build()
     private var ws: okhttp3.WebSocket? = null
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
     var onFrame: (JSONObject) -> Unit = {}
     var onState: (Boolean) -> Unit = {}
@@ -515,7 +516,13 @@ class RemoteClient {
                 try {
                     val frame = JSONObject(text)
                     waiters.remove(frame.optString("id"))?.complete(frame)
-                    onFrame(frame)
+                    /*
+                     * Every frame is applied on the main thread. This ran on
+                     * OkHttp's reader thread, so a burst of deltas and the
+                     * composition were writing the same lists from two threads
+                     * - which is the other half of the crash above.
+                     */
+                    main.post { onFrame(frame) }
                 } catch (e: Exception) {
                     println("[remote] frame error: $e")
                 }
@@ -868,6 +875,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var voiceText by remember { mutableStateOf<String?>(null) }
     /** The turn whose long-press sheet is open (复制 / 从此处分支). */
     var messageTarget by remember { mutableStateOf<Item.Msg?>(null) }
+    /** The question being rewritten in 编辑并重发. */
+    var editTarget by remember { mutableStateOf<Item.Msg?>(null) }
     var modelPicker by remember { mutableStateOf(false) }
     var providers by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     /**
@@ -2855,6 +2864,20 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     Spacer(Modifier.width(14.dp))
                     Text("复制", fontSize = 15.sp, color = LocalText.current)
                 }
+                /*
+                 * 编辑并重发 belongs only on the reader's own words: editing a
+                 * reply would be asking the model to say something it did not.
+                 */
+                if (msg.role == "user" && msg.text.isNotBlank()) {
+                    Row(Modifier.fillMaxWidth().clickable {
+                        messageTarget = null
+                        editTarget = msg
+                    }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Edit, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(14.dp))
+                        Text("编辑并重发", fontSize = 15.sp, color = LocalText.current)
+                    }
+                }
                 Row(Modifier.fillMaxWidth().clickable {
                     val sid = currentSession
                     val mid = msg.id
@@ -2885,6 +2908,80 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 }
             }
         }
+    }
+    /*
+     * 编辑并重发, the desktop's own pair of actions on a user turn (`sendEdit`):
+     * the messages from that question on are deleted - with `files: false`, so
+     * no file on disk moves - and the words come back into the box to be
+     * rewritten.
+     *
+     * The phone could only copy a question or branch from it, which left a typo
+     * at the top of a long conversation unfixable without starting again.
+     */
+    editTarget?.let { msg ->
+        var draft by remember(msg.id) { mutableStateOf(msg.text) }
+        AlertDialog(
+            onDismissRequest = { editTarget = null },
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = LocalText.current,
+            textContentColor = LocalText.current,
+            title = { Text("编辑这条消息", fontSize = 16.sp) },
+            text = {
+                Column {
+                    Text(
+                        "从这条起的内容会被删除，然后按新的文字重新发送。",
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        color = LocalMuted.current,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                    OutlinedTextField(
+                        draft,
+                        { draft = it },
+                        Modifier.fillMaxWidth(),
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
+                        shape = RoundedCornerShape(10.dp),
+                        maxLines = 6,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton({
+                    val sid = currentSession
+                    val text = draft.trim()
+                    editTarget = null
+                    if (sid != null && text.isNotBlank()) {
+                        scope.launch {
+                            val cut = runCatching {
+                                rpc(
+                                    JSONObject().put("type", "session.revert")
+                                        .put("sessionID", sid)
+                                        .put("messageID", msg.id)
+                                        .put("files", false),
+                                )
+                            }.getOrNull()
+                            if (cut == null) {
+                                Toast.makeText(context, "没能撤回，请重试", Toast.LENGTH_SHORT).show()
+                                return@launch
+                            }
+                            // The list is rebuilt from the server's own answer rather
+                            // than sliced here: a revert also rewinds the cursor, and
+                            // guessing at it left the cut turn on screen.
+                            select(sid)
+                            runCatching {
+                                rpc(
+                                    JSONObject().put("type", "session.prompt")
+                                        .put("sessionID", sid)
+                                        .put("text", text)
+                                        .put("attachments", org.json.JSONArray()),
+                                )
+                            }
+                        }
+                    }
+                }) { Text("发送", color = MaterialTheme.colorScheme.primary) }
+            },
+            dismissButton = { TextButton({ editTarget = null }) { Text("取消", color = LocalText.current) } },
+        )
     }
     deleteTarget?.let { row ->
         AlertDialog(
@@ -3511,7 +3608,14 @@ fun Timeline(items: List<Item>, modifier: Modifier, running: Boolean = false, on
         val cards = items.filterIsInstance<Item.Perm>()
         cards.withIndex().associate { (i, card) -> card.requestId to (i + 1 to cards.size) }
     }
-    val rows = remember(items.toList()) { stepsOf(rowsOf(items)) }
+    /*
+     * `rowsOf` walks the list it is handed. Handed the live `SnapshotStateList`
+     * it walked the very list a frame could be clearing at that moment, and the
+     * iterator threw `ConcurrentModificationException` inside LazyColumn's
+     * interval content - which took the whole app down on 编辑并重发. The copy is
+     * the list as of this composition, which is all the rows are meant to be.
+     */
+    val rows = remember(items.toList()) { stepsOf(rowsOf(items.toList())) }
     /*
      * The turn the two glyphs belong to.
      *
