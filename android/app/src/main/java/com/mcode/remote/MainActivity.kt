@@ -880,6 +880,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var showConnect by remember { mutableStateOf(false) }
     /** The pending backoff before a reconnect, or null when connected. */
     var retryDelay by remember { mutableStateOf<Long?>(null) }
+    /** The last refusal the server sent, for a screen to report. */
+    var lastError by remember { mutableStateOf<String?>(null) }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     fun openDrawer() = scope.launch { drawerState.open() }
     fun closeDrawer() = scope.launch { drawerState.close() }
@@ -1246,13 +1248,49 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         request(req, id)
         // Transcription runs a whisper pass on the PC and takes longer than a
         // protocol question does; the caller names how long it may wait.
-        return try {
+        val frame = try {
             kotlinx.coroutines.withTimeout(timeoutMs) { deferred.await() }
         } finally {
             // The reply may still arrive later; the entry must not sit there
             // holding a deferred nobody will ever complete.
             client.forgetResponse(id)
         }
+        /*
+         * A refusal is recorded whether or not the caller looks.
+         *
+         * The protocol answers `{ok: false, error}` for anything the server will
+         * not do - a session that is gone, a path that is not a project, a
+         * provider without a key. Every one of the thirty-odd callers read
+         * `data` and took `null` for "nothing to show", so a refusal arrived as
+         * an empty list or an idle screen with no word about what happened.
+         *
+         * It is NOT thrown here: most callers run inside `scope.launch` with no
+         * catch, and a thrown exception in those would take the app down -
+         * trading a silent failure for a crash. `lastError` is what a screen
+         * shows, and `rpcOrThrow` is for the callers that want the failure
+         * inline.
+         */
+        if (frame.has("ok") && !frame.optBoolean("ok")) {
+            lastError = frame.optString("error").ifBlank { "请求失败" }
+        } else {
+            lastError = null
+        }
+        return frame
+    }
+
+    /**
+     * One round trip that refuses to pretend.
+     *
+     * For the callers that act on what came back - they get the failure instead
+     * of an empty `data`, so they can say what went wrong rather than doing
+     * nothing.
+     */
+    suspend fun rpcOrThrow(req: JSONObject, timeoutMs: Long = 20_000): JSONObject {
+        val frame = rpc(req, timeoutMs)
+        if (frame.has("ok") && !frame.optBoolean("ok")) {
+            throw IllegalStateException(frame.optString("error").ifBlank { "请求失败" })
+        }
+        return frame
     }
 
     /*
@@ -2173,6 +2211,26 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             },
             onAddFolder = { directory ->
                 scope.launch {
+                    /*
+                     * The server accepts a path whose ancestors exist - it
+                     * walks up to the nearest real directory and joins the rest
+                     * back on, which is how the desktop lets a project folder be
+                     * made later. A tablet reader typing a path by hand has no
+                     * way to see that, though: a typo became a project row
+                     * pointing at nothing. So the folder is checked here first,
+                     * and a mistyped one is refused with the sentence saying so.
+                     */
+                    val exists = runCatching {
+                        rpc(
+                            JSONObject().put("type", "file.listDir")
+                                .put("directory", directory).put("sub", ""),
+                            8_000,
+                        ).optJSONObject("data")?.has("entries") == true
+                    }.getOrDefault(false)
+                    if (!exists) {
+                        Toast.makeText(context, "文件夹不存在：$directory", Toast.LENGTH_LONG).show()
+                        return@launch
+                    }
                     val reply = runCatching {
                         rpc(JSONObject().put("type", "project.add").put("directory", directory).put("used", true))
                     }.getOrNull()?.optJSONObject("data")
@@ -2611,9 +2669,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                  */
                 Column(Modifier.weight(leftFraction).fillMaxHeight().fillMaxWidth()) {
                     Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
-                    // The wide layout's own header, so the lost-link notice has
-                    // to be hung here as well as under `AppTopBar`.
+                    // The wide layout's own header, so both notices have to be
+                    // hung here as well as under `AppTopBar`.
                     if (!connected) OfflineStrip()
+                    lastError?.let { msg -> ErrorStrip(msg) { lastError = null } }
                     Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         /*
                          * Claude's list header: menu at the far left, the title
@@ -4206,6 +4265,42 @@ fun OfflineStrip() {
             "连接已断开，正在重连…",
             fontSize = 12.sp,
             color = if (LocalBg.current == DarkBg) Color(0xFFE8C89A) else Color(0xFF7A5B2E),
+        )
+    }
+}
+
+/**
+ * What the server refused, under the header.
+ *
+ * `rpc` records the last `{ok:false, error}` it saw; before this the answer was
+ * simply ignored and the screen showed an empty result, so a request the server
+ * had rejected outright was indistinguishable from one that had nothing to say.
+ * Tapping it dismisses; the next request replaces it.
+ */
+@Composable
+fun ErrorStrip(message: String, onDismiss: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(if (LocalBg.current == DarkBg) Color(0xFF3A2222) else Color(0xFFFDECEC))
+            .clickable { onDismiss() }
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            message,
+            fontSize = 12.sp,
+            color = if (LocalBg.current == DarkBg) Color(0xFFF0A8A8) else Color(0xFF9B2C2C),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(8.dp))
+        Icon(
+            Icons.Filled.Close,
+            contentDescription = "关闭",
+            tint = if (LocalBg.current == DarkBg) Color(0xFFF0A8A8) else Color(0xFF9B2C2C),
+            modifier = Modifier.size(14.dp),
         )
     }
 }
