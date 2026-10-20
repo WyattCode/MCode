@@ -115,7 +115,14 @@ private val CreamLine = Color(0xFFE4E1D8)
 private val Ink = Color(0xFF1F1E1C)
 private val InkMuted = Color(0xFF6B6862)
 private val Ember = Color(0xFFD97757)
-private val DotBlue = Color(0xFF3B82F6)
+/*
+ * The dot at the end of a conversation row, measured off Claude on the fold:
+ * 22px across at its 450dpi (7.8dp), grey (139,137,132) when the conversation
+ * is still, blue (65,118,207) while a turn is running. Claude draws one on
+ * every row - the colour is the state, not the presence.
+ */
+private val DotBlue = Color(0xFF4176CF)
+private val DotGrey = Color(0xFF8B8984)
 
 /*
  * Dark, sampled off Claude's own dark empty state on the fold at 450 dpi:
@@ -4840,7 +4847,12 @@ fun SessionList(sessions: List<SessionRow>, current: String?, query: String, onS
                             )
                         }
                     }
-                    if (s.running) Box(Modifier.size(7.dp).background(DotBlue, CircleShape))
+                    Box(
+                        Modifier
+                            .padding(start = 8.dp)
+                            .size(8.dp)
+                            .background(if (s.running) DotBlue else DotGrey, CircleShape),
+                    )
                 }
             }
         }
