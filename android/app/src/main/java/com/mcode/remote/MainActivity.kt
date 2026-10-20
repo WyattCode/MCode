@@ -1246,6 +1246,19 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     /** Each streamed part's kind, from the `message.part.updated` before its deltas. */
     val partKinds = remember { java.util.HashMap<String, String>() }
     /**
+     * The words of each text part, by part id.
+     *
+     * A reply can be several text parts - the model writes, calls a tool, then
+     * writes again - and the desktop joins them with a blank line
+     * (`replyText` in MessageStream.vue). The phone overwrote the bubble with
+     * whichever part arrived last, so a reply that used a tool showed only the
+     * second half of itself.
+     */
+    val partTexts = remember { java.util.HashMap<String, String>() }
+    /** When each part was first seen, so a rebuilt reply keeps its order. */
+    val partOrder = remember { java.util.HashMap<String, Int>() }
+    var partSeq = 0
+    /**
      * How much thinking each assistant turn produced, by message id.
      *
      * The desktop treats a turn that thought but never answered as a FAILURE
@@ -1814,7 +1827,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         // Remembered before the deltas that name it arrive, so a reasoning part
         // is never mistaken for prose.
         val partID = part.optString("id")
-        if (partID.isNotBlank()) partKinds[partID] = part.optString("type")
+        if (partID.isNotBlank()) {
+            partKinds[partID] = part.optString("type")
+            if (partID !in partOrder) partOrder[partID] = partSeq++
+        }
         if (part.optString("type") == "reasoning") {
             val so = part.optString("text")
             if (so.isNotBlank()) reasoningSeen[messageID] = once(reasoningSeen[messageID]) + so.length
@@ -1823,7 +1839,19 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         val existing = items[known]
         if (existing !is Item.Msg) return
         when (part.optString("type")) {
-            "text" -> items[known] = existing.copy(text = part.optString("text"))
+            "text" -> {
+                if (partID.isNotBlank()) partTexts[partID] = part.optString("text")
+                // Rebuilt from every text part the message has shown so far, in
+                // the order they were first seen, joined the way the desktop
+                // joins them.
+                val joined = partTexts.keys
+                    .filter { partKinds[it] == "text" }
+                    .sortedBy { partOrder[it] ?: Int.MAX_VALUE }
+                    .mapNotNull { partTexts[it] }
+                    .filter { it.isNotBlank() }
+                    .joinToString("\n\n")
+                if (joined.isNotBlank()) items[known] = existing.copy(text = joined)
+            }
             "tool" -> {
                 // Same rule as a whole message: a call streams in many times,
                 // so the row is found by its call id and replaced in place.
@@ -1854,6 +1882,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         items.clear()
         messageIndex.clear()
         partKinds.clear()
+        partTexts.clear()
+        partOrder.clear()
+        partSeq = 0
         reasoningSeen.clear()
         loadingThread = id != null
         if (id == null) return
