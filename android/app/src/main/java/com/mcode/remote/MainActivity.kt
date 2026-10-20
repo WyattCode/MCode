@@ -94,6 +94,13 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.core.graphics.PathParser
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.asComposePath
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
@@ -129,6 +136,44 @@ private val InkMuted = Color(0xFF6B6862)
  * redder, less dusty tone, which showed most at the 40dp mark.
  */
 private val Ember = Color(0xFFCC7C5E)
+
+/**
+ * One of the desktop's own icons, drawn from its `d` string.
+ *
+ * The phone used Material's nearest lookalike for each of these - a speech
+ * bubble, a tray, a code mark - and the shapes were close but never the same:
+ * Claude's new-task bubble carries its tail at the lower left and its plus in
+ * the middle, its tray is open at the top with the screen resting in it, and
+ * its conversation mark has the tail cut into the outline rather than hanging
+ * below it. The desktop ships all of these as literal paths, so the phone
+ * draws the same ones: `stroke-width` and the viewBox come from the same svg,
+ * and the size is whatever the row gives it.
+ */
+@Composable
+fun MiIcon(
+    path: String,
+    contentDescription: String? = null,
+    modifier: Modifier = Modifier,
+    viewBox: Float = 24f,
+    strokeWidth: Float = 2f,
+    tint: Color = LocalText.current,
+) {
+    Canvas(modifier) {
+        val scale = size.width / viewBox
+        withTransform({
+            scale(scale, scale, pivot = Offset.Zero)
+        }) {
+            // androidx's parser reads the full SVG grammar - the arcs in the
+            // new-task bubble included - and converts in one step.
+            val parsed = androidx.core.graphics.PathParser.createPathFromPathData(path).asComposePath()
+            drawPath(
+                parsed,
+                color = tint,
+                style = Stroke(strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round),
+            )
+        }
+    }
+}
 /*
  * The dot at the end of a conversation row, measured off Claude on the fold:
  * 22px across at its 450dpi (7.8dp), grey (139,137,132) when the conversation
@@ -5603,12 +5648,27 @@ fun SessionList(
                      * an icon list rather than a conversation list.
                      */
                     Box(Modifier.width(23.dp), contentAlignment = Alignment.Center) {
-                        Icon(
-                            if (s.running || s.directory.isNotBlank()) Icons.Outlined.Code else Icons.Outlined.ChatBubbleOutline,
-                            contentDescription = null,
-                            tint = LocalMuted.current,
-                            modifier = Modifier.size(14.dp),
-                        )
+                        /*
+                         * The desktop's `convo-cell`: a conversation mark on
+                         * every row (the path at Sidebar.vue:1288, 24 grid, 2
+                         * line), and a <> for one that works in a project
+                         * folder - Claude draws the same split the phone had.
+                         */
+                        if (s.running || s.directory.isNotBlank()) {
+                            MiIcon(
+                                "M5 5h14v14H5zM7.5 10.5 5.5 12l2 1.5M10.5 10.5l2 1.5-2 1.5",
+                                modifier = Modifier.size(14.dp),
+                                viewBox = 24f,
+                                strokeWidth = 1.6f,
+                                tint = LocalMuted.current,
+                            )
+                        } else {
+                            MiIcon(
+                                "M4.5 5h15a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4.5 3.5V17H4.5A1.5 1.5 0 0 1 3 15.5v-9A1.5 1.5 0 0 1 4.5 5z",
+                                modifier = Modifier.size(14.dp),
+                                tint = LocalMuted.current,
+                            )
+                        }
                     }
                     Spacer(Modifier.width(3.dp))
                     Column(Modifier.weight(1f)) {
@@ -5769,7 +5829,9 @@ fun DrawerContent(
              * leaves the drawer and opens a new conversation; it is the only
              * row the desktop's rail has besides the artifact centre.
              */
-            DrawerItem(Icons.Outlined.ChatBubbleOutline, "新建任务") {
+            // MiMo's 新建任务: a round speech bubble with its tail at the
+            // lower left and a plus in the middle (Sidebar.vue, 24 grid, 2 line).
+            DrawerItem(Icons.Outlined.ChatBubbleOutline, "新建任务", path = "M20.3 15.4A9 9 0 1 0 16.5 19.8L21 21zM12 9.5v5M9.5 12h5") {
                 onNewTask()
             }
             Spacer(Modifier.height(12.dp))
@@ -5777,7 +5839,15 @@ fun DrawerContent(
             // it needs no row of its own; the phone's list is a page behind a
             // drawer, and without a row it is unreachable.
             DrawerItem(Icons.Outlined.Folder, "项目", active = currentPage == LeftMode.Projects) { onProjects() }
-            DrawerItem(Icons.AutoMirrored.Outlined.Article, "产物中心", active = currentPage == LeftMode.Artifacts) { onArtifacts() }
+            // MiMo's 产物中心: the open tray with a screen resting in it (20 grid, 1.2 line).
+            DrawerItem(
+                Icons.AutoMirrored.Outlined.Article,
+                "产物中心",
+                active = currentPage == LeftMode.Artifacts,
+                path = "M2.9 11.5h3.4l1 1.9h5.4l1-1.9h3.4M2.9 11.5 5 4.6h10l2.1 6.9M2.9 11.5v3.9h14.2v-3.9",
+                pathViewBox = 20f,
+                pathStroke = 1.2f,
+            ) { onArtifacts() }
             // 插件: the desktop's page for MCP servers and skills, which the
             // phone had no way to reach at all - so a skill could not be turned
             // off, and a server that failed to start could not be seen.
@@ -5835,6 +5905,11 @@ fun DrawerItem(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     active: Boolean = false,
+    /** The desktop's own `d` string; when set it draws instead of the Material glyph. */
+    path: String? = null,
+    /** The path's own grid and stroke, which the desktop writes on its svg. */
+    pathViewBox: Float = 24f,
+    pathStroke: Float = 2f,
     onClick: () -> Unit,
 ) {
     /*
@@ -5870,8 +5945,20 @@ fun DrawerItem(
             .clickable { onClick() },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // The desktop's `row-ico` is 18 in a 24 grid.
-        Icon(icon, contentDescription = label, tint = LocalText.current, modifier = Modifier.size(18.dp))
+        // The desktop's `row-ico` is 18 in a 24 grid; where its own path is
+        // known it is drawn, and the Material lookalike is only a fallback.
+        if (path != null) {
+            MiIcon(
+                path,
+                contentDescription = label,
+                modifier = Modifier.size(18.dp),
+                viewBox = pathViewBox,
+                strokeWidth = pathStroke,
+                tint = LocalText.current,
+            )
+        } else {
+            Icon(icon, contentDescription = label, tint = LocalText.current, modifier = Modifier.size(18.dp))
+        }
         Spacer(Modifier.width(14.dp))
         Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
     }
