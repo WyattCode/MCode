@@ -7132,7 +7132,18 @@ fun GoalSwitch(on: Boolean) {
 
 /** One row of the plus menu: a glyph, what it does, and how it ends. */
 @Composable
-private fun PlusRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
+private fun PlusRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    enabled: Boolean,
+    /** Drawn from the desktop's own path where it has one (the skill mark). */
+    path: String? = null,
+    pathViewBox: Float = 16f,
+    pathStroke: Float = 1.2f,
+    /** The chevron a row that opens a submenu carries at its end. */
+    chevron: Boolean = false,
+    onClick: () -> Unit,
+) {
     /*
      * `Composer.vue`'s `.item`: 28 tall, 0/12 of inset, an 11 corner, 13sp at
      * 440, an 8 gap and a 14 mark. This drew 17/10/14 with 9 of padding and no
@@ -7153,8 +7164,26 @@ private fun PlusRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Icon(icon, contentDescription = null, tint = ink, modifier = Modifier.size(14.dp))
-        Text(label, fontSize = 13.sp, fontWeight = FontWeight(440), color = ink)
+        if (path != null) {
+            MiIcon(path, modifier = Modifier.size(14.dp), viewBox = pathViewBox, strokeWidth = pathStroke, tint = ink)
+        } else {
+            Icon(icon, contentDescription = null, tint = ink, modifier = Modifier.size(14.dp))
+        }
+        Text(label, fontSize = 13.sp, fontWeight = FontWeight(440), color = ink, modifier = Modifier.weight(1f))
+        if (chevron) {
+            /*
+             * `.item-chev`: the 14 chevron at 50% that says a row opens
+             * something rather than acting. 技能 had none, so a row that opens a
+             * picker looked exactly like the two above it that fire at once.
+             */
+            MiIcon(
+                "M6.5 4.5 10 8l-3.5 3.5",
+                modifier = Modifier.size(14.dp).graphicsLayer { alpha = 0.5f },
+                viewBox = 16f,
+                strokeWidth = 1.2f,
+                tint = ink,
+            )
+        }
     }
 }
 
@@ -7969,7 +7998,16 @@ fun InputCapsule(
                             }
                             // `.plus-menu .rule`: 4 above and below, 6 at each end.
                             HorizontalDivider(Modifier.padding(horizontal = 6.dp, vertical = 4.dp), color = LocalMuted.current.copy(alpha = 0.12f))
-                            PlusRow(Icons.Outlined.Build, "技能", enabled && skills.isNotEmpty()) { plusMenu = false; skillPicker = true }
+                            // MiMo's skill mark is a jigsaw piece on a 12 grid, and the
+                            // row carries the submenu chevron.
+                            PlusRow(
+                                Icons.Outlined.Build,
+                                "技能",
+                                enabled && skills.isNotEmpty(),
+                                path = "M6.2 2.5h2.3a1 1 0 0 1 1 1v1.2a1.3 1.3 0 1 1 0 2.6v1.2a1 1 0 0 1-1 1H7.3a1.3 1.3 0 1 0-2.6 0H3.5a1 1 0 0 1-1-1V7.3a1.3 1.3 0 1 0 0-2.6V3.5a1 1 0 0 1 1-1z",
+                                pathViewBox = 12f,
+                                chevron = true,
+                            ) { plusMenu = false; skillPicker = true }
                         }
                     }
                     if (skillPicker) {
