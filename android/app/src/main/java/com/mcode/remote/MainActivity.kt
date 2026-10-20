@@ -975,6 +975,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var changesNoGit by remember { mutableStateOf(false) }
     /** Parked permission requests per session, replayed from session.list. */
     val pendingPerms = remember { java.util.concurrent.ConcurrentHashMap<String, MutableList<JSONObject>>() }
+    /**
+     * Conversations whose turn finished while the reader was elsewhere.
+     *
+     * The desktop keeps this as `unseen` in its store (`Sidebar.vue`'s
+     * `statusOf`): a row that finished out of sight wears a blue dot until it
+     * is opened. The phone had no such state at all - one static dot on every
+     * row, grey or blue - so a reply that arrived while another conversation
+     * was on screen could only be found by scrolling and guessing.
+     */
+    val unseen = remember { mutableStateListOf<String>() }
     /** Parked question cards per session, replayed from question.list. */
     val pendingQuestions = remember { java.util.concurrent.ConcurrentHashMap<String, MutableList<JSONObject>>() }
     /** Bumped whenever the parked maps change, so the replay effect re-runs. */
@@ -1073,6 +1083,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         if (at < 0) return
         if (sessions[at].running == running) return
         sessions[at] = sessions[at].copy(running = running)
+        // A turn that ends while its own conversation is not on screen leaves
+        // the row unread, which is the state the blue dot reports.
+        if (!running && sessionID != currentSession) {
+            if (sessionID !in unseen) unseen.add(sessionID)
+        }
     }
 
     fun frame(json: JSONObject) = client.send(json.toString())
@@ -1470,6 +1485,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
 
     fun select(id: String?) {
         currentSession = id
+        if (id != null) unseen.remove(id)
         // What the reader was last in stays open across restarts: Claude
         // reopens the conversation you left, not whichever conversation
         // happened to move most recently.
@@ -2307,6 +2323,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     onProjects = { leftMode = LeftMode.Projects; closeDrawer() },
                     currentPage = leftMode,
                     onLongPress = { sheetTarget = it },
+                    unseen = unseen.toList(),
+                    awaiting = pendingPerms.filterValues { it.isNotEmpty() }.keys.toList(),
                 )
             }
         },
@@ -2503,7 +2521,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             }
                         }
                         Spacer(Modifier.height(6.dp))
-                        SessionList(visibleSessions, currentSession, search, onSelect = { select(it) }, compact = false, modifier = Modifier.weight(1f).fillMaxWidth(), onLongPress = { sheetTarget = it })
+                        SessionList(
+                            visibleSessions,
+                            currentSession,
+                            search,
+                            onSelect = { select(it) },
+                            compact = false,
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            onLongPress = { sheetTarget = it },
+                            unseen = unseen.toList(),
+                            awaiting = pendingPerms.filterValues { it.isNotEmpty() }.keys.toList(),
+                        )
                         /*
                          * Claude's foot-of-column capsule, which follows the
                          * mode: 新建会话 on the list, 新建项目 on the projects
@@ -4721,13 +4749,20 @@ fun Timeline(
     androidx.compose.runtime.CompositionLocalProvider(
         LocalFind provides if (find.isBlank()) null else FindNeedle(find, hitOrdinal),
     ) {
+    /*
+     * MiMo's reading column: 764 wide with 28 each side (`.inner` in
+     * MessageStream.vue), centred, so on a wide pane the text keeps the same
+     * measure it has on the desktop rather than running the full 3408. It was
+     * 12 either side with no cap, which on this pad drew lines some 2.5x the
+     * desktop's length - the single largest difference in the transcript.
+     */
     LazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+        modifier = Modifier.fillMaxSize().widthIn(max = 812.dp).align(Alignment.Center),
         verticalArrangement = Arrangement.spacedBy(8.dp),
         // The first turn used to sit flush against the header and read as
         // clipped; Claude leaves a breath of air above it.
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 10.dp, bottom = 6.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 28.dp, end = 28.dp, top = 10.dp, bottom = 6.dp),
     ) {
         for (item in rows) {
             item(key = (item as? ToolRun)?.key ?: (item as? Step)?.key ?: (item as Item).key) {
@@ -4801,19 +4836,34 @@ fun Timeline(
                                              * "hello" into a full-width slab. The
                                              * cap is a maximum, not a width.
                                              */
-                                            .widthIn(max = 560.dp)
-                                            .padding(end = 12.dp)
+                                            // `.user-bubble` is 78% of the reading
+                                            // column, not a fixed width: on a wide
+                                            // pane a hard 560 left the bubble short
+                                            // of the cap MiMo draws it to.
+                                            .fillMaxWidth(0.78f)
                                         else Modifier.fillMaxWidth()
                                     )
                                     // Claude renders assistant turns straight on the
                                     // page - only user turns get a bubble.
+                                    /*
+                                     * `.user-bubble`: a 16px corner and 9/13 of
+                                     * inset, which is MiMo's own measurement -
+                                     * this carried 12 and 10/10, a tighter pill
+                                     * that made a two-word question look like a
+                                     * chip. The assistant keeps its 5 above and
+                                     * below and loses the side inset the bubble
+                                     * needed.
+                                     */
                                     .background(
                                         if (isUser) LocalBubble.current else Color.Transparent,
-                                        RoundedCornerShape(12.dp),
+                                        RoundedCornerShape(if (isUser) 16.dp else 0.dp),
                                     )
-                                    // Claude's assistant prose breathes: 30 px between lines at 450 dpi,
-                                    // and a user turn carries its own pill padding.
-                                    .padding(horizontal = 10.dp, vertical = if (isUser) 10.dp else 5.dp)
+                                    .padding(
+                                        start = if (isUser) 13.dp else 0.dp,
+                                        end = if (isUser) 13.dp else 0.dp,
+                                        top = if (isUser) 9.dp else 5.dp,
+                                        bottom = if (isUser) 9.dp else 5.dp,
+                                    )
                                     // Claude's turns answer a long press with
                                     // 复制 / 从此处分支; both are here now.
                                     .combinedClickable(onClick = {}, onLongClick = { onMessage(item) }),
@@ -5483,7 +5533,18 @@ private fun DiffLines(diff: String, modifier: Modifier = Modifier) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun SessionList(sessions: List<SessionRow>, current: String?, query: String, onSelect: (String) -> Unit, compact: Boolean, modifier: Modifier = Modifier, onLongPress: ((SessionRow) -> Unit)? = null) {
+fun SessionList(
+    sessions: List<SessionRow>,
+    current: String?,
+    query: String,
+    onSelect: (String) -> Unit,
+    compact: Boolean,
+    modifier: Modifier = Modifier,
+    onLongPress: ((SessionRow) -> Unit)? = null,
+    /** Rows whose turn finished out of sight, and rows parked on an answer. */
+    unseen: List<String> = emptyList(),
+    awaiting: List<String> = emptyList(),
+) {
     val filtered = sessions.filter { it.title.contains(query, true) || it.id.contains(query, true) }
     if (filtered.isEmpty()) {
         Text("没有匹配的会话", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(16.dp))
@@ -5494,7 +5555,11 @@ fun SessionList(sessions: List<SessionRow>, current: String?, query: String, onS
     // new-chat pill.
     // The pill below is a sibling in the same column, so the list only needs
     // its own breathing room at the bottom, not a reservation for the pill.
-    LazyColumn(modifier.fillMaxWidth(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = if (compact) 6.dp else 6.dp)) {
+    LazyColumn(
+        modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 6.dp),
+    ) {
         for (s in filtered) {
             item(key = s.id) {
                 Row(
@@ -5512,28 +5577,49 @@ fun SessionList(sessions: List<SessionRow>, current: String?, query: String, onS
                                 Modifier
                             },
                         )
-                        .padding(horizontal = 14.dp, vertical = if (compact) 8.dp else 14.dp),
+                        /*
+                         * `.row.task > .row-open`: a 34 minimum with 6 above
+                         * and below, and 2 between rows (`.lists`'s gap). This
+                         * carried 14 of vertical padding and no gap, so a row
+                         * was 48 tall against the desktop's 34 and the list
+                         * read as spaced-out cards rather than as a thread.
+                         */
+                        .padding(horizontal = 14.dp, vertical = if (compact) 6.dp else 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (s.running || s.directory.isNotBlank()) {
-                        // A running session wears the <> mark, and so does any
-                        // session that belongs to a project folder - Claude
-                        // draws the same split. A plain conversation keeps the
-                        // speech bubble.
-                        Icon(Icons.Outlined.Code, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(34.dp).padding(end = 14.dp, top = 1.dp))
-                    } else {
-                        Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(34.dp).padding(end = 14.dp, top = 1.dp))
+                    /*
+                     * The desktop's `convo-cell`: a fixed 46px column that
+                     * holds a 14px glyph centred in it (`Sidebar.vue`), so every
+                     * title starts at the same x whatever the row's glyph is.
+                     * This drew a 34dp icon with a 14dp end padding, which gave
+                     * the same left edge by accident but made the glyph itself
+                     * four times the desktop's size - a tablet row that read as
+                     * an icon list rather than a conversation list.
+                     */
+                    Box(Modifier.width(23.dp), contentAlignment = Alignment.Center) {
+                        Icon(
+                            if (s.running || s.directory.isNotBlank()) Icons.Outlined.Code else Icons.Outlined.ChatBubbleOutline,
+                            contentDescription = null,
+                            tint = LocalMuted.current,
+                            modifier = Modifier.size(14.dp),
+                        )
                     }
+                    Spacer(Modifier.width(3.dp))
                     Column(Modifier.weight(1f)) {
                         // Claude sets the title and its timestamp tight against
                         // each other (32 px between the two baselines at 450
                         // dpi), so the pair reads as one row rather than two.
                         Text(
                             s.title.ifEmpty { s.id }.take(if (compact) 34 else 26),
-                            fontSize = 15.sp,
+                            // 14 at weight 500 over a 20 line-height is the
+                            // desktop's `row-label` exactly; this carried 15 at
+                            // the default weight, which is a different voice.
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
                             lineHeight = 20.sp,
                             color = LocalText.current,
                             maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                         if (!compact) {
                             Text(
@@ -5544,12 +5630,75 @@ fun SessionList(sessions: List<SessionRow>, current: String?, query: String, onS
                             )
                         }
                     }
-                    Box(
-                        Modifier
-                            .padding(start = 8.dp)
-                            .size(8.dp)
-                            .background(if (s.running) DotBlue else DotGrey, CircleShape),
-                    )
+                    /*
+                     * The desktop's three marks (`Sidebar.vue`, `statusOf`):
+                     * a turn still running is a spinning ring in the weak
+                     * text colour, a turn that finished away from this row is
+                     * a 7px blue dot, and one parked on a permission is the
+                     * 待确认 pill. Nothing to report draws nothing - the row
+                     * used to carry a grey dot whatever was happening, which
+                     * said "idle" in the same breath as "unread".
+                     *
+                     * A running ring turns only while something runs; Compose
+                     * has no CSS animation, so the angle is the clock's.
+                     */
+                    val waiting = s.id in awaiting
+                    val unread = s.id in unseen
+                    when {
+                        waiting -> {
+                            Text(
+                                "待确认",
+                                fontSize = 11.sp,
+                                color = LocalMuted.current,
+                                modifier = Modifier
+                                    .padding(start = 8.dp)
+                                    .background(LocalPill.current, RoundedCornerShape(9.dp))
+                                    .padding(horizontal = 7.dp, vertical = 2.dp),
+                            )
+                        }
+                        s.running -> {
+                            val spin = rememberInfiniteTransition(label = "row-spin")
+                            val angle by spin.animateFloat(
+                                initialValue = 0f,
+                                targetValue = 360f,
+                                animationSpec = infiniteRepeatable(
+                                    animation = tween(800, easing = LinearEasing),
+                                    repeatMode = RepeatMode.Restart,
+                                ),
+                                label = "row-angle",
+                            )
+                            /*
+                             * A 270-degree arc, turned by the clock: the missing
+                             * quarter is what makes it read as spinning rather
+                             * than as a ring that happens to be drawn.
+                             */
+                            Canvas(
+                                Modifier
+                                    .padding(start = 8.dp)
+                                    .size(12.dp)
+                                    .graphicsLayer { rotationZ = angle },
+                            ) {
+                                val stroke = 1.6.dp.toPx()
+                                drawArc(
+                                    color = DotGrey,
+                                    startAngle = -90f,
+                                    sweepAngle = 270f,
+                                    useCenter = false,
+                                    style = androidx.compose.ui.graphics.drawscope.Stroke(stroke),
+                                    topLeft = androidx.compose.ui.geometry.Offset(stroke / 2, stroke / 2),
+                                    size = androidx.compose.ui.geometry.Size(size.width - stroke, size.height - stroke),
+                                )
+                            }
+                        }
+                        unread -> {
+                            Box(
+                                Modifier
+                                    .padding(start = 8.dp)
+                                    .size(7.dp)
+                                    .background(DotBlue, CircleShape),
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -5571,6 +5720,9 @@ fun DrawerContent(
     onSearch: () -> Unit = {},
     onSeeAll: () -> Unit = {},
     onLongPress: ((SessionRow) -> Unit)? = null,
+    /** See `SessionList`: the drawer's own three rows carry the same marks. */
+    unseen: List<String> = emptyList(),
+    awaiting: List<String> = emptyList(),
 ) {
     // Claude's drawer is a shade below the page it covers: 243,243,240 against
     // the page's 249,249,247, which is what makes it read as a sheet laid over
@@ -5636,7 +5788,17 @@ fun DrawerContent(
          * on one screen however long the history is.
          */
         Column(Modifier.weight(1f)) {
-            SessionList(sessions.take(3), null, "", onSelect, compact = true, modifier = Modifier.fillMaxWidth(), onLongPress = onLongPress)
+            SessionList(
+                sessions.take(3),
+                null,
+                "",
+                onSelect,
+                compact = true,
+                modifier = Modifier.fillMaxWidth(),
+                onLongPress = onLongPress,
+                unseen = unseen,
+                awaiting = awaiting,
+            )
             if (sessions.size > 3) {
                 Row(
                     Modifier.fillMaxWidth().clickable { onSeeAll() }.padding(horizontal = 18.dp, vertical = 10.dp),
@@ -5680,21 +5842,32 @@ fun DrawerItem(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = if (active) 0.dp else 0.dp)
+            /*
+             * `.row`: a 38 minimum, an 8 corner, 14 in from each edge and 14
+             * between the glyph and the words. This drew a 12 corner, 18 of
+             * gap and 16sp of type, so the drawer's two rows read as headings
+             * rather than as the same rows the list below is made of.
+             */
             .then(
                 if (active) {
                     Modifier
-                        .background(if (LocalBg.current == DarkBg) Color(0xFF2B2B2A) else Color(0xFFF0EFEC), RoundedCornerShape(12.dp))
-                        .padding(horizontal = 10.dp, vertical = 9.dp)
+                        .background(
+                            if (LocalBg.current == DarkBg) Color(0xFF2B2B2A) else Color(0xFFEEEDEC),
+                            RoundedCornerShape(8.dp),
+                        )
                 } else {
-                    Modifier.padding(vertical = 8.dp)
+                    Modifier
                 },
             )
+            .heightIn(min = 38.dp)
+            .padding(horizontal = 14.dp)
             .clickable { onClick() },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = label, tint = LocalText.current, modifier = Modifier.size(22.dp))
-        Spacer(Modifier.width(18.dp))
-        Text(label, fontSize = 16.sp, color = LocalText.current)
+        // The desktop's `row-ico` is 18 in a 24 grid.
+        Icon(icon, contentDescription = label, tint = LocalText.current, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(14.dp))
+        Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
     }
 }
 
@@ -7433,7 +7606,12 @@ fun InputCapsule(
             )
         }
         Surface(
-            shape = RoundedCornerShape(20.dp),
+            /*
+             * `.box`'s own 10px corner (`Composer.vue`), not the 20 this carried:
+             * at 20 the card reads as a pill sunk into the page rather than as
+             * the sheet the desktop lifts off it.
+             */
+            shape = RoundedCornerShape(10.dp),
             color = MaterialTheme.colorScheme.surface,
             // Claude's card carries a hairline: 220,220,220 on the pad, two
             // pixels wide at 400dpi, which is what separates a white plate from
@@ -7441,7 +7619,7 @@ fun InputCapsule(
             border = androidx.compose.foundation.BorderStroke(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFDCDCDC)),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Column(Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
+            Column(Modifier.padding(horizontal = 0.dp, vertical = 0.dp)) {
                 /*
                  * Queued prompts, oldest first, above the field: a line each with
                  * the words, a send-now arrow and an × to withdraw. The desktop
@@ -7528,7 +7706,6 @@ fun InputCapsule(
                 }
                 OutlinedTextField(
                     text, { text = it },
-                    Modifier.fillMaxWidth(),
                     /*
                      * Claude's phone composer says what a send will do: while a
                      * turn is in flight the line becomes 「将消息加入队列…」, so
@@ -7547,10 +7724,26 @@ fun InputCapsule(
                             color = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF7B7974),
                         )
                     },
+                    /*
+                     * `.input`'s measurements: 13 over a 20 line-height, and
+                     * the box's own 16/16/8 inset - the text starts where the
+                     * desktop's does, and an empty composer is 60 tall rather
+                     * than one line tall.
+                     */
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, lineHeight = 20.sp, color = LocalText.current),
                     colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent),
-                    maxLines = 4,
+                    shape = RoundedCornerShape(0.dp),
+                    maxLines = 8,
+                    // `.input`'s 60 is a minimum, not a height: the box grows
+                    // with the text up to its own cap.
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp),
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                // `.row`: 44 tall, 8 in from each edge, 4 between the controls.
+                Row(
+                    Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
                     var plusMenu by remember { mutableStateOf(false) }
                     var skillPicker by remember { mutableStateOf(false) }
                     // Claude's + and mic both sit in a soft pill circle; the
@@ -7839,7 +8032,9 @@ fun ToolRow(item: Item.Tool) {
              */
             Text(
                 toolVerbOf(item.name, item.status) + if (item.title.isNotBlank()) " ${item.title}" else "",
-                fontSize = 13.sp,
+                fontSize = 14.sp,
+                lineHeight = 22.4.sp,
+                fontWeight = FontWeight.Medium,
                 color = if (failed || busy) rowTint else LocalMuted.current,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
