@@ -75,7 +75,8 @@ function isUnder(child: string, parent: string): boolean {
   const rel = path.relative(parent, child)
   if (rel === "") return true
   if (path.isAbsolute(rel)) return false
-  return process.platform === "win32" ? !rel.toLowerCase().startsWith("..") : !rel.startsWith("..")
+  // Only a real parent-reference escapes: `..foo` is a directory name, not a step up.
+  return rel !== ".." && !rel.startsWith(`..${path.sep}`)
 }
 
 async function exists(candidate: string): Promise<boolean> {
@@ -395,8 +396,11 @@ function diagnosticRunResult(
   const diagnostics = parseDiagnosticLines(matching)
   const rerunHint = diagnosticRerunHint(checker, rel)
 
-  if (matching.length > 0) return formatResult(checker, rel, lines, matching.length, diagnostics, rerunHint)
+  // Exit 0 means clean: eslint with warnings-only, ruff and pyright with no
+  // violations all exit 0, and lines may still carry advisory text. Judging by
+  // the exit code first keeps warnings from costing a verify round.
   if (run.code === 0) return formatResult(checker, rel, [], 0)
+  if (matching.length > 0) return formatResult(checker, rel, lines, matching.length, diagnostics, rerunHint)
 
   const fallback = all.slice(0, 15)
   return formatResult(checker, rel, fallback.length ? fallback : [`${checker} failed with exit code ${run.code ?? "unknown"}`], all.length || 1, undefined, rerunHint)
@@ -577,6 +581,19 @@ async function checkTypeScript(
 
   const editedDiagnostics = edited.map((d) => tscToDiagnostic(d, projectDir))
   const otherExamples = other.slice(0, 3).map((d) => tscToDiagnostic(d, projectDir))
+
+  // Errors only in files this edit did not touch are pre-existing: mention them
+  // for context, but do not charge them against this edit as a verify round.
+  if (edited.length === 0 && other.length > 0) {
+    const examples = otherExamples.map(diagnosticLine).join("; ")
+    return {
+      checker: "tsc",
+      problems: 0,
+      status: "ok",
+      text: cap(`\n\nPost-edit check (tsc): no problems in ${rel}. ${other.length} pre-existing error(s) elsewhere, e.g. ${examples}.`),
+    }
+  }
+
   const structured: Diagnostic[] = [...editedDiagnostics, ...otherExamples]
   const summaryLines: string[] = []
 

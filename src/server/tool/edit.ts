@@ -862,7 +862,6 @@ export const EditTool: ToolDefinition = {
       output += lspText
       output += loop.text
       output += rerun
-      output += loop.text
 
       return {
         output,

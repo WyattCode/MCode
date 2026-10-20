@@ -89,7 +89,7 @@
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
-const state = { ws: null, cursor: 0, sessions: {}, current: null, pending: {}, requestId: 0, titles: {} };
+const state = { ws: null, cursor: 0, sessions: {}, current: null, pending: {}, requestId: 0, titles: {}, listReq: null, retries: 0 };
 const saveCfg = (url, token) => localStorage.setItem("mcode-remote", JSON.stringify({ url, token }));
 const loadCfg = () => { try { return JSON.parse(localStorage.getItem("mcode-remote") || "{}"); } catch { return {}; } };
 
@@ -102,8 +102,18 @@ function request(request) {
 
 function connect(url, token) {
   state.ws = new WebSocket(url, ["mcode", "mcode.remote." + token]);
-  state.ws.onopen = () => { $("dot").classList.add("on"); request({ type: "session.list" }); };
-  state.ws.onclose = () => { $("dot").classList.remove("on"); setTimeout(() => connect(url, token), 2500); };
+  state.ws.onopen = () => {
+    $("dot").classList.add("on");
+    state.retries = 0;
+    state.listReq = request({ type: "session.list" });
+  };
+  state.ws.onclose = () => {
+    $("dot").classList.remove("on");
+    // Back off: 2.5s, 5s, 10s … capped at 60s, so a wrong token cannot hammer the host forever.
+    const delay = Math.min(2500 * Math.pow(2, state.retries || 0), 60000);
+    state.retries = (state.retries || 0) + 1;
+    setTimeout(() => connect(url, token), delay);
+  };
   state.ws.onerror = () => {};
   state.ws.onmessage = (ev) => { try { handle(JSON.parse(ev.data)); } catch {} };
 }
@@ -117,7 +127,7 @@ function handle(f) {
     if (!f.ok) addLine("errline", "命令失败：" + (f.error || "未知错误"));
     return;
   }
-  if (f.kind === "remote.resync") { request({ type: "session.list" }); return; }
+  if (f.kind === "remote.resync") { state.listReq = request({ type: "session.list" }); return; }
   if (f.kind !== "remote.event") return;
   state.cursor = Math.max(state.cursor, f.eventId);
   const e = f.event;
@@ -187,6 +197,14 @@ function addLine(cls, text) { const d = document.createElement("div"); d.classNa
 function scroll() { const t = $("timeline"); t.scrollTop = t.scrollHeight; }
 
 const messages = {};
+function renderText(entry) {
+  // All text parts joined the same way upsertMessage laid them out, so a
+  // streaming update to one part never erases its siblings.
+  const pre = entry.el.querySelector("pre");
+  const text = Object.values(entry.texts).join("\n");
+  if (pre) pre.textContent = text || "…";
+}
+
 function upsertMessage(sessionID, message) {
   if (sessionID !== state.current) return;
   const existing = messages[message.id];
@@ -195,7 +213,17 @@ function upsertMessage(sessionID, message) {
   const parts = message.parts || [];
   const texts = parts.filter((p) => p.type === "text").map((p) => p.text).join("\n");
   const el = bubble(role, texts || "…");
-  messages[message.id] = { el, parts: {} };
+  const kept = {};
+  let solo = "";
+  for (const p of parts) {
+    if (p.type !== "text") continue;
+    if (p.id) kept[p.id] = p.text;
+    else solo = solo ? solo + "\n" + p.text : p.text;
+  }
+  // An id-less text part must join `texts` too, or the next renderText rebuild
+  // (from texts alone) would erase it.
+  if (solo) kept.__solo = solo;
+  messages[message.id] = { el, parts: {}, texts: kept };
   for (const part of parts) if (part.type === "tool") addToolRow(part);
 }
 
@@ -203,7 +231,11 @@ function upsertPart(sessionID, messageID, part) {
   if (sessionID !== state.current) return;
   const entry = messages[messageID];
   if (!entry) return;
-  if (part.type === "text") { const pre = entry.el.querySelector("pre"); if (pre) pre.textContent = part.text || pre.textContent; }
+  if (part.type === "text") {
+    if (part.id) entry.texts[part.id] = part.text;
+    else entry.texts.__solo = part.text;
+    renderText(entry);
+  }
   if (part.type === "tool") addToolRow(part);
 }
 

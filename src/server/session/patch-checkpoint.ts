@@ -128,8 +128,12 @@ function countMarker(messages: readonly Message[]): number {
  * has not written anything to disk. It is not generic pacing pressure: it only
  * fires when the latest finished reply names a file that was actually read in
  * this turn and shows concrete fix intent.
+ *
+ * The note rides the request only and never reaches the store, so fires the
+ * history cannot show are counted by the caller through `opts.fired`; markers
+ * already visible in the history are counted here.
  */
-export function withPatchCheckpoint(history: Message[], opts: { local: boolean }): Message[] {
+export function withPatchCheckpoint(history: Message[], opts: { local: boolean; fired?: number }): Message[] {
   if (!opts.local) return history
   if (process.env.MCODE_PATCH_CHECKPOINT === "0") return history
 
@@ -155,7 +159,7 @@ export function withPatchCheckpoint(history: Message[], opts: { local: boolean }
   const paths = readPaths(parts)
   if (!hasFixIntent(text, paths)) return history
 
-  const fired = countMarker(history.slice(at))
+  const fired = countMarker(history.slice(at)) + Math.max(0, opts.fired ?? 0)
   if (fired >= 2) return history
   if (fired === 1 && steps < threshold * 2) return history
 

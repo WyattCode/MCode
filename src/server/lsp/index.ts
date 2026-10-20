@@ -99,6 +99,8 @@ const clients = new Map<string, Cached>()
 const failures = new Map<string, number>()
 const projectDirByRoot = new Map<string, string>()
 const shutdownPromises = new Map<LspClient, Promise<void>>()
+/** Every client ever spawned, so shutdownLsp reaches the ones a lost race left unclaimed. */
+const spawned = new Set<LspClient>()
 const FAILURE_TTL = 60_000
 const IDLE_MS = 10 * 60_000
 const MAX_LIVE = 4
@@ -182,6 +184,13 @@ function ensureSweeper(): void {
   sweeper = setInterval(() => {
     const now = Date.now()
     for (const [key, entry] of clients) {
+      // A dead client must leave the cache, or getClient would hand it out
+      // forever and the project's LSP would silently never work again.
+      if (entry.client?.isDead()) {
+        clients.delete(key)
+        void shutdownClient(entry.client).catch(() => {})
+        continue
+      }
       if (entry.client && !entry.client.isDead() && now - entry.lastUsed > IDLE_MS) {
         const client = entry.client
         clients.delete(key)
@@ -235,8 +244,10 @@ async function startClient(spec: ServerSpec, root: string, key: string, projectD
     return undefined
   }
 
+  let client: LspClient | undefined
   try {
-    const client = new LspClient({ command, args: spec.args, cwd: root, rootUri: pathToUri(root) })
+    client = new LspClient({ command, args: spec.args, cwd: root, rootUri: pathToUri(root) })
+    spawned.add(client)
     await client.initialize(root, initializationOptions)
     const entry = clients.get(key)
     if (entry) {
@@ -249,6 +260,9 @@ async function startClient(spec: ServerSpec, root: string, key: string, projectD
   } catch {
     failures.set(key, Date.now())
     clients.delete(key)
+    // The spawn already happened: without this, every failed (and 60s-later
+    // retried) start leaks one resident language-server process.
+    if (client) void shutdownClient(client).catch(() => {})
     return undefined
   }
 }
@@ -265,8 +279,14 @@ async function getClient(spec: ServerSpec, file: string, projectDir: string, all
   }
   const existing = clients.get(key)
   if (existing) {
-    existing.lastUsed = Date.now()
-    return await existing.promise
+    if (existing.client?.isDead()) {
+      // A crashed server must not be served from the cache; start over.
+      clients.delete(key)
+      void shutdownClient(existing.client).catch(() => {})
+    } else {
+      existing.lastUsed = Date.now()
+      return await existing.promise
+    }
   }
   const promise = startClient(spec, root, key, projectDir, allowProjectTools)
   clients.set(key, { promise, lastUsed: Date.now() })
@@ -313,10 +333,13 @@ export async function lspDiagnostics(
     client.openOrChange(file, text, spec.languageId(file))
     const first = await client.waitForDiagnostics(uri, before, opts.timeoutMs ?? 8000)
     if (first === undefined) return undefined
+    let published = client.currentDiagnostics(uri) ?? first
     // A TypeScript server often publishes an empty set first, then the real one:
-    // wait a little more and take whatever is newest.
-    await client.waitForDiagnostics(uri, client.diagnosticsAt(uri), 600)
-    const published = client.currentDiagnostics(uri) ?? first
+    // only then wait a little more for the follow-up publish.
+    if (published.length === 0) {
+      await client.waitForDiagnostics(uri, client.diagnosticsAt(uri), 600)
+      published = client.currentDiagnostics(uri) ?? first
+    }
     if (opts.signal?.aborted) return undefined
     const diagnostics = published.filter((d) => d.severity === 1 || d.severity === 2).slice(0, DIAGNOSTIC_MAX).map((d) => toDiagnostic(file, projectDir, d))
     const errors = published.filter((d) => d.severity === 1).length
@@ -428,6 +451,10 @@ export async function shutdownLsp(): Promise<void> {
   for (const entry of entries) {
     if (entry.client) pending.push(shutdownClient(entry.client))
   }
+  // A client whose startClient lost the race (shutdownLsp ran mid-initialize)
+  // never made it into the map; the spawned set is the only handle to it.
+  for (const client of spawned) pending.push(shutdownClient(client))
+  spawned.clear()
 
   await Promise.all(pending)
   projectDirByRoot.clear()

@@ -146,12 +146,12 @@ export const WebSearchTool: ToolDefinition = {
   async execute(input, context) {
     const query = typeof input.query === "string" ? input.query.trim() : ""
     if (!query) throw new ToolError("query is required")
-    if (isOffline(context.sessionID)) throw new ToolError(offlineMessage())
+    if (isOffline(context.sessionID)) throw new ToolError(offlineMessage(context.sessionID))
     const access = context.webSearch
     if (access && !context.subagent && !selectionKnown(access.selection())) {
       if (!(await probeOnline(providerHosts()))) {
         markOffline(context.sessionID, "no DNS for web search providers")
-        throw new ToolError(offlineMessage())
+        throw new ToolError(offlineMessage(context.sessionID))
       }
     }
     const selection = await chosen(context)
@@ -185,7 +185,7 @@ export const WebSearchTool: ToolDefinition = {
       if (network) markOffline(context.sessionID, `search failed: ${network}`)
       const message = error instanceof WebSearchHttpError ? (HTTP_ERRORS.get(error.status) ?? `Web search request failed (HTTP ${error.status})`) : `Unable to search the web for ${query}`
       const text = provider ? `${message} [${webSearchProvider(provider)?.name ?? provider}]` : message
-      throw new ToolError(network ? `${text}\n\n${offlineMessage()}` : text)
+      throw new ToolError(network ? `${text}\n\n${offlineMessage(context.sessionID)}` : text)
     }
   },
 }

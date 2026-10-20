@@ -42,18 +42,32 @@ export function parseTextToolCalls(text: string): ParsedCall[] {
   // 3) Line form
   try { results.push(...parseLineForm(text)) } catch { /* ignore */ }
 
-  // Deduplicate by name + serialised input, cap at MAX_CALLS.
+  // Deduplicate by name + canonicalised input, cap at MAX_CALLS. The canonical
+  // form is order-insensitive and type-loose (5 and "5" collapse), because the
+  // XML parser keeps values as strings where the JSON parser produces numbers -
+  // the same logical call must not survive twice and run twice.
   const seen = new Set<string>()
   const unique: ParsedCall[] = []
   for (const call of results) {
     if (!call.name) continue
-    const key = `${call.name}\0${JSON.stringify(call.input)}`
+    const key = `${call.name}\0${canonical(call.input)}`
     if (seen.has(key)) continue
     seen.add(key)
     unique.push(call)
     if (unique.length >= MAX_CALLS) break
   }
   return unique
+}
+
+/** A stable textual form of a value: keys sorted, primitives by their string. */
+function canonical(value: unknown): string {
+  if (value === undefined || value === null) return "null"
+  if (typeof value === "object") {
+    if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    return `{${entries.map(([key, item]) => `${key}:${canonical(item)}`).join(",")}}`
+  }
+  return String(value)
 }
 
 /* ------------------------------------------------------------------ XML */

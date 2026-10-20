@@ -88,7 +88,7 @@ import { BackgroundUsage, type BackgroundUse } from "./background-usage"
 import { UsageDays } from "./usage-days"
 import type { Usage as TurnUsage } from "@shared/protocol"
 import { ABORTED_TOOL } from "../provider/history"
-import { INTERRUPTED_FINISH, INTERRUPTED_NOTE, LENGTH_NOTE, THOUGHT_LENGTH_NOTE, LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, recallHint, reminder, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
+import { INTERRUPTED_FINISH, INTERRUPTED_NOTE, LENGTH_NOTE, THOUGHT_LENGTH_NOTE, LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, CONTINUATION_LIMITS, continuationFor, createLoopMonitor, frameSteered, recallHint, reminder, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
 import { withPatchCheckpoint } from "./patch-checkpoint"
 import { LoopMonitor, TEXT_LOOP_BUFFER, WanderWatch, applyCrops, describeLoop, detectStreak, stepDigest, suggestLoopNextStep, textLoopNoteFor, type LoopIncident } from "./loop-health"
 import { interruptedTurn } from "@shared/resume"
@@ -341,6 +341,12 @@ export class SessionRunner {
   private readonly promptAnchors = new Map<string, { model: string; measured: number; estimated: number }>()
   /** read: how much the running turn trims off older output, so read knows which instructions its request still carries. */
   private readonly turnPrune = new Map<string, PruneLevel>()
+  /**
+   * Patch-checkpoint fires per user message that the stored history cannot
+   * show: the note rides the request only, so the twice-at-most cap needs its
+   * own record until the user speaks again.
+   */
+  private readonly checkpointFireCounts = new Map<string, number>()
   /** Calls whose arguments arrived as text that could not be read, and why. */
   private readonly inputErrors = new WeakMap<ToolPart, string>()
   /**
@@ -622,6 +628,28 @@ export class SessionRunner {
     if (!custom?.length) return false
     const provider = session.model.provider
     return !!provider && custom.some((p) => p.id === provider)
+  }
+
+  private checkpointKey(sessionID: string, history: Message[]): string {
+    for (let index = history.length - 1; index >= 0; index--) {
+      const message = history[index]
+      if (message?.role === "user") return `${sessionID}:${message.id}`
+    }
+    return sessionID
+  }
+
+  private checkpointFires(sessionID: string, history: Message[]): number {
+    return this.checkpointFireCounts.get(this.checkpointKey(sessionID, history)) ?? 0
+  }
+
+  private noteCheckpointFire(sessionID: string, history: Message[]): void {
+    const key = this.checkpointKey(sessionID, history)
+    this.checkpointFireCounts.set(key, (this.checkpointFireCounts.get(key) ?? 0) + 1)
+    while (this.checkpointFireCounts.size > 200) {
+      const oldest = this.checkpointFireCounts.keys().next().value
+      if (oldest === undefined) break
+      this.checkpointFireCounts.delete(oldest)
+    }
   }
 
   /**
@@ -3018,9 +3046,19 @@ export class SessionRunner {
       // skills: what a message loaded follows it, after the framing so it is never taken for typed words;
       // this turn's continuation notes follow the replies they answer; and three identical steps
       // in a row bring a note to change approach.
+      // The checkpoint note rides a user message's reminders, so it goes
+      // inside withSkillReminders - the one merger that folds reminders
+      // into the text the model actually reads. Fires the note made this
+      // turn are counted here because the note never reaches the store.
+      const framed = step > 0 ? frameSteered(chatted) : chatted
+      const checked = withPatchCheckpoint(framed, {
+        local: this.isLocal(session),
+        fired: this.checkpointFires(sessionID, framed),
+      })
+      if (checked !== framed) this.noteCheckpointFire(sessionID, framed)
       const history = forWire(
         await withAttachmentData(
-          withPatchCheckpoint(withSameStepsNote(withNotes(withSkillReminders(step > 0 ? frameSteered(chatted) : chatted), notes)), { local: this.isLocal(session) }),
+          withSameStepsNote(withNotes(withSkillReminders(checked), notes)),
           session.directory,
           attachmentData,
         ),
@@ -3381,16 +3419,42 @@ export class SessionRunner {
           }
           await this.store.saveMessage(assistant)
           pending = assistant.parts.filter((part): part is ToolPart => part.type === "tool" && part.status === "pending")
+          if (pending.length === 0) {
+            /*
+             * Every recovered call named a tool this request never offered.
+             * Asking again would ping-pong forever on models without a step
+             * cap, so the same limit a written-out call burns applies here.
+             */
+            continued.textTool += 1
+            notes.set(assistant.id, [
+              "Recovered tool call(s) written as text, but none matched a tool this request offers. Make the call again as a real tool call.",
+            ])
+            if (continued.textTool >= CONTINUATION_LIMITS.textTool) {
+              assistant.error = "The model kept writing tool calls for tools this request does not offer."
+              assistant.errorCode = "error.invalidTool"
+              assistant.finish = "error"
+              assistant.time.completed = Date.now()
+              await this.store.saveMessage(assistant)
+              return
+            }
+          }
         }
         if (!next.recovered?.length || pending.length === 0) {
-          if (next.error) {
+          /*
+           * A failure the turn is still retrying (the prose-tool-call note rides
+           * beside its error) must not brand the reply an error: the note asks
+           * the model again, and only the step that really ends the turn
+           * records the failure on the message.
+           */
+          const askingAgain = Boolean((next.note || repeatNote) && !lastStep)
+          if (next.error && !askingAgain) {
             assistant.error = next.error.message
             if (next.error.code) assistant.errorCode = next.error.code
           }
-          assistant.finish = outcome.stop === "max_tokens" ? "max_tokens" : next.error ? "error" : "end_turn"
+          assistant.finish = outcome.stop === "max_tokens" ? "max_tokens" : next.error && !askingAgain ? "error" : "end_turn"
           assistant.time.completed = Date.now()
           await this.store.saveMessage(assistant)
-          if ((next.note || repeatNote) && !lastStep) {
+          if (askingAgain) {
             // The rest of a sentence the limit cut belongs to the reply that started it.
             if (next.note === LENGTH_NOTE || next.note === THOUGHT_LENGTH_NOTE || next.note === INTERRUPTED_NOTE) continuing = assistant
             if (overflowing) {
@@ -4175,7 +4239,7 @@ export class SessionRunner {
   private loopWatch(sessionID: string): { monitor: LoopMonitor; wander: WanderWatch; incident?: LoopIncident } {
     const known = this.loopWatches.get(sessionID)
     if (known) return known
-    const made = { monitor: new LoopMonitor(), wander: new WanderWatch() }
+    const made = { monitor: new LoopMonitor(sessionID), wander: new WanderWatch() }
     this.loopWatches.set(sessionID, made)
     return made
   }

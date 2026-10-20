@@ -20,9 +20,14 @@ const MAX_ENTRIES_PER_SESSION = 2000
  */
 const sessions = new Map<string, Map<string, Stamp>>()
 
+// Windows and macOS default filesystems are case-insensitive, so the key must
+// fold case there or `/Users/X/File.ts` misses the stamp written for a
+// differently-cased spelling of the same file.
+const CASE_FOLD = process.platform === "win32" || process.platform === "darwin"
+
 function pathKey(absPath: string): string {
   const resolved = path.resolve(absPath)
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved
+  return CASE_FOLD ? resolved.toLowerCase() : resolved
 }
 
 function touchSession(sessionID: string): Map<string, Stamp> {

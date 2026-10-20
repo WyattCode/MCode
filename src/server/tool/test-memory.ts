@@ -11,6 +11,7 @@ type RerunResult = {
   exit: number | null
   output: string
   timedOut: boolean
+  aborted?: boolean
 }
 
 type RerunRunner = (
@@ -55,7 +56,10 @@ function normalizeSegment(segment: string): string {
 }
 
 function commandSegments(command: string): string[] {
-  return command
+  // Blank quoted spans first so `&&` / `|` inside quotes do not split segments
+  // (`git commit -m "fix || pytest broken"` must not read as a test command).
+  const masked = command.replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/'(?:[^'\\]|\\.)*'/g, "''")
+  return masked
     .split(/&&|\|\||;|\|/)
     .map((segment) => segment.trim())
     .filter(Boolean)
@@ -135,7 +139,7 @@ function defaultRun(
       }
     }
 
-    const finish = (exit: number | null, didTimeOut: boolean) => {
+    const finish = (exit: number | null, didTimeOut: boolean, wasAborted = false) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
@@ -144,13 +148,15 @@ function defaultRun(
         exit,
         output,
         timedOut: didTimeOut,
+        ...(wasAborted ? { aborted: true } : {}),
       })
     }
 
+    // An interrupt is not a timeout: marking it so would retire this failing
+    // test forever, so abort resolves with its own flag instead.
     const onAbort = () => {
-      timedOut = true
       killProcessGroup()
-      finish(null, true)
+      finish(null, false, true)
     }
 
     const timer = setTimeout(() => {
@@ -196,6 +202,9 @@ export async function rerunAfterEdit(
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
     const run = options.run ?? defaultRun
     const result = await run(remembered.command, remembered.cwd, timeoutMs, signal)
+
+    // An aborted run says nothing about the test: leave the memory as it was.
+    if (result.aborted) return ""
 
     if (result.timedOut) {
       rememberFailingTest(sessionID, {

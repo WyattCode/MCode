@@ -43,6 +43,26 @@ function isLowSignalTestScript(key: string): boolean {
   return /^test:(?:e2e|watch)$/i.test(key)
 }
 
+/**
+ * A tail of bare English words after the binary name is prose, not an
+ * invocation ("pytest before every commit"). Flags, paths, globs and options
+ * reset the streak so real command lines pass.
+ */
+function looksLikeProseTail(command: string): boolean {
+  const tokens = command.split(/\s+/).slice(1)
+  let streak = 0
+  for (const token of tokens) {
+    if (/^[-@]/.test(token) || /[\\/=.*[\]"'`{}$<>|&:,;()]/.test(token)) {
+      streak = 0
+      continue
+    }
+    if (/^[A-Za-z][\w-]*$/.test(token)) streak++
+    else streak = 0
+    if (streak >= 2) return true
+  }
+  return false
+}
+
 export function discoverVerifyCommands(input: DiscoverVerifyCommandsInput): string[] {
   const packageManager = isPackageManager(input.packageManager) ? input.packageManager : "npm"
   const scripts = input.packageScripts ?? {}
@@ -106,7 +126,7 @@ export function discoverVerifyCommands(input: DiscoverVerifyCommandsInput): stri
     let otherMatch: RegExpExecArray | null
     while ((otherMatch = otherPattern.exec(agentsMd))) {
       const command = otherMatch[1].trim().replace(/[.,;:]+$/u, "")
-      if (!command) continue
+      if (!command || looksLikeProseTail(command)) continue
       agentCommands.push({ command, index: otherMatch.index + Math.max(0, otherMatch[0].length - command.length) })
     }
 

@@ -116,11 +116,17 @@ function repairValue(schema: unknown, value: unknown, path: string, fixes: strin
 
   // A plain number string for a numeric field, or true/false for a boolean.
   if (typeof current === "string" && types.length) {
-    if ((hasType(types, "number") || hasType(types, "integer")) && isPlainFiniteNumber(current)) {
-      const parsed = Number(current.trim())
-      if (Number.isFinite(parsed)) {
-        fixes.push(`${label(path)}: read string as ${hasType(types, "integer") ? "integer" : "number"}`)
-        current = parsed
+    if (hasType(types, "number") || hasType(types, "integer")) {
+      const wantsInteger = hasType(types, "integer") && !hasType(types, "number")
+      if (isPlainFiniteNumber(current)) {
+        const parsed = Number(current.trim())
+        // Convert only when the parsed value fits: "12.5" against an integer
+        // field stays a string, so validation refuses the original input
+        // instead of a converted value that fits nothing.
+        if (Number.isFinite(parsed) && (!wantsInteger || Number.isInteger(parsed))) {
+          fixes.push(`${label(path)}: read string as ${wantsInteger ? "integer" : "number"}`)
+          current = parsed
+        }
       }
     } else if (hasType(types, "boolean")) {
       const normalized = current.trim().toLowerCase()
@@ -234,6 +240,7 @@ export function repairToolArguments(
       fixes,
     }
   } catch {
-    return { input: {}, fixes }
+    // Never lose the caller's arguments: hand the untouched input back.
+    return { input: isRecord(input) ? input : {}, fixes }
   }
 }

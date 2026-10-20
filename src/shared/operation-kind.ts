@@ -6,7 +6,8 @@ export function operationKind(part: ToolPart, previous?: OperationKind): Operati
   if (part.name !== "app") return undefined
   if (part.metadata?.operationKind === "none") return undefined
   if (part.metadata?.operationKind === "browser" || part.metadata?.operationKind === "computer") return part.metadata.operationKind
-  const action = part.input.action
+  // `input` can be absent on a pending part; guard so the lookup never throws.
+  const action = (part.input as { action?: unknown } | undefined)?.action
   if (action === "open") return "browser"
   if (["window", "launch", "android", "attach"].includes(String(action))) return "computer"
   return previous

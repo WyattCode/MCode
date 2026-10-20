@@ -274,7 +274,9 @@ export class LoopMonitor {
     const progress = ok || (before !== undefined && before.result !== result)
     if (verifying) this.verify.set(command, { ok, result })
     if (ok) this.failed.delete(command)
-    if (verifying && !ok && this.sessionID) incrementVerifyLoop(this.sessionID)
+    // Only a verbatim-repeat failure burns a verify round: a changed output
+    // means the code moved, which is the opposite of a stuck loop.
+    if (verifying && !ok && !progress && this.sessionID) incrementVerifyLoop(this.sessionID)
     if (verifying && ok && this.sessionID) resetVerifyLoop(this.sessionID)
     let count = 0
     if (!ok) {

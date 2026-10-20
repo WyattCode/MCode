@@ -4,10 +4,10 @@
  *
  *   node out/remote-server.mjs --data-dir "C:\Users\me\AppData\Roaming\mcode" --host 0.0.0.0
  *
- * Prints the pairing line a phone enters or scans (`mcode-remote://host:port?token=…`)
- * and stays until interrupted. Defaults to an isolated data directory - point
- * --data-dir at the desktop profile only while the desktop app is closed, so
- * two SessionRunners never share one store.
+ * Prints the pairing address a phone enters (`mcode-remote://host:port`) with
+ * the token on its own line, and stays until interrupted. Defaults to an
+ * isolated data directory - point --data-dir at the desktop profile only while
+ * the desktop app is closed, so two SessionRunners never share one store.
  */
 import os from "node:os"
 import path from "node:path"
@@ -25,6 +25,10 @@ const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roami
 const dataDir = path.resolve(flag("data-dir") ?? path.join(appData, "mcode-remote"))
 const host = flag("host") ?? "127.0.0.1"
 const port = Number(flag("port") ?? 0)
+if (!Number.isInteger(port) || port < 0 || port > 65535) {
+  console.error(`[remote] invalid --port: ${flag("port")}`)
+  process.exit(1)
+}
 // An explicit --token overrides the stored one (demo and CI); otherwise the
 // token beside the storage is generated on first use and kept for good.
 const token = flag("token") ?? loadOrCreateToken(dataDir)
@@ -36,7 +40,11 @@ console.log(`[remote] backend ready (internal socket on 127.0.0.1:${backend.port
 const gateway = await startRemoteGateway(backend.runtime, { host, port, token })
 const shown = host === "0.0.0.0" || host === "::" ? lanAddresses() : [host === "loopback" ? "127.0.0.1" : host]
 console.log(`[remote] gateway listening on ${host}:${gateway.port}`)
-for (const ip of shown) console.log(`[remote] pair with: mcode-remote://${ip}:${gateway.port}?token=${token}`)
+for (const ip of shown) console.log(`[remote] pair with: mcode-remote://${ip}:${gateway.port}`)
+// The token on its own line, never inside a URL: a URL-shaped token lands in
+// logs, and the design promise is that nothing that logs addresses ever sees it.
+console.log("[remote] pairing token (enter it on the phone; keep it out of logs):")
+console.log(token)
 console.log("[remote] Ctrl+C to stop. Keep this running; sessions keep their turns alive.")
 
 // Provider auth loads asynchronously; a few seconds in, report what a prompt
@@ -65,11 +73,21 @@ function lanAddresses(): string[] {
 
 let closing = false
 const close = async () => {
-  if (closing) return
+  if (closing) process.exit(1)
   closing = true
   console.log("\n[remote] closing…")
-  await gateway.close()
-  await backend.close()
+  // A hung close must never swallow the exit: log and leave, so a second
+  // Ctrl+C (or this finally) always ends the process.
+  try {
+    await gateway.close()
+  } catch (err) {
+    console.error("[remote] gateway close failed:", err)
+  }
+  try {
+    await backend.close()
+  } catch (err) {
+    console.error("[remote] backend close failed:", err)
+  }
   process.exit(0)
 }
 process.on("SIGINT", () => void close())

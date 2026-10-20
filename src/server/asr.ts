@@ -125,20 +125,30 @@ type Worker = {
 }
 
 let worker: Worker | undefined
+/** When the last worker died before answering ready; repeated fast failures mean the interpreter is broken. */
+let lastEarlyDeathAt = 0
 
 async function ensureWorker(python: string): Promise<Worker> {
   if (worker && worker.child.exitCode === null) return worker
+  // A worker that died before it was ready (broken interpreter, missing
+  // package) would otherwise be respawned per call - fail fast instead.
+  if (lastEarlyDeathAt && Date.now() - lastEarlyDeathAt < 10_000) throw new Error("voice.localFailed: the local speech worker failed to start")
   const child = spawn(python, ["-u", "-c", WORKER_SCRIPT], { windowsHide: true })
-  let markReady: () => void = () => {}
-  const ready = new Promise<void>((resolve) => {
-    markReady = resolve
+  let settleReady: (error?: Error) => void = () => {}
+  // True once the worker answered ready. Only a death before this point is an
+  // early death: a worker that crashes mid-job (or is killed at the 120s
+  // transcription timeout) must be respawnable, not fail-fast.
+  let readyAnswered = false
+  const ready = new Promise<void>((resolve, reject) => {
+    settleReady = (error) => (error ? reject(error) : resolve())
   })
   const created: Worker = { child, ready, pending: undefined }
   readline.createInterface({ input: child.stdout }).on("line", (line) => {
     try {
       const parsed = JSON.parse(line) as { ready?: boolean }
       if (parsed.ready) {
-        markReady()
+        readyAnswered = true
+        settleReady()
         return
       }
     } catch {
@@ -149,9 +159,22 @@ async function ensureWorker(python: string): Promise<Worker> {
     created.pending = undefined
     waiter?.(line)
   })
-  // A worker that dies is dropped so the next call spawns a fresh one.
+  // A worker that dies is dropped so the next call spawns a fresh one. If it
+  // died before answering ready, wake whatever is waiting on `ready` and note
+  // the early death, or the awaiting call hangs forever.
   child.on("exit", () => {
     if (worker === created) worker = undefined
+    if (readyAnswered) return
+    lastEarlyDeathAt = Date.now()
+    settleReady(new Error("voice.localFailed: the local speech worker exited before it was ready"))
+  })
+  // Spawn failures (missing executable bit, bad interpreter) surface here, not
+  // as an uncaught exception that would take the whole process down.
+  child.on("error", (error) => {
+    if (worker === created) worker = undefined
+    if (readyAnswered) return
+    lastEarlyDeathAt = Date.now()
+    settleReady(new Error(`voice.localFailed: ${error.message}`))
   })
   child.stdin.on("error", () => {})
   worker = created
@@ -165,8 +188,19 @@ async function ensureWorker(python: string): Promise<Worker> {
  * spawn-and-exit run, so a crashed interpreter costs latency rather than the
  * feature. A recording nothing decodes, and silence, both land as
  * `voice.emptyResult`, the code the window already has a message for.
+ *
+ * Calls are serialized: the worker answers one job at a time over a single
+ * reply slot, so concurrent recordings would read each other's transcript.
  */
-export async function transcribeLocally(audio: Buffer, mime: string, language?: string, model?: string): Promise<string> {
+let transcription: Promise<unknown> = Promise.resolve()
+
+export function transcribeLocally(audio: Buffer, mime: string, language?: string, model?: string): Promise<string> {
+  const run = transcription.catch(() => {}).then(() => transcribeOnce(audio, mime, language, model))
+  transcription = run
+  return run
+}
+
+async function transcribeOnce(audio: Buffer, mime: string, language?: string, model?: string): Promise<string> {
   const python = await localPython()
   if (!python) throw new Error("voice.localMissing")
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-asr-"))
@@ -180,6 +214,14 @@ export async function transcribeLocally(audio: Buffer, mime: string, language?: 
     const reply = await new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => {
         active.pending = undefined
+        // The worker is still chewing on the stale job; drop it outright so
+        // its late answer can never be handed to a later recording.
+        try {
+          active.child.kill()
+        } catch {
+          // Already gone.
+        }
+        if (worker === active) worker = undefined
         reject(new Error("voice.timeout"))
       }, 120_000)
       active.pending = (line) => {

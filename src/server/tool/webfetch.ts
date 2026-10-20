@@ -96,7 +96,7 @@ async function reachable(raw: string, sessionID: string): Promise<void> {
         hostname = raw
       }
       markOffline(sessionID, `could not resolve ${hostname}`)
-      throw new ToolError(`${error.message}\n\n${offlineMessage()}`)
+      throw new ToolError(`${error.message}\n\n${offlineMessage(sessionID)}`)
     }
     throw error
   }
@@ -196,7 +196,7 @@ export const WebFetchTool: ToolDefinition = {
     additionalProperties: false,
   },
   async execute(input, context) {
-    if (isOffline(context.sessionID)) throw new ToolError(offlineMessage())
+    if (isOffline(context.sessionID)) throw new ToolError(offlineMessage(context.sessionID))
     const raw = String(input.url)
     if (!raw.startsWith("http://") && !raw.startsWith("https://")) throw new ToolError("The URL has to start with http:// or https://")
     let url: URL

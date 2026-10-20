@@ -39,6 +39,9 @@ interface DiagnosticEntry {
   at: number
 }
 
+/** No honest LSP message approaches this; anything larger is a hostile or broken peer. */
+const MAX_MESSAGE_BYTES = 64 * 1024 * 1024
+
 /** Absolute path to a `file://` URI. */
 export function pathToUri(file: string): string {
   return pathToFileURL(file).toString()
@@ -324,6 +327,18 @@ export class LspClient {
         this.buffer = this.buffer.subarray(bodyStart)
         continue
       }
+      if (length > MAX_MESSAGE_BYTES) {
+        // A declared length no honest server sends would let the buffer grow
+        // without bound; drop the connection rather than the process.
+        this.buffer = Buffer.alloc(0)
+        try {
+          this.child.kill("SIGKILL")
+        } catch {
+          // already gone
+        }
+        this.onExit(null)
+        return
+      }
       if (this.buffer.length < bodyStart + length) return
       const body = this.buffer.subarray(bodyStart, bodyStart + length)
       this.buffer = this.buffer.subarray(bodyStart + length)
@@ -376,7 +391,9 @@ export class LspClient {
     this.diagnostics.set(uri, entry)
     for (let i = this.waiters.length - 1; i >= 0; i--) {
       const waiter = this.waiters[i]!
-      if (waiter.uri !== uri || entry.at <= waiter.since) continue
+      // Strictly-older only: a publish stamped the same millisecond as `since`
+      // must still be delivered, or the waiter waits out its full timeout.
+      if (waiter.uri !== uri || entry.at < waiter.since) continue
       clearTimeout(waiter.timer)
       this.waiters.splice(i, 1)
       waiter.resolve(entry.diagnostics)

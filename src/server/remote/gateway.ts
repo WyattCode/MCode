@@ -134,6 +134,14 @@ export async function startRemoteGateway(runtime: Runtime, options: RemoteGatewa
   const phones = new Set<WebSocket>()
   /** Which events each phone has confirmed; used to drop what every phone has seen. */
   const confirmed = new Map<WebSocket, number>()
+  /** Drop the buffered events every connected phone has already received. */
+  const trimBuffer = () => {
+    if (confirmed.size === 0) return
+    let min = Infinity
+    for (const value of confirmed.values()) min = Math.min(min, value)
+    const keep = buffer.findIndex((entry) => entry.eventId > min)
+    if (keep > 0) buffer.splice(0, keep)
+  }
 
   wss.on("connection", (socket: WebSocket) => {
     phones.add(socket)
@@ -160,16 +168,22 @@ export async function startRemoteGateway(runtime: Runtime, options: RemoteGatewa
       }
 
       if (frame.kind === "remote.resume") {
-        const from = buffer.findIndex((entry) => entry.eventId > frame.cursor)
-        const replayable = from >= 0
-        if (replayable) {
+        const cursor = typeof frame.cursor === "number" && Number.isFinite(frame.cursor) ? frame.cursor : undefined
+        if (cursor === undefined || cursor < (buffer.length ? buffer[0].eventId : lastEventId)) {
+          // The cursor is older than the buffer holds (or malformed): say so, and the phone re-syncs itself.
+          confirmed.set(socket, lastEventId)
+          trimBuffer()
+          if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ kind: "remote.resync", eventId: lastEventId }))
+          return
+        }
+        const from = buffer.findIndex((entry) => entry.eventId > cursor)
+        if (from >= 0) {
           for (let i = from; i < buffer.length; i++) {
             if (socket.readyState === socket.OPEN) socket.send(buffer[i].json)
           }
-        } else if (frame.cursor < lastEventId) {
-          // The cursor is older than the buffer holds: say so, and the phone re-syncs itself.
-          if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ kind: "remote.resync", eventId: lastEventId }))
         }
+        confirmed.set(socket, lastEventId)
+        trimBuffer()
         return
       }
 
@@ -194,6 +208,9 @@ export async function startRemoteGateway(runtime: Runtime, options: RemoteGatewa
     http.once("error", reject)
     http.listen(options.port, listenAt, () => resolve())
   })
+  // Listen succeeded, so the once-reject above is spent; keep a standing
+  // handler or a later server error (say EMFILE) would crash the process.
+  http.on("error", (error) => console.warn(`[remote] gateway server error: ${error.message}`))
   const address = http.address()
   const boundPort = typeof address === "object" && address ? address.port : options.port
 
@@ -204,8 +221,12 @@ export async function startRemoteGateway(runtime: Runtime, options: RemoteGatewa
       for (const client of phones) client.close()
       phones.clear()
       confirmed.clear()
-      await new Promise<void>((resolve) => wss.close(() => resolve()))
-      await new Promise<void>((resolve) => http.close(() => resolve()))
+      // A browser keeps keep-alive sockets open, which would hold http.close's
+      // callback forever; bound the wait so shutdown cannot hang.
+      const bounded = (closing: Promise<void>) => Promise.race([closing, new Promise<void>((resolve) => setTimeout(resolve, 2000))])
+      await bounded(new Promise<void>((resolve) => wss.close(() => resolve())))
+      http.closeIdleConnections()
+      await bounded(new Promise<void>((resolve) => http.close(() => resolve())))
     },
   }
 }
