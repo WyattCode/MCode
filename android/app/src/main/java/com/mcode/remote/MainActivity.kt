@@ -882,6 +882,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var retryDelay by remember { mutableStateOf<Long?>(null) }
     /** The last refusal the server sent, for a screen to report. */
     var lastError by remember { mutableStateOf<String?>(null) }
+    /**
+     * When the list was last read, so a turn that finished while the socket was
+     * down can be told apart from one that was already there.
+     */
+    var lastSeenAt by remember { mutableStateOf(0L) }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     fun openDrawer() = scope.launch { drawerState.open() }
     fun closeDrawer() = scope.launch { drawerState.close() }
@@ -1826,6 +1831,41 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         }
                         replayTick++
                     }
+                    /*
+                     * The open conversation may have been deleted while the
+                     * socket was down. This list is the authority now, and a
+                     * `currentSession` naming a row that is no longer in it
+                     * left the pane showing a conversation nothing could load -
+                     * no title, no transcript, and a send that failed.
+                     */
+                    val gone = currentSession?.takeIf { live -> sessions.none { it.id == live } }
+                    if (gone != null) {
+                        unseen.remove(gone)
+                        pendingPerms.remove(gone)
+                        pendingQuestions.remove(gone)
+                        currentSession = null
+                        items.clear()
+                        messageIndex.clear()
+                        loadingThread = false
+                        selectSeq++
+                    }
+                    /*
+                     * A turn that ran to completion while the link was down is
+                     * unread now. `unseen` was never rebuilt from this list, so
+                     * a reply that arrived in that window left no dot at all -
+                     * the reader had no way to know it had happened.
+                     */
+                    // Only from the second read on: on the first there is no
+                    // "while you were away" - every conversation would be
+                    // marked unread, including ones the reader had just left.
+                    if (lastSeenAt > 0) {
+                        for (row in sessions) {
+                            if (!row.running && row.id != currentSession && row.id != gone && row.updated > lastSeenAt) {
+                                if (row.id !in unseen) unseen.add(row.id)
+                            }
+                        }
+                    }
+                    lastSeenAt = System.currentTimeMillis()
                     if (currentSession == null && sessions.isNotEmpty()) {
                         // The conversation the reader left, if it is still
                         // there; otherwise the most recent one.
