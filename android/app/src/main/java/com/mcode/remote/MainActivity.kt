@@ -2062,6 +2062,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         unseen.remove(gone)
                         pendingPerms.remove(gone)
                         pendingQuestions.remove(gone)
+                        seenUpdated.remove(gone)
                         currentSession = null
                         items.clear()
                         messageIndex.clear()
@@ -2087,7 +2088,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     }
                     for (row in sessions) {
                         val seen = seenUpdated[row.id] ?: 0L
-                        if (row.updated > seen) seenUpdated[row.id] = row.updated
+                        // The open conversation counts as read as its row moves:
+                        // the reader is looking at it, so a reconnect must not
+                        // arrive and mark it unread.
+                        if (row.updated > seen || row.id == currentSession) seenUpdated[row.id] = row.updated
                     }
                     lastSeenAt = System.currentTimeMillis()
                     if (currentSession == null && sessions.isNotEmpty()) {
@@ -2149,6 +2153,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         unseen.remove(gone)
                         pendingPerms.remove(gone)
                         pendingQuestions.remove(gone)
+                        // A map keyed by conversation outlives the conversation
+                        // unless it is told, and this one is read on every
+                        // reconnect pass.
+                        seenUpdated.remove(gone)
                         if (currentSession == gone) {
                             currentSession = null
                             items.clear()
