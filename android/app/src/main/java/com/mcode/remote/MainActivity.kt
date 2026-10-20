@@ -139,6 +139,22 @@ private val InkMuted = Color(0xFF6B6862)
 private val Ember = Color(0xFFCC7C5E)
 
 /**
+ * A patch's two inks, per scheme.
+ *
+ * `--diff-add` / `--diff-delete`: #20a923 and #e5351c in light, #a3da9f and
+ * #ffb3a4 in dark. The phone held one pair of dark greens and reds for both
+ * schemes, so on the dark page a diff's added lines came out a near-black green
+ * that could not be read at all - and a patch is the commonest thing a tool
+ * row prints.
+ */
+@Composable
+fun diffAddInk(): Color = if (LocalBg.current == DarkBg) Color(0xFFA3DA9F) else Color(0xFF20A923)
+
+@Composable
+fun diffDelInk(): Color = if (LocalBg.current == DarkBg) Color(0xFFFFB3A4) else Color(0xFFE5351C)
+
+
+/**
  * A row of one of the app's menus, on the desktop's own measurements.
  *
  * `AppMenu.vue`: 28 tall, 12 in from each edge, a 4 corner, 13sp at the body's
@@ -5690,14 +5706,34 @@ private fun PermButton(label: String, muted: Boolean, modifier: Modifier, primar
     }
 }
 
-/** A diff, coloured the way the desktop colours one: added green, removed red. */
+/**
+ * A patch, coloured the way the desktop colours one: added green, removed red.
+ *
+ * `isPatch` says whether there is a patch here at all - a tool's output is
+ * usually not one, and then every line is plain. Before this the tool row had
+ * its own copy of the same loop, so the two drifted: one drew 80 lines, the
+ * other 60, and only one was monospaced.
+ */
 @Composable
-private fun DiffLines(diff: String, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxWidth().background(LocalPill.current.copy(alpha = 0.5f), RoundedCornerShape(8.dp)).padding(8.dp)) {
-        for (line in diff.lineSequence().take(80)) {
+private fun DiffLines(
+    diff: String,
+    modifier: Modifier = Modifier,
+    isPatch: Boolean = true,
+    maxLines: Int = 80,
+    /** The boxed plate a diff card wears; a tool row's output sits on the page. */
+    boxed: Boolean = true,
+) {
+    val plate = if (boxed) {
+        Modifier.fillMaxWidth().background(LocalPill.current.copy(alpha = 0.5f), RoundedCornerShape(8.dp)).padding(8.dp)
+    } else {
+        Modifier.fillMaxWidth()
+    }
+    Column(modifier.then(plate)) {
+        for (line in diff.lineSequence().take(maxLines)) {
             val (bg, fg) = when {
-                line.startsWith("+") && !line.startsWith("+++") -> Color(0x1A2E7D32) to Color(0xFF2E7D32)
-                line.startsWith("-") && !line.startsWith("---") -> Color(0x1AC62828) to Color(0xFFC62828)
+                !isPatch -> Color.Transparent to LocalMuted.current.copy(alpha = 0.8f)
+                line.startsWith("+") && !line.startsWith("+++") -> (if (LocalBg.current == DarkBg) Color(0x2631532F) else Color(0x1A20A923)) to diffAddInk()
+                line.startsWith("-") && !line.startsWith("---") -> (if (LocalBg.current == DarkBg) Color(0x26553431) else Color(0x1AE5351C)) to diffDelInk()
                 line.startsWith("@@") -> Color.Transparent to LocalMuted.current
                 else -> Color.Transparent to LocalMuted.current.copy(alpha = 0.8f)
             }
@@ -5706,7 +5742,7 @@ private fun DiffLines(diff: String, modifier: Modifier = Modifier) {
                 fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace,
                 color = fg,
-                modifier = Modifier.fillMaxWidth().background(bg).padding(horizontal = 3.dp, vertical = 1.dp),
+                modifier = Modifier.fillMaxWidth().background(bg).padding(horizontal = 3.dp, vertical = if (boxed) 1.dp else 0.5.dp),
             )
         }
     }
@@ -8384,29 +8420,14 @@ fun ToolRow(item: Item.Tool) {
              * the part that makes a patch scannable at all.
              */
             val patch = item.output.contains("\n@@") || item.output.startsWith("diff --git") || item.output.startsWith("@@")
-            // The fade carries the reveal; the height arrives with the content
-            // because the Column sizes to what it holds.
-            Column(
-                Modifier
-                    .padding(start = 22.dp, top = 2.dp, bottom = 4.dp)
-                    .graphicsLayer { alpha = reveal },
-            ) {
-                for (line in item.output.lineSequence().take(60)) {
-                    val (bg, fg) = when {
-                        !patch -> Color.Transparent to LocalMuted.current.copy(alpha = 0.8f)
-                        line.startsWith("+") && !line.startsWith("+++") -> Color(0x1A2E7D32) to Color(0xFF2E7D32)
-                        line.startsWith("-") && !line.startsWith("---") -> Color(0x1AC62828) to Color(0xFFC62828)
-                        line.startsWith("@@") -> Color.Transparent to LocalMuted.current
-                        else -> Color.Transparent to LocalMuted.current.copy(alpha = 0.8f)
-                    }
-                    Text(
-                        line.ifEmpty { " " },
-                        fontSize = 11.sp,
-                        color = fg,
-                        modifier = Modifier.fillMaxWidth().background(bg).padding(horizontal = 3.dp, vertical = 0.5.dp),
-                    )
-                }
-            }
+            // The one renderer, so a tool's output and a diff card cannot drift.
+            DiffLines(
+                item.output,
+                modifier = Modifier.padding(start = 22.dp, top = 2.dp, bottom = 4.dp).graphicsLayer { alpha = reveal },
+                isPatch = patch,
+                maxLines = 60,
+                boxed = false,
+            )
         }
     }
 }
