@@ -1218,6 +1218,27 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     val sessions = remember { mutableStateListOf<SessionRow>() }
     val items = remember { mutableStateListOf<Item>() }
     val messageIndex = remember { mutableStateMapOf<String, Int>() }
+
+    /**
+     * Where a message's row is, without trusting the cached position.
+     *
+     * `messageIndex` is written when a row is appended, and rows are inserted
+     * between them afterwards - a wave divider before a later turn, a tool row
+     * under one, an error card at the end. Every insertion shifts everything
+     * below it, so the stored position can name a different message. Reading
+     * through this resolver keeps a streamed delta from being written into
+     * another turn's bubble; the map stays as the fast path.
+     */
+    fun rowOfMessage(id: String): Int {
+        val known = messageIndex[id]
+        if (known != null && known in items.indices) {
+            val row = items[known]
+            if (row is Item.Msg && row.id == id) return known
+        }
+        val found = items.indexOfFirst { it is Item.Msg && it.id == id }
+        if (found >= 0) messageIndex[id] = found
+        return found
+    }
     var currentSession by remember { mutableStateOf<String?>(null) }
     var cursor by remember { mutableStateOf(0L) }
     /** Counts selections, so a history reply for an abandoned one is dropped. */
@@ -1476,8 +1497,22 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     }
 
     fun respondPerm(requestId: String, response: String) {
-        clearPerm(requestId)
-        scope.launch { rpc(JSONObject().put("type", "permission.respond").put("requestID", requestId).put("response", response)) }
+        /*
+         * The card is cleared only once the server has taken the answer.
+         *
+         * It used to be cleared first, then the request sent - so a reply that
+         * never got through (a dropped socket, a turn that had already been
+         * cancelled) took the card off the screen while the tool stayed
+         * blocked on a permission nobody had answered: nothing on the page, and
+         * nothing in the transcript either, because the model was still waiting.
+         */
+        scope.launch {
+            val ok = runCatching {
+                rpc(JSONObject().put("type", "permission.respond").put("requestID", requestId).put("response", response))
+            }.isSuccess
+            if (ok) clearPerm(requestId)
+            else Toast.makeText(context, "答复没有送达，请重试", Toast.LENGTH_LONG).show()
+        }
     }
 
     /**
@@ -1485,10 +1520,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * it knows what to do differently rather than just that it was stopped.
      */
     fun respondPermReason(requestId: String, reason: String) {
-        clearPerm(requestId)
         val req = JSONObject().put("type", "permission.respond").put("requestID", requestId).put("response", "reject")
         if (reason.isNotBlank()) req.put("reason", reason)
-        scope.launch { rpc(req) }
+        // Same rule as `respondPerm`: the card goes only after the server took it.
+        scope.launch {
+            val ok = runCatching { rpc(req) }.isSuccess
+            if (ok) clearPerm(requestId)
+            else Toast.makeText(context, "答复没有送达，请重试", Toast.LENGTH_LONG).show()
+        }
     }
 
     fun loadProviders() {
@@ -1509,13 +1548,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         // Same reason as `clearPerm`: an answered question is no longer parked,
         // and a card that comes back on the next open would be a question the
         // model has already been told the answer to.
-        clearPerm(requestId)
         scope.launch {
-            try {
+            val ok = runCatching {
                 rpc(JSONObject().put("type", "question.reply").put("requestID", requestId).put("answers", org.json.JSONArray().put(org.json.JSONArray(answer))))
-            } catch (e: Exception) {
-                println("[remote] question.reply failed: $e")
-            }
+            }.isSuccess
+            // An answer that never arrived left the question card gone and the
+            // model still waiting for it - the same silence either way.
+            if (ok) clearPerm(requestId)
+            else Toast.makeText(context, "回答没有送达，请重试", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -1583,7 +1623,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 }
             }
         }
-        val known = messageIndex[id]
+        val known = rowOfMessage(id).takeIf { it >= 0 }
         /*
          * A turn is under way while its reply is unfinished, which is the same
          * rule the desktop uses: the phone had no notion of a running turn at
@@ -1749,8 +1789,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             reasoningSeen[messageID] = once(reasoningSeen[messageID]) + text.length
             return
         }
-        val known = messageIndex[messageID]
-        if (known != null && known in items.indices) {
+        val known = rowOfMessage(messageID).takeIf { it >= 0 }
+        if (known != null) {
             val existing = items[known]
             if (existing is Item.Msg) items[known] = existing.copy(text = existing.text + text)
             return
@@ -1770,7 +1810,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             val so = part.optString("text")
             if (so.isNotBlank()) reasoningSeen[messageID] = once(reasoningSeen[messageID]) + so.length
         }
-        val known = messageIndex[messageID] ?: return
+        val known = rowOfMessage(messageID).takeIf { it >= 0 } ?: return
         val existing = items[known]
         if (existing !is Item.Msg) return
         when (part.optString("type")) {
