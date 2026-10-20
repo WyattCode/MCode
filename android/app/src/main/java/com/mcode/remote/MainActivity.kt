@@ -802,6 +802,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     /** `config.projects` - every folder the app treats as a project, newest first. */
     val projects = remember { mutableStateListOf<String>() }
     /**
+     * `config.projectNames` - the display name a project was given, by folder.
+     * A project without one is its folder's own last segment, which is what
+     * `projectName()` in `lib/project.ts` falls back to.
+     */
+    val projectNames = remember { mutableStateMapOf<String, String>() }
+    /** `config.projectUsed` - when each project was last picked, for the ordering. */
+    val projectUsed = remember { mutableStateMapOf<String, Long>() }
+    /**
      * 作品: the files the app has produced, from `artifact.list`.
      *
      * Claude's drawer opens with 项目 / Code / Artifacts / 定时任务, and this
@@ -1520,10 +1528,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * the row without moving the pane. Claude switches to the new
      * conversation the moment it exists, so this does too.
      */
-    fun newSession() {
+    fun newSession(directory: String = "") {
         scope.launch {
             try {
-                val reply = rpc(JSONObject().put("type", "session.create").put("title", "来自手机"))
+                val ask = JSONObject().put("type", "session.create").put("title", "来自手机")
+                if (directory.isNotBlank()) ask.put("directory", directory)
+                val reply = rpc(ask)
                 val sid = reply.optJSONObject("data")?.optJSONObject("session")?.optString("id").orEmpty()
                 if (sid.isNotBlank()) select(sid)
             } catch (e: Exception) {
@@ -1725,6 +1735,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         read?.optJSONArray("projects")?.let { arr ->
             for (i in 0 until arr.length()) arr.optString(i).takeIf { it.isNotBlank() }?.let { projects.add(it) }
         }
+        projectNames.clear()
+        read?.optJSONObject("projectNames")?.let { obj ->
+            for (key in obj.keys()) if (obj.optString(key).isNotBlank()) projectNames[key] = obj.optString(key)
+        }
+        projectUsed.clear()
+        read?.optJSONObject("projectUsed")?.let { obj ->
+            for (key in obj.keys()) projectUsed[key] = obj.optLong(key)
+        }
     }
 
     if (!connectedOnce || showConnect) {
@@ -1820,6 +1838,100 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         }
         pluginsFailed = mcp == null && sk == null
         pluginsLoading = false
+    }
+
+    /*
+     * The project rows, in the desktop's recency order: the later of a
+     * project's newest conversation and its last pick first, the stored list
+     * breaking ties (`projectsByRecency` in shared/projects.ts).
+     */
+    val projectRows = remember(projects.toList(), projectNames.toMap(), projectUsed.toMap(), sessions.toList()) {
+        val at = HashMap<String, Long>()
+        for (d in projects) at[d] = projectUsed[d] ?: 0L
+        for (s in sessions) {
+            val seen = at[s.directory]
+            if (seen != null && s.updated > seen) at[s.directory] = s.updated
+        }
+        projects.map { d ->
+            ProjectRowData(
+                directory = d,
+                name = projectNames[d] ?: d.substringAfterLast('\\').substringAfterLast('/'),
+                sessions = sessions.count { it.directory == d },
+                lastUsed = at[d] ?: 0L,
+            )
+        }.sortedWith(compareByDescending<ProjectRowData> { it.lastUsed }.thenBy { projects.indexOf(it.directory) })
+    }
+
+    if (leftMode == LeftMode.Projects) {
+        ProjectsScreen(
+            rows = projectRows,
+            onOpen = {
+                projectFilter = it
+                leftMode = LeftMode.Sessions
+            },
+            onClose = { leftMode = LeftMode.Sessions },
+            onCreateBlank = { name ->
+                scope.launch {
+                    /*
+                     * `project.createBlank` only makes the folder - the desktop's
+                     * home then opens the first conversation in it, which is
+                     * what puts the project on the list (a folder with no
+                     * conversation is adopted only once it is used). So the
+                     * three steps go together: the folder, the list, the turn.
+                     */
+                    val made = runCatching {
+                        rpc(JSONObject().put("type", "project.createBlank").put("name", name))
+                    }.getOrNull()?.optJSONObject("data")?.optString("directory").orEmpty()
+                    if (made.isBlank()) {
+                        Toast.makeText(context, "没有创建成功", Toast.LENGTH_SHORT).show()
+                    } else {
+                        runCatching {
+                            rpc(JSONObject().put("type", "project.add").put("directory", made).put("used", true))
+                        }
+                        refreshCommandsTick++
+                        newSession(made)
+                    }
+                }
+            },
+            onAddFolder = { directory ->
+                scope.launch {
+                    val reply = runCatching {
+                        rpc(JSONObject().put("type", "project.add").put("directory", directory).put("used", true))
+                    }.getOrNull()?.optJSONObject("data")
+                    refreshCommandsTick++
+                    if (reply == null) Toast.makeText(context, "文件夹没有添加成功", Toast.LENGTH_SHORT).show()
+                    else if (reply.optBoolean("existed")) Toast.makeText(context, "该项目已在列表中", Toast.LENGTH_SHORT).show()
+                    else Toast.makeText(context, "已添加项目：${directory.substringAfterLast('\\').substringAfterLast('/')}", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onRename = { directory, name ->
+                scope.launch {
+                    runCatching {
+                        val config = runCatching { rpc(JSONObject().put("type", "config.get")) }.getOrNull()
+                            ?.optJSONObject("data")?.optJSONObject("config")
+                        val names = config?.optJSONObject("projectNames")?.let { obj ->
+                            val m = org.json.JSONObject()
+                            for (key in obj.keys()) m.put(key, obj.optString(key))
+                            m
+                        } ?: org.json.JSONObject()
+                        names.put(directory, name)
+                        rpc(JSONObject().put("type", "config.set").put("patch", JSONObject().put("projectNames", names)))
+                    }
+                    refreshCommandsTick++
+                }
+            },
+            onRemove = { directory ->
+                scope.launch {
+                    runCatching {
+                        rpc(JSONObject().put("type", "project.remove").put("directories", org.json.JSONArray().put(directory)))
+                    }
+                    if (projectFilter == directory) projectFilter = null
+                    refreshCommandsTick++
+                    Toast.makeText(context, "已移除项目", Toast.LENGTH_SHORT).show()
+                }
+            },
+        )
+        return
     }
 
     if (leftMode == LeftMode.Plugins) {
@@ -2167,6 +2279,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     onNewTask = { newSession(); closeDrawer() },
                     onArtifacts = { leftMode = LeftMode.Artifacts; closeDrawer() },
                     onPlugins = { leftMode = LeftMode.Plugins; closeDrawer() },
+                    onProjects = { leftMode = LeftMode.Projects; closeDrawer() },
                     currentPage = leftMode,
                     onLongPress = { sheetTarget = it },
                 )
@@ -2330,6 +2443,37 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             Text(marked, fontSize = 12.sp, color = LocalMuted.current, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                         }
                                     }
+                                }
+                            }
+                        }
+                        /*
+                         * The project the list is filtered to, as a chip with a
+                         * clear: picking a project on the projects page lands
+                         * here, and without a visible state the list would
+                         * silently have become three rows long.
+                         */
+                        if (projectFilter != null) {
+                            Row(
+                                Modifier
+                                    .padding(horizontal = 12.dp, vertical = 2.dp)
+                                    .clip(RoundedCornerShape(15.dp))
+                                    .background(LocalPill.current)
+                                    .padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(Icons.Outlined.Folder, contentDescription = null, tint = Ember, modifier = Modifier.size(13.dp))
+                                Spacer(Modifier.width(5.dp))
+                                Text(
+                                    projectNames[projectFilter] ?: (projectFilter ?: "").substringAfterLast('\\').substringAfterLast('/'),
+                                    fontSize = 12.sp,
+                                    color = LocalText.current,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                )
+                                Spacer(Modifier.width(3.dp))
+                                Box(Modifier.size(22.dp).clickable { projectFilter = null }, contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Filled.Close, contentDescription = "清除项目过滤", tint = LocalMuted.current, modifier = Modifier.size(13.dp))
                                 }
                             }
                         }
@@ -5368,6 +5512,7 @@ fun DrawerContent(
     onNewTask: () -> Unit = {},
     onArtifacts: () -> Unit = {},
     onPlugins: () -> Unit = {},
+    onProjects: () -> Unit = {},
     /** Which column page is open, so the drawer can mark the row for it. */
     currentPage: LeftMode = LeftMode.Sessions,
     onSearch: () -> Unit = {},
@@ -5417,6 +5562,10 @@ fun DrawerContent(
                 onNewTask()
             }
             Spacer(Modifier.height(12.dp))
+            // 项目: the desktop's side column is the project list itself, so
+            // it needs no row of its own; the phone's list is a page behind a
+            // drawer, and without a row it is unreachable.
+            DrawerItem(Icons.Outlined.Folder, "项目", active = currentPage == LeftMode.Projects) { onProjects() }
             DrawerItem(Icons.AutoMirrored.Outlined.Article, "产物中心", active = currentPage == LeftMode.Artifacts) { onArtifacts() }
             // 插件: the desktop's page for MCP servers and skills, which the
             // phone had no way to reach at all - so a skill could not be turned
@@ -5749,8 +5898,288 @@ fun PluginsScreen(
     }
 }
 
+/** One row of the projects page: the folder, what it is called, how much is in it. */
+data class ProjectRowData(val directory: String, val name: String, val sessions: Int, val lastUsed: Long)
+
+/**
+ * 项目, the list the desktop's side column is built around.
+ *
+ * The desktop has no separate page for this - its column *is* the project list,
+ * with each project's conversations folded under it - so this page is the
+ * phone's stand-in for that grouping, and it carries what the desktop's project
+ * menu does in its own words: 重命名项目, and 移除 (the desktop's own danger
+ * row), which take the project off the list while its conversations stay.
+ *
+ * Two ways in from the desktop's home: 新建空白项目, which makes a folder and
+ * adds it (`project.createBlank`), and 添加文件夹, which adds a path that
+ * already exists (`project.add`). The desktop reaches for a system folder
+ * picker there; a tablet has one too, but not through the gateway, so the path
+ * is typed - the same trade the connect screen makes.
+ *
+ * The order is `projectsByRecency` in `shared/projects.ts`: the later of the
+ * project's newest conversation and its last pick first, the stored list
+ * breaking ties.
+ */
+@Composable
+fun ProjectsScreen(
+    rows: List<ProjectRowData>,
+    onOpen: (String) -> Unit,
+    onCreateBlank: (String) -> Unit,
+    onAddFolder: (String) -> Unit,
+    onRename: (String, String) -> Unit,
+    onRemove: (String) -> Unit,
+    onClose: () -> Unit,
+) {
+    var menuFor by remember { mutableStateOf<String?>(null) }
+    var renameFor by remember { mutableStateOf<String?>(null) }
+    var renameDraft by remember { mutableStateOf("") }
+    var adding by remember { mutableStateOf(false) }
+    var addDraft by remember { mutableStateOf("") }
+    var creating by remember { mutableStateOf(false) }
+    var createDraft by remember { mutableStateOf("") }
+    val muted = LocalMuted.current
+    val ink = LocalText.current
+    val fieldLine = LocalFieldLine.current
+    val fieldBg = LocalField.current
+
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        // The status bar is drawn over the page, so the header steps under it -
+        // without this the title sat on top of the clock, as the plugins page's
+        // first cut did.
+        Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(38.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = LocalText.current, modifier = Modifier.size(20.dp))
+            }
+            Spacer(Modifier.width(6.dp))
+            Text("项目", fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current, modifier = Modifier.weight(1f))
+        }
+        if (rows.isEmpty()) {
+            // The empty outline: a folder with no fill, the words, and the one
+            // sentence that says what a project is.
+            Column(Modifier.fillMaxWidth().padding(top = 90.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Outlined.Folder, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(63.dp))
+                Spacer(Modifier.height(14.dp))
+                Text("暂无项目", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
+                Spacer(Modifier.height(4.dp))
+                Text("添加一个文件夹，把它的对话归在一起。", fontSize = 13.sp, color = LocalMuted.current)
+            }
+        }
+        LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 20.dp)) {
+            items(rows.size) { index ->
+                val row = rows[index]
+                Box(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .border(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE4E1D8), RoundedCornerShape(12.dp))
+                            .clickable { onOpen(row.directory) }
+                            .padding(start = 12.dp, end = 2.dp, top = 11.dp, bottom = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Outlined.Folder, contentDescription = null, tint = Ember, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(row.name, fontSize = 14.sp, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.height(1.dp))
+                            Text(
+                                row.directory,
+                                fontSize = 11.sp,
+                                color = muted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Text(
+                            if (row.sessions == 1) "1 个会话" else "${row.sessions} 个会话",
+                            fontSize = 11.sp,
+                            color = muted,
+                        )
+                        Spacer(Modifier.width(2.dp))
+                        Box(
+                            Modifier.size(34.dp).clickable { menuFor = if (menuFor == row.directory) null else row.directory },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Outlined.MoreVert, contentDescription = "项目菜单", tint = muted, modifier = Modifier.size(18.dp))
+                        }
+                        androidx.compose.material3.DropdownMenu(
+                            expanded = menuFor == row.directory,
+                            onDismissRequest = { menuFor = null },
+                            modifier = Modifier.width(180.dp).background(MaterialTheme.colorScheme.surface),
+                        ) {
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text("重命名项目", fontSize = 14.sp, color = ink) },
+                                onClick = {
+                                    menuFor = null
+                                    renameFor = row.directory
+                                    renameDraft = row.name
+                                },
+                            )
+                            HorizontalDivider(color = muted.copy(alpha = 0.12f))
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text("移除", fontSize = 14.sp, color = MaterialTheme.colorScheme.error) },
+                                onClick = {
+                                    menuFor = null
+                                    onRemove(row.directory)
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        // The two ways a project comes into being, at the foot of the page the
+        // way the desktop's home carries them.
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = LocalPill.current,
+                modifier = Modifier.weight(1f).clickable { creating = true },
+            ) {
+                Row(Modifier.padding(vertical = 10.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Add, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("新建空白项目", fontSize = 13.sp, color = LocalText.current)
+                }
+            }
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = LocalPill.current,
+                modifier = Modifier.weight(1f).clickable { adding = true; addDraft = "" },
+            ) {
+                Row(Modifier.padding(vertical = 10.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.FolderOpen, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("添加文件夹", fontSize = 13.sp, color = LocalText.current)
+                }
+            }
+        }
+        Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
+    }
+
+    if (renameFor != null) {
+        val dir = renameFor ?: return
+        AlertDialog(
+            onDismissRequest = { renameFor = null },
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = ink,
+            textContentColor = ink,
+            title = { Text("重命名项目", fontSize = 16.sp) },
+            text = {
+                OutlinedTextField(
+                    renameDraft, { renameDraft = it },
+                    Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        unfocusedContainerColor = fieldBg,
+                        focusedContainerColor = fieldBg,
+                        unfocusedBorderColor = fieldLine,
+                        focusedBorderColor = fieldLine,
+                    ),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = renameDraft.isNotBlank(),
+                    onClick = {
+                        onRename(dir, renameDraft.trim())
+                        renameFor = null
+                    },
+                ) { Text("保存") }
+            },
+            dismissButton = { TextButton({ renameFor = null }) { Text("取消", color = ink) } },
+        )
+    }
+    if (adding) {
+        AlertDialog(
+            onDismissRequest = { adding = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = ink,
+            textContentColor = ink,
+            title = { Text("添加文件夹", fontSize = 16.sp) },
+            text = {
+                Column {
+                    Text("输入一个已存在的文件夹的完整路径。", fontSize = 13.sp, color = muted, lineHeight = 20.sp)
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        addDraft, { addDraft = it },
+                        Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        placeholder = { Text("D:\\work\\my-project", fontSize = 13.sp, color = muted) },
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            unfocusedContainerColor = fieldBg,
+                            focusedContainerColor = fieldBg,
+                            unfocusedBorderColor = fieldLine,
+                            focusedBorderColor = fieldLine,
+                        ),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = addDraft.trim().length > 2,
+                    onClick = {
+                        onAddFolder(addDraft.trim())
+                        adding = false
+                    },
+                ) { Text("添加") }
+            },
+            dismissButton = { TextButton({ adding = false }) { Text("取消", color = ink) } },
+        )
+    }
+    if (creating) {
+        AlertDialog(
+            onDismissRequest = { creating = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = ink,
+            textContentColor = ink,
+            title = { Text("新建空白项目", fontSize = 16.sp) },
+            text = {
+                Column {
+                    Text("在默认工作区下建一个空文件夹，作为新项目。", fontSize = 13.sp, color = muted, lineHeight = 20.sp)
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        createDraft, { createDraft = it },
+                        Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        placeholder = { Text("项目名称", fontSize = 13.sp, color = muted) },
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            unfocusedContainerColor = fieldBg,
+                            focusedContainerColor = fieldBg,
+                            unfocusedBorderColor = fieldLine,
+                            focusedBorderColor = fieldLine,
+                        ),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = createDraft.isNotBlank(),
+                    onClick = {
+                        onCreateBlank(createDraft.trim())
+                        createDraft = ""
+                        creating = false
+                    },
+                ) { Text("创建") }
+            },
+            dismissButton = { TextButton({ creating = false }) { Text("取消", color = ink) } },
+        )
+    }
+}
+
 /** Which page the left column is showing. Claude switches between them in place. */
-enum class LeftMode { Sessions, Artifacts, Plugins }
+enum class LeftMode { Sessions, Projects, Artifacts, Plugins }
 
 /**
  * The black capsule at the foot of the column.
