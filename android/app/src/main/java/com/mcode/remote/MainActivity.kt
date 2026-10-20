@@ -455,6 +455,8 @@ sealed class Item {
         val steered: Boolean = false,
         val files: List<String> = emptyList(),
         val finish: String = "",
+        /** Characters of thinking the turn produced, which the phone does not draw. */
+        val thought: Int = 0,
     ) : Item() { override val key = "msg.$id" }
 
     /**
@@ -1223,6 +1225,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     /** Each streamed part's kind, from the `message.part.updated` before its deltas. */
     val partKinds = remember { java.util.HashMap<String, String>() }
     /**
+     * How much thinking each assistant turn produced, by message id.
+     *
+     * The desktop treats a turn that thought but never answered as a FAILURE
+     * rather than an empty reply (`thinkOnly` in MessageStream.vue): there was
+     * output, just not the part that counts, and MiMo writes it up as something
+     * to retry. The phone drops reasoning parts on purpose, so the only way to
+     * know this happened is to remember that some arrived.
+     */
+    val reasoningSeen = remember { java.util.HashMap<String, Int>() }
+    /**
      * What the last turn spent, for the composer's context ring.
      *
      * The desktop reads this off the transcript (`session-context.ts`) and draws
@@ -1555,7 +1567,20 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         if (parts != null) {
             for (i in 0 until parts.length()) {
                 val part = parts.optJSONObject(i) ?: continue
-                if (part.optString("type") == "text") text.append(part.optString("text")).append("\n")
+                when (part.optString("type")) {
+                    "text" -> text.append(part.optString("text")).append("\n")
+                    /*
+                     * Counted but not drawn: a stored turn whose only part is
+                     * reasoning is the desktop's `thinkOnly`, and it has to be
+                     * recognised from the history as well as from the stream -
+                     * this loop is the one a conversation read from disk goes
+                     * through, and it used to drop reasoning entirely.
+                     */
+                    "reasoning" -> {
+                        val so = part.optString("text")
+                        if (so.isNotBlank()) reasoningSeen[id] = (reasoningSeen[id] ?: 0) + so.length
+                    }
+                }
             }
         }
         val known = messageIndex[id]
@@ -1614,11 +1639,24 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     files = sentFiles,
                     steered = message.optBoolean("steered"),
                     finish = message.optString("finish", existing.finish),
+                    // A whole-message update can arrive before the reasoning
+                    // part was counted; taking the larger keeps what is known.
+                    thought = maxOf(existing.thought, reasoningSeen[id] ?: 0),
                 )
             }
         } else {
             val body = text.toString().trim()
-            if (body.isNotEmpty() || role == "user" || images.isNotEmpty()) {
+            /*
+             * An assistant turn with no words still has to become a row when it
+             * ended for a reason worth saying. This gate used to drop every one
+             * of them, so a turn that broke, was stopped, or thought without
+             * answering left NOTHING on the page - the notes that explain those
+             * cases had no row to attach to, which is why the first two
+             * attempts at this fix appeared to do nothing at all.
+             */
+            val worthARow = body.isNotEmpty() || role == "user" || images.isNotEmpty() ||
+                (role == "assistant" && (message.optString("finish").let { it.isNotBlank() && it != "end_turn" } || (reasoningSeen[id] ?: 0) > 0))
+            if (worthARow) {
                 /*
                  * A later sitting gets the wave divider: Claude puts one where
                  * the conversation resumes after a gap, with the clock in the
@@ -1640,12 +1678,21 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                  * a sheet icon and the file name above the bubble (`sent-tile
                  * file`), so the phone does the same and lets it be tapped.
                  */
-                val fallback = if (images.isEmpty() && sentFiles.isEmpty()) "…" else ""
+                /*
+                 * The ellipsis is for a READER's turn that carried only a file
+                 * - their question had no words, and an empty bubble said
+                 * nothing. An assistant turn must never get it: the mark made
+                 * `text` non-blank for a reply that said nothing at all, which
+                 * hid both the "only thought, no answer" note and the plain
+                 * empty-reply case behind a stray 「…」.
+                 */
+                val fallback = if (role != "assistant" && images.isEmpty() && sentFiles.isEmpty()) "…" else ""
                 items.add(
                     Item.Msg(
                         id, role, body.ifEmpty { fallback }, images, at,
                         message.optBoolean("steered"), sentFiles,
                         finish = message.optString("finish"),
+                        thought = reasoningSeen[id] ?: 0,
                     ),
                 )
                 messageIndex[id] = items.size - 1
@@ -1691,9 +1738,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * delta and says it is `reasoning`. The phone used to fold every delta into
      * the message text, which printed the model's thinking as if it had said it.
      */
+    /** `map[key] ?: 0` for an Int-valued HashMap. */
+    fun once(value: Int?): Int = value ?: 0
+
     fun appendDelta(sessionID: String, messageID: String, partID: String, text: String) {
         if (sessionID != currentSession || messageID.isBlank() || text.isEmpty()) return
-        if (partKinds[partID] == "reasoning") return
+        if (partKinds[partID] == "reasoning") {
+            // Counted, not shown: a turn whose only output is thinking is
+            // written up as a failure rather than as an empty reply.
+            reasoningSeen[messageID] = once(reasoningSeen[messageID]) + text.length
+            return
+        }
         val known = messageIndex[messageID]
         if (known != null && known in items.indices) {
             val existing = items[known]
@@ -1711,6 +1766,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         // is never mistaken for prose.
         val partID = part.optString("id")
         if (partID.isNotBlank()) partKinds[partID] = part.optString("type")
+        if (part.optString("type") == "reasoning") {
+            val so = part.optString("text")
+            if (so.isNotBlank()) reasoningSeen[messageID] = once(reasoningSeen[messageID]) + so.length
+        }
         val known = messageIndex[messageID] ?: return
         val existing = items[known]
         if (existing !is Item.Msg) return
@@ -1745,6 +1804,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         val seq = selectSeq
         items.clear()
         messageIndex.clear()
+        partKinds.clear()
+        reasoningSeen.clear()
         loadingThread = id != null
         if (id == null) return
         // Parked permissions ride along: a turn can be sitting on an answer
@@ -5480,11 +5541,21 @@ fun Timeline(
                                      * outside the body's own check or it would
                                      * never draw for exactly those cases.
                                      */
-                                    when (item.finish) {
-                                        "max_tokens" -> TurnNote("回复已达长度上限，内容被截断。发送「继续」可以让它接着说。")
-                                        "refusal" -> TurnNote("模型拒绝了这个请求。")
-                                        "error" -> TurnNote("这一轮出错了。")
-                                        "aborted" -> TurnNote("这一轮被中断。")
+                                    when {
+                                        item.finish == "max_tokens" -> TurnNote("回复已达长度上限，内容被截断。发送「继续」可以让它接着说。")
+                                        item.finish == "refusal" -> TurnNote("模型拒绝了这个请求。")
+                                        item.finish == "error" -> TurnNote("这一轮出错了。")
+                                        item.finish == "aborted" -> TurnNote("这一轮被中断。")
+                                        /*
+                                         * Through to the end without answering,
+                                         * having thought about it: the desktop's
+                                         * `thinkOnly`. Only that case gets this
+                                         * line - an empty turn that never
+                                         * thought is a different thing (a model
+                                         * that said nothing at all).
+                                         */
+                                        item.text.isBlank() && item.thought > 0 ->
+                                            TurnNote("这一轮只生成了思考过程，没有给出回答。")
                                         else -> Unit
                                     }
                                     /*
