@@ -600,10 +600,28 @@ class RemoteClient {
     // threads while the registration happens on the main thread.
     private val waiters = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.CompletableDeferred<JSONObject>>()
 
+    /**
+     * Registers a waiter for one reply.
+     *
+     * The entry is removed when the reply arrives - and, crucially, when it
+     * never does. A request that timed out used to leave its waiter in the map
+     * for the life of the process: every stalled read, every reply that came
+     * back after the screen had moved on, one more entry. On a socket that drops
+     * as often as this one does, that is a slow leak of whole JSON frames'
+     * worth of deferred state.
+     *
+     * `forget` is what the caller's `finally` runs, so the cleanup does not
+     * depend on the continuations remembering to do it.
+     */
     fun awaitResponse(id: String): kotlinx.coroutines.CompletableDeferred<JSONObject> {
         val deferred = kotlinx.coroutines.CompletableDeferred<JSONObject>()
         waiters[id] = deferred
         return deferred
+    }
+
+    /** Drops a waiter whose reply will never come. Safe on an already-answered id. */
+    fun forgetResponse(id: String) {
+        waiters.remove(id)
     }
 
     fun connect(url: String, token: String) {
@@ -1226,7 +1244,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         request(req, id)
         // Transcription runs a whisper pass on the PC and takes longer than a
         // protocol question does; the caller names how long it may wait.
-        return kotlinx.coroutines.withTimeout(timeoutMs) { deferred.await() }
+        return try {
+            kotlinx.coroutines.withTimeout(timeoutMs) { deferred.await() }
+        } finally {
+            // The reply may still arrive later; the entry must not sit there
+            // holding a deferred nobody will ever complete.
+            client.forgetResponse(id)
+        }
     }
 
     /*
@@ -1352,7 +1376,32 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
        cycle in the local-function namespace. */
 
 
+    /**
+     * Drops an answered request from the parked list.
+     *
+     * `pendingPerms` is what a conversation re-opened later replays as its
+     * 待确认 cards. Nothing ever removed an entry once it was answered, so every
+     * permission the reader had already granted came back as still waiting the
+     * next time that conversation was opened - and the row's 待确认 pill with
+     * it.
+     */
+    fun clearPerm(requestId: String) {
+        val keys = pendingPerms.keys.toList()
+        for (key in keys) {
+            pendingPerms[key]?.removeAll { it.optString("id") == requestId }
+            if (pendingPerms[key]?.isEmpty() == true) pendingPerms.remove(key)
+        }
+        // Explicitly, rather than through `entries.removeAll`: a concurrent
+        // map's entry view does not promise the removeIf semantics this needs.
+        for (key in pendingQuestions.keys.toList()) {
+            val list = pendingQuestions[key] ?: continue
+            list.removeAll { it.optString("id") == requestId }
+            if (list.isEmpty()) pendingQuestions.remove(key)
+        }
+    }
+
     fun respondPerm(requestId: String, response: String) {
+        clearPerm(requestId)
         scope.launch { rpc(JSONObject().put("type", "permission.respond").put("requestID", requestId).put("response", response)) }
     }
 
@@ -1361,6 +1410,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * it knows what to do differently rather than just that it was stopped.
      */
     fun respondPermReason(requestId: String, reason: String) {
+        clearPerm(requestId)
         val req = JSONObject().put("type", "permission.respond").put("requestID", requestId).put("response", "reject")
         if (reason.isNotBlank()) req.put("reason", reason)
         scope.launch { rpc(req) }
@@ -1381,6 +1431,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
 
 
     fun answerQuestion(requestId: String, answer: List<String>) {
+        // Same reason as `clearPerm`: an answered question is no longer parked,
+        // and a card that comes back on the next open would be a question the
+        // model has already been told the answer to.
+        clearPerm(requestId)
         scope.launch {
             try {
                 rpc(JSONObject().put("type", "question.reply").put("requestID", requestId).put("answers", org.json.JSONArray().put(org.json.JSONArray(answer))))
@@ -1630,9 +1684,19 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             val ticket = "h${System.nanoTime()}"
             val deferred = client.awaitResponse(ticket)
             request(JSONObject().put("type", "session.get").put("sessionID", id), ticket)
-            val res = runCatching { deferred.await() }.getOrNull() ?: return@launch
-            if (seq != selectSeq) return@launch
-            loadingThread = false
+            /*
+             * The loading line comes down however this read ends. It used to be
+             * cleared only after a reply arrived, so a `session.get` that timed
+             * out or was refused left 「正在加载对话…」 on screen for good - the
+             * conversation never opened again without a restart.
+             */
+            val res = try {
+                runCatching { deferred.await() }.getOrNull()
+            } finally {
+                client.forgetResponse(ticket)
+                if (seq == selectSeq) loadingThread = false
+            }
+            if (res == null || seq != selectSeq) return@launch
             queuedPrompts.clear()
             val info = res.optJSONObject("data")?.optJSONObject("session")
             smartMode = info?.optBoolean("smart") ?: false
@@ -1775,10 +1839,20 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     "session.deleted" -> {
                         val gone = event.optString("sessionID")
                         sessions.removeAll { it.id == gone }
+                        // A row that is gone cannot be unread, and the set is
+                        // held for the life of the screen: without this every
+                        // deleted conversation's id stayed in it for good.
+                        unseen.remove(gone)
+                        pendingPerms.remove(gone)
+                        pendingQuestions.remove(gone)
                         if (currentSession == gone) {
                             currentSession = null
                             items.clear()
                             messageIndex.clear()
+                            // The read this conversation had under way will
+                            // never land; it must not leave the spinner up.
+                            loadingThread = false
+                            selectSeq++
                         }
                     }
                     "message.updated" -> upsertMessage(event.optString("sessionID"), event.optJSONObject("message") ?: return)
@@ -2009,18 +2083,28 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     val projectRows = remember(projects.toList(), projectNames.toMap(), projectUsed.toMap(), sessions.toList()) {
         val at = HashMap<String, Long>()
         for (d in projects) at[d] = projectUsed[d] ?: 0L
+        // The count and the last touch in one pass. Counting with
+        // `sessions.count { }` inside `projects.map { }` was O(projects x
+        // sessions) on every recomposition of the drawer.
+        val counts = HashMap<String, Int>()
         for (s in sessions) {
+            counts[s.directory] = (counts[s.directory] ?: 0) + 1
             val seen = at[s.directory]
             if (seen != null && s.updated > seen) at[s.directory] = s.updated
         }
+        val order = HashMap<String, Int>()
+        for ((index, d) in projects.withIndex()) order[d] = index
         projects.map { d ->
             ProjectRowData(
                 directory = d,
                 name = projectNames[d] ?: d.substringAfterLast('\\').substringAfterLast('/'),
-                sessions = sessions.count { it.directory == d },
+                sessions = counts[d] ?: 0,
                 lastUsed = at[d] ?: 0L,
             )
-        }.sortedWith(compareByDescending<ProjectRowData> { it.lastUsed }.thenBy { projects.indexOf(it.directory) })
+        }.sortedWith(
+            compareByDescending<ProjectRowData> { it.lastUsed }
+                .thenBy { order[it.directory] ?: Int.MAX_VALUE },
+        )
     }
 
     if (leftMode == LeftMode.Projects) {
@@ -2257,7 +2341,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         val ticket = "cmd${System.nanoTime()}"
         val deferred = client.awaitResponse(ticket)
         request(JSONObject().put("type", "command.list").put("directory", commandDir), ticket)
-        val res = runCatching { deferred.await() }.getOrNull() ?: return@LaunchedEffect
+        val res = try {
+            runCatching { deferred.await() }.getOrNull()
+        } finally {
+            client.forgetResponse(ticket)
+        } ?: return@LaunchedEffect
         val arr = res.optJSONObject("data")?.optJSONArray("commands") ?: return@LaunchedEffect
         for (i in 0 until arr.length()) {
             val c = arr.optJSONObject(i) ?: continue
@@ -2355,12 +2443,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             },
             onGoalResend = {
                 val condition = currentRow?.goal?.condition
-                if (!condition.isNullOrBlank() && currentSession != null) {
+                val sessionID = currentSession
+                if (!condition.isNullOrBlank() && sessionID != null) {
                     scope.launch {
                         runCatching {
-                            rpc(JSONObject().put("type", "session.goal").put("sessionID", currentSession).put("condition", condition))
-                            rpc(JSONObject().put("type", "session.prompt").put("sessionID", currentSession).put("text", condition))
-                            withContext(Dispatchers.Main) { setRunning(currentSession!!, true) }
+                            rpc(JSONObject().put("type", "session.goal").put("sessionID", sessionID).put("condition", condition))
+                            rpc(JSONObject().put("type", "session.prompt").put("sessionID", sessionID).put("text", condition))
+                            // The reader may have left this conversation while the
+                            // two round trips were out; the row it names is still
+                            // the one that started running, so the id is taken
+                            // before the calls rather than re-read after them.
+                            withContext(Dispatchers.Main) { setRunning(sessionID, true) }
                         }
                     }
                 }
@@ -2378,17 +2471,31 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 if (words.isEmpty()) draftStore.edit().remove("draft.$key").apply()
                 else draftStore.edit().putString("draft.$key", words).apply()
             },
+            /*
+             * Both take the id and leave if there is none. `currentSession!!`
+             * was an NPE waiting for the reader to switch away from a
+             * conversation with a queued message - the queue belongs to the
+             * conversation it was drawn in, and by the time the tap lands that
+             * one may no longer be the open one.
+             */
             onQueueRemove = { id ->
                 queuedPrompts.removeAll { it.first == id }
-                request(JSONObject().put("type", "session.queue.remove").put("sessionID", currentSession!!).put("id", id))
+                currentSession?.let { sid ->
+                    request(JSONObject().put("type", "session.queue.remove").put("sessionID", sid).put("id", id))
+                }
             },
             onQueueSend = { id ->
-                request(JSONObject().put("type", "session.queue.send").put("sessionID", currentSession!!).put("id", id))
+                currentSession?.let { sid ->
+                    request(JSONObject().put("type", "session.queue.send").put("sessionID", sid).put("id", id))
+                }
             },
             onSend = { text, atts ->
                 // steer only joins a running turn; an idle session gets a
                 // plain prompt or the server ignores the message outright.
-                val sid = currentSession!!
+                // send is only enabled with a conversation open, but the
+                // composer can be rebuilt after it closes; leave rather than
+                // throw if that has happened.
+                val sid = currentSession ?: return@InputCapsule
                 val req = JSONObject().put("type", "session.prompt").put("sessionID", sid).put("text", text)
                 if (atts.isNotEmpty()) req.put("attachments", org.json.JSONArray(atts.toList()))
                 if (sessions.find { it.id == sid }?.running == true) req.put("delivery", "steer")
@@ -3024,7 +3131,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             val ticket = "fs${System.nanoTime()}"
             val deferred = client.awaitResponse(ticket)
             request(JSONObject().put("type", "file.listDir").put("directory", root).put("sub", sub), ticket)
-            val res = runCatching { deferred.await() }.getOrNull() ?: return@LaunchedEffect
+            val res = try {
+                runCatching { deferred.await() }.getOrNull()
+            } finally {
+                client.forgetResponse(ticket)
+            } ?: return@LaunchedEffect
             val arr = res.optJSONObject("data")?.optJSONArray("entries") ?: return@LaunchedEffect
             val list = mutableListOf<Pair<String, Boolean>>()
             for (i in 0 until arr.length()) {
