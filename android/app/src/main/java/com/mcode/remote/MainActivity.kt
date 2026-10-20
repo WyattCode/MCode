@@ -742,6 +742,20 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var refreshCommandsTick by remember { mutableStateOf(0) }
     /** `config.projects` - every folder the app treats as a project, newest first. */
     val projects = remember { mutableStateListOf<String>() }
+    /**
+     * 作品: the files the app has produced, from `artifact.list`.
+     *
+     * Claude's drawer opens with 项目 / Code / Artifacts / 定时任务, and this
+     * app had no third one at all - a whole page of the product's own output
+     * was unreachable from a tablet. `artifact.list` answers with one entry per
+     * conversation that produced something, each with its files.
+     */
+    val artifacts = remember { mutableStateListOf<JSONObject>() }
+    var artifactsLoading by remember { mutableStateOf(false) }
+    /** Which facet the artifacts page is filtered to: "" / doc / app / other. */
+    var artCategory by remember { mutableStateOf("") }
+    var artFacets by remember { mutableStateOf<JSONObject?>(null) }
+    var artBuilding by remember { mutableStateOf(false) }
     var runningOnly by remember { mutableStateOf(false) }
     var privacy by remember { mutableStateOf(false) }
     var projectFilter by remember { mutableStateOf<String?>(null) }
@@ -1791,6 +1805,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     onSearch = { closeDrawer() },
                     onSeeAll = { openDrawer() },
                     onPlugins = { showPlugins = true; closeDrawer() },
+                    onArtifacts = { leftMode = LeftMode.Artifacts; closeDrawer() },
                     onProviders = { loadProviders(); showProviders = true; closeDrawer() },
                     onLongPress = { sheetTarget = it },
                 )
@@ -1845,6 +1860,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 LeftMode.Sessions -> "最近记录"
                                 LeftMode.Projects -> "项目"
                                 LeftMode.Scheduled -> "定时任务"
+                                LeftMode.Artifacts -> "作品"
                             },
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Medium,
@@ -1940,6 +1956,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     tasks = automations.toList(),
                                     modifier = Modifier.weight(1f).fillMaxWidth(),
                                 )
+                            LeftMode.Artifacts ->
+                                ArtifactsPane(
+                                    groups = artifacts.toList(),
+                                    loading = artifactsLoading,
+                                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                                    category = artCategory,
+                                    facets = artFacets,
+                                    building = artBuilding,
+                                    onCategory = { artCategory = it },
+                                )
                         }
                         /*
                          * Claude's foot-of-column capsule, which follows the
@@ -1953,6 +1979,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 LeftMode.Sessions -> "+ 新建会话"
                                 LeftMode.Projects -> "+ 新建项目"
                                 LeftMode.Scheduled -> "+ 新建任务"
+                                LeftMode.Artifacts -> "+ 新建会话"
                             },
                             modifier = Modifier.align(Alignment.CenterHorizontally),
                             enabled = when (leftMode) {
@@ -1963,12 +1990,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 // cron expression, so this opens the box instead
                                 // of pretending to be a form.
                                 LeftMode.Scheduled -> true
+                                LeftMode.Artifacts -> true
                             },
                             onClick = {
                                 when (leftMode) {
                                     LeftMode.Sessions -> newSession()
                                     LeftMode.Projects -> projectAdding = true
                                     LeftMode.Scheduled -> Toast.makeText(context, "让 MCode 按计划安排一次任务，它会把定时建好", Toast.LENGTH_LONG).show()
+                                    LeftMode.Artifacts -> newSession()
                                 }
                             },
                         )
@@ -2671,6 +2700,29 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * answering alone is shown rather than the whole page failing.
      */
     /*
+     * Read when the page is opened rather than at connect: `artifact.list`
+     * walks the artifact stores, which is not work to do for a reader who
+     * never asks.
+     */
+    LaunchedEffect(leftMode, artCategory) {
+        if (leftMode != LeftMode.Artifacts) return@LaunchedEffect
+        artifactsLoading = true
+        val ask = JSONObject().put("type", "artifact.list").put("limit", 40)
+        if (artCategory.isNotEmpty()) ask.put("category", artCategory)
+        val reply = runCatching { rpc(ask, 45_000) }.getOrNull()
+        val data = reply?.optJSONObject("data")
+        artifacts.clear()
+        data?.optJSONArray("artifacts")?.let { list ->
+            for (i in 0 until list.length()) list.optJSONObject(i)?.let { artifacts.add(it) }
+        }
+        // The facets are the server's own counts; a filtered answer still
+        // carries the unfiltered ones, so they are only taken with no filter.
+        if (artCategory.isEmpty()) artFacets = data?.optJSONObject("facets")
+        artBuilding = data?.optBoolean("building") ?: false
+        artifactsLoading = false
+    }
+
+    /*
      * On a phone there is no column to swap, so the same two pages open over
      * the conversation - the identical composables, with the identical data, so
      * the two layouts cannot drift apart the way a second implementation would.
@@ -2685,7 +2737,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             Column(Modifier.fillMaxWidth().fillMaxHeight(0.86f).padding(horizontal = 16.dp).padding(bottom = 12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        if (leftMode == LeftMode.Projects) "项目" else "定时任务",
+                        when (leftMode) {
+                            LeftMode.Projects -> "项目"
+                            LeftMode.Scheduled -> "定时任务"
+                            else -> "作品"
+                        },
                         fontSize = 17.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = LocalText.current,
@@ -2696,7 +2752,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                if (leftMode == LeftMode.Projects) {
+                if (leftMode == LeftMode.Artifacts) {
+                    ArtifactsPane(
+                        groups = artifacts.toList(),
+                        loading = artifactsLoading,
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        category = artCategory,
+                        facets = artFacets,
+                        building = artBuilding,
+                        onCategory = { artCategory = it },
+                    )
+                } else if (leftMode == LeftMode.Projects) {
                     ProjectsPane(
                         projects = projects,
                         filter = projectFilter,
@@ -4721,6 +4787,7 @@ fun DrawerContent(
     onTasks: () -> Unit,
     onPlugins: () -> Unit = {},
     onProviders: () -> Unit = {},
+    onArtifacts: () -> Unit = {},
     onUsage: () -> Unit = {},
     onSearch: () -> Unit = {},
     onSeeAll: () -> Unit = {},
@@ -4750,6 +4817,8 @@ fun DrawerContent(
              * row that does something.
              */
             DrawerItem(Icons.Outlined.Build, "技能与插件") { onPlugins() }
+            Spacer(Modifier.height(18.dp))
+            DrawerItem(Icons.Outlined.FolderOpen, "作品") { onArtifacts() }
             Spacer(Modifier.height(18.dp))
             DrawerItem(Icons.Outlined.Schedule, "定时任务") { onScheduled() }
             Spacer(Modifier.height(18.dp))
@@ -4815,7 +4884,7 @@ fun DrawerItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: Str
 /* ------------------------------------------------------------------ */
 
 /** Which page the left column is showing. Claude switches between them in place. */
-enum class LeftMode { Sessions, Projects, Scheduled }
+enum class LeftMode { Sessions, Projects, Scheduled, Artifacts }
 
 /**
  * The black capsule at the foot of the column.
@@ -4961,6 +5030,132 @@ fun ScheduledPane(tasks: List<Triple<String, String, Long>>, modifier: Modifier 
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * 作品: what the app has made, grouped by the conversation that made it.
+ *
+ * `artifact.list` answers one entry per conversation with its files, newest
+ * first. A file that has since been deleted or moved still has a row - the
+ * entry says `exists: false` - because the point of the page is to remember
+ * that this was produced, not only to hand it over again.
+ */
+@Composable
+fun ArtifactsPane(
+    groups: List<JSONObject>,
+    loading: Boolean,
+    modifier: Modifier = Modifier,
+    category: String = "",
+    facets: JSONObject? = null,
+    building: Boolean = false,
+    onCategory: (String) -> Unit = {},
+) {
+    if (loading && groups.isEmpty()) {
+        Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = LocalMuted.current)
+        }
+        return
+    }
+    if (groups.isEmpty()) {
+        Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Icon(Icons.Outlined.FolderOpen, contentDescription = null, tint = LocalMuted.current.copy(alpha = 0.6f), modifier = Modifier.size(46.dp))
+            Spacer(Modifier.height(16.dp))
+            Text("暂无作品", fontSize = 15.sp, color = LocalText.current)
+            Spacer(Modifier.height(8.dp))
+            Text("对话产出的文件会出现在这里。", fontSize = 13.sp, color = LocalMuted.current)
+        }
+        return
+    }
+    Column(modifier) {
+        /*
+         * MiMo's facets: the tabs are counted by the server (`facets`), not by
+         * what this page happens to hold - so 文档 says 5 because five documents
+         * exist, not because five were loaded into the list.
+         */
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp).horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            for ((key, label, count) in listOf(
+                Triple("", "全部", facets?.optInt("total") ?: 0),
+                Triple("doc", "文档", facets?.optInt("doc") ?: 0),
+                Triple("app", "应用", facets?.optInt("app") ?: 0),
+                Triple("other", "其他", facets?.optInt("other") ?: 0),
+            )) {
+                val active = category == key
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (active) MaterialTheme.colorScheme.primary else LocalPill.current,
+                    modifier = Modifier.clickable { onCategory(key) },
+                ) {
+                    Text(
+                        "$label $count",
+                        fontSize = 12.sp,
+                        color = if (active) LocalBg.current else LocalText.current,
+                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                    )
+                }
+            }
+            if (building) {
+                Spacer(Modifier.width(4.dp))
+                androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(13.dp), strokeWidth = 1.8.dp, color = LocalMuted.current)
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
+        for ((index, group) in groups.withIndex()) {
+            val title = group.optString("title").ifBlank { "对话" }
+            val files = group.optJSONArray("files")
+            val count = files?.length() ?: 0
+            item(key = "g$index") {
+                Text(
+                    "$title · $count 个文件",
+                    fontSize = 11.5.sp,
+                    color = LocalMuted.current,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 4.dp),
+                )
+            }
+            if (files != null) {
+                items(count) { i ->
+                    val file = files.optJSONObject(i) ?: return@items
+                    val path = file.optString("path")
+                    val exists = file.optBoolean("exists", true)
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            if (exists) Icons.AutoMirrored.Outlined.Article else Icons.Outlined.ErrorOutline,
+                            contentDescription = null,
+                            tint = if (exists) LocalMuted.current else LocalMuted.current.copy(alpha = 0.5f),
+                            modifier = Modifier.size(15.dp),
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                path.substringAfterLast('\\').substringAfterLast('/'),
+                                fontSize = 13.sp,
+                                color = if (exists) LocalText.current else LocalMuted.current,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                if (exists) path else "已不在了 · $path",
+                                fontSize = 10.sp,
+                                color = LocalMuted.current,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            }
+        }
         }
     }
 }
