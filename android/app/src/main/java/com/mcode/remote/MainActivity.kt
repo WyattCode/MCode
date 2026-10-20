@@ -1653,7 +1653,26 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             for (i in 0 until parts.length()) {
                 val part = parts.optJSONObject(i) ?: continue
                 when (part.optString("type")) {
-                    "text" -> text.append(part.optString("text")).append("\n")
+                    "text" -> {
+                        // Blank line between parts, as the live rebuild and the
+                        // desktop both join them - a single newline made two
+                        // paragraphs read as one run-on.
+                        text.append(part.optString("text")).append("\n\n")
+                        /*
+                         * The same store the live path writes, so a reply read
+                         * from disk can go on being rebuilt when its next part
+                         * streams in. Without this a conversation opened from
+                         * history and then continued had its earlier text wiped
+                         * the moment a new part arrived: the rebuild only knew
+                         * about parts it had seen itself.
+                         */
+                        val pid = part.optString("id")
+                        if (pid.isNotBlank()) {
+                            partTexts[pid] = part.optString("text")
+                            partKinds[pid] = "text"
+                            if (pid !in partOrder) partOrder[pid] = partSeq++
+                        }
+                    }
                     /*
                      * Counted but not drawn: a stored turn whose only part is
                      * reasoning is the desktop's `thinkOnly`, and it has to be
