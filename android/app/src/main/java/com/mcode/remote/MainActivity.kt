@@ -948,6 +948,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     val fileEntries = remember { mutableStateListOf<Pair<String, Boolean>>() }
     var filePreview by remember { mutableStateOf<Pair<String, String>?>(null) }
     /**
+     * A video opened from the artifacts page, as its name and the local copy
+     * the bytes were written to. The desktop plays straight off its disk
+     * (`file.read` answers `video: true` with no data and the files tab hands
+     * the path to its local server); across the gateway the bytes are the only
+     * way, so they arrive base64 and land in the cache before playing.
+     */
+    var videoPreview by remember { mutableStateOf<Pair<String, java.io.File>?>(null) }
+    /**
      * The changes rail: which files a turn touched, and the patch for the one
      * being read. The desktop keeps this beside the conversation all the time;
      * on a phone it belongs in a sheet reached from the header.
@@ -1803,8 +1811,25 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 JSONObject().put("type", "file.read").put("root", root).put("rel", rel)
             }
             ask.put("preview", true)
-            val r = runCatching { rpc(ask, 30_000) }.getOrNull()
-            val body = r?.optJSONObject("data")?.optString("content").orEmpty()
+            val r = runCatching { rpc(ask, 60_000) }.getOrNull()
+            val payload = r?.optJSONObject("data")
+            if (payload?.optBoolean("video") == true) {
+                val name = rel.substringAfterLast('/').substringAfterLast('\\')
+                val b64 = payload.optString("data")
+                if (b64.isBlank()) {
+                    // The 25 MB ceiling: the server says video but carries nothing.
+                    Toast.makeText(context, "视频超过 25 MB，无法预览", Toast.LENGTH_SHORT).show()
+                } else {
+                    runCatching {
+                        val dir = java.io.File(context.cacheDir, "video-preview").apply { mkdirs() }
+                        val out = java.io.File(dir, name.replace(Regex("[^\\w.\\- ()]"), "_"))
+                        out.outputStream().use { it.write(android.util.Base64.decode(b64, android.util.Base64.DEFAULT)) }
+                        videoPreview = name to out
+                    }.onFailure { Toast.makeText(context, "视频没有取回来", Toast.LENGTH_SHORT).show() }
+                }
+                return@launch
+            }
+            val body = payload?.optString("content").orEmpty()
             if (body.isNotBlank()) filePreview = rel.substringAfterLast('/').substringAfterLast('\\') to body
         }
     }
@@ -2905,17 +2930,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     if (isDir) {
                                         fileStack = fileStack + if (sub.isBlank()) name else "$sub/$name"
                                     } else {
-                                        val rel = if (sub.isBlank()) name else "$sub/$name"
-                                        // `rpc` is the same round trip the rest of
-                                        // this screen uses; the hand-rolled ticket
-                                        // here never came back.
-                                        scope.launch {
-                                            val r = runCatching {
-                                                rpc(JSONObject().put("type", "file.read").put("root", root).put("rel", rel))
-                                            }.getOrNull() ?: return@launch
-                                            val body = r.optJSONObject("data")?.optString("content").orEmpty()
-                                            filePreview = rel to body
-                                        }
+                                        /*
+                                         * The one open path, shared with the
+                                         * artifacts page: it was a second copy of
+                                         * the same read here, and its text-only
+                                         * branch handed a video an empty sheet.
+                                         */
+                                        openArtifact(root, if (sub.isBlank()) name else "$sub/$name")
                                     }
                                 }
                                 .padding(vertical = 10.dp),
@@ -3324,6 +3345,38 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         )
                     }
                 }
+            }
+        }
+    }
+
+    /*
+     * The video, played from the copy the gateway sent over. `VideoView`
+     * rather than ExoPlayer: the formats that arrive here are the ones every
+     * Android build decodes (mp4/m4v/webm), and MediaController's transport is
+     * what the desktop's own bar offers - play, seek, the clock.
+     */
+    videoPreview?.let { (name, file) ->
+        ModalBottomSheet(onDismissRequest = { videoPreview = null }, containerColor = Color.Black) {
+            Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+                Text(
+                    name,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 10.dp),
+                )
+                androidx.compose.ui.viewinterop.AndroidView(
+                    factory = { ctx ->
+                        android.widget.VideoView(ctx).apply {
+                            setMediaController(android.widget.MediaController(ctx))
+                            setVideoPath(file.absolutePath)
+                            start()
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(320.dp),
+                )
             }
         }
     }
