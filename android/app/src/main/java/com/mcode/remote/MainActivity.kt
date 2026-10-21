@@ -1029,6 +1029,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var refreshArtifacts by remember { mutableStateOf(0) }
     var runningOnly by remember { mutableStateOf(false) }
     var privacy by remember { mutableStateOf(false) }
+    /**
+     * The conversation's own record (`InfoPanel.vue`), as a card over the
+     * transcript rather than a column beside it: the desktop draws it inline
+     * only when the pane is wide enough for both, and floats it otherwise
+     * (`infoFloating`), which on this pad - where the transcript already runs
+     * to the edges - is the way it behaves.
+     */
+    var infoOpen by remember { mutableStateOf(false) }
     var projectFilter by remember { mutableStateOf<String?>(null) }
     /**
      * 技能与插件: the desktop's plugins page, which lists the folder's skills
@@ -3455,6 +3463,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 Icon(Icons.Outlined.MoreVert, contentDescription = "更多", tint = LocalText.current, modifier = Modifier.size(20.dp))
                                 DropdownMenu(expanded = headerMenu, onDismissRequest = { headerMenu = false }) {
                                     MenuRow(
+                                        label = if (infoOpen) "关闭对话信息" else "对话信息",
+                                        onClick = { infoOpen = !infoOpen; headerMenu = false },
+                                    )
+                                    MenuRow(
                                         label = if (privacy) "关闭隐私模糊" else "隐私模糊",
                                         onClick = { privacy = !privacy; headerMenu = false },
                                         icon = { GhostGlyph(active = privacy, size = 15.dp) },
@@ -3511,6 +3523,23 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             onReviewTurn = { patch -> filePreview = "本回合的改动" to patch },
                                         )
                                         /*
+                                         * The info card floats over the pane's top
+                                         * trailing corner, under the find bar - the
+                                         * desktop's `floating` mode, which it uses
+                                         * whenever the pane is too narrow to hold a
+                                         * column beside the prose.
+                                         */
+                                        if (infoOpen) InfoCard(
+                                            items = items.toList(),
+                                            root = sessions.find { it.id == currentSession }?.directory.orEmpty(),
+                                            onOpen = { path ->
+                                                val dir = sessions.find { it.id == currentSession }?.directory.orEmpty()
+                                                openArtifact(dir, path)
+                                            },
+                                            onClose = { infoOpen = false },
+                                            modifier = Modifier.align(Alignment.TopEnd).padding(top = 56.dp, end = 20.dp),
+                                        )
+                                        /*
                                          * The card hangs over the pane's top trailing
                                          * corner, 9 into it - the desktop puts it 54
                                          * below the pane's own top and 20 in from
@@ -3536,7 +3565,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         } else {
             if (empty) {
                 Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                    AppTopBar(filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onPrivacy = { privacy = !privacy }, findOpen = findOpen, onFind = { findOpen = !findOpen; if (!findOpen) findQuery = "" }, connected = connected)
+                    AppTopBar(filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onPrivacy = { privacy = !privacy }, findOpen = findOpen, onFind = { findOpen = !findOpen; if (!findOpen) findQuery = "" }, infoOpen = infoOpen, onInfo = { infoOpen = !infoOpen }, connected = connected)
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         WelcomePane(withInput = true, inputBar = inputBar)
                     }
@@ -3545,7 +3574,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             } else {
                 Scaffold(
                     containerColor = MaterialTheme.colorScheme.background,
-                    topBar = { AppTopBar(filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onPrivacy = { privacy = !privacy }, findOpen = findOpen, onFind = { findOpen = !findOpen; if (!findOpen) findQuery = "" }, connected = connected) },
+                    topBar = { AppTopBar(filterActive = runningOnly, privacyActive = privacy, onDrawer = { openDrawer() }, onFilter = { runningOnly = !runningOnly }, onPrivacy = { privacy = !privacy }, findOpen = findOpen, onFind = { findOpen = !findOpen; if (!findOpen) findQuery = "" }, infoOpen = infoOpen, onInfo = { infoOpen = !infoOpen }, connected = connected) },
                     bottomBar = {
                         Column {
                             inputBar()
@@ -3570,6 +3599,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             root = sessions.find { it.id == currentSession }?.directory.orEmpty(),
                             onRevertTurn = ::revertTurn,
                             onReviewTurn = { patch -> filePreview = "本回合的改动" to patch },
+                        )
+                        if (infoOpen) InfoCard(
+                            items = items.toList(),
+                            root = sessions.find { it.id == currentSession }?.directory.orEmpty(),
+                            onOpen = { path ->
+                                val dir = sessions.find { it.id == currentSession }?.directory.orEmpty()
+                                openArtifact(dir, path)
+                            },
+                            onClose = { infoOpen = false },
+                            modifier = Modifier.align(Alignment.TopEnd).padding(top = 56.dp, end = 16.dp),
                         )
                         if (findOpen) FindCard(
                             query = findQuery,
@@ -5200,6 +5239,9 @@ fun AppTopBar(
     onPrivacy: () -> Unit,
     findOpen: Boolean = false,
     onFind: () -> Unit = {},
+    /** Whether the info card is open, and the tap that toggles it. */
+    infoOpen: Boolean = false,
+    onInfo: () -> Unit = {},
     /** False while the socket is down; the strip under the bar says so. */
     connected: Boolean = true,
 ) {
@@ -5250,6 +5292,23 @@ fun AppTopBar(
                     contentDescription = if (findOpen) "关闭查找" else "在对话中查找",
                     tint = if (findOpen) Ember else LocalText.current,
                     modifier = Modifier.size(18.dp),
+                )
+            }
+            /*
+             * The conversation's record. The desktop hangs it off the header's
+             * info mark (`@info="toggleInfo"` in `App.vue`); without a way in,
+             * the card it opens is a screen nobody can reach.
+             */
+            Box(
+                Modifier.size(40.dp).clickable { onInfo() },
+                contentAlignment = Alignment.Center,
+            ) {
+                // A circle with a stem and a dot - the desktop's info mark.
+                MiIcon(
+                    "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 11v5.5M12 7.6h.01",
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 1.7f,
+                    tint = if (infoOpen) Ember else LocalText.current,
                 )
             }
             Box(
@@ -10731,6 +10790,233 @@ fun EditedCard(
                     }
                 }
                 Spacer(Modifier.height(2.dp))
+            }
+        }
+    }
+}
+
+/**
+ * One section of the info card, measured off MiMo's (`InfoSection.vue`): a 14
+ * medium title with a 13 chevron that points down while open and right while
+ * folded, and a count pill at the end. Sections are parted by a hairline with
+ * 13 above and 13 below it.
+ */
+@Composable
+fun InfoSection(
+    name: String,
+    title: String,
+    open: Boolean,
+    count: String? = null,
+    complete: Boolean = false,
+    onToggle: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().clickable { onToggle() }.padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(title, fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
+            Spacer(Modifier.width(6.dp))
+            MiIcon(
+                if (open) "M4.5 6.5 8 10l3.5-3.5" else "M6.5 4.5 10 8l-3.5 3.5",
+                viewBox = 16f,
+                modifier = Modifier.size(13.dp),
+                strokeWidth = 1.3f,
+                tint = LocalMuted.current,
+            )
+            if (!count.isNullOrBlank()) {
+                Spacer(Modifier.width(6.dp))
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(if (complete) Color(0x1F21A366) else LocalMuted.current.copy(alpha = 0.12f))
+                        .padding(horizontal = 6.dp),
+                ) {
+                    Text(
+                        count,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        color = if (complete) Color(0xFF21A366) else LocalMuted.current,
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                }
+            }
+        }
+        if (open) {
+            Spacer(Modifier.height(6.dp))
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) { content() }
+        }
+    }
+}
+
+/** A file row inside a section: its name, the folder it came from, and nothing else. */
+@Composable
+private fun InfoFileRow(path: String, onClick: (() -> Unit)? = null) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
+            .padding(horizontal = 2.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        MiIcon(
+            "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8ZM14 3v5h5",
+            modifier = Modifier.size(14.dp),
+            strokeWidth = 1.6f,
+            tint = LocalMuted.current,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            path,
+            fontSize = 13.sp,
+            lineHeight = 18.sp,
+            color = LocalText.current,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+/**
+ * The conversation's own record: what it touched, and where it worked.
+ *
+ * `InfoPanel.vue` has four sections - the environment, the task list, the
+ * outputs and the sources - and the phone had none of them, so there was no
+ * way to answer "which files did this conversation read" without scrolling the
+ * whole transcript. The two that the transcript itself can answer are here:
+ *
+ *   - 产物: the files the turn's tools wrote, and anything present_files
+ *     handed over, which is `sessionArtifacts` in `shared/session-files.ts`.
+ *   - 来源: the files the call's tools read and the reader's own attachments,
+ *     which is `sessionReferences` there.
+ *
+ * 环境信息 and 任务清单 are left off rather than faked. The first needs
+ * `git.summary` and a commit flow the phone has no screen for yet; the second
+ * needs `infoTasks`, which reads a task registry the gateway does not publish.
+ * A section that always read "0" would be worse than no section.
+ */
+@Composable
+fun InfoCard(
+    items: List<Item>,
+    root: String,
+    onOpen: (String) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val dark = LocalBg.current == DarkBg
+    val surface = if (dark) Color(0xFF181818) else Color(0xFFFFFEFD)
+    val line = if (dark) Color(0xFF2E2E2E) else Color(0xFFF0EBE5)
+    var outputsOpen by remember { mutableStateOf(true) }
+    var sourcesOpen by remember { mutableStateOf(false) }
+    /*
+     * What the conversation produced: a file a call wrote, and every file a
+     * `present_files` handed over. A path outside the project is left out on
+     * the desktop (`projectRelative` returns nothing), and so here.
+     */
+    val outputs = remember(items.toList(), root) {
+        val base = root.trimEnd('/', '\\')
+        fun inside(path: String): Boolean {
+            if (base.isEmpty()) return true
+            val full = path.replace('\\', '/')
+            val normal = base.replace('\\', '/')
+            return full.lowercase().startsWith(normal.lowercase() + "/")
+        }
+        val seen = LinkedHashSet<String>()
+        for (item in items) {
+            if (item !is Item.Tool) continue
+            for (file in item.delivered) {
+                if (file.path.isNotBlank() && inside(file.path)) seen.add(file.path)
+            }
+            if (item.name == "write" && item.status != "error") {
+                val raw = item.raw.optJSONObject("input")
+                val path = raw?.optString("file_path").orEmpty().ifBlank { raw?.optString("path").orEmpty() }
+                val created = item.raw.optJSONObject("metadata")?.optString("created") == "true" ||
+                    item.raw.optJSONObject("metadata")?.optBoolean("created") == true
+                if (path.isNotBlank() && created && inside(path)) seen.add(path)
+            }
+        }
+        seen.toList()
+    }
+    /*
+     * What it read: the paths a call's read or list named, less anything it
+     * wrote or handed over - the desktop's rule, because a file that came out
+     * of the turn is not also a source for it.
+     *
+     * `grep` and `glob` are left out on purpose. Their input carries a
+     * `pattern`, not a file: taking it as a path listed 「*(HANDOVER,handover,
+     * HANDOFF,ha...」 and 「交接」 as sources, which is not a file at all. The
+     * desktop's `sessionFiles` counts them among what was read, but it looks at
+     * the results; the phone has only the one-line summary here.
+     */
+    val sources = remember(items.toList(), outputs) {
+        val out = LinkedHashSet<String>()
+        val produced = outputs.map { it.replace('\\', '/').lowercase() }.toSet()
+        for (item in items) {
+            if (item !is Item.Tool || item.status == "error") continue
+            if (item.name !in setOf("read", "list")) continue
+            val raw = item.raw.optJSONObject("input") ?: continue
+            val path = raw.optString("file_path").orEmpty()
+                .ifBlank { raw.optString("path").orEmpty() }
+            if (path.isBlank()) continue
+            if (path.replace('\\', '/').lowercase() in produced) continue
+            out.add(path)
+        }
+        out.toList()
+    }
+    Column(
+        modifier
+            .width(300.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(surface)
+            .border(1.dp, line, RoundedCornerShape(14.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("对话信息", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
+            Spacer(Modifier.weight(1f))
+            Box(Modifier.size(26.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
+                Icon(Icons.Filled.Close, contentDescription = "关闭", tint = LocalMuted.current, modifier = Modifier.size(15.dp))
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        InfoSection(
+            "artifacts",
+            "产物",
+            outputsOpen,
+            count = outputs.size.toString(),
+            onToggle = { outputsOpen = !outputsOpen },
+        ) {
+            if (outputs.isEmpty()) {
+                Text("这一轮还没有产物", fontSize = 13.sp, color = LocalMuted.current)
+            } else {
+                for (path in outputs.take(20)) {
+                    InfoFileRow(path.substringAfterLast('/').substringAfterLast('\\')) { onOpen(path) }
+                }
+                if (outputs.size > 20) {
+                    Text("还有 ${outputs.size - 20} 个", fontSize = 12.sp, color = LocalMuted.current)
+                }
+            }
+        }
+        Box(Modifier.padding(vertical = 13.dp).fillMaxWidth().height(1.dp).background(line))
+        InfoSection(
+            "sources",
+            "来源",
+            sourcesOpen,
+            count = sources.size.toString(),
+            onToggle = { sourcesOpen = !sourcesOpen },
+        ) {
+            if (sources.isEmpty()) {
+                Text("这一轮还没有读过文件", fontSize = 13.sp, color = LocalMuted.current)
+            } else {
+                for (path in sources.take(20)) {
+                    InfoFileRow(path.substringAfterLast('/').substringAfterLast('\\')) { onOpen(path) }
+                }
+                if (sources.size > 20) {
+                    Text("还有 ${sources.size - 20} 个", fontSize = 12.sp, color = LocalMuted.current)
+                }
             }
         }
     }
