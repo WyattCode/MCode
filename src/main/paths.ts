@@ -72,6 +72,21 @@ export async function isProgram(target: string, stat: { mode: number }): Promise
   return EXECUTABLE.has(extensionOf(target)) || EXECUTABLE.has(extensionOf(real)) || unixExecutable
 }
 
+/**
+ * Whether a *directory* names something the shell would run rather than show.
+ *
+ * `isProgram` cannot be reused here: a folder always carries the execute bits,
+ * so its unix-executable arm would call every extension-less directory a
+ * program. But a macOS `.app` (or `.workflow`, `.action`) is a directory on
+ * disk that `shell.openPath` launches - the exact thing the open channel must
+ * never do (R25-E1) - so the name is all a folder is judged by, through the
+ * same table.
+ */
+export async function isBundleProgram(target: string): Promise<boolean> {
+  const real = await fs.realpath(target).catch(() => target)
+  return EXECUTABLE.has(extensionOf(target)) || EXECUTABLE.has(extensionOf(real))
+}
+
 export async function openNativePath(target: unknown): Promise<OpenNativeResult> {
   if (!usable(target)) return { ok: false, code: "invalid", error: "路径无效" }
   let stat
