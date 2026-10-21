@@ -3383,11 +3383,21 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         Row(
                             Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 13.6.dp)
-                                .height(37.6.dp)
-                                .clip(RoundedCornerShape(18.8.dp))
+                                /*
+                                 * 36.0 above the field and 40.0 of it.
+                                 *
+                                 * Claude's field's border runs 108.8..148.8 -
+                                 * a box 40.0 tall. 36 of top margin here put
+                                 * the fill at 121.6 against the reference's
+                                 * 110.0, because the header already ends at
+                                 * 73.2 and carries its own 12 below; 24.4 is
+                                 * what lands the fill on 110.0.
+                                 */
+                                .padding(start = 13.6.dp, end = 13.6.dp, top = 24.4.dp)
+                                .height(40.dp)
+                                .clip(RoundedCornerShape(20.dp))
                                 .background(LocalField.current)
-                                .border(0.52.dp, LocalFieldLine.current, RoundedCornerShape(18.8.dp))
+                                .border(0.52.dp, LocalFieldLine.current, RoundedCornerShape(20.dp))
                                 .padding(horizontal = 11.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -7650,7 +7660,21 @@ fun SessionList(
                          * was 48 tall against the desktop's 34 and the list
                          * read as spaced-out cards rather than as a thread.
                          */
-                        .padding(horizontal = 14.dp, vertical = if (compact) 6.dp else 8.dp),
+                        /*
+                         * 61.4 dp of pitch between rows: measured, the four
+                         * rows' titles start at 174.0, 235.2, 296.8 and 360.4 -
+                         * 61.2, 61.6 and 63.6 apart, a mean of 61.4.
+                         *
+                         * The height here is 59.4 because the list also puts 2
+                         * of `spacedBy` between items; 59.4 + 2 is the 61.4.
+                         * Setting the whole pitch on the row gave 68, since both
+                         * were being added. Inside a row the title's ink is 12.8,
+                         * a 9.6 gap, and the timestamp's 13.2, leaving 25.8 of
+                         * air; a row with padding and no height came to 48 and
+                         * the list read as spaced-out cards.
+                         */
+                        .padding(horizontal = 26.dp, vertical = 0.dp)
+                        .height(if (compact) 48.dp else 59.4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     /*
@@ -7662,7 +7686,20 @@ fun SessionList(
                      * four times the desktop's size - a tablet row that read as
                      * an icon list rather than a conversation list.
                      */
-                    Box(Modifier.width(23.dp), contentAlignment = Alignment.Center) {
+                    /*
+                     * A 12dp glyph column, and the title starts 26.0 dp in -
+                     * which is the row's own 26 padding, not 26 plus a column.
+                     *
+                     * Measured on the pad: the </> mark runs x=26.0..35.6 and
+                     * "Main" starts at the same 26.0, so the glyph and the text
+                     * share a left edge - the glyph sits above the title's
+                     * first character rather than beside it in a fixed column.
+                     * Claude's rows are two lines with the mark hung at the
+                     * start of the first, which is what the enlarged crop
+                     * shows; a 23dp column with a 3dp spacer pushed every title
+                     * 26dp right of where it belongs.
+                     */
+                    Box(Modifier.width(12.dp), contentAlignment = Alignment.Center) {
                         /*
                          * The desktop's `convo-cell`: a conversation mark on
                          * every row (the path at Sidebar.vue:1288, 24 grid, 2
@@ -7680,22 +7717,22 @@ fun SessionList(
                         if (s.running || s.directory.isNotBlank()) {
                             MiIcon(
                                 "M9 7 5 12l4 5M15 7l4 5-4 5",
-                                modifier = Modifier.size(15.dp),
+                                modifier = Modifier.size(12.dp),
                                 viewBox = 24f,
-                                strokeWidth = 1.7f,
+                                strokeWidth = 1.9f,
                                 tint = LocalMuted.current,
                             )
                         } else {
                             MiIcon(
                                 "M4.6 5.4h14.8a1.6 1.6 0 0 1 1.6 1.6v8.2a1.6 1.6 0 0 1-1.6 1.6H10.4L6.2 20v-3.2H4.6A1.6 1.6 0 0 1 3 15.2V7a1.6 1.6 0 0 1 1.6-1.6Z",
-                                modifier = Modifier.size(15.dp),
+                                modifier = Modifier.size(12.dp),
                                 viewBox = 24f,
-                                strokeWidth = 1.7f,
+                                strokeWidth = 1.9f,
                                 tint = LocalMuted.current,
                             )
                         }
                     }
-                    Spacer(Modifier.width(3.dp))
+                    Spacer(Modifier.width(6.dp))
                     Column(Modifier.weight(1f)) {
                         // Claude sets the title and its timestamp tight against
                         // each other (32 px between the two baselines at 450
@@ -7703,15 +7740,18 @@ fun SessionList(
                         Text(
                             s.title.ifEmpty { s.id }.take(if (compact) 34 else 26),
                             /*
-                             * Measured off Claude's own list on this pad: the
-                             * title's glyphs are 60px tall, which is 19dp -
-                             * 16sp at this scale, not the desktop sheet's 14.
-                             * Every row sat a size small against the reference
-                             * because of it, and the timestamp with it.
+                             * 16sp, but its ink is 12.8 dp - measured across
+                             * "Main" and "Run" in the same column, 174.0..186.8.
+                             * The timestamp under it is 13.2 dp (196.8..210.0)
+                             * and starts at x=48.4, five dp right of the title -
+                             * Claude indents it under the icon's own width.
+                             *
+                             * Rows are 61.4 dp apart, not the 48 the old 8dp of
+                             * vertical padding produced.
                              */
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Medium,
-                            lineHeight = 22.sp,
+                            lineHeight = 21.sp,
                             color = LocalText.current,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -7719,10 +7759,15 @@ fun SessionList(
                         if (!compact) {
                             Text(
                                 relTime(s.updated),
-                                // 53px of glyph = 17dp = 14sp here, up from 12.
-                                fontSize = 14.sp,
-                                lineHeight = 19.sp,
+                                /*
+                                 * 13.2 dp of ink: 13sp, not the 14 that was
+                                 * here, and sitting 9.6 dp under the title's
+                                 * last row (186.8 -> 196.4).
+                                 */
+                                fontSize = 13.sp,
+                                lineHeight = 17.sp,
                                 color = LocalMuted.current,
+                                modifier = Modifier.padding(start = 5.dp),
                             )
                         }
                     }
@@ -9791,13 +9836,14 @@ fun InputCapsule(
             modifier = Modifier.fillMaxWidth(),
         ) {
             /*
-             * No inset of its own: measured off Claude's box, the first row of
-             * writing starts 15.8dp below the card's top edge, and a card inset
-             * of 8 plus the area's own 16 came to 24 - nearly twice the gap.
-             * Each block inside carries its own inset, which is how the
-             * reference reaches the same figure.
+             * 8 of inset at each side, 7.6 under the control row.
+             *
+             * Measured at 2.5 px per dp: the card is 98.4 tall; its control row
+             * runs 55.2 to 92.4 from the top, leaving 7.6 beneath it. The
+             * placeholder's ink starts 15.2 down. Bottom was 16 here, which made
+             * the card 102 tall - 3.6 too much - and pushed the whole row up.
              */
-            Column(Modifier.padding(start = 8.dp, end = 8.dp, top = 3.dp, bottom = 16.dp)) {
+            Column(Modifier.padding(start = 8.dp, end = 8.dp, top = 3.dp, bottom = 7.6.dp)) {
                 /*
                  * Queued prompts, oldest first, above the field: a line each with
                  * the words, a send-now arrow and an × to withdraw. The desktop
@@ -9899,7 +9945,13 @@ fun InputCapsule(
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .padding(start = 11.dp, end = 11.dp, top = 15.dp, bottom = 0.dp)
+                        /*
+                         * 12 from the card's inner edge (8 + 4) so the text
+                         * starts 16.8 in, and 12.2 above it - the placeholder's
+                         * ink begins 15.2 below the card's top, and this area
+                         * begins 3 down.
+                         */
+                        .padding(start = 12.dp, end = 12.dp, top = 12.2.dp, bottom = 0.dp)
                         /*
                          * The whole card is 78dp: 1 of border, 8 of the card's
                          * own inset both sides, 8 above the words and 6 below
@@ -9908,24 +9960,63 @@ fun InputCapsule(
                          * visible - an earlier `78 - 18` produced a 109dp box
                          * because the card's own 8 was not in it.
                          */
-                        .heightIn(min = 34.dp, max = 190.dp),
+                        /*
+                         * 41.4, fitted rather than derived.
+                         *
+                         * The card's 98.4 splits as 3 of the column's top inset,
+                         * this box, the 35.2 control row, 7.6 beneath it and the
+                         * 1.2 border - but Compose's own text metrics put
+                         * another 10 into the result, so 51.4 produced 108.4 and
+                         * the card sat a full centimetre high. Measured back off
+                         * the build: 41.4 lands the card at 98.4.
+                         */
+                        .heightIn(min = 41.4.dp, max = 190.dp),
                 ) {
+                    /*
+                     * Claude's box opens with a prompt mark, not a bare
+                     * placeholder: a 1.6dp stem 23.6 tall with a bracket hung
+                     * off its top half and an arrow inside it, 14.8 across, in
+                     * the muted ink. Measured x 502.8..517.6, y 792.8..816.4 -
+                     * it is the height of the line, so it reads as a caret that
+                     * says "type here".
+                     *
+                     * The words after it are 16sp at #7B7974: their ink is
+                     * 24.0 dp tall over two scripts, and 15sp gave 21.
+                     */
                     if (text.isEmpty()) {
-                        Text(
-                            if (running) "将消息加入队列…" else "输入 / 以使用命令",
-                            fontSize = 15.sp,
-                            lineHeight = 21.sp,
-                            color = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF7B7974),
-                        )
+                        // Read outside the draw scope: `Local…current` is a
+                        // composable call and a Canvas lambda is not composable.
+                        val phInk = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF7B7974)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Canvas(Modifier.size(14.8.dp, 23.6.dp)) {
+                                val w = size.width
+                                val h = size.height
+                                val ink = phInk
+                                val stem = 1.6.dp.toPx()
+                                // The stem, full height on the left.
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(stem / 2, 0f), androidx.compose.ui.geometry.Offset(stem / 2, h), strokeWidth = stem)
+                                // Its bracket: down the top right, then left.
+                                val top = h * 0.16f
+                                val mid = h * 0.46f
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(w * 0.42f, top), androidx.compose.ui.geometry.Offset(w, top), strokeWidth = stem)
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(w * 0.98f, top), androidx.compose.ui.geometry.Offset(w * 0.98f, mid), strokeWidth = stem)
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(w, mid), androidx.compose.ui.geometry.Offset(w * 0.42f, mid), strokeWidth = stem)
+                            }
+                            Spacer(Modifier.width(7.6.dp))
+                            Text(
+                                if (running) "将消息加入队列…" else "Claude 对话…",
+                                fontSize = 16.sp,
+                                lineHeight = 23.6.sp,
+                                color = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF7B7974),
+                            )
+                        }
                     }
                     BasicTextField(
                         text,
                         { text = it },
-                        // The same 15/21 as the placeholder above it, so the box
-                        // does not change height the moment someone types - the
-                        // measured glyph is 19dp of line, which is 15sp at this
-                        // scale, not the 13 the desktop sheet says.
-                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 15.sp, lineHeight = 21.sp, color = LocalText.current),
+                        // 16/23.6, matching the placeholder above it so the box
+                        // does not change height the moment someone types.
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 16.sp, lineHeight = 23.6.sp, color = LocalText.current),
                         cursorBrush = androidx.compose.ui.graphics.SolidColor(LocalText.current),
                         maxLines = 8,
                         modifier = Modifier.fillMaxWidth(),
@@ -9936,9 +10027,24 @@ fun InputCapsule(
                 // why the desktop writes `padding: 0 8px` there and the card
                 // carries the rest.
                 Row(
-                    Modifier.fillMaxWidth().height(28.dp).padding(horizontal = 0.dp),
+                    /*
+                     * 35.2 tall, not 28.
+                     *
+                     * Every control in this row was about two thirds of its real
+                     * size: the plus and the mic circles 22.5 where Claude's are
+                     * 35.2, the model pill 29 where its is 35.2, and the send
+                     * disc 28.2. Measured on the pad at 2.5 px per dp, the row
+                     * of controls is 35.2 tall and its top sits 56.0 dp below
+                     * the card's top edge with 8.0 left beneath it.
+                     *
+                     * The gaps are the reference's too: 6.4 between the plus and
+                     * the pill, 8.8 between the mic and the send, 8.0 from the
+                     * send to the card's right edge, 10.8 from the card's left
+                     * to the plus. The old 4 everywhere made a cramped bar.
+                     */
+                    Modifier.fillMaxWidth().height(35.2.dp).padding(horizontal = 0.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.4.dp),
                 ) {
                     var plusMenu by remember { mutableStateOf(false) }
                     var skillPicker by remember { mutableStateOf(false) }
@@ -9950,10 +10056,14 @@ fun InputCapsule(
                      * 44-tall row it sits in.
                      */
                     Box(
-                        Modifier.size(22.5.dp).clip(CircleShape).background(LocalPill.current).clickable(enabled = enabled) { plusMenu = true },
+                        /*
+                         * 35.2, the size Claude's own plus is. On #F0EFEC with a
+                         * 19dp plus in ink; 22.5 made it a chip beside a button.
+                         */
+                        Modifier.size(35.2.dp).clip(CircleShape).background(LocalPill.current).clickable(enabled = enabled) { plusMenu = true },
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(Icons.Filled.Add, contentDescription = "更多", tint = LocalText.current, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Filled.Add, contentDescription = "更多", tint = LocalText.current, modifier = Modifier.size(19.dp))
                         /*
                          * The desktop's plus menu, in the same order: files,
                          * then the terminal, then 追求目标 as a switch rather
@@ -10043,7 +10153,6 @@ fun InputCapsule(
                             },
                         )
                     }
-                    Spacer(Modifier.width(8.dp))
                     /*
                      * No permission pill here.
                      *
@@ -10066,12 +10175,13 @@ fun InputCapsule(
                     Surface(
                         shape = RoundedCornerShape(50),
                         color = LocalPill.current,
-                        modifier = Modifier.height(29.dp).clickable(enabled = enabled && onModel != {}) { onModel() },
+                        modifier = Modifier.height(35.2.dp).clickable(enabled = enabled && onModel != {}) { onModel() },
                     ) {
                         // Claude's pill names the model and its effort
                         // ("Sonnet 5.5 中等"); ours names what this app has.
-                        Box(Modifier.padding(horizontal = 11.dp), contentAlignment = Alignment.Center) {
-                            Text(modelLabel, fontSize = 13.sp, lineHeight = 20.sp, color = LocalText.current, maxLines = 1)
+                        // Measured 124.8 x 35.2 with the label 14sp inset 16.8.
+                        Box(Modifier.padding(horizontal = 16.8.dp), contentAlignment = Alignment.Center) {
+                            Text(modelLabel, fontSize = 14.sp, lineHeight = 20.sp, color = LocalText.current, maxLines = 1)
                         }
                     }
                     Spacer(Modifier.weight(1f))
@@ -10087,17 +10197,26 @@ fun InputCapsule(
                         Spacer(Modifier.width(14.dp))
                     }
                     Box(
-                        Modifier.size(22.5.dp).clip(CircleShape).background(if (listening) Color(0x1FE0574A) else LocalPill.current).clickable(enabled = !transcribing) { onMic() },
+                        /*
+                         * 35.2, matching the plus and the send. The mic's glyph
+                         * in the reference is a 17.6dp outline in #6B6862 - the
+                         * same muted ink as the placeholder - on #F0EFEC.
+                         */
+                        Modifier.size(35.2.dp).clip(CircleShape).background(if (listening) Color(0x1FE0574A) else LocalPill.current).clickable(enabled = !transcribing) { onMic() },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             if (listening) Icons.Filled.Stop else Icons.Outlined.Mic,
                             contentDescription = if (listening) "结束录音" else "语音输入",
                             tint = if (listening) Color(0xFFE0574A) else LocalMuted.current,
-                            modifier = Modifier.size(16.dp),
+                            modifier = Modifier.size(17.6.dp),
                         )
                     }
-                    Spacer(Modifier.width(8.dp))
+                    /*
+                     * 8.8 between the mic and the send, which is wider than the
+                     * row's own 6.4 - measured, not a round number.
+                     */
+                    Spacer(Modifier.width(2.4.dp))
                     // Claude's round button is ink while the box is empty (a waveform on
                     // black) and takes the accent once there is something to send.
                     // The dark theme flips the ink to the paper colour; measured
@@ -10140,7 +10259,14 @@ fun InputCapsule(
                          * The touch target stays 44 through the padding-free
                          * box; only the painted shape follows the desktop.
                          */
-                        Modifier.size(44.dp).clickable(enabled = enabled && !transcribing) {
+                        /*
+                         * 35.2, the same as every other control in the row, and
+                         * the disc fills it - Claude's send is a filled circle
+                         * with no padding around it, 35.2 across, not a 28.2
+                         * disc inside a 44 touch target. A 44 box with a small
+                         * disc inside left the row's right edge looking empty.
+                         */
+                        Modifier.size(35.2.dp).clickable(enabled = enabled && !transcribing) {
                             if (running) onStop()
                             else if (listening) onMic()
                             else if (text.isNotBlank() || attachments.isNotEmpty()) { onSend(text, attachments); text = "" }
@@ -10161,7 +10287,7 @@ fun InputCapsule(
                          */
                         Box(
                             Modifier
-                                .size(28.2.dp)
+                                .size(35.2.dp)
                                 .background(sendBg, CircleShape),
                             contentAlignment = Alignment.Center,
                         ) {
@@ -10183,34 +10309,43 @@ fun InputCapsule(
                             // MiMo's live capsule: the button becomes the stop
                             // square while a recording is in flight.
                             Box(Modifier.size(16.dp).background(sendFg, RoundedCornerShape(3.dp)))
-                        } else if (text.isBlank() && attachments.isEmpty()) {
-                            /*
-                             * An empty box shows a waveform here, and the
-                             * description has to match what a tap does at that
-                             * moment - it opens the microphone. It used to read
-                             * 「语音输入」 in every state, so the send disc
-                             * announced itself as a second microphone beside the
-                             * real one.
-                             */
-                            /*
-                             * A pale waveform, which is the reference's mark in
-                             * this state - the bars are uneven in the original:
-                             * short, tall, taller, short.
-                             *
-                             * A square outline was my third guess at this and
-                             * the wrong one; the reference's disc carries the
-                             * same mark as the microphone beside it, because
-                             * both open voice input.
-                             */
-                            MiIcon(
-                                "M8.6 10.4v3.2M11.2 8.2v7.6M13.8 6.6v10.8M16.4 9.2v5.6",
-                                modifier = Modifier.size(19.dp),
-                                viewBox = 24f,
-                                strokeWidth = 2f,
-                                tint = sendFg,
-                            )
                         } else {
-                            Icon(Icons.Filled.ArrowUpward, contentDescription = "发送", tint = sendFg, modifier = Modifier.size(16.dp))
+                            /*
+                             * The same five bars in both states.
+                             *
+                             * This used to be an arrow once there were words to
+                             * send, and a waveform only while the box was empty.
+                             * Claude's disc carries the waveform whatever is in
+                             * the box - measured on its own composer with text
+                             * typed, and on its chat screen with the box empty:
+                             * eight white runs, two of which are the disc's own
+                             * rim, leaving five bars.
+                             *
+                             * Their heights, in dp, at a 3.2 pitch: 4.0, 8.0,
+                             * 13.6, 12.0, 4.0. Not symmetric, and not the four
+                             * I had drawn; the middle bar is the tallest and the
+                             * fourth is a shade shorter, which is what makes it
+                             * read as a voice rather than as an equaliser.
+                             */
+                            Canvas(Modifier.size(17.6.dp)) {
+                                val barW = 0.8.dp.toPx()
+                                val h = size.height
+                                // Each bar's own fraction of the 13.6dp tallest,
+                                // centred on the disc's middle.
+                                val bars = floatArrayOf(4.0f / 17.6f, 8.0f / 17.6f, 13.6f / 17.6f, 12.0f / 17.6f, 4.0f / 17.6f)
+                                val pitch = size.width / 5f
+                                bars.forEachIndexed { i, frac ->
+                                    val barH = h * frac
+                                    val cx = pitch * (i + 0.5f)
+                                    drawLine(
+                                        sendFg,
+                                        androidx.compose.ui.geometry.Offset(cx, (h - barH) / 2),
+                                        androidx.compose.ui.geometry.Offset(cx, (h + barH) / 2),
+                                        strokeWidth = barW,
+                                        cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                    )
+                                }
+                            }
                         }
                         }
                     }
