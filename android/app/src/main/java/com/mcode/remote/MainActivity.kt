@@ -58,6 +58,9 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.automirrored.outlined.CallSplit
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.IosShare
+import androidx.compose.material.icons.outlined.ThumbUpAlt
+import androidx.compose.material.icons.outlined.ThumbDownAlt
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.ArrowDownward
@@ -3567,7 +3570,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                  * the block read as a heading with a footnote
                                  * rather than as two lines of one label.
                                  */
-                                Text(currentSessionTitle(sessions, currentSession), fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium, color = LocalText.current, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                                Text(headerTitle(items, sessions, currentSession), fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium, color = LocalText.current, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                                 val where = sessions.find { it.id == currentSession }?.directory.orEmpty()
                                 if (where.isNotBlank()) {
                                     Text(
@@ -5577,6 +5580,23 @@ fun greeting(): String = when (java.util.Calendar.getInstance().get(java.util.Ca
 fun currentSessionTitle(sessions: List<SessionRow>, current: String?): String =
     current?.let { id -> sessions.find { it.id == id }?.title.orEmpty() } ?: ""
 
+/**
+ * What the header says when the conversation has no name yet.
+ *
+ * Claude names a conversation after its first words, so a fresh one shows that
+ * line in the header straight away. This app names it on the server after the
+ * turn settles, which leaves a window - and a conversation that never got a
+ * name - showing nothing but the folder underneath, which reads as a title
+ * that failed to load. The first thing the reader said is the same words the
+ * reference would have used.
+ */
+fun headerTitle(items: List<Item>, sessions: List<SessionRow>, current: String?): String {
+    val named = currentSessionTitle(sessions, current)
+    if (named.isNotBlank()) return named
+    val said = items.firstOrNull { it is Item.Msg && it.role == "user" } as? Item.Msg
+    return said?.text?.trim()?.lineSequence()?.firstOrNull()?.take(60).orEmpty()
+}
+
 /* ------------------------------------------------------------------ */
 /* Timeline / lists                                                    */
 /* ------------------------------------------------------------------ */
@@ -6731,17 +6751,33 @@ fun Timeline(
                                         }
                                     }
                                     /*
-                                     * Claude ends a reply with two quiet glyphs -
-                                     * copy, then read aloud - at 149,147,143 on
-                                     * the pad, 127px wide for the pair. They were
-                                     * only reachable by long-pressing the turn
-                                     * here, which nothing on screen said.
+                                     * Six quiet glyphs under every reply.
+                                     *
+                                     * Measured off Claude's own transcript: copy,
+                                     * share, read aloud, good, bad, retry - 34px
+                                     * of ink each (10.8dp), centres 90px apart
+                                     * (28.5dp), on every reply rather than only
+                                     * the last one. This carried two marks on the
+                                     * final turn only, which made the controls look
+                                     * like they belonged to the end of the
+                                     * conversation rather than to each answer.
+                                     *
+                                     * Copy and retry do the work; share, read and
+                                     * the two votes have no equivalent in this app
+                                     * yet, so they are drawn and inert - the row's
+                                     * shape is the thing being matched, and a
+                                     * missing mark would leave the rhythm wrong.
                                      */
                                     val context = androidx.compose.ui.platform.LocalContext.current
                                     var copied by remember(item.id) { mutableStateOf(false) }
-                                    if (item.id == lastReplied) Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Row(
+                                        Modifier.padding(top = 4.dp, start = 2.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(18.5.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        // Copy.
                                         Box(
-                                            Modifier.size(34.dp).clickable {
+                                            Modifier.size(10.8.dp).clickable {
                                                 val board = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                                                 board.setPrimaryClip(android.content.ClipData.newPlainText("MCode", item.text))
                                                 copied = true
@@ -6753,18 +6789,46 @@ fun Timeline(
                                                 Icons.Outlined.ContentCopy,
                                                 contentDescription = "复制",
                                                 tint = if (copied) Color(0xFF2E7D32) else LocalMuted.current,
-                                                modifier = Modifier.size(16.dp),
+                                                modifier = Modifier.size(10.8.dp),
                                             )
                                         }
+                                        // Share - drawn, not wired: nothing here
+                                        // hands a turn to another app.
+                                        Icon(
+                                            Icons.Outlined.IosShare,
+                                            contentDescription = "分享",
+                                            tint = LocalMuted.current.copy(alpha = 0.45f),
+                                            modifier = Modifier.size(10.8.dp),
+                                        )
+                                        Icon(
+                                            Icons.Outlined.PlayArrow,
+                                            contentDescription = "朗读",
+                                            tint = LocalMuted.current.copy(alpha = 0.45f),
+                                            modifier = Modifier.size(10.8.dp),
+                                        )
+                                        Icon(
+                                            Icons.Outlined.ThumbUpAlt,
+                                            contentDescription = "回复很好",
+                                            tint = LocalMuted.current.copy(alpha = 0.45f),
+                                            modifier = Modifier.size(10.8.dp),
+                                        )
+                                        Icon(
+                                            Icons.Outlined.ThumbDownAlt,
+                                            contentDescription = "回复不佳",
+                                            tint = LocalMuted.current.copy(alpha = 0.45f),
+                                            modifier = Modifier.size(10.8.dp),
+                                        )
+                                        // Retry reopens the turn's own menu,
+                                        // which is what the phone has for it.
                                         Box(
-                                            Modifier.size(34.dp).clickable { onMessage(item) },
+                                            Modifier.size(10.8.dp).clickable { onMessage(item) },
                                             contentAlignment = Alignment.Center,
                                         ) {
                                             Icon(
-                                                Icons.Outlined.PlayArrow,
-                                                contentDescription = "更多操作",
+                                                Icons.Outlined.Refresh,
+                                                contentDescription = "重试消息",
                                                 tint = LocalMuted.current,
-                                                modifier = Modifier.size(16.dp),
+                                                modifier = Modifier.size(10.8.dp),
                                             )
                                         }
                                     }
