@@ -4874,14 +4874,15 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
         // Claude's phone empty pane is its asterisk over 月光下的对话?; the
         // two-pane pane greets by name. Both are sampled from its own screens.
         if (inputAtBottom) {
-            // Claude's pad empty pane carries the same asterisk its phone pane
-            // does, drawn rather than a bitmap: the packaged mark is a raster
-            // and read as two grey triangles at this size.
-            SparkMark(Modifier.size(40.dp))
+            /*
+             * 32.6dp, measured: the mark's ink spans 103px on this pad, not the
+             * 112 the earlier note recorded - 40dp drew most of a size large.
+             */
+            SparkMark(Modifier.size(32.6.dp))
             Spacer(Modifier.height(14.dp))
             Text(greeting(), fontSize = 18.sp, fontWeight = FontWeight.Normal, color = LocalText.current)
         } else {
-            SparkMark(Modifier.size(40.dp))
+            SparkMark(Modifier.size(32.6.dp))
             Spacer(Modifier.height(16.dp))
             // Claude's phrase is 50px of glyph on the pad - 18sp, not the 44
             // this was set to after a first read of its line box (144px, which
@@ -10099,17 +10100,18 @@ fun InputCapsule(
                      * nothing to send.
                      */
                     /*
-                     * One fill in every state: the soft circle Claude uses.
+                     * The last of the two: an ink capsule with a pale mark.
                      *
-                     * Measured on the pad, its send disc is #F0EFEC with a dark
-                     * mark in it whether the box is empty, filling or a turn is
-                     * running - never an ink-filled disc. This had a near-black
-                     * fill whenever there was nothing to send, which made the
-                     * loudest thing in the composer the control that could do
-                     * the least.
+                     * I had this wrong twice. The Code screen's composer - the
+                     * only one this pad will open - shows a soft grey disc, and
+                     * I copied that; but that screen has no send disc, only a
+                     * voice one. This is Claude's chat composer, and its send is
+                     * 87 x 46px of #1A1A18 - a capsule, not a circle, 27.6 wide
+                     * by 14.6 - with a pale waveform inside. Empty or not, that
+                     * is what it is: the capsule is the microphone's target.
                      */
-                    val sendBg = LocalPill.current
-                    val sendFg = if (hasWords) LocalText.current else LocalMuted.current
+                    val sendBg = LocalText.current
+                    val sendFg = LocalBg.current
                     Box(
                         /*
                          * `.send` is a 28 square with a 6 corner, not a circle:
@@ -10127,15 +10129,20 @@ fun InputCapsule(
                         contentAlignment = Alignment.Center,
                     ) {
                         /*
-                         * A 28 disc, measured: Claude's send is 88px across on
-                         * this pad - 27.9dp - and round, not the 6-cornered
-                         * tile the desktop stylesheet describes. The phone drew
-                         * a 28 tile inside a 44 target, which read as a small
-                         * square beside two round buttons.
+                         * A 28.2 disc of ink.
+                         *
+                         * Measured at the widest row and the tallest column of
+                         * the reference's mark: 89px each way, so it is round -
+                         * a capsule was a mis-read of a run that crossed the
+                         * waveform's own gaps. The fill is near-black with a
+                         * pale waveform inside, and it is that in every state;
+                         * the soft grey disc I copied earlier comes from the
+                         * Code screen, whose composer has a voice button there
+                         * and no send at all.
                          */
                         Box(
                             Modifier
-                                .size(28.dp)
+                                .size(28.2.dp)
                                 .background(sendBg, CircleShape),
                             contentAlignment = Alignment.Center,
                         ) {
@@ -10167,21 +10174,20 @@ fun InputCapsule(
                              * real one.
                              */
                             /*
-                             * The mark is a rounded square outline, as Claude's
-                             * is - measured at 3dp of stroke inside a 22.5 disc.
-                             * A waveform here read as an audio meter rather than
-                             * as "send", and the reference uses the same mark
-                             * whether the box is empty or a turn is running.
+                             * A pale waveform, which is the reference's mark in
+                             * this state - the bars are uneven in the original:
+                             * short, tall, taller, short.
                              *
-                             * An outline, not a glyph: `MiIcon` strokes, and a
-                             * closed path under a stroke is its own outline,
-                             * which is exactly what this wants.
+                             * A square outline was my third guess at this and
+                             * the wrong one; the reference's disc carries the
+                             * same mark as the microphone beside it, because
+                             * both open voice input.
                              */
                             MiIcon(
-                                "M7.5 7.5h9v9h-9z",
-                                modifier = Modifier.size(20.dp),
+                                "M8.6 10.4v3.2M11.2 8.2v7.6M13.8 6.6v10.8M16.4 9.2v5.6",
+                                modifier = Modifier.size(19.dp),
                                 viewBox = 24f,
-                                strokeWidth = 2.2f,
+                                strokeWidth = 2f,
                                 tint = sendFg,
                             )
                         } else {
