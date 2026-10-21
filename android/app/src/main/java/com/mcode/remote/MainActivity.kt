@@ -6407,7 +6407,14 @@ fun Timeline(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         // The first turn used to sit flush against the header and read as
         // clipped; Claude leaves a breath of air above it.
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 28.dp, end = 28.dp, top = 10.dp, bottom = 6.dp),
+        /*
+         * Measured off Claude's own transcript: its text starts 40px in from the
+         * pane's edge, which is 12.7dp, and its last word stops the same
+         * distance from the far edge. This carried 28 either side, so every
+         * paragraph was 15dp narrower than the reference's and sat a third
+         * further in - on a 1368-wide pane that is 100px of lost line length.
+         */
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 13.dp, end = 13.dp, top = 10.dp, bottom = 6.dp),
     ) {
         for (rowAt in rows.indices) {
             val item = rows[rowAt]
@@ -7517,7 +7524,20 @@ fun SessionList(
 ) {
     val filtered = sessions.filter { it.title.contains(query, true) || it.id.contains(query, true) }
     if (filtered.isEmpty()) {
-        Text("没有匹配的会话", fontSize = 13.sp, color = LocalMuted.current, modifier = Modifier.padding(16.dp))
+        /*
+         * Two different emptinesses.
+         *
+         * 「没有匹配的会话」 is about a search that found nothing; on a machine with
+         * no conversations at all it claims a filter where there is none. The
+         * field is always on now, so the first thing a new install shows is this
+         * line - it has to say which of the two it means.
+         */
+        Text(
+            if (query.isBlank()) "还没有对话" else "没有匹配的会话",
+            fontSize = 15.sp,
+            color = LocalMuted.current,
+            modifier = Modifier.padding(16.dp),
+        )
         return
     }
     // `modifier` already carries the weight the parent gave this list; filling
@@ -10108,7 +10128,20 @@ fun InputCapsule(
                             // square while a recording is in flight.
                             Box(Modifier.size(16.dp).background(sendFg, RoundedCornerShape(3.dp)))
                         } else if (text.isBlank() && attachments.isEmpty()) {
-                            Icon(Icons.Outlined.GraphicEq, contentDescription = "语音输入", tint = sendFg, modifier = Modifier.size(20.dp))
+                            /*
+                             * An empty box shows a waveform here, and the
+                             * description has to match what a tap does at that
+                             * moment - it opens the microphone. It used to read
+                             * 「语音输入」 in every state, so the send disc
+                             * announced itself as a second microphone beside the
+                             * real one.
+                             */
+                            Icon(
+                                Icons.Outlined.GraphicEq,
+                                contentDescription = if (running) "停止" else "语音输入",
+                                tint = sendFg,
+                                modifier = Modifier.size(20.dp),
+                            )
                         } else {
                             Icon(Icons.Filled.ArrowUpward, contentDescription = "发送", tint = sendFg, modifier = Modifier.size(16.dp))
                         }

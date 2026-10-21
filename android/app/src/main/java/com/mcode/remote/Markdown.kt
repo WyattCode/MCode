@@ -284,7 +284,7 @@ private val LinkBlue = Color(0xFF2F6FED)
  * sentences of the same paragraph sat 40dp apart in the phone's transcript and
  * 3 in Claude's, which made every reply look loosely set.
  */
-private val PARAGRAPH_GAP = 3.2.dp
+private val PARAGRAPH_GAP = 0.dp
 
 @Composable
 fun MarkdownBody(source: String, modifier: Modifier = Modifier, dark: Boolean = false, onCopy: (String) -> Unit = {}) {
@@ -399,7 +399,13 @@ private fun MdLine(
      */
     size: androidx.compose.ui.unit.TextUnit = 15.sp,
     weight: FontWeight? = null,
-    lineHeight: androidx.compose.ui.unit.TextUnit = 20.sp,
+    /*
+     * 20.3dp of line, which is 64px on the pad. The paragraph gap is folded into
+     * this rather than kept as a separate padding: with both, a run of short
+     * paragraphs opened 4dp looser than the reference's and every block sat
+     * lower than its word count called for.
+     */
+    lineHeight: androidx.compose.ui.unit.TextUnit = 24.sp,
 ) {
     val context = LocalContext.current
     val inline = remember(source, color) { MdText.inline(source, LinkBlue) }
