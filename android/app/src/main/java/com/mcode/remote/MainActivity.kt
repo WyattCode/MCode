@@ -92,6 +92,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
@@ -457,6 +458,12 @@ sealed class Item {
         val finish: String = "",
         /** Characters of thinking the turn produced, which the phone does not draw. */
         val thought: Int = 0,
+        /**
+         * The turn's file changes were taken back with the card's 撤销. The
+         * words stay; only the files moved, so the card says so in place of its
+         * counts (`EditedFilesCard.vue`'s `reverted`).
+         */
+        val reverted: Boolean = false,
     ) : Item() { override val key = "msg.$id" }
 
     /**
@@ -487,6 +494,13 @@ sealed class Item {
          * presented it left the reader with no way to open what it wrote.
          */
         val delivered: List<DeliveredFile> = emptyList(),
+        /**
+         * The part this row was built from, kept because two cards need to read
+         * it again: the file it wrote (`editedOf`) and what it presented. The
+         * row already carries the words it shows; this is for the details a row
+         * does not have room for.
+         */
+        val raw: JSONObject = JSONObject(),
     ) : Item() { override val key = "tool.$uid" }
     /*
      * A permission request, carried whole: the card decides what to show from
@@ -1827,6 +1841,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         message.optBoolean("steered"), sentFiles,
                         finish = message.optString("finish"),
                         thought = reasoningSeen[id] ?: 0,
+                        reverted = message.optBoolean("reverted"),
                     ),
                 )
                 messageIndex[id] = items.size - 1
@@ -1850,6 +1865,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     output.replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: "",
                     toolTitleOf(part),
                     deliveredOf(part),
+                    part,
                 )
                 val at = items.indexOfFirst { it is Item.Tool && it.uid == uid }
                 if (at >= 0) items[at] = row else items.add(row)
@@ -1945,6 +1961,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     output.replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: "",
                     toolTitleOf(part),
                     deliveredOf(part),
+                    part,
                 )
                 val at = items.indexOfFirst { it is Item.Tool && it.uid == uid }
                 if (at >= 0) items[at] = row else items.add(row)
@@ -2506,11 +2523,50 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     }
 
     /*
-     * 产物中心 is a page of its own, not a pane: the desktop renders it in place
-     * of the whole workspace (`App.vue` swaps `view` to "artifacts"), with the
-     * conversation list and the transcript both gone. Built that way here too,
-     * which is also why it needs no column-mode of its own.
+     * 撤销 on an edited-files card: take the turn's changes back out of the
+     * files, then reload the conversation so both the files and the card's own
+     * reverted form come from the server rather than from a guess here.
+     *
+     * The server refuses this while a turn is running or when the turn is no
+     * longer in the conversation, and answers with what it could and could not
+     * move - so the sentence is built from its counts, the way the desktop's
+     * `revert()` words it.
      */
+    fun revertTurn(messageIDs: List<String>) {
+        val sid = currentSession ?: return
+        scope.launch {
+            val reply = runCatching {
+                rpc(JSONObject().put("type", "session.revertTurn").put("sessionID", sid).put("messageIDs", org.json.JSONArray(messageIDs)), 120_000)
+            }.getOrNull()
+            val data = reply?.optJSONObject("data")
+            if (data == null) {
+                Toast.makeText(context, lastError ?: "撤销失败", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            val restored = data.optInt("restored")
+            val removed = data.optInt("removed")
+            val failed = data.optInt("failed")
+            val outside = data.optInt("outside")
+            val done = restored + removed
+            val said = when {
+                done == 0 && outside > 0 -> "有 $outside 个文件在项目外，撤销未处理"
+                done == 0 && failed > 0 -> "撤销失败：$failed 个文件未能撤销"
+                done == 0 -> "撤销失败"
+                else -> buildString {
+                    append("已撤销 $done 个文件")
+                    val extra = listOfNotNull(
+                        if (failed > 0) "$failed 个文件未能撤销" else null,
+                        if (outside > 0) "$outside 个文件在项目外" else null,
+                    )
+                    if (extra.isNotEmpty()) append("；").append(extra.joinToString("，"))
+                }
+            }
+            Toast.makeText(context, said, Toast.LENGTH_LONG).show()
+            // Both the files and the card's own reverted form come from the
+            // server, so the conversation is read again rather than patched here.
+            if (done > 0) select(sid)
+        }
+    }
     /*
      * The plugins page reads both lists together: `mcp.list` for the servers
      * and `skill.list` for the folder's skills. Neither is fatal on its own -
@@ -3450,6 +3506,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             findStep = findStep,
                                             onOpenFile = { dir, rel -> openArtifact(dir, rel) },
                                             root = sessions.find { it.id == currentSession }?.directory.orEmpty(),
+                                            onRevertTurn = ::revertTurn,
+                                            onReviewTurn = { patch -> filePreview = "本回合的改动" to patch },
                                         )
                                         /*
                                          * The card hangs over the pane's top trailing
@@ -3509,6 +3567,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             findStep = findStep,
                             onOpenFile = { dir, rel -> openArtifact(dir, rel) },
                             root = sessions.find { it.id == currentSession }?.directory.orEmpty(),
+                            onRevertTurn = ::revertTurn,
+                            onReviewTurn = { patch -> filePreview = "本回合的改动" to patch },
                         )
                         if (findOpen) FindCard(
                             query = findQuery,
@@ -5912,6 +5972,17 @@ fun Timeline(
     /** Where a delivered file opens, and the folder that names it. */
     onOpenFile: ((String, String) -> Unit)? = null,
     root: String = "",
+    /**
+     * Taking a turn's files back, offered on its edited-files card.
+     *
+     * Handed the turn's assistant message ids, which is how the server names
+     * the turn (`session.revertTurn`). Null where there is no session to act
+     * on, which is also how the desktop leaves the buttons off a side
+     * conversation.
+     */
+    onRevertTurn: ((List<String>) -> Unit)? = null,
+    /** 审阅: open the turn's recorded diffs. Handed the patch to show. */
+    onReviewTurn: ((String) -> Unit)? = null,
 ) {
     val listState = rememberLazyListState()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -5944,6 +6015,27 @@ fun Timeline(
      * the list as of this composition, which is all the rows are meant to be.
      */
     val rows = remember(items.toList()) { stepsOf(rowsOf(items.toList())) }
+    /*
+     * Each turn's edits, and which of the drawn rows ends that turn.
+     *
+     * The desktop draws one card per turn, after the turn's last row
+     * (`MessageStream.vue` places `EditedFilesCard` at the end of every turn).
+     * The rows here are folded - a step swallows the calls under a paragraph, a
+     * run swallows neighbouring calls - so the card cannot hang off the call
+     * that made it: it goes under whichever folded row last covers the turn,
+     * which is what `keysByRow` is for.
+     */
+    val edits = remember(items.toList()) { turnEdits(items.toList()) }
+    val editAt = remember(rows) {
+        if (edits.isEmpty()) return@remember emptyMap<Int, String>()
+        val covered = keysByRow(rows)
+        val out = HashMap<Int, String>()
+        for ((turnKey, _) in edits) {
+            val at = covered.indexOfLast { turnKey in it }
+            if (at >= 0) out[at] = turnKey
+        }
+        out
+    }
     /*
      * The turn the two glyphs belong to.
      *
@@ -6071,7 +6163,8 @@ fun Timeline(
         // clipped; Claude leaves a breath of air above it.
         contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 28.dp, end = 28.dp, top = 10.dp, bottom = 6.dp),
     ) {
-        for (item in rows) {
+        for (rowAt in rows.indices) {
+            val item = rows[rowAt]
             item(key = (item as? ToolRun)?.key ?: (item as? Step)?.key ?: (item as Item).key) {
                 /*
                  * `@keyframes msg-in` (MessageStream.vue): 0.2s on
@@ -6087,7 +6180,14 @@ fun Timeline(
                     tween(durationMillis = 200, easing = CubicBezierEasing(0.2f, 0.7f, 0.2f, 1f)),
                     label = "row-in",
                 )
-                Box(Modifier.graphicsLayer { alpha = appear; translationY = (1f - appear) * 8.dp.toPx() }) {
+                /*
+                 * A Column, not a Box: the row can carry a second child - the
+                 * turn's edited-files card that hangs under its last row - and
+                 * a Box stacks its children on top of each other, so the card
+                 * was drawn over the paragraph it was meant to follow. Measured
+                 * on the pad: 「起更新了。」 sat behind the card's top edge.
+                 */
+                Column(Modifier.graphicsLayer { alpha = appear; translationY = (1f - appear) * 8.dp.toPx() }) {
                 when (item) {
                     /*
                      * A step: the rule down the left, then the words and the
@@ -6365,7 +6465,9 @@ fun Timeline(
                             }
                         }
                     }
-                    is Item.Tool -> ToolRow(item, onOpenDelivered = onOpenFile, root = root)
+                    is Item.Tool -> {
+                        ToolRow(item, onOpenDelivered = onOpenFile, root = root)
+                    }
                     is Item.Perm -> {
                         val (at, total) = permIndex[item.requestId] ?: (1 to 1)
                         PermCard(item.copy(queueTotal = total, queuePosition = at), onPerm = onPerm, onPermReason = onPermReason)
@@ -6459,6 +6561,35 @@ fun Timeline(
                             }
                         }
                     }
+                }
+                /*
+                 * The turn's edits, under its last row.
+                 *
+                 * Only once the turn is over: a live turn's files are still
+                 * moving, and the desktop holds the card back for the same
+                 * reason (`v-if="!(at === turns.length - 1 && shownBusy)"`).
+                 * `reverted` reads the flag the server writes on the turn's last
+                 * message when 撤销 actually moved something.
+                 */
+                val turnKey = editAt[rowAt]
+                val turn = turnKey?.let { edits[it] }
+                // The last turn's card waits while it is still streaming; an
+                // earlier turn's is settled and stays.
+                val settled = !running || turnKey != edits.keys.lastOrNull()
+                if (turn != null && settled) {
+                    EditedCard(
+                        turn,
+                        root,
+                        onOpenFile,
+                        onRevert = if (onRevertTurn != null && turn.messages.isNotEmpty()) {
+                            { onRevertTurn(turn.messages) }
+                        } else {
+                            null
+                        },
+                        onReview = if (turn.patch.isBlank() || onReviewTurn == null) null else {
+                            { onReviewTurn(turn.patch) }
+                        },
+                    )
                 }
                 }
             }
@@ -9903,4 +10034,496 @@ fun sizeLabel(bytes: Long): String = when {
     bytes < 1024 -> "$bytes B"
     bytes < 1024 * 1024 -> "%.1f KB".format(bytes / 1024.0)
     else -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
+}
+
+/** One file a turn wrote, and how it changed. */
+data class EditedFile(val path: String, val add: Int, val del: Int, val created: Boolean)
+
+/** The tools whose calls change a file; the desktop's `EDITING` set. */
+private val EDITING_TOOLS = setOf("edit", "write", "notebook_edit", "patch")
+
+private val HUNK_HEADER = Regex("^@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@")
+
+/** One file's share of a patch, as the header and the hunk counts give it. */
+private data class DiffCount(val file: String, val oldFile: String, val add: Int, val del: Int)
+
+/**
+ * Splits a unified diff and counts each file's lines the way
+ * `src/shared/unified-diff.ts` does.
+ *
+ * Hunks are read by their own line counts rather than by the `+`/`-` prefixes:
+ * a removed line that happens to read `-- x` is written `--- x`, and when the
+ * added line after it reads `++ y` the pair looks exactly like the header of
+ * the next file. Only the counts say it is still inside the hunk - which is
+ * why the naive prefix tally this replaced produced a phantom file per such
+ * line, and why the desktop's parser is written this way.
+ */
+private fun countDiff(diff: String): List<DiffCount> {
+    val lines = diff.split("\n")
+    val out = ArrayList<DiffCount>()
+    var file: String? = null
+    var oldFile = ""
+    var add = 0
+    var del = 0
+    fun flush() {
+        val name = file
+        if (name != null && name.isNotBlank()) out.add(DiffCount(name, oldFile, add, del))
+        add = 0
+        del = 0
+    }
+    var index = 0
+    while (index < lines.size) {
+        val line = lines[index]
+        if (line.startsWith("--- ") && lines.getOrNull(index + 1)?.startsWith("+++ ") == true) {
+            flush()
+            oldFile = line.substring(4).removePrefix("a/").trim()
+            file = lines[index + 1].substring(4).removePrefix("b/").trim()
+            index += 2
+            continue
+        }
+        val match = HUNK_HEADER.find(line)
+        if (match == null || file == null) {
+            index++
+            continue
+        }
+        val groups = match.groupValues
+        var oldLeft = if (groups[2].isEmpty()) 1 else groups[2].toInt()
+        var newLeft = if (groups[4].isEmpty()) 1 else groups[4].toInt()
+        index++
+        while (index < lines.size && (oldLeft > 0 || newLeft > 0)) {
+            val body = lines[index]
+            if (body.startsWith(" ")) {
+                oldLeft--
+                newLeft--
+            } else if (body.startsWith("-")) {
+                del++
+                oldLeft--
+            } else if (body.startsWith("+")) {
+                add++
+                newLeft--
+            } else if (!body.startsWith("\\")) {
+                break
+            }
+            index++
+        }
+    }
+    flush()
+    return out
+}
+
+/**
+ * The files a call's recorded patch changed.
+ *
+ * `metadata.diff` is where the desktop reads them (`src/renderer/src/lib/
+ * edited-files.ts`), and the phone used to look in `state.output` instead -
+ * which carries the tool's one-line reply, not the change. Measured over the
+ * 18 conversations on this machine: 1306 tool calls, 244 of them with a
+ * `metadata.diff`, and not one with a patch in its output. That mismatch is
+ * why the card never appeared at all rather than merely being miscounted.
+ *
+ * A call that ended in error is left out, the same test the desktop's card and
+ * its undo both make: a row drawn here that the undo then skipped reported
+ * fewer files than the reader had just been shown.
+ */
+fun editedOf(part: JSONObject): List<EditedFile> {
+    if (part.optString("name") !in EDITING_TOOLS) return emptyList()
+    val state = part.optJSONObject("state")
+    val status = state?.optString("status").orEmpty().ifBlank { part.optString("status") }
+    if (status == "error") return emptyList()
+    val metadata = state?.optJSONObject("metadata") ?: part.optJSONObject("metadata") ?: return emptyList()
+    val diff = metadata.optString("diff")
+    if (diff.isBlank()) return emptyList()
+    // What the call recorded about creating the file beats what the patch looks like.
+    val recorded = if (metadata.has("created")) metadata.optBoolean("created") else null
+    return countDiff(diff).map { section ->
+        EditedFile(section.file, section.add, section.del, recorded ?: (section.oldFile == "/dev/null"))
+    }
+}
+
+/**
+ * Each turn's edits, gathered into one card the way `EditedFilesCard.vue` has
+ * it - keyed by the key of the item that ends the turn.
+ *
+ * The desktop counts a turn, not a call: three edits in one reply are one card
+ * saying 「已编辑 3 个文件」, and the phone drawing one per call was three cards
+ * stacked under the same paragraph. A turn starts at the reader's own message,
+ * which is also where the desktop's `turns` starts one.
+ *
+ * Only the words and the calls move the turn's end, because that is where the
+ * desktop puts the card: ahead of the error card, the delivered files and the
+ * media strip that follow the same reply. Letting a gap or a failure set it too
+ * put the card after the failure notice, which reads as if the files had been
+ * edited by the thing that broke.
+ */
+/**
+ * A turn's edits, plus what the server needs to take them back.
+ *
+ * `messages` is the turn's assistant message ids, which is what
+ * `session.revertTurn` names the turn by (`EditedFilesCard.vue` passes
+ * `turn.messageIDs`); `reverted` is the flag the server writes on the turn's
+ * last message once 撤销 has actually moved something.
+ */
+data class TurnEdit(
+    val files: List<EditedFile>,
+    val messages: List<String>,
+    val reverted: Boolean,
+    /**
+     * The patches the turn's own calls recorded, joined - what 审阅 shows.
+     *
+     * The desktop prefers the repository's current diff and falls back to this
+     * (`recordedPatch`), because a turn's own record survives a later commit.
+     * The phone asks git for nothing here: `git.diffFiles` is a second round
+     * trip per card, and the recorded patch is the change the reader is looking
+     * at anyway.
+     */
+    val patch: String,
+)
+
+fun turnEdits(items: List<Item>): Map<String, TurnEdit> {
+    val out = LinkedHashMap<String, TurnEdit>()
+    val byPath = LinkedHashMap<String, EditedFile>()
+    val messages = mutableListOf<String>()
+    val patches = mutableListOf<String>()
+    var last = ""
+    var reverted = false
+    fun flush() {
+        if (last.isNotEmpty() && byPath.isNotEmpty()) {
+            out[last] = TurnEdit(byPath.values.toList(), messages.toList(), reverted, patches.joinToString("\n"))
+        }
+        byPath.clear()
+        messages.clear()
+        patches.clear()
+        reverted = false
+    }
+    for (item in items) {
+        if (item is Item.Msg && item.role == "user") {
+            flush()
+            continue
+        }
+        if (item is Item.Msg || item is Item.Tool) last = item.key
+        if (item is Item.Msg && item.role != "user") {
+            messages.add(item.id)
+            if (item.reverted) reverted = true
+        }
+        if (item is Item.Tool) {
+            for (file in editedOf(item.raw)) {
+                val known = byPath[file.path]
+                byPath[file.path] = if (known == null) file else known.copy(add = known.add + file.add, del = known.del + file.del)
+            }
+            if (item.name in EDITING_TOOLS && item.status != "error") {
+                val metadata = item.raw.optJSONObject("state")?.optJSONObject("metadata")
+                    ?: item.raw.optJSONObject("metadata")
+                metadata?.optString("diff")?.takeIf { it.isNotBlank() }?.let { patches.add(it) }
+            }
+        }
+    }
+    flush()
+    return out
+}
+
+/** The item keys each folded row covers, so a card finds the row its turn ends on. */
+private fun keysByRow(rows: List<Any>): List<Set<String>> {
+    fun keysOf(value: Any): Set<String> = when (value) {
+        is Item -> setOf(value.key)
+        is ToolRun -> value.items.map { it.key }.toSet()
+        is Step -> buildSet {
+            (value.body as? Item)?.let { add(it.key) }
+            for (call in value.calls) addAll(keysOf(call))
+        }
+        else -> emptySet()
+    }
+    return rows.map { keysOf(it) }
+}
+
+/**
+ * The turn's edits as one card, the way the desktop draws them.
+ *
+ * `EditedFilesCard.vue`: a 10 corner on the page's own fill, a 40 plate holding
+ * a 19 mark - a sheet with a plus over a minus when several files changed, a
+ * plus when one was created, a pencil otherwise - then the title and the two
+ * counts. Several files also list their rows under a hairline, three at a time
+ * with the rest behind 「再显示 N 个文件」.
+ *
+ * The counts here are fixed greens and reds whatever the theme, which is what
+ * MiMo does on this card - not the diff view's theme-aware inks.
+ */
+@Composable
+fun EditedCard(
+    turn: TurnEdit,
+    root: String,
+    onOpen: ((String, String) -> Unit)?,
+    /** Offered only where the server can act on it, and not in a side conversation. */
+    onRevert: (() -> Unit)? = null,
+    onReview: (() -> Unit)? = null,
+) {
+    val files = turn.files
+    if (files.isEmpty()) return
+    val dark = LocalBg.current == DarkBg
+    val surface = if (dark) Color(0xFF181818) else Color(0xFFFFFEFD)
+    val line = if (dark) Color(0xFF2E2E2E) else Color(0xFFF0EBE5)
+    val plate = if (dark) Color(0xFF2E2E2E) else Color(0xFFF0F0F2)
+    val statMuted = if (dark) Color(0xFFB8B8B8) else Color(0x99151C13)
+    /*
+     * Taken back: the transcript stays and only the files moved, so the card
+     * says so in place of its counts. It keeps its own surface, dimmed.
+     */
+    if (turn.reverted) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(plate)
+                .alpha(0.85f)
+                .padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MiIcon(
+                "M3 7v6h6M3 13a9 9 0 1 0 3-7.7L3 8",
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 1.7f,
+                tint = statMuted,
+            )
+            Spacer(Modifier.width(9.dp))
+            Text("已撤销 ${files.size} 个文件的改动", fontSize = 14.sp, color = statMuted)
+        }
+        return
+    }
+    val add = files.sumOf { it.add }
+    val del = files.sumOf { it.del }
+    val single = files.singleOrNull()
+    var expanded by remember(files.size) { mutableStateOf(false) }
+    var confirming by remember(files.size) { mutableStateOf(false) }
+    val shown = if (expanded) files else files.take(3)
+    fun relative(path: String): String {
+        val base = root.trimEnd('/', '\\')
+        if (base.isEmpty()) return path
+        if (!path.lowercase().startsWith(base.lowercase())) return path
+        val next = path.getOrNull(base.length)
+        return if (next == '/' || next == '\\') path.substring(base.length + 1) else path
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(surface)
+            .border(1.dp, line, RoundedCornerShape(10.dp)),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .then(
+                    if (single != null && onOpen != null) {
+                        Modifier.clickable { onOpen(root, single.path) }
+                    } else {
+                        Modifier
+                    },
+                )
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(plate),
+                contentAlignment = Alignment.Center,
+            ) {
+                MiIcon(
+                    when {
+                        files.size > 1 -> "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8ZM12 7.5v5M9.5 10h5M9.5 16h5"
+                        single!!.created -> "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8ZM14 3v5h5M12 11v6M9 14h6"
+                        else -> "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4M14 3v5h5v2M19.4 13.6a1.9 1.9 0 0 1 0 2.7L15 20.7l-3 .8.8-3 4.4-4.4a1.9 1.9 0 0 1 2.2-.5Z"
+                    },
+                    modifier = Modifier.size(19.dp),
+                    strokeWidth = 1.7f,
+                    tint = LocalMuted.current,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                if (single != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("已编辑 ", fontSize = 14.sp, lineHeight = 20.sp, color = LocalText.current)
+                        Text(
+                            single.path.substringAfterLast('/').substringAfterLast('\\'),
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
+                            color = LocalText.current,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                } else {
+                    Text(
+                        "已编辑 ${files.size} 个文件",
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        color = LocalText.current,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (add > 0 || del > 0) {
+                Spacer(Modifier.width(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("+$add", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = Color(0xFF1A7F37))
+                    Text("-$del", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = Color(0xFFE5484D))
+                }
+            }
+            /*
+             * 撤销 and 审阅, as the desktop offers them behind the counts. The
+             * revert asks first: it cannot be undone, and the question is the
+             * desktop's own sentence (`stream.confirmRevert`).
+             */
+            if (onRevert != null || onReview != null) {
+                Spacer(Modifier.width(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (onRevert != null) {
+                        Row(
+                            Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { confirming = true }
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("撤销", fontSize = 14.sp, lineHeight = 20.sp, color = LocalText.current)
+                            Spacer(Modifier.width(5.dp))
+                            MiIcon(
+                                "M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 1.8f,
+                                tint = LocalText.current,
+                            )
+                        }
+                    }
+                    if (onReview != null) {
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (dark) Color(0xFF181818) else Color(0xFFFFFEFD))
+                                .border(1.dp, line, RoundedCornerShape(8.dp))
+                                .clickable { onReview() }
+                                .padding(horizontal = 11.dp, vertical = 4.dp),
+                        ) {
+                            Text("审阅", fontSize = 14.sp, lineHeight = 20.sp, color = LocalText.current)
+                        }
+                    }
+                }
+            }
+        }
+        /*
+         * The question before taking a turn back - the desktop's own card, in
+         * its orange tint: an orange edge on both themes, since what it asks
+         * cannot be undone.
+         */
+        if (confirming) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0x0FFF6A2B))
+                    .border(1.dp, Color(0x59FF6A2B), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+            ) {
+                Row {
+                    MiIcon(
+                        "M12 2 3 7v6c0 5 3.8 8.5 9 9 5.2-.5 9-4 9-9V7ZM12 8v4M12 16h.01",
+                        modifier = Modifier.padding(top = 1.dp).size(18.dp),
+                        strokeWidth = 1.8f,
+                        tint = Color(0xFFFF6A2B),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "确定撤销 ${files.size} 个文件的改动？已跟踪文件仅撤销本回合的编辑（保留之前几轮的改动），新增文件将被删除，不可恢复。",
+                        fontSize = 14.sp,
+                        lineHeight = 21.7.sp,
+                        color = LocalText.current,
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (dark) Color(0xFFECECEC) else Color(0xFF151C13))
+                            .clickable { confirming = false; onRevert?.let { it() } }
+                            .padding(horizontal = 18.dp, vertical = 7.dp),
+                    ) {
+                        Text(
+                            "确定撤销",
+                            fontSize = 13.sp,
+                            color = if (dark) Color(0xFF151C13) else Color.White,
+                        )
+                    }
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (dark) Color(0xFF181818) else Color(0xFFFFFEFD))
+                            .border(1.dp, line, RoundedCornerShape(8.dp))
+                            .clickable { confirming = false }
+                            .padding(horizontal = 18.dp, vertical = 7.dp),
+                    ) {
+                        Text("取消", fontSize = 13.sp, color = LocalText.current)
+                    }
+                }
+            }
+        }
+        if (files.size > 1) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                Box(Modifier.fillMaxWidth().height(1.dp).background(line))
+                Spacer(Modifier.height(2.dp))
+                for (file in shown) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .then(if (onOpen != null) Modifier.clickable { onOpen(root, file.path) } else Modifier)
+                            .padding(horizontal = 9.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            relative(file.path),
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
+                            color = statMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("+${file.add}", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = Color(0xFF1A7F37))
+                            Text("-${file.del}", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = Color(0xFFE5484D))
+                        }
+                    }
+                }
+                if (files.size > 3) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable { expanded = !expanded }
+                            .padding(horizontal = 1.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            if (expanded) "收起" else "再显示 ${files.size - 3} 个文件",
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
+                            color = LocalText.current,
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        MiIcon(
+                            if (expanded) "m6 15 6-6 6 6" else "m6 9 6 6 6-6",
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 1.8f,
+                            tint = LocalText.current,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(2.dp))
+            }
+        }
+    }
 }
