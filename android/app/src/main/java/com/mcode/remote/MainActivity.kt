@@ -6451,13 +6451,22 @@ fun Timeline(
         // The first turn used to sit flush against the header and read as
         // clipped; Claude leaves a breath of air above it.
         /*
-         * Measured off Claude's own transcript: its text starts 40px in from the
-         * pane's edge, which is 12.7dp, and its last word stops the same
-         * distance from the far edge. This carried 28 either side, so every
-         * paragraph was 15dp narrower than the reference's and sat a third
-         * further in - on a 1368-wide pane that is 100px of lost line length.
+         * A centred column, not a full-width one.
+         *
+         * Measured off Claude's chat pane - not its Code pane, which is a
+         * different layout and the one I had been reading: its text starts
+         * 99.5dp in from the pane's edge and stops the same distance short of
+         * the far edge, which makes a reading column about 577dp wide inside a
+         * 775dp pane. The phone ran the text edge to edge at 13dp, so every
+         * reply was 200px wider than the reference's and its line length was
+         * half again as long - the single biggest reason the transcript did not
+         * read like Claude's.
+         *
+         * Done with padding rather than a fixed width so the column still fills
+         * a narrow screen: `widthIn` would have pinned it and left a phone with
+         * margins wider than the text.
          */
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 13.dp, end = 13.dp, top = 10.dp, bottom = 6.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 112.dp, end = 99.5.dp, top = 10.dp, bottom = 6.dp),
     ) {
         for (rowAt in rows.indices) {
             val item = rows[rowAt]
@@ -6836,6 +6845,27 @@ fun Timeline(
                                                 modifier = Modifier.size(10.8.dp),
                                             )
                                         }
+                                    }
+                                    /*
+                                     * The line under the last reply of a turn.
+                                     *
+                                     * Claude ends a turn with 「Claude 是 AI，可能会出错。」
+                                     * at 46px of glyph - 13sp - starting level with the
+                                     * reply's own left edge. Nothing said it here, so
+                                     * the transcript simply stopped.
+                                     *
+                                     * Only on the last answer: the reference draws it
+                                     * once at the foot of a turn, not after each
+                                     * paragraph-sized update within one.
+                                     */
+                                    if (item.id == lastReplied) {
+                                        Text(
+                                            "Claude 是 AI，可能会出错。",
+                                            fontSize = 13.sp,
+                                            lineHeight = 18.sp,
+                                            color = LocalMuted.current.copy(alpha = 0.75f),
+                                            modifier = Modifier.padding(top = 12.dp),
+                                        )
                                     }
                                 }
                             }
