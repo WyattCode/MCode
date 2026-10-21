@@ -465,6 +465,17 @@ sealed class Item {
          * counts (`EditedFilesCard.vue`'s `reverted`).
          */
         val reverted: Boolean = false,
+        /**
+         * Set while the provider request is being tried again - MiMo's
+         * 「正在重新连接」 with an attempt count and the reason.
+         *
+         * The gateway publishes this only on `message.updated` and never writes
+         * it to disk, so it is blank in every message read back from history
+         * and set only while a retry is in flight, which is exactly the row's
+         * lifetime.
+         */
+        val retryAttempt: Int = 0,
+        val retryReason: String = "",
     ) : Item() { override val key = "msg.$id" }
 
     /**
@@ -1799,6 +1810,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     // A whole-message update can arrive before the reasoning
                     // part was counted; taking the larger keeps what is known.
                     thought = maxOf(existing.thought, reasoningSeen[id] ?: 0),
+                    reverted = message.optBoolean("reverted", existing.reverted),
+                    /*
+                     * The retry rides only on the published copy: the next
+                     * update for the message comes without it, which is how the
+                     * row goes away once the stream resumes. So it is assigned,
+                     * never merged - a stale attempt would otherwise outlive
+                     * the retry it described.
+                     */
+                    retryAttempt = message.optJSONObject("retry")?.optInt("attempt") ?: 0,
+                    retryReason = message.optJSONObject("retry")?.optString("message").orEmpty(),
                 )
             }
         } else {
@@ -1812,6 +1833,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
              * attempts at this fix appeared to do nothing at all.
              */
             val worthARow = body.isNotEmpty() || role == "user" || images.isNotEmpty() ||
+                message.optJSONObject("retry") != null ||
                 (role == "assistant" && (message.optString("finish").let { it.isNotBlank() && it != "end_turn" } || (reasoningSeen[id] ?: 0) > 0))
             if (worthARow) {
                 /*
@@ -1851,6 +1873,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         finish = message.optString("finish"),
                         thought = reasoningSeen[id] ?: 0,
                         reverted = message.optBoolean("reverted"),
+                        retryAttempt = message.optJSONObject("retry")?.optInt("attempt") ?: 0,
+                        retryReason = message.optJSONObject("retry")?.optString("message").orEmpty(),
                     ),
                 )
                 messageIndex[id] = items.size - 1
@@ -6468,6 +6492,53 @@ fun Timeline(
                                         item.text.isBlank() && item.thought > 0 ->
                                             TurnNote("这一轮只生成了思考过程，没有给出回答。")
                                         else -> Unit
+                                    }
+                                    /*
+                                     * 「正在重新连接」 - the provider request being
+                                     * tried again, with the attempt and the
+                                     * reason. `RetryRow.vue` gives it a
+                                     * reconnect mark, the count, and the
+                                     * reason after a middot, in the muted ink,
+                                     * at the same 14/22.4 as a tool row.
+                                     *
+                                     * The gateway publishes this only on
+                                     * `message.updated` and never stores it, so
+                                     * the row is live-only; a transcript read
+                                     * back has no such field and draws nothing.
+                                     */
+                                    if (item.retryAttempt > 0) {
+                                        Row(
+                                            Modifier.fillMaxWidth().padding(top = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            MiIcon(
+                                                "M20 12a8 8 0 1 1-2.3-5.6M20 4v4h-4",
+                                                modifier = Modifier.size(15.dp),
+                                                strokeWidth = 1.8f,
+                                                tint = LocalMuted.current,
+                                            )
+                                            Spacer(Modifier.width(7.dp))
+                                            Text("正在重新连接", fontSize = 14.sp, lineHeight = 22.4.sp, color = LocalMuted.current)
+                                            Spacer(Modifier.width(5.dp))
+                                            Text(
+                                                item.retryAttempt.toString(),
+                                                fontSize = 14.sp,
+                                                lineHeight = 22.4.sp,
+                                                color = LocalMuted.current,
+                                            )
+                                            if (item.retryReason.isNotBlank()) {
+                                                Text(" · ", fontSize = 14.sp, lineHeight = 22.4.sp, color = LocalMuted.current)
+                                                Text(
+                                                    item.retryReason,
+                                                    fontSize = 14.sp,
+                                                    lineHeight = 22.4.sp,
+                                                    color = LocalMuted.current,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f, fill = false),
+                                                )
+                                            }
+                                        }
                                     }
                                     /*
                                      * Claude ends a reply with two quiet glyphs -
