@@ -471,7 +471,23 @@ sealed class Item {
      * says where the call is, and what it was about (`title`). The phone used
      * to print `· read completed`, which told the reader nothing.
      */
-    data class Tool(val uid: String, val name: String, val status: String, val output: String, val title: String = "") : Item() { override val key = "tool.$uid" }
+    data class Tool(
+        val uid: String,
+        val name: String,
+        val status: String,
+        val output: String,
+        val title: String = "",
+        /**
+         * What a `present_files` call handed over: its `metadata.files`, as
+         * `{path, name, size}` entries.
+         *
+         * The desktop draws these as cards under the reply
+         * (`DeliveredFilesCard.vue`); without them the phone showed the phrase
+         * 「展示文件」 and nothing else, so a model that wrote a document and
+         * presented it left the reader with no way to open what it wrote.
+         */
+        val delivered: List<DeliveredFile> = emptyList(),
+    ) : Item() { override val key = "tool.$uid" }
     /*
      * A permission request, carried whole: the card decides what to show from
      * the request itself (its command or subject, whether it carries a diff,
@@ -1827,7 +1843,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 val uid = if (callID.isNotBlank()) callID else java.util.UUID.randomUUID().toString()
                 val status = part.optJSONObject("state")?.optString("status", "")?.ifEmpty { null } ?: part.optString("status", "")
                 val output = part.optString("output").ifEmpty { part.optJSONObject("state")?.optString("output", "") ?: "" }
-                val row = Item.Tool(uid, part.optString("name", "tool"), status, output.replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: "", toolTitleOf(part))
+                val row = Item.Tool(
+                    uid,
+                    part.optString("name", "tool"),
+                    status,
+                    output.replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: "",
+                    toolTitleOf(part),
+                    deliveredOf(part),
+                )
                 val at = items.indexOfFirst { it is Item.Tool && it.uid == uid }
                 if (at >= 0) items[at] = row else items.add(row)
             }
@@ -1915,7 +1938,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 val uid = if (callID.isNotBlank()) callID else java.util.UUID.randomUUID().toString()
                 val status = part.optJSONObject("state")?.optString("status", "")?.ifEmpty { null } ?: part.optString("status", "")
                 val output = part.optString("output").ifEmpty { part.optJSONObject("state")?.optString("output", "") ?: "" }
-                val row = Item.Tool(uid, part.optString("name", "tool"), status, output.replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: "", toolTitleOf(part))
+                val row = Item.Tool(
+                    uid,
+                    part.optString("name", "tool"),
+                    status,
+                    output.replace(Regex("<[^>]+>"), "").lineSequence().firstOrNull()?.take(90) ?: "",
+                    toolTitleOf(part),
+                    deliveredOf(part),
+                )
                 val at = items.indexOfFirst { it is Item.Tool && it.uid == uid }
                 if (at >= 0) items[at] = row else items.add(row)
             }
@@ -3418,6 +3448,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             onFixKey = { loadProviders(); showProviders = true },
                                             find = if (findOpen) findQuery else "",
                                             findStep = findStep,
+                                            onOpenFile = { dir, rel -> openArtifact(dir, rel) },
+                                            root = sessions.find { it.id == currentSession }?.directory.orEmpty(),
                                         )
                                         /*
                                          * The card hangs over the pane's top trailing
@@ -3475,6 +3507,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             onFixKey = { loadProviders(); showProviders = true },
                             find = if (findOpen) findQuery else "",
                             findStep = findStep,
+                            onOpenFile = { dir, rel -> openArtifact(dir, rel) },
+                            root = sessions.find { it.id == currentSession }?.directory.orEmpty(),
                         )
                         if (findOpen) FindCard(
                             query = findQuery,
@@ -5364,6 +5398,36 @@ fun SentFileChip(name: String) {
  * twenty calls is then one line instead of twenty, which is the difference
  * between a readable transcript and a wall.
  */
+/** One file a `present_files` call handed over. */
+data class DeliveredFile(val path: String, val name: String, val size: Long)
+
+/**
+ * The files a tool call handed over, from its `metadata.files`.
+ *
+ * Only `present_files` carries any, and only when it completed; the desktop
+ * filters the same way (`deliveredFiles` in `lib/delivered.ts`) and de-duplicates
+ * by path, because a turn that presents the same file twice shows it once.
+ */
+fun deliveredOf(part: JSONObject): List<DeliveredFile> {
+    if (part.optString("name") != "present_files") return emptyList()
+    val state = part.optJSONObject("state")
+    val status = state?.optString("status").orEmpty().ifBlank { part.optString("status") }
+    if (status.isNotEmpty() && status != "completed") return emptyList()
+    val files = part.optJSONObject("metadata")?.optJSONArray("files") ?: return emptyList()
+    val seen = HashSet<String>()
+    val out = ArrayList<DeliveredFile>()
+    for (i in 0 until files.length()) {
+        val entry = files.optJSONObject(i) ?: continue
+        val path = entry.optString("path")
+        if (path.isBlank()) continue
+        val key = path.replace('\\', '/').lowercase()
+        if (!seen.add(key)) continue
+        val name = entry.optString("name").ifBlank { path.substringAfterLast('/').substringAfterLast('\\') }
+        out.add(DeliveredFile(path, name, entry.optLong("size", 0L)))
+    }
+    return out
+}
+
 data class ToolRun(val items: List<Item.Tool>, val key: String)
 
 /** Turns the flat list into rows, folding neighbouring tool calls together. */
@@ -5845,6 +5909,9 @@ fun Timeline(
     find: String = "",
     /** Which match is the current one, counting from the conversation's start. */
     findStep: Int = 0,
+    /** Where a delivered file opens, and the folder that names it. */
+    onOpenFile: ((String, String) -> Unit)? = null,
+    root: String = "",
 ) {
     val listState = rememberLazyListState()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -6298,7 +6365,7 @@ fun Timeline(
                             }
                         }
                     }
-                    is Item.Tool -> ToolRow(item)
+                    is Item.Tool -> ToolRow(item, onOpenDelivered = onOpenFile, root = root)
                     is Item.Perm -> {
                         val (at, total) = permIndex[item.requestId] ?: (1 to 1)
                         PermCard(item.copy(queueTotal = total, queuePosition = at), onPerm = onPerm, onPermReason = onPermReason)
@@ -9493,7 +9560,16 @@ private fun RunRow(item: ToolRun) {
 }
 
 @Composable
-fun ToolRow(item: Item.Tool) {
+fun ToolRow(
+    item: Item.Tool,
+    /**
+     * Where a delivered file opens, when this row may draw the cards. A row
+     * drawn inside a folded run or a sheet passes nothing, so the card appears
+     * once - under the reply, where the desktop puts it.
+     */
+    onOpenDelivered: ((String, String) -> Unit)? = null,
+    root: String = "",
+) {
     var open by remember { mutableStateOf(false) }
     // A call that is still going and one that broke read differently from one
     // that finished quietly.
@@ -9568,6 +9644,14 @@ fun ToolRow(item: Item.Tool) {
                 maxLines = 60,
                 boxed = false,
             )
+        }
+        /*
+         * What the call handed over, as cards. They sit outside the collapsible
+         * block on purpose: a delivered file is the point of the call, and a
+         * reader should not have to open 「展示文件」 to find what was presented.
+         */
+        if (onOpenDelivered != null && item.delivered.isNotEmpty()) {
+            DeliveredCards(item.delivered, root, onOpenDelivered)
         }
     }
 }
@@ -9748,4 +9832,75 @@ fun OfficeViewer(name: String, kind: String, html: String, onClose: () -> Unit) 
             )
         }
     }
+}
+
+/**
+ * What a reply handed over, as cards under it.
+ *
+ * `DeliveredFilesCard.vue`: a 38 tile in the file's own colour at a 9 corner,
+ * the name at 14 over a 12 sub-line that carries the size, the whole row a
+ * 12-cornered card on the raised surface with 11/14 of inset. Tapping one opens
+ * the file the same way the artifacts page does.
+ */
+@Composable
+fun DeliveredCards(files: List<DeliveredFile>, root: String, onOpen: (String, String) -> Unit) {
+    if (files.isEmpty()) return
+    for (file in files) {
+        val badge = badgeOf(file.path)
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .border(
+                    1.dp,
+                    if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE4E1D8),
+                    RoundedCornerShape(12.dp),
+                )
+                .clickable { onOpen(root, file.path) }
+                .padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(badge.fg.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Canvas(Modifier.size(20.dp)) { badge.glyph(this) }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    file.name,
+                    fontSize = 14.sp,
+                    color = LocalText.current,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    listOfNotNull(badge.label, sizeLabel(file.size).takeIf { it.isNotBlank() }).joinToString(" · "),
+                    fontSize = 12.sp,
+                    color = LocalMuted.current,
+                    maxLines = 1,
+                )
+            }
+            Icon(
+                Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                contentDescription = null,
+                tint = LocalMuted.current,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
+}
+
+/** A file's size the way the desktop writes it: bytes, then KB and MB to one place. */
+fun sizeLabel(bytes: Long): String = when {
+    bytes <= 0L -> ""
+    bytes < 1024 -> "$bytes B"
+    bytes < 1024 * 1024 -> "%.1f KB".format(bytes / 1024.0)
+    else -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
 }
