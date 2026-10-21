@@ -279,6 +279,13 @@ private val LinkBlue = Color(0xFF2F6FED)
  * 15 on a 23 line, headings 20 / 20 / 16 / 16 / 14 / 14, a 14 step below a
  * paragraph, code a step smaller than prose.
  */
+/*
+ * 10px between paragraphs on the reference - 3.2dp - where this used 14. Two
+ * sentences of the same paragraph sat 40dp apart in the phone's transcript and
+ * 3 in Claude's, which made every reply look loosely set.
+ */
+private val PARAGRAPH_GAP = 3.2.dp
+
 @Composable
 fun MarkdownBody(source: String, modifier: Modifier = Modifier, dark: Boolean = false, onCopy: (String) -> Unit = {}) {
     val blocks = remember(source) { Md.blocks(source) }
@@ -301,10 +308,10 @@ fun MarkdownBody(source: String, modifier: Modifier = Modifier, dark: Boolean = 
                 }
                 is MdBlock.Para -> MdLine(
                     block.text, color = textColor,
-                    modifier = Modifier.padding(bottom = if (last) 0.dp else 14.dp),
+                    modifier = Modifier.padding(bottom = if (last) 0.dp else PARAGRAPH_GAP),
                 )
                 is MdBlock.Code -> CodeBox(block.lang, block.code, dark, Modifier.padding(vertical = 4.dp))
-                is MdBlock.ListBlock -> ListBox(block, textColor, modifier = Modifier.padding(bottom = if (last) 0.dp else 14.dp))
+                is MdBlock.ListBlock -> ListBox(block, textColor, modifier = Modifier.padding(bottom = if (last) 0.dp else PARAGRAPH_GAP))
                 is MdBlock.Quote -> Row(
                     Modifier
                         .padding(bottom = if (last) 0.dp else 14.dp)
@@ -383,9 +390,16 @@ private fun MdLine(
     source: String,
     color: Color,
     modifier: Modifier = Modifier,
-    size: androidx.compose.ui.unit.TextUnit = 17.sp,
+    /*
+     * Measured off Claude's own transcript on this pad: a line of body text is
+     * 64px tall, which is 20.3dp - 15sp on a 20sp line, not the 17/26 this
+     * carried. The over-size face and its 26 line were the largest single
+     * difference in the transcript: a paragraph of the same words was a third
+     * taller here than in the reference.
+     */
+    size: androidx.compose.ui.unit.TextUnit = 15.sp,
     weight: FontWeight? = null,
-    lineHeight: androidx.compose.ui.unit.TextUnit = 26.sp,
+    lineHeight: androidx.compose.ui.unit.TextUnit = 20.sp,
 ) {
     val context = LocalContext.current
     val inline = remember(source, color) { MdText.inline(source, LinkBlue) }

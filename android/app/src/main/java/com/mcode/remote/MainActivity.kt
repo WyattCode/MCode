@@ -7576,18 +7576,28 @@ fun SessionList(
                          * line), and a <> for one that works in a project
                          * folder - Claude draws the same split the phone had.
                          */
+                        /*
+                         * A code mark for a conversation that works in a folder
+                         * and a speech bubble for one that does not - Claude's
+                         * own split. Both are outlines: this drew a closed
+                         * rectangle (`M5 5h14v14H5z`) for the first, which under
+                         * a stroke reads as an empty box, which is exactly what
+                         * every row showed.
+                         */
                         if (s.running || s.directory.isNotBlank()) {
                             MiIcon(
-                                "M5 5h14v14H5zM7.5 10.5 5.5 12l2 1.5M10.5 10.5l2 1.5-2 1.5",
-                                modifier = Modifier.size(14.dp),
+                                "M9 7 5 12l4 5M15 7l4 5-4 5",
+                                modifier = Modifier.size(15.dp),
                                 viewBox = 24f,
-                                strokeWidth = 1.6f,
+                                strokeWidth = 1.7f,
                                 tint = LocalMuted.current,
                             )
                         } else {
                             MiIcon(
-                                "M4.5 5h15a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4.5 3.5V17H4.5A1.5 1.5 0 0 1 3 15.5v-9A1.5 1.5 0 0 1 4.5 5z",
-                                modifier = Modifier.size(14.dp),
+                                "M4.6 5.4h14.8a1.6 1.6 0 0 1 1.6 1.6v8.2a1.6 1.6 0 0 1-1.6 1.6H10.4L6.2 20v-3.2H4.6A1.6 1.6 0 0 1 3 15.2V7a1.6 1.6 0 0 1 1.6-1.6Z",
+                                modifier = Modifier.size(15.dp),
+                                viewBox = 24f,
+                                strokeWidth = 1.7f,
                                 tint = LocalMuted.current,
                             )
                         }
