@@ -53,6 +53,7 @@ import {
 } from "../lib/scroll-follow"
 import { reducedMotion } from "../lib/modal"
 import { subagentsAtWork } from "../lib/subagent-chip"
+import { writeText } from "./../lib/clipboard"
 
 /**
  * WHY EVERY MESSAGE IS DRAWN, where opencode virtualises.
@@ -388,7 +389,7 @@ async function copyCode(event: MouseEvent) {
   if (!button) return
   const code = button.closest(".md-codeblock")?.querySelector("pre code")?.textContent ?? ""
   try {
-    await navigator.clipboard.writeText(code)
+    await writeText(code)
     button.classList.add("copied")
     window.setTimeout(() => button.classList.remove("copied"), 2000)
   } catch {
@@ -447,7 +448,7 @@ function completedAt(turn: Turn): string | undefined {
  */
 async function copyToClipboard(text: string) {
   try {
-    await navigator.clipboard.writeText(text)
+    await writeText(text)
     notify(t("stream.replyCopied"))
   } catch {
     notifyFailure(t("code.copyFailed"))

@@ -4,6 +4,7 @@ import { t } from "./i18n"
 import type { MenuItem } from "./menu"
 import { mediaOf, type PathKind } from "./markdown"
 import { base64ToBlob, toPng, writeClipboardPng } from "./diagram"
+import { writeText } from "./clipboard"
 
 /**
  * What a path in a reply does, as MiMo has it: a file goes to its default
@@ -154,7 +155,7 @@ export async function runPathMenu(key: string, target: PathTarget, platform: str
   }
   if (key === "copyPath") {
     try {
-      await navigator.clipboard.writeText(target.path)
+      await writeText(target.path)
       notify(t("officeCard.copied"))
     } catch {
       notifyFailure(t("officeCard.copyFailed"))
