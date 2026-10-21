@@ -10195,10 +10195,23 @@ fun InputCapsule(
                          * a turn at a goal, and reaching a skill by name - were
                          * unreachable from a tablet.
                          */
+                        /*
+                         * An opaque panel, drawn rather than left to
+                         * `DropdownMenu`'s own surface.
+                         *
+                         * On this build the menu came up with the reply showing
+                         * through it - text over text - because the material
+                         * container's alpha is not the colour this app sets.
+                         * The popup sits in a card of the same #FEFEFE with a
+                         * hairline and a shadow, which is what Claude's own plus
+                         * menu looks like, and nothing behind it reads through.
+                         */
                         DropdownMenu(
                             expanded = plusMenu,
                             onDismissRequest = { plusMenu = false },
-                            modifier = Modifier.width(272.dp).background(MaterialTheme.colorScheme.surface),
+                            modifier = Modifier
+                                .width(272.dp)
+                                .background(Color(0xFFFEFEFE), RoundedCornerShape(14.dp)),
                         ) {
                             // The desktop's row opens the system file dialog and
                             // attaches what is picked. This one opened the
