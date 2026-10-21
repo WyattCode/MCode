@@ -3485,6 +3485,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             onLongPress = { sheetTarget = it },
                             unseen = unseen.toList(),
                             awaiting = pendingPerms.filterValues { it.isNotEmpty() }.keys.toList(),
+                            live = connected,
                         )
                         /*
                          * Claude's foot-of-column capsule, which follows the
@@ -3545,27 +3546,34 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                              * to press it on - and a long transcript is exactly
                              * where one wants it.
                              */
-                            Box(
-                                Modifier.size(38.dp).clickable { findOpen = !findOpen; if (!findOpen) findQuery = "" },
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    Icons.Outlined.Search,
-                                    contentDescription = if (findOpen) "关闭查找" else "在对话中查找",
-                                    tint = if (findOpen) MaterialTheme.colorScheme.primary else LocalText.current,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                            }
+                            /*
+                             * The header's left end is the arrow and nothing
+                             * else, as Claude's is - measured across its own
+                             * bar: back, the two-line title, a ring and the
+                             * overflow. The find field is still reached from
+                             * the overflow menu, where it does not put a second
+                             * magnifier next to the list's own search.
+                             */
                             Column(
                                 Modifier.weight(1f).clickable { toTopTicks++ },
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             ) {
-                                Text(currentSessionTitle(sessions, currentSession), fontSize = 16.sp, fontWeight = FontWeight.Medium, color = LocalText.current, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                                /*
+                                 * Two faces, measured off Claude's own header:
+                                 * its title is 53px of glyph - 16.8dp - and its
+                                 * subtitle 46px, 14.6dp. At 16 and 11 this pair
+                                 * was a size apart in both directions: the title
+                                 * too tall and the folder too short, which is why
+                                 * the block read as a heading with a footnote
+                                 * rather than as two lines of one label.
+                                 */
+                                Text(currentSessionTitle(sessions, currentSession), fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium, color = LocalText.current, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                                 val where = sessions.find { it.id == currentSession }?.directory.orEmpty()
                                 if (where.isNotBlank()) {
                                     Text(
                                         where.substringAfterLast('\\').substringAfterLast('/'),
-                                        fontSize = 11.sp,
+                                        fontSize = 13.sp,
+                                        lineHeight = 17.sp,
                                         color = LocalMuted.current,
                                         maxLines = 1,
                                         softWrap = false,
@@ -7521,6 +7529,8 @@ fun SessionList(
     /** Rows whose turn finished out of sight, and rows parked on an answer. */
     unseen: List<String> = emptyList(),
     awaiting: List<String> = emptyList(),
+    /** False while the link is down, so an empty list is not read as an empty machine. */
+    live: Boolean = true,
 ) {
     val filtered = sessions.filter { it.title.contains(query, true) || it.id.contains(query, true) }
     if (filtered.isEmpty()) {
@@ -7532,8 +7542,21 @@ fun SessionList(
          * field is always on now, so the first thing a new install shows is this
          * line - it has to say which of the two it means.
          */
+        /*
+         * Three emptinesses, not two.
+         *
+         * A dropped link empties this list without emptying the machine - seen
+         * on the pad: the reconnect banner above said the link was down, and
+         * this line said there were no conversations, which was wrong by
+         * eighteen. 「连接已断开」 is the banner's job to shout about; here the
+         * line only has to not contradict it.
+         */
         Text(
-            if (query.isBlank()) "还没有对话" else "没有匹配的会话",
+            when {
+                !live -> "连接断开，暂时读不到会话"
+                query.isBlank() -> "还没有对话"
+                else -> "没有匹配的会话"
+            },
             fontSize = 15.sp,
             color = LocalMuted.current,
             modifier = Modifier.padding(16.dp),
