@@ -9590,7 +9590,17 @@ fun InputCapsule(
      * This used to be 118/113, symmetric, which is 1.5dp from the truth on the
      * right and 74dp from it on the left.
      */
-    Box(modifier.fillMaxWidth().padding(start = 44.dp, end = 30.dp, top = 8.dp, bottom = 8.dp)) {
+    /*
+     * The card's own inset from the pane, measured: 1002px in and 13.6dp in
+     * from the far edge on this pad, which is 12.7dp on the left. This carried
+     * 44 and 30, which made the card 41dp narrower than the reference's - the
+     * single most visible difference between the two composers, and the reason
+     * its contents looked crowded while Claude's had room.
+     *
+     * `bottom` is 12.8, which puts the card's lower edge 25.4dp above the
+     * screen's - measured, not derived: at 6.4 it stopped at 19.0.
+     */
+    Box(modifier.fillMaxWidth().padding(start = 12.7.dp, end = 13.6.dp, top = 8.dp, bottom = 12.8.dp)) {
         /*
          * The @ menu, over the box exactly where the slash menu sits: a file
          * named and chosen here goes into the words as its relative path, which
@@ -9717,11 +9727,24 @@ fun InputCapsule(
              */
             shape = RoundedCornerShape(20.dp),
             color = if (LocalBg.current == DarkBg) Color(0xFF1F1F1F) else Color(0xFFFEFEFE),
+            /*
+             * 0.6dp of edge, not 1: the reference's is two pad pixels at this
+             * density, and `3` here read as a drawn border rather than as the
+             * card's own lip. Measured across the top edge: 220,220,220 twice
+             * on the reference against three times here.
+             */
             border = androidx.compose.foundation.BorderStroke(
-                1.dp,
+                0.6.dp,
                 if (LocalBg.current == DarkBg) Color(0xFF2E2E2E) else Color(0xFFDCDCDC),
             ),
-            shadowElevation = if (LocalBg.current == DarkBg) 3.dp else 6.dp,
+            /*
+             * 4, not 6. Compose's elevation falls in every direction, and at 6
+             * the wash above the card was visible - 249 easing down to 241 over
+             * 6px - where the reference has nothing above it and its whole drop
+             * below. Lower is the only lever `Surface` gives toward a shadow
+             * that only goes down.
+             */
+            shadowElevation = if (LocalBg.current == DarkBg) 2.dp else 4.dp,
             modifier = Modifier.fillMaxWidth(),
         ) {
             /*
@@ -9884,7 +9907,7 @@ fun InputCapsule(
                      * 44-tall row it sits in.
                      */
                     Box(
-                        Modifier.size(24.dp).clip(CircleShape).background(LocalPill.current).clickable(enabled = enabled) { plusMenu = true },
+                        Modifier.size(22.5.dp).clip(CircleShape).background(LocalPill.current).clickable(enabled = enabled) { plusMenu = true },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(Icons.Filled.Add, contentDescription = "更多", tint = LocalText.current, modifier = Modifier.size(16.dp))
@@ -9948,6 +9971,23 @@ fun InputCapsule(
                                 pathViewBox = 12f,
                                 chevron = true,
                             ) { plusMenu = false; skillPicker = true }
+                            /*
+                             * The access switch lives here now.
+                             *
+                             * Claude's composer has one pill and nothing else,
+                             * so this cannot sit in that row; putting it in the
+                             * plus menu keeps it one tap from the box for a
+                             * reader being asked too often, which was the reason
+                             * it was promoted to the row in the first place.
+                             */
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text("权限", fontSize = 13.sp, color = LocalText.current)
+                                Spacer(Modifier.weight(1f))
+                                AccessPill(access0, onAccess, fullAllowed)
+                            }
                         }
                     }
                     if (skillPicker) {
@@ -9961,51 +10001,18 @@ fun InputCapsule(
                         )
                     }
                     Spacer(Modifier.width(8.dp))
-                    // The desktop's middle pill. It sat only in the settings
-                    // sheet here, so a reader being asked too often had to leave
-                    // the words they were writing to change it.
-                    AccessPill(access0, onAccess, fullAllowed)
-                    Spacer(Modifier.width(8.dp))
                     /*
-                     * The ring, left of the model the way the desktop has it.
-                     * Like the desktop, nothing is drawn until a turn has spent
-                     * something: an empty conversation has nothing to measure.
+                     * No permission pill here.
+                     *
+                     * Claude's composer carries exactly one pill - the model
+                     * and its effort as one word - and puts every other switch
+                     * behind the plus. Measured on the pad: from the plus to the
+                     * microphone it is a single pill, nothing between. The
+                     * access pill was put here so a reader being asked too often
+                     * would not have to leave what they were writing, which is a
+                     * real cost - so it moves into the plus menu rather than
+                     * disappearing, and the row is the reference's shape again.
                      */
-                    if (contextUsed > 0) {
-                        /*
-                         * Pressing the ring keeps the figures up, as the
-                         * desktop's tooltip does on a click: the ring alone
-                         * says "somewhere here" and never how much.
-                         */
-                        var ctxCard by remember { mutableStateOf(false) }
-                        Box {
-                            Row(
-                                Modifier.clip(RoundedCornerShape(9.dp)).clickable { ctxCard = true }.padding(3.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) { ContextRing(contextUsed, contextLimit, 18.dp) }
-                            DropdownMenu(
-                                expanded = ctxCard,
-                                onDismissRequest = { ctxCard = false },
-                                modifier = Modifier.width(220.dp).background(MaterialTheme.colorScheme.surface),
-                            ) {
-                                Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                                    Text("上下文用量", fontSize = 12.sp, color = LocalMuted.current)
-                                    Spacer(Modifier.height(4.dp))
-                                    val pct = if (contextLimit > 0) Math.round(contextUsed * 100.0 / contextLimit).toInt() else 0
-                                    Text(
-                                        if (contextLimit > 0) "已用 $pct%（剩余 ${100 - pct}%）" else "已用 ${compactTokens(contextUsed)}",
-                                        fontSize = 14.sp,
-                                        color = LocalText.current,
-                                    )
-                                    if (contextLimit > 0) {
-                                        Spacer(Modifier.height(2.dp))
-                                        Text("已用 ${compactTokens(contextUsed)}，共 ${compactTokens(contextLimit)}", fontSize = 12.sp, color = LocalMuted.current)
-                                    }
-                                }
-                            }
-                        }
-                        Spacer(Modifier.width(8.dp))
-                    }
                     /*
                      * `.pill`: 28 tall on a `--radius-md` (6) corner with 11px of
                      * inline padding, its text 13 on a 20 line. This was a 17
@@ -10037,7 +10044,7 @@ fun InputCapsule(
                         Spacer(Modifier.width(14.dp))
                     }
                     Box(
-                        Modifier.size(24.dp).clip(CircleShape).background(if (listening) Color(0x1FE0574A) else LocalPill.current).clickable(enabled = !transcribing) { onMic() },
+                        Modifier.size(22.5.dp).clip(CircleShape).background(if (listening) Color(0x1FE0574A) else LocalPill.current).clickable(enabled = !transcribing) { onMic() },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
@@ -10068,18 +10075,18 @@ fun InputCapsule(
                      * sending, which read as "press to send" while there was
                      * nothing to send.
                      */
-                    val sendBg = when {
-                        running -> LocalPill.current
-                        hasWords && !dark -> Color(0xFFE1C0B3)
-                        dark -> Color(0xFFF9F9F7)
-                        else -> LocalText.current
-                    }
-                    val sendFg = when {
-                        running -> LocalText.current
-                        hasWords && !dark -> Color.White
-                        dark -> Color(0xFF151515)
-                        else -> LocalBg.current
-                    }
+                    /*
+                     * One fill in every state: the soft circle Claude uses.
+                     *
+                     * Measured on the pad, its send disc is #F0EFEC with a dark
+                     * mark in it whether the box is empty, filling or a turn is
+                     * running - never an ink-filled disc. This had a near-black
+                     * fill whenever there was nothing to send, which made the
+                     * loudest thing in the composer the control that could do
+                     * the least.
+                     */
+                    val sendBg = LocalPill.current
+                    val sendFg = if (hasWords) LocalText.current else LocalMuted.current
                     Box(
                         /*
                          * `.send` is a 28 square with a 6 corner, not a circle:
@@ -10136,11 +10143,23 @@ fun InputCapsule(
                              * announced itself as a second microphone beside the
                              * real one.
                              */
-                            Icon(
-                                Icons.Outlined.GraphicEq,
-                                contentDescription = if (running) "停止" else "语音输入",
-                                tint = sendFg,
+                            /*
+                             * The mark is a rounded square outline, as Claude's
+                             * is - measured at 3dp of stroke inside a 22.5 disc.
+                             * A waveform here read as an audio meter rather than
+                             * as "send", and the reference uses the same mark
+                             * whether the box is empty or a turn is running.
+                             *
+                             * An outline, not a glyph: `MiIcon` strokes, and a
+                             * closed path under a stroke is its own outline,
+                             * which is exactly what this wants.
+                             */
+                            MiIcon(
+                                "M7.5 7.5h9v9h-9z",
                                 modifier = Modifier.size(20.dp),
+                                viewBox = 24f,
+                                strokeWidth = 2.2f,
+                                tint = sendFg,
                             )
                         } else {
                             Icon(Icons.Filled.ArrowUpward, contentDescription = "发送", tint = sendFg, modifier = Modifier.size(16.dp))
