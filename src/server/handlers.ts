@@ -1791,7 +1791,20 @@ export async function readPreview(resolved: string, options: { withBytes?: boole
    * read of the whole file, so it goes on applying to pictures, sound, video
    * and the Office byte channel.
    */
-  if (kind === "pdf") return { ...empty, kind, mime: mimeFor(resolved) }
+  if (kind === "pdf") {
+    /*
+     * `withBytes` works for a PDF the same way it does for a video: the desktop
+     * streams it through the local preview server for the ranges pdf.js asks
+     * for, so it needs no bytes here, but a reader across the gateway has no
+     * server to ask - it takes the whole file and draws it with its own renderer.
+     * Under the same ceiling as every other media read.
+     */
+    const mime = mimeFor(resolved)
+    if (!options.withBytes) return { ...empty, kind, mime }
+    if ((await oversized()) > MEDIA_LIMIT) return { ...empty, kind, mime, tooBig: true }
+    const bytes = await fs.readFile(resolved)
+    return { ...empty, kind, mime, data: bytes.toString("base64") }
+  }
   if (kind === "image" || kind === "audio") {
     // Measured here as well as on the read of the bytes: this is the answer the tab draws from.
     if ((await oversized()) > MEDIA_LIMIT) return { ...empty, kind, mime: mimeFor(resolved), tooBig: true }

@@ -1125,6 +1125,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      */
     var videoPreview by remember { mutableStateOf<Pair<String, java.io.File>?>(null) }
     /**
+     * A PDF opened from the artifacts page: its name and the local copy.
+     *
+     * The desktop streams a PDF through its local preview server for the ranges
+     * pdf.js asks for; across the gateway there is no such server, so the file
+     * arrives whole and is drawn with Android's own `PdfRenderer`. Same shape as
+     * the video above - bytes on the wire, a temp file here.
+     */
+    var pdfPreview by remember { mutableStateOf<Pair<String, java.io.File>?>(null) }
+    /**
      * The changes rail: which files a turn touched, and the patch for the one
      * being read. The desktop keeps this beside the conversation all the time;
      * on a phone it belongs in a sheet reached from the header.
@@ -2408,6 +2417,26 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         out.outputStream().use { it.write(android.util.Base64.decode(b64, android.util.Base64.DEFAULT)) }
                         videoPreview = name to out
                     }.onFailure { Toast.makeText(context, "视频没有取回来", Toast.LENGTH_SHORT).show() }
+                }
+                return@launch
+            }
+            /*
+             * A PDF carries its bytes when asked, so it lands here the same way
+             * a video does - except that it is drawn rather than played, and a
+             * document's own renderer is the only thing that can do it.
+             */
+            if (payload?.optString("kind") == "pdf") {
+                val name = rel.substringAfterLast('/').substringAfterLast('\\')
+                val b64 = payload.optString("data")
+                if (b64.isBlank()) {
+                    Toast.makeText(context, "PDF 超过 25 MB，无法预览", Toast.LENGTH_SHORT).show()
+                } else {
+                    runCatching {
+                        val dir = java.io.File(context.cacheDir, "pdf-preview").apply { mkdirs() }
+                        val out = java.io.File(dir, name.replace(Regex("[^\\w.\\- ()]"), "_"))
+                        out.outputStream().use { it.write(android.util.Base64.decode(b64, android.util.Base64.DEFAULT)) }
+                        pdfPreview = name to out
+                    }.onFailure { Toast.makeText(context, "PDF 没有取回来", Toast.LENGTH_SHORT).show() }
                 }
                 return@launch
             }
@@ -4031,6 +4060,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * Android build decodes (mp4/m4v/webm), and MediaController's transport is
      * what the desktop's own bar offers - play, seek, the clock.
      */
+    pdfPreview?.let { (name, file) ->
+        PdfViewer(name = name, file = file, onClose = { pdfPreview = null })
+    }
+
     videoPreview?.let { (name, file) ->
         ModalBottomSheet(onDismissRequest = { videoPreview = null }, containerColor = Color.Black) {
             Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
@@ -9502,5 +9535,120 @@ fun ToolRow(item: Item.Tool) {
                 boxed = false,
             )
         }
+    }
+}
+
+/**
+ * A PDF, page by page.
+ *
+ * Android ships `PdfRenderer`, which turns a page into a bitmap; there is no
+ * viewer widget, so the pages are drawn into a lazily-built column and scrolled.
+ * That is what the desktop's pdf.js tab shows as well - the document, whole, one
+ * page under the next - so the shape is the same even though the engine is not.
+ *
+ * The renderer and its parcel file are closed when the sheet goes: both hold a
+ * file descriptor, and a tablet that opens three documents would otherwise run
+ * out of them.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PdfViewer(name: String, file: java.io.File, onClose: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var pages by remember(file) { mutableStateOf(0) }
+    var error by remember(file) { mutableStateOf<String?>(null) }
+
+    // One renderer for the life of the sheet; each page is rendered on demand.
+    val holder = remember(file) { arrayOfNulls<Any>(2) } // [PdfRenderer, ParcelFileDescriptor]
+    DisposableEffect(file) {
+        onDispose {
+            runCatching { (holder[0] as? android.graphics.pdf.PdfRenderer)?.close() }
+            runCatching { (holder[1] as? android.os.ParcelFileDescriptor)?.close() }
+        }
+    }
+    LaunchedEffect(file) {
+        runCatching {
+            val pfd = android.os.ParcelFileDescriptor.open(file, android.os.ParcelFileDescriptor.MODE_READ_ONLY)
+            val renderer = android.graphics.pdf.PdfRenderer(pfd)
+            holder[0] = renderer
+            holder[1] = pfd
+            pages = renderer.pageCount
+        }.onFailure { error = it.message ?: "无法打开" }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onClose,
+        containerColor = MaterialTheme.colorScheme.background,
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    name,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = LocalText.current,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (pages > 0) {
+                    Text("$pages 页", fontSize = 12.sp, color = LocalMuted.current)
+                    Spacer(Modifier.width(10.dp))
+                }
+                Box(Modifier.size(34.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.Close, contentDescription = "关闭", tint = LocalMuted.current, modifier = Modifier.size(16.dp))
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            when {
+                error != null -> Text("打不开这个 PDF：$error", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                pages == 0 -> Text("正在读取…", fontSize = 13.sp, color = LocalMuted.current)
+                else -> LazyColumn(Modifier.fillMaxWidth().heightIn(max = 620.dp)) {
+                    items(pages) { index ->
+                        PdfPage(holder[0] as? android.graphics.pdf.PdfRenderer, index)
+                        Spacer(Modifier.height(10.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One page, drawn at the pane's width.
+ *
+ * The bitmap is built once per index and remembered by it; a page that scrolls
+ * out is dropped and rebuilt from its index when it comes back, which keeps a
+ * long document's memory bounded by what is on screen rather than by its length.
+ */
+@Composable
+fun PdfPage(renderer: android.graphics.pdf.PdfRenderer?, index: Int) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val widthPx = with(density) { 340.dp.toPx() }.toInt()
+    val bitmap = remember(renderer, index) {
+        runCatching {
+            renderer?.openPage(index)?.use { page ->
+                val ratio = page.height.toFloat() / page.width.toFloat().coerceAtLeast(1f)
+                val h = (widthPx * ratio).toInt().coerceIn(1, 4000)
+                val image = android.graphics.Bitmap.createBitmap(widthPx, h, android.graphics.Bitmap.Config.ARGB_8888)
+                val canvas = android.graphics.Canvas(image)
+                canvas.drawColor(android.graphics.Color.WHITE)
+                page.render(image, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                image
+            }
+        }.getOrNull()
+    }
+    if (bitmap != null) {
+        androidx.compose.foundation.Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = "第 ${index + 1} 页",
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.White),
+            contentScale = ContentScale.FillWidth,
+        )
+    } else {
+        Text("第 ${index + 1} 页读不出来", fontSize = 12.sp, color = LocalMuted.current)
     }
 }
