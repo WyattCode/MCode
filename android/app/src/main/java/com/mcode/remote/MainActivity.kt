@@ -533,10 +533,45 @@ sealed class Item {
      * app on open whenever a conversation held the same error twice. A counter
      * keeps `session.error` (which has no message of its own) unique as well.
      */
-    data class Err(val text: String, val uid: String = "e${nextErrId()}") : Item() {
+    data class Err(
+        val text: String,
+        val uid: String = "e${nextErrId()}",
+        /**
+         * The error came from a message's own `error` field, so the turn may
+         * still carry on past it. A later message in the same turn turns this
+         * card into an inline 「错误：…」 row where it happened; one that ends
+         * the turn stays a card. `session.error` has no message and never
+         * converts, which is why the flag is explicit rather than inferred
+         * from the uid's shape.
+         */
+        val fromMessage: Boolean = false,
+    ) : Item() {
         override val key = "err.$uid"
     }
+    /**
+     * A quiet line inside the steps - MiMo's `ErrorStep.vue` and
+     * `NoticeRow.vue`, which are the same row with a different mark.
+     *
+     * `error` is a failure the turn carried on past, drawn where it happened:
+     * a length refusal answered by compacting and asking again. The phone used
+     * to draw every failure as a card at the end of the turn, so a turn that
+     * recovered still ended on a red card, which read as though it had broken.
+     * `notice` is the app's own remark about the step above it - today, that a
+     * command wanting input was not run.
+     *
+     * A failure that ends the turn keeps its card (`Item.Err`).
+     */
+    data class Note(
+        val kind: NoteKind,
+        val text: String,
+        val uid: String = "n${nextErrId()}",
+    ) : Item() {
+        override val key = "note.$uid"
+    }
 }
+
+/** `!` in the icon column for an error, `i` for a notice. */
+enum class NoteKind { Error, Notice }
 
 /**
  * 追求目標: the goal a conversation is being judged against, as `session.goal`
@@ -1905,18 +1940,32 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             }
         }
         /*
-         * A turn that broke has no text at all, so it used to arrive as an
-         * empty message and be dropped: the question stayed on screen with
-         * nothing after it and no sign that anything had gone wrong. The
-         * desktop draws an error card for exactly this.
+         * A message that failed but whose turn went on past it is a step, not
+         * an ending.
+         *
+         * The desktop settles this by looking back at the previous message
+         * while walking the turn (`MessageStream.vue`: "an earlier step of this
+         * turn failed and the turn went on past it"). The phone feeds messages
+         * through here one at a time in order, so the same question is settled
+         * the other way round: when an assistant message arrives and the
+         * *previous* one had left an error card, that card belonged to a step
+         * the turn recovered from, and it becomes an inline 「错误：…」 row where
+         * it happened.
          */
+        if (role == "assistant") {
+            val prior = items.lastOrNull() as? Item.Err
+            if (prior != null && prior.fromMessage) {
+                items[items.lastIndex] = Item.Note(NoteKind.Error, prior.text, prior.uid)
+            }
+        }
         val failure = message.optString("error").ifEmpty {
             if (message.optString("finish") == "error" || message.optString("finish") == "max_tokens") "这次回复没有完成" else ""
         }
         if (failure.isNotBlank()) {
             val key = "err.$id"
             val place = items.indexOfFirst { it.key == key }
-            if (place >= 0) items[place] = Item.Err(failure, id) else items.add(Item.Err(failure, id))
+            val card = Item.Err(failure, id, fromMessage = role == "assistant")
+            if (place >= 0) items[place] = card else items.add(card)
         }
     }
 
@@ -9168,18 +9217,25 @@ fun AccessPill(level: String, onPick: (String) -> Unit, fullAllowed: Boolean = t
     }
     val tint = if (level == "full") MaterialTheme.colorScheme.primary else LocalText.current
     val caret = LocalMuted.current
+    /*
+     * `.pill` again, as the model pill is: 28 tall, a 6 corner, 11 of inline
+     * padding. This carried a 17 corner and 12/8 of padding, so the access
+     * pill stood 60px tall on the pad against the model pill's 50 and the two
+     * read as different kinds of control on the same row.
+     */
     Box {
         Row(
             Modifier
-                .clip(RoundedCornerShape(17.dp))
+                .height(28.dp)
+                .clip(RoundedCornerShape(6.dp))
                 .background(LocalPill.current)
                 .clickable { open = true }
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(horizontal = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             AccessGlyphs(level, tint)
             Spacer(Modifier.width(6.dp))
-            Text(word, fontSize = 13.sp, color = tint)
+            Text(word, fontSize = 13.sp, lineHeight = 20.sp, color = tint)
             /*
              * The desktop's caret is a 16 unit chevron at the weaker text
              * colour, not a Material arrow: a filled triangle would read as a
@@ -9520,27 +9576,45 @@ fun InputCapsule(
         }
         Surface(
             /*
-             * `.box`'s own 10px corner (`Composer.vue`), not the 20 this carried:
-             * at 20 the card reads as a pill sunk into the page rather than as
-             * the sheet the desktop lifts off it.
+             * `.box` as `Composer.vue` ends up declaring it — the last of the
+             * four blocks in that file is the one that wins:
+             *
+             *   padding: 8px;                     -> the controls sit 8 in from
+             *                                        the card's own edge, and the
+             *                                        writing area adds its own 16
+             *   background: #ffffff;              -> white, not the page's
+             *                                        --surface-raised
+             *   border: 0.5px solid var(--border-input);   -> #151c130f
+             *   border-radius: 20px;
+             *   box-shadow: var(--shadow-composer);        -> 0 1px 2px #0000000d,
+             *                                                 0 6px 18px #0000001b
+             *
+             * The phone had 10 / #DCDCDC 1px / no padding / the menu surface,
+             * which is why it read as a second grey panel rather than as the
+             * white sheet MiMo lifts off the page with a shadow. There is no
+             * border ring on focus either, as there is none in MiMo.
              */
-            shape = RoundedCornerShape(10.dp),
-            color = MaterialTheme.colorScheme.surface,
-            // Claude's card carries a hairline: 220,220,220 on the pad, two
-            // pixels wide at 400dpi, which is what separates a white plate from
-            // a page that is almost as white.
-            border = androidx.compose.foundation.BorderStroke(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFDCDCDC)),
+            shape = RoundedCornerShape(20.dp),
+            color = if (LocalBg.current == DarkBg) Color(0xFF1F1F1F) else Color(0xFFFFFFFF),
             /*
-             * `.box` carries `--shadow-md`: a 1px drop in light, and in dark
-             * three lifts at once - 2/4, 1/2 and a half-pixel white inner edge
-             * that is what actually separates the card from a page a shade
-             * lighter than it. Elevation alone gives the drop; the white inner
-             * line has to be drawn.
+             * 0.5px is not a unit Compose draws reliably at this density, so the
+             * hairline is the colour's own alpha over a 1dp stroke: #151c130f is
+             * a 6% ink, and drawn as the pixel it must be it reads the same.
              */
-            shadowElevation = if (LocalBg.current == DarkBg) 4.dp else 2.dp,
+            border = androidx.compose.foundation.BorderStroke(
+                1.dp,
+                if (LocalBg.current == DarkBg) Color(0xFF2E2E2E) else Color(0x0F151C13),
+            ),
+            /*
+             * `--shadow-composer`: two drops at once on light (1/2 at 5%, then
+             * 6/18 at 11%) and one darker on dark (1/3 at 40%). Elevation gives
+             * a single soft lift; the tight 1px contact shadow is what makes the
+             * card sit on the page rather than hover above it.
+             */
+            shadowElevation = if (LocalBg.current == DarkBg) 3.dp else 6.dp,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Column(Modifier.padding(horizontal = 0.dp, vertical = 0.dp)) {
+            Column(Modifier.padding(8.dp)) {
                 /*
                  * Queued prompts, oldest first, above the field: a line each with
                  * the words, a send-now arrow and an × to withdraw. The desktop
@@ -9625,56 +9699,63 @@ fun InputCapsule(
                     }
                     Spacer(Modifier.height(4.dp))
                 }
-                OutlinedTextField(
-                    text, { text = it },
-                    /*
-                     * Claude's phone composer says what a send will do: while a
-                     * turn is in flight the line becomes 「将消息加入队列…」, so
-                     * it is clear the words wait their turn instead of steering
-                     * the running reply.
-                     */
-                    /*
-                     * Claude's idle line reads 「输入 / 以使用命令」 - it teaches the
-                     * slash commands right where they would be typed - and
-                     * its own grey is 123,121,116, a step lighter than the
-                     * muted used for labels elsewhere on the page.
-                     */
-                    placeholder = {
+                /*
+                 * `.input`: 13 over a 20 line-height, its own 16/16/8 inset,
+                 * a 60 floor and a 200 cap.
+                 *
+                 * A `BasicTextField`, not an `OutlinedTextField`: the Material
+                 * one brings its own 16dp of inner padding, its own placeholder
+                 * baseline and a 56dp minimum height, so the text sat lower and
+                 * further in than the desktop's and an empty composer was taller
+                 * than 60. The padding is written here so the numbers are the
+                 * desktop's own.
+                 */
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp)
+                        .heightIn(min = 60.dp - 24.dp, max = 200.dp),
+                ) {
+                    if (text.isEmpty()) {
                         Text(
                             if (running) "将消息加入队列…" else "输入 / 以使用命令",
+                            fontSize = 13.sp,
+                            lineHeight = 20.sp,
                             color = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF7B7974),
                         )
-                    },
-                    /*
-                     * `.input`'s measurements: 13 over a 20 line-height, and
-                     * the box's own 16/16/8 inset - the text starts where the
-                     * desktop's does, and an empty composer is 60 tall rather
-                     * than one line tall.
-                     */
-                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, lineHeight = 20.sp, color = LocalText.current),
-                    colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent),
-                    shape = RoundedCornerShape(0.dp),
-                    maxLines = 8,
-                    // `.input`'s 60 is a minimum, not a height: the box grows
-                    // with the text up to its own cap.
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp),
-                )
-                // `.row`: 44 tall, 8 in from each edge, 4 between the controls.
+                    }
+                    BasicTextField(
+                        text,
+                        { text = it },
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, lineHeight = 20.sp, color = LocalText.current),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(LocalText.current),
+                        maxLines = 8,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                // `.row`: 44 tall, 4 between the controls, and no inset of its
+                // own - the box's own 8 already holds it off the edge, which is
+                // why the desktop writes `padding: 0 8px` there and the card
+                // carries the rest.
                 Row(
-                    Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 8.dp),
+                    Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 0.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     var plusMenu by remember { mutableStateOf(false) }
                     var skillPicker by remember { mutableStateOf(false) }
-                    // Claude's + and mic both sit in a soft pill circle; the
-                    // round button on the right is ink until there is something
-                    // to send, then the theme's accent.
+                    /*
+                     * `.attach`: a 28 box on `--radius-md` (6), not a 36 circle.
+                     * The desktop's plus, mic and send are all the same 28/6
+                     * square with a glyph in it - the pill circle made the bar
+                     * read a size too big and, with 20px glyphs, crowded the
+                     * 44-tall row it sits in.
+                     */
                     Box(
-                        Modifier.size(36.dp).background(LocalPill.current, CircleShape).clickable(enabled = enabled) { plusMenu = true },
+                        Modifier.size(28.dp).clip(RoundedCornerShape(6.dp)).clickable(enabled = enabled) { plusMenu = true },
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(Icons.Filled.Add, contentDescription = "更多", tint = LocalText.current, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Filled.Add, contentDescription = "更多", tint = LocalText.current, modifier = Modifier.size(16.dp))
                         /*
                          * The desktop's plus menu, in the same order: files,
                          * then the terminal, then 追求目标 as a switch rather
@@ -9793,14 +9874,23 @@ fun InputCapsule(
                         }
                         Spacer(Modifier.width(8.dp))
                     }
+                    /*
+                     * `.pill`: 28 tall on a `--radius-md` (6) corner with 11px of
+                     * inline padding, its text 13 on a 20 line. This was a 17
+                     * corner with 14/8 of padding, which made it a lozenge a
+                     * size taller than the buttons beside it and pushed the row
+                     * past its 44.
+                     */
                     Surface(
-                        shape = RoundedCornerShape(17.dp),
+                        shape = RoundedCornerShape(6.dp),
                         color = LocalPill.current,
-                        modifier = Modifier.clickable(enabled = enabled && onModel != {}) { onModel() },
+                        modifier = Modifier.height(28.dp).clickable(enabled = enabled && onModel != {}) { onModel() },
                     ) {
                         // Claude's pill names the model and its effort
                         // ("Sonnet 5.5 中等"); ours names what this app has.
-                        Text(modelLabel, fontSize = 13.sp, color = LocalText.current, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
+                        Box(Modifier.padding(horizontal = 11.dp), contentAlignment = Alignment.Center) {
+                            Text(modelLabel, fontSize = 13.sp, lineHeight = 20.sp, color = LocalText.current, maxLines = 1)
+                        }
                     }
                     Spacer(Modifier.weight(1f))
                     // Listening and transcribing own the round button: Claude
@@ -9815,14 +9905,14 @@ fun InputCapsule(
                         Spacer(Modifier.width(14.dp))
                     }
                     Box(
-                        Modifier.size(36.dp).background(if (listening) Color(0x1FE0574A) else LocalPill.current, CircleShape).clickable(enabled = !transcribing) { onMic() },
+                        Modifier.size(28.dp).clip(RoundedCornerShape(6.dp)).background(if (listening) Color(0x1FE0574A) else Color.Transparent).clickable(enabled = !transcribing) { onMic() },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             if (listening) Icons.Filled.Stop else Icons.Outlined.Mic,
                             contentDescription = if (listening) "结束录音" else "语音输入",
                             tint = if (listening) Color(0xFFE0574A) else LocalMuted.current,
-                            modifier = Modifier.size(20.dp),
+                            modifier = Modifier.size(16.dp),
                         )
                     }
                     Spacer(Modifier.width(8.dp))
