@@ -321,6 +321,20 @@ console.log("context ring: checked")
   )
   const declared = [...union.matchAll(/\|\s*\{\s*type:\s*"([\w.]+)"/g)].map((m) => m[1])
 
+  /*
+   * Requests the phone sends rather than this window.
+   *
+   * The remote gateway speaks the same protocol over a WebSocket, and a few
+   * requests exist only for it: `office.render` turns a docx, xlsx or pptx into
+   * one HTML page on the gateway, where the libraries that understand those
+   * formats live, because the Android client has neither. The desktop reads
+   * Office documents itself and has no reason to ask.
+   *
+   * The exemption is by name and must stay short: everything else the backend
+   * answers still has to have a caller here, which is what this check is for.
+   */
+  const remoteOnly = new Set(["office.render"])
+
   const files: string[] = []
   const walk = (relative: string) => {
     for (const entry of fs.readdirSync(path.join(root, relative), { withFileTypes: true })) {
@@ -333,10 +347,14 @@ console.log("context ring: checked")
   const renderer = files.map((file) => read(file)).join("\n")
 
   for (const name of declared) {
+    if (remoteOnly.has(name)) continue
     if (new RegExp(`type:\\s*"${name.replace(".", "\\.")}"`).test(renderer)) continue
     problems.push(`the backend answers ${name} and nothing in the interface sends it`)
   }
-  console.log(`backend requests: ${declared.length}, all reachable from the interface`)
+  console.log(
+    `backend requests: ${declared.length}, all reachable from the interface` +
+      (remoteOnly.size ? ` (${remoteOnly.size} remote-only: ${[...remoteOnly].join(", ")})` : ""),
+  )
 
   /*
    * A setting nothing reads.
