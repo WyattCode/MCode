@@ -3340,14 +3340,6 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          * magnifier opens it; the field then sits above the list
                          * with a close glyph that puts it away.
                          */
-                        Box(Modifier.size(38.dp).clickable { searching = !searching; if (!searching) search = "" }, contentAlignment = Alignment.Center) {
-                            Icon(
-                                if (searching) Icons.Filled.Close else Icons.Outlined.Search,
-                                contentDescription = if (searching) "关闭搜索" else "搜索",
-                                tint = LocalText.current,
-                                modifier = Modifier.size(19.dp),
-                            )
-                        }
                         Box(Modifier.size(38.dp).clickable { runningOnly = !runningOnly }, contentAlignment = Alignment.Center) {
                             Icon(Icons.Outlined.Tune, contentDescription = "筛选", tint = if (runningOnly) MaterialTheme.colorScheme.primary else LocalText.current, modifier = Modifier.size(18.dp))
                         }
@@ -3358,11 +3350,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                      * reader then had to tap again would be two gestures for one
                      * intent.
                      */
-                    if (searching) {
-                        val focus = remember { androidx.compose.ui.focus.FocusRequester() }
-                        LaunchedEffect(searching) {
-                            if (searching) withContext(kotlinx.coroutines.Dispatchers.Main) { runCatching { focus.requestFocus() } }
-                        }
+                    /*
+                     * Always on, as Claude's is: its field sits under the title
+                     * on every visit, and the magnifier the phone used instead
+                     * was a second step to reach the same box. Nothing takes
+                     * the focus until it is tapped, so the keyboard does not
+                     * open on every visit to the list.
+                     */
+                    run {
                         OutlinedTextField(
                             search, { search = it },
                             /*
@@ -3371,11 +3366,26 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                              * placeholder clipped - 「搜索」 rendered as a cut-off
                              * glyph pair.
                              */
-                            Modifier.fillMaxWidth().padding(horizontal = 12.dp).heightIn(min = 45.dp).focusRequester(focus),
-                            placeholder = { Text("搜索", color = LocalMuted.current, fontSize = 14.sp) },
-                            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(17.dp)) },
-                            shape = RoundedCornerShape(14.dp),
-                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
+                            /*
+                             * Measured off Claude's own field: 266 x 38dp, with
+                             * a corner so round it is a capsule - the edge is
+                             * already leaving the top at 11px in from the left,
+                             * which 14dp could not do. 45 tall / 14 rounded was
+                             * a plain rounded rectangle beside it.
+                             */
+                            /*
+                             * `heightIn` with a minimum, not a fixed `height`:
+                             * Material's field needs 56dp for its own padding
+                             * and a 15sp face, so a fixed 38 clipped the
+                             * placeholder into an ellipsis. The minimum keeps
+                             * the empty box at the reference's 38 and lets it
+                             * grow when a face needs the room.
+                             */
+                            Modifier.fillMaxWidth().padding(horizontal = 9.5.dp).heightIn(min = 38.dp),
+                            placeholder = { Text("搜索", color = LocalMuted.current, fontSize = 15.sp) },
+                            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(18.dp)) },
+                            shape = RoundedCornerShape(19.dp),
+                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 15.sp),
                             // Claude's search sits on white with a hairline pill
                             // outline, not on the page's own colour with none.
                             colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = LocalField.current, focusedContainerColor = LocalField.current, unfocusedBorderColor = LocalFieldLine.current, focusedBorderColor = LocalFieldLine.current),
@@ -7530,13 +7540,16 @@ fun SessionList(
                     Modifier
                         .fillMaxWidth()
                         .combinedClickable(onClick = { onSelect(s.id) }, onLongClick = { onLongPress?.invoke(s) })
-                        .then(
-                            if (s.id == current) {
-                                Modifier.background(LocalPill.current, RoundedCornerShape(10.dp))
-                            } else {
-                                Modifier
-                            },
-                        )
+                        /*
+                         * No fill on the open conversation.
+                         *
+                         * Claude marks it with a dot at the row's trailing end
+                         * (the 20px grey disc beside 「Main」 in its own list),
+                         * not with a grey slab behind the whole row - measured
+                         * on the pad, its own open row has the page's fill from
+                         * edge to edge. The slab made our list read as a menu
+                         * with a selected item rather than as a thread.
+                         */
                         /*
                          * `.row.task > .row-open`: a 34 minimum with 6 above
                          * and below, and 2 between rows (`.lists`'s gap). This
@@ -7544,7 +7557,7 @@ fun SessionList(
                          * was 48 tall against the desktop's 34 and the list
                          * read as spaced-out cards rather than as a thread.
                          */
-                        .padding(horizontal = 14.dp, vertical = if (compact) 6.dp else 6.dp),
+                        .padding(horizontal = 14.dp, vertical = if (compact) 6.dp else 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     /*
@@ -7586,12 +7599,16 @@ fun SessionList(
                         // dpi), so the pair reads as one row rather than two.
                         Text(
                             s.title.ifEmpty { s.id }.take(if (compact) 34 else 26),
-                            // 14 at weight 500 over a 20 line-height is the
-                            // desktop's `row-label` exactly; this carried 15 at
-                            // the default weight, which is a different voice.
-                            fontSize = 14.sp,
+                            /*
+                             * Measured off Claude's own list on this pad: the
+                             * title's glyphs are 60px tall, which is 19dp -
+                             * 16sp at this scale, not the desktop sheet's 14.
+                             * Every row sat a size small against the reference
+                             * because of it, and the timestamp with it.
+                             */
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Medium,
-                            lineHeight = 20.sp,
+                            lineHeight = 22.sp,
                             color = LocalText.current,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -7599,8 +7616,9 @@ fun SessionList(
                         if (!compact) {
                             Text(
                                 relTime(s.updated),
-                                fontSize = 12.sp,
-                                lineHeight = 16.sp,
+                                // 53px of glyph = 17dp = 14sp here, up from 12.
+                                fontSize = 14.sp,
+                                lineHeight = 19.sp,
                                 color = LocalMuted.current,
                             )
                         }
