@@ -115,7 +115,11 @@ export interface UpdaterDeps {
  */
 export function compareVersions(a: string, b: string): number {
   const parse = (value: string): { numbers: number[]; pre?: string } => {
-    const text = String(value ?? "")
+    let text = String(value ?? "")
+    // Build metadata (`+…`) never affects order; it may itself contain `-`,
+    // which must not be read as a pre-release marker.
+    const plus = text.indexOf("+")
+    if (plus !== -1) text = text.slice(0, plus)
     const dash = text.indexOf("-")
     const core = dash === -1 ? text : text.slice(0, dash)
     const pre = dash === -1 ? undefined : text.slice(dash + 1)

@@ -540,8 +540,11 @@ class Connection {
       return
     }
     // A close that ran while this connect was in flight would otherwise leave
-    // the freshly spawned child alive outside any group it sweeps.
+    // the freshly spawned child alive outside any group it sweeps - and the
+    // sweep skips connections still pending, so say failed before stopping.
     if (this.closed) {
+      this.status = "failed"
+      this.error = "the server was disabled while it was connecting"
       void this.stop()
       return
     }
@@ -856,8 +859,9 @@ class Connection {
       index = this.buffer.indexOf("\n")
     }
     // A server printing banners without a newline would grow this without
-    // bound; past the cap, keep only the tail a frame could still start in.
-    if (this.buffer.length > 1_000_000) this.buffer = this.buffer.slice(-100_000)
+    // bound. The cap sits far above any legitimate single-line frame (large
+    // tool results ride one line each), and past it the tail is kept.
+    if (this.buffer.length > 16_000_000) this.buffer = this.buffer.slice(-100_000)
   }
 
   /** A frame, a batch of frames, or - some servers print banners on stdout - not a frame at all. */

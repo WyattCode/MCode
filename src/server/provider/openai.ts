@@ -339,6 +339,7 @@ export const OpenAICompatible: ProviderAdapter = {
     let textOpen = false
     let reasoningOpen = false
     let reasoningIndex = 1
+    let reasoningUsed = false
     const pending = new Map<number, { id: string; name: string; args: string; announced: boolean }>()
     /**
      * Slot for a delta that carries no `index`.
@@ -401,6 +402,10 @@ export const OpenAICompatible: ProviderAdapter = {
       if (reasoning) {
         if (!reasoningOpen) {
           reasoningOpen = true
+          // A stretch that reopens after text is a new block: the first one
+          // ended with its own block.end and its index cannot start again.
+          if (reasoningUsed) reasoningIndex++
+          reasoningUsed = true
           emit({ type: "reasoning.start", index: reasoningIndex })
         }
         emit({ type: "reasoning.delta", index: reasoningIndex, text: reasoning })
@@ -421,7 +426,9 @@ export const OpenAICompatible: ProviderAdapter = {
       for (const call of delta.tool_calls ?? []) {
         const at = slotFor(call)
         const slot = pending.get(at) ?? { id: "", name: "", args: "", announced: false }
-        if (call.id) slot.id = call.id
+        // An announced call already carries the made-up id its card went out
+        // with; a real id arriving later must not re-key it mid-flight.
+        if (call.id && !slot.announced) slot.id = call.id
         if (call.function?.name) slot.name += call.function.name
         if (call.function?.arguments) slot.args += call.function.arguments
         pending.set(at, slot)

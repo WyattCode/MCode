@@ -1861,9 +1861,9 @@ const draftKey = computed(() =>
 function saveDraft(key: string) {
   // A deleted session's draft was already forgotten by the store; writing this
   // box's stale contents back would resurrect an orphan that is saved to disk
-  // and never shown again.
+  // and never shown again. Side conversations live in sideSessions, not sessions.
   const id = key.startsWith("main:") || key.startsWith("side:") ? key.slice(key.indexOf(":") + 1) : undefined
-  if (id && !app.sessions.some((entry) => entry.id === id)) return
+  if (id && !app.sessions.some((entry) => entry.id === id) && !app.sideSessions.some((entry) => entry.id === id)) return
   if (text.value || attachments.value.length || skills.value.length) {
     drafts.set(key, {
       text: text.value,

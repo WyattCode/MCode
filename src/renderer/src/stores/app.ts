@@ -2414,6 +2414,7 @@ export const useApp = defineStore("app", () => {
     version,
     port,
     sessions,
+    sideSessions,
     currentID,
     current,
     visibleChats,

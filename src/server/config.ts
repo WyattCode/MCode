@@ -1122,7 +1122,15 @@ export class Config {
    * change left them.
    */
   update(mutate: (current: AppConfig) => Partial<AppConfig>, forget: readonly string[] = []): Promise<AppConfig> {
-    const next = this.setting.catch(() => undefined).then(() => this.setNow(mutate(this.current), forget))
+    const next = this.setting
+      .catch(() => undefined)
+      .then(async () => {
+        const patch = mutate(this.current)
+        // An empty patch says "nothing to change": skip the save and the
+        // config.updated broadcast instead of rewriting the file for nothing.
+        if (!patch || Object.keys(patch).length === 0) return this.current
+        return this.setNow(patch, forget)
+      })
     this.setting = next
     return next
   }
