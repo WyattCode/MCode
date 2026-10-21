@@ -270,7 +270,13 @@ npm run package      # 打包 + 自动递增补丁号，不要手改版本号
 
 **验证**：全部改动编译通过并装机；真机截图核对列表、会话、正文列宽、气泡、工具行、菜单、顶栏、发送按钮、深色 diff；断线重连端到端（杀网关 → 退避 2/4/8/15s 不停 → 重启网关 25 秒内自动恢复、断线条消失、零误报未读）。
 
-**状态**：分支 `feat/remote-markdown`，比 `origin/main` 领先 100 个提交（Remote 全部历史 + 本轮 28 个），未合入 main；未打包、未发版。交接文档顺带修正了第六十九轮排错位置的问题。
+**合并与发版**：分支已 `--no-ff` 合入 main 并推送（`23a97dfd..89904928`）。合并时 main 已长到 0.8.3，本分支的语言表整份覆盖导致 17 张表缺 `set.remote` / `set.remoteSub`，i18ncheck 抓到并补齐。**0.8.5 已发布**：`MCode-0.8.5-x64.exe`（237,058,790 B，SHA-256 `d83d68241bf46d6e8a1d38c10998a59b36d3142f3b8c83569b309b754648628f`）+ `MCode-Remote-0.1.0-debug.apk`（74,603,291 B，SHA-256 `ba056a461bd8eb94fc5546b6bfb5e845639415064e163f7aa957513a6962706a`），两侧 SHA-256 已与远程核对一致。
+
+**smoke**：7837 passed / 36 failed。逐条核对过——其中 35 条是 Electron/Chromium 环境类（`the Electron helper ran` / DevTools attach / 外网封面抓取），与本轮无关；**第 36 条是本轮引入的**：视频预览开始携带 base64 字节，违反第八轮就立下的「video 预览只标类型、不带字节」断言。已改为按需——`file.read` 新增 `withBytes`，缺省仍不带（桌面从磁盘播放），手机端显式请求。两条路径直测：默认 `video:true, hasData:false`，请求后 `dataLen:8`。0.8.4 是这次修复前的构建，未发布。
+
+**事故记录**：为对比基线执行 `git checkout 23a97dfd -- .`，该命令会改写工作区，4 个文件被回退（净删 7649 行）。用 `git restore --staged --worktree <files>` 完整恢复。**对比历史版本请用 `git diff <sha> HEAD -- <path>`，不要 checkout。**
+
+交接文档顺带修正了第六十九轮排错位置的问题。
 
 ### 第六十九轮：语音破案 —— 本机 faster-whisper 引擎 + 手机录音转写（2026-10-19 凌晨）
 
