@@ -4878,14 +4878,19 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
         // two-pane pane greets by name. Both are sampled from its own screens.
         if (inputAtBottom) {
             /*
-             * 32.6dp, measured: the mark's ink spans 103px on this pad, not the
-             * 112 the earlier note recorded - 40dp drew most of a size large.
+             * 39.5, which draws 32.6dp of ink.
+             *
+             * Measured both ways: the reference's ink spans 103px on this pad,
+             * and a 32.6 box here drew only 85. The gap is the drawing, not the
+             * measurement - the spokes are stroked lines that stop at the
+             * radius, so the round cap keeps half a stroke inside the box, and
+             * no spoke points exactly along an axis. 32.6 x 103/85 = 39.5.
              */
-            SparkMark(Modifier.size(32.6.dp))
+            SparkMark(Modifier.size(39.5.dp))
             Spacer(Modifier.height(14.dp))
             Text(greeting(), fontSize = 18.sp, fontWeight = FontWeight.Normal, color = LocalText.current)
         } else {
-            SparkMark(Modifier.size(32.6.dp))
+            SparkMark(Modifier.size(39.5.dp))
             Spacer(Modifier.height(16.dp))
             // Claude's phrase is 50px of glyph on the pad - 18sp, not the 44
             // this was set to after a first read of its line box (144px, which
