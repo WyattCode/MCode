@@ -18,7 +18,7 @@ ADB = r"C:/Users/Wyatt/.workbuddy/binaries/android-sdk/platform-tools/adb.exe"
 # rather than remembered.
 DEVICES = {
     "fold": ("192.168.10.155", "0186D460499C3540", "192.168.10.155:40025"),
-    "pad": ("192.168.10.173", "0A06049009983540", "192.168.10.173:39569"),
+    "pad": ("192.168.10.173", "0A06049009983540", "192.168.10.173:35317"),
 }
 
 TARGET = os.environ.get("MCODE_DEVICE", "pad")

@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.OpenInFull
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -20,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -397,15 +399,24 @@ private fun MdLine(
      * difference in the transcript: a paragraph of the same words was a third
      * taller here than in the reference.
      */
-    size: androidx.compose.ui.unit.TextUnit = 15.sp,
+    size: androidx.compose.ui.unit.TextUnit = 18.sp,
     weight: FontWeight? = null,
     /*
-     * 20.3dp of line, which is 64px on the pad. The paragraph gap is folded into
-     * this rather than kept as a separate padding: with both, a run of short
-     * paragraphs opened 4dp looser than the reference's and every block sat
-     * lower than its word count called for.
+     * 29.8dp of line, measured at the pad's real 2.5 px per dp.
+     *
+     * Both numbers here were a size too small, and the reason is the same
+     * mistake twice over: every dp in this file was divided by 3.156, the
+     * screenshot's nominal 1080 against the pad's 3408, instead of by the 2.5
+     * that 400 dpi actually gives. Claude's CJK body ink measures 43 px - 17.2
+     * dp - and its line pitch 75 px, 30.0 dp; this set 15sp over 24sp, whose ink
+     * is 35 px. The prose therefore read a seventh smaller and a fifth tighter
+     * than the reference, which is the difference the eye catches first.
+     *
+     * The paragraph gap stays folded into this rather than kept as a separate
+     * padding: with both, a run of short paragraphs opened 4dp looser than the
+     * reference's and every block sat lower than its word count called for.
      */
-    lineHeight: androidx.compose.ui.unit.TextUnit = 24.sp,
+    lineHeight: androidx.compose.ui.unit.TextUnit = 30.sp,
 ) {
     val context = LocalContext.current
     val inline = remember(source, color) { MdText.inline(source, LinkBlue) }
@@ -451,49 +462,78 @@ private fun MdLine(
     )
 }
 
-/** A fenced block: language at the start of its head, a copy button at the end. */
+/**
+ * A fenced block, measured off Claude's own card on the pad.
+ *
+ * Every figure here was read at the pad's real 2.5 px per dp; the previous
+ * version had all of them divided by 3.156 and so ran about a quarter large,
+ * and it drew a white card with a rule under the head where Claude draws a
+ * single warm plate with no rule at all.
+ *
+ *   card     x 1274..3093, 728 dp wide, 135.6 dp in from the pane and 126.0
+ *            from its far edge - the same inset as the prose beside it
+ *   fill     #F0EFEC for the head band, #F3F3F0 for the body; on the page's
+ *            #F9F9F7 that is a card and not a hole
+ *   head     40.0 dp tall, the language 17.2 dp in and 15.2 dp down, 12sp
+ *   rule     none - the two fills differ by three levels, and the original
+ *            reads the change of plate as the rule
+ *   body     code 17.2 dp in, first line 58.0 dp from the card's top, 16.4 dp
+ *            of line pitch, last line 16.8 dp off the bottom
+ *   corner   22.4 dp, the same as the composer's
+ */
 @Composable
 private fun CodeBox(lang: String, code: String, dark: Boolean, modifier: Modifier = Modifier) {
     val clipboard = LocalClipboardManager.current
     var copied by remember(code) { mutableStateOf(false) }
-    val fill = if (dark) Color(0xFF2E2E2E) else Color(0xFFFFFFFF)
-    val line = if (dark) Color(0xFF2E2E2E) else Color(0xFFF0EBE5)
-    val head = if (dark) Color(0xFFB8B8B8) else Color(0x99151C13)
+    val head = if (dark) Color(0xFF262626) else Color(0xFFF0EFEC)
+    val body = if (dark) Color(0xFF2E2E2E) else Color(0xFFF3F3F0)
+    val ink = if (dark) Color(0xFFB8B8B8) else Color(0xFF6B6862)
     Column(
         modifier
             .fillMaxWidth()
-            .background(fill, RoundedCornerShape(8.dp)),
+            .clip(RoundedCornerShape(22.4.dp))
+            .background(body),
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp),
+            Modifier.fillMaxWidth().background(head).height(40.dp).padding(start = 17.2.dp, end = 13.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 lang.ifEmpty { "code" },
                 fontSize = 12.sp,
-                color = head,
+                color = ink,
                 modifier = Modifier.weight(1f),
             )
+            /*
+             * Two marks, as Claude's head carries: copy and expand. Expand has
+             * nothing to open into on this pane - there is no full-screen code
+             * sheet yet - so it is drawn inert, at the same size as its
+             * neighbour so the pair reads as a pair.
+             */
             Row(
                 Modifier
                     .clickable {
                         clipboard.setText(AnnotatedString(code))
                         copied = true
                     }
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                    .padding(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
                     if (copied) Icons.Filled.Check else Icons.Outlined.ContentCopy,
                     contentDescription = if (copied) "已复制" else "复制",
-                    tint = if (copied) Color(0xFF00C950) else head,
-                    modifier = Modifier.size(13.dp),
+                    tint = if (copied) Color(0xFF00C950) else ink,
+                    modifier = Modifier.size(15.dp),
                 )
-                Spacer(Modifier.width(4.dp))
-                Text(if (copied) "已复制" else "复制", fontSize = 12.sp, color = head)
             }
+            Spacer(Modifier.width(10.dp))
+            Icon(
+                Icons.Outlined.OpenInFull,
+                contentDescription = "展开",
+                tint = ink.copy(alpha = 0.55f),
+                modifier = Modifier.size(15.dp).padding(end = 2.dp),
+            )
         }
-        Box(Modifier.fillMaxWidth().height(1.dp).background(line))
         /*
          * A long line wraps instead of scrolling sideways.
          *
@@ -502,17 +542,21 @@ private fun CodeBox(lang: String, code: String, dark: Boolean, modifier: Modifie
          * thread, and gives no sign that it is even possible - the line simply
          * ended and read as cut off. Claude wraps a long line inside the card,
          * keeping its indent so it still reads as code.
+         *
+         * 16.4 dp of pitch, from three lines 41 px apart: at 400 dpi that is
+         * 14sp set solid, not the 22sp of leading the old fixed line height
+         * gave.
          */
         Text(
             code,
             fontFamily = FontFamily.Monospace,
             fontSize = 14.sp,
-            lineHeight = 22.sp,
+            lineHeight = 16.4.sp,
             color = LocalText.current,
             softWrap = true,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(start = 17.2.dp, end = 17.2.dp, top = 15.6.dp, bottom = 16.8.dp),
         )
     }
 }
@@ -531,14 +575,15 @@ private fun ListBox(block: MdBlock.ListBlock, color: Color, modifier: Modifier =
                 Text(
                     marker,
                     /*
-                     * 18sp/27sp, measured off Claude's own reply on this pad:
-                     * one CJK glyph's ink is 36px and its line pitch is 107px,
-                     * which is 18sp at 400dpi with 1.5 leading. The 15sp/19sp
-                     * this used to be made a glyph 29px and set the paragraph a
-                     * fifth shorter and far tighter than the original.
+                     * The same size and pitch as the prose beside it, which is
+                     * what Claude's lists use. 17sp over 26sp was a reading of
+                     * "ink 36 px, pitch 107 px" divided by the same 3.156 that
+                     * made every other dp in this file 26% too large - so it
+                     * came out a step under the body it sits in rather than
+                     * level with it. `MdLine`'s own 18/30 is the truth.
                      */
-                    fontSize = 17.sp,
-                    lineHeight = 26.sp,
+                    fontSize = 18.sp,
+                    lineHeight = 30.sp,
                     color = if (item.task && !item.checked) LocalMuted.current else color,
                     modifier = Modifier.width(if (block.ordered) 24.dp else 16.dp),
                 )

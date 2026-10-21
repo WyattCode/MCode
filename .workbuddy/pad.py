@@ -11,7 +11,7 @@ import sys
 import time
 
 ADB = r"C:/Users/Wyatt/.workbuddy/binaries/android-sdk/platform-tools/adb.exe"
-ENDPOINT = os.environ.get("MCODE_ENDPOINT", "192.168.10.173:39569")
+ENDPOINT = os.environ.get("MCODE_ENDPOINT", "192.168.10.173:35317")
 ENV = dict(os.environ)
 ENV.pop("ELECTRON_RUN_AS_NODE", None)
 

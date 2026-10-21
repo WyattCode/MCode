@@ -6467,7 +6467,7 @@ fun Timeline(
          * a narrow screen: `widthIn` would have pinned it and left a phone with
          * margins wider than the text.
          */
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 112.dp, end = 99.5.dp, top = 10.dp, bottom = 6.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 137.6.dp, end = 124.dp, top = 10.dp, bottom = 6.dp),
     ) {
         for (rowAt in rows.indices) {
             val item = rows[rowAt]
@@ -9574,26 +9574,32 @@ fun InputCapsule(
         }
     }
     /*
-     * Claude's composer is a little off centre: on the pad its card runs
-     * x=1034..3333 in a pane from 925 to 3408 - 44dp of air on the left and
-     * 30dp on the right, a card 920dp wide. Measured on the card's clean top
-     * edge (y=1950); a row through its text gives white runs broken by the
-     * glyphs and reads far narrower if you take the longest one.
+     * The card's inset from its pane, re-measured at the pad's real density.
      *
-     * This used to be 118/113, symmetric, which is 1.5dp from the truth on the
-     * right and 74dp from it on the left.
-     */
-    /*
-     * The card's own inset from the pane, measured: 1002px in and 13.6dp in
-     * from the far edge on this pad, which is 12.7dp on the left. This carried
-     * 44 and 30, which made the card 41dp narrower than the reference's - the
-     * single most visible difference between the two composers, and the reason
-     * its contents looked crowded while Claude's had room.
+     * Every figure in this file used to be divided by 3.156 - the screenshot's
+     * nominal 1080 against the pad's 3408 - which is not a dp. The pad reports
+     * 400 dpi, so a dp is 2.5 px, and dividing by 3.156 inflated every reading
+     * by 26%. Checked by inverting a number this app sets itself: a transcript
+     * inset of 112 dp inside a pane starting at 925 px predicts 1205 px, and the
+     * screenshot shows 1207.
      *
-     * `bottom` is 12.8, which puts the card's lower edge 25.4dp above the
-     * screen's - measured, not derived: at 6.4 it stopped at 19.0.
+     * At 2.5, Claude's card runs x=1226..3141 in a pane from 935: 116.4 dp of
+     * air on the left, 106.8 on the right, 766.4 wide. This had 12.7 and 12.0,
+     * which made the card 964 dp wide - 200 dp, a quarter, wider than the
+     * reference, and why its contents looked spread out where Claude's are
+     * gathered.
+     *
+     * Height 246 px is 98.4 dp; the card's foot sits 83 px - 33.2 dp - above the
+     * screen's. This carried 12.8 for that gap, less than half.
+     *
+     * The 33.2 is measured from the screen's own edge, and the row already
+     * carries the navigation-bar inset (`windowInsetsPadding` on the Row at the
+     * top of the wide layout, 16.8 dp of gesture bar on this pad). Spending the
+     * whole 33.2 here on top of that inset put the card's foot 50 dp up the
+     * screen - measured on the rebuilt build - so what belongs here is the
+     * difference.
      */
-    Box(modifier.fillMaxWidth().padding(start = 12.7.dp, end = 13.6.dp, top = 8.dp, bottom = 12.8.dp)) {
+    Box(modifier.fillMaxWidth().padding(start = 116.4.dp, end = 106.8.dp, top = 8.dp, bottom = 16.4.dp)) {
         /*
          * The @ menu, over the box exactly where the slash menu sits: a file
          * named and chosen here goes into the words as its relative path, which
@@ -9715,10 +9721,11 @@ fun InputCapsule(
              *   fill    #FEFEFE   (not #FFFFFF: a page of #F9F9F7 wants the
              *                       card one step off white, not pure white)
              *   edge    1px #DCDCDC, a crisp line, not a 6% ink
-             *   corner  20
+             *   corner  22.4, from the fill's own profile: at 2.5 px per dp the
+             *           corner takes 56 px to reach the card's left edge
              *   drop    0 1px 2px #0000000d, 0 6px 18px #0000001b
              */
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(22.4.dp),
             color = if (LocalBg.current == DarkBg) Color(0xFF1F1F1F) else Color(0xFFFEFEFE),
             /*
              * 0.6dp of edge, not 1: the reference's is two pad pixels at this
