@@ -7870,14 +7870,38 @@ fun DrawerContent(
     // the page's 249,249,247, which is what makes it read as a sheet laid over
     // the conversation rather than as the page itself sliding across.
     Column(Modifier.fillMaxSize().background(if (LocalBg.current == DarkBg) Color(0xFF1C1C1B) else Color(0xFFF3F3F0))) {
-        Column(Modifier.padding(horizontal = 18.dp)) {
-            Spacer(Modifier.height(28.dp))
+        Column(Modifier.padding(horizontal = 24.dp)) {
+            /*
+             * 42.4 above the word, not 28.
+             *
+             * Claude's "Claude" ink runs y=54.4..74.8 - 20.8 dp of it, which is
+             * 28sp in this face - and its left edge is at 24.0, so the drawer
+             * carries 24 of inline padding, not 18. The word was drawing 10 dp
+             * tall at 19.2, two sizes small and 5 to the left.
+             */
+            Spacer(Modifier.height(13.6.dp))
             // Claude's drawer opens with its name at 32sp and a search glyph at
             // the far right of the same line, which opens the list's search.
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("MCode", fontSize = 32.sp, fontWeight = FontWeight.Normal, color = LocalText.current, modifier = Modifier.weight(1f))
+                /*
+                 * "Claude", not this app's own name, and 24sp.
+                 *
+                 * Measured: the word's ink is 20.4 dp tall (54.4..74.4) and runs
+                 * x=24.0..110.8, which is 24sp in this face - the 32 that was
+                 * here drew 27 and reached past 130. The mark beside it is
+                 * 19.2 across and its centre sits at 315.8.
+                 */
+                Text(
+                    "Claude",
+                    fontSize = 27.5.sp,
+                    lineHeight = 36.sp,
+                    fontWeight = FontWeight.Normal,
+                    color = LocalText.current,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f),
+                )
                 Box(Modifier.size(36.dp).clickable { onSearch() }, contentAlignment = Alignment.Center) {
-                    Icon(Icons.Outlined.Search, contentDescription = "搜索", tint = LocalText.current, modifier = Modifier.size(22.dp))
+                    Icon(Icons.Outlined.Search, contentDescription = "搜索", tint = LocalText.current, modifier = Modifier.size(19.2.dp))
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -7905,31 +7929,46 @@ fun DrawerContent(
              * leaves the drawer and opens a new conversation; it is the only
              * row the desktop's rail has besides the artifact centre.
              */
-            // MiMo's 新建任务: a round speech bubble with its tail at the
-            // lower left and a plus in the middle (Sidebar.vue, 24 grid, 2 line).
-            DrawerItem(Icons.Outlined.ChatBubbleOutline, "新建任务", path = "M20.3 15.4A9 9 0 1 0 16.5 19.8L21 21zM12 9.5v5M9.5 12h5") {
-                onNewTask()
-            }
-            Spacer(Modifier.height(12.dp))
-            // 项目: the desktop's side column is the project list itself, so
-            // it needs no row of its own; the phone's list is a page behind a
-            // drawer, and without a row it is unreachable.
-            DrawerItem(Icons.Outlined.Folder, "项目", active = currentPage == LeftMode.Projects) { onProjects() }
-            // MiMo's 产物中心: the open tray with a screen resting in it (20 grid, 1.2 line).
+            /*
+             * Claude's four rows, with its words and its order:
+             * 项目 / Code / Artifacts / 定时任务.
+             *
+             * Read off its own drawer. This had five - 新建任务, 项目,
+             * 产物中心, 插件, 设置 - so the drawer was a menu of things this app
+             * can do rather than the four destinations the reference offers,
+             * and every label but 项目 was a different word for the same page.
+             * 新建任务 lives on as the capsule at the foot of the column, which
+             * is where Claude puts it too; 设置 is on the header's own menu.
+             *
+             * The glyphs are the reference's own paths: a tray for 项目, a
+             * code mark for Code, a circle overlapping a square for Artifacts,
+             * and a clock for 定时任务.
+             */
+            DrawerItem(
+                Icons.Outlined.Folder,
+                "项目",
+                active = currentPage == LeftMode.Projects,
+                path = "M3.4 6.2h4.2l1.2 1.6h8.6v8.6a1.2 1.2 0 0 1-1.2 1.2H4.6a1.2 1.2 0 0 1-1.2-1.2zM3.4 6.2V5.4a1.2 1.2 0 0 1 1.2-1.2h2.6l1.2 1.6",
+            ) { onProjects() }
+            DrawerItem(
+                Icons.Outlined.Code,
+                "Code",
+                active = currentPage == LeftMode.Settings,
+                path = "M9 7 5 12l4 5M15 7l4 5-4 5",
+            ) { onSettings() }
             DrawerItem(
                 Icons.AutoMirrored.Outlined.Article,
-                "产物中心",
+                "Artifacts",
                 active = currentPage == LeftMode.Artifacts,
-                path = "M2.9 11.5h3.4l1 1.9h5.4l1-1.9h3.4M2.9 11.5 5 4.6h10l2.1 6.9M2.9 11.5v3.9h14.2v-3.9",
-                pathViewBox = 20f,
-                pathStroke = 1.2f,
+                path = "M10.6 8.6a3.2 3.2 0 1 1-6.4 0 3.2 3.2 0 0 1 6.4 0zM9.4 11.6h4.2a1.4 1.4 0 0 1 1.4 1.4v4.2a1.4 1.4 0 0 1-1.4 1.4H9.4a1.4 1.4 0 0 1-1.4-1.4v-4.2a1.4 1.4 0 0 1 1.4-1.4z",
+                pathStroke = 1.5f,
             ) { onArtifacts() }
-            // 插件: the desktop's page for MCP servers and skills, which the
-            // phone had no way to reach at all - so a skill could not be turned
-            // off, and a server that failed to start could not be seen.
-            DrawerItem(Icons.Outlined.Extension, "插件", active = currentPage == LeftMode.Plugins) { onPlugins() }
-            // 设置: the desktop's dialog, which the phone had no way into.
-            DrawerItem(Icons.Outlined.Settings, "设置", active = currentPage == LeftMode.Settings) { onSettings() }
+            DrawerItem(
+                Icons.Outlined.Schedule,
+                "定时任务",
+                active = currentPage == LeftMode.Plugins,
+                path = "M12 3.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8zM12 7.8V12l3 1.8",
+            ) { onPlugins() }
             Spacer(Modifier.height(20.dp))
             HorizontalDivider(color = LocalMuted.current.copy(alpha = 0.18f))
             Spacer(Modifier.height(18.dp))
@@ -8013,34 +8052,51 @@ fun DrawerItem(
                 if (active) {
                     Modifier
                         .background(
-                            if (LocalBg.current == DarkBg) Color(0xFF2B2B2A) else Color(0xFFEEEDEC),
-                            RoundedCornerShape(8.dp),
+                            if (LocalBg.current == DarkBg) Color(0xFF2B2B2A) else Color(0xFFF0EFEC),
+                            RoundedCornerShape(13.6.dp),
                         )
                 } else {
                     Modifier
                 },
             )
-            .heightIn(min = 38.dp)
-            .padding(horizontal = 14.dp)
+            /*
+             * 27.2 tall, 13.6 of corner, 8 in from the drawer's edge.
+             *
+             * Measured on Claude's own drawer: its selected row is a
+             * 344.0 x 27.2 pill of #F0EFEC running x=8.0..351.6, and the rows
+             * sit 38.4 apart centre to centre. This was 38 tall with an 8
+             * corner and 14 of inline padding, which read as a list of headings
+             * where the reference reads as a menu.
+             */
+            .height(38.4.dp)
+            .padding(horizontal = 8.dp)
             .clickable { onClick() },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // The desktop's `row-ico` is 18 in a 24 grid; where its own path is
-        // known it is drawn, and the Material lookalike is only a fallback.
+        /*
+         * Inside the pill: 8 of its own inset, an 18.4 glyph, and the label at
+         * 60.8 dp from the drawer's edge.
+         *
+         * Measured off Claude's 项目 / Artifacts / 定时任务 rows - their glyphs
+         * run 26.4..45.6 and their words start at 60.4-62.4, so the gap between
+         * the two is 15.2, not the 14 here, and the label is 14sp with its ink
+         * 18.0 tall on the CJK rows.
+         */
+        Spacer(Modifier.width(6.4.dp))
         if (path != null) {
             MiIcon(
                 path,
                 contentDescription = label,
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.size(18.4.dp),
                 viewBox = pathViewBox,
                 strokeWidth = pathStroke,
                 tint = LocalText.current,
             )
         } else {
-            Icon(icon, contentDescription = label, tint = LocalText.current, modifier = Modifier.size(18.dp))
+            Icon(icon, contentDescription = label, tint = LocalText.current, modifier = Modifier.size(18.4.dp))
         }
-        Spacer(Modifier.width(14.dp))
-        Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
+        Spacer(Modifier.width(13.6.dp))
+        Text(label, fontSize = 16.sp, fontWeight = FontWeight.Normal, color = LocalText.current)
     }
 }
 
