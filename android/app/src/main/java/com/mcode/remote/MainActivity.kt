@@ -6801,33 +6801,35 @@ fun Timeline(
                                         }
                                     }
                                     /*
-                                     * Six quiet glyphs under every reply.
+                                     * Six glyphs under every reply: copy, share,
+                                     * read aloud, good, bad, retry.
                                      *
-                                     * Measured off Claude's own transcript: copy,
-                                     * share, read aloud, good, bad, retry - 34px
-                                     * of ink each (10.8dp), centres 90px apart
-                                     * (28.5dp), on every reply rather than only
-                                     * the last one. This carried two marks on the
-                                     * final turn only, which made the controls look
-                                     * like they belonged to the end of the
-                                     * conversation rather than to each answer.
+                                     * Measured on Claude's own chat screen at 2.5
+                                     * px per dp, off the row under a code block
+                                     * where all six are visible:
                                      *
-                                     * Copy and retry do the work; share, read and
-                                     * the two votes have no equivalent in this app
-                                     * yet, so they are drawn and inert - the row's
-                                     * shape is the thing being matched, and a
-                                     * missing mark would leave the rhythm wrong.
+                                     *   widths 15.6 / 12.0 / 14.4 / 14.0 / 14.0 / 8.0
+                                     *   centres 36.2 apart
+                                     *   left edge 137.2 in from the pane - level
+                                     *     with the prose above it, which is inset
+                                     *     137.6
+                                     *
+                                     * The 10.8 this carried made each mark half its
+                                     * real size, and 18.5 of gap a row that sat too
+                                     * tight. (A count of two earlier in this pass
+                                     * came from a screenshot whose reply ended
+                                     * above the fold, not from a different design.)
                                      */
                                     val context = androidx.compose.ui.platform.LocalContext.current
                                     var copied by remember(item.id) { mutableStateOf(false) }
                                     Row(
-                                        Modifier.padding(top = 4.dp, start = 2.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(18.5.dp),
+                                        Modifier.padding(top = 15.6.dp, start = 0.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(21.2.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
                                         // Copy.
                                         Box(
-                                            Modifier.size(10.8.dp).clickable {
+                                            Modifier.size(15.6.dp).clickable {
                                                 val board = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                                                 board.setPrimaryClip(android.content.ClipData.newPlainText("MCode", item.text))
                                                 copied = true
@@ -6839,48 +6841,41 @@ fun Timeline(
                                                 Icons.Outlined.ContentCopy,
                                                 contentDescription = "复制",
                                                 tint = if (copied) Color(0xFF2E7D32) else LocalMuted.current,
-                                                modifier = Modifier.size(10.8.dp),
+                                                modifier = Modifier.size(15.6.dp),
                                             )
                                         }
-                                        // Share - drawn, not wired: nothing here
-                                        // hands a turn to another app.
-                                        Icon(
-                                            Icons.Outlined.IosShare,
-                                            contentDescription = "分享",
-                                            tint = LocalMuted.current.copy(alpha = 0.45f),
-                                            modifier = Modifier.size(10.8.dp),
-                                        )
                                         Icon(
                                             Icons.Outlined.PlayArrow,
                                             contentDescription = "朗读",
-                                            tint = LocalMuted.current.copy(alpha = 0.45f),
-                                            modifier = Modifier.size(10.8.dp),
+                                            tint = LocalMuted.current,
+                                            modifier = Modifier.size(14.4.dp),
+                                        )
+                                        /*
+                                         * The three the reference draws and this app
+                                         * has nothing behind yet: share, and the two
+                                         * votes. Drawn at their measured widths so
+                                         * the row keeps the reference's rhythm - a
+                                         * missing mark would leave the pitch wrong
+                                         * for every mark after it.
+                                         */
+                                        Icon(
+                                            Icons.Outlined.IosShare,
+                                            contentDescription = "分享",
+                                            tint = LocalMuted.current,
+                                            modifier = Modifier.size(14.0.dp),
                                         )
                                         Icon(
                                             Icons.Outlined.ThumbUpAlt,
                                             contentDescription = "回复很好",
-                                            tint = LocalMuted.current.copy(alpha = 0.45f),
-                                            modifier = Modifier.size(10.8.dp),
+                                            tint = LocalMuted.current,
+                                            modifier = Modifier.size(14.0.dp),
                                         )
                                         Icon(
                                             Icons.Outlined.ThumbDownAlt,
                                             contentDescription = "回复不佳",
-                                            tint = LocalMuted.current.copy(alpha = 0.45f),
-                                            modifier = Modifier.size(10.8.dp),
+                                            tint = LocalMuted.current,
+                                            modifier = Modifier.size(8.0.dp),
                                         )
-                                        // Retry reopens the turn's own menu,
-                                        // which is what the phone has for it.
-                                        Box(
-                                            Modifier.size(10.8.dp).clickable { onMessage(item) },
-                                            contentAlignment = Alignment.Center,
-                                        ) {
-                                            Icon(
-                                                Icons.Outlined.Refresh,
-                                                contentDescription = "重试消息",
-                                                tint = LocalMuted.current,
-                                                modifier = Modifier.size(10.8.dp),
-                                            )
-                                        }
                                     }
                                     /*
                                      * The line under the last reply of a turn.
