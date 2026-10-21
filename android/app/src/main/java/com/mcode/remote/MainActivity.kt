@@ -3509,19 +3509,20 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         )
                     }
                     /*
-                     * Claude's divider is not a rule but a handle: a 4dp wide,
-                     * 48dp tall rounded bar in (216,216,214), centred in the
-                     * pane's height, which the reader drags to trade width
-                     * between the two sides. There is no line at all - the two
-                     * panes share the page colour - so without this the split
-                     * cannot be moved and, more to the point, does not look
-                     * like it can be.
+                     * No divider handle between the panes.
+                     *
+                     * The handle came from Claude's Code screen, which has one
+                     * because that screen lets you trade width between a device
+                     * list and a session. Its chat screen does not: the two
+                     * panes share the page colour, the split is fixed, and
+                     * nothing is drawn in the seam at all.
+                     *
+                     * On the phone the handle was the loudest mark in the
+                     * chrome - a 32dp grab target with grip lines, sitting
+                     * between two columns that otherwise have no edge - and it
+                     * was also the thing that blocked taps on the list whenever
+                     * a drag was in flight.
                      */
-                    ColumnDivider(
-                        fraction = leftFraction,
-                        totalWidthPx = paneWidthPx,
-                        onChange = { leftFraction = it },
-                    )
                     Column(Modifier.weight(1f - leftFraction).fillMaxHeight().fillMaxWidth()) {
                         Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
                         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -8090,61 +8091,6 @@ fun DrawerItem(
 /* ------------------------------------------------------------------ */
 /* The left column's three pages                                       */
 /* ------------------------------------------------------------------ */
-
-/**
- * The draggable divider between the two panes.
- *
- * Measured off Claude on the pad: the bar is 10px across at 400dpi - 4dp - and
- * 120px tall - 48dp - in (216,216,214), vertically centred in the pane and not
- * at all attached to the top or bottom edge. The touch target is wider than the
- * bar (24dp) because a 4dp handle is not something a finger can find.
- */
-@Composable
-fun ColumnDivider(fraction: Float, totalWidthPx: Int, onChange: (Float) -> Unit) {
-    val bar = if (LocalBg.current == DarkBg) Color(0xFF3E3E3C) else Color(0xFFD8D8D6)
-    var paneWidth by remember { mutableStateOf(totalWidthPx) }
-    LaunchedEffect(totalWidthPx) { paneWidth = totalWidthPx }
-    /*
-     * `pointerInput(Unit)` captures its lambda once, so a `fraction` read inside
-     * it is the value from the first composition - every drag would compute from
-     * the same starting point and the handle would jump back. The current
-     * fraction and the callback are read through state holders instead, which is
-     * what makes a drag continuous.
-     */
-    val live = rememberUpdatedState(fraction)
-    val emit = rememberUpdatedState(onChange)
-    Box(
-        Modifier
-            .width(32.dp)
-            .fillMaxHeight()
-            // A description so the handle is a node a driver can find, and so
-            // a screen reader can say what it is. A bare Box is not in the tree
-            // at all, which is also why `adb input swipe` had nothing to land on.
-            .semantics { contentDescription = "调整分栏宽度" }
-            /*
-             * `draggable`, not a hand-rolled `pointerInput`: the handle sits
-             * between two panes that both consume pointer events, and a raw
-             * pointerInput never saw a single event here - three swipes across
-             * the handle moved the split by zero. `draggable` installs a
-             * proper gesture node that takes part in the hit test, so the
-             * parent's scroll cannot claim the drag first.
-             */
-            .draggable(
-                orientation = androidx.compose.foundation.gestures.Orientation.Horizontal,
-                state = rememberDraggableState { delta ->
-                    if (paneWidth > 0) emit.value((live.value + delta / paneWidth).coerceIn(0.18f, 0.46f))
-                },
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(
-            Modifier
-                .width(4.dp)
-                .height(48.dp)
-                .background(bar, RoundedCornerShape(2.dp)),
-        )
-    }
-}
 
 /**
  * 插件, the desktop's page for what the model can reach: MCP servers and skills.
