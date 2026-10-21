@@ -3575,9 +3575,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 .border(
                                     0.8.dp,
                                     if (LocalBg.current == DarkBg) LocalFieldLine.current else Color(0xFFCECECE),
-                                    RoundedCornerShape(20.dp),
+                                    RoundedCornerShape(17.2.dp),
                                 )
-                                .background(LocalField.current, RoundedCornerShape(20.dp))
+                                .background(LocalField.current, RoundedCornerShape(17.2.dp))
                                 .padding(start = 10.2.dp, end = 11.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -7970,9 +7970,32 @@ fun SessionList(
                      * 49.2. Two screens, two columns; the 12dp box this used to
                      * be drew the title at 42 in the drawer against 61.2.
                      */
+                    /*
+                     * The glyph hangs from the row's top, not its middle.
+                     *
+                     * Claude's `</>` ink runs y=175.6..185.6 while the title's
+                     * runs 174.0..186.4 - the mark sits on the title's first
+                     * line, aligned to its top, and the timestamp below has
+                     * nothing beside it. `Alignment.CenterVertically` on the
+                     * row put the glyph at 182.0, 6.4 low, centred on the whole
+                     * two-line block instead of on its first line.
+                     */
+                    /*
+                     * Lifted 6.4, because the row centres its children and
+                     * Claude hangs the mark on the title's first line.
+                     *
+                     * The row's `CenterVertically` puts a 11.6 box in the
+                     * middle of a 34.4 two-line block, which measured 182.8
+                     * against the reference's 175.6. `align(Alignment.Top)` was
+                     * worse - it pinned the glyph to the row's own top, above
+                     * the title entirely - so the offset is the one that lands
+                     * on the line.
+                     */
                     Box(
-                        Modifier.width(if (compact) 31.2.dp else 23.6.dp),
-                        contentAlignment = Alignment.CenterStart,
+                        Modifier
+                            .width(if (compact) 31.2.dp else 23.6.dp)
+                            .offset(y = (-6.4).dp),
+                        contentAlignment = Alignment.TopStart,
                     ) {
                         /*
                          * The desktop's `convo-cell`: a conversation mark on
@@ -7993,7 +8016,7 @@ fun SessionList(
                                 // Fills the grid: `M9 7…M19 17` inside 24 drew
                                 // 7.2 of mark in an 11.6 box, where Claude's
                                 // `</>` ink is 11.6 x 10.0.
-                                "M1.6 5.2 6.4 12l-4.8 6.8M15.6 3.6 8.4 20.4M22.4 5.2 17.6 12l4.8 6.8",
+                                "M6.4 5.2 1.6 12l4.8 6.8M17.6 5.2 22.4 12l-4.8 6.8M15.6 3.6 8.4 20.4",
                                 modifier = Modifier.size(11.6.dp),
                                 viewBox = 24f,
                                 strokeWidth = 2.2f,
