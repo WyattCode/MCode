@@ -5565,8 +5565,17 @@ fun greeting(): String = when (java.util.Calendar.getInstance().get(java.util.Ca
     else -> "深夜独白"
 }
 
+/*
+ * The conversation's own name, and nothing invented.
+ *
+ * With no name it used to say 「MCode」 - the app's own name in the place the
+ * conversation's should be, which read as a title that had failed to load. A
+ * new conversation on the reference is named by its first words; until then
+ * the header has no title line at all, so an empty string is the honest answer
+ * and the subtitle sits alone.
+ */
 fun currentSessionTitle(sessions: List<SessionRow>, current: String?): String =
-    current?.let { id -> sessions.find { it.id == id }?.title } ?: "MCode"
+    current?.let { id -> sessions.find { it.id == id }?.title.orEmpty() } ?: ""
 
 /* ------------------------------------------------------------------ */
 /* Timeline / lists                                                    */
@@ -6508,17 +6517,35 @@ fun Timeline(
                                         if (isUser) Modifier
                                             .align(Alignment.CenterEnd)
                                             /*
-                                             * Claude's bubble hugs its words and
-                                             * only grows when they need room; a
-                                             * fixed share of the pane turned
-                                             * "hello" into a full-width slab. The
-                                             * cap is a maximum, not a width.
+                                             * Hugs its words, with a cap.
+                                             *
+                                             * Measured off Claude's own reply
+                                             * screen: the bubble around 「Hi」 is
+                                             * 94px wide - 29.8dp - against a 730px
+                                             * reply above it. `fillMaxWidth(0.78)`
+                                             * made every turn a slab three
+                                             * quarters of the pane wide whatever
+                                             * was in it, so a two-word question
+                                             * looked like a paragraph and the
+                                             * reader's own voice shouted.
+                                             *
+                                             * `widthIn(max = ...)` instead: as wide
+                                             * as the words, no wider than 78% of
+                                             * the column.
                                              */
-                                            // `.user-bubble` is 78% of the reading
-                                            // column, not a fixed width: on a wide
-                                            // pane a hard 560 left the bubble short
-                                            // of the cap MiMo draws it to.
-                                            .fillMaxWidth(0.78f)
+                                            /*
+                                             * 95.7 here puts the bubble's edge
+                                             * 90.3dp from the screen's - the
+                                             * reference's figure, and not an
+                                             * accident: its bubble stops clear of
+                                             * the header's trailing icons. Measured
+                                             * at 77.3 first, which landed at 71.9 -
+                                             * the pane's own inset is not additive
+                                             * with this one the way the arithmetic
+                                             * suggested.
+                                             */
+                                            .padding(end = 95.7.dp)
+                                            .widthIn(max = 520.dp)
                                         else Modifier.fillMaxWidth()
                                     )
                                     // Claude renders assistant turns straight on the
@@ -6532,15 +6559,24 @@ fun Timeline(
                                      * below and loses the side inset the bubble
                                      * needed.
                                      */
+                                    /*
+                                     * 20 corner and 9.2 / 10.8 of inset, all four
+                                     * measured off the reference's bubble: it
+                                     * carried 16 and 13/9, a tighter pill that
+                                     * made a two-word question read as a chip.
+                                     * The vertical pair is 10.8 above the words
+                                     * and 10.5 below - a 38dp bubble around a
+                                     * 21dp line.
+                                     */
                                     .background(
                                         if (isUser) LocalBubble.current else Color.Transparent,
-                                        RoundedCornerShape(if (isUser) 16.dp else 0.dp),
+                                        RoundedCornerShape(if (isUser) 20.dp else 0.dp),
                                     )
                                     .padding(
-                                        start = if (isUser) 13.dp else 0.dp,
-                                        end = if (isUser) 13.dp else 0.dp,
-                                        top = if (isUser) 9.dp else 5.dp,
-                                        bottom = if (isUser) 9.dp else 5.dp,
+                                        start = if (isUser) 9.2.dp else 0.dp,
+                                        end = if (isUser) 9.2.dp else 0.dp,
+                                        top = if (isUser) 10.8.dp else 5.dp,
+                                        bottom = if (isUser) 10.5.dp else 5.dp,
                                     )
                                     // Claude's turns answer a long press with
                                     // 复制 / 从此处分支; both are here now.
