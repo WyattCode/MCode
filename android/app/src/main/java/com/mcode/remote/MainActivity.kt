@@ -2386,6 +2386,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 JSONObject().put("type", "file.read").put("root", root).put("rel", rel)
             }
             ask.put("preview", true)
+            // The desktop plays a video from its own disk and asks for no bytes;
+            // this reader has no disk on the far side of the gateway, so it asks.
+            // A text or picture preview ignores the flag.
+            ask.put("withBytes", true)
             val r = runCatching { rpc(ask, 60_000) }.getOrNull()
             val payload = r?.optJSONObject("data")
             if (payload?.optBoolean("video") == true) {

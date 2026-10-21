@@ -2365,7 +2365,15 @@ export type Request =
    * 512 KiB or holding a NUL byte is refused, a video is named as one, and media
    * carries no bytes because the tab plays it from a local address.
    */
-  | { type: "file.read"; root: string; rel: string; preview?: boolean }
+  /**
+   * `withBytes` asks a preview of a video to carry its bytes.
+   *
+   * The desktop plays a video from its own disk, so its preview names the kind
+   * and carries nothing - that is the default and stays it. A reader on the far
+   * side of the gateway has no disk to play from, and asks for the bytes
+   * explicitly rather than making every desktop preview pay for them.
+   */
+  | { type: "file.read"; root: string; rel: string; preview?: boolean; withBytes?: boolean }
   /* A text file saved from the right panel's files tab: `rel` inside `root`, which has to be a folder the app works in. */
   | { type: "file.write"; root: string; rel: string; content: string }
   /*

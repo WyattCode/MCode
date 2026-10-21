@@ -1531,7 +1531,9 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * `readFile(path, "utf8")` on a PNG succeeds - it just returns a string
        * of replacement characters, which the panel then drew as the file.
        */
-      if (request.preview) return (await readPreview(resolved)) satisfies Handled<"file.read">
+      if (request.preview) {
+        return (await readPreview(resolved, { withBytes: request.withBytes === true })) satisfies Handled<"file.read">
+      }
       /*
        * Measured before it is read (S13-7). Reading first held a whole file of
        * any size in memory to find it was over the cap, and past 2 GB the read
@@ -1761,20 +1763,23 @@ async function readHead(file: string, bytes: number): Promise<Buffer> {
 const VIDEO_EXTENSIONS = new Set([".mp4", ".m4v", ".webm", ".mov", ".ogv"])
 
 /* One file for the files tab: MiMo's kinds, with media left to be played from disk. */
-export async function readPreview(resolved: string): Promise<Handled<"file.read">> {
+export async function readPreview(resolved: string, options: { withBytes?: boolean } = {}): Promise<Handled<"file.read">> {
   const empty = { path: resolved, content: "", truncated: false }
   const oversized = async () => (await fs.stat(resolved).catch(() => undefined))?.size ?? 0
   if (VIDEO_EXTENSIONS.has(path.extname(resolved).toLowerCase())) {
     if ((await oversized()) > MEDIA_LIMIT) return { ...empty, kind: "binary", tooBig: true }
     /*
-     * The bytes ride along now. The desktop never reads them - its files tab
-     * plays the video from its own disk through the local preview server, and
-     * `mediaAddress` returns before looking at anything past `video` - but a
-     * reader on the far side of the gateway has no disk to play from, and the
-     * base64 channel the pictures and sounds already use is the one way it
-     * gets the file at all. The same 25 MB ceiling applies.
+     * The bytes ride along only when asked for.
+     *
+     * The desktop plays the video from its own disk through the local preview
+     * server (`mediaAddress` returns on `video` before looking at anything
+     * else), so its preview names the kind and carries nothing - and reading
+     * the file for it was work nobody could use. A reader across the gateway
+     * has no disk to play from and passes `withBytes`, which is the only case
+     * that pays for the base64. The same 25 MB ceiling applies to both.
      */
     const mime = mimeFor(resolved) ?? "application/octet-stream"
+    if (!options.withBytes) return { ...empty, kind: "binary", video: true, mime }
     const bytes = await fs.readFile(resolved)
     return { ...empty, kind: "binary", video: true, mime, data: bytes.toString("base64") }
   }
