@@ -85,6 +85,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
@@ -5459,7 +5460,15 @@ fun SentFileChip(name: String) {
  * between a readable transcript and a wall.
  */
 /** One file a `present_files` call handed over. */
-data class DeliveredFile(val path: String, val name: String, val size: Long)
+/**
+ * One entry a `present_files` call handed over.
+ *
+ * `url` is set instead of `path` when the call handed over a web address rather
+ * than a file - the desktop's `Delivered` is the same two shapes
+ * (`src/renderer/src/lib/delivered.ts`), and it draws that one as a web card
+ * saying 「网页 · HTML · 地址」 with the address under it.
+ */
+data class DeliveredFile(val path: String, val name: String, val size: Long, val url: String = "")
 
 /**
  * The files a tool call handed over, from its `metadata.files`.
@@ -5473,13 +5482,29 @@ fun deliveredOf(part: JSONObject): List<DeliveredFile> {
     val state = part.optJSONObject("state")
     val status = state?.optString("status").orEmpty().ifBlank { part.optString("status") }
     if (status.isNotEmpty() && status != "completed") return emptyList()
-    val files = part.optJSONObject("metadata")?.optJSONArray("files") ?: return emptyList()
+    // Where the metadata sits depends on how the part was read: a live part
+    // carries it at the top level, a replayed one under its `state`. Asking only
+    // the top level showed nothing for a conversation opened from history.
+    val metadata = state?.optJSONObject("metadata") ?: part.optJSONObject("metadata") ?: return emptyList()
+    val files = metadata.optJSONArray("files") ?: return emptyList()
     val seen = HashSet<String>()
     val out = ArrayList<DeliveredFile>()
     for (i in 0 until files.length()) {
         val entry = files.optJSONObject(i) ?: continue
         val path = entry.optString("path")
-        if (path.isBlank()) continue
+        if (path.isBlank()) {
+            /*
+             * A web address, not a file. The desktop takes it as its own kind
+             * and shows it as a web card; skipping it here meant a reply that
+             * handed over a page showed nothing at all.
+             */
+            val url = entry.optString("url")
+            if (!url.startsWith("http://") && !url.startsWith("https://")) continue
+            if (!seen.add(url)) continue
+            val name = entry.optString("name").ifBlank { url.substringAfter("://").substringAfter('/').ifBlank { url } }
+            out.add(DeliveredFile("", name, 0L, url))
+            continue
+        }
         val key = path.replace('\\', '/').lowercase()
         if (!seen.add(key)) continue
         val name = entry.optString("name").ifBlank { path.substringAfterLast('/').substringAfterLast('\\') }
@@ -6577,19 +6602,29 @@ fun Timeline(
                 // earlier turn's is settled and stays.
                 val settled = !running || turnKey != edits.keys.lastOrNull()
                 if (turn != null && settled) {
-                    EditedCard(
-                        turn,
-                        root,
-                        onOpenFile,
-                        onRevert = if (onRevertTurn != null && turn.messages.isNotEmpty()) {
-                            { onRevertTurn(turn.messages) }
-                        } else {
-                            null
-                        },
-                        onReview = if (turn.patch.isBlank() || onReviewTurn == null) null else {
-                            { onReviewTurn(turn.patch) }
-                        },
-                    )
+                    /*
+                     * The desktop's order under a finished reply: its files
+                     * changed, then what it handed over (`MessageStream.vue`
+                     * puts `EditedFilesCard` before `DeliveredFilesCard`).
+                     */
+                    if (turn.files.isNotEmpty()) {
+                        EditedCard(
+                            turn,
+                            root,
+                            onOpenFile,
+                            onRevert = if (onRevertTurn != null && turn.messages.isNotEmpty()) {
+                                { onRevertTurn(turn.messages) }
+                            } else {
+                                null
+                            },
+                            onReview = if (turn.patch.isBlank() || onReviewTurn == null) null else {
+                                { onReviewTurn(turn.patch) }
+                            },
+                        )
+                    }
+                    if (turn.delivered.isNotEmpty()) {
+                        DeliveredCards(turn.delivered, root, onOpenFile ?: { _, _ -> })
+                    }
                 }
                 }
             }
@@ -6664,6 +6699,120 @@ fun Timeline(
                 tint = LocalText.current,
                 modifier = Modifier.size(17.dp),
             )
+        }
+    }
+    /*
+     * The turn rail, as the desktop has it (`SessionSpine.vue`).
+     *
+     * A transcript with a dozen exchanges has no way back to the eighth except
+     * by scrolling, and the desktop answers that with a rail of ticks down the
+     * left edge: one per question, 9px wide, swelling to 24 near the pointer.
+     * The phone had nothing - a tap on the header's title only went to the very
+     * top. Here one tap on a tick goes straight to that turn.
+     *
+     * The desktop waits for three exchanges before it shows the rail, because
+     * one or two ticks say nothing a scroll would not; the same rule applies,
+     * and so does its room rule: a short pane has no space for a rail beside
+     * the prose.
+     */
+    val turns = remember(rows) {
+        rows.indices.filter { at ->
+            val row = rows[at]
+            val body = when (row) {
+                is Step -> row.body as? Item.Msg
+                is Item.Msg -> row
+                else -> null
+            }
+            body != null && body.role == "user"
+        }
+    }
+    if (turns.size >= 3) {
+        val tickHeight = 4.dp
+        val narrow = 9.dp
+        val wide = 24.dp
+        var hovered by remember { mutableStateOf(-1) }
+        /*
+         * Which turns are in view, so the rail says where the reader is.
+         *
+         * The desktop paints the visible ticks in the strong ink and the rest
+         * in the weak one (`active` in `SessionSpine.vue`). Without it the rail
+         * is a set of hairlines with no reading position on it at all.
+         */
+        val firstAt = listState.firstVisibleItemIndex
+        val lastAt = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: firstAt
+        val inView = remember(firstAt, lastAt, turns) {
+            turns.filter { it in firstAt..lastAt }.toSet()
+        }
+        Column(
+            Modifier
+                .align(Alignment.CenterStart)
+                .width(52.dp)
+                .fillMaxHeight()
+                /*
+                 * The rail keeps clear of the header and the composer, as the
+                 * desktop's own `inset: calc(10px + 7.5%)` does: ticks behind
+                 * either of them would be a tap that scrolls when the reader
+                 * meant to type.
+                 */
+                .padding(vertical = 64.dp),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            /*
+             * The whole column listens, not just the ticks: a 9dp hairline is a
+             * hopeless target, and the desktop's own rail is a full-height
+             * column for the same reason.
+             */
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val block = tickHeight * turns.size
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(block)
+                        .pointerInput(turns) {
+                            detectTapGestures(
+                                onPress = { offset ->
+                                    val each = tickHeight.toPx()
+                                    val at = (offset.y / each).toInt()
+                                    hovered = if (at in turns.indices) at else -1
+                                    if (hovered >= 0) {
+                                        follows = false
+                                        scope.launch { listState.animateScrollToItem(turns[hovered]) }
+                                    }
+                                    tryAwaitRelease()
+                                    hovered = -1
+                                },
+                            )
+                        },
+                ) {
+                    for (at in turns.indices) {
+                        Box(Modifier.height(tickHeight).fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+                            /*
+                             * The desktop's own swell: 9px away from the pointer,
+                             * widening towards 24 within three ticks on a Gaussian
+                             * falloff (`widthOf` in `SessionSpine.vue`), so the rail
+                             * reads as one arrow rather than as a bar chart.
+                             */
+                            val near = hovered >= 0 && kotlin.math.abs(at - hovered) <= 3
+                            val width = if (near) {
+                                val distance = kotlin.math.abs(at - hovered).toFloat()
+                                val factor = kotlin.math.exp(-(distance * distance) / 0.8f)
+                                narrow + (wide - narrow) * factor
+                            } else {
+                                narrow
+                            }
+                            val strong = near || at in inView
+                            Box(
+                                Modifier
+                                    .padding(start = 14.dp)
+                                    .width(width)
+                                    .height(2.dp)
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(if (strong) LocalText.current.copy(alpha = 0.8f) else LocalMuted.current.copy(alpha = 0.45f)),
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
     }
@@ -9777,13 +9926,17 @@ fun ToolRow(
             )
         }
         /*
-         * What the call handed over, as cards. They sit outside the collapsible
-         * block on purpose: a delivered file is the point of the call, and a
-         * reader should not have to open 「展示文件」 to find what was presented.
-         */
-        if (onOpenDelivered != null && item.delivered.isNotEmpty()) {
-            DeliveredCards(item.delivered, root, onOpenDelivered)
-        }
+     * What the call handed over is drawn at the turn's end, with the edited
+     * card (`DeliveredCards` from the row loop), not here.
+     *
+     * This used to paint them inside the row, behind an `onOpenDelivered`
+     * argument. That argument was only passed to the bare `is Item.Tool ->`
+     * branch - and a tool call almost never reaches it, because `rowsOf` folds
+     * neighbouring calls into a `ToolRun` and `stepsOf` folds those into the
+     * `Step` above them. So a reply that presented a document showed the words
+     * 「展示文件」 and no card at all. Drawing them per turn is also where the
+     * desktop puts them: after the edited card, under the same reply.
+     */
     }
 }
 
@@ -9976,8 +10129,16 @@ fun OfficeViewer(name: String, kind: String, html: String, onClose: () -> Unit) 
 @Composable
 fun DeliveredCards(files: List<DeliveredFile>, root: String, onOpen: (String, String) -> Unit) {
     if (files.isEmpty()) return
+    val context = androidx.compose.ui.platform.LocalContext.current
     for (file in files) {
+        val web = file.url.isNotBlank()
         val badge = badgeOf(file.path)
+        /*
+         * A web address gets the desktop's web card: its own blue on the tile
+         * and 「网页 · HTML · 地址」 under the name, and a tap hands it to the
+         * system browser rather than to the file reader - there is no file.
+         */
+        val ink = if (web) Color(0xFF2F6FED) else badge.fg
         Row(
             Modifier
                 .fillMaxWidth()
@@ -9989,7 +10150,18 @@ fun DeliveredCards(files: List<DeliveredFile>, root: String, onOpen: (String, St
                     if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE4E1D8),
                     RoundedCornerShape(12.dp),
                 )
-                .clickable { onOpen(root, file.path) }
+                .clickable {
+                    if (web) {
+                        runCatching {
+                            context.startActivity(
+                                android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(file.url))
+                                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                            )
+                        }.onFailure { Toast.makeText(context, "打不开这个地址", Toast.LENGTH_SHORT).show() }
+                    } else {
+                        onOpen(root, file.path)
+                    }
+                }
                 .padding(horizontal = 14.dp, vertical = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -9997,10 +10169,19 @@ fun DeliveredCards(files: List<DeliveredFile>, root: String, onOpen: (String, St
                 Modifier
                     .size(38.dp)
                     .clip(RoundedCornerShape(9.dp))
-                    .background(badge.fg.copy(alpha = 0.12f)),
+                    .background(ink.copy(alpha = 0.12f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Canvas(Modifier.size(20.dp)) { badge.glyph(this) }
+                if (web) {
+                    MiIcon(
+                        "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M3.6 9h16.8M3.6 15h16.8M12 3c2.5 2.4 3.8 5.4 3.8 9S14.5 18.6 12 21c-2.5-2.4-3.8-5.4-3.8-9S9.5 5.4 12 3",
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 1.7f,
+                        tint = ink,
+                    )
+                } else {
+                    Canvas(Modifier.size(20.dp)) { badge.glyph(this) }
+                }
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
@@ -10012,10 +10193,15 @@ fun DeliveredCards(files: List<DeliveredFile>, root: String, onOpen: (String, St
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    listOfNotNull(badge.label, sizeLabel(file.size).takeIf { it.isNotBlank() }).joinToString(" · "),
+                    if (web) {
+                        file.url
+                    } else {
+                        listOfNotNull(badge.label, sizeLabel(file.size).takeIf { it.isNotBlank() }).joinToString(" · ")
+                    },
                     fontSize = 12.sp,
                     color = LocalMuted.current,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             Icon(
@@ -10177,6 +10363,14 @@ data class TurnEdit(
      * at anyway.
      */
     val patch: String,
+    /**
+     * What the turn's `present_files` calls handed over, in order, each once.
+     *
+     * The desktop collects these the same way (`deliveredFiles`), across all of
+     * a turn's calls rather than one call's - a turn that presents three
+     * documents presents them as three cards under the same reply.
+     */
+    val delivered: List<DeliveredFile>,
 )
 
 fun turnEdits(items: List<Item>): Map<String, TurnEdit> {
@@ -10184,15 +10378,25 @@ fun turnEdits(items: List<Item>): Map<String, TurnEdit> {
     val byPath = LinkedHashMap<String, EditedFile>()
     val messages = mutableListOf<String>()
     val patches = mutableListOf<String>()
+    val delivered = ArrayList<DeliveredFile>()
+    val deliveredSeen = HashSet<String>()
     var last = ""
     var reverted = false
     fun flush() {
-        if (last.isNotEmpty() && byPath.isNotEmpty()) {
-            out[last] = TurnEdit(byPath.values.toList(), messages.toList(), reverted, patches.joinToString("\n"))
+        if (last.isNotEmpty() && (byPath.isNotEmpty() || delivered.isNotEmpty())) {
+            out[last] = TurnEdit(
+                byPath.values.toList(),
+                messages.toList(),
+                reverted,
+                patches.joinToString("\n"),
+                delivered.toList(),
+            )
         }
         byPath.clear()
         messages.clear()
         patches.clear()
+        delivered.clear()
+        deliveredSeen.clear()
         reverted = false
     }
     for (item in items) {
@@ -10214,6 +10418,10 @@ fun turnEdits(items: List<Item>): Map<String, TurnEdit> {
                 val metadata = item.raw.optJSONObject("state")?.optJSONObject("metadata")
                     ?: item.raw.optJSONObject("metadata")
                 metadata?.optString("diff")?.takeIf { it.isNotBlank() }?.let { patches.add(it) }
+            }
+            for (file in item.delivered) {
+                val key = if (file.url.isNotBlank()) file.url else file.path.replace('\\', '/').lowercase()
+                if (deliveredSeen.add(key)) delivered.add(file)
             }
         }
     }
