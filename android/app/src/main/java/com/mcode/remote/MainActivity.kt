@@ -1740,10 +1740,64 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         }
     }
 
+    /**
+     * Turns the card left by a message the turn stepped past into an inline row.
+     *
+     * The desktop decides this by looking back at the previous message while
+     * walking the turn (`MessageStream.vue`: "an earlier step of this turn
+     * failed and the turn went on past it"). The phone feeds messages through
+     * one at a time in order, so the same question is answered the other way
+     * round: when an assistant message arrives after one that left an error
+     * card, that card belonged to a step the turn recovered from.
+     *
+     * Two things it also has to do, both found by measuring rather than by
+     * reading: the failed message left a wordless row of its own carrying its
+     * `finish`, which draws 「回复已达长度上限，内容被截断」 - a sentence that is
+     * wrong once the turn did not end there - so that finish is cleared; and the
+     * row is not the last one in the list, so the search walks the whole list
+     * rather than testing `last()`.
+     */
+    fun settleSteppedPastError() {
+        val at = items.indexOfLast { it is Item.Err && it.fromMessage }
+        if (at < 0) return
+        val card = items[at] as Item.Err
+        // The step's own row: nothing said, only the reason it stopped.
+        for (i in items.indices) {
+            val row = items[i]
+            if (row is Item.Msg && row.role != "user" && row.text.isBlank() &&
+                row.finish.isNotBlank() && row.images.isEmpty() && row.files.isEmpty()
+            ) {
+                items[i] = row.copy(finish = "")
+            }
+        }
+        items[at] = Item.Note(NoteKind.Error, card.text, card.uid)
+    }
+
     fun upsertMessage(sessionID: String, message: JSONObject) {
         if (sessionID != currentSession) return
         val id = message.optString("id")
         val role = message.optString("role", "assistant")
+        /*
+         * A message that failed but whose turn went on past it is a step, not
+         * an ending.
+         *
+         * The desktop settles this by looking back at the previous message
+         * while walking the turn (`MessageStream.vue`: "an earlier step of this
+         * turn failed and the turn went on past it"). The phone feeds messages
+         * through here one at a time in order, so the same question is settled
+         * the other way round: an assistant message arriving after one that
+         * left an error card means that card belonged to a step the turn
+         * recovered from, and it becomes an inline 「错误：…」 row where it
+         * happened.
+         *
+         * It has to run before this message adds rows of its own, and it looks
+         * past the trailing rows rather than at only the last one: a failed
+         * message with no words still gets an empty message row of its own, so
+         * the card is the second-to-last, not the last. Measured on the pad -
+         * the tail read `[Msg, Err, Msg]` and a `lastOrNull` test found the
+         * plain Msg and converted nothing.
+         */
+        if (role == "assistant") settleSteppedPastError()
         val parts = message.optJSONArray("parts")
         // Stored transcripts carry the text flat on the message; live events
         // carry it in parts. Accept both.
@@ -1937,27 +1991,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 )
                 val at = items.indexOfFirst { it is Item.Tool && it.uid == uid }
                 if (at >= 0) items[at] = row else items.add(row)
+                items.noteInteractive(part, uid)
             }
         }
         /*
-         * A message that failed but whose turn went on past it is a step, not
-         * an ending.
-         *
-         * The desktop settles this by looking back at the previous message
-         * while walking the turn (`MessageStream.vue`: "an earlier step of this
-         * turn failed and the turn went on past it"). The phone feeds messages
-         * through here one at a time in order, so the same question is settled
-         * the other way round: when an assistant message arrives and the
-         * *previous* one had left an error card, that card belonged to a step
-         * the turn recovered from, and it becomes an inline 「错误：…」 row where
-         * it happened.
+         * The failure this message carries, if any. Whether it ends the turn or
+         * was stepped past is decided by the *next* message (see the top of this
+         * function), so it always lands as a card for now.
          */
-        if (role == "assistant") {
-            val prior = items.lastOrNull() as? Item.Err
-            if (prior != null && prior.fromMessage) {
-                items[items.lastIndex] = Item.Note(NoteKind.Error, prior.text, prior.uid)
-            }
-        }
         val failure = message.optString("error").ifEmpty {
             if (message.optString("finish") == "error" || message.optString("finish") == "max_tokens") "这次回复没有完成" else ""
         }
@@ -2047,6 +2088,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 )
                 val at = items.indexOfFirst { it is Item.Tool && it.uid == uid }
                 if (at >= 0) items[at] = row else items.add(row)
+                items.noteInteractive(part, uid)
             }
         }
     }
@@ -5609,6 +5651,28 @@ data class DeliveredFile(val path: String, val name: String, val size: Long, val
  * filters the same way (`deliveredFiles` in `lib/delivered.ts`) and de-duplicates
  * by path, because a turn that presents the same file twice shows it once.
  */
+/**
+ * The app's remark that a call wanting input was not run - `NoticeRow.vue`, fed
+ * by `step-rows.ts`: "if (!toldInteractive && part.metadata?.interactive === true)".
+ *
+ * It follows the call that raised it and is added at most once: a streamed call
+ * sends the same part many times as it moves pending -> running -> completed,
+ * so a naive append would stack a column of identical lines under one command.
+ * The row's uid is the call's own, which is what makes the test cheap.
+ */
+fun MutableList<Item>.noteInteractive(part: JSONObject, uid: String) {
+    val metadata = part.optJSONObject("state")?.optJSONObject("metadata") ?: part.optJSONObject("metadata")
+    if (metadata?.optBoolean("interactive") != true) return
+    if (any { it is Item.Note && it.uid == "int.$uid" }) return
+    add(
+        Item.Note(
+            NoteKind.Notice,
+            "该命令需要交互输入，未运行。可让 Agent 改用非交互方式重试",
+            "int.$uid",
+        ),
+    )
+}
+
 fun deliveredOf(part: JSONObject): List<DeliveredFile> {
     if (part.optString("name") != "present_files") return emptyList()
     val state = part.optJSONObject("state")
@@ -6678,6 +6742,7 @@ fun Timeline(
                     }
                     is Item.Quest -> QuestCard(item, onAnswer = onAnswer)
                     is Item.Gap -> GapRule(item.label)
+                    is Item.Note -> NoteRow(item)
                     is Item.Err -> {
                         // A broken turn is a card, not a red line lost in the
                         // prose: the desktop gives it its own surface and its
@@ -11180,5 +11245,50 @@ fun InfoCard(
                 }
             }
         }
+    }
+}
+
+/**
+ * A quiet line among the steps: MiMo's `ErrorStep.vue` or `NoticeRow.vue`.
+ *
+ * Both are the same row - `.hstep`'s 5 above and below, 14 over a 22.4 line,
+ * a 14-wide mark column with 9 between it and the words. The mark is a plain
+ * `!` for a failure the turn recovered from and a plain `i` for the app's own
+ * remark, monospaced, in the icon column, with no circle or box drawn round
+ * either:
+ *
+ *   .hs-error-mark / .hs-notice-mark { width: 14px; font-family: var(--font-mono);
+ *                                      font-weight: 400; text-align: center }
+ *
+ * The phone drew every failure as a card at the end of the turn, so a turn that
+ * hit a length limit, compacted and carried on still ended on a red card - the
+ * reader was told the turn broke when it had not.
+ */
+@Composable
+fun NoteRow(item: Item.Note) {
+    val error = item.kind == NoteKind.Error
+    Row(
+        Modifier.fillMaxWidth().padding(start = 23.dp, top = 5.dp, bottom = 5.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            if (error) "!" else "i",
+            fontSize = 14.sp,
+            lineHeight = 22.4.sp,
+            fontWeight = FontWeight.Normal,
+            fontFamily = FontFamily.Monospace,
+            color = if (error) LocalText.current else LocalMuted.current,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.width(14.dp).padding(top = 2.dp),
+        )
+        Spacer(Modifier.width(9.dp))
+        Text(
+            // `stepList.errorPrefix`: 「错误：{text}」. A notice carries its own sentence.
+            if (error) "错误：${item.text}" else item.text,
+            fontSize = 14.sp,
+            lineHeight = 22.4.sp,
+            color = if (error) LocalText.current else LocalText.current.copy(alpha = 0.86f),
+            modifier = Modifier.weight(1f),
+        )
     }
 }
