@@ -3361,39 +3361,55 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                      * open on every visit to the list.
                      */
                     run {
-                        OutlinedTextField(
-                            search, { search = it },
-                            /*
-                             * `heightIn`, not `height`: a fixed 45dp box with a
-                             * 14sp field and Material's own inner padding left the
-                             * placeholder clipped - 「搜索」 rendered as a cut-off
-                             * glyph pair.
-                             */
-                            /*
-                             * Measured off Claude's own field: 266 x 38dp, with
-                             * a corner so round it is a capsule - the edge is
-                             * already leaving the top at 11px in from the left,
-                             * which 14dp could not do. 45 tall / 14 rounded was
-                             * a plain rounded rectangle beside it.
-                             */
-                            /*
-                             * `heightIn` with a minimum, not a fixed `height`:
-                             * Material's field needs 56dp for its own padding
-                             * and a 15sp face, so a fixed 38 clipped the
-                             * placeholder into an ellipsis. The minimum keeps
-                             * the empty box at the reference's 38 and lets it
-                             * grow when a face needs the room.
-                             */
-                            Modifier.fillMaxWidth().padding(horizontal = 9.5.dp).heightIn(min = 38.dp),
-                            placeholder = { Text("搜索", color = LocalMuted.current, fontSize = 15.sp) },
-                            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(18.dp)) },
-                            shape = RoundedCornerShape(19.dp),
-                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 15.sp),
-                            // Claude's search sits on white with a hairline pill
-                            // outline, not on the page's own colour with none.
-                            colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = LocalField.current, focusedContainerColor = LocalField.current, unfocusedBorderColor = LocalFieldLine.current, focusedBorderColor = LocalFieldLine.current),
-                            singleLine = true,
-                        )
+                        /*
+                         * A hand-built pill, not Material's field.
+                         *
+                         * `OutlinedTextField` carries a 56dp minimum height of
+                         * its own, and `heightIn(min = 38.dp)` cannot bring it
+                         * under that: the box measured 51.6dp on the pad against
+                         * Claude's 37.6, so it stood 14dp - a third - too tall
+                         * and pushed the whole list down with it. Its inner
+                         * padding is the same story on the horizontal: the box
+                         * ran 277dp wide where Claude's is 332.8.
+                         *
+                         * Claude's field is a white capsule with a #CECECE
+                         * hairline, a magnifier 15dp in and its placeholder
+                         * after it. That is a row and a rounded background, and
+                         * nothing an OutlinedTextField is needed for.
+                         *
+                         * Measured at 2.5 px per dp: 332.8 x 37.6, 13.6dp in
+                         * from the list's edge, capsule corners.
+                         */
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 13.6.dp)
+                                .height(37.6.dp)
+                                .clip(RoundedCornerShape(18.8.dp))
+                                .background(LocalField.current)
+                                .border(0.52.dp, LocalFieldLine.current, RoundedCornerShape(18.8.dp))
+                                .padding(horizontal = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Outlined.Search,
+                                contentDescription = null,
+                                tint = LocalMuted.current,
+                                modifier = Modifier.size(15.dp),
+                            )
+                            Spacer(Modifier.width(7.dp))
+                            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                                if (search.isEmpty()) Text("搜索", color = LocalMuted.current, fontSize = 14.sp)
+                                BasicTextField(
+                                    value = search,
+                                    onValueChange = { search = it },
+                                    singleLine = true,
+                                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, color = LocalText.current),
+                                    cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
                     }
                         /*
                          * The body hits sit between the field and the list, the
@@ -3504,7 +3520,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                              * one row with one job, not a menu whose words change.
                              */
                             label = "+ 新建会话",
-                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                            /*
+                             * Against the column's right edge, not centred.
+                             *
+                             * Measured: the capsule runs x=552..859 in a column
+                             * that ends at 925, so it sits 26.4 dp off the seam
+                             * and 220.8 off the left edge. Centred put it 105 dp
+                             * too far left and made the column read as empty on
+                             * the side the thumb reaches for.
+                             */
+                            modifier = Modifier.align(Alignment.End).padding(end = 26.4.dp),
                             onClick = { newSession() },
                         )
                     }
@@ -8458,13 +8483,31 @@ enum class LeftMode { Sessions, Projects, Artifacts, Plugins, Settings }
  */
 @Composable
 fun FootCapsule(label: String, enabled: Boolean = true, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    /*
+     * Measured at the pad's 2.5 px per dp: 123.2 x 44.0, its right edge 26.4 dp
+     * in from the column's 370. This drew 107.6 x 26.8 - the width followed
+     * from the old 18dp of inset on a 14sp label, and the height from 10dp of
+     * vertical padding over a line that was itself too small. The capsule read
+     * as a chip beside Claude's button.
+     */
     Surface(
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(22.dp),
         color = if (enabled) LocalText.current else LocalMuted.current.copy(alpha = 0.4f),
-        modifier = Modifier.padding(top = 8.dp, bottom = 10.dp).then(modifier).clickable(enabled = enabled) { onClick() },
+        modifier = Modifier.padding(top = 8.dp, bottom = 16.dp).then(modifier).clickable(enabled = enabled) { onClick() },
     ) {
-        Row(Modifier.padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(label, fontSize = 14.sp, color = LocalBg.current)
+        /*
+         * A fixed 44.0 dp, not padding over a line of text.
+         *
+         * The vertical padding was doing the job and could not finish it: 19.2
+         * either side over a 16sp line measures 40.8, three dp short of the
+         * reference, because the line's own height is not the font size and
+         * changes with the face. The height is the measurement, so it is set.
+         */
+        Row(
+            Modifier.height(44.dp).padding(horizontal = 22.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(label, fontSize = 16.sp, color = LocalBg.current)
         }
     }
 }
