@@ -6836,35 +6836,57 @@ fun Timeline(
                                         }
                                     }
                                     /*
-                                     * Six glyphs under every reply: copy, share,
-                                     * read aloud, good, bad, retry.
+                                     * Two glyphs under every reply: copy and share.
                                      *
-                                     * Measured on Claude's own chat screen at 2.5
-                                     * px per dp, off the row under a code block
-                                     * where all six are visible:
+                                     * Claude draws six - copy, share, read aloud, a
+                                     * thumb up, a thumb down and a retry, at
+                                     * 15.6 / 12.0 / 14.4 / 14.0 / 14.0 / 8.0 with
+                                     * their centres 36.2 apart, the first 137.2 dp
+                                     * in from the pane.
                                      *
-                                     *   widths 15.6 / 12.0 / 14.4 / 14.0 / 14.0 / 8.0
-                                     *   centres 36.2 apart
-                                     *   left edge 137.2 in from the pane - level
-                                     *     with the prose above it, which is inset
-                                     *     137.6
+                                     * The four that are missing are missing because
+                                     * nothing behind them exists here, and a mark
+                                     * that cannot act is a lie about the interface:
                                      *
-                                     * The 10.8 this carried made each mark half its
-                                     * real size, and 18.5 of gap a row that sat too
-                                     * tight. (A count of two earlier in this pass
-                                     * came from a screenshot whose reply ended
-                                     * above the fold, not from a different design.)
+                                     *   the two votes  a message to Anthropic's own
+                                     *                  service; this gateway has no
+                                     *                  endpoint that could take one.
+                                     *   retry          reopening a turn is on the
+                                     *                  long press of the message, which
+                                     *                  is where this app puts it.
+                                     *   read aloud     the engine is not on this
+                                     *                  device. `pm list packages`
+                                     *                  shows no `*.tts` provider at
+                                     *                  all, so `TextToSpeech` binds
+                                     *                  nothing and never calls back -
+                                     *                  tried, measured, and taken out
+                                     *                  rather than left looking
+                                     *                  pressable.
+                                     *
+                                     * The pitch stays at the reference's 36.2 so
+                                     * the two marks that are here sit where Claude
+                                     * puts them.
                                      */
                                     val context = androidx.compose.ui.platform.LocalContext.current
                                     var copied by remember(item.id) { mutableStateOf(false) }
+                                    /*
+                                     * A 20dp target around each 14-16dp mark, with the
+                                     * gaps pulled in to keep the 36.2 pitch.
+                                     *
+                                     * 14.4dp is too small to hit reliably at this
+                                     * density; a 20dp box around each mark, and 16.2
+                                     * between boxes, puts the centres 36.2 apart -
+                                     * the reference's pitch - while leaving a target
+                                     * a finger can land on.
+                                     */
                                     Row(
                                         Modifier.padding(top = 15.6.dp, start = 0.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(21.2.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(16.2.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
                                         // Copy.
                                         Box(
-                                            Modifier.size(15.6.dp).clickable {
+                                            Modifier.size(20.dp).clickable {
                                                 val board = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                                                 board.setPrimaryClip(android.content.ClipData.newPlainText("MCode", item.text))
                                                 copied = true
@@ -6879,38 +6901,34 @@ fun Timeline(
                                                 modifier = Modifier.size(15.6.dp),
                                             )
                                         }
-                                        Icon(
-                                            Icons.Outlined.PlayArrow,
-                                            contentDescription = "朗读",
-                                            tint = LocalMuted.current,
-                                            modifier = Modifier.size(14.4.dp),
-                                        )
                                         /*
-                                         * The three the reference draws and this app
-                                         * has nothing behind yet: share, and the two
-                                         * votes. Drawn at their measured widths so
-                                         * the row keeps the reference's rhythm - a
-                                         * missing mark would leave the pitch wrong
-                                         * for every mark after it.
+                                         * Share: the platform's own chooser, which is
+                                         * what this app can do with a reply.
+                                         *
+                                         * The two votes are gone rather than drawn
+                                         * and inert. They are a message to Anthropic's
+                                         * own service - there is no endpoint behind
+                                         * them here, and nothing this gateway could do
+                                         * with a thumb. A mark that cannot act is a
+                                         * lie about the interface.
                                          */
-                                        Icon(
-                                            Icons.Outlined.IosShare,
-                                            contentDescription = "分享",
-                                            tint = LocalMuted.current,
-                                            modifier = Modifier.size(14.0.dp),
-                                        )
-                                        Icon(
-                                            Icons.Outlined.ThumbUpAlt,
-                                            contentDescription = "回复很好",
-                                            tint = LocalMuted.current,
-                                            modifier = Modifier.size(14.0.dp),
-                                        )
-                                        Icon(
-                                            Icons.Outlined.ThumbDownAlt,
-                                            contentDescription = "回复不佳",
-                                            tint = LocalMuted.current,
-                                            modifier = Modifier.size(8.0.dp),
-                                        )
+                                        Box(
+                                            Modifier.size(20.dp).clickable {
+                                                val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                                    type = "text/plain"
+                                                    putExtra(android.content.Intent.EXTRA_TEXT, item.text)
+                                                }
+                                                context.startActivity(android.content.Intent.createChooser(send, "分享回复"))
+                                            },
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Icon(
+                                                Icons.Outlined.IosShare,
+                                                contentDescription = "分享",
+                                                tint = LocalMuted.current,
+                                                modifier = Modifier.size(14.0.dp),
+                                            )
+                                        }
                                     }
                                     /*
                                      * The line under the last reply of a turn.
@@ -7137,8 +7155,16 @@ fun Timeline(
         val liveCalls = items.filterIsInstance<Item.Tool>().count { it.status == "running" }
         if (liveCalls > 0) {
             item(key = "tasks") {
+                /*
+                 * Not clickable: the count is a statement, not a door.
+                 *
+                 * It was `clickable { }` with an empty body, which claims the
+                 * touch, draws the ripple and then does nothing - a control in
+                 * appearance only. There is no page behind it to open, so it is
+                 * plain text again.
+                 */
                 Row(
-                    Modifier.fillMaxWidth().clickable { }.padding(start = 10.dp, top = 4.dp, bottom = 2.dp),
+                    Modifier.fillMaxWidth().padding(start = 10.dp, top = 4.dp, bottom = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
@@ -7672,6 +7698,17 @@ fun SessionList(
                     // and never read, so the list had no idea where you were.
                     Modifier
                         .fillMaxWidth()
+                        /*
+                         * The height comes before the click handler, not after.
+                         *
+                         * `combinedClickable` claims the area it is applied to,
+                         * and everything after it only shrinks what is drawn -
+                         * so a 59.4dp row whose height was set after the handler
+                         * had a hit box the size of its text, and a tap on the
+                         * empty part of a row did nothing at all. That is why a
+                         * conversation could not be opened from the list.
+                         */
+                        .height(if (compact) 48.dp else 59.4.dp)
                         .combinedClickable(onClick = { onSelect(s.id) }, onLongClick = { onLongPress?.invoke(s) })
                         /*
                          * No fill on the open conversation.
@@ -7703,8 +7740,7 @@ fun SessionList(
                          * air; a row with padding and no height came to 48 and
                          * the list read as spaced-out cards.
                          */
-                        .padding(horizontal = 26.dp, vertical = 0.dp)
-                        .height(if (compact) 48.dp else 59.4.dp),
+                        .padding(horizontal = 26.dp, vertical = 0.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     /*

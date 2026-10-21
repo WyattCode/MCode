@@ -8,9 +8,11 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.OpenInFull
 import androidx.compose.material3.Icon
@@ -22,6 +24,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -485,6 +488,7 @@ private fun MdLine(
 private fun CodeBox(lang: String, code: String, dark: Boolean, modifier: Modifier = Modifier) {
     val clipboard = LocalClipboardManager.current
     var copied by remember(code) { mutableStateOf(false) }
+    var expanded by remember(code) { mutableStateOf(false) }
     val head = if (dark) Color(0xFF262626) else Color(0xFFF0EFEC)
     val body = if (dark) Color(0xFF2E2E2E) else Color(0xFFF3F3F0)
     val ink = if (dark) Color(0xFFB8B8B8) else Color(0xFF6B6862)
@@ -526,13 +530,69 @@ private fun CodeBox(lang: String, code: String, dark: Boolean, modifier: Modifie
                     modifier = Modifier.size(15.dp),
                 )
             }
-            Spacer(Modifier.width(10.dp))
-            Icon(
-                Icons.Outlined.OpenInFull,
-                contentDescription = "展开",
-                tint = ink.copy(alpha = 0.55f),
-                modifier = Modifier.size(15.dp).padding(end = 2.dp),
-            )
+            Spacer(Modifier.width(2.dp))
+            /*
+             * Expand, for real: a full screen sheet with the block on it.
+             *
+             * The mark was drawn at 55% and did nothing, which is the one thing
+             * a control must not do. The sheet is the same card at the screen's
+             * own size, scrolling rather than wrapping.
+             */
+            Box(
+                Modifier.size(19.dp).clickable { expanded = true },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Outlined.OpenInFull,
+                    contentDescription = "展开",
+                    tint = ink,
+                    modifier = Modifier.size(15.dp),
+                )
+            }
+        }
+        if (expanded) {
+            androidx.compose.ui.window.Dialog(onDismissRequest = { expanded = false }) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(if (dark) Color(0xFF1F1F1F) else Color(0xFFFFFEFD), RoundedCornerShape(22.4.dp))
+                        .padding(16.dp),
+                ) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(lang.ifEmpty { "code" }, fontSize = 13.sp, color = ink, modifier = Modifier.weight(1f))
+                        Box(
+                            Modifier.size(28.dp).clickable {
+                                clipboard.setText(AnnotatedString(code))
+                                copied = true
+                            },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                if (copied) Icons.Filled.Check else Icons.Outlined.ContentCopy,
+                                contentDescription = if (copied) "已复制" else "复制",
+                                tint = if (copied) Color(0xFF00C950) else ink,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                        Box(
+                            Modifier.size(28.dp).clickable { expanded = false },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Filled.Close, contentDescription = "关闭", tint = ink, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        code,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        color = LocalText.current,
+                        softWrap = true,
+                        modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    )
+                }
+            }
         }
         /*
          * A long line wraps instead of scrolling sideways.
