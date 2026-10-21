@@ -7253,24 +7253,26 @@ fun Timeline(
  * the clock. A straight rule would read as a section break in a document; the
  * wave is what makes it read as time passing.
  */
-/** One wavy rule: quadratic humps at the pitch measured off Claude's divider. */
+/** One hairline rule: the gap marker's own line, either side of the clock. */
 @Composable
 private fun WaveLine(ink: Color, modifier: Modifier = Modifier) {
-    Canvas(modifier.height(9.dp)) {
-        val amp = size.height / 3f
-        val mid = size.height / 2f
-        val step = with(density) { 9.dp.toPx() }
-        val path = androidx.compose.ui.graphics.Path()
-        path.moveTo(0f, mid)
-        var x = 0f
-        var up = true
-        while (x < size.width) {
-            val nx = (x + step).coerceAtMost(size.width)
-            path.quadraticBezierTo((x + nx) / 2f, if (up) mid - amp * 2f else mid + amp * 2f, nx, mid)
-            up = !up
-            x = nx
-        }
-        drawPath(path, ink, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5f))
+    /*
+     * A hairline, not a wave.
+     *
+     * This drew a real sine - six humps across the pane, 1.5dp of stroke each.
+     * Claude's gap marker is the plainest thing on the page: one 1px rule at
+     * the text colour's weakest step, broken in the middle by the clock. The
+     * wave was the loudest mark in a transcript that is otherwise all
+     * restraint, and it is the one thing that made the phone's page look drawn
+     * rather than set.
+     */
+    Canvas(modifier.height(1.dp)) {
+        drawLine(
+            ink,
+            androidx.compose.ui.geometry.Offset(0f, size.height / 2f),
+            androidx.compose.ui.geometry.Offset(size.width, size.height / 2f),
+            strokeWidth = 1f,
+        )
     }
 }
 
