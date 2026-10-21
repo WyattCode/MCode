@@ -610,7 +610,17 @@ class RemoteClient {
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .build()
     private var ws: okhttp3.WebSocket? = null
+    // Each dial mints a generation: a superseded socket's callbacks still
+    // arrive, and without this check an old socket's onClosed would mark the
+    // new connection down.
+    @kotlin.jvm.Volatile
+    private var generation = 0
+    // Frames reach the main looper, which also serializes them; the reconnect
+    // timer rides the same queue.
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private var reconnectUrl: String? = null
+    private var reconnectToken: String? = null
+    private var attempts = 0
 
     var onFrame: (JSONObject) -> Unit = {}
     var onState: (Boolean) -> Unit = {}
@@ -644,25 +654,61 @@ class RemoteClient {
         waiters.remove(id)
     }
 
+    private val reconnect = Runnable {
+        val url = reconnectUrl
+        val token = reconnectToken
+        if (url != null && token != null) dial(url, token)
+    }
+
+    /** Connects; an unparseable address reports down instead of crashing the caller. */
     fun connect(url: String, token: String) {
-        val request = Request.Builder()
-            .url(url)
-            .header("Sec-WebSocket-Protocol", "mcode, mcode.remote.$token")
-            .build()
+        reconnectUrl = url
+        reconnectToken = token
+        attempts = 0
+        main.removeCallbacks(reconnect)
+        dial(url, token)
+    }
+
+    private fun dial(url: String, token: String) {
+        // `Request.Builder().url` throws on an unparseable address, and the
+        // caller is a coroutine that would die with it.
+        val request = try {
+            Request.Builder()
+                .url(url)
+                .header("Sec-WebSocket-Protocol", "mcode, mcode.remote.$token")
+                .build()
+        } catch (e: IllegalArgumentException) {
+            println("[remote] bad address: $e")
+            main.post { onState(false) }
+            return
+        }
+        val mine = ++generation
+        // A superseded socket is closed, not left half-open beside the new one.
+        ws?.close(1000, "reconnect")
         ws = http.newWebSocket(request, object : okhttp3.WebSocketListener() {
             override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
+                if (mine != generation) {
+                    webSocket.close(1000, "superseded")
+                    return
+                }
                 println("[remote] ws open")
+                attempts = 0
                 onState(true)
             }
             override fun onClosed(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
+                if (mine != generation) return
                 println("[remote] ws closed")
                 onState(false)
+                scheduleReconnect()
             }
             override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) {
+                if (mine != generation) return
                 println("[remote] ws failure: $t")
                 onState(false)
+                scheduleReconnect()
             }
             override fun onMessage(webSocket: okhttp3.WebSocket, text: String) {
+                if (mine != generation) return
                 try {
                     val frame = JSONObject(text)
                     waiters.remove(frame.optString("id"))?.complete(frame)
@@ -680,16 +726,28 @@ class RemoteClient {
         })
     }
 
+    /** Tries again with a growing pause; one minute caps it so a long outage keeps trying quietly. */
+    private fun scheduleReconnect() {
+        if (reconnectUrl == null || reconnectToken == null) return
+        val delay = (1000L shl Math.min(attempts, 6)).coerceAtMost(60_000L)
+        attempts++
+        main.postDelayed(reconnect, delay)
+    }
+
     fun send(text: String) {
         ws?.send(text)
     }
 
     fun close() {
+        // A close the app called for: no reconnect, and the held socket goes.
+        reconnectUrl = null
+        reconnectToken = null
+        main.removeCallbacks(reconnect)
+        generation++
         ws?.close(1000, "bye")
         ws = null
     }
 }
-
 /* ------------------------------------------------------------------ */
 /* Activity                                                            */
 /* ------------------------------------------------------------------ */
@@ -892,6 +950,12 @@ fun relTime(updated: Long): String {
 fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, lastSession: String? = null, onRemember: (String?) -> Unit = {}, onSave: (String, String) -> Unit) {
     val scope = rememberCoroutineScope()
     val client = remember { RemoteClient() }
+    // The client holds an OkHttp worker and possibly a socket; a remembered
+    // instance outliving this composition (and a second one made on
+    // re-composition) would leak both and double every frame.
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { client.close() }
+    }
 
     var connected by remember { mutableStateOf(false) }
     var connectedOnce by remember { mutableStateOf(autoUrl.isNotBlank() && autoToken.isNotBlank()) }

@@ -1276,8 +1276,13 @@ export const useApp = defineStore("app", () => {
    * The session list carries which sessions are mid-turn; the open one is read
    * again because its transcript may have grown while nothing was listening.
    */
+  let resyncing: Promise<void> | undefined
   async function resync() {
-    try {
+    // A socket flapping fires this faster than it completes; two overlapping
+    // runs would double every re-read and replay.
+    if (resyncing) return resyncing
+    const run = (async () => {
+      try {
       const listed = await api().request({ type: "session.list" })
       subagentSessions.value = listed.sessions.filter((session) => session.parentID)
       sessions.value = listed.sessions.filter((session) => !session.sideOf && !session.parentID)
@@ -1299,9 +1304,15 @@ export const useApp = defineStore("app", () => {
       declareWatched()
       if (currentID.value) await open(currentID.value)
       await recoverAppOperations(listed.running)
-    } catch {
-      // A socket that dropped again; the next open will bring another attempt.
-    }
+      } catch {
+        // A socket that dropped again; the next open will bring another attempt.
+      }
+    })()
+    resyncing = run
+    void run.finally(() => {
+      if (resyncing === run) resyncing = undefined
+    })
+    return run
   }
 
   async function open(sessionID: string) {

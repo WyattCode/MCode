@@ -539,6 +539,12 @@ class Connection {
       void this.stop()
       return
     }
+    // A close that ran while this connect was in flight would otherwise leave
+    // the freshly spawned child alive outside any group it sweeps.
+    if (this.closed) {
+      void this.stop()
+      return
+    }
     this.status = "connected"
   }
 
@@ -849,6 +855,9 @@ class Connection {
       if (line) this.receiveText(line)
       index = this.buffer.indexOf("\n")
     }
+    // A server printing banners without a newline would grow this without
+    // bound; past the cap, keep only the tail a frame could still start in.
+    if (this.buffer.length > 1_000_000) this.buffer = this.buffer.slice(-100_000)
   }
 
   /** A frame, a batch of frames, or - some servers print banners on stdout - not a frame at all. */
@@ -1502,7 +1511,9 @@ export class McpServers {
     const working = new Set(this.busyIn().map((directory) => directoryKey(directory)))
     for (const [key, group] of [...this.groups]) {
       if (key === view || group.lastUsed > cutoff || working.has(key)) continue
-      if ([...group.connections.values()].some((connection) => connection.busy())) continue
+      // A connection still spawning is busy()=false but very much alive; sweeping
+      // it orphans the child that is about to exist.
+      if ([...group.connections.values()].some((connection) => connection.busy() || connection.status === "pending")) continue
       for (const connection of group.connections.values()) void connection.stop()
       this.groups.delete(key)
     }

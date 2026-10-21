@@ -42594,10 +42594,14 @@ export function rememberedLanguage(): Language | undefined {
   }
 }
 
+function fill(value: string, params: Record<string, string | number>): string {
+  return Object.entries(params).reduce((out, [name, param]) => out.split(`{${name}}`).join(String(param)), value)
+}
+
 export function t(key: string, params?: Record<string, string | number>): string {
   const value = TABLES[language.value]?.[key] ?? en[key] ?? key
   if (!params) return value
-  return Object.entries(params).reduce((out, [name, param]) => out.split(`{${name}}`).join(String(param)), value)
+  return fill(value, params)
 }
 
 /*
@@ -42619,9 +42623,12 @@ export function tn(key: string, count: number): string {
   } catch {
     // A language tag the runtime does not know keeps `_other`.
   }
-  const said = t(`${key}_${form}`, { count })
-  // A table without that form says `_other`, rather than the key itself.
-  return said === `${key}_${form}` ? t(`${key}_other`, { count }) : said
+  // A form the current table does not carry says that table's `_other`. Asking
+  // `t` first would fall through to the English table's `_one` and leak it,
+  // because `t` cannot tell "the language lacks it" from "the language said it".
+  const said = TABLES[language.value]?.[`${key}_${form}`]
+  if (said !== undefined) return fill(said, { count })
+  return t(`${key}_other`, { count })
 }
 
 /**

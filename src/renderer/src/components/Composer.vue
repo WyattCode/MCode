@@ -487,7 +487,11 @@ const leavingSkill = ref<string>()
 
 async function take(files: readonly File[]) {
   if (!files.length) return
+  // The draft this drop or pick belonged to: switching conversations while the
+  // read is in flight must not drop its files into the other one.
+  const originKey = draftKey.value
   const { attachments: taken, rejected } = await readFiles(files)
+  if (!composerMounted || draftKey.value !== originKey) return
   attachments.value = [...attachments.value, ...taken]
   if (taken.length) notify(t("toast.attachmentsAdded", { count: taken.length }))
   sayIfUnreadable(taken)
@@ -740,7 +744,10 @@ async function onDrop(event: DragEvent) {
  * drawn from and shows as a capsule with its name.
  */
 async function attachPaths(paths: readonly string[]) {
+  // Same guard as take(): the paths belong to the draft they were dropped on.
+  const originKey = draftKey.value
   const found = await window.mcode.describeFiles([...paths]).catch(() => [])
+  if (!composerMounted || draftKey.value !== originKey) return
   if (!found.length) return
   const root = projectRoot.value
   const mentions: { rel: string; file: boolean }[] = []
@@ -1852,6 +1859,11 @@ const draftKey = computed(() =>
 )
 
 function saveDraft(key: string) {
+  // A deleted session's draft was already forgotten by the store; writing this
+  // box's stale contents back would resurrect an orphan that is saved to disk
+  // and never shown again.
+  const id = key.startsWith("main:") || key.startsWith("side:") ? key.slice(key.indexOf(":") + 1) : undefined
+  if (id && !app.sessions.some((entry) => entry.id === id)) return
   if (text.value || attachments.value.length || skills.value.length) {
     drafts.set(key, {
       text: text.value,

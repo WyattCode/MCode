@@ -1005,6 +1005,7 @@ export class Config {
   }
 
   private watcher?: FSWatcher
+  private watcherTimer?: ReturnType<typeof setTimeout>
 
   /**
    * Hand edits to config.json take effect without reopening the app.
@@ -1026,12 +1027,19 @@ export class Config {
       this.watcher = watchFiles(path.dirname(file), (_event, name) => {
         if (name && name.toString() !== path.basename(file)) return
         clearTimeout(timer)
-        timer = setTimeout(() => void this.reloadFromDisk(), 150)
+        this.watcherTimer = timer = setTimeout(() => void this.reloadFromDisk(), 150)
       })
       this.watcher.unref()
     } catch {
       // A folder that cannot be watched only means edits wait for the next launch.
     }
+  }
+
+  /** Stops watching the config folder, for shutdown. */
+  unwatch(): void {
+    this.watcher?.close()
+    this.watcher = undefined
+    if (this.watcherTimer) clearTimeout(this.watcherTimer)
   }
 
   /** Told after a hand edit has been taken in, with the settings before and after it. */
@@ -1052,6 +1060,14 @@ export class Config {
    * there until its next question.
    */
   async reloadFromDisk(): Promise<void> {
+    // Serialized against set/setNow: a reload interleaved with a save would
+    // overwrite the just-applied settings with the file's older contents.
+    const run = this.setting.catch(() => undefined).then(() => this.reloadNow())
+    this.setting = run
+    await run
+  }
+
+  private async reloadNow(): Promise<void> {
     // A file that stopped parsing is left alone: the next save refuses and says where it broke.
     const read = await this.readStored()
     const stored = read.value
@@ -1094,6 +1110,19 @@ export class Config {
    */
   set(patch: Partial<AppConfig>, forget: readonly string[] = []): Promise<AppConfig> {
     const next = this.setting.catch(() => undefined).then(() => this.setNow(patch, forget))
+    this.setting = next
+    return next
+  }
+
+  /**
+   * Read-modify-write inside the same queue `set` uses. A patch computed from a
+   * `get()` snapshot outside the queue races a concurrent save: the later write
+   * was computed from a stale snapshot and silently swallows the earlier one.
+   * The mutator runs inside the queue, against the settings as the previous
+   * change left them.
+   */
+  update(mutate: (current: AppConfig) => Partial<AppConfig>, forget: readonly string[] = []): Promise<AppConfig> {
+    const next = this.setting.catch(() => undefined).then(() => this.setNow(mutate(this.current), forget))
     this.setting = next
     return next
   }

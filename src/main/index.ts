@@ -1311,7 +1311,12 @@ app.whenReady().then(async () => {
       liveUpdater = created
       if (osQuitting) created.holdInstallOnQuit()
       created.start()
-      app.on("before-quit", () => created.stop())
+      app.on("before-quit", () => {
+        created.stop()
+        // An ordinary quit (the OS not ending the session) installs as normal,
+        // even after a held install from a session end that was cancelled.
+        if (!osQuitting) created.resumeInstallOnQuit()
+      })
       return created
     })
     .catch((error: unknown) => {

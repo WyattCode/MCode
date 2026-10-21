@@ -98,7 +98,11 @@ export async function shrunkImage(file: { mime: string; data: string }, fit: Ima
 export async function fittedImage(file: { mime: string; data: string }): Promise<{ mime: string; data: string } | undefined> {
   const fit = imageFit(file.mime, file.data)
   if (!fit || !shrinker) return undefined
-  return (await shrinker({ data: file.data, mime: file.mime, fit }).catch(() => undefined)) ?? undefined
+  const out = await shrinker({ data: file.data, mime: file.mime, fit }).catch(() => undefined)
+  // The shrinker's promise is its best effort, not a guarantee: verify the
+  // result against the same limit as shrunkImage, or an oversized picture
+  // rides to the provider and gets the whole request refused.
+  return out && Math.floor((out.data.length * 3) / 4) <= fit.maxBytes ? out : undefined
 }
 
 const AUDIO_FORMATS: Record<string, string> = { "audio/wav": "wav", "audio/x-wav": "wav", "audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/flac": "flac", "audio/mp4": "m4a", "audio/x-m4a": "m4a", "audio/ogg": "ogg" }

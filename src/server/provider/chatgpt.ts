@@ -251,7 +251,9 @@ async function streamResponses(
   const headers: Record<string, string> = {
     ...target.headers,
     "Content-Type": "application/json",
-    Authorization: `Bearer ${request.apiKey}`,
+    // Header-authenticated gateways have no key; `Bearer ` must not displace
+    // the authorization they carry (see openai.ts's same guard).
+    ...(request.apiKey ? { Authorization: `Bearer ${request.apiKey}` } : {}),
     Accept: "text/event-stream",
   }
   // MiMo keeps a conversation's requests together with this header.
