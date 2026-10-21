@@ -1799,9 +1799,24 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
          */
         if (role == "assistant") settleSteppedPastError()
         val parts = message.optJSONArray("parts")
-        // Stored transcripts carry the text flat on the message; live events
-        // carry it in parts. Accept both.
-        val text = StringBuilder(message.optString("text", ""))
+        /*
+         * A stored message carries its words one way or the other, never both:
+         * flat on `text` for a reader's own turn, in `text` parts for a reply.
+         * Measured across the conversations on this machine - `text: true,
+         * textparts: 0` for every user message, the reverse for every assistant
+         * one.
+         *
+         * Appending both printed the question twice on the pad
+         * (「错误行验证错误行验证」), because a message that has the flat copy
+         * and has had its parts filled in as well went through this loop once
+         * with each. The parts win when they are there: they are the same words
+         * with their own ids, which the live rebuild needs.
+         */
+        val flat = message.optString("text", "")
+        val hasTextParts = parts != null && (0 until parts.length()).any {
+            parts.optJSONObject(it)?.optString("type") == "text"
+        }
+        val text = StringBuilder(if (hasTextParts) "" else flat)
         if (parts != null) {
             for (i in 0 until parts.length()) {
                 val part = parts.optJSONObject(i) ?: continue
@@ -9291,8 +9306,8 @@ fun AccessPill(level: String, onPick: (String) -> Unit, fullAllowed: Boolean = t
     Box {
         Row(
             Modifier
-                .height(28.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .height(24.dp)
+                .clip(RoundedCornerShape(50))
                 .background(LocalPill.current)
                 .clickable { open = true }
                 .padding(horizontal = 11.dp),
@@ -9641,45 +9656,34 @@ fun InputCapsule(
         }
         Surface(
             /*
-             * `.box` as `Composer.vue` ends up declaring it — the last of the
-             * four blocks in that file is the one that wins:
+             * Sampled off Claude's own composer on this pad, which is the thing
+             * being copied - the desktop stylesheet describes a different
+             * design at this size, and following it put the wrong fill, the
+             * wrong edge and 15dp of extra height into the box.
              *
-             *   padding: 8px;                     -> the controls sit 8 in from
-             *                                        the card's own edge, and the
-             *                                        writing area adds its own 16
-             *   background: #ffffff;              -> white, not the page's
-             *                                        --surface-raised
-             *   border: 0.5px solid var(--border-input);   -> #151c130f
-             *   border-radius: 20px;
-             *   box-shadow: var(--shadow-composer);        -> 0 1px 2px #0000000d,
-             *                                                 0 6px 18px #0000001b
-             *
-             * The phone had 10 / #DCDCDC 1px / no padding / the menu surface,
-             * which is why it read as a second grey panel rather than as the
-             * white sheet MiMo lifts off the page with a shadow. There is no
-             * border ring on focus either, as there is none in MiMo.
+             *   fill    #FEFEFE   (not #FFFFFF: a page of #F9F9F7 wants the
+             *                       card one step off white, not pure white)
+             *   edge    1px #DCDCDC, a crisp line, not a 6% ink
+             *   corner  20
+             *   drop    0 1px 2px #0000000d, 0 6px 18px #0000001b
              */
             shape = RoundedCornerShape(20.dp),
-            color = if (LocalBg.current == DarkBg) Color(0xFF1F1F1F) else Color(0xFFFFFFFF),
-            /*
-             * 0.5px is not a unit Compose draws reliably at this density, so the
-             * hairline is the colour's own alpha over a 1dp stroke: #151c130f is
-             * a 6% ink, and drawn as the pixel it must be it reads the same.
-             */
+            color = if (LocalBg.current == DarkBg) Color(0xFF1F1F1F) else Color(0xFFFEFEFE),
             border = androidx.compose.foundation.BorderStroke(
                 1.dp,
-                if (LocalBg.current == DarkBg) Color(0xFF2E2E2E) else Color(0x0F151C13),
+                if (LocalBg.current == DarkBg) Color(0xFF2E2E2E) else Color(0xFFDCDCDC),
             ),
-            /*
-             * `--shadow-composer`: two drops at once on light (1/2 at 5%, then
-             * 6/18 at 11%) and one darker on dark (1/3 at 40%). Elevation gives
-             * a single soft lift; the tight 1px contact shadow is what makes the
-             * card sit on the page rather than hover above it.
-             */
             shadowElevation = if (LocalBg.current == DarkBg) 3.dp else 6.dp,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Column(Modifier.padding(8.dp)) {
+            /*
+             * No inset of its own: measured off Claude's box, the first row of
+             * writing starts 15.8dp below the card's top edge, and a card inset
+             * of 8 plus the area's own 16 came to 24 - nearly twice the gap.
+             * Each block inside carries its own inset, which is how the
+             * reference reaches the same figure.
+             */
+            Column(Modifier.padding(start = 8.dp, end = 8.dp, top = 3.dp, bottom = 16.dp)) {
                 /*
                  * Queued prompts, oldest first, above the field: a line each with
                  * the words, a send-now arrow and an × to withdraw. The desktop
@@ -9765,34 +9769,49 @@ fun InputCapsule(
                     Spacer(Modifier.height(4.dp))
                 }
                 /*
-                 * `.input`: 13 over a 20 line-height, its own 16/16/8 inset,
-                 * a 60 floor and a 200 cap.
+                 * Measured against Claude's own composer on this pad by row
+                 * projection over the box - the desktop stylesheet describes a
+                 * different design at this size, and the two gaps are where it
+                 * shows most:
                  *
-                 * A `BasicTextField`, not an `OutlinedTextField`: the Material
-                 * one brings its own 16dp of inner padding, its own placeholder
-                 * baseline and a 56dp minimum height, so the text sat lower and
-                 * further in than the desktop's and an empty composer was taller
-                 * than 60. The padding is written here so the numbers are the
-                 * desktop's own.
+                 *   placeholder from the box's top   15.8dp   (was 24.1 here)
+                 *   control row from the box's top   44.0dp   (was 79.9 here)
+                 *   gap between the two rows         28dp     (was 56 here)
+                 *
+                 * The empty middle was the single most visible difference: the
+                 * card read as a mostly-blank panel with a toolbar pinned to
+                 * its floor.
                  */
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp)
-                        .heightIn(min = 60.dp - 24.dp, max = 200.dp),
+                        .padding(start = 11.dp, end = 11.dp, top = 15.dp, bottom = 0.dp)
+                        /*
+                         * The whole card is 78dp: 1 of border, 8 of the card's
+                         * own inset both sides, 8 above the words and 6 below
+                         * them leaves 55 for the writing area. Written as the sum
+                         * rather than a round number so the arithmetic stays
+                         * visible - an earlier `78 - 18` produced a 109dp box
+                         * because the card's own 8 was not in it.
+                         */
+                        .heightIn(min = 34.dp, max = 190.dp),
                 ) {
                     if (text.isEmpty()) {
                         Text(
                             if (running) "将消息加入队列…" else "输入 / 以使用命令",
-                            fontSize = 13.sp,
-                            lineHeight = 20.sp,
+                            fontSize = 15.sp,
+                            lineHeight = 21.sp,
                             color = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF7B7974),
                         )
                     }
                     BasicTextField(
                         text,
                         { text = it },
-                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, lineHeight = 20.sp, color = LocalText.current),
+                        // The same 15/21 as the placeholder above it, so the box
+                        // does not change height the moment someone types - the
+                        // measured glyph is 19dp of line, which is 15sp at this
+                        // scale, not the 13 the desktop sheet says.
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 15.sp, lineHeight = 21.sp, color = LocalText.current),
                         cursorBrush = androidx.compose.ui.graphics.SolidColor(LocalText.current),
                         maxLines = 8,
                         modifier = Modifier.fillMaxWidth(),
@@ -9803,7 +9822,7 @@ fun InputCapsule(
                 // why the desktop writes `padding: 0 8px` there and the card
                 // carries the rest.
                 Row(
-                    Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 0.dp),
+                    Modifier.fillMaxWidth().height(28.dp).padding(horizontal = 0.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
@@ -9817,7 +9836,7 @@ fun InputCapsule(
                      * 44-tall row it sits in.
                      */
                     Box(
-                        Modifier.size(28.dp).clip(RoundedCornerShape(6.dp)).clickable(enabled = enabled) { plusMenu = true },
+                        Modifier.size(24.dp).clip(CircleShape).background(LocalPill.current).clickable(enabled = enabled) { plusMenu = true },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(Icons.Filled.Add, contentDescription = "更多", tint = LocalText.current, modifier = Modifier.size(16.dp))
@@ -9947,9 +9966,9 @@ fun InputCapsule(
                      * past its 44.
                      */
                     Surface(
-                        shape = RoundedCornerShape(6.dp),
+                        shape = RoundedCornerShape(50),
                         color = LocalPill.current,
-                        modifier = Modifier.height(28.dp).clickable(enabled = enabled && onModel != {}) { onModel() },
+                        modifier = Modifier.height(29.dp).clickable(enabled = enabled && onModel != {}) { onModel() },
                     ) {
                         // Claude's pill names the model and its effort
                         // ("Sonnet 5.5 中等"); ours names what this app has.
@@ -9970,7 +9989,7 @@ fun InputCapsule(
                         Spacer(Modifier.width(14.dp))
                     }
                     Box(
-                        Modifier.size(28.dp).clip(RoundedCornerShape(6.dp)).background(if (listening) Color(0x1FE0574A) else Color.Transparent).clickable(enabled = !transcribing) { onMic() },
+                        Modifier.size(24.dp).clip(CircleShape).background(if (listening) Color(0x1FE0574A) else LocalPill.current).clickable(enabled = !transcribing) { onMic() },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
@@ -10030,15 +10049,16 @@ fun InputCapsule(
                         contentAlignment = Alignment.Center,
                     ) {
                         /*
-                         * The painted tile: 28 square with a 6 corner, the
-                         * desktop's `.send`, with the mark at 16 - which is
-                         * what the icon sizes on the reference row come to
-                         * against a 28 box.
+                         * A 28 disc, measured: Claude's send is 88px across on
+                         * this pad - 27.9dp - and round, not the 6-cornered
+                         * tile the desktop stylesheet describes. The phone drew
+                         * a 28 tile inside a 44 target, which read as a small
+                         * square beside two round buttons.
                          */
                         Box(
                             Modifier
                                 .size(28.dp)
-                                .background(sendBg, RoundedCornerShape(6.dp)),
+                                .background(sendBg, CircleShape),
                             contentAlignment = Alignment.Center,
                         ) {
                         if (running) {
