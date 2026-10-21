@@ -1133,6 +1133,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * the video above - bytes on the wire, a temp file here.
      */
     var pdfPreview by remember { mutableStateOf<Pair<String, java.io.File>?>(null) }
+    /** An Office document, already turned into one HTML page by the gateway. */
+    var officePreview by remember { mutableStateOf<Triple<String, String, String>?>(null) }
     /**
      * The changes rail: which files a turn touched, and the patch for the one
      * being read. The desktop keeps this beside the conversation all the time;
@@ -2396,6 +2398,34 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     .put("rel", if (cut > 0) rel.substring(cut + 1) else rel)
             } else {
                 JSONObject().put("type", "file.read").put("root", root).put("rel", rel)
+            }
+            /*
+             * An Office document is not read here at all: the gateway turns it
+             * into one HTML page, because the libraries that understand docx,
+             * xlsx and pptx live there and a WebView here can only render what
+             * it is given. `badgeOf` has given these files a badge for months
+             * while opening one answered with an empty sheet.
+             */
+            val officeExt = rel.substringAfterLast('.', "").lowercase()
+            if (officeExt in setOf("docx", "xlsx", "pptx")) {
+                val name = rel.substringAfterLast('/').substringAfterLast('\\')
+                val reply = runCatching {
+                    rpc(
+                        JSONObject().put("type", "office.render").put("root", root).put("rel", rel),
+                        60_000,
+                    )
+                }.getOrNull()?.optJSONObject("data")
+                val html = reply?.optString("html").orEmpty()
+                if (html.isNotBlank()) {
+                    officePreview = Triple(name, reply?.optString("kind").orEmpty().ifBlank { officeExt }, html)
+                } else {
+                    Toast.makeText(
+                        context,
+                        reply?.optString("error").orEmpty().ifBlank { "打不开这个文档" },
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+                return@launch
             }
             ask.put("preview", true)
             // The desktop plays a video from its own disk and asks for no bytes;
@@ -4060,6 +4090,10 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * Android build decodes (mp4/m4v/webm), and MediaController's transport is
      * what the desktop's own bar offers - play, seek, the clock.
      */
+    officePreview?.let { (name, kind, html) ->
+        OfficeViewer(name = name, kind = kind, html = html, onClose = { officePreview = null })
+    }
+
     pdfPreview?.let { (name, file) ->
         PdfViewer(name = name, file = file, onClose = { pdfPreview = null })
     }
@@ -9650,5 +9684,68 @@ fun PdfPage(renderer: android.graphics.pdf.PdfRenderer?, index: Int) {
         )
     } else {
         Text("第 ${index + 1} 页读不出来", fontSize = 12.sp, color = LocalMuted.current)
+    }
+}
+
+/**
+ * An Office document, drawn by the WebView.
+ *
+ * The document was turned into one HTML page where the file is (see
+ * `src/server/office/html.ts`), so this side has nothing to parse: a WebView
+ * shows the page, which is the same arrangement the desktop has - a viewer that
+ * renders, and a document turned into something renderable.
+ *
+ * The view is given the page as a string rather than a URL, and JavaScript is
+ * off: the page is the converter's own output, it needs no script, and a reader
+ * that never runs one cannot be made to by a document.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun OfficeViewer(name: String, kind: String, html: String, onClose: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val dark = LocalBg.current == DarkBg
+    ModalBottomSheet(onDismissRequest = onClose, containerColor = MaterialTheme.colorScheme.background) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    name,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = LocalText.current,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    kind.uppercase(),
+                    fontSize = 11.sp,
+                    color = LocalMuted.current,
+                    modifier = Modifier
+                        .background(LocalPill.current, RoundedCornerShape(6.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Box(Modifier.size(34.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.Close, contentDescription = "关闭", tint = LocalMuted.current, modifier = Modifier.size(16.dp))
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            androidx.compose.ui.viewinterop.AndroidView(
+                factory = { ctx ->
+                    android.webkit.WebView(ctx).apply {
+                        setBackgroundColor(if (dark) 0xFF151515.toInt() else 0xFFFFFEFD.toInt())
+                        settings.javaScriptEnabled = false
+                        settings.loadWithOverviewMode = true
+                        settings.useWideViewPort = true
+                        isVerticalScrollBarEnabled = false
+                        // The page is handed over as a string with no base URL, so
+                        // nothing it asks for can reach the network: its images are
+                        // already data URLs.
+                        loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().heightIn(max = 640.dp),
+            )
+        }
     }
 }

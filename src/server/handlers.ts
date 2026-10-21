@@ -1,6 +1,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
+import { renderOffice } from "./office/html"
 import { kindFor, mimeFor } from "./media"
 import type {
   AppPath,
@@ -447,6 +448,20 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         title: request.title,
       })
       return { session } satisfies Handled<"session.create">
+    }
+
+    case "office.render": {
+      /*
+       * An Office document as one HTML page, built here because the libraries
+       * that read these formats live here and the reader is a WebView. The path
+       * is resolved the same way `file.read` resolves one, so the same rules
+       * about which folders the app will open apply.
+       */
+      // The same gate `file.read` passes through: a document outside the
+      // folders the app works in is refused here exactly as it is there.
+      const entry = await readableFile(request.root, request.rel)
+      const rendered = await renderOffice(entry, request.rel)
+      return { path: entry, ...rendered } satisfies Handled<"office.render">
     }
 
     case "project.createBlank": {
