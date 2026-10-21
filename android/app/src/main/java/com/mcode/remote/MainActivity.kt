@@ -3593,32 +3593,20 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                              * the overflow menu, where it does not put a second
                              * magnifier next to the list's own search.
                              */
-                            Column(
-                                Modifier.weight(1f).clickable { toTopTicks++ },
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                            ) {
-                                /*
-                                 * Two faces, measured off Claude's own header:
-                                 * its title is 53px of glyph - 16.8dp - and its
-                                 * subtitle 46px, 14.6dp. At 16 and 11 this pair
-                                 * was a size apart in both directions: the title
-                                 * too tall and the folder too short, which is why
-                                 * the block read as a heading with a footnote
-                                 * rather than as two lines of one label.
-                                 */
-                                Text(headerTitle(items, sessions, currentSession), fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium, color = LocalText.current, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-                                val where = sessions.find { it.id == currentSession }?.directory.orEmpty()
-                                if (where.isNotBlank()) {
-                                    Text(
-                                        where.substringAfterLast('\\').substringAfterLast('/'),
-                                        fontSize = 13.sp,
-                                        lineHeight = 17.sp,
-                                        color = LocalMuted.current,
-                                        maxLines = 1,
-                                        softWrap = false,
-                                    )
-                                }
-                            }
+                            /*
+                             * No title and no subtitle in the middle.
+                             *
+                             * Claude's chat screen has none: measured across
+                             * its header, the right pane carries only three
+                             * glyphs, all at its trailing end - a pair at
+                             * 1249.6 and 1290.0 (19.2 and 18.4 wide) and a
+                             * kebab at 1337.6. The conversation's name is in
+                             * the left column's list, where the row for it is
+                             * marked; repeating it here was this app's own
+                             * idea, and a centred heading with a folder path
+                             * under it read as a different screen.
+                             */
+                            Spacer(Modifier.weight(1f))
                             /*
                              * While a turn is in flight Claude puts an amber ring
                              * beside the clock - 239,181,68, 16dp across - instead
@@ -3645,6 +3633,53 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                              * that menu, which is where the phone keeps the ones
                              * with no room of their own.
                              */
+                            /*
+                             * Three marks at the header's trailing end, as
+                             * Claude's chat screen has them: a laptop, a filled
+                             * speech bubble with a plus, then the kebab. Read
+                             * off its header at 2.5 px per dp - 19.2 wide at
+                             * 1249.6, 18.4 at 1290.0, and the kebab's 3.2 dots
+                             * at 1337.6.
+                             *
+                             * The laptop opens the left column's Code page and
+                             * the bubble starts a conversation, which are the
+                             * two things those marks do on the reference.
+                             */
+                            Box(Modifier.size(40.dp).clickable { leftMode = LeftMode.Settings }, contentAlignment = Alignment.Center) {
+                                MiIcon(
+                                    "M5.6 7.4h12.8a1.2 1.2 0 0 1 1.2 1.2v7.4H4.4V8.6a1.2 1.2 0 0 1 1.2-1.2zM3.2 16h17.6v2a1 1 0 0 1-1 1H4.2a1 1 0 0 1-1-1z",
+                                    contentDescription = "Code",
+                                    modifier = Modifier.size(19.2.dp),
+                                    viewBox = 24f,
+                                    strokeWidth = 1.7f,
+                                    tint = LocalText.current,
+                                )
+                            }
+                            // Read outside the draw scope: a Canvas lambda is not
+                            // composable, so `Local…current` cannot be called in it.
+                            val bubbleInk = LocalText.current
+                            val bubbleFg = LocalBg.current
+                            Box(Modifier.size(40.dp).clickable { newSession() }, contentAlignment = Alignment.Center) {
+                                Canvas(Modifier.size(18.4.dp)) {
+                                    val c = size.minDimension / 2f
+                                    val ink = bubbleInk
+                                    drawCircle(ink, radius = c, center = androidx.compose.ui.geometry.Offset(c, c * 0.92f))
+                                    // Its tail, at the lower left.
+                                    val path = androidx.compose.ui.graphics.Path().apply {
+                                        moveTo(c * 0.46f, size.height * 0.90f)
+                                        lineTo(c * 0.34f, size.height)
+                                        lineTo(c * 1.02f, size.height * 0.90f)
+                                        close()
+                                    }
+                                    drawPath(path, ink)
+                                    // The plus, in paper.
+                                    val fg = bubbleFg
+                                    val w = c * 0.30f
+                                    val t = c * 0.11f
+                                    drawLine(fg, androidx.compose.ui.geometry.Offset(c - w, c * 0.92f), androidx.compose.ui.geometry.Offset(c + w, c * 0.92f), strokeWidth = t, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                                    drawLine(fg, androidx.compose.ui.geometry.Offset(c, c * 0.92f - w), androidx.compose.ui.geometry.Offset(c, c * 0.92f + w), strokeWidth = t, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                                }
+                            }
                             var headerMenu by remember { mutableStateOf(false) }
                             Box(Modifier.size(40.dp).clickable { headerMenu = true }, contentAlignment = Alignment.Center) {
                                 Icon(Icons.Outlined.MoreVert, contentDescription = "更多", tint = LocalText.current, modifier = Modifier.size(20.dp))
