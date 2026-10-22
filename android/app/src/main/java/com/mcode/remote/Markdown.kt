@@ -818,6 +818,7 @@ private fun MdLine(
                         }
                         down.consume()
 
+                        sharedSelection.onTakeOver?.invoke()
                         if (sharedSelection.isEmpty) {
                             // Word granularity, which is what makes a press land
                             // on the whole word rather than on one character.
@@ -918,6 +919,16 @@ class SelectionState {
      * the next press picks a word, and a tap clears both.
      */
     var armed by mutableStateOf(false)
+
+    /*
+     * Clears the other replies when this one is picked.
+     *
+     * Every reply owns its own state - the screen keys them by message id - so
+     * without this, lighting a second reply left the first one still lit and its
+     * 复制 chip still floating. The reference never shows two, and a second wash
+     * on screen reads as a bug rather than as a second selection.
+     */
+    var onTakeOver: (() -> Unit)? = null
 
     val isEmpty: Boolean get() = anchorLine < 0
 

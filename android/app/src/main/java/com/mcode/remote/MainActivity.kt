@@ -1291,6 +1291,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * address the same object.
      */
     val selectionByMessage = remember { mutableMapOf<String, SelectionState>() }
+    /** The reply currently lit, so picking another can put the first out. */
+    var litMessage by remember { mutableStateOf<String?>(null) }
     /** The question being rewritten in 编辑并重发. */
     var editTarget by remember { mutableStateOf<Item.Msg?>(null) }
     var modelPicker by remember { mutableStateOf(false) }
@@ -4198,7 +4200,20 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                         Timeline(
                                             items,
                                             Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp),
-                                            share = { id -> selectionByMessage.getOrPut(id) { SelectionState() } },
+                                            share = { id ->
+                                selectionByMessage.getOrPut(id) { SelectionState() }.apply {
+                                    // Only one reply may be lit: the reference never
+                                    // shows two washes, and a stale one keeps its
+                                    // 复制 chip floating over the transcript.
+                                    onTakeOver = {
+                                        val was = litMessage
+                                        if (was != null && was != id) {
+                                            selectionByMessage[was]?.clear()
+                                        }
+                                        litMessage = id
+                                    }
+                                }
+                            },
                                             running = sessions.find { it.id == currentSession }?.running == true,
                                             onPerm = ::respondPerm,
                                             onPermReason = ::respondPermReason,
@@ -4277,7 +4292,20 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         Timeline(
                             items,
                             Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp),
-                            share = { id -> selectionByMessage.getOrPut(id) { SelectionState() } },
+                            share = { id ->
+                                selectionByMessage.getOrPut(id) { SelectionState() }.apply {
+                                    // Only one reply may be lit: the reference never
+                                    // shows two washes, and a stale one keeps its
+                                    // 复制 chip floating over the transcript.
+                                    onTakeOver = {
+                                        val was = litMessage
+                                        if (was != null && was != id) {
+                                            selectionByMessage[was]?.clear()
+                                        }
+                                        litMessage = id
+                                    }
+                                }
+                            },
                             running = sessions.find { it.id == currentSession }?.running == true,
                             onPerm = ::respondPerm,
                             onPermReason = ::respondPermReason,
