@@ -473,20 +473,27 @@ fun MarkdownBody(
                     popupContentSize: androidx.compose.ui.unit.IntSize,
                 ): androidx.compose.ui.unit.IntOffset {
                     /*
-                     * The pill sits 8.4 dp above the wash's top, centred on it.
+                     * Above the wash by 8.4 dp and centred on it; below it when
+                     * there is no room above.
                      *
                      * `windowSize` is the whole window here, so the anchor's own
                      * root coordinates can be used as-is - which is the point of
-                     * going through a provider at all. The result is clamped to
-                     * the window so a selection near the top edge puts the pill
-                     * just inside it rather than off-screen, where it would
-                     * vanish exactly the way the earlier attempts did.
+                     * going through a provider at all. The clamp alone was not
+                     * enough: a selection near the top of the screen had the pill
+                     * pushed down onto the very words it was for, which reads as
+                     * a broken popup. The reference flips it under the selection
+                     * instead, so this does too - 48 for the pill, 8.4 of air,
+                     * and 27.6 for the wash's own height.
                      */
                     val halfPill = with(density) { pillWidth.toPx() / 2f }
-                    val air = with(density) { 56.4.dp.toPx() }
+                    val above = with(density) { 56.4.dp.toPx() }
+                    val below = with(density) { (48f + 8.4f + 27.6f).dp.toPx() }
                     val x = (anchor.x - halfPill).toInt()
                         .coerceIn(0, (windowSize.width - popupContentSize.width).coerceAtLeast(0))
-                    val y = (anchor.y - air).toInt().coerceAtLeast(0)
+                    val preferred = anchor.y - above
+                    val y = if (preferred >= 0f) preferred.toInt()
+                    else (anchor.y + below).toInt()
+                        .coerceAtMost((windowSize.height - popupContentSize.height).coerceAtLeast(0))
                     return androidx.compose.ui.unit.IntOffset(x, y)
                 }
             },
@@ -960,7 +967,23 @@ private fun Modifier.selectable(
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
                 val downOffset = laidNow.getOffsetForPosition(down.position)
-                val held = awaitLongPressOrCancellation(down.id)
+                /*
+                 * Armed by the sheet's 选择文本, one press is enough.
+                 *
+                 * The sheet has just told the reader "长按或拖动选择文字", so
+                 * waiting out the long-press timeout again would be asking for
+                 * the gesture twice. When armed, the press selects immediately
+                 * and the drag below extends it - which is the behaviour that
+                 * makes the menu item do something at all. Every press that is
+                 * not armed still has to be held, so reading a reply is not
+                 * turned into selecting it.
+                 */
+                val held = if (sharedSelection.armed) {
+                    sharedSelection.armed = false
+                    down
+                } else {
+                    awaitLongPressOrCancellation(down.id)
+                }
                 if (held == null) {
                     val cancelled = currentEvent.changes.any { it.isConsumed }
                     val moved = (currentEvent.changes.firstOrNull()?.position
@@ -1118,10 +1141,14 @@ class SelectionState {
     /*
      * Whether the reader asked for selection from the message sheet.
      *
-     * A long press on a reply already opens 复制 / 从此处分支, and the reference
-     * keeps that: its sheet carries 选择文本 as an item rather than binding the
-     * long press to the text. So the same shape here - the sheet turns this on,
-     * the next press picks a word, and a tap clears both.
+     * The reference does not bind its long press to the text: its sheet carries
+     * 选择文本 as an item. So picking that item arms the reply, and the next
+     * press on a word lights it - no second long hold, which is what the sheet
+     * has just told the reader to do ("长按或拖动选择文字").
+     *
+     * This was written by the sheet and read by nobody, so the item did nothing
+     * at all. It is read in `selectable` now: armed, a plain press selects
+     * instead of waiting out the long-press timeout.
      */
     var armed by mutableStateOf(false)
 
