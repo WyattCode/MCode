@@ -388,19 +388,74 @@ fun MarkdownBody(
      * remembering on the object alone would compute once and never again - the
      * chip would show the first selection for ever.
      */
-    val selectedText = remember(sharedSelection.startLine, sharedSelection.startOffset, sharedSelection.endLine, sharedSelection.endOffset, plain) {
-        if (sharedSelection.isEmpty) "" else {
-            val a = offsets.getOrNull(sharedSelection.startLine)
-            val b = offsets.getOrNull(sharedSelection.endLine)
-            if (a == null || b == null) "" else {
-                val from = (a + sharedSelection.startOffset).coerceIn(0, plain.length)
-                val to = (b + sharedSelection.endOffset).coerceIn(from, plain.length)
-                plain.substring(from, to).trim()
-            }
+    /*
+     * Computed inline, in the composable body.
+     *
+     * Both earlier forms failed the same way: a `remember` keyed on the four
+     * offsets never recomputed, and a `derivedStateOf` built once kept capturing
+     * the first `blocks`/`plain`. Reading the four fields here - in composition,
+     * where Compose is watching them - is what makes the chip appear and follow
+     * the selection.
+     */
+    val selStart = if (sharedSelection.isEmpty) -1 else sharedSelection.startLine
+    val selEnd = if (sharedSelection.isEmpty) -1 else sharedSelection.endLine
+    val selectedText: String = if (selStart < 0) "" else {
+        val a = offsets.getOrNull(selStart)
+        val b = offsets.getOrNull(selEnd)
+        if (a == null || b == null) "" else {
+            val from = (a + sharedSelection.startOffset).coerceIn(0, plain.length)
+            val to = (b + sharedSelection.endOffset).coerceIn(from, plain.length)
+            plain.substring(from, to).trim()
         }
     }
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    /*
+     * The chip is a sibling of the text inside a wrapping Box, and it is placed
+     * by `offset` rather than by `align`: the caller hands this composable a
+     * `wrapContent` modifier, so the Box is exactly as tall as the column and an
+     * `align(TopEnd)` child has no slack to sit in - which is why the chip never
+     * appeared even when the selection was lit.
+     */
     androidx.compose.foundation.layout.Box(modifier) {
+    if (selectedText.isNotEmpty()) {
+        /*
+         * UNVERIFIED: this chip has never been seen on screen.
+         *
+         * The state behind it is right - a log during the last check read
+         * `empty=false lines=13/13 off=46..48 plain=1780 text=2`, so the range
+         * and the substring are both correct - but no arrangement of the
+         * anchor has put it in the view tree yet. `offset(-26)` was clipped,
+         * `align(TopEnd)` inside this wrapping Box was too, and the inline
+         * computation of `selectedText` did not change it.
+         *
+         * Left in place because the selection itself works; the anchoring is
+         * the open question.
+         */
+        Row(
+            androidx.compose.ui.Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 0.dp, end = 0.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(if (LocalBg.current.luminance() < 0.4f) Color(0xFF2E2E2E) else Color(0xFF2B2B2A))
+                .clickable {
+                    clipboard.setText(AnnotatedString(selectedText))
+                    sharedSelection.clear()
+                }
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MiIcon(
+                "M8.4 3.4h9.2a1.4 1.4 0 0 1 1.4 1.4v9.2M6.4 7.4h9.2a1.4 1.4 0 0 1 1.4 1.4v9.2a1.4 1.4 0 0 1-1.4 1.4H6.4A1.4 1.4 0 0 1 5 18V8.8a1.4 1.4 0 0 1 1.4-1.4z",
+                contentDescription = null,
+                modifier = androidx.compose.ui.Modifier.size(12.dp),
+                viewBox = 24f,
+                strokeWidth = 1.7f,
+                tint = Color(0xFFF5F3EE),
+            )
+            Spacer(androidx.compose.ui.Modifier.width(5.dp))
+            Text("复制", fontSize = 12.sp, color = Color(0xFFF5F3EE))
+        }
+    }
     Column(androidx.compose.ui.Modifier.fillMaxWidth()) {
         blocks.forEachIndexed { index, block ->
             val last = index == blocks.lastIndex
@@ -449,43 +504,6 @@ fun MarkdownBody(
                 is MdBlock.Table -> TableBox(block, textColor, muted, Modifier.padding(bottom = if (last) 0.dp else 14.dp))
                 MdBlock.Rule -> Box(Modifier.fillMaxWidth().padding(vertical = 16.dp).height(1.dp).background(LocalLine.current))
             }
-        }
-    }
-    /*
-     * 复制, over the top-right of the reply.
-     *
-     * The reference floats a small chip beside the selection. Anchoring to the
-     * selection's exact line would need the line's position in the column, which
-     * a `Text` cannot report to its parent without a second layout pass - so it
-     * sits at the reply's corner instead, which on a phone is where the eye
-     * already is and where the thumb reaches without covering the words.
-     */
-    if (selectedText.isNotEmpty()) {
-        Row(
-            androidx.compose.ui.Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 2.dp, end = 2.dp)
-                .clip(RoundedCornerShape(9.dp))
-                // Judged by the page's own luminance rather than comparing
-                // against `DarkBg`, which is private to the activity's file.
-                .background(if (LocalBg.current.luminance() < 0.4f) Color(0xFF2E2E2E) else Color(0xFF2B2B2A))
-                .clickable {
-                    clipboard.setText(AnnotatedString(selectedText))
-                    sharedSelection.clear()
-                }
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            MiIcon(
-                "M8.4 3.4h9.2a1.4 1.4 0 0 1 1.4 1.4v9.2M6.4 7.4h9.2a1.4 1.4 0 0 1 1.4 1.4v9.2a1.4 1.4 0 0 1-1.4 1.4H6.4A1.4 1.4 0 0 1 5 18V8.8a1.4 1.4 0 0 1 1.4-1.4z",
-                contentDescription = null,
-                modifier = androidx.compose.ui.Modifier.size(12.dp),
-                viewBox = 24f,
-                strokeWidth = 1.7f,
-                tint = Color(0xFFF5F3EE),
-            )
-            Spacer(androidx.compose.ui.Modifier.width(5.dp))
-            Text("复制", fontSize = 12.sp, color = Color(0xFFF5F3EE))
         }
     }
     }
@@ -580,7 +598,15 @@ private fun MdLine(
     sharedSelection: SelectionState? = null,
     /** This line's index within the reply, so the shared drag can be clipped to it. */
     lineIndex: Int = -1,
-    /** Where this line begins in the reply's flat text. */
+    /**
+     * Where this line begins in the reply's flat text.
+     *
+     * Not subtracted from anything: `getOffsetForPosition` and
+     * `getWordBoundary` already answer in this `Text`'s own coordinates, and
+     * subtracting a block offset from them produced negative anchors
+     * (1686 against a 94-character line) which lit nothing. Kept because the
+     * copy chip still needs the map, and it documents the block's place.
+     */
     lineStart: Int = 0,
 ) {
     val context = LocalContext.current
@@ -763,71 +789,57 @@ private fun MdLine(
              * plain tap on a link still opens it.
              */
             .then(
-                if (sharedSelection == null) Modifier else Modifier.pointerInput(sharedSelection, source, sharedSelection.armed) {
+                if (sharedSelection == null) Modifier else Modifier.pointerInput(sharedSelection, source) {
                     awaitEachGesture {
-                        /*
-                         * Two modes, and the difference is who owns the long press.
-                         *
-                         * Normally it belongs to the message sheet (复制 / 从此处分支),
-                         * so this detector only watches for a tap that clears an
-                         * existing selection and lets everything else through
-                         * unconsumed. Once the sheet's 选择文本 has armed the reply,
-                         * a press is ours: it picks the word under the finger.
-                         */
-                        if (!sharedSelection.armed && sharedSelection.isEmpty) return@awaitEachGesture
                         val down = awaitFirstDown(requireUnconsumed = false)
                         val laid = layout
                         if (laid == null) return@awaitEachGesture
-                        /*
-                         * Consume before anything else looks at it.
-                         *
-                         * `Text` has its own long-press behaviour in this
-                         * release, and it sits below this detector in the
-                         * pointer chain: unconsumed, it opens its own 复制
-                         * toolbar on a press that was meant to pick a word. The
-                         * down event is taken here so the gesture is ours alone.
-                         */
-                        down.consume()
-                        if (!sharedSelection.armed) {
-                            // An existing selection: any touch dismisses it, and the
-                            // touch is left unconsumed so the sheet can still open.
-                            sharedSelection.clear()
-                            return@awaitEachGesture
-                        }
                         val downOffset = laid.getOffsetForPosition(down.position)
 
-                        down.consume()
                         /*
-                         * Once armed, a plain tap picks the word too.
+                         * Long press picks a word; a short tap clears.
                          *
-                         * The long press is not available on every device: this
-                         * pad opens its own system surface on a sustained press,
-                         * so waiting for the timeout meant the gesture went to
-                         * the system instead of to the text. A tap has no such
-                         * competition, and after 选择文本 the reader has already
-                         * said what they want - so the press does not have to be
-                         * long to mean selection.
+                         * `Text` has its own long-press behaviour in this release
+                         * and sits below this detector, so the down is consumed
+                         * as soon as the gesture is ours - otherwise its own 复制
+                         * toolbar opens underneath this one.
+                         *
+                         * The wait is what separates the two: held past the
+                         * timeout means selection, released before it means a tap
+                         * on words that were only being read, which dismisses a
+                         * wash if one is lit.
                          */
+                        val released = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                            waitForUpOrCancellation()
+                        }
+                        if (released != null) {
+                            if (!sharedSelection.isEmpty) sharedSelection.clear()
+                            return@awaitEachGesture
+                        }
+                        down.consume()
+
                         if (sharedSelection.isEmpty) {
+                            // Word granularity, which is what makes a press land
+                            // on the whole word rather than on one character.
                             val word = laid.getWordBoundary(downOffset)
                             sharedSelection.anchorLine = lineIndex
-                            sharedSelection.anchorOffset = word.start - lineStart
+                            sharedSelection.anchorOffset = word.start
                             sharedSelection.activeLine = lineIndex
-                            sharedSelection.activeOffset = word.end - lineStart
+                            sharedSelection.activeOffset = word.end
                         } else {
                             // Already lit: the press grabs whichever end is nearer,
                             // which is what gives the two handles their behaviour
                             // without drawing grab targets of their own.
-                            if (sharedSelection.endNear(lineIndex, downOffset - lineStart)) {
-                                sharedSelection.moveEnd(lineIndex, downOffset - lineStart)
+                            if (sharedSelection.endNear(lineIndex, downOffset)) {
+                                sharedSelection.moveEnd(lineIndex, downOffset)
                             } else {
-                                sharedSelection.moveStart(lineIndex, downOffset - lineStart)
+                                sharedSelection.moveStart(lineIndex, downOffset)
                             }
                         }
                         drag(down.id) { change ->
                             val offset = layout?.getOffsetForPosition(change.position) ?: return@drag
                             sharedSelection.activeLine = lineIndex
-                            sharedSelection.activeOffset = offset - lineStart
+                            sharedSelection.activeOffset = offset
                             change.consume()
                         }
                     }
@@ -867,21 +879,15 @@ private fun blockText(block: MdBlock): String = when (block) {
 }
 
 /**
- * How many characters a block contributes to the container's flat string.
+ * How many characters a block contributes to the reply's flat text.
  *
- * A quote and a list are containers, so they are measured by what they hold;
- * a table by its cells; a rule contributes nothing, since it draws a line
- * rather than text and the container does not register it.
+ * Deliberately the length of `blockText(block)` rather than a sum of the parts:
+ * the two used to be written separately and disagreed the moment a block joined
+ * its pieces with a newline (a list, a quote, a table), so the offset table and
+ * the text drifted apart and every selection after the first list landed on the
+ * wrong characters. One function now feeds both, and they cannot disagree.
  */
-private fun flatLength(block: MdBlock): Int = when (block) {
-    is MdBlock.Heading -> block.text.length
-    is MdBlock.Para -> block.text.length
-    is MdBlock.Code -> block.code.length
-    is MdBlock.ListBlock -> block.items.sumOf { it.text.length }
-    is MdBlock.Quote -> block.blocks.sumOf { flatLength(it) + 1 }
-    is MdBlock.Table -> block.head.sumOf { it.length } + block.rows.sumOf { r -> r.sumOf { it.length } }
-    MdBlock.Rule -> 0
-}
+private fun flatLength(block: MdBlock): Int = blockText(block).length
 
 /**
  * What the reader has selected, held by the reply rather than by a container.

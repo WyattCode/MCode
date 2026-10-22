@@ -7213,9 +7213,21 @@ fun Timeline(
                                         top = if (isUser) 10.8.dp else 5.dp,
                                         bottom = if (isUser) 10.5.dp else 5.dp,
                                     )
-                                    // Claude's turns answer a long press with
-                                    // 复制 / 从此处分支; both are here now.
-                                    .combinedClickable(onClick = {}, onLongClick = { onMessage(item) }),
+                                    /*
+                                     * No long press here.
+                                     *
+                                     * It used to open the message sheet, and that
+                                     * is what made the text unselectable: this
+                                     * detector sits outside the words, so it took
+                                     * the press before any line could, and a
+                                     * sustained press painted the whole bubble
+                                     * grey instead of picking a word. The sheet
+                                     * moved to the ⓘ mark under the reply, where
+                                     * it does not compete with the words.
+                                     */
+                                    .pointerInput(item.id) {
+                                        detectTapGestures(onTap = {})
+                                    },
                             ) {
                                 // A picture arrives above the words it was sent
                                 // with, the way the desktop draws it.
@@ -7498,6 +7510,26 @@ fun Timeline(
                                                 contentDescription = "分享",
                                                 tint = LocalMuted.current,
                                                 modifier = Modifier.size(14.0.dp),
+                                            )
+                                        }
+                                        /*
+                                         * 更多, where the message sheet lives now.
+                                         *
+                                         * The sheet used to answer a long press,
+                                         * which is the one gesture the text needs
+                                         * for selection - so it moved here, beside
+                                         * 复制 and 分享, and the long press was freed
+                                         * for the words.
+                                         */
+                                        Box(
+                                            Modifier.size(20.dp).clickable { onMessage(item) },
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Icon(
+                                                Icons.Outlined.MoreVert,
+                                                contentDescription = "更多",
+                                                tint = LocalMuted.current,
+                                                modifier = Modifier.size(15.6.dp),
                                             )
                                         }
                                     }
