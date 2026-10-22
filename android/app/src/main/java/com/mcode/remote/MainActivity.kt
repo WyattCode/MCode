@@ -8794,6 +8794,22 @@ fun ProjectsScreen(
     var addDraft by remember { mutableStateOf("") }
     var creating by remember { mutableStateOf(false) }
     var createDraft by remember { mutableStateOf("") }
+    /*
+     * The header's two marks are controls, not decoration: the magnifier opens
+     * a name filter and the sliders keep only the folders that have a
+     * conversation. They are drawn to the reference's geometry because its page
+     * carries the same pair, and both do what their label says - a mark that
+     * looks clickable and is not is the one thing a header must not contain.
+     */
+    var searching by remember { mutableStateOf(false) }
+    var nameFilter by remember { mutableStateOf("") }
+    var onlyWithSessions by remember { mutableStateOf(false) }
+    val visible = remember(rows, nameFilter, onlyWithSessions) {
+        rows.filter { row ->
+            (nameFilter.isBlank() || row.name.contains(nameFilter, ignoreCase = true) || row.directory.contains(nameFilter, ignoreCase = true)) &&
+                (!onlyWithSessions || row.sessions > 0)
+        }
+    }
     val muted = LocalMuted.current
     val ink = LocalText.current
     val fieldLine = LocalFieldLine.current
@@ -8804,27 +8820,134 @@ fun ProjectsScreen(
         // without this the title sat on top of the clock, as the plugins page's
         // first cut did.
         Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
-        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(38.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = LocalText.current, modifier = Modifier.size(20.dp))
+        /*
+         * The reference's projects header: burger, 项目 centred on the column,
+         * and two marks on the right - a magnifier and a filter.
+         *
+         * Measured: 「项目」 runs x 163.2..196.8 (centre 180.0, the column's
+         * own), the magnifier's target 272.0..312.0 and the filter's
+         * 316.0..356.0, both 40 square on y 44.8..84.8. This header carried a
+         * 24sp left-aligned title and a back arrow, which is the shape of a
+         * pushed screen rather than of the reference's page - the page is one of
+         * the four the drawer switches between, so it is reached from the drawer
+         * and has no "back" of its own.
+         */
+        Box(Modifier.fillMaxWidth().height(63.2.dp)) {
+            Text(
+                "项目",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                color = LocalText.current,
+                maxLines = 1,
+                softWrap = false,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.fillMaxSize().wrapContentHeight().align(Alignment.Center).offset(x = (-5.2).dp),
+            )
+            Row(
+                Modifier.fillMaxWidth().height(63.2.dp).padding(start = 1.6.dp, end = 4.4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier.size(44.dp).clickable { onClose() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MiIcon(
+                        "M0.95 2.6h22.1M0.95 12h22.1M0.95 21.4h11.05",
+                        contentDescription = "菜单",
+                        modifier = Modifier.size(16.4.dp),
+                        viewBox = 24f,
+                        strokeWidth = 1.9f,
+                        tint = LocalText.current,
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                /*
+                 * 搜索项目 and 筛选项目 are real: the page filters its rows by
+                 * name and by whether it has conversations. They are drawn as
+                 * the reference's two 40-square targets, at its two positions.
+                 */
+                Box(
+                    Modifier.size(40.dp).clickable { searching = !searching },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Outlined.Search, contentDescription = "搜索项目", tint = LocalText.current, modifier = Modifier.size(17.dp))
+                }
+                Box(
+                    Modifier.size(40.dp).clickable { onlyWithSessions = !onlyWithSessions },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MiIcon(
+                        "M4 5.6h16M7 12h10M10 18.4h4",
+                        contentDescription = "筛选项目",
+                        modifier = Modifier.size(16.8.dp),
+                        viewBox = 24f,
+                        strokeWidth = 1.8f,
+                        tint = if (onlyWithSessions) MaterialTheme.colorScheme.primary else LocalText.current,
+                    )
+                }
             }
-            Spacer(Modifier.width(6.dp))
-            Text("项目", fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = LocalText.current, modifier = Modifier.weight(1f))
         }
-        if (rows.isEmpty()) {
-            // The empty outline: a folder with no fill, the words, and the one
-            // sentence that says what a project is.
-            Column(Modifier.fillMaxWidth().padding(top = 90.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Outlined.Folder, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(63.dp))
+        if (searching) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 12.dp, end = 20.4.dp, top = 13.2.dp, bottom = 8.dp)
+                    .border(0.8.dp, LocalFieldLine.current, RoundedCornerShape(17.2.dp))
+                    .background(LocalField.current, RoundedCornerShape(17.2.dp))
+                    .padding(start = 10.2.dp, end = 11.dp, top = 11.dp, bottom = 11.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(19.dp))
+                Spacer(Modifier.width(0.4.dp))
+                androidx.compose.foundation.text.BasicTextField(
+                    value = nameFilter,
+                    onValueChange = { nameFilter = it },
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 15.sp, color = LocalText.current),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        if (visible.isEmpty()) {
+            /*
+             * The reference's own empty page, in its own words.
+             *
+             * Measured off Claude's projects page at 400dpi: its tray mark is
+             * centred on the column, 「暂无项目」 runs x 146.4..213.6 at y
+             * 416.4..440.4 (24 tall - 17sp, medium), and the sentence under it
+             * runs 61.6..298.4 at 448.4..469.6 (21.2 - 13sp). This said
+             * 「添加一个文件夹，把它的对话归在一起。」, which is this app's own
+             * explanation of its own feature rather than the reference's line;
+             * the reference says 「您创建或加入的项目将显示在此处。」 - what the
+             * page is for, not how to work it.
+             */
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 168.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                // The tray, not a folder: the reference's empty mark is the same
+                // inbox its 项目 row wears, at 40.
+                MiIcon(
+                    "M2 2.6h20M2 8.2h20M3.6 12.4h16.8l-1.6 9.2H5.2z",
+                    contentDescription = null,
+                    modifier = Modifier.size(40.dp),
+                    viewBox = 24f,
+                    strokeWidth = 1.6f,
+                    tint = LocalMuted.current,
+                )
                 Spacer(Modifier.height(14.dp))
-                Text("暂无项目", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
-                Spacer(Modifier.height(4.dp))
-                Text("添加一个文件夹，把它的对话归在一起。", fontSize = 13.sp, color = LocalMuted.current)
+                Text("暂无项目", fontSize = 17.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "您创建或加入的项目将显示在此处。",
+                    fontSize = 13.sp,
+                    lineHeight = 21.2.sp,
+                    color = LocalMuted.current,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
             }
         }
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 20.dp)) {
-            items(rows.size) { index ->
-                val row = rows[index]
+            items(visible.size) { index ->
+                val row = visible[index]
                 Box(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
                     Row(
                         Modifier
@@ -8883,31 +9006,50 @@ fun ProjectsScreen(
         }
         // The two ways a project comes into being, at the foot of the page the
         // way the desktop's home carries them.
+        /*
+         * A right-hand capsule, not two full-width buttons.
+         *
+         * The reference's projects page carries one dark pill at the foot of the
+         * column - 「+ 新建项目」, 122.8 wide and 40 tall, its right edge 16.4
+         * from the column's own - and it has no second button because its only
+         * way in is "make a blank project". MCode has two ways in from the
+         * desktop (a blank folder, or a path that already exists), so both stay:
+         * the primary keeps the reference's capsule and the second becomes the
+         * text control the reference would use for a secondary action.
+         */
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Modifier.fillMaxWidth().padding(start = 18.dp, end = 16.4.dp, top = 10.dp, bottom = 10.dp),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = LocalPill.current,
-                modifier = Modifier.weight(1f).clickable { creating = true },
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(22.dp))
+                    .clickable { adding = true; addDraft = "" }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(Modifier.padding(vertical = 10.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Add, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(15.dp))
-                    Spacer(Modifier.width(5.dp))
-                    Text("新建空白项目", fontSize = 13.sp, color = LocalText.current)
-                }
+                Icon(Icons.Outlined.FolderOpen, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("添加文件夹", fontSize = 13.sp, color = LocalMuted.current)
             }
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = LocalPill.current,
-                modifier = Modifier.weight(1f).clickable { adding = true; addDraft = "" },
+            Spacer(Modifier.width(8.dp))
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(LocalText.current)
+                    .clickable { creating = true }
+                    .padding(horizontal = 16.dp, vertical = 10.5.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(Modifier.padding(vertical = 10.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.FolderOpen, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(15.dp))
-                    Spacer(Modifier.width(5.dp))
-                    Text("添加文件夹", fontSize = 13.sp, color = LocalText.current)
-                }
+                Icon(Icons.Filled.Add, contentDescription = null, tint = LocalBg.current, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    "新建项目",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = LocalBg.current,
+                )
             }
         }
         Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
