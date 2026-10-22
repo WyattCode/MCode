@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
@@ -30,16 +31,27 @@ android {
     buildFeatures {
         compose = true
     }
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.14"
-    }
+    /*
+     * No `composeOptions` block.
+     *
+     * The compiler extension version is chosen by `org.jetbrains.kotlin.plugin.compose`
+     * since Kotlin 2.0 - leaving 1.5.14 here would either be ignored or
+     * conflict, and either way it no longer describes the compiler in use.
+     */
     packaging {
         resources.excludes += "META-INF/*"
     }
 }
 
 dependencies {
-    val composeBom = platform("androidx.compose:compose-bom:2024.05.00")
+    /*
+     * 2024.09.03 is the first BOM on foundation 1.7.8 - the release where
+     * `SelectionRegistrar` carries no opt-in annotation (verified against the
+     * published artifact: its class file has no `@InternalFoundationApi` and no
+     * `@ExperimentalFoundationApi`), and `Selection` exposes `start`/`end`
+     * offsets through `getSubselections`.
+     */
+    val composeBom = platform("androidx.compose:compose-bom:2024.09.03")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
