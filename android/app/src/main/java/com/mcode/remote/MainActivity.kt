@@ -11632,8 +11632,17 @@ fun ScheduledScreen(
             }
         }
         if (tasks.isEmpty()) {
+            /*
+             * 393, not 300.
+             *
+             * Measured: the reference's 「暂无定时任务」 ink runs y
+             * 497.2..510.8 and its sentence 526.4..540.0, on a page whose header
+             * ends at 73.2. This block started at 404.0 - 93 short - because the
+             * 300 was a guess at a full-screen page's centre rather than the
+             * reference's own height.
+             */
             Column(
-                Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 300.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 393.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 MiIcon(
@@ -11702,6 +11711,15 @@ fun ScheduledScreen(
                 }
             }
         }
+        /*
+         * The capsule stays at the foot.
+         *
+         * Without this spacer the empty block above - which is a fixed 393 of
+         * top padding rather than a weighted region - pushed the capsule up to
+         * sit directly under its sentence, where the reference has it 300 dp
+         * lower on the column's own floor.
+         */
+        Spacer(Modifier.weight(1f))
         Row(
             Modifier.fillMaxWidth().padding(start = 18.dp, end = 16.4.dp, top = 10.dp, bottom = 10.dp),
             horizontalArrangement = Arrangement.End,
