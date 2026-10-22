@@ -7668,6 +7668,9 @@ fun Timeline(
                 .size(43.dp)
                 .shadow(3.dp, CircleShape)
                 .background(if (LocalBg.current == DarkBg) Color(0xFF2E2E2E) else Color(0xFFFEFEFE), CircleShape)
+                // Clipped, so a press cannot paint a square patch across the
+                // circle's four corners - the shape the eye reads first.
+                .clip(CircleShape)
                 .clickable {
                     follows = true
                     scope.launch { listState.animateScrollToItem(rows.size + if (running) 0 else -1) }
