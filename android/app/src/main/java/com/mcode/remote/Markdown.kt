@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -195,7 +196,12 @@ object Md {
 /* ------------------------------------------------------------------ */
 
 /** An inline run of text plus the ranges that should open something. */
-data class MdInline(val text: AnnotatedString, val links: List<Pair<IntRange, String>>)
+data class MdInline(
+    val text: AnnotatedString,
+    val links: List<Pair<IntRange, String>>,
+    /** Where the inline code sits, so the line can paint a rounded fill under it. */
+    val code: List<IntRange> = emptyList(),
+)
 
 object MdText {
     private val CODE = Regex("`([^`]+)`")
@@ -204,18 +210,31 @@ object MdText {
     fun inline(source: String, linkColor: Color): MdInline {
         val builder = AnnotatedString.Builder()
         val links = mutableListOf<Pair<IntRange, String>>()
+        val codeRanges = mutableListOf<IntRange>()
         var at = 0
         // Code wins over emphasis, the way the spec says it does: split the
         // line on code first, then read the gaps for everything else.
         for (hit in CODE.findAll(source)) {
             if (hit.range.first > at) emphasis(builder, source.substring(at, hit.range.first), links, linkColor)
-            builder.pushStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = chipBg, color = chipFg, fontSize = 13.sp))
+            /*
+             * The chip's own extent, kept so the line can round its ends.
+             *
+             * A `SpanStyle` background is a rectangle with square corners - the
+             * rectangle is drawn behind the glyphs, and no amount of shape on
+             * the `Text` reaches inside it. The reference's inline code is a
+             * 29.6-tall block with a small corner, so the fill is painted by
+             * `MdLine` from this range instead, and the span keeps only the
+             * colour of the letters.
+             */
+            val from = builder.length
+            builder.pushStyle(SpanStyle(fontFamily = FontFamily.Monospace, color = chipFg, fontSize = 13.sp))
             builder.append(hit.groupValues[1])
             builder.pop()
+            codeRanges.add(from until builder.length)
             at = hit.range.last + 1
         }
         if (at < source.length) emphasis(builder, source.substring(at), links, linkColor)
-        return MdInline(builder.toAnnotatedString(), links)
+        return MdInline(builder.toAnnotatedString(), links, codeRanges)
     }
 
     private fun emphasis(builder: AnnotatedString.Builder, source: String, links: MutableList<Pair<IntRange, String>>, linkColor: Color) {
@@ -451,6 +470,58 @@ private fun MdLine(
         onTextLayout = { layout = it },
         modifier = modifier
             .fillMaxWidth()
+            /*
+             * Inline code's fill, drawn rather than spanned.
+             *
+             * The reference's chip is a 29.6-tall block with a rounded corner;
+             * a `SpanStyle` background is a bare rectangle behind the glyphs, so
+             * every chip in this transcript had square ends while the
+             * reference's are cut. The fill is painted here from the layout's own
+             * boxes - one path per line, so a chip that wraps is filled as two
+             * pieces rather than as one band across the column - and the span
+             * keeps only the letter colour.
+             */
+            .drawBehind {
+                if (inline.code.isEmpty()) return@drawBehind
+                val laid = layout ?: return@drawBehind
+                val radius = 4.dp.toPx()
+                for (range in inline.code) {
+                    /*
+                     * One rounded rect per band of lines the chip covers.
+                     *
+                     * `TextLayoutResult` exposes `getBoundingBox(start, end)` for a
+                     * single slice, and its `getBoundingBoxes` overload wants a
+                     * `TextBox` range from `getRangeForRect` - so the bounds are
+                     * walked line by line instead: find the line holding the
+                     * chip's first character, and extend while the chip still has
+                     * characters on that line. A chip that wraps therefore yields
+                     * two boxes, which is what the reference draws too.
+                     */
+                    for (box in chipBoxes(laid, range)) {
+                        // Grown by 1.6 on each side and 4 above and below: the
+                        // glyph box is the em, and the reference's fill stands
+                        // clear of the letters on all four sides.
+                        /*
+                         * The glyph box is already the line's own height here -
+                         * 14sp mono in a 30sp line - so the fill needs no
+                         * vertical inflation. 3.6 above and below made the chip
+                         * 36.8 tall against the reference's 29.6; with the box
+                         * taken as it is, only the horizontal 1.6 a side
+                         * remains, which is the air the reference puts before
+                         * the first letter and after the last.
+                         */
+                        drawRoundRect(
+                            color = chipBg,
+                            topLeft = androidx.compose.ui.geometry.Offset(box.left - 1.6.dp.toPx(), box.top),
+                            size = androidx.compose.ui.geometry.Size(
+                                box.width + 3.2.dp.toPx(),
+                                box.height,
+                            ),
+                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(radius, radius),
+                        )
+                    }
+                }
+            }
             .then(
                 if (inline.links.isEmpty()) Modifier else Modifier.pointerInput(inline) {
                     detectTapGestures { pos ->
@@ -463,6 +534,49 @@ private fun MdLine(
                 },
             ),
     )
+}
+
+/**
+ * The boxes an inline chip covers, one per line it spans.
+ *
+ * `getBoundingBox(start, end)` answers the union of a slice, which for a chip
+ * that wraps is a rectangle reaching from the end of one line to the start of
+ * the next - a band across the column. Walking the lines instead gives one box
+ * per run of characters the chip actually owns, so a wrapped chip is filled as
+ * two pieces the way the reference draws it.
+ */
+private fun chipBoxes(laid: androidx.compose.ui.text.TextLayoutResult, range: IntRange): List<androidx.compose.ui.geometry.Rect> {
+    if (range.isEmpty()) return emptyList()
+    /*
+     * Per character, merged along their line.
+     *
+     * This Compose ships only `getBoundingBox(offset: Int)` - the slice overload
+     * is not in the API at this version - so the chip is accumulated one glyph
+     * at a time and each run is closed when the line changes. The union is the
+     * glyph box, which is what the fill wants anyway: it is inflated by the
+     * caller for the reference's padding.
+     */
+    val out = mutableListOf<androidx.compose.ui.geometry.Rect>()
+    var run: androidx.compose.ui.geometry.Rect? = null
+    var runLine = -1
+    for (offset in range) {
+        val line = laid.getLineForOffset(offset)
+        val box = laid.getBoundingBox(offset)
+        if (run == null || line != runLine) {
+            run?.let { out.add(it) }
+            run = box
+            runLine = line
+        } else {
+            run = androidx.compose.ui.geometry.Rect(
+                left = minOf(run.left, box.left),
+                top = minOf(run.top, box.top),
+                right = maxOf(run.right, box.right),
+                bottom = maxOf(run.bottom, box.bottom),
+            )
+        }
+    }
+    run?.let { out.add(it) }
+    return out
 }
 
 /**

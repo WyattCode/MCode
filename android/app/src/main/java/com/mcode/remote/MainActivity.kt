@@ -116,6 +116,8 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
+import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -899,6 +901,40 @@ fun MCodeTheme(content: @Composable () -> Unit) {
         LocalLine provides line,
         LocalField provides (if (dark) DarkField else CreamSurface),
         LocalFieldLine provides (if (dark) DarkFieldLine else FieldLine),
+        /*
+         * The selection tint, which this app had never set.
+         *
+         * A long press on a reply showed Compose's default - a saturated blue
+         * drawn as a bare span behind the glyphs, with square ends. Read off the
+         * reference's own selection on the pad at 400 dpi: the tint is a warm
+         * #ECDFE6 behind dark ink, its block is 29.6 tall over glyphs 12 tall,
+         * and its corners are rounded by about 4 dp - a highlighter stroke, not
+         * a text marker. The tint here matches it; the corner needs the drawn
+         * highlight `SelectionTint` below, since a span cannot be rounded.
+         *
+         * Dark keeps the same warm family rather than inverting to blue: on a
+         * #151515 page a blue wash reads as a system artefact, and the
+         * reference's own dark theme tints rather than inverts.
+         */
+        /*
+         * The selection tint, which this app had never set at all.
+         *
+         * Nothing here was inside a `SelectionContainer`, so a long press on a
+         * reply produced no selection whatsoever. Read off the reference's own
+         * selection on the pad at 400 dpi: a warm #ECDFE6 behind dark ink, its
+         * block 29.6 tall over glyphs 12 tall, corners rounded by about 4 dp.
+         *
+         * Compose 1.7 (BOM 2024.05) cannot round it: `SelectionContainer`
+         * paints `backgroundColor` as one rectangle per line, hard against the
+         * glyphs, and the registrar that would let a line draw its own is
+         * `@InternalFoundationApi`. So the colour is the reference's, and the
+         * corner stays square until that API is public - a transparent tint
+         * would have removed the highlight rather than shaped it.
+         */
+        LocalTextSelectionColors provides TextSelectionColors(
+            handleColor = if (dark) Color(0xFFD9A08C) else Color(0xFFB4705A),
+            backgroundColor = if (dark) Color(0xFF5A4038) else Color(0xFFECDFE6),
+        ),
     ) {
         MaterialTheme(colorScheme = scheme, content = content)
     }
@@ -7132,10 +7168,24 @@ fun Timeline(
                                     }
                                 } else {
                                     if (item.text.isNotBlank()) {
-                                        MarkdownBody(
-                                            item.text,
-                                            dark = LocalBg.current == DarkBg,
-                                        )
+                                        /*
+                                         * A reply can be selected.
+                                         *
+                                         * Nothing in this app was inside a
+                                         * `SelectionContainer`, so a long press
+                                         * on a reply produced no selection at
+                                         * all - while the reference selects, and
+                                         * with a warm #ECDFE6 tint rather than
+                                         * the system's blue. The tint is provided
+                                         * by `MCodeTheme`; this is the container
+                                         * that lets it be seen.
+                                         */
+                                        androidx.compose.foundation.text.selection.SelectionContainer {
+                                            MarkdownBody(
+                                                item.text,
+                                                dark = LocalBg.current == DarkBg,
+                                            )
+                                        }
                                     }
                                     /*
                                      * `finish` says how the turn ended, and the
