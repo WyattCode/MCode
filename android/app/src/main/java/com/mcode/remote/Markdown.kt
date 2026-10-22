@@ -333,6 +333,12 @@ fun MarkdownBody(
     modifier: Modifier = Modifier,
     dark: Boolean = false,
     onCopy: (String) -> Unit = {},
+    /*
+     * The selection this reply should use, when the caller owns it - the screen
+     * does, because the message sheet's 选择文本 arms it from outside the
+     * transcript. A caller that does not pass one gets a private instance.
+     */
+    share: SelectionState? = null,
 ) {
     /*
      * One drag for the whole reply.
@@ -346,7 +352,7 @@ fun MarkdownBody(
      * `SelectionContainer` overload are `internal` in Kotlin at every foundation
      * version checked, up to 1.10.
      */
-    val sharedSelection: SelectionState = remember(source) { SelectionState() }
+    val sharedSelection: SelectionState = share ?: remember(source) { SelectionState() }
     val blocks = remember(source) { Md.blocks(source) }
     val textColor = LocalText.current
     val muted = LocalMuted.current
@@ -757,24 +763,51 @@ private fun MdLine(
              * plain tap on a link still opens it.
              */
             .then(
-                if (sharedSelection == null) Modifier else Modifier.pointerInput(sharedSelection, source) {
+                if (sharedSelection == null) Modifier else Modifier.pointerInput(sharedSelection, source, sharedSelection.armed) {
                     awaitEachGesture {
+                        /*
+                         * Two modes, and the difference is who owns the long press.
+                         *
+                         * Normally it belongs to the message sheet (复制 / 从此处分支),
+                         * so this detector only watches for a tap that clears an
+                         * existing selection and lets everything else through
+                         * unconsumed. Once the sheet's 选择文本 has armed the reply,
+                         * a press is ours: it picks the word under the finger.
+                         */
+                        if (!sharedSelection.armed && sharedSelection.isEmpty) return@awaitEachGesture
                         val down = awaitFirstDown(requireUnconsumed = false)
                         val laid = layout
                         if (laid == null) return@awaitEachGesture
-                        val downOffset = laid.getOffsetForPosition(down.position)
-
-                        // Held long enough? Then this is a selection, not a tap.
-                        val held = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
-                            waitForUpOrCancellation()
-                        }
-                        if (held != null) {
-                            // Released before the timeout: a plain tap.
-                            if (!sharedSelection.isEmpty) sharedSelection.clear()
+                        /*
+                         * Consume before anything else looks at it.
+                         *
+                         * `Text` has its own long-press behaviour in this
+                         * release, and it sits below this detector in the
+                         * pointer chain: unconsumed, it opens its own 复制
+                         * toolbar on a press that was meant to pick a word. The
+                         * down event is taken here so the gesture is ours alone.
+                         */
+                        down.consume()
+                        if (!sharedSelection.armed) {
+                            // An existing selection: any touch dismisses it, and the
+                            // touch is left unconsumed so the sheet can still open.
+                            sharedSelection.clear()
                             return@awaitEachGesture
                         }
+                        val downOffset = laid.getOffsetForPosition(down.position)
 
                         down.consume()
+                        /*
+                         * Once armed, a plain tap picks the word too.
+                         *
+                         * The long press is not available on every device: this
+                         * pad opens its own system surface on a sustained press,
+                         * so waiting for the timeout meant the gesture went to
+                         * the system instead of to the text. A tap has no such
+                         * competition, and after 选择文本 the reader has already
+                         * said what they want - so the press does not have to be
+                         * long to mean selection.
+                         */
                         if (sharedSelection.isEmpty) {
                             val word = laid.getWordBoundary(downOffset)
                             sharedSelection.anchorLine = lineIndex
@@ -870,6 +903,16 @@ class SelectionState {
     var activeLine by mutableStateOf(-1)
     var activeOffset by mutableStateOf(0)
 
+    /*
+     * Whether the reader asked for selection from the message sheet.
+     *
+     * A long press on a reply already opens 复制 / 从此处分支, and the reference
+     * keeps that: its sheet carries 选择文本 as an item rather than binding the
+     * long press to the text. So the same shape here - the sheet turns this on,
+     * the next press picks a word, and a tap clears both.
+     */
+    var armed by mutableStateOf(false)
+
     val isEmpty: Boolean get() = anchorLine < 0
 
     /*
@@ -921,6 +964,7 @@ class SelectionState {
         activeLine = -1
         anchorOffset = 0
         activeOffset = 0
+        armed = false
     }
 }
 

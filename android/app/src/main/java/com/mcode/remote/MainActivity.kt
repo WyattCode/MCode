@@ -1281,6 +1281,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     var voiceText by remember { mutableStateOf<String?>(null) }
     /** The turn whose long-press sheet is open (复制 / 从此处分支). */
     var messageTarget by remember { mutableStateOf<Item.Msg?>(null) }
+    /*
+     * Each reply's selection, by message id.
+     *
+     * The sheet's 选择文本 has to arm a state that the reply's `MarkdownBody`
+     * already holds, and the two are not in the same composable - the sheet is
+     * hoisted to the screen. Sharing one map keeps a single source of truth per
+     * message, so arming from the sheet and picking a word in the transcript
+     * address the same object.
+     */
+    val selectionByMessage = remember { mutableMapOf<String, SelectionState>() }
     /** The question being rewritten in 编辑并重发. */
     var editTarget by remember { mutableStateOf<Item.Msg?>(null) }
     var modelPicker by remember { mutableStateOf(false) }
@@ -4188,6 +4198,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                         Timeline(
                                             items,
                                             Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp),
+                                            share = { id -> selectionByMessage.getOrPut(id) { SelectionState() } },
                                             running = sessions.find { it.id == currentSession }?.running == true,
                                             onPerm = ::respondPerm,
                                             onPermReason = ::respondPermReason,
@@ -4266,6 +4277,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         Timeline(
                             items,
                             Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp),
+                            share = { id -> selectionByMessage.getOrPut(id) { SelectionState() } },
                             running = sessions.find { it.id == currentSession }?.running == true,
                             onPerm = ::respondPerm,
                             onPermReason = ::respondPermReason,
@@ -5031,6 +5043,37 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     Icon(Icons.Outlined.ContentCopy, contentDescription = null, tint = LocalText.current, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(14.dp))
                     Text("复制", fontSize = 15.sp, color = LocalText.current)
+                }
+                /*
+                 * 选择文本, the way the reference offers it.
+                 *
+                 * The reference does not bind the long press to the text: its
+                 * sheet carries this item, and picking it is what turns the
+                 * reply selectable. Copying that shape is also what makes the
+                 * rounded wash possible at all - a long press here still belongs
+                 * to this sheet, so nothing upstream fights the gesture that
+                 * picks the word.
+                 */
+                if (msg.role != "user" && msg.text.isNotBlank()) {
+                    Row(Modifier.fillMaxWidth().clickable {
+                        selectionByMessage.getOrPut(msg.id) { SelectionState() }.apply {
+                            clear()
+                            armed = true
+                        }
+                        messageTarget = null
+                        Toast.makeText(context, "长按或拖动选择文字", Toast.LENGTH_SHORT).show()
+                    }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        MiIcon(
+                            "M4.6 6.4h14.8M4.6 12h9.6M4.6 17.6h6.4",
+                            contentDescription = null,
+                            tint = LocalText.current,
+                            modifier = Modifier.size(20.dp),
+                            viewBox = 24f,
+                            strokeWidth = 1.8f,
+                        )
+                        Spacer(Modifier.width(14.dp))
+                        Text("选择文本", fontSize = 15.sp, color = LocalText.current)
+                    }
                 }
                 /*
                  * 编辑并重发 belongs only on the reader's own words: editing a
@@ -6797,6 +6840,14 @@ fun FindCard(
 fun Timeline(
     items: List<Item>,
     modifier: Modifier,
+    /*
+     * Each reply's selection, owned by the screen.
+     *
+     * The message sheet's 选择文本 arms it from outside the transcript, so the
+     * state cannot live inside `MarkdownBody` - the two would be different
+     * objects and the arming would go nowhere.
+     */
+    share: (String) -> SelectionState = { SelectionState() },
     running: Boolean = false,
     onPerm: (String, String) -> Unit = { _, _ -> },
     onPermReason: (String, String) -> Unit = { _, _ -> },
@@ -7275,6 +7326,7 @@ fun Timeline(
                                         MarkdownBody(
                                             item.text,
                                             dark = LocalBg.current == DarkBg,
+                                            share = share(item.id),
                                         )
                                     }
                                     /*
