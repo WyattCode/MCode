@@ -706,10 +706,20 @@ private fun MdLine(
                     for (box in chipBoxes(laid, wash.start until wash.end)) {
                         drawRoundRect(
                             color = selectionTint,
-                            topLeft = androidx.compose.ui.geometry.Offset(box.left - 2.2.dp.toPx(), box.top - 3.0.dp.toPx()),
+                            /*
+                             * 0.2 above and below, not 3.0.
+                             *
+                             * Measured on the pad: the wash came out 35.2 tall
+                             * against the reference's 29.6. The glyph box in this
+                             * line is already 29.2 - the em of a 30sp line - so the
+                             * inflation, not the box, was what made the block too
+                             * thick. The reference's air is horizontal as well, and
+                             * the 2.2 at each end already provides that.
+                             */
+                            topLeft = androidx.compose.ui.geometry.Offset(box.left - 2.2.dp.toPx(), box.top - 0.2.dp.toPx()),
                             size = androidx.compose.ui.geometry.Size(
                                 box.width + 4.4.dp.toPx(),
-                                box.height + 6.0.dp.toPx(),
+                                box.height + 0.4.dp.toPx(),
                             ),
                             cornerRadius = androidx.compose.ui.geometry.CornerRadius(radius, radius),
                         )
