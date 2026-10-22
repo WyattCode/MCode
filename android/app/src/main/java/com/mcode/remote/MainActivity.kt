@@ -2907,6 +2907,29 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         return
     }
 
+    if (leftMode == LeftMode.Scheduled) {
+        /*
+         * 定时任务 - the page the drawer's fourth row has always named.
+         *
+         * That row and the rail's third mark were both labelled 定时任务 and both
+         * opened 插件: the server has pushed `automation.tasks` for a while and
+         * this screen collected them into `automations`, but nothing ever drew
+         * them, so a scheduled task was a thing the phone received and then
+         * silently dropped. The reference has this page as its own, with a
+         * clock, a line, and 新建任务 at the foot.
+         *
+         * Measured off the reference at 400dpi: 暂无定时任务 runs x 135.6..224.4
+         * at y 493.6..514.8, the sentence under it 85.6..274.4 at 522.8..544.0,
+         * and 新建任务's capsule sits at the column's right at 844.8.
+         */
+        ScheduledScreen(
+            tasks = automations.toList(),
+            onNew = { newSession(); leftMode = LeftMode.Sessions },
+            onClose = { leftMode = LeftMode.Sessions },
+        )
+        return
+    }
+
     if (leftMode == LeftMode.Plugins) {
         PluginsScreen(
             servers = pluginServers.toList(),
@@ -3285,6 +3308,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     onNewTask = { newSession(); closeDrawer() },
                     onArtifacts = { leftMode = LeftMode.Artifacts; closeDrawer() },
                     onPlugins = { leftMode = LeftMode.Plugins; closeDrawer() },
+                    onScheduled = { leftMode = LeftMode.Scheduled; closeDrawer() },
                     onProjects = { leftMode = LeftMode.Projects; closeDrawer() },
                     onSettings = { leftMode = LeftMode.Settings; closeDrawer() },
                     currentPage = leftMode,
@@ -3501,7 +3525,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          * drawer offers. It had no way in from this bar before,
                          * which left the page reachable only from the drawer.
                          */
-                        Box(Modifier.size(40.dp).clickable { leftMode = LeftMode.Plugins }, contentAlignment = Alignment.Center) {
+                        Box(Modifier.size(40.dp).clickable { leftMode = LeftMode.Scheduled }, contentAlignment = Alignment.Center) {
                             /*
                              * Three checks, each followed by a rule, filling
                              * the grid: ink measured 16.8 square at x 327.2,
@@ -3515,7 +3539,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 modifier = Modifier.size(16.8.dp),
                                 viewBox = 24f,
                                 strokeWidth = 1.7f,
-                                tint = if (leftMode == LeftMode.Plugins) MaterialTheme.colorScheme.primary else LocalText.current,
+                                tint = if (leftMode == LeftMode.Scheduled) MaterialTheme.colorScheme.primary else LocalText.current,
                             )
                         }
                     }
@@ -8191,6 +8215,7 @@ fun DrawerContent(
     onNewTask: () -> Unit = {},
     onArtifacts: () -> Unit = {},
     onPlugins: () -> Unit = {},
+    onScheduled: () -> Unit = {},
     onProjects: () -> Unit = {},
     onSettings: () -> Unit = {},
     /** Which column page is open, so the drawer can mark the row for it. */
@@ -8345,12 +8370,21 @@ fun DrawerContent(
                 path = "M7.6 12.2A5.4 5.4 0 0 1 18.4 9.4l-6.2 6.2a5.4 5.4 0 0 1-4.6-3.4zM12.4 12.2h9v9h-9z",
                 pathStroke = 1.5f,
             ) { onArtifacts() }
+            /*
+             * 定时任务, and it opens 定时任务.
+             *
+             * This row carried a clock and the word 定时任务 while its click
+             * went to `onPlugins` - the label and the destination disagreed,
+             * and the page the label promised did not exist at all, so the
+             * `automation.tasks` the server pushes were collected and never
+             * drawn. It has its own page now.
+             */
             DrawerItem(
                 Icons.Outlined.Schedule,
                 "定时任务",
-                active = currentPage == LeftMode.Plugins,
-                path = "M12 3.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8zM12 7.8V12l3 1.8",
-            ) { onPlugins() }
+                active = currentPage == LeftMode.Scheduled,
+                path = "M12 3.6c4.64 0 8.4 3.76 8.4 8.4s-3.76 8.4-8.4 8.4S3.6 16.64 3.6 12 7.36 3.6 12 3.6zM12 7.8V12l3 1.8",
+            ) { onScheduled() }
             /*
              * The hairline sits 8.2 under the last row and 20.2 above the
              * section head.
@@ -9172,7 +9206,7 @@ fun ProjectsScreen(
 }
 
 /** Which page the left column is showing. Claude switches between them in place. */
-enum class LeftMode { Sessions, Projects, Artifacts, Plugins, Settings }
+enum class LeftMode { Sessions, Projects, Artifacts, Scheduled, Plugins, Settings }
 
 /**
  * The black capsule at the foot of the column.
@@ -9472,9 +9506,60 @@ fun ArtifactsScreen(
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(44.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = LocalText.current, modifier = Modifier.size(20.dp))
+        /*
+         * The reference's artifacts header: burger, Artifacts centred on the
+         * column, one mark on the right.
+         *
+         * Measured at 400dpi: 「Artifacts」 runs x 143.6..216.4 (centre 180.0)
+         * and the filter's target 316.0..356.0 on y 44.8..84.8. This header was
+         * a bare 44dp back arrow over a 24sp title, which is a pushed screen's
+         * shape; the page is one of the four the drawer switches between.
+         *
+         * What follows it is not the reference's: its page is one 334-wide
+         * search field and an empty mark, while this one carries the desktop's
+         * own anatomy - a title, a sentence, the kind chips and the layout
+         * switch, all of which filter or re-draw the list and none of which the
+         * reference has because its Artifacts page has nothing to filter yet.
+         */
+        Box(Modifier.fillMaxWidth().height(63.2.dp)) {
+            Text(
+                "Artifacts",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                color = LocalText.current,
+                maxLines = 1,
+                softWrap = false,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.fillMaxSize().wrapContentHeight().align(Alignment.Center).offset(x = (-5.2).dp),
+            )
+            Row(
+                Modifier.fillMaxWidth().height(63.2.dp).padding(start = 1.6.dp, end = 4.4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(44.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
+                    MiIcon(
+                        "M0.95 2.6h22.1M0.95 12h22.1M0.95 21.4h11.05",
+                        contentDescription = "菜单",
+                        modifier = Modifier.size(16.4.dp),
+                        viewBox = 24f,
+                        strokeWidth = 1.9f,
+                        tint = LocalText.current,
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                Box(
+                    Modifier.size(40.dp).clickable { grid = !grid },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MiIcon(
+                        "M4 5.6h16M7 12h10M10 18.4h4",
+                        contentDescription = if (grid) "列表视图" else "网格视图",
+                        modifier = Modifier.size(16.8.dp),
+                        viewBox = 24f,
+                        strokeWidth = 1.8f,
+                        tint = LocalText.current,
+                    )
+                }
             }
         }
         LazyColumn(
@@ -11324,6 +11409,143 @@ private val STEP_MARKS = mapOf(
     "memory" to "M12 5.5a3.5 3.5 0 0 0-6.6 1.6A3.3 3.3 0 0 0 4 13a3.4 3.4 0 0 0 3 5 3 3 0 0 0 5 .5zM12 5.5a3.5 3.5 0 0 1 6.6 1.6A3.3 3.3 0 0 1 20 13a3.4 3.4 0 0 1-3 5 3 3 0 0 1-5 .5zM12 5.5v13",
     "fallback" to "M14.5 5.5a4.2 4.2 0 0 0-5.3 5.3L4 16a1.9 1.9 0 0 0 2.7 2.7l5.2-5.2a4.2 4.2 0 0 0 5.3-5.3l-2.5 2.5-2.4-.5-.5-2.4z",
 )
+
+/**
+ * 定时任务, drawn as the reference draws it.
+ *
+ * A burger, the title centred on the 360 column, a clock and two lines when
+ * there is nothing, and 新建任务 as a right-hand capsule - every figure read off
+ * the reference at 2.5 px per dp. What it lists is real: `automation.tasks`
+ * pushes (id, title, nextAt) and the page shows the next run in the reader's
+ * own clock, so a scheduled task stops being something the phone receives and
+ * then forgets.
+ */
+@Composable
+fun ScheduledScreen(
+    tasks: List<Triple<String, String, Long>>,
+    onNew: () -> Unit,
+    onClose: () -> Unit,
+) {
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+        Box(Modifier.fillMaxWidth().height(63.2.dp)) {
+            Text(
+                "定时任务",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                color = LocalText.current,
+                maxLines = 1,
+                softWrap = false,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.fillMaxSize().wrapContentHeight().align(Alignment.Center).offset(x = (-5.2).dp),
+            )
+            Row(
+                Modifier.fillMaxWidth().height(63.2.dp).padding(start = 1.6.dp, end = 4.4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(44.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
+                    MiIcon(
+                        "M0.95 2.6h22.1M0.95 12h22.1M0.95 21.4h11.05",
+                        contentDescription = "菜单",
+                        modifier = Modifier.size(16.4.dp),
+                        viewBox = 24f,
+                        strokeWidth = 1.9f,
+                        tint = LocalText.current,
+                    )
+                }
+            }
+        }
+        if (tasks.isEmpty()) {
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 300.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                MiIcon(
+                    "M12 3.6c4.64 0 8.4 3.76 8.4 8.4s-3.76 8.4-8.4 8.4S3.6 16.64 3.6 12 7.36 3.6 12 3.6zM12 7.8V12l3 1.8",
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    viewBox = 24f,
+                    strokeWidth = 1.7f,
+                    tint = LocalMuted.current,
+                )
+                Spacer(Modifier.height(14.dp))
+                Text("暂无定时任务", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "让 Claude 按计划运行任务。",
+                    fontSize = 13.sp,
+                    lineHeight = 21.2.sp,
+                    color = LocalMuted.current,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
+            }
+        } else {
+            LazyColumn(
+                Modifier.fillMaxWidth().weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 18.dp, end = 18.dp, top = 8.dp, bottom = 16.dp),
+            ) {
+                items(tasks.size) { index ->
+                    val (id, title, nextAt) = tasks[index]
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 6.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .border(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE4E1D8), RoundedCornerShape(12.dp))
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        MiIcon(
+                            "M12 3.6c4.64 0 8.4 3.76 8.4 8.4s-3.76 8.4-8.4 8.4S3.6 16.64 3.6 12 7.36 3.6 12 3.6zM12 7.8V12l3 1.8",
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            viewBox = 24f,
+                            strokeWidth = 1.7f,
+                            tint = LocalMuted.current,
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                title.ifBlank { id },
+                                fontSize = 15.sp,
+                                color = LocalText.current,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (nextAt > 0) {
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    "下次 " + relTime(nextAt),
+                                    fontSize = 12.sp,
+                                    color = LocalMuted.current,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(start = 18.dp, end = 16.4.dp, top = 10.dp, bottom = 10.dp),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(LocalText.current)
+                    .clickable { onNew() }
+                    .padding(horizontal = 16.dp, vertical = 10.5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = null, tint = LocalBg.current, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("新建任务", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = LocalBg.current)
+            }
+        }
+        Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
+    }
+}
 
 /**
  * A PDF, page by page.
