@@ -8063,7 +8063,7 @@ fun SessionList(
                             )
                         }
                     }
-                    Column(Modifier.weight(1f).padding(top = 6.dp)) {
+                    Column(Modifier.weight(1f).padding(top = if (compact) 0.dp else 6.dp)) {
                         /*
                          * 17sp of title over 14sp of time.
                          *
@@ -8082,9 +8082,18 @@ fun SessionList(
                          */
                         Text(
                             s.title.ifEmpty { s.id }.take(if (compact) 34 else 26),
-                            fontSize = 17.sp,
+                            /*
+                             * 12sp in the drawer, 17sp in the list.
+                             *
+                             * Measured: the drawer's row ink is 10.8 tall
+                             * (11.6sp for CJK) where the list's is 15.2
+                             * (16.3sp). One size for both made every drawer
+                             * row a third too large and pushed its baseline
+                             * 6 dp low.
+                             */
+                            fontSize = if (compact) 13.sp else 17.sp,
                             fontWeight = FontWeight.Medium,
-                            lineHeight = 22.sp,
+                            lineHeight = if (compact) 17.sp else 22.sp,
                             color = LocalText.current,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -8277,11 +8286,27 @@ fun DrawerContent(
                 active = currentPage == LeftMode.Projects,
                 path = "M3.4 6.2h4.2l1.2 1.6h8.6v8.6a1.2 1.2 0 0 1-1.2 1.2H4.6a1.2 1.2 0 0 1-1.2-1.2zM3.4 6.2V5.4a1.2 1.2 0 0 1 1.2-1.2h2.6l1.2 1.6",
             ) { onProjects() }
+            /*
+             * 设置, not 「Code」.
+             *
+             * Claude's Code row opens a page this app does not have: an
+             * 设备 block with 添加设备, a 会话 block with an 全部 filter, and a
+             * card per conversation carrying its connection state (「已断开连接
+             * · 在您的电脑上重新连接」). MCode's rail has no counterpart for
+             * any of that - sessions live in the column beside it - so the
+             * row here opens Settings, which is what MCode actually offers.
+             *
+             * Keeping Claude's word over MCode's page was the worst of both:
+             * a reader tapping 「Code」 landed on 设置 and had no way to know
+             * the label was borrowed scenery. The reference's four rows are
+             * copied only where the destination matches.
+             */
             DrawerItem(
-                Icons.Outlined.Code,
-                "Code",
+                Icons.Outlined.Settings,
+                "设置",
                 active = currentPage == LeftMode.Settings,
-                path = "M9 7 5 12l4 5M15 7l4 5-4 5",
+                path = "M12 8.4a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2zM19.4 12a7.4 7.4 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-2-1.2L14.5 3h-4l-.4 2.6a7.4 7.4 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 2 1.2l.4 2.6h4l.4-2.6a7.4 7.4 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z",
+                pathStroke = 1.6f,
             ) { onSettings() }
             DrawerItem(
                 Icons.AutoMirrored.Outlined.Article,
@@ -8327,7 +8352,17 @@ fun DrawerContent(
          */
         Column(Modifier.weight(1f)) {
             SessionList(
-                sessions.take(3),
+                /*
+                 * Six, not three.
+                 *
+                 * Counted off the reference's own drawer at 400dpi: its 最近使用
+                 * block lists Main, 笼管交换机级联, 大模型推理部署方案,
+                 * Python code request, Run and macOS 屏幕保护密码设置 - six rows
+                 * at 385.2 / 428.8 / 472.4 / 516.0 / 559.6 / 603.2, a 43.6
+                 * pitch - with 查看全部 under them at 650.8. Three was this
+                 * app's own guess and left the block half empty.
+                 */
+                sessions.take(6),
                 null,
                 "",
                 onSelect,
@@ -8337,9 +8372,16 @@ fun DrawerContent(
                 unseen = unseen,
                 awaiting = awaiting,
             )
-            if (sessions.size > 3) {
+            if (sessions.size > 6) {
+                /*
+                 * 24.8 in from the drawer's edge and 654.4 down, not 20/660.8.
+                 *
+                 * The last row ends at 620.4 and this line's ink starts at
+                 * 654.4, so the row is ~8 tall plus 10 of padding; 18 of inline
+                 * padding put the word at 20.0, 4.8 left of the reference.
+                 */
                 Row(
-                    Modifier.fillMaxWidth().clickable { onSeeAll() }.padding(horizontal = 18.dp, vertical = 10.dp),
+                    Modifier.fillMaxWidth().clickable { onSeeAll() }.padding(start = 24.8.dp, end = 18.dp, top = 6.dp, bottom = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text("查看全部", fontSize = 14.sp, color = LocalMuted.current)
@@ -8356,7 +8398,13 @@ fun DrawerContent(
              * than as an account.
              */
             Box(Modifier.size(43.6.dp).background(Color(0xFF6E62D9), CircleShape), contentAlignment = Alignment.Center) {
-                Text("W", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+                /*
+                 * Normal weight, not SemiBold. Claude's initial reads as a
+                 * light "W" at the centre of a 43.6 disc; at SemiBold the same
+                 * glyph is a size heavier and reads as a logo rather than as an
+                 * initial.
+                 */
+                Text("W", color = Color.White, fontWeight = FontWeight.Normal, fontSize = 17.sp)
             }
             Spacer(Modifier.weight(1f))
             /*
