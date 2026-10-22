@@ -925,20 +925,27 @@ fun SparkMark(modifier: Modifier = Modifier, tint: Color = Ember) {
         val cy = size.height / 2f
         val outer = size.minDimension / 2f
         /*
-         * Fitted, not eyeballed: sweeping stroke width and inner radius against
-         * the real mark's ink coverage (42% of the 112 px box) lands on 0.16 of
-         * the radius and a start at the centre. A 0.05 start left a hole in the
-         * middle that the original does not have.
+         * 12 spokes, uneven lengths, around a small solid core.
+         *
+         * A ray sweep around the reference's asterisk reports a peak every 15
+         * degrees, which reads as 24 - but that count is the round caps on 12
+         * spokes, each producing two shoulders. Drawing 24 on a 15-degree step
+         * filled the middle into a solid disc, which is plainly not the mark.
+         *
+         * What the reference actually shows: 12 spokes at 30 degrees, of two
+         * lengths (the short ones about 0.72 of the long), radiating from a
+         * core roughly a fifth of the mark, with clear paper between them.
          */
-        val stroke = outer * 0.16f
+        val stroke = outer * 0.155f
+        // The core, so the spokes read as one burst rather than as a wheel.
+        drawCircle(tint, radius = outer * 0.30f, center = androidx.compose.ui.geometry.Offset(cx, cy))
         for (i in 0 until 12) {
-            // The first spoke sits a little off vertical in the original.
-            val angle = Math.toRadians((i * 30.0) + 12.0)
-            val r0 = 0f
-            val r1 = outer
+            // Off vertical by 11 degrees, as the original's spokes sit.
+            val angle = Math.toRadians((i * 30.0) + 11.0)
+            val r1 = if (i % 3 == 0) outer else outer * 0.80f
             drawLine(
                 tint,
-                androidx.compose.ui.geometry.Offset(cx + (Math.cos(angle) * r0).toFloat(), cy + (Math.sin(angle) * r0).toFloat()),
+                androidx.compose.ui.geometry.Offset(cx, cy),
                 androidx.compose.ui.geometry.Offset(cx + (Math.cos(angle) * r1).toFloat(), cy + (Math.sin(angle) * r1).toFloat()),
                 strokeWidth = stroke,
                 cap = androidx.compose.ui.graphics.StrokeCap.Round,
@@ -3080,12 +3087,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         InputCapsule(
             enabled = currentSession != null,
             /*
-             * Whether a conversation is open, for the placeholder: Claude says
-             * 回复 Claude… inside one and 与 Claude 对话… on an empty page. The
-             * composer is enabled only with a session, so `enabled` carries
-             * exactly that fact.
+             * Whether the conversation has anything in it, for the placeholder.
+             *
+             * Claude says 与 Claude 对话… on the empty page it opens 新建会话
+             * onto, and 回复 Claude… once the thread has words in it. This was
+             * `currentSession != null`, but a new conversation is given an id
+             * the moment it is created - so every fresh page said 回复, which is
+             * the wrong one of the two. The transcript is what decides.
              */
-            hasSession = currentSession != null,
+            hasSession = items.isNotEmpty(),
             modelLabel = currentModelLabel,
             contextUsed = contextUsed,
             contextLimit = if (contextWindow > 0) contextWindow else contextLimit,
@@ -5166,9 +5176,15 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
          */
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             Column(
-                // Claude's asterisk centres at 41% of the pane and its phrase
-                // at 48%; a plain centre lands both about 150px low.
-                Modifier.align(Alignment.Center).padding(bottom = 124.dp),
+                /*
+                 * 135.8, not 124.
+                 *
+                 * Measured on the pad at 2.5 px per dp: Claude's asterisk spans
+                 * y 373.2..414.4, so its centre is 393.8 on a 908.8 pane -
+                 * 43.3% down. This block centred 11.8 lower, which is what the
+                 * extra bottom padding takes out.
+                 */
+                Modifier.align(Alignment.Center).padding(bottom = 135.8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) { mark() }
             if (withInput) Box(Modifier.align(Alignment.BottomCenter)) { inputBar() }
@@ -5823,13 +5839,28 @@ fun ThreadLoading() {
     }
 }
 
-fun greeting(): String = when (java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)) {
-    in 5..8 -> "清晨随笔"
-    in 9..11 -> "上午闲话"
-    in 12..13 -> "午后漫谈"
-    in 14..17 -> "下午絮语"
-    in 18..22 -> "晚间随想"
-    else -> "深夜独白"
+/*
+ * Claude's greeting, in its own words and its own shape.
+ *
+ * This used to invent a mood for each part of the day - 清晨随笔, 上午闲话,
+ * 午后漫谈, 下午絮语, 晚间随想, 深夜独白 - six phrases that belong to no app but
+ * this one's imagination. Read off the reference's empty page, it says
+ * 「下午好，Wyatt」: a plain greeting, a comma, the account's own name. The
+ * name is the same W the drawer's account dot carries.
+ *
+ * The ranges follow the reference's visible behaviour (it showed 下午好 at
+ * 16:29); the exact cut-offs it uses are not observable from the outside, so
+ * these are the conventional ones - 5..11 morning, 12..17 afternoon, 18..4
+ * evening and night.
+ */
+fun greeting(): String {
+    val name = "Wyatt"
+    return when (java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)) {
+        in 5..11 -> "上午好，$name"
+        in 12..17 -> "下午好，$name"
+        in 18..23 -> "晚上好，$name"
+        else -> "夜深了，$name"
+    }
 }
 
 /*
@@ -10364,31 +10395,118 @@ fun InputCapsule(
                         .heightIn(min = 41.4.dp, max = 190.dp),
                 ) {
                     /*
-                     * A bare placeholder, with no mark in front of it.
+                     * The prompt mark, then the words.
                      *
-                     * A prompt glyph used to sit here - a stem with a bracket
-                     * hung off its top half - on the reading that Claude's box
-                     * opens with one. It does not: cropped at the pad's own
-                     * scale, its composer's first ink is the "回" of 回复, and
-                     * the glyph belonged to a different screen. Drawing it put
-                     * a mark of this app's own invention in the busiest corner
-                     * of the UI, and pushed the words 16.8 right.
+                     * This mark was removed in the previous pass on the reading
+                     * that Claude's composer opens with bare text. It does not:
+                     * cropped at the pad's own 400dpi, the first ink in its box
+                     * is a 1.6dp stem 23.6 tall at x=502.8, with a bracket
+                     * hanging off its top half and an arrow inside it, running
+                     * out to x=518.0 - 15.2 across. The words start after it.
                      *
-                     * The words are the reference's too: 回复 Claude… once a
-                     * conversation is open, 与 Claude 对话… before that, and
-                     * 将消息加入队列… while a turn is in flight.
+                     * The removal had been argued from a downscaled screenshot
+                     * where the mark is three grey pixels; at this scale it is
+                     * unmistakable.
                      */
                     if (text.isEmpty()) {
-                        Text(
-                            when {
-                                running -> "将消息加入队列…"
-                                hasSession -> "回复 Claude…"
-                                else -> "与 Claude 对话…"
-                            },
-                            fontSize = 16.sp,
-                            lineHeight = 23.6.sp,
-                            color = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF7B7974),
-                        )
+                        /*
+                         * 3.6 of left offset: the stem's ink measured 506.4
+                         * against the reference's 502.8. The card's own inner
+                         * padding sets where the text block starts, and moving
+                         * it would move the typed text with it, so only the
+                         * placeholder's mark is nudged.
+                         */
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.offset(x = (-3.6).dp),
+                        ) {
+                            // Read outside the draw scope: `Local…current` is a
+                            // composable call and a Canvas lambda is not.
+                            val phInk = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF7B7974)
+                            // `requiredSize`, not `size`: inside a Row the canvas was being
+                            // measured against the row's own width and drew 30.4
+                            // dp of mark where 15.2 was asked for.
+                            Canvas(Modifier.requiredSize(15.2.dp, 23.6.dp)) {
+                                val w = size.width
+                                val h = size.height
+                                val ink = phInk
+                                val stem = 1.6.dp.toPx()
+                                // The stem, full height on the left.
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(stem / 2, 0f), androidx.compose.ui.geometry.Offset(stem / 2, h), strokeWidth = stem)
+                                /*
+                                 * The bracket: out along the top, down to just
+                                 * above the middle, back to the stem - open at
+                                 * the left, so it reads as a bracket rather than
+                                 * as a box.
+                                 */
+                                /*
+                                 * Not a bracket - a brace of three rules and
+                                 * two uprights, read off the reference pixel by
+                                 * pixel (x 502.8..518.0, y 792.8..816.4):
+                                 *
+                                 *   row 800: a full rule from 506.4 to 518.0
+                                 *   row 804: a full rule from 506.4 to 517.2
+                                 *   row 807: a rule from 504.8 to 516.8,
+                                 *            reaching further left
+                                 *
+                                 * with a short upright at 506.8..507.6 spanning
+                                 * rows 797..804, and a longer one at
+                                 * 515.6..516.8 spanning rows 804..811.
+                                 *
+                                 * So it reads as コ stacked over a コ, offset -
+                                 * the shape a terminal prints before a prompt.
+                                 * The earlier version drew one bracket the height
+                                 * of half the mark, which is why it looked like a
+                                 * box rather than like this.
+                                 */
+                                /*
+                                 * Fractions of the canvas, then pulled inside
+                                 * the stroke's own half-width: at w * 0.95 the
+                                 * outer rules ran half a stem past the box and
+                                 * the mark measured 30.4 wide in a 15.2 box.
+                                 */
+                                /*
+                                 * Vertically the brace occupies 797..811 of a
+                                 * mark that runs 792.8..816.4 - 14 of 23.6, so
+                                 * 0.18..0.77 of the box, with the three rules at
+                                 * 0.31 / 0.50 / 0.62. The earlier 0.30/0.48/0.62
+                                 * spread them over the whole height, which made
+                                 * the mark read twice the size of the reference's.
+                                 */
+                                val s1 = h * 0.31f
+                                val s2 = h * 0.50f
+                                val s3 = h * 0.62f
+                                /*
+                                 * The reference's rules run 506.4..518.0 on a box
+                                 * that starts at 502.8 with a 15.2 width: they
+                                 * begin at 0.24 of the box and stop 0.15 short of
+                                 * its right edge. Drawing them to `w - stem / 2`
+                                 * made the mark 20.8 wide instead of 15.2.
+                                 */
+                                val x0 = w * 0.24f
+                                val x1 = w * 0.24f
+                                val x2 = w * 0.86f
+                                // Top rule, and the short upright under its left end.
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(x1, s1), androidx.compose.ui.geometry.Offset(x2, s1), strokeWidth = stem)
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(x1 + stem / 2, s1), androidx.compose.ui.geometry.Offset(x1 + stem / 2, s2), strokeWidth = stem)
+                                // Middle rule, and the longer upright under its right end.
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(x1, s2), androidx.compose.ui.geometry.Offset(x2, s2), strokeWidth = stem)
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(x2 - stem / 2, s2), androidx.compose.ui.geometry.Offset(x2 - stem / 2, s3), strokeWidth = stem)
+                                // The lead-in rule, which starts left of the others.
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(x0, s3), androidx.compose.ui.geometry.Offset(x2, s3), strokeWidth = stem)
+                            }
+                            Spacer(Modifier.width(1.2.dp))
+                            Text(
+                                when {
+                                    running -> "将消息加入队列…"
+                                    hasSession -> "回复 Claude…"
+                                    else -> "与 Claude 对话…"
+                                },
+                                fontSize = 16.sp,
+                                lineHeight = 23.6.sp,
+                                color = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF7B7974),
+                            )
+                        }
                     }
                     BasicTextField(
                         text,
