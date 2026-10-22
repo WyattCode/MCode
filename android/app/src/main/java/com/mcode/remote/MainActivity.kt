@@ -2868,7 +2868,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                 }
             },
         )
-        return
+        /*
+         * Narrow screens keep the page full-screen; a wide one draws it inside
+         * the left column instead, so the conversation stays beside it - which
+         * is how the reference lays all four of these pages out.
+         */
+        if (widthSize < WindowWidthSizeClass.Expanded) return
     }
 
     var usageSummary by remember { mutableStateOf<JSONObject?>(null) }
@@ -2904,7 +2909,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             },
             onClose = { leftMode = LeftMode.Sessions },
         )
-        return
+        /*
+         * Narrow screens keep the page full-screen; a wide one draws it inside
+         * the left column instead, so the conversation stays beside it - which
+         * is how the reference lays all four of these pages out.
+         */
+        if (widthSize < WindowWidthSizeClass.Expanded) return
     }
 
     if (leftMode == LeftMode.Scheduled) {
@@ -2927,7 +2937,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             onNew = { newSession(); leftMode = LeftMode.Sessions },
             onClose = { leftMode = LeftMode.Sessions },
         )
-        return
+        /*
+         * Narrow screens keep the page full-screen; a wide one draws it inside
+         * the left column instead, so the conversation stays beside it - which
+         * is how the reference lays all four of these pages out.
+         */
+        if (widthSize < WindowWidthSizeClass.Expanded) return
     }
 
     if (leftMode == LeftMode.Plugins) {
@@ -2961,7 +2976,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             },
             onClose = { leftMode = LeftMode.Sessions },
         )
-        return
+        /*
+         * Narrow screens keep the page full-screen; a wide one draws it inside
+         * the left column instead, so the conversation stays beside it - which
+         * is how the reference lays all four of these pages out.
+         */
+        if (widthSize < WindowWidthSizeClass.Expanded) return
     }
 
     if (leftMode == LeftMode.Artifacts) {
@@ -2978,7 +2998,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             onOpen = { root, rel -> openArtifact(root, rel) },
             onClose = { leftMode = LeftMode.Sessions },
         )
-        return
+        /*
+         * Narrow screens keep the page full-screen; a wide one draws it inside
+         * the left column instead, so the conversation stays beside it - which
+         * is how the reference lays all four of these pages out.
+         */
+        if (widthSize < WindowWidthSizeClass.Expanded) return
     }
 
     // Claude keeps the single-pane layout in portrait even on the big inner
@@ -3362,7 +3387,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                      * `searchTop`, which is 24.4 minus whatever this row grew
                      * past 52.
                      */
-                    Box(Modifier.fillMaxWidth().height(63.2.dp)) {
+                    /*
+                     * The list's own header, only when the list is what the
+                     * column shows.
+                     *
+                     * A sub-page draws its own header inside this column, so
+                     * leaving this one up stacked two bars - 「最近记录」 over
+                     * 「项目」 - which read as one page with two titles.
+                     */
+                    if (leftMode == LeftMode.Sessions) Box(Modifier.fillMaxWidth().height(63.2.dp)) {
                         /*
                          * The title goes in first, on the full column width;
                          * the marks row goes over it afterwards. Centring the
@@ -3577,7 +3610,15 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          * Measured at 2.5 px per dp: 332.8 x 37.6, 13.6dp in
                          * from the list's edge, capsule corners.
                          */
-                        Row(
+                        /*
+                         * The list's search field belongs to the list.
+                         *
+                         * A sub-page carries its own filter (项目 has the two
+                         * marks in its header, Artifacts has its own field), so
+                         * leaving this one in place put a 「搜索」 box above a
+                         * page that does not search the conversations.
+                         */
+                        if (leftMode == LeftMode.Sessions) Row(
                             Modifier
                                 .fillMaxWidth()
                                 /*
@@ -3726,18 +3767,113 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             }
                         }
                         Spacer(Modifier.height(6.dp))
-                        SessionList(
-                            visibleSessions,
-                            currentSession,
-                            search,
-                            onSelect = { select(it) },
-                            compact = false,
-                            modifier = Modifier.weight(1f).fillMaxWidth(),
-                            onLongPress = { sheetTarget = it },
-                            unseen = unseen.toList(),
-                            awaiting = pendingPerms.filterValues { it.isNotEmpty() }.keys.toList(),
-                            live = connected,
-                        )
+                        /*
+                         * On a wide screen the column's body is the page the
+                         * mode names, not always the list.
+                         *
+                         * The reference keeps 项目, Artifacts and 定时任务 inside
+                         * this 360 column with the conversation still beside
+                         * them - the drawer switches what the column shows, not
+                         * what the whole window shows. These three used to
+                         * `return` out of the layout and paint over both panes,
+                         * so switching to 项目 lost the conversation entirely.
+                         *
+                         * They are handed `embedded = true`, which drops their
+                         * own page fill and their status-bar spacer: the column
+                         * has already cleared the bar and painted the page.
+                         */
+                        when (leftMode) {
+                            LeftMode.Projects -> ProjectsScreen(
+                                rows = projectRows,
+                                onOpen = {
+                                    projectFilter = it
+                                    leftMode = LeftMode.Sessions
+                                },
+                                onClose = { leftMode = LeftMode.Sessions },
+                                onCreateBlank = { name ->
+                                    scope.launch {
+                                        val made = runCatching {
+                                            rpc(JSONObject().put("type", "project.createBlank").put("name", name))
+                                        }.getOrNull()
+                                        if (made != null) {
+                                            projects.add(name)
+                                            projectNames[name] = name
+                                        }
+                                    }
+                                },
+                                onAddFolder = { path ->
+                                    scope.launch {
+                                        runCatching {
+                                            rpc(JSONObject().put("type", "project.add").put("path", path))
+                                        }
+                                        projects.add(path)
+                                        projectNames[path] = path.substringAfterLast('\\').substringAfterLast('/')
+                                    }
+                                },
+                                onRename = { dir, name -> projectNames[dir] = name },
+                                onRemove = { dir -> projects.remove(dir); projectNames.remove(dir) },
+                                embedded = true,
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                            )
+                            LeftMode.Artifacts -> ArtifactsScreen(
+                                groups = artifacts.toList(),
+                                loading = artifactsLoading,
+                                failed = artifactsFailed,
+                                facets = artFacets,
+                                category = artCategory,
+                                query = artQuery,
+                                onQuery = { artQuery = it },
+                                onCategory = { artCategory = it },
+                                onRefresh = { refreshArtifacts++ },
+                                onOpen = { root, rel -> openArtifact(root, rel) },
+                                onClose = { leftMode = LeftMode.Sessions },
+                                embedded = true,
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                            )
+                            LeftMode.Scheduled -> ScheduledScreen(
+                                tasks = automations.toList(),
+                                onNew = { newSession(); leftMode = LeftMode.Sessions },
+                                onClose = { leftMode = LeftMode.Sessions },
+                                embedded = true,
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                            )
+                            LeftMode.Plugins -> PluginsScreen(
+                                servers = pluginServers.toList(),
+                                skills = pluginSkills.toList(),
+                                loading = pluginsLoading,
+                                failed = pluginsFailed,
+                                onRefresh = { refreshPlugins++ },
+                                onToggleSkill = { name, enabled ->
+                                    scope.launch {
+                                        val config = runCatching { rpc(JSONObject().put("type", "config.get")) }
+                                            .getOrNull()?.optJSONObject("data")?.optJSONObject("config")
+                                        val off = config?.optJSONArray("disabledSkills")?.let { arr ->
+                                            (0 until arr.length()).mapNotNull { arr.optString(it).ifBlank { null } }.toMutableList()
+                                        } ?: mutableListOf()
+                                        if (enabled) off.remove(name) else if (name !in off) off.add(name)
+                                        runCatching {
+                                            rpc(JSONObject().put("type", "config.set").put("patch", JSONObject().put("disabledSkills", org.json.JSONArray(off))))
+                                        }
+                                        refreshPlugins++
+                                    }
+                                },
+                                onClose = { leftMode = LeftMode.Sessions },
+                                embedded = true,
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                            )
+                            else -> SessionList(
+                                visibleSessions,
+                                currentSession,
+                                search,
+                                onSelect = { select(it) },
+                                compact = false,
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                                onLongPress = { sheetTarget = it },
+                                unseen = unseen.toList(),
+                                awaiting = pendingPerms.filterValues { it.isNotEmpty() }.keys.toList(),
+                                live = connected,
+                            )
+                        }
                         /*
                          * Claude's foot-of-column capsule, which follows the
                          * mode: 新建会话 on the list, 新建项目 on the projects
@@ -3745,7 +3881,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          * after the list so the list takes the space first and
                          * the capsule never covers a row.
                          */
-                        FootCapsule(
+                        if (leftMode == LeftMode.Sessions) FootCapsule(
                             /*
                              * The desktop's capsule reads 新建任务 and makes a
                              * conversation wherever the list is showing; it is
@@ -8619,6 +8755,14 @@ fun PluginsScreen(
     onRefresh: () -> Unit,
     onToggleSkill: (String, Boolean) -> Unit,
     onClose: () -> Unit,
+    /*
+     * True when the caller already owns the window: on a wide screen these
+     * pages are the left column's content, so they must not paint the page
+     * colour under the whole screen or add a status-bar spacer for a bar the
+     * column has already cleared.
+     */
+    embedded: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     var query by remember { mutableStateOf("") }
     // 全部 / 已启用 / 已停用, the desktop's three status filters.
@@ -8633,10 +8777,12 @@ fun PluginsScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    Column(
+        modifier.then(if (embedded) Modifier.fillMaxSize() else Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)),
+    ) {
         // The status bar is drawn over the page, so the header has to step under
         // it - without this the title sat on top of the clock and the arrow.
-        Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+        if (!embedded) Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
         Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(38.dp).clickable { onClose() }, contentAlignment = Alignment.Center) {
                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = LocalText.current, modifier = Modifier.size(20.dp))
@@ -8820,6 +8966,14 @@ fun ProjectsScreen(
     onRename: (String, String) -> Unit,
     onRemove: (String) -> Unit,
     onClose: () -> Unit,
+    /*
+     * True when the caller already owns the window: on a wide screen these
+     * pages are the left column's content, so they must not paint the page
+     * colour under the whole screen or add a status-bar spacer for a bar the
+     * column has already cleared.
+     */
+    embedded: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     var menuFor by remember { mutableStateOf<String?>(null) }
     var renameFor by remember { mutableStateOf<String?>(null) }
@@ -8849,11 +9003,13 @@ fun ProjectsScreen(
     val fieldLine = LocalFieldLine.current
     val fieldBg = LocalField.current
 
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    Column(
+        modifier.then(if (embedded) Modifier.fillMaxSize() else Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)),
+    ) {
         // The status bar is drawn over the page, so the header steps under it -
         // without this the title sat on top of the clock, as the plugins page's
         // first cut did.
-        Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+        if (!embedded) Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
         /*
          * The reference's projects header: burger, 项目 centred on the column,
          * and two marks on the right - a magnifier and a filter.
@@ -9491,6 +9647,14 @@ fun ArtifactsScreen(
     onRefresh: () -> Unit,
     onOpen: (String, String) -> Unit,
     onClose: () -> Unit,
+    /*
+     * True when the caller already owns the window: on a wide screen these
+     * pages are the left column's content, so they must not paint the page
+     * colour under the whole screen or add a status-bar spacer for a bar the
+     * column has already cleared.
+     */
+    embedded: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     var grid by remember { mutableStateOf(true) }
     val rows = remember(groups) { artifactRows(groups) }
@@ -9504,8 +9668,10 @@ fun ArtifactsScreen(
     val shown = if (needle.isEmpty()) rows else rows.filter { it.name.lowercase().contains(needle) }
     val now = remember { System.currentTimeMillis() }
 
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+    Column(
+        modifier.then(if (embedded) Modifier.fillMaxSize() else Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)),
+    ) {
+        if (!embedded) Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
         /*
          * The reference's artifacts header: burger, Artifacts centred on the
          * column, one mark on the right.
@@ -11425,9 +11591,19 @@ fun ScheduledScreen(
     tasks: List<Triple<String, String, Long>>,
     onNew: () -> Unit,
     onClose: () -> Unit,
+    /*
+     * True when the caller already owns the window: on a wide screen these
+     * pages are the left column's content, so they must not paint the page
+     * colour under the whole screen or add a status-bar spacer for a bar the
+     * column has already cleared.
+     */
+    embedded: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+    Column(
+        modifier.then(if (embedded) Modifier.fillMaxSize() else Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)),
+    ) {
+        if (!embedded) Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
         Box(Modifier.fillMaxWidth().height(63.2.dp)) {
             Text(
                 "定时任务",
