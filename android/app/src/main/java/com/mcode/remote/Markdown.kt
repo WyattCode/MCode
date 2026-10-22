@@ -419,15 +419,8 @@ fun MarkdownBody(
         val a = offsets.getOrNull(selStart)
         val b = offsets.getOrNull(selEnd)
         if (a == null || b == null) "" else {
-            /*
-             * `Long`, because a drag that ran off the end of its own line stores
-             * `Int.MAX_VALUE` in the moving end to mean "the rest of this
-             * paragraph" - and adding that to an offset wrapped around and
-             * produced a range that started after it ended.
-             */
-            val from = (a.toLong() + sharedSelection.startOffset).coerceIn(0L, plain.length.toLong()).toInt()
-            val to = (b.toLong() + sharedSelection.endOffset).coerceIn(from.toLong(), plain.length.toLong()).toInt()
-            plain.substring(from, to).trim()
+            val range = copyRange(a, sharedSelection.startOffset, b, sharedSelection.endOffset, plain.length)
+            if (range == null) "" else plain.substring(range.first, range.second).trim()
         }
     }
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
@@ -588,12 +581,46 @@ fun MarkdownBody(
                     // A quote keeps its own paragraphs, so it recurses with a
                     // step in from the rule rather than flattening to one line.
                     Column(Modifier.padding(start = 12.dp)) {
-                        block.blocks.forEach { inner ->
+                        /*
+                         * A quote is one block of the reply's flat text whose
+                         * contents are several blocks joined by newlines, so
+                         * each inner block's slice starts where the one before
+                         * it ended - the same arithmetic a list uses. Without
+                         * this, nothing inside a quote could be selected: the
+                         * whole quote answered to one index and every inner
+                         * `Text` claimed the selection belonged to a block it
+                         * was only a part of.
+                         */
+                        var at = 0
+                        for (inner in block.blocks) {
+                            val here = at
+                            at += flatLength(inner) + 1
                             when (inner) {
-                                is MdBlock.Para -> MdLine(inner.text, color = muted, modifier = Modifier.padding(bottom = 6.dp))
-                                is MdBlock.Code -> CodeBox(inner.lang, inner.code, dark)
-                                is MdBlock.ListBlock -> ListBox(inner, muted)
-                                is MdBlock.Heading -> MdLine(inner.text, weight = FontWeight.SemiBold, color = muted)
+                                is MdBlock.Para -> MdLine(
+                                    inner.text, color = muted,
+                                    modifier = Modifier.padding(bottom = 6.dp),
+                                    sharedSelection = sharedSelection,
+                                    lineIndex = index,
+                                    lineStart = here,
+                                )
+                                is MdBlock.Code -> CodeBox(
+                                    inner.lang, inner.code, dark,
+                                    sharedSelection = sharedSelection,
+                                    lineIndex = index,
+                                    lineStart = here,
+                                )
+                                is MdBlock.ListBlock -> ListBox(
+                                    inner, muted,
+                                    sharedSelection = sharedSelection,
+                                    lineIndex = index,
+                                    lineStart = here,
+                                )
+                                is MdBlock.Heading -> MdLine(
+                                    inner.text, weight = FontWeight.SemiBold, color = muted,
+                                    sharedSelection = sharedSelection,
+                                    lineIndex = index,
+                                    lineStart = here,
+                                )
                                 else -> Unit
                             }
                         }
@@ -907,14 +934,83 @@ private fun MdLine(
 }
 
 /**
+ * The range of the reply's flat text the reader has lit, for the copy chip.
+ *
+ * The two ends live in different spaces and have to be joined with care: the
+ * selection stores a block index and an offset *within that block*, so the
+ * block's own position in the reply has to be added before a range can be taken
+ * from the flat string.
+ *
+ * Two things make this worth its own function:
+ *
+ *  - the end offset may be `Int.MAX_VALUE`, which is the marker for "through the
+ *    rest of this block" that a drag past a block's edge leaves behind. Adding
+ *    it to a base in `Int` wraps round to a negative number, and the range then
+ *    started after it ended - the copy chip had no text and the wash covered
+ *    nothing. The addition is done in `Long` and saturated.
+ *  - a dragged end can point past the text it belongs to, so both ends are
+ *    clamped to the flat string's own length.
+ *
+ * Returns null when the range is empty, which the caller treats as "nothing
+ * selected".
+ */
+internal fun copyRange(
+    startBlockAt: Int,
+    startOffset: Int,
+    endBlockAt: Int,
+    endOffset: Int,
+    plainLength: Int,
+): Pair<Int, Int>? {
+    val from = (startBlockAt.toLong() + startOffset)
+        .coerceIn(0L, plainLength.toLong()).toInt()
+    val to = (endBlockAt.toLong() + endOffset)
+        .coerceIn(from.toLong(), plainLength.toLong()).toInt()
+    return if (to > from) from to to else null
+}
+
+/**
+ * The overlap between a block-wide selection and one slice of that block,
+ * expressed in the slice's own offsets.
+ *
+ * This is the whole of the selection's arithmetic, and it is deliberately free
+ * of Compose so it can be tested: two of the bugs in this file came from getting
+ * it wrong - a slice handed its block's offset instead of its offset *within*
+ * the block, and `Int.MAX_VALUE` used as "the rest of this block" wrapping round
+ * when it was added to a base.
+ *
+ * - `blockFrom`/`blockTo` are the two ends of the selection in block offsets.
+ *   `blockTo` may be `Int.MAX_VALUE`, which means "through the end of the block";
+ *   it is saturated here rather than added to anything.
+ * - `sliceStart` is where this `Text` begins inside its block, and `length` is
+ *   how many characters it holds.
+ *
+ * Returns null when the two do not overlap, which is the common case: every
+ * block of a reply asks, and all but the covered ones answer null.
+ */
+internal fun sliceOfSelection(
+    blockFrom: Int,
+    blockTo: Int,
+    sliceStart: Int,
+    length: Int,
+): Pair<Int, Int>? {
+    if (length <= 0) return null
+    val from = (maxOf(blockFrom, sliceStart) - sliceStart).coerceIn(0, length)
+    val to = when {
+        blockTo == Int.MAX_VALUE -> length
+        else -> (minOf(blockTo, sliceStart + length) - sliceStart).coerceIn(0, length)
+    }
+    return if (to > from) from to to else null
+}
+
+/**
  * This `Text`'s part of the shared selection, in its own offsets, or null.
  *
  * A block of the reply can be split across several `Text`s - a list is one block
  * but one `Text` per item - so `lineStart` is where this slice begins inside its
- * block, and the two ranges are intersected here. A paragraph passes a
- * `lineStart` of its block's own offset and a `length` of its whole text, and a
- * list item passes its offset within the list, so the same arithmetic serves
- * both and a drag across three items lights the three as one run.
+ * block, and the two ranges are intersected by `sliceOfSelection`. A paragraph
+ * passes a `lineStart` of 0 and its whole length; a list item passes its offset
+ * within the list, so the same arithmetic serves both and a drag across three
+ * items lights the three as one run.
  */
 private fun codeSelection(
     shared: SelectionState?,
@@ -922,14 +1018,11 @@ private fun codeSelection(
     lineStart: Int,
     length: Int,
 ): Pair<Int, Int>? {
-    if (shared == null || shared.isEmpty || lineIndex < 0) return null
+    if (shared == null || shared.isEmpty || lineIndex < 0 || length <= 0) return null
     if (lineIndex < shared.startLine || lineIndex > shared.endLine) return null
     val blockFrom = if (lineIndex == shared.startLine) shared.startOffset else 0
     val blockTo = if (lineIndex == shared.endLine) shared.endOffset else Int.MAX_VALUE
-    val sliceEnd = lineStart + length
-    val from = (maxOf(blockFrom, lineStart) - lineStart).coerceIn(0, length)
-    val to = (minOf(blockTo, sliceEnd) - lineStart).coerceIn(0, length)
-    return if (to > from) from to to else null
+    return sliceOfSelection(blockFrom, blockTo, lineStart, length)
 }
 
 /**

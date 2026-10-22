@@ -63,4 +63,15 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    /*
+     * JVM tests, for the selection's arithmetic.
+     *
+     * Two bugs in `Markdown.kt` were pure offset mathematics - a slice handed its
+     * block's offset instead of its offset within the block, and `Int.MAX_VALUE`
+     * used as "the rest of this block" wrapping round - and neither needed a
+     * device to catch. They only ever showed up as "nothing can be selected"
+     * after a build and an install, which is a slow and unreliable way to find
+     * out that two numbers were added in the wrong space.
+     */
+    testImplementation("junit:junit:4.13.2")
 }
