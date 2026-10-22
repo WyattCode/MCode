@@ -4,6 +4,12 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import kotlinx.coroutines.withTimeoutOrNull
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.horizontalScroll
@@ -299,6 +305,8 @@ private var chipFg = Color(0xFF3A3A38)
  * composition.
  */
 private var selectionTint = Color(0xFFECDFE6)
+/* The two end dots: the reference's accent in light, a lighter one on dark. */
+private var selectionHandle = Color(0xFFB4705A)
 private val LinkBlue = Color(0xFF2F6FED)
 
 /* ------------------------------------------------------------------ */
@@ -325,36 +333,27 @@ fun MarkdownBody(
     modifier: Modifier = Modifier,
     dark: Boolean = false,
     onCopy: (String) -> Unit = {},
-    /*
-     * What the reader has selected, in the flat text of this body.
-     *
-     * Compose reports a selection against the concatenation of the `Text`
-     * composables it registered, not against one of them, and each `Text` here
-     * only knows its own string. So the walk below keeps a running offset -
-     * adding a newline between blocks, which is what the container itself
-     * counts - and clips that range to each block to get the slice the line can
-     * draw.
-     */
-    /*
-     * Selection is this line's own.
-     *
-     * Compose will not round the container's fill and will not let a line draw
-     * its own - `SelectionRegistrar` and the controlled `SelectionContainer`
-     * are `internal` in Kotlin at every foundation version checked, up to
-     * 1.10 (`e: Cannot access 'interface SelectionRegistrar': it is internal`).
-     * So the two things the container was providing that actually matter are
-     * taken over here: word-granular hit testing on long press, and the wash
-     * itself. The reference does the same thing, and its selection is a 4dp
-     * block standing clear of the letters rather than a rectangle hugging them.
-     */
-    sharedSelection: SelectionState? = null,
 ) {
+    /*
+     * One drag for the whole reply.
+     *
+     * Held here rather than per line so a selection that starts in one paragraph
+     * and runs into the next is a single run - each `MdLine` is handed this
+     * instance plus its own place in the reply, and works out its slice.
+     *
+     * The whole selection system is local because Compose's is unreachable:
+     * `SelectionRegistrar`, `LocalSelectionRegistrar` and the controlled
+     * `SelectionContainer` overload are `internal` in Kotlin at every foundation
+     * version checked, up to 1.10.
+     */
+    val sharedSelection: SelectionState = remember(source) { SelectionState() }
     val blocks = remember(source) { Md.blocks(source) }
     val textColor = LocalText.current
     val muted = LocalMuted.current
     chipBg = if (dark) Color(0xFF2E2E2E) else Color(0xFFF0F0F2)
     chipFg = if (dark) Color(0xFFE6E6E6) else Color(0xFF3A3A38)
     selectionTint = if (dark) Color(0xFF5A4038) else Color(0xFFECDFE6)
+    selectionHandle = if (dark) Color(0xFFD9A08C) else Color(0xFFB4705A)
     /*
      * How many characters of the container's flat string each block owns, in
      * order. A block's own text plus the newline the container inserts after it
@@ -369,7 +368,34 @@ fun MarkdownBody(
             start
         }
     }
-    Column(modifier) {
+    /*
+     * The reply's flat text, so the copy chip can take exactly what is lit
+     * rather than the whole markdown source: `offsets` already say where each
+     * block begins, so walking them with the selection's two ends yields the
+     * words the reader actually sees selected.
+     */
+    val plain = remember(source) { blocks.joinToString("\n") { blockText(it) } }
+    /*
+     * Keyed on the four numbers, not on the state object.
+     *
+     * `SelectionState` is a stable instance whose fields are mutable state, so
+     * remembering on the object alone would compute once and never again - the
+     * chip would show the first selection for ever.
+     */
+    val selectedText = remember(sharedSelection.startLine, sharedSelection.startOffset, sharedSelection.endLine, sharedSelection.endOffset, plain) {
+        if (sharedSelection.isEmpty) "" else {
+            val a = offsets.getOrNull(sharedSelection.startLine)
+            val b = offsets.getOrNull(sharedSelection.endLine)
+            if (a == null || b == null) "" else {
+                val from = (a + sharedSelection.startOffset).coerceIn(0, plain.length)
+                val to = (b + sharedSelection.endOffset).coerceIn(from, plain.length)
+                plain.substring(from, to).trim()
+            }
+        }
+    }
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    androidx.compose.foundation.layout.Box(modifier) {
+    Column(androidx.compose.ui.Modifier.fillMaxWidth()) {
         blocks.forEachIndexed { index, block ->
             val last = index == blocks.lastIndex
             when (block) {
@@ -418,6 +444,44 @@ fun MarkdownBody(
                 MdBlock.Rule -> Box(Modifier.fillMaxWidth().padding(vertical = 16.dp).height(1.dp).background(LocalLine.current))
             }
         }
+    }
+    /*
+     * 复制, over the top-right of the reply.
+     *
+     * The reference floats a small chip beside the selection. Anchoring to the
+     * selection's exact line would need the line's position in the column, which
+     * a `Text` cannot report to its parent without a second layout pass - so it
+     * sits at the reply's corner instead, which on a phone is where the eye
+     * already is and where the thumb reaches without covering the words.
+     */
+    if (selectedText.isNotEmpty()) {
+        Row(
+            androidx.compose.ui.Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 2.dp, end = 2.dp)
+                .clip(RoundedCornerShape(9.dp))
+                // Judged by the page's own luminance rather than comparing
+                // against `DarkBg`, which is private to the activity's file.
+                .background(if (LocalBg.current.luminance() < 0.4f) Color(0xFF2E2E2E) else Color(0xFF2B2B2A))
+                .clickable {
+                    clipboard.setText(AnnotatedString(selectedText))
+                    sharedSelection.clear()
+                }
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MiIcon(
+                "M8.4 3.4h9.2a1.4 1.4 0 0 1 1.4 1.4v9.2M6.4 7.4h9.2a1.4 1.4 0 0 1 1.4 1.4v9.2a1.4 1.4 0 0 1-1.4 1.4H6.4A1.4 1.4 0 0 1 5 18V8.8a1.4 1.4 0 0 1 1.4-1.4z",
+                contentDescription = null,
+                modifier = androidx.compose.ui.Modifier.size(12.dp),
+                viewBox = 24f,
+                strokeWidth = 1.7f,
+                tint = Color(0xFFF5F3EE),
+            )
+            Spacer(androidx.compose.ui.Modifier.width(5.dp))
+            Text("复制", fontSize = 12.sp, color = Color(0xFFF5F3EE))
+        }
+    }
     }
 }
 
@@ -602,6 +666,43 @@ private fun MdLine(
                         )
                     }
                 }
+                /*
+                 * The handles, on the line that owns each end.
+                 *
+                 * Two 3.6 dots sitting just under the wash's bottom edge on the
+                 * end lines - the reference's are small circles, not the long
+                 * teardrops Material draws, because the two ends here are a
+                 * position rather than a lever. They are drawn, not hit-tested:
+                 * a press anywhere on an already-lit line grabs the nearer end,
+                 * which is what makes them feel grabbable without a second
+                 * gesture pipeline competing with the first.
+                 */
+                if (ownSelection != null && sharedSelection != null) {
+                    val dot = 3.6.dp.toPx()
+                    val gap = 1.6.dp.toPx()
+                    if (lineIndex == sharedSelection.startLine) {
+                        val box = chipBoxes(laid, sharedSelection.startOffset.coerceIn(0, source.length - 1) until
+                            (sharedSelection.startOffset + 1).coerceIn(1, source.length)).firstOrNull()
+                        if (box != null) {
+                            drawCircle(
+                                color = selectionHandle,
+                                radius = dot,
+                                center = androidx.compose.ui.geometry.Offset(box.left - 2.2.dp.toPx(), box.bottom + gap),
+                            )
+                        }
+                    }
+                    if (lineIndex == sharedSelection.endLine) {
+                        val box = chipBoxes(laid, (sharedSelection.endOffset - 1).coerceIn(0, source.length - 1) until
+                            sharedSelection.endOffset.coerceIn(1, source.length)).firstOrNull()
+                        if (box != null) {
+                            drawCircle(
+                                color = selectionHandle,
+                                radius = dot,
+                                center = androidx.compose.ui.geometry.Offset(box.right + 2.2.dp.toPx(), box.bottom + gap),
+                            )
+                        }
+                    }
+                }
                 if (inline.code.isEmpty()) return@drawBehind
                 for (range in inline.code) {
                     /*
@@ -641,47 +742,62 @@ private fun MdLine(
                 }
             }
             /*
-             * Long press selects a word; dragging from it extends the run.
+             * One gesture for the whole interaction, because they compete.
              *
-             * This is the part `SelectionContainer` used to provide and that
-             * cannot be borrowed piecemeal - it owns both the hit testing and
-             * the fill. Replacing it is what buys the rounded wash: the gesture
-             * writes offsets into `SelectionState`, and `drawBehind` above paints
-             * whatever the state says, with the corner Compose would not give.
+             * `SelectionContainer` used to arbitrate between a long press that
+             * starts a selection, a drag that extends it, a drag on a handle that
+             * moves one end, and a tap that dismisses. Splitting them across
+             * three `pointerInput` modifiers meant whichever consumed first won,
+             * which is why the handles never received a touch.
              *
-             * Word granularity comes from `getWordBoundary`, which is what makes
-             * a long press land on a whole word rather than a single character.
+             * So: a press held past the long-press timeout starts a word
+             * selection (or grabs the nearer end if one is already lit), and
+             * whatever movement follows extends that. A short press without
+             * movement clears. Links keep their own detector after this one, so a
+             * plain tap on a link still opens it.
              */
             .then(
                 if (sharedSelection == null) Modifier else Modifier.pointerInput(sharedSelection, source) {
-                    detectDragGesturesAfterLongPress(
-                        onDragStart = { pos ->
-                            val laid = layout ?: return@detectDragGesturesAfterLongPress
-                            val offset = laid.getOffsetForPosition(pos)
-                            val word = laid.getWordBoundary(offset)
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val laid = layout
+                        if (laid == null) return@awaitEachGesture
+                        val downOffset = laid.getOffsetForPosition(down.position)
+
+                        // Held long enough? Then this is a selection, not a tap.
+                        val held = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                            waitForUpOrCancellation()
+                        }
+                        if (held != null) {
+                            // Released before the timeout: a plain tap.
+                            if (!sharedSelection.isEmpty) sharedSelection.clear()
+                            return@awaitEachGesture
+                        }
+
+                        down.consume()
+                        if (sharedSelection.isEmpty) {
+                            val word = laid.getWordBoundary(downOffset)
                             sharedSelection.anchorLine = lineIndex
                             sharedSelection.anchorOffset = word.start - lineStart
                             sharedSelection.activeLine = lineIndex
                             sharedSelection.activeOffset = word.end - lineStart
-                        },
-                        onDrag = { change, _ ->
-                            val laid = layout ?: return@detectDragGesturesAfterLongPress
-                            val offset = laid.getOffsetForPosition(change.position)
+                        } else {
+                            // Already lit: the press grabs whichever end is nearer,
+                            // which is what gives the two handles their behaviour
+                            // without drawing grab targets of their own.
+                            if (sharedSelection.endNear(lineIndex, downOffset - lineStart)) {
+                                sharedSelection.moveEnd(lineIndex, downOffset - lineStart)
+                            } else {
+                                sharedSelection.moveStart(lineIndex, downOffset - lineStart)
+                            }
+                        }
+                        drag(down.id) { change ->
+                            val offset = layout?.getOffsetForPosition(change.position) ?: return@drag
                             sharedSelection.activeLine = lineIndex
                             sharedSelection.activeOffset = offset - lineStart
                             change.consume()
-                        },
-                    )
-                },
-            )
-            /*
-             * A tap anywhere on the line clears, which is what the container's
-             * dismiss did - without it a selection would stay lit until the next
-             * long press somewhere else.
-             */
-            .then(
-                if (sharedSelection == null) Modifier else Modifier.pointerInput(sharedSelection) {
-                    detectTapGestures { if (!sharedSelection.isEmpty) sharedSelection.clear() }
+                        }
+                    }
                 },
             )
             .then(
@@ -696,6 +812,25 @@ private fun MdLine(
                 },
             ),
     )
+}
+
+/**
+ * A block as plain text, matching `flatLength` exactly.
+ *
+ * The copy chip must take the words the reader sees, not the markdown, so the
+ * two functions have to agree character for character: `flatLength` reserves the
+ * offsets and this consumes them. Lists join their items with newlines because
+ * each item is registered as its own `Text`; that is the same newline the offset
+ * table already accounts for.
+ */
+private fun blockText(block: MdBlock): String = when (block) {
+    is MdBlock.Heading -> block.text
+    is MdBlock.Para -> block.text
+    is MdBlock.Code -> block.code
+    is MdBlock.ListBlock -> block.items.joinToString("\n") { it.text }
+    is MdBlock.Quote -> block.blocks.joinToString("\n") { blockText(it) }
+    is MdBlock.Table -> (listOf(block.head) + block.rows).joinToString("\n") { it.joinToString(" ") }
+    MdBlock.Rule -> ""
 }
 
 /**
@@ -728,17 +863,58 @@ private fun flatLength(block: MdBlock): Int = when (block) {
  * slice by adding its offset within the reply.
  */
 class SelectionState {
-    /** The line the selection is rooted in - a drag cannot start outside it. */
+    /** Where the drag began - the line and offset the finger first landed on. */
     var anchorLine by mutableStateOf(-1)
-    /** Offsets in the reply's flat text, which is what `MarkdownBody` maps per line. */
     var anchorOffset by mutableStateOf(0)
+    /** Where the drag has reached. */
     var activeLine by mutableStateOf(-1)
     var activeOffset by mutableStateOf(0)
 
     val isEmpty: Boolean get() = anchorLine < 0
 
+    /*
+     * The two ends, ordered - a backward drag means the anchor is the end, not
+     * the start. Handles and the copy chip both address these, not the raw
+     * anchor/active pair, so "drag the left handle left" keeps working whichever
+     * direction the selection was made in.
+     */
+    private val ordered: Pair<Pair<Int, Int>, Pair<Int, Int>>
+        get() {
+            val a = anchorLine to anchorOffset
+            val b = activeLine to activeOffset
+            val aFirst = a.first < b.first || (a.first == b.first && a.second <= b.second)
+            return if (aFirst) a to b else b to a
+        }
+
+    val startLine: Int get() = ordered.first.first
+    val startOffset: Int get() = ordered.first.second
+    val endLine: Int get() = ordered.second.first
+    val endOffset: Int get() = ordered.second.second
+
     /** True when this line's index falls inside the drag, start or end line included. */
-    fun coversLine(index: Int): Boolean = !isEmpty && index in minOf(anchorLine, activeLine)..maxOf(anchorLine, activeLine)
+    fun coversLine(index: Int): Boolean = !isEmpty && index in startLine..endLine
+
+    /** Which end a touch belongs to: the nearer of the two, by line then offset. */
+    fun endNear(line: Int, offset: Int): Boolean {
+        val toStart = kotlin.math.abs(line - startLine) * 1000 + kotlin.math.abs(offset - startOffset)
+        val toEnd = kotlin.math.abs(line - endLine) * 1000 + kotlin.math.abs(offset - endOffset)
+        return toEnd <= toStart
+    }
+
+    /** Replace the far end - used when a drag starts inside an existing selection. */
+    fun moveEnd(line: Int, offset: Int) {
+        anchorLine = startLine
+        anchorOffset = startOffset
+        activeLine = line
+        activeOffset = offset
+    }
+
+    fun moveStart(line: Int, offset: Int) {
+        anchorLine = endLine
+        anchorOffset = endOffset
+        activeLine = line
+        activeOffset = offset
+    }
 
     fun clear() {
         anchorLine = -1
