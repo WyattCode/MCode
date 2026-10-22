@@ -6818,7 +6818,7 @@ fun Timeline(
                                 (item.body as? Item.Msg)?.let { StepBody(it) }
                                 for (call in item.calls) {
                                     when (call) {
-                                        is Item.Tool -> ToolRow(call)
+                                        is Item.Tool -> ToolRow(call, indent = true)
                                         is ToolRun -> RunRow(call)
                                     }
                                 }
@@ -7208,7 +7208,7 @@ fun Timeline(
                             if (open) {
                                 // The run opens in place: each call keeps the row
                                 // it would have had on its own.
-                                for (call in item.items) ToolRow(call)
+                                for (call in item.items) ToolRow(call, indent = true)
                             }
                         }
                     }
@@ -11006,7 +11006,7 @@ private fun RunRow(item: ToolRun) {
                 modifier = Modifier.size(14.dp).graphicsLayer { rotationZ = if (open) 90f else 0f },
             )
         }
-        if (open) for (call in item.items) ToolRow(call)
+        if (open) for (call in item.items) ToolRow(call, indent = true)
     }
 }
 
@@ -11020,6 +11020,8 @@ fun ToolRow(
      */
     onOpenDelivered: ((String, String) -> Unit)? = null,
     root: String = "",
+    /** True when this row hangs under a group's summary - see the padding below. */
+    indent: Boolean = false,
 ) {
     var open by remember { mutableStateOf(false) }
     // A call that is still going and one that broke read differently from one
@@ -11032,23 +11034,32 @@ fun ToolRow(
         else -> LocalMuted.current
     }
     /*
-     * `.hstep`: 14 over a 22.4 line, 5 above and below, indented 23 from the
-     * step's rail. This drew 13 with 3 of padding and a 10 indent, which is
-     * both a size and a rhythm off - the rows sat tighter than the prose they
-     * sit between.
+     * No indent, and the mark is back.
+     *
+     * This carried an unconditional 23 of start padding, on a note that said
+     * Claude's own tool row is words and a chevron only. The desktop says
+     * otherwise, and it is the source of truth for this row: `steps.css` gives
+     * `.hstep` `padding: 5px 0` for a lone row, and only `.hstep.indent` -
+     * which `ToolPart` sets when the row sits under a group's summary - the
+     * `padding-inline-start: 23px`. Applying it to every row put a lone
+     * 「已执行命令」 23 to the right of the prose it belongs to; the reference's
+     * lone rows start on the text's own left edge.
+     *
+     * `hs-ic` is a real column as well: 14 wide, `flex: none`, a 6 gap before
+     * the words, one mark per tool family (read / edit / write / bash / search
+     * / globe / todo). It had been dropped here on the same misreading, which
+     * left a transcript of identical rows where the reference lets a reader
+     * find the three file reads at a glance.
      */
-    Column(Modifier.padding(start = 23.dp)) {
+    Column(if (indent) Modifier.padding(start = 23.dp) else Modifier) {
         Row(
             Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            /*
-             * No icon: Claude's own tool row is words and a chevron -
-             * 「已使用 PowerShell ›」, 「正在读取 ›」 - at 53px of line height. A
-             * glyph per call added a column of little pictures down the
-             * transcript the original never had, and pushed the words away from
-             * where they are read from.
-             */
+            Box(Modifier.width(14.dp), contentAlignment = Alignment.CenterStart) {
+                StepMark(item.name, rowTint, Modifier.size(14.dp))
+            }
+            Spacer(Modifier.width(6.dp))
             Text(
                 toolVerbOf(item.name, item.status) + if (item.title.isNotBlank()) " ${item.title}" else "",
                 fontSize = 14.sp,
@@ -11110,6 +11121,67 @@ fun ToolRow(
      */
     }
 }
+
+/**
+ * The mark in front of a tool row, one per family.
+ *
+ * A port of the desktop's `StepIcon.vue`, on the same 24 grid at stroke 2, so
+ * the two transcripts cannot drift. The families and their members are copied
+ * from `tool-meta.ts`'s `ICONS` map rather than guessed: a `grep` is a
+ * magnifier because the desktop says so, not because a search sounds like one.
+ *
+ * A tool outside the map gets the wrench, which is what the desktop falls back
+ * to as well.
+ */
+@Composable
+fun StepMark(name: String, tint: Color, modifier: Modifier = Modifier) {
+    val kind = when (name.lowercase()) {
+        "read" -> "read"
+        "edit", "apply_patch", "patch" -> "edit"
+        "write" -> "write"
+        "bash", "exec_command", "execute" -> "bash"
+        "grep", "glob", "codesearch" -> "search"
+        "list" -> "list"
+        "webfetch", "websearch" -> "globe"
+        "app" -> "browser"
+        "todowrite" -> "todo"
+        "skill" -> "skill"
+        "memory" -> "memory"
+        else -> "fallback"
+    }
+    MiIcon(
+        STEP_MARKS.getValue(kind),
+        contentDescription = null,
+        modifier = modifier,
+        viewBox = 24f,
+        strokeWidth = 2f,
+        tint = tint,
+    )
+}
+
+/** The 24-grid paths of [StepMark], one line each as the desktop draws them. */
+private val STEP_MARKS = mapOf(
+    "read" to "M6 3h8.5L19 7.5V21H6zM9.5 11.5h6M9.5 15h6M9.5 18.5h3",
+    "edit" to "M16.9 4.1c.9-.9 2.4-.9 3.3 0 .9.9.9 2.4 0 3.3L8 18.6l-4 1.2 1.2-4zM13 20h7",
+    "write" to "M12 4H6.5C5.1 4 4 5.1 4 6.5v11C4 18.9 5.1 20 6.5 20h11c1.4 0 2.5-1.1 2.5-2.5V12M19.4 3c.8.8.8 2 0 2.8L13 14.2l-3.6.9.9-3.6z",
+    "bash" to "M5.5 4h13c1.4 0 2.5 1.1 2.5 2.5v11c0 1.4-1.1 2.5-2.5 2.5h-13C4.1 20 3 18.9 3 17.5v-11C3 5.1 4.1 4 5.5 4zM3 8.5h18M7.5 12l2.8 2.5-2.8 2.5",
+    /*
+     * Drawn with cubics rather than the `a` command the desktop's SVG uses.
+     *
+     * `PathParser` accepts arcs, but this path's `a6.5 6.5 0 1 0 0 13` -
+     * a lopsided large-arc pair - came out as two overlapping rectangles on
+     * the pad, which is what a mis-signed sweep does. Two half-circles of
+     * cubics have no such ambiguity, and the ink is identical at 14 dp.
+     */
+    "search" to "M10.5 4c3.59 0 6.5 2.91 6.5 6.5S14.09 17 10.5 17 4 14.09 4 10.5 6.91 4 10.5 4zM15.7 15.7 20.5 20.5",
+    "list" to "M9 6.5h11M9 12h11M9 17.5h11M4.5 5.5h1v2h-1zM4.5 11h1v2h-1zM4.5 16.5h1v2h-1z",
+    "globe" to "M12 3c5 0 9 4 9 9s-4 9-9 9-9-4-9-9 4-9 9-9zM3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z",
+    "todo" to "M4.7 4.5h4.6c.7 0 1.2.5 1.2 1.2v4.6c0 .7-.5 1.2-1.2 1.2H4.7c-.7 0-1.2-.5-1.2-1.2V5.7c0-.7.5-1.2 1.2-1.2zM4.8 17l1.6 1.6 3-3.2M13 7.5h7.5M13 17h7.5",
+    "browser" to "M5.5 4h13C19.9 4 21 5.1 21 6.5v11c0 1.4-1.1 2.5-2.5 2.5h-13C4.1 20 3 18.9 3 17.5v-11C3 5.1 4.1 4 5.5 4zM3 9h18M6.5 6.5h.01M9 6.5h.01M11.5 6.5h.01",
+    "skill" to "M19.5 4.5c-5.8.4-10.4 4.4-12 10.6L6 20M19.5 4.5c.3 5.6-3.4 10-9.9 10.9M10.2 11.2 13 8.4",
+    "memory" to "M12 5.5a3.5 3.5 0 0 0-6.6 1.6A3.3 3.3 0 0 0 4 13a3.4 3.4 0 0 0 3 5 3 3 0 0 0 5 .5zM12 5.5a3.5 3.5 0 0 1 6.6 1.6A3.3 3.3 0 0 1 20 13a3.4 3.4 0 0 1-3 5 3 3 0 0 1-5 .5zM12 5.5v13",
+    "fallback" to "M14.5 5.5a4.2 4.2 0 0 0-5.3 5.3L4 16a1.9 1.9 0 0 0 2.7 2.7l5.2-5.2a4.2 4.2 0 0 0 5.3-5.3l-2.5 2.5-2.4-.5-.5-2.4z",
+)
 
 /**
  * A PDF, page by page.

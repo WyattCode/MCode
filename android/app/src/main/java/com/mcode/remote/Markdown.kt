@@ -583,7 +583,7 @@ private fun CodeBox(lang: String, code: String, dark: Boolean, modifier: Modifie
                     }
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        code,
+                        Highlight.colorize(code, lang, if (dark) Highlight.dark else Highlight.light),
                         fontFamily = FontFamily.Monospace,
                         fontSize = 13.sp,
                         lineHeight = 18.sp,
@@ -607,8 +607,18 @@ private fun CodeBox(lang: String, code: String, dark: Boolean, modifier: Modifie
          * 14sp set solid, not the 22sp of leading the old fixed line height
          * gave.
          */
+        /*
+         * Coloured, not monochrome.
+         *
+         * Everything else on this pane had been measured against the reference
+         * while this one block still arrived in a single grey - and code is the
+         * one block a reader scans by shape rather than reads. `Highlight`
+         * carries the six inks, read off the pad's own Python, and the colour
+         * for plain punctuation is the block's own text colour so the code that
+         * has no keyword in it still matches the rest of the reply.
+         */
         Text(
-            code,
+            Highlight.colorize(code, lang, if (dark) Highlight.dark else Highlight.light),
             fontFamily = FontFamily.Monospace,
             fontSize = 14.sp,
             lineHeight = 16.4.sp,
