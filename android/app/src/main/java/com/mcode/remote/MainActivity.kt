@@ -936,8 +936,48 @@ fun MCodeTheme(content: @Composable () -> Unit) {
             backgroundColor = if (dark) Color(0xFF5A4038) else Color(0xFFECDFE6),
         ),
     ) {
-        MaterialTheme(colorScheme = scheme, content = content)
+        /*
+         * No ripple.
+         *
+         * Compose's default indication draws an unbounded rectangle from the
+         * touch point, so a control that lives inside a rounded capsule shipped
+         * a square wash spilling past its own corners - the one thing the eye
+         * reads as "not finished" the moment a thumb lands on it. 88 of this
+         * app's 119 click targets had no clip in front of their `clickable`, so
+         * most of them did exactly that.
+         *
+         * The reference does not ripple at all: its controls change background
+         * while held (`:active`) and keep their own shape. `LocalIndication` is
+         * null here for that reason, and the surfaces that need a pressed state
+         * draw it themselves inside their own clip.
+         */
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.foundation.LocalIndication provides NoIndication,
+        ) {
+            MaterialTheme(colorScheme = scheme, content = content)
+        }
     }
+}
+
+/**
+ * An indication that draws nothing.
+ *
+ * `LocalIndication` is non-null in foundation 1.6 - passing `null` does not
+ * compile - so silence is an `Indication` whose instance paints nothing rather
+ * than an absent one. See `MCodeTheme` for why the ripple is off.
+ */
+private object NoIndication : androidx.compose.foundation.Indication {
+    private object Empty : androidx.compose.foundation.IndicationInstance {
+        // `drawIndication` is a `ContentDrawScope` extension, not a member -
+        // the receiver is the scope itself. Drawing the content and nothing
+        // else is exactly the silence wanted.
+        override fun androidx.compose.ui.graphics.drawscope.ContentDrawScope.drawIndication() {
+            drawContent()
+        }
+    }
+
+    @androidx.compose.runtime.Composable
+    override fun rememberUpdatedInstance(interactionSource: androidx.compose.foundation.interaction.InteractionSource): androidx.compose.foundation.IndicationInstance = Empty
 }
 
 /* MCode's own mark, straight from the desktop build. */
