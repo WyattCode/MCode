@@ -167,4 +167,124 @@ class SelectionSliceTest {
     fun aCollapsedCopyRange() {
         assertNull(copyRange(60, 5, 60, 5, plainLength = 400))
     }
+
+    /* ------------------------------------------------------------------ */
+    /* A table's cells, which are offsets inside a two-dimensional block    */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * A two-column table: `a b\ncc dd`.
+     *
+     * The head's cells start at 0 and 2 - one space between them, which belongs
+     * to neither. The flat text is `a` `space` `b` `newline` `c` `c` ... so the
+     * newline is at 3 and the first row's cells start at 4 and 7.
+     */
+    @Test
+    fun aTwoColumnTable() {
+        val starts = tableCellStarts(
+            head = listOf("a", "b"),
+            rows = listOf(listOf("cc", "dd")),
+            columns = 2,
+        )
+        assertEquals(listOf(0, 2), starts[0].toList())
+        assertEquals(listOf(4, 7), starts[1].toList())
+
+        // The same offsets read back out of the real flat string.
+        val flat = (listOf(listOf("a", "b")) + listOf(listOf("cc", "dd")))
+            .joinToString("\n") { it.joinToString(" ") }
+        assertEquals("a b\ncc dd", flat)
+        assertEquals("cc", flat.substring(4, 6))
+        assertEquals("dd", flat.substring(7, 9))
+    }
+
+    /**
+     * The separators are what a wrong version gets wrong.
+     *
+     * Folding the space or the newline into a cell's length puts every cell
+     * after the first one character to the right, which selects the wrong word -
+     * visibly so, but only on a device. Asserting the flat text's own character
+     * at each offset makes the separators explicit: they are spaces and
+     * newlines, and no cell claims them.
+     */
+    @Test
+    fun theSeparatorsBelongToNoCell() {
+        val head = listOf("ab", "cd")
+        val rows = listOf(listOf("ef", "gh"))
+        val flat = (listOf(head) + rows).joinToString("\n") { it.joinToString(" ") }
+        val starts = tableCellStarts(head, rows, columns = 2)
+
+        // Reconstruct each cell from the flat text and check it back.
+        assertEquals("ab", flat.substring(starts[0][0], starts[0][0] + 2))
+        assertEquals("cd", flat.substring(starts[0][1], starts[0][1] + 2))
+        assertEquals("ef", flat.substring(starts[1][0], starts[1][0] + 2))
+        assertEquals("gh", flat.substring(starts[1][1], starts[1][1] + 2))
+
+        // And the two separators really are where they should be.
+        assertEquals(' ', flat[starts[0][1] - 1])
+        assertEquals('\n', flat[starts[1][0] - 1])
+    }
+
+    /** A short row: the missing cell gets no characters of its own. */
+    @Test
+    fun aShortRowPadsItsMissingCells() {
+        val head = listOf("a", "b", "c")
+        val rows = listOf(listOf("x"))
+        val starts = tableCellStarts(head, rows, columns = 3)
+        val flat = (listOf(head) + rows).joinToString("\n") { it.joinToString(" ") }
+        assertEquals("a b c\nx", flat)
+        // Head: a at 0, b at 2, c at 4.
+        assertEquals(listOf(0, 2, 4), starts[0].toList())
+        // The row's only cell starts at 6; the two it does not have collapse on
+        // their end, so they own nothing and can never be lit.
+        assertEquals(6, starts[1][0])
+        assertEquals("x", flat.substring(6, 7))
+        assertEquals(7, starts[1][1])
+        assertEquals(7, starts[1][2])
+    }
+
+    /** A cell that owns no characters can never be lit, however wide the selection. */
+    @Test
+    fun aMissingCellIsNeverLIT() {
+        val starts = tableCellStarts(
+            head = listOf("a", "b"),
+            rows = listOf(listOf("x")),
+            columns = 2,
+        )
+        // The second cell of the row has start 7 and length 0.
+        assertNull(sliceOfSelection(0, 50, sliceStart = starts[1][1], length = 0))
+    }
+
+    /** Three rows: each newline is accounted for exactly once. */
+    @Test
+    fun threeRowsAdvanceByTheirOwnLengths() {
+        val head = listOf("h")
+        val rows = listOf(listOf("a"), listOf("bb"))
+        val starts = tableCellStarts(head, rows, columns = 1)
+        val flat = (listOf(head) + rows).joinToString("\n") { it.joinToString(" ") }
+        assertEquals("h\na\nbb", flat)
+        // h at 0, newline at 1, a at 2, newline at 3, bb at 4.
+        assertEquals(0, starts[0][0])
+        assertEquals(2, starts[1][0])
+        assertEquals(4, starts[2][0])
+        assertEquals("h", flat.substring(0, 1))
+        assertEquals("a", flat.substring(2, 3))
+        assertEquals("bb", flat.substring(4, 6))
+    }
+
+    /** The whole table's flat length matches the last cell plus the trailing newline. */
+    @Test
+    fun theTableMatchesItsOwnFlatText() {
+        val head = listOf("名字", "值")
+        val rows = listOf(listOf("甲", "1"), listOf("乙", "2"))
+        val flat = (listOf(head) + rows).joinToString("\n") { it.joinToString(" ") }
+        val starts = tableCellStarts(head, rows, columns = 2)
+        // Every cell's slice must land on its own text when read from `flat`.
+        for (r in starts.indices) {
+            val cells = if (r == 0) head else rows[r - 1]
+            for (c in cells.indices) {
+                val from = starts[r][c]
+                assertEquals(cells[c], flat.substring(from, from + cells[c].length))
+            }
+        }
+    }
 }

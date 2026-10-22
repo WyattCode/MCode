@@ -621,12 +621,32 @@ fun MarkdownBody(
                                     lineIndex = index,
                                     lineStart = here,
                                 )
+                                /*
+                                 * A table inside a quote, which used to be
+                                 * dropped on the floor: the `when` had no branch
+                                 * for it and the `else` swallowed it, so a
+                                 * quoted table vanished from the reply entirely.
+                                 * Its cells take slices of the quote's text the
+                                 * same way the other blocks do.
+                                 */
+                                is MdBlock.Table -> TableBox(
+                                    inner, muted, muted,
+                                    Modifier.padding(bottom = 6.dp),
+                                    sharedSelection = sharedSelection,
+                                    lineIndex = index,
+                                    cellOffset = here,
+                                )
                                 else -> Unit
                             }
                         }
                     }
                 }
-                is MdBlock.Table -> TableBox(block, textColor, muted, Modifier.padding(bottom = if (last) 0.dp else 14.dp))
+                is MdBlock.Table -> TableBox(
+                    block, textColor, muted,
+                    Modifier.padding(bottom = if (last) 0.dp else 14.dp),
+                    sharedSelection = sharedSelection,
+                    lineIndex = index,
+                )
                 MdBlock.Rule -> Box(Modifier.fillMaxWidth().padding(vertical = 16.dp).height(1.dp).background(LocalLine.current))
             }
         }
@@ -677,6 +697,73 @@ fun findSpans(source: String, query: String, active: Int): androidx.compose.ui.t
         hit++
     }
     return out.toAnnotatedString()
+}
+
+/**
+ * Keeps a lit surface's anchor in root coordinates, so the pill can follow it.
+ *
+ * Every selectable surface needs the same three pieces of state and the same
+ * effect, and there are four of them now - a paragraph, a heading, a list item,
+ * a line of code and each table cell. Writing that out once per surface is how
+ * the code fence ended up with its own copy that could drift from the
+ * paragraph's.
+ *
+ * The split matters and is the reason this is not a plain `onGloballyPositioned`
+ * write: that callback fires on *placement*, and lighting a word moves nothing,
+ * so the anchor was never written on the press that created the selection and
+ * the pill never appeared. So placement is kept in state, and the arithmetic
+ * runs in an effect keyed on the selection - which does change.
+ *
+ * @param slice this surface's part of the selection, in its own offsets.
+ * @param lineIndex the block this surface belongs to.
+ * @return a `onPlaced` callback for `Modifier.selectable`.
+ */
+@Composable
+private fun rememberAnchorReporter(
+    sharedSelection: SelectionState?,
+    lineIndex: Int,
+    slice: Pair<Int, Int>?,
+    laid: TextLayoutResult?,
+): (androidx.compose.ui.layout.LayoutCoordinates) -> Unit {
+    var placed by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+    /*
+     * Bumped when the surface actually moves.
+     *
+     * The coordinates node is the same object across a scroll, so keying the
+     * effect on it alone kept the anchor from the pre-scroll position and the
+     * pill drifted up the screen with every flick. A separate tick is what makes
+     * a scroll re-run the arithmetic - and it is only bumped on a real change,
+     * because writing state from the placement callback on every pass would put
+     * the composition in a loop.
+     */
+    var tick by remember { mutableStateOf(0) }
+    var lastAt by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
+
+    LaunchedEffect(sharedSelection, lineIndex, slice, laid, placed, tick) {
+        val shared = sharedSelection ?: return@LaunchedEffect
+        val coords = placed ?: return@LaunchedEffect
+        /*
+         * Only the block the selection *starts* in reports an anchor. Every
+         * surface shares one `SelectionState`, so an unselected one must not
+         * write: clearing from here would race the start surface's write and
+         * leave the pill with no anchor at all.
+         */
+        if (shared.isEmpty || lineIndex != shared.startLine) return@LaunchedEffect
+        val box = slice ?: return@LaunchedEffect
+        val result = laid ?: return@LaunchedEffect
+        val first = chipBoxes(result, box.first until box.second).firstOrNull() ?: return@LaunchedEffect
+        shared.anchorInRoot = coords.localToRoot(
+            androidx.compose.ui.geometry.Offset((first.left + first.right) / 2f, first.top),
+        )
+    }
+    return { coords ->
+        placed = coords
+        val at = coords.localToRoot(androidx.compose.ui.geometry.Offset.Zero)
+        if (lastAt != at) {
+            lastAt = at
+            tick++
+        }
+    }
 }
 
 @Composable
@@ -767,56 +854,7 @@ private fun MdLine(
             }
         }
     }
-    /*
-     * Where this line was placed, so the pill can be anchored to its words.
-     *
-     * Held in state rather than written straight into the selection from
-     * `onGloballyPositioned`: that callback fires on placement, and lighting a
-     * selection moves nothing - so the write never happened on the press that
-     * created the selection, and the pill never appeared. The two halves are
-     * kept here and combined in an effect keyed on the selection, which runs
-     * whenever the lit words change.
-     */
-    var placed by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
-    /*
-     * A counter, bumped whenever this line moves.
-     *
-     * `placed` is the same object instance across a scroll - Compose reuses the
-     * coordinates node - so keying the effect on it alone kept the anchor from
-     * the pre-scroll position, and the pill drifted up the screen with every
-     * flick. The tick is what makes a scroll re-run the arithmetic.
-     */
-    var placedTick by remember { mutableStateOf(0) }
-    /*
-     * Where this line's top-left was on the last placement, so the tick only
-     * moves when the line actually moved. Bumping it unconditionally would
-     * write state from the placement callback on every pass and put the
-     * composition in a loop.
-     */
-    var lastPlace by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
-    LaunchedEffect(sharedSelection, ownSelection, placed, layout, placedTick) {
-        val shared = sharedSelection ?: return@LaunchedEffect
-        val coords = placed ?: return@LaunchedEffect
-        /*
-         * Only the line the selection *starts* on reports an anchor.
-         *
-         * Every line shares one `SelectionState`, so an unselected line must
-         * not write to it at all: clearing from here would race the start line's
-         * write and leave the pill with no anchor - the same "nothing ever
-         * appears" that took three rounds to explain. A cleared selection nulls
-         * the anchor in `SelectionState.clear()` instead.
-         */
-        if (shared.isEmpty || lineIndex != shared.startLine) return@LaunchedEffect
-        val box = ownSelection ?: return@LaunchedEffect
-        val laid = layout ?: return@LaunchedEffect
-        val first = chipBoxes(laid, box.first until box.second).firstOrNull() ?: return@LaunchedEffect
-        shared.anchorInRoot = coords.localToRoot(
-            androidx.compose.ui.geometry.Offset(
-                (first.left + first.right) / 2f,
-                first.top,
-            ),
-        )
-    }
+    val reportAnchor = rememberAnchorReporter(sharedSelection, lineIndex, ownSelection, layout)
     Text(
         annotated,
         fontSize = size,
@@ -910,14 +948,7 @@ private fun MdLine(
                 lineStart = lineStart,
                 slice = ownSelection,
                 text = annotated.text,
-                onPlaced = { coords ->
-                    placed = coords
-                    val at = coords.localToRoot(androidx.compose.ui.geometry.Offset.Zero)
-                    if (lastPlace != at) {
-                        lastPlace = at
-                        placedTick++
-                    }
-                },
+                onPlaced = reportAnchor,
             )
             .then(
                 if (inline.links.isEmpty()) Modifier else Modifier.pointerInput(inline) {
@@ -1504,27 +1535,8 @@ private fun CodeBox(
      * shared `selectable` modifier work here unchanged.
      */
     var codeLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
-    var codePlaced by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
-    var codeTick by remember { mutableStateOf(0) }
-    var codeLast by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
-    /*
-     * The pill's anchor, for a selection that starts inside this fence.
-     *
-     * Same shape as `MdLine`'s: the coordinates are state and the arithmetic
-     * runs in an effect keyed on the selection, because lighting a word does not
-     * move anything and `onGloballyPositioned` therefore never fires for it.
-     */
-    LaunchedEffect(sharedSelection, codeLayout, codePlaced, codeTick) {
-        val shared = sharedSelection ?: return@LaunchedEffect
-        val coords = codePlaced ?: return@LaunchedEffect
-        if (shared.isEmpty || lineIndex != shared.startLine) return@LaunchedEffect
-        val laid = codeLayout ?: return@LaunchedEffect
-        val slice = codeSelection(shared, lineIndex, lineStart, code.length) ?: return@LaunchedEffect
-        val first = chipBoxes(laid, slice.first until slice.second).firstOrNull() ?: return@LaunchedEffect
-        shared.anchorInRoot = coords.localToRoot(
-            androidx.compose.ui.geometry.Offset((first.left + first.right) / 2f, first.top),
-        )
-    }
+    val codeSlice = codeSelection(sharedSelection, lineIndex, lineStart, code.length)
+    val reportAnchor = rememberAnchorReporter(sharedSelection, lineIndex, codeSlice, codeLayout)
     val head = if (dark) Color(0xFF262626) else Color(0xFFF0EFEC)
     val body = if (dark) Color(0xFF2E2E2E) else Color(0xFFF3F3F0)
     val ink = if (dark) Color(0xFFB8B8B8) else Color(0xFF6B6862)
@@ -1669,16 +1681,9 @@ private fun CodeBox(
                     sharedSelection = sharedSelection,
                     lineIndex = lineIndex,
                     lineStart = lineStart,
-                    slice = codeSelection(sharedSelection, lineIndex, lineStart, code.length),
+                    slice = codeSlice,
                     text = code,
-                    onPlaced = { coords ->
-                        codePlaced = coords
-                        val at = coords.localToRoot(androidx.compose.ui.geometry.Offset.Zero)
-                        if (codeLast != at) {
-                            codeLast = at
-                            codeTick++
-                        }
-                    },
+                    onPlaced = reportAnchor,
                 ),
         )
     }
@@ -1744,6 +1749,55 @@ private fun ListBox(
 }
 
 /**
+ * Where each cell of a table begins in the table's own flat text.
+ *
+ * A table's flat text is `(head + rows).joinToString("\n") { it.joinToString(" ") }`
+ * - see `blockText` - and a cell's selection has to be expressed in that same
+ * space or the wash lands on the wrong characters. The separators (one space
+ * between cells, one newline between rows) belong to no cell, which is why they
+ * are added after each cell's own characters rather than folded into a cell's
+ * length.
+ *
+ * Returned as one `IntArray` per row, head first, each already padded to
+ * `columns` so a short row still indexes safely - a cell the row does not have
+ * gets the offset the row had reached, which makes its slice empty and keeps it
+ * from ever being lit.
+ *
+ * Free of Compose so it can be tested: a table's offsets are exactly the kind of
+ * off-by-a-separator arithmetic that is invisible until a selection lands a
+ * character to the left.
+ */
+internal fun tableCellStarts(
+    head: List<String>,
+    rows: List<List<String>>,
+    columns: Int,
+    base: Int = 0,
+): List<IntArray> {
+    val out = ArrayList<IntArray>(rows.size + 1)
+    var at = base
+    fun layRow(cells: List<String>) {
+        val starts = IntArray(columns)
+        for (index in 0 until columns) {
+            starts[index] = at
+            if (index < cells.size) {
+                at += cells[index].length
+                // The space before the next cell. Absent after the row's last
+                // cell, because the row is joined with a newline instead.
+                if (index < cells.size - 1) at += 1
+            }
+        }
+        out.add(starts)
+    }
+    layRow(head)
+    at += 1 // the newline joining the head to the first row
+    for (row in rows) {
+        layRow(row)
+        at += 1 // the newline joining this row to the next
+    }
+    return out
+}
+
+/**
  * A table scrolls sideways inside the reply rather than widening the column.
  *
  * A column is as wide as its widest cell. The width is counted in characters
@@ -1752,9 +1806,32 @@ private fun ListBox(
  * and stacked `列A` on two lines. A CJK glyph is two Latin characters wide, so
  * it counts as two - that is the whole difference that made the first attempt
  * wrong.
+ *
+ * Cells are selectable, and the offsets come from the flat text `blockText`
+ * already defines for a table: the head row then each row, joined by newlines,
+ * with a single space between cells. Every cell therefore knows exactly which
+ * characters of the block it owns, which is what lets a drag run across a row
+ * or down a column and still copy as one contiguous run - the same arithmetic
+ * a list uses, just two-dimensionally indexed.
  */
 @Composable
-private fun TableBox(block: MdBlock.Table, color: Color, muted: Color, modifier: Modifier = Modifier) {
+private fun TableBox(
+    block: MdBlock.Table,
+    color: Color,
+    muted: Color,
+    modifier: Modifier = Modifier,
+    sharedSelection: SelectionState? = null,
+    lineIndex: Int = -1,
+    /*
+     * Where this table begins inside its block's flat text.
+     *
+     * 0 when the table *is* the block, and the quote's own offset when the table
+     * is nested inside one - a quote is a single block whose contents are
+     * several, so a table within it starts partway through, exactly as a list
+     * item does.
+     */
+    cellOffset: Int = 0,
+) {
     val columns = maxOf(block.head.size, block.rows.maxOfOrNull { it.size } ?: 0)
     val widths = remember(block) {
         List(columns) { index ->
@@ -1768,33 +1845,106 @@ private fun TableBox(block: MdBlock.Table, color: Color, muted: Color, modifier:
             (widest.coerceIn(4, 48) * 8.2f + 24f).dp
         }
     }
+    /*
+     * Where each cell begins in the block's flat text.
+     *
+     * Built from the same shape `blockText` uses - head, then each row, each
+     * joined by newlines and each row's cells joined by single spaces - so the
+     * two cannot disagree about which characters a cell owns. The last cell of a
+     * row is followed by the newline that starts the next row; that newline is
+     * not part of any cell, which is why each row's total includes it.
+     */
+    val cellStarts = remember(block, columns, cellOffset) {
+        tableCellStarts(block.head, block.rows, columns, cellOffset)
+    }
     Column(modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
         Row(Modifier.background(LocalPill.current.copy(alpha = 0.5f))) {
             for (index in 0 until columns) {
-                Text(
-                    block.head.getOrNull(index) ?: "",
-                    fontSize = 13.5.sp,
-                    fontWeight = FontWeight.Medium,
+                TableCell(
+                    text = block.head.getOrNull(index) ?: "",
+                    size = 13.5.sp,
+                    weight = FontWeight.Medium,
+                    lineHeight = 20.sp,
                     color = color,
-                    modifier = Modifier.width(widths[index]).padding(horizontal = 10.dp, vertical = 8.dp),
+                    width = widths[index],
+                    sharedSelection = sharedSelection,
+                    lineIndex = lineIndex,
+                    cellStart = cellStarts[0]?.getOrNull(index) ?: 0,
                 )
             }
         }
-        block.rows.forEach { row ->
+        block.rows.forEachIndexed { rowIndex, row ->
             Row {
                 for (index in 0 until columns) {
-                    Text(
-                        row.getOrNull(index) ?: "",
-                        fontSize = 15.sp,
+                    TableCell(
+                        text = row.getOrNull(index) ?: "",
+                        size = 15.sp,
+                        weight = null,
                         lineHeight = 22.sp,
                         color = color,
-                        modifier = Modifier.width(widths[index]).padding(horizontal = 10.dp, vertical = 8.dp),
+                        width = widths[index],
+                        sharedSelection = sharedSelection,
+                        lineIndex = lineIndex,
+                        cellStart = cellStarts[rowIndex + 1]?.getOrNull(index) ?: 0,
                     )
                 }
             }
             Box(Modifier.fillMaxWidth().height(1.dp).background(LocalLine.current.copy(alpha = 0.6f)))
         }
     }
+}
+
+/**
+ * One cell of a table, selectable in its own right.
+ *
+ * A cell is the one place in a reply where the selectable surface is not a whole
+ * block: it holds a few characters of a much longer flat text, so `lineStart` is
+ * where it sits in that text and `sliceOfSelection` does the intersection. Its
+ * width is fixed rather than measured, so the text inside is clipped by the
+ * column - which is why the tap target is the padded cell and why a selection
+ * that runs past the cell's own characters simply clamps to them.
+ */
+@Composable
+private fun TableCell(
+    text: String,
+    size: androidx.compose.ui.unit.TextUnit,
+    weight: FontWeight?,
+    lineHeight: androidx.compose.ui.unit.TextUnit,
+    color: Color,
+    width: androidx.compose.ui.unit.Dp,
+    sharedSelection: SelectionState?,
+    lineIndex: Int,
+    cellStart: Int,
+) {
+    var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    val slice = codeSelection(sharedSelection, lineIndex, cellStart, text.length)
+    val reportAnchor = rememberAnchorReporter(sharedSelection, lineIndex, slice, layout)
+    val annotated = remember(text, weight) {
+        if (weight == null) AnnotatedString(text) else buildAnnotatedString {
+            append(text)
+            addStyle(SpanStyle(fontWeight = weight), 0, text.length)
+        }
+    }
+    Text(
+        annotated,
+        fontSize = size,
+        fontWeight = weight,
+        lineHeight = lineHeight,
+        color = color,
+        onTextLayout = { layout = it },
+        modifier = Modifier
+            .width(width)
+            .padding(horizontal = 10.dp, vertical = 8.dp)
+            .selectable(
+                laid = layout,
+                sharedSelection = sharedSelection,
+                lineIndex = lineIndex,
+                lineStart = cellStart,
+                slice = slice,
+                text = text,
+                onPlaced = reportAnchor,
+            ),
+    )
 }
 
 /** How many Latin character widths a cell takes: a CJK glyph counts as two. */
