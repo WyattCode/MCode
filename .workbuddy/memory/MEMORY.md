@@ -36,6 +36,14 @@
   `flat.substring(start, start+len) == 期望单元格文本` 反断。
 - **表格分隔符不属于任何单元格**：`(head+rows).joinToString("\n"){ it.joinToString(" ") }`
   里，格间是 1 空格、行间是 1 换行。折进单元格长度会让后面整体右移一位。
+- **别往非目标设备装东西**：网络上的 `192.168.10.174`（25079RPDCC）不是 MCode 的目标机，
+  用户 2026-10-23 明确选择「不装」。只有平板 `192.168.10.173` 才装。
+- **`TextLayoutResult` 没有 `density` 属性**：需要 dp→px 时显式传
+  `LocalDensity.current.density` 进来，别写成 `laid.density`。
+- **画的和能抓的必须同源**：手柄用 `handleCentres(...)` 同时供绘制与命中测试；
+  两处各算一遍必然漂移。
+- **`git commit -m` 里的反引号会被 bash 当命令替换执行**（内容静默丢失）。
+  提交信息先写进 `.workbuddy/commitmsg.txt`，再 `git commit -F`。
 
 ## 工作流
 
