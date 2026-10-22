@@ -22,10 +22,19 @@ import { ToolError } from "./types"
 export class Questions {
   private readonly pending = new Map<
     string,
-    { request: QuestionRequest; resolve: (answers: QuestionAnswer[]) => void; reject: (reason: Error) => void }
+    {
+      request: QuestionRequest
+      resolve: (answers: QuestionAnswer[]) => void
+      reject: (reason: Error) => void
+      timer?: ReturnType<typeof setTimeout>
+    }
   >()
 
-  constructor(private readonly bus: Bus) {}
+  constructor(
+    private readonly bus: Bus,
+    /** Overridable so a check can watch the wait end without sitting out half an hour. */
+    private readonly timeoutMs: number = QUESTION_TIMEOUT_MS,
+  ) {}
 
   /**
    * Parks the calling tool until the reader answers.
@@ -34,6 +43,13 @@ export class Questions {
    * on screen. The reference gets this from its Effect fiber being interrupted;
    * here it has to be wired by hand, and without it Stop would leave the
    * promise unsettled and the session busy forever.
+   *
+   * A question also ends by itself after `QUESTION_TIMEOUT_MS`. Nothing else
+   * would settle it when the window is gone - closed, crashed, or a session
+   * driven without a reader at all, which is what an automated run is. The
+   * reference has the same hole and no answer for it; here the wait ends the
+   * way a skipped question does, with empty answers, so the model reads
+   * "Unanswered" and carries on rather than the turn hanging for ever.
    */
   ask(input: {
     sessionID: string
@@ -69,6 +85,8 @@ export class Questions {
       }
 
       const settle = () => {
+        const parked = this.pending.get(request.id)
+        if (parked?.timer) clearTimeout(parked.timer)
         this.pending.delete(request.id)
         input.signal?.removeEventListener("abort", onAbort)
       }
@@ -79,7 +97,12 @@ export class Questions {
       }
       input.signal?.addEventListener("abort", onAbort, { once: true })
 
-      this.pending.set(request.id, {
+      const entry: {
+        request: QuestionRequest
+        resolve: (answers: QuestionAnswer[]) => void
+        reject: (reason: Error) => void
+        timer?: ReturnType<typeof setTimeout>
+      } = {
         request,
         resolve: (answers) => {
           settle()
@@ -89,7 +112,29 @@ export class Questions {
           settle()
           reject(reason)
         },
-      })
+      }
+      this.pending.set(request.id, entry)
+
+      /*
+       * A question nobody answers is a question the reader skipped: the model
+       * is told "Unanswered" and told to carry on, which is what the tool's
+       * own description promises for a skip. Published as `replied` rather than
+       * `rejected` so a window that comes back draws the card as answered-empty
+       * instead of as a refusal.
+       *
+       * Armed after the entry is parked, so the timer cannot fire into a map
+       * that does not yet hold the request - which, with a short bound, would
+       * leave the promise unsettled with nothing left to settle it.
+       */
+      const timer = setTimeout(() => {
+        if (!this.pending.has(request.id)) return
+        settle()
+        this.bus.publish({ type: "question.replied", sessionID: request.sessionID, requestID: request.id, answers: [] })
+        resolve([])
+      }, this.timeoutMs)
+      timer.unref?.()
+      entry.timer = timer
+
       this.bus.publish({ type: "question.asked", request })
     })
   }
@@ -152,6 +197,17 @@ export class Questions {
     return [...this.pending.values()].map((parked) => parked.request)
   }
 }
+
+/**
+ * How long a question waits for an answer before it is read as skipped.
+ *
+ * Long enough that a reader who stepped away for a coffee still finds the card
+ * where they left it, short enough that a window which is gone for good does
+ * not hold a turn for the rest of the afternoon. MiMo's engine has no such
+ * bound, and a session driven with no window at all - a headless run, or a
+ * window that crashed - sat parked until something outside killed it.
+ */
+export const QUESTION_TIMEOUT_MS = 30 * 60_000
 
 /**
  * What a dismissed question tells the model.

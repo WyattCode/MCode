@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>MCode vs MiMo-Code 性能对比</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; max-width: 860px; margin: 0 auto; padding: 32px 24px; color: #1d1d1f; background: #fff; line-height: 1.6; }
+  h1 { font-size: 22px; font-weight: 600; }
+  h2 { font-size: 16px; font-weight: 600; margin-top: 36px; border-bottom: 1px solid #e5e5e5; padding-bottom: 6px; }
+  h3 { font-size: 14px; font-weight: 600; }
+  .meta { color: #86868b; font-size: 13px; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 13px; }
+  th, td { border: 1px solid #e5e5e5; padding: 8px 12px; text-align: left; }
+  th { background: #f5f5f7; font-weight: 600; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .win { color: #1d7a3e; font-weight: 600; }
+  .note { background: #f5f5f7; border-radius: 10px; padding: 12px 16px; font-size: 13px; color: #515154; margin: 14px 0; }
+  .chart { position: relative; height: 260px; margin: 16px 0; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+  code { background: #f5f5f7; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>MCode vs MiMo-Code 性能对比</h1>
+<p class="meta">测试机：Apple Silicon Mac（arm64）· 2026-10-22 · 每项 3 次取中位 · MiMo-Code v0.1.15（OpenCode fork，Bun 编译单二进制）· MCode v0.8.9（Electron 桌面端）</p>
+
+<h2>一、引擎启动到就绪</h2>
+<p>同一指标的两端实现：MCode <code>startBackend()</code>（HTTP+WS 就绪，冷数据目录）vs MiMo <code>serve</code>（HTTP 就绪，含 SQLite/FTS5 初始化，已排除首跑迁移）。</p>
+<div class="chart"><canvas id="bootChart" role="img" aria-label="启动时间对比柱状图">启动时间对比</canvas></div>
+
+<h2>二、引擎内存峰值 RSS</h2>
+<div class="chart"><canvas id="memChart" role="img" aria-label="内存峰值对比柱状图">内存峰值对比</canvas></div>
+
+<h2>三、原始数据</h2>
+<table>
+  <tr><th>指标</th><th>MCode（Electron + Node 后端）</th><th>MiMo-Code（Bun 单二进制 TUI）</th><th>优势方</th></tr>
+  <tr><td>引擎启动到就绪</td><td class="num">116 / 120 / 129 ms → <b>≈122 ms</b></td><td class="num">1120 / 1129 / 1146 ms → <b>≈1130 ms</b></td><td class="win">MCode（快 ~9 倍）</td></tr>
+  <tr><td>引擎峰值内存 RSS</td><td class="num">180 / 186 / 189 MB → <b>≈184 MB</b></td><td class="num">749 / 754 / 756 MB → <b>≈753 MB</b></td><td class="win">MCode（省 ~4 倍）</td></tr>
+  <tr><td>CLI 快速命令（--version）</td><td class="num">不适用（无 CLI 形态）</td><td class="num">0.56 s，358 MB RSS</td><td>—</td></tr>
+  <tr><td>安装产物体积</td><td class="num">DMG 160 MB；MCode.app 369 MB（Electron Frameworks 占 262 MB）</td><td class="num">引擎二进制 96 MB（自包含）</td><td class="win">MiMo（小 ~4 倍）</td></tr>
+  <tr><td>前端资源包</td><td class="num">out/renderer 53 MB</td><td class="num">内嵌于二进制</td><td>—</td></tr>
+  <tr><td>开发依赖体积</td><td class="num">node_modules 1.4 GB</td><td class="num">bun ci（未测）</td><td>—</td></tr>
+</table>
+
+<h2>四、结论</h2>
+<div class="note">
+<b>引擎层 MCode 明显占优</b>：启动快约 9 倍（122ms vs 1130ms）、内存省约 4 倍（184MB vs 753MB）。原因清楚：MiMo 的 Bun 编译二进制把 SQLite/FTS5/全量 TUI 基建一次性拉起，且 Bun 运行时本身基线内存就高；MCode 的后端是纯 Node 模块图，按需初始化。
+</div>
+<div class="note">
+<b>分发体积 MiMo 占优</b>：96MB 自包含二进制 vs 369MB 的 .app——这是 Electron 的固定税（仅 Frameworks 就 262MB）。但两者的安装产物在同一量级（DMG 160MB 已压缩）。
+</div>
+<div class="note">
+<b>注意口径</b>：① MCode 引擎在独立 Node 进程中测得，未含 Electron 主进程与渲染进程（GUI 冷启动因单实例锁无法在本机无干扰测量）；② MiMo 侧为引擎二进制直测（launchers 的 0.6s 与引擎的 0.56s 基本一致，无额外开销）；③ 两者功能面不同（MCode 多了 GUI/Office/语音管线，MiMo 多了 FTS5 记忆库），启动负载不完全等价，比值仅供参考；④ 模型响应速度取决于 API 侧，与客户端无关，未测。
+</div>
+
+<h2>五、测试方法</h2>
+<p style="font-size:13px">MCode：<code>startBackend("/tmp/mcode-perf-data")</code> esbuild bundle 后以 node 22 直跑，performance.now() 计时，/usr/bin/time -l 取峰值 RSS，每次运行前清空数据目录。MiMo：<code>bin/.mimocode serve --port 41xx</code>，轮询日志至 "listening"，MIMOCODE_HOME 指向临时目录（首跑迁移完成后计时），getrusage(RUSAGE_CHILDREN).ru_maxrss 取峰值。环境变量注入均为临时目录，未触碰真实用户数据。</p>
+
+<script>
+const BOOT = [122, 1130];
+const MEM = [184, 753];
+const labels = ['MCode 引擎', 'MiMo-Code 引擎'];
+const COLORS = { mcode: '#0F6E56', mimo: '#BA7517' };
+function bar(ctx, data, unit, suggestedMax) {
+  return new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [{ data, backgroundColor: [COLORS.mcode, COLORS.mimo], borderRadius: 6, barPercentage: 0.5 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: (c) => `${c.parsed.y} ${unit}` } } },
+      scales: { y: { beginAtZero: true, suggestedMax, title: { display: true, text: unit } } }
+    }
+  });
+}
+bar(document.getElementById('bootChart'), BOOT, 'ms', 1400);
+bar(document.getElementById('memChart'), MEM, 'MB', 900);
+</script>
+</body>
+</html>
