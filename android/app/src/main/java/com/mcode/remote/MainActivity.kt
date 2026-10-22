@@ -950,7 +950,18 @@ fun MCodeTheme(content: @Composable () -> Unit) {
          * square: the honest half of the fix rather than a fragile whole.
          */
         LocalTextSelectionColors provides TextSelectionColors(
-            handleColor = if (dark) Color(0xFFD9A08C) else Color(0xFFB4705A),
+            /*
+             * The reference's own handle, sampled on the pad: #B96747 on the
+             * light page, a lighter #D08A6B on dark. The earlier #B4705A was a
+             * guess from a screenshot of this app rather than of the reference,
+             * which is how the wash and the handles both ended up the wrong
+             * colour for several rounds.
+             */
+            handleColor = if (dark) Color(0xFFD08A6B) else Color(0xFFB96747),
+            /*
+             * Transparent on purpose: `MarkdownBody` paints the wash itself, and
+             * Compose's own fill is one square band per line with no way in.
+             */
             backgroundColor = Color.Transparent,
         ),
     ) {
@@ -4202,15 +4213,30 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                             Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp),
                                             share = { id ->
                                 selectionByMessage.getOrPut(id) { SelectionState() }.apply {
-                                    // Only one reply may be lit: the reference never
-                                    // shows two washes, and a stale one keeps its
-                                    // 复制 chip floating over the transcript.
+                                    /*
+                                     * Only one reply may be lit: the reference
+                                     * never shows two washes, and a stale one
+                                     * keeps its 复制 chip floating over the
+                                     * transcript.
+                                     */
                                     onTakeOver = {
                                         val was = litMessage
                                         if (was != null && was != id) {
                                             selectionByMessage[was]?.clear()
                                         }
                                         litMessage = id
+                                    }
+                                    /*
+                                     * A tap clears every reply, not just this
+                                     * one: the reference's selection is one
+                                     * screen-wide thing, so dismissing it has to
+                                     * reach the reply that was lit as well as
+                                     * this one - otherwise a tap on a second
+                                     * paragraph left the first still washed.
+                                     */
+                                    onDismiss = {
+                                        selectionByMessage.values.forEach { it.clear() }
+                                        litMessage = null
                                     }
                                 }
                             },
@@ -4294,15 +4320,30 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             Modifier.fillMaxSize().blur(if (privacy) 14.dp else 0.dp),
                             share = { id ->
                                 selectionByMessage.getOrPut(id) { SelectionState() }.apply {
-                                    // Only one reply may be lit: the reference never
-                                    // shows two washes, and a stale one keeps its
-                                    // 复制 chip floating over the transcript.
+                                    /*
+                                     * Only one reply may be lit: the reference
+                                     * never shows two washes, and a stale one
+                                     * keeps its 复制 chip floating over the
+                                     * transcript.
+                                     */
                                     onTakeOver = {
                                         val was = litMessage
                                         if (was != null && was != id) {
                                             selectionByMessage[was]?.clear()
                                         }
                                         litMessage = id
+                                    }
+                                    /*
+                                     * A tap clears every reply, not just this
+                                     * one: the reference's selection is one
+                                     * screen-wide thing, so dismissing it has to
+                                     * reach the reply that was lit as well as
+                                     * this one - otherwise a tap on a second
+                                     * paragraph left the first still washed.
+                                     */
+                                    onDismiss = {
+                                        selectionByMessage.values.forEach { it.clear() }
+                                        litMessage = null
                                     }
                                 }
                             },

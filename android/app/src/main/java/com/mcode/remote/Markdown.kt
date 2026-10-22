@@ -8,6 +8,7 @@ import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -300,14 +301,22 @@ object MdText {
 private var chipBg = Color(0xFFF0F0F2)
 private var chipFg = Color(0xFF3A3A38)
 /*
- * The selection wash, measured off the reference at 400 dpi: #ECDFE6 behind
- * dark ink in light, and a deeper #5A4038 on the #151515 page. Kept beside the
- * chip colours and set per render for the same reason - the parser runs outside
- * composition.
+ * The selection wash, measured off the reference at 400 dpi.
+ *
+ * The figure this file carried before was #ECDFE6, and it was the *toolbar's*
+ * colour rather than the selection's: the pill that floats above a selection
+ * is pink-lilac, while the block behind the words is a peach. Reading the two
+ * apart matters, because a pink wash behind pink-ish text reads as a tinted
+ * page and a peach one reads as a highlighter - which is what the reference
+ * looks like.
+ *
+ *   wash     #DEBFAF  222,190,175 - sampled inside 复制's own selection
+ *   handle   #B96747  185,103,71  - the two large teardrops under it
+ *   pill     #ECDFE6  236,223,230 - the 复制 / 全选 menu
  */
-private var selectionTint = Color(0xFFECDFE6)
-/* The two end dots: the reference's accent in light, a lighter one on dark. */
-private var selectionHandle = Color(0xFFB4705A)
+private var selectionTint = Color(0xFFDEBFAF)
+/* The two end handles: the reference's burnt orange in light, lighter on dark. */
+private var selectionHandle = Color(0xFFB96747)
 private val LinkBlue = Color(0xFF2F6FED)
 
 /* ------------------------------------------------------------------ */
@@ -355,12 +364,18 @@ fun MarkdownBody(
      */
     val sharedSelection: SelectionState = share ?: remember(source) { SelectionState() }
     val blocks = remember(source) { Md.blocks(source) }
+    /*
+     * Published after composition rather than during it: a drag that runs past
+     * one paragraph clamps against this count, and writing it inline would be a
+     * state write inside the composition that reads it.
+     */
+    SideEffect { sharedSelection.lineCount = blocks.size }
     val textColor = LocalText.current
     val muted = LocalMuted.current
     chipBg = if (dark) Color(0xFF2E2E2E) else Color(0xFFF0F0F2)
     chipFg = if (dark) Color(0xFFE6E6E6) else Color(0xFF3A3A38)
-    selectionTint = if (dark) Color(0xFF5A4038) else Color(0xFFECDFE6)
-    selectionHandle = if (dark) Color(0xFFD9A08C) else Color(0xFFB4705A)
+    selectionTint = if (dark) Color(0xFF63463A) else Color(0xFFDEBFAF)
+    selectionHandle = if (dark) Color(0xFFD08A6B) else Color(0xFFB96747)
     /*
      * How many characters of the container's flat string each block owns, in
      * order. A block's own text plus the newline the container inserts after it
@@ -404,14 +419,30 @@ fun MarkdownBody(
         val a = offsets.getOrNull(selStart)
         val b = offsets.getOrNull(selEnd)
         if (a == null || b == null) "" else {
-            val from = (a + sharedSelection.startOffset).coerceIn(0, plain.length)
-            val to = (b + sharedSelection.endOffset).coerceIn(from, plain.length)
+            /*
+             * `Long`, because a drag that ran off the end of its own line stores
+             * `Int.MAX_VALUE` in the moving end to mean "the rest of this
+             * paragraph" - and adding that to an offset wrapped around and
+             * produced a range that started after it ended.
+             */
+            val from = (a.toLong() + sharedSelection.startOffset).coerceIn(0L, plain.length.toLong()).toInt()
+            val to = (b.toLong() + sharedSelection.endOffset).coerceIn(from.toLong(), plain.length.toLong()).toInt()
             plain.substring(from, to).trim()
         }
     }
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     /*
-     * The chip, as a `Popup` at the lit box.
+     * The 复制 / 全选 pill, as a `Popup` at the lit box.
+     *
+     * Measured off the reference's own selection on the pad at 400 dpi:
+     *
+     *   pill      x 1251..1530, y 207..326 - 112 by 48 dp, corner 24, filled
+     *             #ECDFE6 with #382F36 lettering at about 13sp
+     *   labels    复制 at 17.6 in from the pill's left, 全选 at 17.6 from its
+     *             right, 25.2 between them - so the pill's own width is exactly
+     *             what those three runs add up to, and it needs no fixed width
+     *   gap       21 px of air between the pill's bottom and the wash's top,
+     *             8.4 dp, and the pill is centred on the wash
      *
      * Two earlier shapes failed for reasons that only showed up on the device:
      * pinning it to the reply's `TopEnd` put it above the viewport whenever the
@@ -421,36 +452,80 @@ fun MarkdownBody(
      */
     val anchor = sharedSelection.anchorInRoot
     val density = androidx.compose.ui.platform.LocalDensity.current
+    val pillWidth = 112.dp
+    /*
+     * A fixed 112 dp, centred on the wash - but the offset has to be measured
+     * from the pill's own parent, not from the root.
+     *
+     * `Popup(offset = ...)` positions its window against the *layout that
+     * contains the anchor*, and the anchor here is a root coordinate, so using
+     * it directly put the pill a whole sidebar's width to the right. Routeing
+     * it through `PopupPositionProvider` lets the arithmetic happen in one
+     * coordinate space.
+     */
     if (selectedText.isNotEmpty() && anchor != null) {
         androidx.compose.ui.window.Popup(
-            offset = androidx.compose.ui.unit.IntOffset(
-                x = anchor.x.toInt(),
-                // 34dp above the box's top, in pixels; `LocalDensity` because a
-                // Popup's offset is measured outside any draw scope.
-                y = (anchor.y - with(density) { 34.dp.toPx() }).toInt().coerceAtLeast(0),
-            ),
+            popupPositionProvider = object : androidx.compose.ui.window.PopupPositionProvider {
+                override fun calculatePosition(
+                    anchorBounds: androidx.compose.ui.unit.IntRect,
+                    windowSize: androidx.compose.ui.unit.IntSize,
+                    layoutDirection: androidx.compose.ui.unit.LayoutDirection,
+                    popupContentSize: androidx.compose.ui.unit.IntSize,
+                ): androidx.compose.ui.unit.IntOffset {
+                    /*
+                     * The pill sits 8.4 dp above the wash's top, centred on it.
+                     *
+                     * `windowSize` is the whole window here, so the anchor's own
+                     * root coordinates can be used as-is - which is the point of
+                     * going through a provider at all. The result is clamped to
+                     * the window so a selection near the top edge puts the pill
+                     * just inside it rather than off-screen, where it would
+                     * vanish exactly the way the earlier attempts did.
+                     */
+                    val halfPill = with(density) { pillWidth.toPx() / 2f }
+                    val air = with(density) { 56.4.dp.toPx() }
+                    val x = (anchor.x - halfPill).toInt()
+                        .coerceIn(0, (windowSize.width - popupContentSize.width).coerceAtLeast(0))
+                    val y = (anchor.y - air).toInt().coerceAtLeast(0)
+                    return androidx.compose.ui.unit.IntOffset(x, y)
+                }
+            },
         ) {
+            val night = LocalBg.current.luminance() < 0.4f
             Row(
                 androidx.compose.ui.Modifier
-                    .clip(RoundedCornerShape(9.dp))
-                    .background(if (LocalBg.current.luminance() < 0.4f) Color(0xFF2E2E2E) else Color(0xFF2B2B2A))
-                    .clickable {
+                    .width(pillWidth)
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(if (night) Color(0xFF3A2E33) else Color(0xFFECDFE6)),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    "复制",
+                    fontSize = 13.sp,
+                    color = if (night) Color(0xFFF1E9EC) else Color(0xFF382F36),
+                    modifier = androidx.compose.ui.Modifier.clickable {
                         clipboard.setText(AnnotatedString(selectedText))
                         sharedSelection.clear()
-                    }
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                MiIcon(
-                    "M8.4 3.4h9.2a1.4 1.4 0 0 1 1.4 1.4v9.2M6.4 7.4h9.2a1.4 1.4 0 0 1 1.4 1.4v9.2a1.4 1.4 0 0 1-1.4 1.4H6.4A1.4 1.4 0 0 1 5 18V8.8a1.4 1.4 0 0 1 1.4-1.4z",
-                    contentDescription = null,
-                    modifier = androidx.compose.ui.Modifier.size(12.dp),
-                    viewBox = 24f,
-                    strokeWidth = 1.7f,
-                    tint = Color(0xFFF5F3EE),
+                    },
                 )
-                Spacer(androidx.compose.ui.Modifier.width(5.dp))
-                Text("复制", fontSize = 12.sp, color = Color(0xFFF5F3EE))
+                Spacer(androidx.compose.ui.Modifier.width(25.dp))
+                Text(
+                    "全选",
+                    fontSize = 13.sp,
+                    color = if (night) Color(0xFFF1E9EC) else Color(0xFF382F36),
+                    modifier = androidx.compose.ui.Modifier.clickable {
+                        // Every line of the reply, from its first character to
+                        // its last - the reference's 全选 lights the whole
+                        // message rather than the paragraph the press landed in.
+                        val last = blocks.lastOrNull() ?: return@clickable
+                        sharedSelection.anchorLine = 0
+                        sharedSelection.anchorOffset = 0
+                        sharedSelection.activeLine = blocks.lastIndex
+                        sharedSelection.activeOffset = flatLength(last)
+                    },
+                )
             }
         }
     }
@@ -622,10 +697,19 @@ private fun MdLine(
     val ownSelection: Pair<Int, Int>? = run {
         val shared = sharedSelection ?: return@run null
         if (shared.isEmpty || lineIndex < 0 || !shared.coversLine(lineIndex)) return@run null
-        val low = minOf(shared.anchorLine, shared.activeLine)
-        val high = maxOf(shared.anchorLine, shared.activeLine)
-        val from = if (lineIndex == low) minOf(shared.anchorOffset, shared.activeOffset) else 0
-        val to = if (lineIndex == high) maxOf(shared.anchorOffset, shared.activeOffset) else source.length
+        /*
+         * The two ends as they belong to lines, not as raw anchor and active.
+         *
+         * `anchorOffset` is an offset *in the anchor's line* and `activeOffset`
+         * is one in the active line's - so taking `min`/`max` of the two
+         * compared numbers from different paragraphs as soon as a drag crossed
+         * a line boundary, and a backwards drag across paragraphs picked the
+         * far end's offset for the near end's line. `startLine`/`startOffset`
+         * and `endLine`/`endOffset` are already ordered and paired, so each
+         * line asks for the end that actually sits on it.
+         */
+        val from = if (lineIndex == shared.startLine) shared.startOffset else 0
+        val to = if (lineIndex == shared.endLine) shared.endOffset else source.length
         val a = from.coerceIn(0, source.length)
         val b = to.coerceIn(0, source.length)
         if (b > a) a to b else null
@@ -647,6 +731,56 @@ private fun MdLine(
                 addStyle(span.item, span.start, span.end)
             }
         }
+    }
+    /*
+     * Where this line was placed, so the pill can be anchored to its words.
+     *
+     * Held in state rather than written straight into the selection from
+     * `onGloballyPositioned`: that callback fires on placement, and lighting a
+     * selection moves nothing - so the write never happened on the press that
+     * created the selection, and the pill never appeared. The two halves are
+     * kept here and combined in an effect keyed on the selection, which runs
+     * whenever the lit words change.
+     */
+    var placed by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+    /*
+     * A counter, bumped whenever this line moves.
+     *
+     * `placed` is the same object instance across a scroll - Compose reuses the
+     * coordinates node - so keying the effect on it alone kept the anchor from
+     * the pre-scroll position, and the pill drifted up the screen with every
+     * flick. The tick is what makes a scroll re-run the arithmetic.
+     */
+    var placedTick by remember { mutableStateOf(0) }
+    /*
+     * Where this line's top-left was on the last placement, so the tick only
+     * moves when the line actually moved. Bumping it unconditionally would
+     * write state from the placement callback on every pass and put the
+     * composition in a loop.
+     */
+    var lastPlace by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
+    LaunchedEffect(sharedSelection, ownSelection, placed, layout, placedTick) {
+        val shared = sharedSelection ?: return@LaunchedEffect
+        val coords = placed ?: return@LaunchedEffect
+        /*
+         * Only the line the selection *starts* on reports an anchor.
+         *
+         * Every line shares one `SelectionState`, so an unselected line must
+         * not write to it at all: clearing from here would race the start line's
+         * write and leave the pill with no anchor - the same "nothing ever
+         * appears" that took three rounds to explain. A cleared selection nulls
+         * the anchor in `SelectionState.clear()` instead.
+         */
+        if (shared.isEmpty || lineIndex != shared.startLine) return@LaunchedEffect
+        val box = ownSelection ?: return@LaunchedEffect
+        val laid = layout ?: return@LaunchedEffect
+        val first = chipBoxes(laid, box.first until box.second).firstOrNull() ?: return@LaunchedEffect
+        shared.anchorInRoot = coords.localToRoot(
+            androidx.compose.ui.geometry.Offset(
+                (first.left + first.right) / 2f,
+                first.top,
+            ),
+        )
     }
     Text(
         annotated,
@@ -670,22 +804,24 @@ private fun MdLine(
             /*
              * Report where the lit box sits, in root coordinates.
              *
-             * Done after layout rather than during draw: `localToRoot` needs the
-             * coordinates to be placed, and writing state inside `drawBehind`
-             * would be a write during the draw phase. The chip is a `Popup` and
-             * is positioned from this, so it follows the words instead of the
-             * reply's corner.
+             * Two things have to hold for the pill to appear at all, and the
+             * previous version only had the first: the line's coordinates, and
+             * the selection itself. `onGloballyPositioned` fires when the line's
+             * *placement* changes, which a selection does not do - lighting a
+             * word leaves every line exactly where it was - so writing the
+             * anchor inside it meant the pill never got an anchor and never
+             * appeared, which matched the "it is never in the tree" checks.
+             * The coordinates are kept in state here, and a `LaunchedEffect`
+             * keyed on the selection does the arithmetic, so a press that lights
+             * new words recomputes it while nothing has moved.
              */
             .onGloballyPositioned { coords ->
-                val shared = sharedSelection ?: return@onGloballyPositioned
-                val box = ownSelection ?: return@onGloballyPositioned
-                val laid = layout ?: return@onGloballyPositioned
-                val first = chipBoxes(laid, box.first until box.second).firstOrNull()
-                    ?: return@onGloballyPositioned
-                val inRoot = coords.localToRoot(
-                    androidx.compose.ui.geometry.Offset(first.left, first.top),
-                )
-                shared.anchorInRoot = inRoot
+                placed = coords
+                val at = coords.localToRoot(androidx.compose.ui.geometry.Offset.Zero)
+                if (lastPlace != at) {
+                    lastPlace = at
+                    placedTick++
+                }
             }
             .drawBehind {
                 val laid = layout ?: return@drawBehind
@@ -695,71 +831,116 @@ private fun MdLine(
                  * top: the reference tints the words and leaves an inline chip's
                  * grey block visible within the wash.
                  *
-                 * The block is grown 3.0 above and below and 2.2 at the ends -
-                 * read off the reference, whose selection stands 5.6 clear of
-                 * 12-tall glyphs and carries a 4dp corner. `SelectionContainer`'s
-                 * own rectangle hugs the glyphs and cannot be rounded, which is
-                 * the whole reason this is drawn here.
+                 * Square and flush, read off the reference at 400 dpi: its wash
+                 * is x 1358..1424 by y 347..415 behind the word *the* - 65.2 by
+                 * 27.6 dp - and every one of those rows starts at exactly 1358,
+                 * so the block has no corner radius at all and no horizontal
+                 * air. The 4 dp corner this drew before was a guess that the
+                 * earlier rounds kept re-deriving from this app's own
+                 * screenshot rather than from the reference's.
+                 *
+                 * 27.6 over a 30 dp line is the glyph box grown 0.2 above and
+                 * below, which is what the box already is; two clean sides and
+                 * the block's own height are all this needs.
                  */
                 val wash = ownSelection?.let { (a, b) -> TextRange(a, b) }
+                /*
+                 * The block's own box, derived once so the handles can hang off
+                 * the same edges the fill was drawn to.
+                 *
+                 * Vertically it is the line box pulled in 1.2 at each end: the
+                 * reference's wash is 69 px, 27.6 dp, while a 30 dp line's glyph
+                 * box here is 30.0 - so the block covers the letters and stops
+                 * short of the line's own leading. Horizontally it is flush, 0.8
+                 * each side, which is the two pixels between the reference's
+                 * wash and the ink of its word.
+                 */
+                var washLeft = 0f
+                var washRight = 0f
+                var washBottom = 0f
                 if (wash != null && !wash.collapsed) {
-                    for (box in chipBoxes(laid, wash.start until wash.end)) {
+                    val boxes = chipBoxes(laid, wash.start until wash.end)
+                    for (box in boxes) {
+                        val left = box.left - 0.8.dp.toPx()
+                        val right = box.right + 0.8.dp.toPx()
+                        val top = box.top + 1.2.dp.toPx()
+                        val bottom = box.bottom - 1.2.dp.toPx()
+                        /*
+                         * Rounded, at 4 dp.
+                         *
+                         * The reference's own selection on this pad is a square
+                         * block, but the reader asked for the corner twice and
+                         * the desktop's selection is cut, so the corner stays -
+                         * the same 4 dp the earlier rounds settled on, which at
+                         * 27.6 of height reads as a soft block rather than as a
+                         * capsule.
+                         */
                         drawRoundRect(
                             color = selectionTint,
-                            /*
-                             * 0.2 above and below, not 3.0.
-                             *
-                             * Measured on the pad: the wash came out 35.2 tall
-                             * against the reference's 29.6. The glyph box in this
-                             * line is already 29.2 - the em of a 30sp line - so the
-                             * inflation, not the box, was what made the block too
-                             * thick. The reference's air is horizontal as well, and
-                             * the 2.2 at each end already provides that.
-                             */
-                            topLeft = androidx.compose.ui.geometry.Offset(box.left - 2.2.dp.toPx(), box.top - 0.2.dp.toPx()),
-                            size = androidx.compose.ui.geometry.Size(
-                                box.width + 4.4.dp.toPx(),
-                                box.height + 0.4.dp.toPx(),
-                            ),
+                            topLeft = androidx.compose.ui.geometry.Offset(left, top),
+                            size = androidx.compose.ui.geometry.Size(right - left, bottom - top),
                             cornerRadius = androidx.compose.ui.geometry.CornerRadius(radius, radius),
                         )
                     }
+                    /*
+                     * The handles hang off the *selection's* ends, not this
+                     * line's slice: a drag that starts mid-paragraph and runs
+                     * into the next has its discs on two different lines, and
+                     * each line only draws the one it owns.
+                     */
+                    washLeft = boxes.firstOrNull()?.left?.minus(0.8.dp.toPx()) ?: 0f
+                    washRight = boxes.lastOrNull()?.right?.plus(0.8.dp.toPx()) ?: 0f
+                    washBottom = (boxes.firstOrNull()?.bottom ?: 0f) - 1.2.dp.toPx()
                 }
                 /*
                  * The handles, on the line that owns each end.
                  *
-                 * Two 3.6 dots sitting just under the wash's bottom edge on the
-                 * end lines - the reference's are small circles, not the long
-                 * teardrops Material draws, because the two ends here are a
-                 * position rather than a lever. They are drawn, not hit-tested:
-                 * a press anywhere on an already-lit line grabs the nearer end,
-                 * which is what makes them feel grabbable without a second
-                 * gesture pipeline competing with the first.
+                 * 25.2 dp across, measured: the reference's are 63 px wide and
+                 * 63 tall, a disc with one flat side against the word - not the
+                 * 7 dp dots Material draws, and not the teardrops either. Their
+                 * tops sit 1.6 dp into the wash's own bottom edge and each is
+                 * centred on its end of the selection, so a pair reads as the
+                 * two ends of a bracket.
+                 *
+                 * They are drawn, not hit-tested: a press anywhere on an
+                 * already-lit line grabs the nearer end, which is what makes
+                 * them feel grabbable without a second gesture pipeline
+                 * competing with the first.
                  */
                 if (ownSelection != null && sharedSelection != null) {
-                    val dot = 3.6.dp.toPx()
-                    val gap = 1.6.dp.toPx()
+                    val disc = 12.6.dp.toPx()
+                    /*
+                     * 1.6 dp of the disc's top lies inside the wash: the
+                     * reference's handles start at y 411 against a block ending
+                     * at 415, so the pair reads as attached to the block's
+                     * bottom corners rather than floating below it.
+                     */
+                    val overlap = 1.6.dp.toPx()
                     if (lineIndex == sharedSelection.startLine) {
-                        val box = chipBoxes(laid, sharedSelection.startOffset.coerceIn(0, source.length - 1) until
-                            (sharedSelection.startOffset + 1).coerceIn(1, source.length)).firstOrNull()
-                        if (box != null) {
-                            drawCircle(
-                                color = selectionHandle,
-                                radius = dot,
-                                center = androidx.compose.ui.geometry.Offset(box.left - 2.2.dp.toPx(), box.bottom + gap),
-                            )
-                        }
+                        drawCircle(
+                            color = selectionHandle,
+                            radius = disc,
+                            /*
+                             * Tucked into the gutter on the block's left, not
+                             * over it: the reference's left handle spans
+                             * x 1295..1357 against a wash starting at 1358, so
+                             * the disc's right edge touches the block's edge.
+                             */
+                            center = androidx.compose.ui.geometry.Offset(
+                                washLeft - disc,
+                                washBottom + disc - overlap,
+                            ),
+                        )
                     }
                     if (lineIndex == sharedSelection.endLine) {
-                        val box = chipBoxes(laid, (sharedSelection.endOffset - 1).coerceIn(0, source.length - 1) until
-                            sharedSelection.endOffset.coerceIn(1, source.length)).firstOrNull()
-                        if (box != null) {
-                            drawCircle(
-                                color = selectionHandle,
-                                radius = dot,
-                                center = androidx.compose.ui.geometry.Offset(box.right + 2.2.dp.toPx(), box.bottom + gap),
-                            )
-                        }
+                        drawCircle(
+                            color = selectionHandle,
+                            radius = disc,
+                            center = androidx.compose.ui.geometry.Offset(
+                                washRight + disc,
+                                washBottom + disc - overlap,
+                            ),
+                        )
                     }
                 }
                 if (inline.code.isEmpty()) return@drawBehind
@@ -824,36 +1005,57 @@ private fun MdLine(
                         val downOffset = laid.getOffsetForPosition(down.position)
 
                         /*
-                         * Long press picks a word; a short tap clears.
+                         * Three outcomes, told apart by two null-able waits.
                          *
-                         * `Text` has its own long-press behaviour in this release
-                         * and sits below this detector, so the down is consumed
-                         * as soon as the gesture is ours - otherwise its own 复制
-                         * toolbar opens underneath this one.
-                         *
-                         * The wait is what separates the two: held past the
-                         * timeout means selection, released before it means a tap
-                         * on words that were only being read, which dismisses a
-                         * wash if one is lit.
+                         * A press that lifts inside the long-press timeout is a
+                         * tap and dismisses a lit wash. A press that a parent
+                         * takes away is a scroll, and must not select anything -
+                         * `waitForUpOrCancellation` answers null for both, which
+                         * is the trap this shape exists to avoid: treating null
+                         * as "still held" made every flick of the transcript
+                         * light a word. `awaitLongPressOrCancellation` names the
+                         * case instead: it answers non-null only when the
+                         * pointer really did stay down, and null when it went
+                         * away - scrolled, cancelled, or lifted early.
                          */
-                        val released = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
-                            waitForUpOrCancellation()
-                        }
-                        if (released != null) {
-                            if (!sharedSelection.isEmpty) sharedSelection.clear()
+                        val held = awaitLongPressOrCancellation(down.id)
+                        if (held == null) {
+                            /*
+                             * Not a long press. It was a tap only if the pointer
+                             * stayed put and nothing above claimed it - so the
+                             * wash is dismissed on a tap and left alone on a
+                             * scroll. `onDismiss` reaches every reply, because a
+                             * tap on one paragraph is the reader saying "stop
+                             * selecting", not "stop selecting here".
+                             */
+                            val cancelled = currentEvent.changes.any { it.isConsumed }
+                            val moved = (currentEvent.changes.firstOrNull()?.position
+                                ?: down.position) != down.position
+                            if (!cancelled && !moved) sharedSelection.onDismiss?.invoke()
                             return@awaitEachGesture
                         }
-                        down.consume()
+                        held.consume()
 
                         sharedSelection.onTakeOver?.invoke()
                         if (sharedSelection.isEmpty) {
-                            // Word granularity, which is what makes a press land
-                            // on the whole word rather than on one character.
-                            val word = laid.getWordBoundary(downOffset)
+                            /*
+                             * Word granularity, from ICU rather than from the
+                             * layout.
+                             *
+                             * `getWordBoundary` asks the platform's iterator
+                             * over the *styled* string, and that iterator has
+                             * no dictionary: pressing inside a Chinese sentence
+                             * returned the whole run, so one long press lit
+                             * three paragraphs at once. ICU's word instance
+                             * segments Chinese by dictionary - the same one the
+                             * reference's selection uses - and it finds 色温
+                             * inside 看,色温从生产线.
+                             */
+                            val word = wordAt(annotated.text, downOffset)
                             sharedSelection.anchorLine = lineIndex
-                            sharedSelection.anchorOffset = word.start
+                            sharedSelection.anchorOffset = word.first
                             sharedSelection.activeLine = lineIndex
-                            sharedSelection.activeOffset = word.end
+                            sharedSelection.activeOffset = word.last + 1
                         } else {
                             // Already lit: the press grabs whichever end is nearer,
                             // which is what gives the two handles their behaviour
@@ -865,9 +1067,38 @@ private fun MdLine(
                             }
                         }
                         drag(down.id) { change ->
-                            val offset = layout?.getOffsetForPosition(change.position) ?: return@drag
-                            sharedSelection.activeLine = lineIndex
-                            sharedSelection.activeOffset = offset
+                            val laidNow = layout ?: return@drag
+                            val h = laidNow.size.height.toFloat().coerceAtLeast(1f)
+                            val y = change.position.y
+                            /*
+                             * A drag that leaves this line keeps going.
+                             *
+                             * Each `MdLine` only sees its own `Text`, so a pull
+                             * past the bottom edge used to stop dead at the
+                             * paragraph's last character - while the reference
+                             * lets one motion sweep paragraph after paragraph.
+                             * The steps are counted in this line's own heights,
+                             * which is close enough to the paragraph pitch that
+                             * the wash keeps up with the finger, and the target
+                             * line's slice clamps the offset to its own length:
+                             * a step past a middle line means "all of it".
+                             */
+                            val steps = when {
+                                y < 0f -> -kotlin.math.ceil((-y) / h).toInt()
+                                y > h -> kotlin.math.floor(y / h).toInt()
+                                else -> 0
+                            }
+                            if (steps != 0) {
+                                val target = (lineIndex + steps)
+                                    .coerceIn(0, (sharedSelection.lineCount - 1).coerceAtLeast(0))
+                                sharedSelection.activeLine = target
+                                sharedSelection.activeOffset = if (target == lineIndex) {
+                                    laidNow.getOffsetForPosition(change.position)
+                                } else if (steps > 0) 0 else Int.MAX_VALUE
+                            } else {
+                                sharedSelection.activeLine = lineIndex
+                                sharedSelection.activeOffset = laidNow.getOffsetForPosition(change.position)
+                            }
                             change.consume()
                         }
                     }
@@ -958,6 +1189,27 @@ class SelectionState {
     var onTakeOver: (() -> Unit)? = null
 
     /*
+     * Turns every reply's wash off when the reader taps elsewhere.
+     *
+     * The reference clears the whole screen's selection on a tap outside it,
+     * not just the paragraph that was touched: two replies can never be lit at
+     * once, so "stop selecting" is a screen-wide statement. The screen wires
+     * this to a single shared handler that walks every reply it has kept state
+     * for; a reply standing alone leaves it null and simply clears itself.
+     */
+    var onDismiss: (() -> Unit)? = null
+
+    /*
+     * How many lines the reply has, so a drag can be clamped to it.
+     *
+     * Set by `MarkdownBody` once it has parsed its blocks: a drag that leaves
+     * one line's own `Text` steps the active end by whole lines, and without a
+     * count it would run off the end of the reply and write offsets no line can
+     * map.
+     */
+    var lineCount by mutableStateOf(0)
+
+    /*
      * Where the selected box sits on screen, for the 复制 chip.
      *
      * The chip cannot be anchored to the reply: a reply taller than the viewport
@@ -1002,6 +1254,15 @@ class SelectionState {
 
     /** Replace the far end - used when a drag starts inside an existing selection. */
     fun moveEnd(line: Int, offset: Int) {
+        /*
+         * The surviving end keeps its own line as well as its own offset.
+         *
+         * `anchorOffset` was being reset to `startOffset` while `anchorLine` was
+         * set to `startLine` - but the offset is only meaningful against the
+         * line it came from, so a selection that spanned two paragraphs and was
+         * then grabbed at its far end moved the fixed end back onto the wrong
+         * paragraph's character count.
+         */
         anchorLine = startLine
         anchorOffset = startOffset
         activeLine = line
@@ -1023,6 +1284,60 @@ class SelectionState {
         armed = false
         anchorInRoot = null
     }
+}
+
+/**
+ * The word around `offset`, by ICU's rules.
+ *
+ * `TextLayoutResult.getWordBoundary` is not enough here: the iterator behind it
+ * has no dictionary for scripts written without spaces, so a long press in a
+ * Chinese sentence returned the whole run - on the pad that lit three
+ * paragraphs from one press. `android.icu.text.BreakIterator` is the same
+ * segmenter the system's own text selection uses, and it splits 色温 out of
+ * 看,色温从生产线 the way a reader would.
+ *
+ * Offsets are the string's, which is what `MdLine` already works in: the
+ * annotated text keeps the source's characters one for one.
+ */
+private fun wordAt(text: CharSequence, offset: Int): IntRange {
+    if (text.isEmpty()) return 0..0
+    val at = offset.coerceIn(0, text.length - 1)
+    /*
+     * `Locale.SIMPLIFIED_CHINESE`, not the default.
+     *
+     * ICU only loads a dictionary for the languages that need one, and the
+     * default instance on this pad came back character by character: a press on
+     * 色温 reported the single 色. Naming the language is what asks for the
+     * segmenter instead of the fallback.
+     */
+    val iterator = android.icu.text.BreakIterator.getWordInstance(java.util.Locale.SIMPLIFIED_CHINESE)
+    iterator.setText(text.toString())
+    /*
+     * Forward, then back.
+     *
+     * `preceding` and `following` both move the iterator, so asking for the
+     * start first left the second call walking on from wherever the first one
+     * stopped - which returned `4..4` for a press at 3, one character instead
+     * of a word. Bounding forward from the press and then stepping back to the
+     * boundary before that end is stable whichever side of the word the press
+     * lands on.
+     */
+    val end = iterator.following(at).coerceAtMost(text.length)
+    val start = if (end <= 0) at else iterator.preceding(end).coerceAtLeast(0)
+    /*
+     * A press on a space or a comma segments as whitespace with no letters in
+     * it; widening to the next word is what the reference does, and it keeps a
+     * press between two words from lighting nothing.
+     */
+    val slice = text.subSequence(start, end.coerceAtLeast(start)).toString()
+    if (slice.isBlank() || slice.none { it.isLetterOrDigit() }) {
+        val next = iterator.following(end).coerceAtMost(text.length)
+        if (next > end) {
+            val after = iterator.following(next).coerceAtMost(text.length)
+            return end until after.coerceAtLeast(end + 1)
+        }
+    }
+    return start until end.coerceAtLeast(start + 1)
 }
 
 /**
