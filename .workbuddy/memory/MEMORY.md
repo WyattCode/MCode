@@ -24,6 +24,13 @@
 - **中文分词用 ICU**：`TextLayoutResult.getWordBoundary` 无词典，中文整段一个词。用 `android.icu.text.BreakIterator.getWordInstance(Locale.SIMPLIFIED_CHINESE)`——locale 必须显式给，且要「先 following 再 preceding」（两者都会移动游标）。
 - **`onGloballyPositioned` 不因选区变化而触发**：选中文字不动布局，所以不能在里面写 Popup 锚点。要写进 state，再用 `LaunchedEffect` 按选区 key 算；滚动场景再加一个坐标变化 tick。
 - **`waitForUpOrCancellation` 返回 null 有歧义**（抬起 / 被父组件抢走都算），拿它当「还在按」会导致每次滑动都选词。用 `awaitLongPressOrCancellation`。
+- **选区算术有单测，别绕过**：`android/app/src/test/java/com/mcode/remote/SelectionSliceTest.kt`
+  （19 例）锁住 `sliceOfSelection` 与 `copyRange`。改选区偏移必跑
+  `gradle app:testDebugUnitTest`（`.workbuddy/build.py` 已内置）。
+  两个历史 bug：切片拿到的是「块在全文的偏移」而非「块内偏移」→ 段落全选不中；
+  `Int.MAX_VALUE`（到块尾标记）与基数用 `Int` 相加会回绕 → 复制范围起点大于终点。
+  **验证测试有效性的方法**：故意改回 `Int` 加法，应看到
+  `anOpenEndReachesTheEndRatherThanWrapping` 精确失败。
 
 ## 工作流
 
