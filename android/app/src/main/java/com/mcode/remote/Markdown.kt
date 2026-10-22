@@ -518,6 +518,21 @@ fun MarkdownBody(
             },
         ) {
             val night = LocalBg.current.luminance() < 0.4f
+            /*
+             * 复制 confirms itself before the pill goes away.
+             *
+             * The pill used to vanish the instant it was touched, so the reader
+             * had no way to know the clipboard had been written - on a phone the
+             * system's own toast is easy to miss, and the reference says 已复制
+             * in place. The pill stays for a moment with that word, then clears
+             * the selection, which is what closes it.
+             */
+            var copied by remember(selectedText) { mutableStateOf(false) }
+            LaunchedEffect(copied) {
+                if (!copied) return@LaunchedEffect
+                kotlinx.coroutines.delay(650)
+                sharedSelection.clear()
+            }
             Row(
                 androidx.compose.ui.Modifier
                     .width(pillWidth)
@@ -528,30 +543,35 @@ fun MarkdownBody(
                 horizontalArrangement = Arrangement.Center,
             ) {
                 Text(
-                    "复制",
+                    if (copied) "已复制" else "复制",
                     fontSize = 13.sp,
                     color = if (night) Color(0xFFF1E9EC) else Color(0xFF382F36),
-                    modifier = androidx.compose.ui.Modifier.clickable {
+                    modifier = androidx.compose.ui.Modifier.clickable(enabled = !copied) {
                         clipboard.setText(AnnotatedString(selectedText))
-                        sharedSelection.clear()
+                        copied = true
                     },
                 )
-                Spacer(androidx.compose.ui.Modifier.width(25.dp))
-                Text(
-                    "全选",
-                    fontSize = 13.sp,
-                    color = if (night) Color(0xFFF1E9EC) else Color(0xFF382F36),
-                    modifier = androidx.compose.ui.Modifier.clickable {
-                        // Every line of the reply, from its first character to
-                        // its last - the reference's 全选 lights the whole
-                        // message rather than the paragraph the press landed in.
-                        val last = blocks.lastOrNull() ?: return@clickable
-                        sharedSelection.anchorLine = 0
-                        sharedSelection.anchorOffset = 0
-                        sharedSelection.activeLine = blocks.lastIndex
-                        sharedSelection.activeOffset = flatLength(last)
-                    },
-                )
+                if (!copied) {
+                    Spacer(androidx.compose.ui.Modifier.width(25.dp))
+                    Text(
+                        "全选",
+                        fontSize = 13.sp,
+                        color = if (night) Color(0xFFF1E9EC) else Color(0xFF382F36),
+                        modifier = androidx.compose.ui.Modifier.clickable {
+                            /*
+                             * Every line of the reply, from its first character
+                             * to its last - the reference's 全选 lights the whole
+                             * message rather than the paragraph the press landed
+                             * in.
+                             */
+                            val lastBlock = blocks.lastOrNull() ?: return@clickable
+                            sharedSelection.anchorLine = 0
+                            sharedSelection.anchorOffset = 0
+                            sharedSelection.activeLine = blocks.lastIndex
+                            sharedSelection.activeOffset = flatLength(lastBlock)
+                        },
+                    )
+                }
             }
         }
     }
