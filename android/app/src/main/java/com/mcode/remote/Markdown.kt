@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -290,6 +291,13 @@ object MdText {
  */
 private var chipBg = Color(0xFFF0F0F2)
 private var chipFg = Color(0xFF3A3A38)
+/*
+ * The selection wash, measured off the reference at 400 dpi: #ECDFE6 behind
+ * dark ink in light, and a deeper #5A4038 on the #151515 page. Kept beside the
+ * chip colours and set per render for the same reason - the parser runs outside
+ * composition.
+ */
+private var selectionTint = Color(0xFFECDFE6)
 private val LinkBlue = Color(0xFF2F6FED)
 
 /* ------------------------------------------------------------------ */
@@ -311,15 +319,62 @@ private val LinkBlue = Color(0xFF2F6FED)
 private val PARAGRAPH_GAP = 0.dp
 
 @Composable
-fun MarkdownBody(source: String, modifier: Modifier = Modifier, dark: Boolean = false, onCopy: (String) -> Unit = {}) {
+fun MarkdownBody(
+    source: String,
+    modifier: Modifier = Modifier,
+    dark: Boolean = false,
+    onCopy: (String) -> Unit = {},
+    /*
+     * What the reader has selected, in the flat text of this body.
+     *
+     * Compose reports a selection against the concatenation of the `Text`
+     * composables it registered, not against one of them, and each `Text` here
+     * only knows its own string. So the walk below keeps a running offset -
+     * adding a newline between blocks, which is what the container itself
+     * counts - and clips that range to each block to get the slice the line can
+     * draw.
+     */
+    selection: TextRange? = null,
+) {
+    /*
+     * NOTE: `selection` is inert at this release.
+     *
+     * The wash it draws is correct, but nothing can supply a range yet: the
+     * container's controlled overload and `LocalSelectionRegistrar` are both
+     * `internal` in Kotlin at foundation 1.7.3 (their JVM members are public,
+     * which is why this looked reachable). The parameter stays because the
+     * drawing is measured and working - the moment a public hook exists, wiring
+     * it is one call site.
+     */
     val blocks = remember(source) { Md.blocks(source) }
     val textColor = LocalText.current
     val muted = LocalMuted.current
     chipBg = if (dark) Color(0xFF2E2E2E) else Color(0xFFF0F0F2)
     chipFg = if (dark) Color(0xFFE6E6E6) else Color(0xFF3A3A38)
+    selectionTint = if (dark) Color(0xFF5A4038) else Color(0xFFECDFE6)
+    /*
+     * How many characters of the container's flat string each block owns, in
+     * order. A block's own text plus the newline the container inserts after it
+     * - the same arithmetic `SelectionContainer` does when it merges the
+     * registered `Text`s into one selectable run.
+     */
+    val offsets = remember(blocks) {
+        var at = 0
+        blocks.map { block ->
+            val start = at
+            at += flatLength(block) + 1
+            start
+        }
+    }
     Column(modifier) {
         blocks.forEachIndexed { index, block ->
             val last = index == blocks.lastIndex
+            /*
+             * The block's slice of the container's range, in the block's own
+             * offsets. `null` when the selection does not touch this block, which
+             * is the common case and keeps every untouched line a plain `Text`.
+             */
+            val slice = clipSelection(selection, offsets[index], flatLength(block))
             when (block) {
                 is MdBlock.Heading -> {
                     val size = when (block.level) { 1, 2 -> 24.sp; 3, 4 -> 19.sp; else -> 17.sp }
@@ -328,11 +383,13 @@ fun MarkdownBody(source: String, modifier: Modifier = Modifier, dark: Boolean = 
                         block.text, size = size, weight = FontWeight.SemiBold, color = textColor,
                         modifier = Modifier.padding(top = if (index == 0) 0.dp else top, bottom = 8.dp),
                         lineHeight = (size.value * 1.4f).sp,
+                        selection = slice,
                     )
                 }
                 is MdBlock.Para -> MdLine(
                     block.text, color = textColor,
                     modifier = Modifier.padding(bottom = if (last) 0.dp else PARAGRAPH_GAP),
+                    selection = slice,
                 )
                 is MdBlock.Code -> CodeBox(block.lang, block.code, dark, Modifier.padding(vertical = 4.dp))
                 is MdBlock.ListBlock -> ListBox(block, textColor, modifier = Modifier.padding(bottom = if (last) 0.dp else PARAGRAPH_GAP))
@@ -439,6 +496,17 @@ private fun MdLine(
      * reference's and every block sat lower than its word count called for.
      */
     lineHeight: androidx.compose.ui.unit.TextUnit = 30.sp,
+    /*
+     * This line's slice of the reader's selection, in *its own* offsets, or
+     * null when nothing on this line is selected.
+     *
+     * `MarkdownBody` walks its blocks in order and converts the container's
+     * whole-response range into per-line ones, because a `Text` can only speak
+     * about its own `AnnotatedString`. The tint is then drawn here rather than
+     * left to `SelectionContainer`, whose own fill is a bare rectangle per
+     * line - see `MarkdownBody` for why that was not good enough.
+     */
+    selection: TextRange? = null,
 ) {
     val context = LocalContext.current
     val inline = remember(source, color) { MdText.inline(source, LinkBlue) }
@@ -482,9 +550,33 @@ private fun MdLine(
              * keeps only the letter colour.
              */
             .drawBehind {
-                if (inline.code.isEmpty()) return@drawBehind
                 val laid = layout ?: return@drawBehind
                 val radius = 4.dp.toPx()
+                /*
+                 * The selection first, so a chip inside it keeps its own fill on
+                 * top: the reference tints the words and leaves an inline chip's
+                 * grey block visible within the wash.
+                 *
+                 * The block is grown 3.0 above and below and 2.2 at the ends -
+                 * read off the reference, whose selection stands 5.6 clear of
+                 * 12-tall glyphs and carries a 4dp corner. `SelectionContainer`'s
+                 * own rectangle hugs the glyphs and cannot be rounded, which is
+                 * the whole reason this is drawn here.
+                 */
+                if (selection != null && !selection.collapsed) {
+                    for (box in chipBoxes(laid, selection.start until selection.end)) {
+                        drawRoundRect(
+                            color = selectionTint,
+                            topLeft = androidx.compose.ui.geometry.Offset(box.left - 2.2.dp.toPx(), box.top - 3.0.dp.toPx()),
+                            size = androidx.compose.ui.geometry.Size(
+                                box.width + 4.4.dp.toPx(),
+                                box.height + 6.0.dp.toPx(),
+                            ),
+                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(radius, radius),
+                        )
+                    }
+                }
+                if (inline.code.isEmpty()) return@drawBehind
                 for (range in inline.code) {
                     /*
                      * One rounded rect per band of lines the chip covers.
@@ -534,6 +626,39 @@ private fun MdLine(
                 },
             ),
     )
+}
+
+/**
+ * A block's slice of the container's range, in the block's own offsets.
+ *
+ * The container reports one range over the concatenation of every `Text` it
+ * registered, separated by a newline; a `Text` can only tint against its own
+ * string. Subtracting the block's start and clipping to its length gives the
+ * part this block can draw, and `null` when the two do not overlap at all.
+ */
+private fun clipSelection(selection: TextRange?, blockStart: Int, blockLength: Int): TextRange? {
+    if (selection == null || selection.collapsed || blockLength <= 0) return null
+    val from = maxOf(selection.start, blockStart) - blockStart
+    val to = minOf(selection.end, blockStart + blockLength) - blockStart
+    if (to <= from) return null
+    return TextRange(from, to)
+}
+
+/**
+ * How many characters a block contributes to the container's flat string.
+ *
+ * A quote and a list are containers, so they are measured by what they hold;
+ * a table by its cells; a rule contributes nothing, since it draws a line
+ * rather than text and the container does not register it.
+ */
+private fun flatLength(block: MdBlock): Int = when (block) {
+    is MdBlock.Heading -> block.text.length
+    is MdBlock.Para -> block.text.length
+    is MdBlock.Code -> block.code.length
+    is MdBlock.ListBlock -> block.items.sumOf { it.text.length }
+    is MdBlock.Quote -> block.blocks.sumOf { flatLength(it) + 1 }
+    is MdBlock.Table -> block.head.sumOf { it.length } + block.rows.sumOf { r -> r.sumOf { it.length } }
+    MdBlock.Rule -> 0
 }
 
 /**

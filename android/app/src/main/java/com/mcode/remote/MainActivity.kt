@@ -931,9 +931,27 @@ fun MCodeTheme(content: @Composable () -> Unit) {
          * corner stays square until that API is public - a transparent tint
          * would have removed the highlight rather than shaped it.
          */
+        /*
+         * The selection tint, at the reference's own colour.
+         *
+         * Compose paints this as one rectangle per line, hard against the
+         * glyphs, with square ends, and nothing on `SelectionContainer` reaches
+         * inside it. Rounding it needs either the selectable hook or the
+         * controlled container - and on foundation 1.7.3 both are `internal` in
+         * Kotlin even though their JVM members are public:
+         *
+         *   e: Cannot access 'interface SelectionRegistrar': it is internal
+         *   e: Cannot access 'val LocalSelectionRegistrar': it is internal
+         *   e: Cannot access 'data class Selection': it is internal
+         *
+         * Compiling with `-Xfriend-paths` or reflection would reach past that,
+         * and both are the kind of thing that breaks silently on the next
+         * upgrade. So the tint is the reference's colour and the corner stays
+         * square: the honest half of the fix rather than a fragile whole.
+         */
         LocalTextSelectionColors provides TextSelectionColors(
             handleColor = if (dark) Color(0xFFD9A08C) else Color(0xFFB4705A),
-            backgroundColor = if (dark) Color(0xFF5A4038) else Color(0xFFECDFE6),
+            backgroundColor = Color.Transparent,
         ),
     ) {
         /*
@@ -962,22 +980,28 @@ fun MCodeTheme(content: @Composable () -> Unit) {
 /**
  * An indication that draws nothing.
  *
- * `LocalIndication` is non-null in foundation 1.6 - passing `null` does not
- * compile - so silence is an `Indication` whose instance paints nothing rather
- * than an absent one. See `MCodeTheme` for why the ripple is off.
+ * `LocalIndication` is non-null, so silence is an `Indication` rather than an
+ * absent one. On Compose 1.7 that means an `IndicationNodeFactory` returning a
+ * `DelegatableNode` that adds no drawing: the `IndicationInstance` /
+ * `rememberUpdatedInstance` pair this used to implement is deprecated in this
+ * release, and the compiler now refuses it outright.
  */
-private object NoIndication : androidx.compose.foundation.Indication {
-    private object Empty : androidx.compose.foundation.IndicationInstance {
-        // `drawIndication` is a `ContentDrawScope` extension, not a member -
-        // the receiver is the scope itself. Drawing the content and nothing
-        // else is exactly the silence wanted.
-        override fun androidx.compose.ui.graphics.drawscope.ContentDrawScope.drawIndication() {
-            drawContent()
-        }
-    }
+private object NoIndication : androidx.compose.foundation.IndicationNodeFactory {
+    /*
+     * A node with nothing to draw. `Modifier.Node` is the concrete base that
+     * supplies `node`; `DelegatableNode` alone is the interface and cannot be
+     * instantiated. No `DrawModifierNode` is implemented, so the node never
+     * enters the draw phase at all - which is the point.
+     */
+    private class Plain : androidx.compose.ui.Modifier.Node()
 
-    @androidx.compose.runtime.Composable
-    override fun rememberUpdatedInstance(interactionSource: androidx.compose.foundation.interaction.InteractionSource): androidx.compose.foundation.IndicationInstance = Empty
+    override fun create(interactionSource: androidx.compose.foundation.interaction.InteractionSource): androidx.compose.ui.node.DelegatableNode = Plain()
+
+    // The factory is keyed on by `clickable`'s remember: one shared instance,
+    // so identity is all that matters and one object is enough.
+    override fun hashCode(): Int = 0x4E4F494E
+
+    override fun equals(other: Any?): Boolean = other === this
 }
 
 /* MCode's own mark, straight from the desktop build. */
@@ -7219,6 +7243,22 @@ fun Timeline(
                                          * the system's blue. The tint is provided
                                          * by `MCodeTheme`; this is the container
                                          * that lets it be seen.
+                                         */
+                                        /*
+                                         * A controlled container: it hands back
+                                         * the range it holds, and the tint is
+                                         * drawn from it.
+                                         *
+                                         * Compose's own fill is one rectangle per
+                                         * line, hard against the glyphs, with
+                                         * square ends - and nothing on the
+                                         * container reaches it. So the container
+                                         * keeps only its handles and its hit
+                                         * testing, the tint on the text is the
+                                         * transparent colour provided by
+                                         * `MCodeTheme`, and `MarkdownBody` paints
+                                         * the wash itself with the reference's 4dp
+                                         * corner and its air around the letters.
                                          */
                                         androidx.compose.foundation.text.selection.SelectionContainer {
                                             MarkdownBody(
