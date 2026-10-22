@@ -315,6 +315,32 @@ private var chipFg = Color(0xFF3A3A38)
  *   pill     #ECDFE6  236,223,230 - the 复制 / 全选 menu
  */
 private var selectionTint = Color(0xFFDEBFAF)
+
+/*
+ * The selection's geometry, in dp, all in one place.
+ *
+ * Every one of these was read off the reference at 400 dpi (2.5 px per dp) and
+ * every one is used by at least two of the drawing, the hit test and the pill's
+ * placement. They lived as literals inside those functions before, which is how
+ * the handles ended up drawn in one place and grabbable in another.
+ *
+ *   disc     25.2 dp across: 63 px in the reference, a circle rather than the
+ *            teardrop Material draws
+ *   overlap  1.6 dp of the disc's top lies inside the wash's bottom edge, so a
+ *            pair reads as attached to the block's corners
+ *   side     0.8 dp of air either side of the glyphs inside the wash
+ *   inset    1.2 dp off the line's own top and bottom: the reference's wash is
+ *            27.6 over a 30 dp line
+ *   corner   4 dp, asked for by the reader; the reference's own block is square
+ *   reach    how far from a disc's centre a press still counts as grabbing it -
+ *            36 dp of diameter, the smallest comfortable fingertip target
+ */
+private const val HANDLE_DISC = 12.6f
+private const val HANDLE_OVERLAP = 1.6f
+private const val WASH_SIDE = 0.8f
+private const val WASH_INSET = 1.2f
+private val WASH_CORNER = 4.dp
+private const val HANDLE_REACH = 18f
 /* The two end handles: the reference's burnt orange in light, lighter on dark. */
 private var selectionHandle = Color(0xFFB96747)
 private val LinkBlue = Color(0xFF2F6FED)
@@ -948,6 +974,7 @@ private fun MdLine(
                 lineStart = lineStart,
                 slice = ownSelection,
                 text = annotated.text,
+                density = androidx.compose.ui.platform.LocalDensity.current.density,
                 onPlaced = reportAnchor,
             )
             .then(
@@ -1057,6 +1084,75 @@ private fun codeSelection(
 }
 
 /**
+ * Where the two handles sit, in a surface's own coordinates.
+ *
+ * The drawing and the hit test have to agree, so both come from here: the discs
+ * are `HANDLE_DISC` across, they hang in the gutter just outside the wash's ends
+ * with their tops `HANDLE_OVERLAP` inside its bottom edge, and the wash itself is
+ * the glyph box pulled in 1.2 vertically and grown 0.8 horizontally.
+ *
+ * Returns null when this surface holds no end of the selection.
+ */
+private fun handleCentres(
+    laid: TextLayoutResult,
+    shared: SelectionState,
+    lineIndex: Int,
+    slice: Pair<Int, Int>?,
+    density: Float,
+): List<androidx.compose.ui.geometry.Offset> {
+    if (slice == null || shared.isEmpty) return emptyList()
+    val boxes = chipBoxes(laid, slice.first until slice.second)
+    if (boxes.isEmpty()) return emptyList()
+    val disc = HANDLE_DISC * density
+    val overlap = HANDLE_OVERLAP * density
+    val side = WASH_SIDE * density
+    val inset = WASH_INSET * density
+    val out = ArrayList<androidx.compose.ui.geometry.Offset>(2)
+    if (lineIndex == shared.startLine) {
+        val first = boxes.first()
+        out.add(
+            androidx.compose.ui.geometry.Offset(
+                first.left - side - disc,
+                first.bottom - inset + disc - overlap,
+            ),
+        )
+    }
+    if (lineIndex == shared.endLine) {
+        val last = boxes.last()
+        out.add(
+            androidx.compose.ui.geometry.Offset(
+                last.right + side + disc,
+                last.bottom - inset + disc - overlap,
+            ),
+        )
+    }
+    return out
+}
+
+/**
+ * Whether a press landed on one of the handles.
+ *
+ * The drawn disc is 25.2 dp, which is a small target for a fingertip; the touch
+ * region is widened to `HANDLE_REACH` either side of its centre - a 36 dp
+ * diameter, the minimum this platform recommends - so the handles are actually
+ * grabbable without making them look larger than the reference's.
+ */
+private fun onHandle(
+    shared: SelectionState,
+    lineIndex: Int,
+    slice: Pair<Int, Int>?,
+    laid: TextLayoutResult,
+    density: Float,
+    position: androidx.compose.ui.geometry.Offset,
+): Boolean {
+    if (shared.isEmpty || slice == null) return false
+    val reach = HANDLE_REACH * density
+    return handleCentres(laid, shared, lineIndex, slice, density).any { centre ->
+        (centre - position).getDistance() <= reach
+    }
+}
+
+/**
  * The selection, as a modifier any text surface in a reply can wear.
  *
  * Pulled out of `MdLine` because a reply's code fences have their own face,
@@ -1077,6 +1173,7 @@ private fun Modifier.selectable(
     lineStart: Int,
     slice: Pair<Int, Int>?,
     text: CharSequence,
+    density: Float,
     onPlaced: (androidx.compose.ui.layout.LayoutCoordinates) -> Unit,
 ): Modifier {
     if (sharedSelection == null) return this
@@ -1084,7 +1181,7 @@ private fun Modifier.selectable(
         .onGloballyPositioned { onPlaced(it) }
         .drawBehind {
             val result = laid ?: return@drawBehind
-            drawSelectionWash(result, sharedSelection, lineIndex, slice)
+            drawSelectionWash(result, sharedSelection, lineIndex, slice, density)
         }
         .pointerInput(sharedSelection, lineIndex, lineStart) {
             val laidNow = laid ?: return@pointerInput
@@ -1092,22 +1189,30 @@ private fun Modifier.selectable(
                 val down = awaitFirstDown(requireUnconsumed = false)
                 val downOffset = laidNow.getOffsetForPosition(down.position)
                 /*
-                 * Armed by the sheet's 选择文本, one press is enough.
+                 * Two presses skip the wait, for different reasons.
                  *
-                 * The sheet has just told the reader "长按或拖动选择文字", so
-                 * waiting out the long-press timeout again would be asking for
-                 * the gesture twice. When armed, the press selects immediately
-                 * and the drag below extends it - which is the behaviour that
-                 * makes the menu item do something at all. Every press that is
-                 * not armed still has to be held, so reading a reply is not
-                 * turned into selecting it.
+                 * Armed by the sheet's 选择文本: the sheet has just told the
+                 * reader "长按或拖动选择文字", so waiting out the long-press
+                 * timeout again would be asking for the gesture twice.
+                 *
+                 * Already lit, and the press lands on a handle: the reader is
+                 * reaching for one. The reference lets a live selection be
+                 * pulled straight away - the whole point of the two discs is
+                 * that they look grabbable - and requiring a second long hold
+                 * made every adjustment cost half a second before it began.
+                 *
+                 * A press elsewhere inside a live selection is *not* one of
+                 * these: it is either a tap (which dismisses) or a scroll, and
+                 * grabbing an end from the middle would collapse the selection
+                 * on a stray touch. That case falls through to the hold.
                  */
-                val held = if (sharedSelection.armed) {
+                val grab = if (sharedSelection.armed) {
                     sharedSelection.armed = false
-                    down
+                    true
                 } else {
-                    awaitLongPressOrCancellation(down.id)
+                    onHandle(sharedSelection, lineIndex, slice, laidNow, density, down.position)
                 }
+                val held = if (grab) down else awaitLongPressOrCancellation(down.id)
                 if (held == null) {
                     val cancelled = currentEvent.changes.any { it.isConsumed }
                     val moved = (currentEvent.changes.firstOrNull()?.position
@@ -1166,16 +1271,17 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSelectionWash(
     shared: SelectionState,
     lineIndex: Int,
     slice: Pair<Int, Int>?,
+    density: Float,
 ) {
-    val radius = 4.dp.toPx()
+    val radius = WASH_CORNER.toPx()
     val wash = slice?.let { (a, b) -> TextRange(a, b) }
     if (wash == null || wash.collapsed) return
     val boxes = chipBoxes(laid, wash.start until wash.end)
     for (box in boxes) {
-        val left = box.left - 0.8.dp.toPx()
-        val right = box.right + 0.8.dp.toPx()
-        val top = box.top + 1.2.dp.toPx()
-        val bottom = box.bottom - 1.2.dp.toPx()
+        val left = box.left - WASH_SIDE * density
+        val right = box.right + WASH_SIDE * density
+        val top = box.top + WASH_INSET * density
+        val bottom = box.bottom - WASH_INSET * density
         drawRoundRect(
             color = selectionTint,
             topLeft = androidx.compose.ui.geometry.Offset(left, top),
@@ -1191,24 +1297,14 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSelectionWash(
      * last. Taking the first box for both put the end disc up beside the
      * paragraph's first line - which is why a selection of a long paragraph
      * showed both discs at the top.
+     *
+     * The positions come from `handleCentres`, the same function the hit test
+     * uses: a disc that is drawn somewhere other than where it can be grabbed is
+     * worse than no disc at all.
      */
-    val disc = 12.6.dp.toPx()
-    val overlap = 1.6.dp.toPx()
-    if (lineIndex == shared.startLine) {
-        val first = boxes.firstOrNull()
-        if (first != null) {
-            val x = first.left - 0.8.dp.toPx() - disc
-            val y = first.bottom - 1.2.dp.toPx() + disc - overlap
-            drawCircle(color = selectionHandle, radius = disc, center = androidx.compose.ui.geometry.Offset(x, y))
-        }
-    }
-    if (lineIndex == shared.endLine) {
-        val last = boxes.lastOrNull()
-        if (last != null) {
-            val x = last.right + 0.8.dp.toPx() + disc
-            val y = last.bottom - 1.2.dp.toPx() + disc - overlap
-            drawCircle(color = selectionHandle, radius = disc, center = androidx.compose.ui.geometry.Offset(x, y))
-        }
+    val disc = HANDLE_DISC.dp.toPx()
+    for (centre in handleCentres(laid, shared, lineIndex, slice, density)) {
+        drawCircle(color = selectionHandle, radius = disc, center = centre)
     }
 }
 
@@ -1241,6 +1337,41 @@ private fun blockText(block: MdBlock): String = when (block) {
  * wrong characters. One function now feeds both, and they cannot disagree.
  */
 private fun flatLength(block: MdBlock): Int = blockText(block).length
+
+/**
+ * Which end of a selection a press belongs to, given sorted ends.
+ *
+ * A press outside the span belongs to the end it is outside of; inside, it
+ * belongs to whichever end is closer. The comparison is on the block's own
+ * offsets, not on (block, offset) pairs: a table's cells all share one block
+ * index, so weighting the block number would score every cell in the table the
+ * same and hand the decision to whichever end was listed first - which is exactly
+ * as unreliable as it sounds when the reader is trying to grab the far disc.
+ *
+ * Returns true when the press takes the *end* (the moving one) rather than the
+ * start.
+ */
+internal fun nearerEndIsEnd(
+    startLine: Int,
+    startOffset: Int,
+    endLine: Int,
+    endOffset: Int,
+    line: Int,
+    offset: Int,
+): Boolean {
+    if (line < startLine) return false
+    if (line > endLine) return true
+    /*
+     * A block strictly between the two ends is neither, so it can only be
+     * reached by a drag in progress - and a drag extends the end, not the start.
+     */
+    val atStart = line == startLine
+    val atEnd = line == endLine
+    if (!atStart && !atEnd) return true
+    val toStart = if (atStart) kotlin.math.abs(offset - startOffset) else Int.MAX_VALUE
+    val toEnd = if (atEnd) kotlin.math.abs(offset - endOffset) else Int.MAX_VALUE
+    return toEnd <= toStart
+}
 
 /**
  * What the reader has selected, held by the reply rather than by a container.
@@ -1340,15 +1471,14 @@ class SelectionState {
     val endLine: Int get() = ordered.second.first
     val endOffset: Int get() = ordered.second.second
 
-    /** True when this line's index falls inside the drag, start or end line included. */
-    fun coversLine(index: Int): Boolean = !isEmpty && index in startLine..endLine
-
-    /** Which end a touch belongs to: the nearer of the two, by line then offset. */
-    fun endNear(line: Int, offset: Int): Boolean {
-        val toStart = kotlin.math.abs(line - startLine) * 1000 + kotlin.math.abs(offset - startOffset)
-        val toEnd = kotlin.math.abs(line - endLine) * 1000 + kotlin.math.abs(offset - endOffset)
-        return toEnd <= toStart
-    }
+    /**
+     * Which end a touch belongs to: the nearer of the two.
+     *
+     * The decision is `nearerEnd` below, which is pure and tested; this only
+     * feeds it the selection's own ends.
+     */
+    fun endNear(line: Int, offset: Int): Boolean =
+        nearerEndIsEnd(startLine, startOffset, endLine, endOffset, line, offset)
 
     /** Replace the far end - used when a drag starts inside an existing selection. */
     fun moveEnd(line: Int, offset: Int) {
@@ -1683,6 +1813,7 @@ private fun CodeBox(
                     lineStart = lineStart,
                     slice = codeSlice,
                     text = code,
+                    density = androidx.compose.ui.platform.LocalDensity.current.density,
                     onPlaced = reportAnchor,
                 ),
         )
@@ -1942,6 +2073,7 @@ private fun TableCell(
                 lineStart = cellStart,
                 slice = slice,
                 text = text,
+                density = androidx.compose.ui.platform.LocalDensity.current.density,
                 onPlaced = reportAnchor,
             ),
     )

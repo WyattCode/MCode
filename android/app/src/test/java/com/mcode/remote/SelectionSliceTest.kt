@@ -1,7 +1,9 @@
 package com.mcode.remote
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -286,5 +288,75 @@ class SelectionSliceTest {
                 assertEquals(cells[c], flat.substring(from, from + cells[c].length))
             }
         }
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Which end a press grabs                                             */
+    /* ------------------------------------------------------------------ */
+
+    /** A press left of the selection takes the start. */
+    @Test
+    fun aPressBeforeTheSelectionTakesTheStart() {
+        assertFalse(nearerEndIsEnd(2, 10, 2, 20, line = 2, offset = 5))
+    }
+
+    /** A press right of the selection takes the end. */
+    @Test
+    fun aPressAfterTheSelectionTakesTheEnd() {
+        assertTrue(nearerEndIsEnd(2, 10, 2, 20, line = 2, offset = 30))
+    }
+
+    /** Inside, the nearer end wins - and the tie goes to the end, which is what makes a tap extend rather than rewind. */
+    @Test
+    fun insideTheNearerEndWins() {
+        assertFalse(nearerEndIsEnd(2, 10, 2, 20, line = 2, offset = 12))
+        assertTrue(nearerEndIsEnd(2, 10, 2, 20, line = 2, offset = 18))
+        assertTrue(nearerEndIsEnd(2, 10, 2, 20, line = 2, offset = 15))
+    }
+
+    /**
+     * The bug this replaced: two ends in the *same* block.
+     *
+     * Every cell of a table shares one block index, so a comparator that weighted
+     * the block number gave both ends the same block term and the decision fell
+     * to whichever was listed first - the far handle could not be grabbed.
+     */
+    @Test
+    fun twoEndsInOneBlockAreJudgedByOffsetAlone() {
+        // Same block, cells at 0 and 120 in the table's flat text.
+        assertFalse(nearerEndIsEnd(3, 0, 3, 120, line = 3, offset = 8))
+        assertTrue(nearerEndIsEnd(3, 0, 3, 120, line = 3, offset = 115))
+    }
+
+    /** A press in a block before the start takes the start. */
+    @Test
+    fun aPressInAnEarlierBlockTakesTheStart() {
+        assertFalse(nearerEndIsEnd(5, 0, 7, 10, line = 4, offset = 900))
+    }
+
+    /** A press in a block after the end takes the end. */
+    @Test
+    fun aPressInALaterBlockTakesTheEnd() {
+        assertTrue(nearerEndIsEnd(5, 0, 7, 10, line = 8, offset = 0))
+    }
+
+    /** A block strictly between the two ends is a drag in progress: it extends the end. */
+    @Test
+    fun aBlockBetweenTheEndsExtendsTheEnd() {
+        assertTrue(nearerEndIsEnd(5, 0, 7, 10, line = 6, offset = 3))
+    }
+
+    /**
+     * Ends in different blocks are not compared by their offsets.
+     *
+     * A start at offset 90 of block 5 and an end at offset 4 of block 7: a press
+     * at offset 50 of block 5 must be nearer the start even though 50 is a larger
+     * number than 4 - the two offsets are in different strings and comparing them
+     * directly would be nonsense.
+     */
+    @Test
+    fun endsInDifferentBlocksDoNotCompareOffsetsDirectly() {
+        assertFalse(nearerEndIsEnd(5, 90, 7, 4, line = 5, offset = 50))
+        assertTrue(nearerEndIsEnd(5, 90, 7, 4, line = 7, offset = 20))
     }
 }
