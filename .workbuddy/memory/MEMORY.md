@@ -19,6 +19,11 @@
 - **`rowsOf`→`stepsOf` 会折叠，任何「只在某个 when 分支里渲染」的东西都可能永不显示**：相邻调用折成 `ToolRun`，再折进上方的 `Step`，裸的 `is Item.Tool ->` 分支几乎到不了。编辑卡片和交付卡片都栽在这上面（后者是靠 `onOpenDelivered != null` 把关）。
 - **Compose 的 `Box` 是层叠不是堆叠**：在一行里追加第二个 child（比如卡片），必须用 `Column`，否则卡片会盖住段落。这个错误肉眼看起来像「文字被裁了」。
 - **`Icons.Outlined.Info` 不存在**；`MiIcon` 手绘路径是通用替代。`Dp*Float` 合法、`Float*Dp` 不合法。
+- **参考截图必须能和自己的截图分开**：2026-10-22 连续好几轮把 MCode 自己的截图当成 Claude 的来量，配色/几何全错（选了粉色圆角，实际参考是桃色直角）。凡是量参考，截图名一律 `ref-*`，自己的用 `mine-*`，量之前先确认前台包名（`dumpsys window | grep mCurrentFocus`）——**跑 adb 前一定先确认前台不是别人的会议/通话**。
+- **Claude 安卓端选区的真实值**（`ref-claude-sel.png`，400dpi）：色块 #DEBFAF 直角 27.6dp 高、左右各留 0.8dp；手柄直径 25.2dp 的圆贴在色块左右外侧、顶边嵌入 1.6dp；菜单 #ECDFE6 胶囊 112×48dp 圆角 24，文字「复制 / 全选」13sp。**#ECDFE6 是胶囊色，不是选区色。**
+- **中文分词用 ICU**：`TextLayoutResult.getWordBoundary` 无词典，中文整段一个词。用 `android.icu.text.BreakIterator.getWordInstance(Locale.SIMPLIFIED_CHINESE)`——locale 必须显式给，且要「先 following 再 preceding」（两者都会移动游标）。
+- **`onGloballyPositioned` 不因选区变化而触发**：选中文字不动布局，所以不能在里面写 Popup 锚点。要写进 state，再用 `LaunchedEffect` 按选区 key 算；滚动场景再加一个坐标变化 tick。
+- **`waitForUpOrCancellation` 返回 null 有歧义**（抬起 / 被父组件抢走都算），拿它当「还在按」会导致每次滑动都选词。用 `awaitLongPressOrCancellation`。
 
 ## 工作流
 
