@@ -28,6 +28,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
@@ -410,50 +411,47 @@ fun MarkdownBody(
     }
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     /*
-     * The chip is a sibling of the text inside a wrapping Box, and it is placed
-     * by `offset` rather than by `align`: the caller hands this composable a
-     * `wrapContent` modifier, so the Box is exactly as tall as the column and an
-     * `align(TopEnd)` child has no slack to sit in - which is why the chip never
-     * appeared even when the selection was lit.
+     * The chip, as a `Popup` at the lit box.
+     *
+     * Two earlier shapes failed for reasons that only showed up on the device:
+     * pinning it to the reply's `TopEnd` put it above the viewport whenever the
+     * reply was taller than the screen and had scrolled, and a sibling inside the
+     * box was drawn under the full-width column. A `Popup` sits in its own window
+     * at the coordinates the line reported, so neither can happen.
      */
-    androidx.compose.foundation.layout.Box(modifier) {
-    if (selectedText.isNotEmpty()) {
-        /*
-         * UNVERIFIED: this chip has never been seen on screen.
-         *
-         * The state behind it is right - a log during the last check read
-         * `empty=false lines=13/13 off=46..48 plain=1780 text=2`, so the range
-         * and the substring are both correct - but no arrangement of the
-         * anchor has put it in the view tree yet. `offset(-26)` was clipped,
-         * `align(TopEnd)` inside this wrapping Box was too, and the inline
-         * computation of `selectedText` did not change it.
-         *
-         * Left in place because the selection itself works; the anchoring is
-         * the open question.
-         */
-        Row(
-            androidx.compose.ui.Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 0.dp, end = 0.dp)
-                .clip(RoundedCornerShape(9.dp))
-                .background(if (LocalBg.current.luminance() < 0.4f) Color(0xFF2E2E2E) else Color(0xFF2B2B2A))
-                .clickable {
-                    clipboard.setText(AnnotatedString(selectedText))
-                    sharedSelection.clear()
-                }
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+    val anchor = sharedSelection.anchorInRoot
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    if (selectedText.isNotEmpty() && anchor != null) {
+        androidx.compose.ui.window.Popup(
+            offset = androidx.compose.ui.unit.IntOffset(
+                x = anchor.x.toInt(),
+                // 34dp above the box's top, in pixels; `LocalDensity` because a
+                // Popup's offset is measured outside any draw scope.
+                y = (anchor.y - with(density) { 34.dp.toPx() }).toInt().coerceAtLeast(0),
+            ),
         ) {
-            MiIcon(
-                "M8.4 3.4h9.2a1.4 1.4 0 0 1 1.4 1.4v9.2M6.4 7.4h9.2a1.4 1.4 0 0 1 1.4 1.4v9.2a1.4 1.4 0 0 1-1.4 1.4H6.4A1.4 1.4 0 0 1 5 18V8.8a1.4 1.4 0 0 1 1.4-1.4z",
-                contentDescription = null,
-                modifier = androidx.compose.ui.Modifier.size(12.dp),
-                viewBox = 24f,
-                strokeWidth = 1.7f,
-                tint = Color(0xFFF5F3EE),
-            )
-            Spacer(androidx.compose.ui.Modifier.width(5.dp))
-            Text("复制", fontSize = 12.sp, color = Color(0xFFF5F3EE))
+            Row(
+                androidx.compose.ui.Modifier
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(if (LocalBg.current.luminance() < 0.4f) Color(0xFF2E2E2E) else Color(0xFF2B2B2A))
+                    .clickable {
+                        clipboard.setText(AnnotatedString(selectedText))
+                        sharedSelection.clear()
+                    }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                MiIcon(
+                    "M8.4 3.4h9.2a1.4 1.4 0 0 1 1.4 1.4v9.2M6.4 7.4h9.2a1.4 1.4 0 0 1 1.4 1.4v9.2a1.4 1.4 0 0 1-1.4 1.4H6.4A1.4 1.4 0 0 1 5 18V8.8a1.4 1.4 0 0 1 1.4-1.4z",
+                    contentDescription = null,
+                    modifier = androidx.compose.ui.Modifier.size(12.dp),
+                    viewBox = 24f,
+                    strokeWidth = 1.7f,
+                    tint = Color(0xFFF5F3EE),
+                )
+                Spacer(androidx.compose.ui.Modifier.width(5.dp))
+                Text("复制", fontSize = 12.sp, color = Color(0xFFF5F3EE))
+            }
         }
     }
     Column(androidx.compose.ui.Modifier.fillMaxWidth()) {
@@ -505,7 +503,6 @@ fun MarkdownBody(
                 MdBlock.Rule -> Box(Modifier.fillMaxWidth().padding(vertical = 16.dp).height(1.dp).background(LocalLine.current))
             }
         }
-    }
     }
 }
 
@@ -670,6 +667,26 @@ private fun MdLine(
              * pieces rather than as one band across the column - and the span
              * keeps only the letter colour.
              */
+            /*
+             * Report where the lit box sits, in root coordinates.
+             *
+             * Done after layout rather than during draw: `localToRoot` needs the
+             * coordinates to be placed, and writing state inside `drawBehind`
+             * would be a write during the draw phase. The chip is a `Popup` and
+             * is positioned from this, so it follows the words instead of the
+             * reply's corner.
+             */
+            .onGloballyPositioned { coords ->
+                val shared = sharedSelection ?: return@onGloballyPositioned
+                val box = ownSelection ?: return@onGloballyPositioned
+                val laid = layout ?: return@onGloballyPositioned
+                val first = chipBoxes(laid, box.first until box.second).firstOrNull()
+                    ?: return@onGloballyPositioned
+                val inRoot = coords.localToRoot(
+                    androidx.compose.ui.geometry.Offset(first.left, first.top),
+                )
+                shared.anchorInRoot = inRoot
+            }
             .drawBehind {
                 val laid = layout ?: return@drawBehind
                 val radius = 4.dp.toPx()
@@ -930,6 +947,18 @@ class SelectionState {
      */
     var onTakeOver: (() -> Unit)? = null
 
+    /*
+     * Where the selected box sits on screen, for the 复制 chip.
+     *
+     * The chip cannot be anchored to the reply: a reply taller than the viewport
+     * has its top scrolled away, so a chip pinned to `TopEnd` renders above the
+     * visible area and looks like it was never drawn - which is exactly what the
+     * last few checks kept concluding. The line reports the box in root
+     * coordinates instead, and the chip is placed by a `Popup` at that point, so
+     * it follows the words wherever they are.
+     */
+    var anchorInRoot by mutableStateOf<androidx.compose.ui.geometry.Offset?>(null)
+
     val isEmpty: Boolean get() = anchorLine < 0
 
     /*
@@ -982,6 +1011,7 @@ class SelectionState {
         anchorOffset = 0
         activeOffset = 0
         armed = false
+        anchorInRoot = null
     }
 }
 
