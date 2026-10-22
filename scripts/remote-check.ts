@@ -89,6 +89,13 @@ let phone: WebSocket
     res.status === 200 && body.includes("MCode") && body.includes("mcode.remote."),
     res.status,
   )
+  /*
+   * A phone must be able to answer a question, not only a permission. The
+   * cockpit drew permission cards and nothing else, so a turn that stopped to
+   * ask sat on screen as a busy conversation with nothing to press until the
+   * question timed out half an hour later.
+   */
+  check("and can put a question to the phone", body.includes("question.asked") && body.includes("question.reply"), "question card")
 }
 
 // 3. session.list through handle()

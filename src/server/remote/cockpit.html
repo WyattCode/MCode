@@ -138,6 +138,8 @@ function handle(f) {
   if (e.type === "message.part.updated") upsertPart(e.sessionID, e.messageID, e.part);
   if (e.type === "permission.requested") addPermissionCard(e.request);
   if (e.type === "permission.resolved") removePermissionCard(e.requestID);
+  if (e.type === "question.asked") addQuestionCard(e.request);
+  if (e.type === "question.replied" || e.type === "question.rejected") removeQuestionCard(e.requestID);
   if (e.type === "session.deleted") { delete state.titles[e.sessionID]; refreshSelect(); }
 }
 
@@ -268,6 +270,54 @@ function addPermissionCard(request) {
   $("timeline").appendChild(card); scroll();
 }
 function removePermissionCard(id) { const el = $("pc-" + id); if (el) el.remove(); }
+
+/*
+ * A question the turn is parked on. The window shows it as a card of options;
+ * here it is the same card, one question at a time, because a phone has no
+ * room for the whole form. Answering sends every answer in one reply - the
+ * skipped ones empty - which is what the dock's own submit does.
+ *
+ * Without this a phone would show a busy conversation and nothing to press,
+ * and the turn would sit until the question timed out.
+ */
+function addQuestionCard(request) {
+  if (!request || !request.questions || !request.questions.length) return;
+  const card = document.createElement("div");
+  card.className = "pcard";
+  card.id = "qc-" + request.id;
+  const t = document.createElement("div"); t.className = "t";
+  t.textContent = request.loop ? "重复调用确认" : "需要你的决定";
+  const answers = request.questions.map(() => []);
+  const send = () => { request({ type: "question.reply", requestID: request.id, answers }); card.remove(); };
+
+  request.questions.forEach((q, qi) => {
+    const label = document.createElement("div"); label.className = "d";
+    label.textContent = q.question.slice(0, 240);
+    card.appendChild(label);
+    const btns = document.createElement("div"); btns.className = "btns";
+    (q.options || []).slice(0, 3).forEach((option) => {
+      const b = document.createElement("button");
+      b.className = "allow"; b.textContent = option.label;
+      b.onclick = () => {
+        answers[qi] = [option.label];
+        // Only this question's own buttons are cleared: one choice per question.
+        btns.querySelectorAll("button").forEach((x) => x.classList.remove("allow"));
+        b.classList.add("allow");
+        // Answered or skipped everywhere - the dock submits in one reply, so this does too.
+        if (answers.every((a) => a.length > 0)) send();
+      };
+      btns.appendChild(b);
+    });
+    card.appendChild(btns);
+  });
+
+  const skip = document.createElement("button");
+  skip.className = "reject"; skip.textContent = "跳过（Unanswered）";
+  skip.onclick = () => { request({ type: "question.reply", requestID: request.id, answers: request.questions.map(() => []) }); card.remove(); };
+  card.appendChild(skip);
+  $("timeline").appendChild(card); scroll();
+}
+function removeQuestionCard(id) { const el = $("qc-" + id); if (el) el.remove(); }
 
 $("c-go").onclick = () => {
   const url = $("c-url").value.trim() || (location.origin.replace(/^http/, "ws"));

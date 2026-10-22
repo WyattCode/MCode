@@ -67,9 +67,22 @@ export const EXECUTABLE_REFUSAL = "出于安全,不支持直接打开可执行�
  */
 export async function isProgram(target: string, stat: { mode: number }): Promise<boolean> {
   // The name as written and the file it really is: a link called notes.txt may point at a program.
-  const real = await fs.realpath(target).catch(() => target)
-  const unixExecutable = process.platform !== "win32" && (stat.mode & 0o111) !== 0 && !extensionOf(real)
-  return EXECUTABLE.has(extensionOf(target)) || EXECUTABLE.has(extensionOf(real)) || unixExecutable
+  if (EXECUTABLE.has(extensionOf(target))) return true
+  /*
+   * Where the real path cannot be read, the file is a program as far as this
+   * channel is concerned. Refusing to open something whose target is unknown
+   * is the safe side of the same judgement `isBundleProgram` makes; the
+   * alternative - judging it by its own name alone - is how a link named
+   * `notes.txt` pointing at a program got through before.
+   */
+  let real: string
+  try {
+    real = await fs.realpath(target)
+  } catch {
+    return true
+  }
+  if (EXECUTABLE.has(extensionOf(real))) return true
+  return process.platform !== "win32" && (stat.mode & 0o111) !== 0 && !extensionOf(real)
 }
 
 /**
@@ -81,10 +94,20 @@ export async function isProgram(target: string, stat: { mode: number }): Promise
  * disk that `shell.openPath` launches - the exact thing the open channel must
  * never do (R25-E1) - so the name is all a folder is judged by, through the
  * same table.
+ *
+ * Both names are read: the one written, and the one the path really leads to,
+ * so a link with no extension at all - `~/Desktop/notes` pointing at an
+ * application - cannot pass as an ordinary folder. Where the real path cannot
+ * be read the answer is "yes": a folder whose target is unknown must not be
+ * handed to `openPath`, and being shown in its parent instead costs nothing.
  */
 export async function isBundleProgram(target: string): Promise<boolean> {
-  const real = await fs.realpath(target).catch(() => target)
-  return EXECUTABLE.has(extensionOf(target)) || EXECUTABLE.has(extensionOf(real))
+  if (EXECUTABLE.has(extensionOf(target))) return true
+  try {
+    return EXECUTABLE.has(extensionOf(await fs.realpath(target)))
+  } catch {
+    return true
+  }
 }
 
 export async function openNativePath(target: unknown): Promise<OpenNativeResult> {
@@ -119,8 +142,15 @@ export async function revealNativePath(target: unknown): Promise<{ ok: true } | 
   if (!usable(target)) return { ok: false, error: "not found" }
   const stat = await fs.stat(target).catch(() => undefined)
   if (!stat) return { ok: false, error: "not found" }
-  // A macOS .app is a folder that openPath would launch, so it is only ever selected.
-  if (stat.isDirectory() && !(process.platform === "darwin" && extensionOf(target) === ".app")) {
+  /*
+   * A macOS .app is a folder that openPath would launch, so it is only ever
+   * selected. The name is read through a realpath as well: a link with no
+   * extension at all - `~/Desktop/notes` pointing at an application - stats as
+   * a directory and would otherwise take the branch below and start it, which
+   * is the same hole R25-E1 closes on the open channel, reached by a second
+   * name for the same bundle.
+   */
+  if (stat.isDirectory() && !(await isBundleProgram(target))) {
     const error = await shell.openPath(target)
     return error ? { ok: false, error } : { ok: true }
   }
