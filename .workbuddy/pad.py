@@ -47,7 +47,7 @@ def shot(name):
     sh("screencap", "-p", "/sdcard/_q.png")
     out = f"D:/Documents/Claude Code/MCode/.workbuddy/shots/{name}.png"
     ensure()
-    _run(["pull", "/sdcard/_q.png", out])
+    _run(["-s", ENDPOINT, "pull", "/sdcard/_q.png", out])
     print("captured", out)
     return out
 

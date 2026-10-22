@@ -133,6 +133,12 @@ import java.util.concurrent.TimeUnit
 private val Cream = Color(0xFFF9F9F7)
 private val CreamSurface = Color(0xFFFEFEFE)
 private val CreamPill = Color(0xFFF0EFEC)
+
+/* The search field's hairline. Claude's is #CECECE: sampled off its own list
+ * at 2.5 px per dp, the border runs one pixel deep at 108.8 and reads clearly
+ * against the white fill, where this app used the pill colour (#F0EFEC) and
+ * drew a field with no visible edge at all. */
+private val FieldLine = Color(0xFFCECECE)
 private val CreamLine = Color(0xFFE4E1D8)
 private val Ink = Color(0xFF1F1E1C)
 private val InkMuted = Color(0xFF6B6862)
@@ -279,7 +285,7 @@ val LocalBubbleText = staticCompositionLocalOf { Ink }
 val LocalLine = staticCompositionLocalOf { CreamLine }
 /** The search field's fill and hairline: white on cream, #1A1A19 on #151515. */
 val LocalField = staticCompositionLocalOf { CreamSurface }
-val LocalFieldLine = staticCompositionLocalOf { CreamPill }
+val LocalFieldLine = staticCompositionLocalOf { FieldLine }
 
 /* ------------------------------------------------------------------ */
 /* Model                                                               */
@@ -892,7 +898,7 @@ fun MCodeTheme(content: @Composable () -> Unit) {
         LocalBubbleText provides (if (dark) DarkText else Ink),
         LocalLine provides line,
         LocalField provides (if (dark) DarkField else CreamSurface),
-        LocalFieldLine provides (if (dark) DarkFieldLine else CreamPill),
+        LocalFieldLine provides (if (dark) DarkFieldLine else FieldLine),
     ) {
         MaterialTheme(colorScheme = scheme, content = content)
     }
@@ -919,20 +925,27 @@ fun SparkMark(modifier: Modifier = Modifier, tint: Color = Ember) {
         val cy = size.height / 2f
         val outer = size.minDimension / 2f
         /*
-         * Fitted, not eyeballed: sweeping stroke width and inner radius against
-         * the real mark's ink coverage (42% of the 112 px box) lands on 0.16 of
-         * the radius and a start at the centre. A 0.05 start left a hole in the
-         * middle that the original does not have.
+         * 12 spokes, uneven lengths, around a small solid core.
+         *
+         * A ray sweep around the reference's asterisk reports a peak every 15
+         * degrees, which reads as 24 - but that count is the round caps on 12
+         * spokes, each producing two shoulders. Drawing 24 on a 15-degree step
+         * filled the middle into a solid disc, which is plainly not the mark.
+         *
+         * What the reference actually shows: 12 spokes at 30 degrees, of two
+         * lengths (the short ones about 0.72 of the long), radiating from a
+         * core roughly a fifth of the mark, with clear paper between them.
          */
-        val stroke = outer * 0.16f
+        val stroke = outer * 0.155f
+        // The core, so the spokes read as one burst rather than as a wheel.
+        drawCircle(tint, radius = outer * 0.30f, center = androidx.compose.ui.geometry.Offset(cx, cy))
         for (i in 0 until 12) {
-            // The first spoke sits a little off vertical in the original.
-            val angle = Math.toRadians((i * 30.0) + 12.0)
-            val r0 = 0f
-            val r1 = outer
+            // Off vertical by 11 degrees, as the original's spokes sit.
+            val angle = Math.toRadians((i * 30.0) + 11.0)
+            val r1 = if (i % 3 == 0) outer else outer * 0.80f
             drawLine(
                 tint,
-                androidx.compose.ui.geometry.Offset(cx + (Math.cos(angle) * r0).toFloat(), cy + (Math.sin(angle) * r0).toFloat()),
+                androidx.compose.ui.geometry.Offset(cx, cy),
                 androidx.compose.ui.geometry.Offset(cx + (Math.cos(angle) * r1).toFloat(), cy + (Math.sin(angle) * r1).toFloat()),
                 strokeWidth = stroke,
                 cap = androidx.compose.ui.graphics.StrokeCap.Round,
@@ -3073,6 +3086,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     val inputBar: @Composable () -> Unit = {
         InputCapsule(
             enabled = currentSession != null,
+            /*
+             * Whether the conversation has anything in it, for the placeholder.
+             *
+             * Claude says 与 Claude 对话… on the empty page it opens 新建会话
+             * onto, and 回复 Claude… once the thread has words in it. This was
+             * `currentSession != null`, but a new conversation is given an id
+             * the moment it is created - so every fresh page said 回复, which is
+             * the wrong one of the two. The transcript is what decides.
+             */
+            hasSession = items.isNotEmpty(),
             modelLabel = currentModelLabel,
             contextUsed = contextUsed,
             contextLimit = if (contextWindow > 0) contextWindow else contextLimit,
@@ -3298,7 +3321,60 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     // hung here as well as under `AppTopBar`.
                     if (!connected) OfflineStrip()
                     lastError?.let { msg -> ErrorStrip(msg) { lastError = null } }
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    /*
+                     * 63.2 dp of bar, so its marks hang from 57.6.
+                     *
+                     * Measured off Claude's list header at 2.5 px per dp: the
+                     * burger's ink is y 57.6..71.6, the title's 57.2..72.0 and
+                     * the two trailing glyphs' 57.6..71.6 - one line, 14.4
+                     * tall, whose centre is 64.6. The status bar above ends at
+                     * 32.8, so a 63.2 row centres its own 44dp targets on 64.4.
+                     *
+                     * Two earlier readings were wrong in opposite directions:
+                     * 52 tall (a 4dp-padded row with no height) centred the
+                     * line on 58.8, five dp high; 74.4 centred it on 70, five
+                     * low and pushed the search field's top 22 dp down. The
+                     * field compensates with its own top padding - see
+                     * `searchTop`, which is 24.4 minus whatever this row grew
+                     * past 52.
+                     */
+                    Box(Modifier.fillMaxWidth().height(63.2.dp)) {
+                        /*
+                         * The title goes in first, on the full column width;
+                         * the marks row goes over it afterwards. Centring the
+                         * title inside the padded row put it 6.0 right, since
+                         * that row's 1.6/14.2 padding is asymmetric to place
+                         * the marks, not the word.
+                         */
+                        Text(
+                            if (leftMode == LeftMode.Artifacts) "产物中心" else "最近记录",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = LocalText.current,
+                            maxLines = 1,
+                            softWrap = false,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            /*
+                             * Centred, then nudged 5.2 left.
+                             *
+                             * `fillMaxWidth` inside this Box centres on the
+                             * Box, and the Box measures 370.4 wide inside a
+                             * 360 column - 5.2 of it on each side, from the
+                             * parent's own padding. The word therefore landed
+                             * at 185.2 against Claude's 180.0; a 5.2 offset
+                             * puts the ink back on the column's centre rather
+                             * than fighting the padding above.
+                             */
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .wrapContentHeight()
+                                .align(Alignment.Center)
+                                .offset(x = (-5.2).dp),
+                        )
+                        Row(
+                            Modifier.fillMaxWidth().height(63.2.dp).padding(start = 1.6.dp, end = 14.2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                         /*
                          * Claude's list header: menu at the far left, the title
                          * centred, the two glyphs at the right. They are plain
@@ -3312,29 +3388,62 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          * what Claude's own header puts at that corner once a
                          * page has been opened.
                          */
+                        /*
+                         * Claude's burger is three unequal lines, not three equal
+                         * ones and not Material's Menu: measured on its own bar
+                         * the top rule runs the full 16.4 dp, the middle one the
+                         * same, and the bottom rule only 8.0 - the reference's
+                         * own mark, which Material's glyph cannot draw.
+                         */
                         Box(
                             Modifier.size(44.dp).clickable {
                                 if (leftMode == LeftMode.Sessions) openDrawer() else leftMode = LeftMode.Sessions
                             },
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(
-                                if (leftMode == LeftMode.Sessions) Icons.Outlined.Menu else Icons.AutoMirrored.Outlined.ArrowBack,
-                                contentDescription = if (leftMode == LeftMode.Sessions) "菜单" else "返回列表",
-                                tint = LocalText.current,
-                                modifier = Modifier.size(20.dp),
-                            )
+                            if (leftMode == LeftMode.Sessions) {
+                                MiIcon(
+                                    /*
+                                     * The path fills the 24 grid, because a
+                                     * canvas scales the *grid*, not the ink:
+                                     * `M4 7h16` inside a 24 viewBox drew 10.9 dp
+                                     * of rule in a 16.4 dp box, which is why the
+                                     * mark came out a third smaller than
+                                     * Claude's 16.4 x 14.0.
+                                     *
+                                     * Claude's own proportions: three rules
+                                     * 1.9 thick, 5 apart, the first two full
+                                     * width and the last half.
+                                     */
+                                    "M0.95 2.6h22.1M0.95 12h22.1M0.95 21.4h11.05",
+                                    contentDescription = "菜单",
+                                    modifier = Modifier.size(16.4.dp),
+                                    viewBox = 24f,
+                                    strokeWidth = 2.1f,
+                                    tint = LocalText.current,
+                                )
+                            } else {
+                                Icon(
+                                    Icons.AutoMirrored.Outlined.ArrowBack,
+                                    contentDescription = "返回列表",
+                                    tint = LocalText.current,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
                         }
-                        Text(
-                            if (leftMode == LeftMode.Artifacts) "产物中心" else "最近记录",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = LocalText.current,
-                            maxLines = 1,
-                            softWrap = false,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            modifier = Modifier.weight(1f),
-                        )
+                        /*
+                         * The title is centred on the 360dp column, not on what
+                         * is left between the marks.
+                         *
+                         * Claude's "最近记录" runs x=147.6..212.4, whose centre is
+                         * exactly 180.0 - half of 360. `weight(1f)` centres it
+                         * in the space between a 44dp box and two 40dp ones,
+                         * which put the word's centre at 167.2: 12.8 left, on a
+                         * header where the eye reads the word as the page's
+                         * name. A Box laid over the whole bar with the marks
+                         * drawn on top centres the word on the column instead.
+                         */
+                        Spacer(Modifier.weight(1f))
                         /*
                          * Claude's header ends with a magnifier and a filter,
                          * and the search field is not on the page until it is
@@ -3343,10 +3452,74 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          * magnifier opens it; the field then sits above the list
                          * with a close glyph that puts it away.
                          */
-                        Box(Modifier.size(38.dp).clickable { runningOnly = !runningOnly }, contentAlignment = Alignment.Center) {
-                            Icon(Icons.Outlined.Tune, contentDescription = "筛选", tint = if (runningOnly) MaterialTheme.colorScheme.primary else LocalText.current, modifier = Modifier.size(18.dp))
+                        /*
+                         * Two marks, and both are the reference's own shapes
+                         * rather than Material approximations of them.
+                         *
+                         * The first is three vertical sliders - a knob on the
+                         * outer two high up, one on the middle one low down,
+                         * each with its stem running the icon's whole height.
+                         * Its ink is 15.6 x 14.0 at x 288.0 and y 57.6. The
+                         * second is three checkmarks each followed by a rule:
+                         * ink 16.8 square at x 327.2, y 56.4. The Tune and
+                         * Checklist glyphs this carried are close in meaning
+                         * and plainly not the same drawing - the sliders read
+                         * vertical where Material's are horizontal, and the
+                         * checks are heavier and set in three rows, not in a
+                         * circle.
+                         */
+                        Box(Modifier.size(40.dp).clickable { runningOnly = !runningOnly }, contentAlignment = Alignment.Center) {
+                            MiIcon(
+                                /*
+                                 * Three vertical sliders: the left knob sits
+                                 * high, the middle one low, the right one high
+                                 * again - measured at x 288.0..303.6, y
+                                 * 57.6..71.6, three stems 4.8 apart.
+                                 *
+                                 * The grid is filled edge to edge, because a
+                                 * canvas scales the grid and not the ink: the
+                                 * first version of this path ran 6.6..20 inside
+                                 * 24 and drew 11.2 dp of mark in a 15.6 box.
+                                 *
+                                 * Each slider is one stem through the whole
+                                 * height with a 2.6-radius ring centred on it;
+                                 * the two arcs make the ring hollow so the stem
+                                 * shows as a gap rather than a bar across it.
+                                 */
+                                "M2.6 0.9v8.1M2.6 14.6v8.5M2.6 14.6a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 1 0 0 5.2" +
+                                    "M12 0.9v12.8M12 19.3v3.8M12 19.3a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 1 0 0 5.2" +
+                                    "M21.4 0.9v8.1M21.4 14.6v8.5M21.4 14.6a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 1 0 0 5.2",
+                                contentDescription = "筛选",
+                                modifier = Modifier.size(15.6.dp),
+                                viewBox = 24f,
+                                strokeWidth = 1.6f,
+                                tint = if (runningOnly) MaterialTheme.colorScheme.primary else LocalText.current,
+                            )
+                        }
+                        /*
+                         * The second mark opens 定时任务, the third page the
+                         * drawer offers. It had no way in from this bar before,
+                         * which left the page reachable only from the drawer.
+                         */
+                        Box(Modifier.size(40.dp).clickable { leftMode = LeftMode.Plugins }, contentAlignment = Alignment.Center) {
+                            /*
+                             * Three checks, each followed by a rule, filling
+                             * the grid: ink measured 16.8 square at x 327.2,
+                             * y 56.4, with the checks 4.8 wide and the rules
+                             * starting 6.4 after them.
+                             */
+                            MiIcon(
+                                "M0.9 6.4 3.4 8.9 7.7 3.4M0.9 12.4 3.4 14.9 7.7 9.4M0.9 18.4 3.4 20.9 7.7 15.4" +
+                                    "M12.2 6.4h10.9M12.2 12.4h10.9M12.2 18.4h10.9",
+                                contentDescription = "定时任务",
+                                modifier = Modifier.size(16.8.dp),
+                                viewBox = 24f,
+                                strokeWidth = 1.7f,
+                                tint = if (leftMode == LeftMode.Plugins) MaterialTheme.colorScheme.primary else LocalText.current,
+                            )
                         }
                     }
+                }
                     /*
                      * The field appears only while searching, and takes the
                      * focus as it does - a magnifier that opened a box the
@@ -3393,21 +3566,46 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                  * 73.2 and carries its own 12 below; 24.4 is
                                  * what lands the fill on 110.0.
                                  */
-                                .padding(start = 13.6.dp, end = 13.6.dp, top = 24.4.dp)
+                                .padding(start = 12.dp, end = 20.4.dp, top = 13.2.dp)
                                 .height(40.dp)
-                                .clip(RoundedCornerShape(20.dp))
-                                .background(LocalField.current)
-                                .border(0.52.dp, LocalFieldLine.current, RoundedCornerShape(20.dp))
-                                .padding(horizontal = 11.dp),
+                                /*
+                                 * No `clip` on this capsule, and the border
+                                 * before the fill.
+                                 *
+                                 * `clip(RoundedCornerShape(20.dp))` cuts every
+                                 * later draw to the rounded rectangle, so a
+                                 * `border` drawn after it loses the half of its
+                                 * stroke that lies on the shape's edge - the
+                                 * field came out with no visible hairline at
+                                 * any colour or width. `background` and
+                                 * `border` both take the shape themselves, so
+                                 * the clip was doing nothing the two of them
+                                 * do not already do.
+                                 */
+                                .border(
+                                    0.8.dp,
+                                    if (LocalBg.current == DarkBg) LocalFieldLine.current else Color(0xFFCECECE),
+                                    RoundedCornerShape(17.2.dp),
+                                )
+                                .background(LocalField.current, RoundedCornerShape(17.2.dp))
+                                .padding(start = 10.2.dp, end = 11.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            /*
+                             * 19dp, because Material's Search glyph does not
+                             * fill its 24 grid: at 15 it drew 9.6 dp of ink
+                             * where Claude's magnifier is 8.4 wide and 15.2
+                             * tall (x 26.4..34.8, y 119.2..134.4). The old
+                             * spacing also pushed the placeholder from 36.0 to
+                             * 46.4, so the gap drops to 2.4.
+                             */
                             Icon(
                                 Icons.Outlined.Search,
                                 contentDescription = null,
                                 tint = LocalMuted.current,
-                                modifier = Modifier.size(15.dp),
+                                modifier = Modifier.size(19.dp),
                             )
-                            Spacer(Modifier.width(7.dp))
+                            Spacer(Modifier.width(0.4.dp))
                             Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                                 if (search.isEmpty()) Text("搜索", color = LocalMuted.current, fontSize = 14.sp)
                                 BasicTextField(
@@ -4978,9 +5176,15 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
          */
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             Column(
-                // Claude's asterisk centres at 41% of the pane and its phrase
-                // at 48%; a plain centre lands both about 150px low.
-                Modifier.align(Alignment.Center).padding(bottom = 124.dp),
+                /*
+                 * 135.8, not 124.
+                 *
+                 * Measured on the pad at 2.5 px per dp: Claude's asterisk spans
+                 * y 373.2..414.4, so its centre is 393.8 on a 908.8 pane -
+                 * 43.3% down. This block centred 11.8 lower, which is what the
+                 * extra bottom padding takes out.
+                 */
+                Modifier.align(Alignment.Center).padding(bottom = 135.8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) { mark() }
             if (withInput) Box(Modifier.align(Alignment.BottomCenter)) { inputBar() }
@@ -5635,13 +5839,28 @@ fun ThreadLoading() {
     }
 }
 
-fun greeting(): String = when (java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)) {
-    in 5..8 -> "清晨随笔"
-    in 9..11 -> "上午闲话"
-    in 12..13 -> "午后漫谈"
-    in 14..17 -> "下午絮语"
-    in 18..22 -> "晚间随想"
-    else -> "深夜独白"
+/*
+ * Claude's greeting, in its own words and its own shape.
+ *
+ * This used to invent a mood for each part of the day - 清晨随笔, 上午闲话,
+ * 午后漫谈, 下午絮语, 晚间随想, 深夜独白 - six phrases that belong to no app but
+ * this one's imagination. Read off the reference's empty page, it says
+ * 「下午好，Wyatt」: a plain greeting, a comma, the account's own name. The
+ * name is the same W the drawer's account dot carries.
+ *
+ * The ranges follow the reference's visible behaviour (it showed 下午好 at
+ * 16:29); the exact cut-offs it uses are not observable from the outside, so
+ * these are the conventional ones - 5..11 morning, 12..17 afternoon, 18..4
+ * evening and night.
+ */
+fun greeting(): String {
+    val name = "Wyatt"
+    return when (java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)) {
+        in 5..11 -> "上午好，$name"
+        in 12..17 -> "下午好，$name"
+        in 18..23 -> "晚上好，$name"
+        else -> "夜深了，$name"
+    }
 }
 
 /*
@@ -7708,7 +7927,7 @@ fun SessionList(
                          * empty part of a row did nothing at all. That is why a
                          * conversation could not be opened from the list.
                          */
-                        .height(if (compact) 48.dp else 59.4.dp)
+                        .height(if (compact) 41.6.dp else 62.6.dp)
                         .combinedClickable(onClick = { onSelect(s.id) }, onLongClick = { onLongPress?.invoke(s) })
                         /*
                          * No fill on the open conversation.
@@ -7728,19 +7947,25 @@ fun SessionList(
                          * read as spaced-out cards rather than as a thread.
                          */
                         /*
-                         * 61.4 dp of pitch between rows: measured, the four
-                         * rows' titles start at 174.0, 235.2, 296.8 and 360.4 -
-                         * 61.2, 61.6 and 63.6 apart, a mean of 61.4.
+                         * 64.6 dp of pitch in the list, 43.6 in the drawer.
                          *
-                         * The height here is 59.4 because the list also puts 2
-                         * of `spacedBy` between items; 59.4 + 2 is the 61.4.
-                         * Setting the whole pitch on the row gave 68, since both
-                         * were being added. Inside a row the title's ink is 12.8,
-                         * a 9.6 gap, and the timestamp's 13.2, leaving 25.8 of
-                         * air; a row with padding and no height came to 48 and
-                         * the list read as spaced-out cards.
+                         * Re-measured off the pad's own 3408-wide pixels rather
+                         * than a downscaled capture: the list's glyph tops sit
+                         * at 175.6 and 240.0 - 64.4 apart - and their
+                         * timestamps' at 196.4 and 262.0, 65.6 apart. The 59.4
+                         * here plus the list's 2 of `spacedBy` came to 61.4,
+                         * close enough to look right and three dp short by the
+                         * second row. 62.6 + 2 is the measured 64.6.
+                         *
+                         * The drawer's rows are single-line and 43.6 apart
+                         * (glyph tops 390.8 / 433.6 / 477.2 / 520.8), so 41.6
+                         * plus the same 2 of gap.
+                         *
+                         * The inline padding is 30 in the drawer and 26 in the
+                         * list: the drawer's glyph starts at 30.0, the list's
+                         * at 26.0.
                          */
-                        .padding(horizontal = 26.dp, vertical = 0.dp),
+                        .padding(horizontal = if (compact) 30.dp else 25.6.dp, vertical = 0.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     /*
@@ -7765,7 +7990,44 @@ fun SessionList(
                      * shows; a 23dp column with a 3dp spacer pushed every title
                      * 26dp right of where it belongs.
                      */
-                    Box(Modifier.width(12.dp), contentAlignment = Alignment.Center) {
+                    /*
+                     * The drawer's rows are laid out differently from the
+                     * list's, and they are the reason `compact` exists.
+                     *
+                     * Measured off Claude's drawer: its glyph runs x=30.0..41.6
+                     * and its title starts at 61.2 - 19.6 of gap, so the column
+                     * here is 31.2 wide off the drawer's own 30 of padding. In
+                     * the list the same glyph runs 26.0..37.6 with the title at
+                     * 49.2. Two screens, two columns; the 12dp box this used to
+                     * be drew the title at 42 in the drawer against 61.2.
+                     */
+                    /*
+                     * The glyph hangs from the row's top, not its middle.
+                     *
+                     * Claude's `</>` ink runs y=175.6..185.6 while the title's
+                     * runs 174.0..186.4 - the mark sits on the title's first
+                     * line, aligned to its top, and the timestamp below has
+                     * nothing beside it. `Alignment.CenterVertically` on the
+                     * row put the glyph at 182.0, 6.4 low, centred on the whole
+                     * two-line block instead of on its first line.
+                     */
+                    /*
+                     * Lifted 6.4, because the row centres its children and
+                     * Claude hangs the mark on the title's first line.
+                     *
+                     * The row's `CenterVertically` puts a 11.6 box in the
+                     * middle of a 34.4 two-line block, which measured 182.8
+                     * against the reference's 175.6. `align(Alignment.Top)` was
+                     * worse - it pinned the glyph to the row's own top, above
+                     * the title entirely - so the offset is the one that lands
+                     * on the line.
+                     */
+                    Box(
+                        Modifier
+                            .width(if (compact) 31.2.dp else 23.6.dp)
+                            .offset(y = (-6.4).dp),
+                        contentAlignment = Alignment.TopStart,
+                    ) {
                         /*
                          * The desktop's `convo-cell`: a conversation mark on
                          * every row (the path at Sidebar.vue:1288, 24 grid, 2
@@ -7782,42 +8044,47 @@ fun SessionList(
                          */
                         if (s.running || s.directory.isNotBlank()) {
                             MiIcon(
-                                "M9 7 5 12l4 5M15 7l4 5-4 5",
-                                modifier = Modifier.size(12.dp),
+                                // Fills the grid: `M9 7…M19 17` inside 24 drew
+                                // 7.2 of mark in an 11.6 box, where Claude's
+                                // `</>` ink is 11.6 x 10.0.
+                                "M6.4 5.2 1.6 12l4.8 6.8M17.6 5.2 22.4 12l-4.8 6.8M15.6 3.6 8.4 20.4",
+                                modifier = Modifier.size(11.6.dp),
                                 viewBox = 24f,
-                                strokeWidth = 1.9f,
+                                strokeWidth = 2.2f,
                                 tint = LocalMuted.current,
                             )
                         } else {
                             MiIcon(
                                 "M4.6 5.4h14.8a1.6 1.6 0 0 1 1.6 1.6v8.2a1.6 1.6 0 0 1-1.6 1.6H10.4L6.2 20v-3.2H4.6A1.6 1.6 0 0 1 3 15.2V7a1.6 1.6 0 0 1 1.6-1.6Z",
-                                modifier = Modifier.size(12.dp),
+                                modifier = Modifier.size(11.6.dp),
                                 viewBox = 24f,
                                 strokeWidth = 1.9f,
                                 tint = LocalMuted.current,
                             )
                         }
                     }
-                    Spacer(Modifier.width(6.dp))
-                    Column(Modifier.weight(1f)) {
-                        // Claude sets the title and its timestamp tight against
-                        // each other (32 px between the two baselines at 450
-                        // dpi), so the pair reads as one row rather than two.
+                    Column(Modifier.weight(1f).padding(top = 6.dp)) {
+                        /*
+                         * 17sp of title over 14sp of time.
+                         *
+                         * Measured: "Main"'s cap height is 12.4 dp and the CJK
+                         * title beside it 15.2 - 18sp in this face, where the
+                         * 16 here drew 14.4. The timestamp's CJK ink is 13.2,
+                         * which is 14sp, not the 13 that was here.
+                         *
+                         * The two run 22.4 apart (title top 174.0, time top
+                         * 196.4) with a 10.0 gap between their inks; the
+                         * timestamp starts at x=48.8, the title at 49.2, so
+                         * there is no indent of its own - the 5dp that used to
+                         * push it right was compensating for the glyph column
+                         * being too narrow, and both lines now sit in the same
+                         * column the way the reference's do.
+                         */
                         Text(
                             s.title.ifEmpty { s.id }.take(if (compact) 34 else 26),
-                            /*
-                             * 16sp, but its ink is 12.8 dp - measured across
-                             * "Main" and "Run" in the same column, 174.0..186.8.
-                             * The timestamp under it is 13.2 dp (196.8..210.0)
-                             * and starts at x=48.4, five dp right of the title -
-                             * Claude indents it under the icon's own width.
-                             *
-                             * Rows are 61.4 dp apart, not the 48 the old 8dp of
-                             * vertical padding produced.
-                             */
-                            fontSize = 16.sp,
+                            fontSize = 17.sp,
                             fontWeight = FontWeight.Medium,
-                            lineHeight = 21.sp,
+                            lineHeight = 22.sp,
                             color = LocalText.current,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -7825,15 +8092,9 @@ fun SessionList(
                         if (!compact) {
                             Text(
                                 relTime(s.updated),
-                                /*
-                                 * 13.2 dp of ink: 13sp, not the 14 that was
-                                 * here, and sitting 9.6 dp under the title's
-                                 * last row (186.8 -> 196.4).
-                                 */
-                                fontSize = 13.sp,
-                                lineHeight = 17.sp,
+                                fontSize = 14.sp,
+                                lineHeight = 19.sp,
                                 color = LocalMuted.current,
-                                modifier = Modifier.padding(start = 5.dp),
                             )
                         }
                     }
@@ -8035,13 +8296,29 @@ fun DrawerContent(
                 active = currentPage == LeftMode.Plugins,
                 path = "M12 3.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8zM12 7.8V12l3 1.8",
             ) { onPlugins() }
-            Spacer(Modifier.height(20.dp))
-            HorizontalDivider(color = LocalMuted.current.copy(alpha = 0.18f))
-            Spacer(Modifier.height(18.dp))
+            /*
+             * The hairline sits 8.2 under the last row and 20.2 above the
+             * section head.
+             *
+             * Measured off Claude's drawer: 定时任务's row ends at 320.4, the
+             * rule is at 328.6, and 最近使用's ink runs 348.8..361.6. This
+             * carried 20 and 18, which put the rule 12 low and the head 6 low
+             * on top of that - the two spaces the drawer reads as a break
+             * rather than a section boundary.
+             */
+            Spacer(Modifier.height(8.2.dp))
+            HorizontalDivider(color = LocalMuted.current.copy(alpha = 0.30f))
+            Spacer(Modifier.height(15.4.dp))
             // `.section-head`: 12 at weight 500, in the body's grey. This read
             // 13 at the default weight, which is a size and a voice off.
             Text("最近使用", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = LocalMuted.current)
-            Spacer(Modifier.height(8.dp))
+            /*
+             * 20.8 between the head's ink and the first row's: the head ends
+             * at 361.6 and the first row's title starts at 390.0. The 8 that
+             * was here pulled the rows up under the head; 20.8 then overshot
+             * by 7.2 because the head's own line box adds air below its ink.
+             */
+            Spacer(Modifier.height(13.6.dp))
         }
         /*
          * Claude's drawer shows the three most recent conversations and then a
@@ -8072,15 +8349,32 @@ fun DrawerContent(
             }
         }
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(42.dp).background(Ember, CircleShape), contentAlignment = Alignment.Center) {
+            /*
+             * Claude's account dot is a violet disc, #6E62D9, 43.6 across, and
+             * it carries the reader's initial in white. This drew an ember
+             * disc in the app's own accent, which read as a status light rather
+             * than as an account.
+             */
+            Box(Modifier.size(43.6.dp).background(Color(0xFF6E62D9), CircleShape), contentAlignment = Alignment.Center) {
                 Text("W", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
             }
             Spacer(Modifier.weight(1f))
-            Button(
-                onCreate,
-                shape = RoundedCornerShape(22.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = LocalText.current, contentColor = LocalBg.current),
-            ) { Text("+ 新建会话", fontSize = 14.sp) }
+            /*
+             * The capsule is 43.6 tall and 118.8 wide (x 224.8..343.6), with
+             * 22 corners - a pill, not a Material button with its own 40dp
+             * minimum, which drew 39.6.
+             */
+            Box(
+                Modifier
+                    .height(43.6.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(LocalText.current)
+                    .clickable { onCreate() }
+                    .padding(horizontal = 22.4.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("+ 新建会话", fontSize = 14.sp, color = LocalBg.current)
+            }
         }
     }
 }
@@ -8126,29 +8420,33 @@ fun DrawerItem(
                 },
             )
             /*
-             * 27.2 tall, 13.6 of corner, 8 in from the drawer's edge.
+             * 55.6 tall, a 13.6 corner, and the pill 8 in from the drawer's
+             * edge.
              *
-             * Measured on Claude's own drawer: its selected row is a
-             * 344.0 x 27.2 pill of #F0EFEC running x=8.0..351.6, and the rows
-             * sit 38.4 apart centre to centre. This was 38 tall with an 8
-             * corner and 14 of inline padding, which read as a list of headings
-             * where the reference reads as a menu.
+             * Re-measured off Claude's own drawer at 2.5 px per dp, scanning
+             * the pixel column through the selected row: the pill's fill runs
+             * y=152.8..208.4 - 55.6 dp, not the 27.2 an earlier pass recorded -
+             * and the four rows' centres sit at 124.6 / 180.6 / 236.2 / 292.6,
+             * a 56.0 pitch. Those earlier numbers came from reading the
+             * downscaled 1080-wide capture as if it were the device's own
+             * resolution, which halved them; the row was drawn half height and
+             * the drawer read as a dense menu where the reference is a list of
+             * full-height rows.
              */
-            .height(38.4.dp)
+            .height(55.6.dp)
             .padding(horizontal = 8.dp)
             .clickable { onClick() },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         /*
-         * Inside the pill: 8 of its own inset, an 18.4 glyph, and the label at
-         * 60.8 dp from the drawer's edge.
+         * Inside the pill: 10.4 of its own inset, an 18.4 glyph, and the label
+         * at 60.8 dp from the drawer's edge.
          *
-         * Measured off Claude's 项目 / Artifacts / 定时任务 rows - their glyphs
-         * run 26.4..45.6 and their words start at 60.4-62.4, so the gap between
-         * the two is 15.2, not the 14 here, and the label is 14sp with its ink
-         * 18.0 tall on the CJK rows.
+         * Measured: the glyphs run 26.4..45.6 and the words start at 60.4-60.8,
+         * so the gap between the two is 15.2 and the drawer's own 24 of inline
+         * padding puts the glyph at 26.4 - 2.4 of it is the pill's inset.
          */
-        Spacer(Modifier.width(6.4.dp))
+        Spacer(Modifier.width(10.4.dp))
         if (path != null) {
             MiIcon(
                 path,
@@ -8161,7 +8459,7 @@ fun DrawerItem(
         } else {
             Icon(icon, contentDescription = label, tint = LocalText.current, modifier = Modifier.size(18.4.dp))
         }
-        Spacer(Modifier.width(13.6.dp))
+        Spacer(Modifier.width(15.2.dp))
         Text(label, fontSize = 16.sp, fontWeight = FontWeight.Normal, color = LocalText.current)
     }
 }
@@ -9676,6 +9974,8 @@ fun AccessPill(level: String, onPick: (String) -> Unit, fullAllowed: Boolean = t
 fun InputCapsule(
     enabled: Boolean,
     modelLabel: String,
+    /** An open conversation, which only changes the placeholder's words. */
+    hasSession: Boolean = false,
     /** What the last turn spent, and the model's window - the desktop's ring. */
     contextUsed: Int = 0,
     contextLimit: Int = 0,
@@ -10095,38 +10395,113 @@ fun InputCapsule(
                         .heightIn(min = 41.4.dp, max = 190.dp),
                 ) {
                     /*
-                     * Claude's box opens with a prompt mark, not a bare
-                     * placeholder: a 1.6dp stem 23.6 tall with a bracket hung
-                     * off its top half and an arrow inside it, 14.8 across, in
-                     * the muted ink. Measured x 502.8..517.6, y 792.8..816.4 -
-                     * it is the height of the line, so it reads as a caret that
-                     * says "type here".
+                     * The prompt mark, then the words.
                      *
-                     * The words after it are 16sp at #7B7974: their ink is
-                     * 24.0 dp tall over two scripts, and 15sp gave 21.
+                     * This mark was removed in the previous pass on the reading
+                     * that Claude's composer opens with bare text. It does not:
+                     * cropped at the pad's own 400dpi, the first ink in its box
+                     * is a 1.6dp stem 23.6 tall at x=502.8, with a bracket
+                     * hanging off its top half and an arrow inside it, running
+                     * out to x=518.0 - 15.2 across. The words start after it.
+                     *
+                     * The removal had been argued from a downscaled screenshot
+                     * where the mark is three grey pixels; at this scale it is
+                     * unmistakable.
                      */
                     if (text.isEmpty()) {
-                        // Read outside the draw scope: `Local…current` is a
-                        // composable call and a Canvas lambda is not composable.
-                        val phInk = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF7B7974)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Canvas(Modifier.size(14.8.dp, 23.6.dp)) {
+                        /*
+                         * 3.6 of left offset: the stem's ink measured 506.4
+                         * against the reference's 502.8. The card's own inner
+                         * padding sets where the text block starts, and moving
+                         * it would move the typed text with it, so only the
+                         * placeholder's mark is nudged.
+                         */
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.offset(x = (-3.6).dp),
+                        ) {
+                            // Read outside the draw scope: `Local…current` is a
+                            // composable call and a Canvas lambda is not.
+                            val phInk = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF7B7974)
+                            // `requiredSize`, not `size`: inside a Row the canvas was being
+                            // measured against the row's own width and drew 30.4
+                            // dp of mark where 15.2 was asked for.
+                            Canvas(Modifier.requiredSize(15.2.dp, 23.6.dp)) {
                                 val w = size.width
                                 val h = size.height
                                 val ink = phInk
                                 val stem = 1.6.dp.toPx()
                                 // The stem, full height on the left.
                                 drawLine(ink, androidx.compose.ui.geometry.Offset(stem / 2, 0f), androidx.compose.ui.geometry.Offset(stem / 2, h), strokeWidth = stem)
-                                // Its bracket: down the top right, then left.
-                                val top = h * 0.16f
-                                val mid = h * 0.46f
-                                drawLine(ink, androidx.compose.ui.geometry.Offset(w * 0.42f, top), androidx.compose.ui.geometry.Offset(w, top), strokeWidth = stem)
-                                drawLine(ink, androidx.compose.ui.geometry.Offset(w * 0.98f, top), androidx.compose.ui.geometry.Offset(w * 0.98f, mid), strokeWidth = stem)
-                                drawLine(ink, androidx.compose.ui.geometry.Offset(w, mid), androidx.compose.ui.geometry.Offset(w * 0.42f, mid), strokeWidth = stem)
+                                /*
+                                 * The bracket: out along the top, down to just
+                                 * above the middle, back to the stem - open at
+                                 * the left, so it reads as a bracket rather than
+                                 * as a box.
+                                 */
+                                /*
+                                 * Not a bracket - a brace of three rules and
+                                 * two uprights, read off the reference pixel by
+                                 * pixel (x 502.8..518.0, y 792.8..816.4):
+                                 *
+                                 *   row 800: a full rule from 506.4 to 518.0
+                                 *   row 804: a full rule from 506.4 to 517.2
+                                 *   row 807: a rule from 504.8 to 516.8,
+                                 *            reaching further left
+                                 *
+                                 * with a short upright at 506.8..507.6 spanning
+                                 * rows 797..804, and a longer one at
+                                 * 515.6..516.8 spanning rows 804..811.
+                                 *
+                                 * So it reads as コ stacked over a コ, offset -
+                                 * the shape a terminal prints before a prompt.
+                                 * The earlier version drew one bracket the height
+                                 * of half the mark, which is why it looked like a
+                                 * box rather than like this.
+                                 */
+                                /*
+                                 * Fractions of the canvas, then pulled inside
+                                 * the stroke's own half-width: at w * 0.95 the
+                                 * outer rules ran half a stem past the box and
+                                 * the mark measured 30.4 wide in a 15.2 box.
+                                 */
+                                /*
+                                 * Vertically the brace occupies 797..811 of a
+                                 * mark that runs 792.8..816.4 - 14 of 23.6, so
+                                 * 0.18..0.77 of the box, with the three rules at
+                                 * 0.31 / 0.50 / 0.62. The earlier 0.30/0.48/0.62
+                                 * spread them over the whole height, which made
+                                 * the mark read twice the size of the reference's.
+                                 */
+                                val s1 = h * 0.31f
+                                val s2 = h * 0.50f
+                                val s3 = h * 0.62f
+                                /*
+                                 * The reference's rules run 506.4..518.0 on a box
+                                 * that starts at 502.8 with a 15.2 width: they
+                                 * begin at 0.24 of the box and stop 0.15 short of
+                                 * its right edge. Drawing them to `w - stem / 2`
+                                 * made the mark 20.8 wide instead of 15.2.
+                                 */
+                                val x0 = w * 0.24f
+                                val x1 = w * 0.24f
+                                val x2 = w * 0.86f
+                                // Top rule, and the short upright under its left end.
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(x1, s1), androidx.compose.ui.geometry.Offset(x2, s1), strokeWidth = stem)
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(x1 + stem / 2, s1), androidx.compose.ui.geometry.Offset(x1 + stem / 2, s2), strokeWidth = stem)
+                                // Middle rule, and the longer upright under its right end.
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(x1, s2), androidx.compose.ui.geometry.Offset(x2, s2), strokeWidth = stem)
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(x2 - stem / 2, s2), androidx.compose.ui.geometry.Offset(x2 - stem / 2, s3), strokeWidth = stem)
+                                // The lead-in rule, which starts left of the others.
+                                drawLine(ink, androidx.compose.ui.geometry.Offset(x0, s3), androidx.compose.ui.geometry.Offset(x2, s3), strokeWidth = stem)
                             }
-                            Spacer(Modifier.width(7.6.dp))
+                            Spacer(Modifier.width(1.2.dp))
                             Text(
-                                if (running) "将消息加入队列…" else "Claude 对话…",
+                                when {
+                                    running -> "将消息加入队列…"
+                                    hasSession -> "回复 Claude…"
+                                    else -> "与 Claude 对话…"
+                                },
                                 fontSize = 16.sp,
                                 lineHeight = 23.6.sp,
                                 color = if (LocalBg.current == DarkBg) DarkMuted else Color(0xFF7B7974),
