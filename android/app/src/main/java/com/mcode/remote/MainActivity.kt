@@ -7260,12 +7260,22 @@ fun Timeline(
                                          * the wash itself with the reference's 4dp
                                          * corner and its air around the letters.
                                          */
-                                        androidx.compose.foundation.text.selection.SelectionContainer {
-                                            MarkdownBody(
-                                                item.text,
-                                                dark = LocalBg.current == DarkBg,
-                                            )
-                                        }
+                                        /*
+                                         * No `SelectionContainer`.
+                                         *
+                                         * It owns both the hit testing and the
+                                         * fill, and its fill cannot be rounded -
+                                         * the hook that would let a line draw its
+                                         * own is `internal` at every foundation
+                                         * version through 1.10. `MarkdownBody`
+                                         * therefore does its own long-press word
+                                         * selection and paints the wash with the
+                                         * reference's 4dp corner.
+                                         */
+                                        MarkdownBody(
+                                            item.text,
+                                            dark = LocalBg.current == DarkBg,
+                                        )
                                     }
                                     /*
                                      * `finish` says how the turn ended, and the

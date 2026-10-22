@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -334,18 +335,20 @@ fun MarkdownBody(
      * counts - and clips that range to each block to get the slice the line can
      * draw.
      */
-    selection: TextRange? = null,
-) {
     /*
-     * NOTE: `selection` is inert at this release.
+     * Selection is this line's own.
      *
-     * The wash it draws is correct, but nothing can supply a range yet: the
-     * container's controlled overload and `LocalSelectionRegistrar` are both
-     * `internal` in Kotlin at foundation 1.7.3 (their JVM members are public,
-     * which is why this looked reachable). The parameter stays because the
-     * drawing is measured and working - the moment a public hook exists, wiring
-     * it is one call site.
+     * Compose will not round the container's fill and will not let a line draw
+     * its own - `SelectionRegistrar` and the controlled `SelectionContainer`
+     * are `internal` in Kotlin at every foundation version checked, up to
+     * 1.10 (`e: Cannot access 'interface SelectionRegistrar': it is internal`).
+     * So the two things the container was providing that actually matter are
+     * taken over here: word-granular hit testing on long press, and the wash
+     * itself. The reference does the same thing, and its selection is a 4dp
+     * block standing clear of the letters rather than a rectangle hugging them.
      */
+    sharedSelection: SelectionState? = null,
+) {
     val blocks = remember(source) { Md.blocks(source) }
     val textColor = LocalText.current
     val muted = LocalMuted.current
@@ -369,12 +372,6 @@ fun MarkdownBody(
     Column(modifier) {
         blocks.forEachIndexed { index, block ->
             val last = index == blocks.lastIndex
-            /*
-             * The block's slice of the container's range, in the block's own
-             * offsets. `null` when the selection does not touch this block, which
-             * is the common case and keeps every untouched line a plain `Text`.
-             */
-            val slice = clipSelection(selection, offsets[index], flatLength(block))
             when (block) {
                 is MdBlock.Heading -> {
                     val size = when (block.level) { 1, 2 -> 24.sp; 3, 4 -> 19.sp; else -> 17.sp }
@@ -383,13 +380,17 @@ fun MarkdownBody(
                         block.text, size = size, weight = FontWeight.SemiBold, color = textColor,
                         modifier = Modifier.padding(top = if (index == 0) 0.dp else top, bottom = 8.dp),
                         lineHeight = (size.value * 1.4f).sp,
-                        selection = slice,
+                        sharedSelection = sharedSelection,
+                        lineIndex = index,
+                        lineStart = offsets[index],
                     )
                 }
                 is MdBlock.Para -> MdLine(
                     block.text, color = textColor,
                     modifier = Modifier.padding(bottom = if (last) 0.dp else PARAGRAPH_GAP),
-                    selection = slice,
+                    sharedSelection = sharedSelection,
+                    lineIndex = index,
+                    lineStart = offsets[index],
                 )
                 is MdBlock.Code -> CodeBox(block.lang, block.code, dark, Modifier.padding(vertical = 4.dp))
                 is MdBlock.ListBlock -> ListBox(block, textColor, modifier = Modifier.padding(bottom = if (last) 0.dp else PARAGRAPH_GAP))
@@ -506,12 +507,36 @@ private fun MdLine(
      * left to `SelectionContainer`, whose own fill is a bare rectangle per
      * line - see `MarkdownBody` for why that was not good enough.
      */
-    selection: TextRange? = null,
+    sharedSelection: SelectionState? = null,
+    /** This line's index within the reply, so the shared drag can be clipped to it. */
+    lineIndex: Int = -1,
+    /** Where this line begins in the reply's flat text. */
+    lineStart: Int = 0,
 ) {
     val context = LocalContext.current
     val inline = remember(source, color) { MdText.inline(source, LinkBlue) }
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
     val needle = LocalFind.current
+    /*
+     * This line's own slice of the shared drag, in its own offsets.
+     *
+     * A drag is anchored on one line and may run into the next; each line asks
+     * the state where the drag crosses it. The first covered line takes
+     * everything from the anchor onward, the last everything up to the moving
+     * end, and the lines between them take their whole length - which is what
+     * makes a three-paragraph selection read as one continuous run.
+     */
+    val ownSelection: Pair<Int, Int>? = run {
+        val shared = sharedSelection ?: return@run null
+        if (shared.isEmpty || lineIndex < 0 || !shared.coversLine(lineIndex)) return@run null
+        val low = minOf(shared.anchorLine, shared.activeLine)
+        val high = maxOf(shared.anchorLine, shared.activeLine)
+        val from = if (lineIndex == low) minOf(shared.anchorOffset, shared.activeOffset) else 0
+        val to = if (lineIndex == high) maxOf(shared.anchorOffset, shared.activeOffset) else source.length
+        val a = from.coerceIn(0, source.length)
+        val b = to.coerceIn(0, source.length)
+        if (b > a) a to b else null
+    }
     /*
      * The needle's tint goes on after the line's own spans (a bold heading, a
      * link's colour) so a match inside one is still visible: the highlight is a
@@ -563,8 +588,9 @@ private fun MdLine(
                  * own rectangle hugs the glyphs and cannot be rounded, which is
                  * the whole reason this is drawn here.
                  */
-                if (selection != null && !selection.collapsed) {
-                    for (box in chipBoxes(laid, selection.start until selection.end)) {
+                val wash = ownSelection?.let { (a, b) -> TextRange(a, b) }
+                if (wash != null && !wash.collapsed) {
+                    for (box in chipBoxes(laid, wash.start until wash.end)) {
                         drawRoundRect(
                             color = selectionTint,
                             topLeft = androidx.compose.ui.geometry.Offset(box.left - 2.2.dp.toPx(), box.top - 3.0.dp.toPx()),
@@ -614,6 +640,50 @@ private fun MdLine(
                     }
                 }
             }
+            /*
+             * Long press selects a word; dragging from it extends the run.
+             *
+             * This is the part `SelectionContainer` used to provide and that
+             * cannot be borrowed piecemeal - it owns both the hit testing and
+             * the fill. Replacing it is what buys the rounded wash: the gesture
+             * writes offsets into `SelectionState`, and `drawBehind` above paints
+             * whatever the state says, with the corner Compose would not give.
+             *
+             * Word granularity comes from `getWordBoundary`, which is what makes
+             * a long press land on a whole word rather than a single character.
+             */
+            .then(
+                if (sharedSelection == null) Modifier else Modifier.pointerInput(sharedSelection, source) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { pos ->
+                            val laid = layout ?: return@detectDragGesturesAfterLongPress
+                            val offset = laid.getOffsetForPosition(pos)
+                            val word = laid.getWordBoundary(offset)
+                            sharedSelection.anchorLine = lineIndex
+                            sharedSelection.anchorOffset = word.start - lineStart
+                            sharedSelection.activeLine = lineIndex
+                            sharedSelection.activeOffset = word.end - lineStart
+                        },
+                        onDrag = { change, _ ->
+                            val laid = layout ?: return@detectDragGesturesAfterLongPress
+                            val offset = laid.getOffsetForPosition(change.position)
+                            sharedSelection.activeLine = lineIndex
+                            sharedSelection.activeOffset = offset - lineStart
+                            change.consume()
+                        },
+                    )
+                },
+            )
+            /*
+             * A tap anywhere on the line clears, which is what the container's
+             * dismiss did - without it a selection would stay lit until the next
+             * long press somewhere else.
+             */
+            .then(
+                if (sharedSelection == null) Modifier else Modifier.pointerInput(sharedSelection) {
+                    detectTapGestures { if (!sharedSelection.isEmpty) sharedSelection.clear() }
+                },
+            )
             .then(
                 if (inline.links.isEmpty()) Modifier else Modifier.pointerInput(inline) {
                     detectTapGestures { pos ->
@@ -626,22 +696,6 @@ private fun MdLine(
                 },
             ),
     )
-}
-
-/**
- * A block's slice of the container's range, in the block's own offsets.
- *
- * The container reports one range over the concatenation of every `Text` it
- * registered, separated by a newline; a `Text` can only tint against its own
- * string. Subtracting the block's start and clipping to its length gives the
- * part this block can draw, and `null` when the two do not overlap at all.
- */
-private fun clipSelection(selection: TextRange?, blockStart: Int, blockLength: Int): TextRange? {
-    if (selection == null || selection.collapsed || blockLength <= 0) return null
-    val from = maxOf(selection.start, blockStart) - blockStart
-    val to = minOf(selection.end, blockStart + blockLength) - blockStart
-    if (to <= from) return null
-    return TextRange(from, to)
 }
 
 /**
@@ -659,6 +713,39 @@ private fun flatLength(block: MdBlock): Int = when (block) {
     is MdBlock.Quote -> block.blocks.sumOf { flatLength(it) + 1 }
     is MdBlock.Table -> block.head.sumOf { it.length } + block.rows.sumOf { r -> r.sumOf { it.length } }
     MdBlock.Rule -> 0
+}
+
+/**
+ * What the reader has selected, held by the reply rather than by a container.
+ *
+ * `SelectionContainer` is not used at all: its fill cannot be rounded, and the
+ * hook that would let a line draw its own is `internal`. So the state is a plain
+ * holder - the anchor line and offset where the drag began, and the moving end -
+ * and every `MdLine` reads it to decide whether it is covered.
+ *
+ * Lines share one instance, so a drag that starts in one paragraph and runs into
+ * the next keeps a single continuous range: each line asks the state for its own
+ * slice by adding its offset within the reply.
+ */
+class SelectionState {
+    /** The line the selection is rooted in - a drag cannot start outside it. */
+    var anchorLine by mutableStateOf(-1)
+    /** Offsets in the reply's flat text, which is what `MarkdownBody` maps per line. */
+    var anchorOffset by mutableStateOf(0)
+    var activeLine by mutableStateOf(-1)
+    var activeOffset by mutableStateOf(0)
+
+    val isEmpty: Boolean get() = anchorLine < 0
+
+    /** True when this line's index falls inside the drag, start or end line included. */
+    fun coversLine(index: Int): Boolean = !isEmpty && index in minOf(anchorLine, activeLine)..maxOf(anchorLine, activeLine)
+
+    fun clear() {
+        anchorLine = -1
+        activeLine = -1
+        anchorOffset = 0
+        activeOffset = 0
+    }
 }
 
 /**
