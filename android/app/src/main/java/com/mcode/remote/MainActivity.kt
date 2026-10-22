@@ -8265,6 +8265,17 @@ fun DrawerContent(
              * leaves the drawer and opens a new conversation; it is the only
              * row the desktop's rail has besides the artifact centre.
              */
+        }
+        /*
+         * The four rows live outside the 24-padded block above.
+         *
+         * That block exists to line the word 「Claude」up at x=24 and the section
+         * heads with it; the rows themselves are a pill that starts at x=8 with
+         * its glyph at 26.4. Keeping them inside the 24 put the glyph at 44.8 -
+         * 18 dp right of where the reference draws it - because the pill's own
+         * 8 and the glyph's 10.4 stacked on top of that 24.
+         */
+        Column(Modifier.padding(horizontal = 8.dp)) {
             /*
              * Claude's four rows, with its words and its order:
              * 项目 / Code / Artifacts / 定时任务.
@@ -8284,7 +8295,17 @@ fun DrawerContent(
                 Icons.Outlined.Folder,
                 "项目",
                 active = currentPage == LeftMode.Projects,
-                path = "M3.4 6.2h4.2l1.2 1.6h8.6v8.6a1.2 1.2 0 0 1-1.2 1.2H4.6a1.2 1.2 0 0 1-1.2-1.2zM3.4 6.2V5.4a1.2 1.2 0 0 1 1.2-1.2h2.6l1.2 1.6",
+                /*
+                 * A tray, not a folder.
+                 *
+                 * Claude's 项目 mark is an inbox: two short rules above a
+                 * trapezoid whose sides lean in. This drew a folder - complete
+                 * with its folded corner - which reads as a file browser rather
+                 * than as the projects list. The path fills the 24 grid so the
+                 * ink is the full 18.4 the row asks for; the folder path ran
+                 * 3.4..15 and drew 12.
+                 */
+                path = "M2 2.6h20M2 8.2h20M3.6 12.4h16.8l-1.6 9.2H5.2z",
             ) { onProjects() }
             /*
              * 设置, not 「Code」.
@@ -8312,7 +8333,16 @@ fun DrawerContent(
                 Icons.AutoMirrored.Outlined.Article,
                 "Artifacts",
                 active = currentPage == LeftMode.Artifacts,
-                path = "M10.6 8.6a3.2 3.2 0 1 1-6.4 0 3.2 3.2 0 0 1 6.4 0zM9.4 11.6h4.2a1.4 1.4 0 0 1 1.4 1.4v4.2a1.4 1.4 0 0 1-1.4 1.4H9.4a1.4 1.4 0 0 1-1.4-1.4v-4.2a1.4 1.4 0 0 1 1.4-1.4z",
+                /*
+                 * A fan over a rectangle - the shape the reference uses - not a
+                 * circle beside a square.
+                 *
+                 * Claude's Artifacts mark is a half-disc with a wedge cut out,
+                 * sitting over the top-left corner of a box: it reads as
+                 * "something being made", where a circle and a square read as
+                 * two objects. Fills the 24 grid.
+                 */
+                path = "M7.6 12.2A5.4 5.4 0 0 1 18.4 9.4l-6.2 6.2a5.4 5.4 0 0 1-4.6-3.4zM12.4 12.2h9v9h-9z",
                 pathStroke = 1.5f,
             ) { onArtifacts() }
             DrawerItem(
@@ -8332,11 +8362,26 @@ fun DrawerContent(
              * rather than a section boundary.
              */
             Spacer(Modifier.height(8.2.dp))
-            HorizontalDivider(color = LocalMuted.current.copy(alpha = 0.30f))
+            /*
+             * The rule and the section head keep the 24 inset the rows just
+             * gave up: measured, the rule runs from 24.0 and 最近使用's ink
+             * starts at 24.8, so they belong to the word 「Claude」above, not to
+             * the pill.
+             */
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                color = LocalMuted.current.copy(alpha = 0.30f),
+            )
             Spacer(Modifier.height(15.4.dp))
             // `.section-head`: 12 at weight 500, in the body's grey. This read
             // 13 at the default weight, which is a size and a voice off.
-            Text("最近使用", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = LocalMuted.current)
+            Text(
+                "最近使用",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                color = LocalMuted.current,
+                modifier = Modifier.padding(start = 16.dp),
+            )
             /*
              * 20.8 between the head's ink and the first row's: the head ends
              * at 361.6 and the first row's title starts at 390.0. The 8 that
