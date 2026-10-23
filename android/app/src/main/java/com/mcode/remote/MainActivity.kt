@@ -272,8 +272,8 @@ private val DarkPill = Color(0xFF313131)
 private val DarkField = Color(0xFF1A1A19)
 private val DarkFieldLine = Color(0xFF484847)
 private val DarkLine = Color(0xFF232323)
-private val DarkText = Color(0xFFF5F4EF)
-private val DarkMuted = Color(0xFF888681)
+private val DarkText = Color(0xFFF9F9F7)
+private val DarkMuted = Color(0xFF8A8A8A)
 
 val LocalBg = staticCompositionLocalOf { Cream }
 val LocalSurface = staticCompositionLocalOf { CreamSurface }
@@ -9631,7 +9631,18 @@ fun ProjectsScreen(
                 maxLines = 1,
                 softWrap = false,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                modifier = Modifier.fillMaxSize().wrapContentHeight().align(Alignment.Center).offset(x = (-5.2).dp),
+                /*
+                 * Centred on the column, which is 5 dp right of where the
+                 * padded row puts it.
+                 *
+                 * The reference's 「项目」 runs 164.0..194.0, centre 179.0, on a
+                 * 360 dp column whose centre is 180.0. Ours measured centre
+                 * 174.0 - five left - because the row's own end padding is
+                 * asymmetric to place the marks, and the title was inheriting
+                 * that. It had a -5.2 offset, which pushed it the wrong way;
+                 * this one is +5.0.
+                 */
+                modifier = Modifier.fillMaxSize().wrapContentHeight().align(Alignment.Center).offset(x = 2.4.dp),
             )
             Row(
                 Modifier.fillMaxWidth().height(63.2.dp).padding(start = 1.6.dp, end = 4.4.dp),
@@ -9660,16 +9671,40 @@ fun ProjectsScreen(
                     Modifier.size(40.dp).clickable { searching = !searching },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.Outlined.Search, contentDescription = "搜索项目", tint = LocalText.current, modifier = Modifier.size(17.dp))
+                    /*
+                     * 26.6, because Material's magnifier leaves a quarter of its
+                     * grid empty: at 17 dp it drew 12.0 dp of ink where the
+                     * reference's runs 18.8 (x 286.4..305.2). Scaling by the
+                     * measured ratio is the only way to hit it - the grid size
+                     * is not the drawn size.
+                     */
+                    Icon(Icons.Outlined.Search, contentDescription = "搜索项目", tint = LocalText.current, modifier = Modifier.size(26.6.dp))
                 }
                 Box(
                     Modifier.size(40.dp).clickable { onlyWithSessions = !onlyWithSessions },
                     contentAlignment = Alignment.Center,
                 ) {
+                    /*
+                     * Three vertical sliders, not a funnel.
+                     *
+                     * The reference's filter mark is three stems 4.8 dp apart
+                     * with a hollow ring on each - the outer two high, the middle
+                     * one low - measured at x 820..859, y 145..178 on its own
+                     * bar. What stood here was `M4 5.6h16M7 12h10M10 18.4h4`,
+                     * three horizontal rules of decreasing width: the usual
+                     * funnel, and plainly a different drawing at 6x zoom.
+                     *
+                     * Each stem is broken around its ring so the ring's inside
+                     * shows the page rather than the stem running through it,
+                     * which is what the reference's hollow centres do.
+                     */
                     MiIcon(
-                        "M4 5.6h16M7 12h10M10 18.4h4",
+                        "M4.8 1.2V5.8M4.8 12.2V22.8M12 1.2V11.8M12 18.2V22.8M19.2 1.2V5.8M19.2 12.2V22.8" +
+                            "M2.4 9a2.4 2.4 0 1 0 4.8 0a2.4 2.4 0 1 0-4.8 0" +
+                            "M9.6 15a2.4 2.4 0 1 0 4.8 0a2.4 2.4 0 1 0-4.8 0" +
+                            "M16.8 9a2.4 2.4 0 1 0 4.8 0a2.4 2.4 0 1 0-4.8 0",
                         contentDescription = "筛选项目",
-                        modifier = Modifier.size(16.8.dp),
+                        modifier = Modifier.size(22.6.dp),
                         viewBox = 24f,
                         strokeWidth = 1.8f,
                         tint = if (onlyWithSessions) MaterialTheme.colorScheme.primary else LocalText.current,
