@@ -1304,6 +1304,33 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     val selectionByMessage = remember { mutableMapOf<String, SelectionState>() }
     /** The reply currently lit, so picking another can put the first out. */
     var litMessage by remember { mutableStateOf<String?>(null) }
+    /*
+     * Anything that moves the transcript out from under a selection clears it.
+     *
+     * The wash is drawn inside the reply and the 复制 pill lives in a window of
+     * its own, anchored to a root coordinate captured when the words were lit.
+     * Open the drawer and the reply slides sideways while the pill stays put - a
+     * pill floating over the sidebar, attached to nothing. Measured on the pad:
+     * dragging right far enough to extend a selection opened the drawer, and the
+     * pill was left behind with no selection under it at all.
+     *
+     * So opening the drawer clears every reply's wash. It is called from the
+     * drawer's own open path rather than watched, because a modal drawer sliding
+     * is a gesture the transcript should simply give way to.
+     */
+    val clearSelections = {
+        selectionByMessage.values.forEach { it.clear() }
+        litMessage = null
+    }
+    /*
+     * Watched rather than called from `openDrawer`, because the drawer can also
+     * be opened by its own edge swipe - which is exactly how this was found: a
+     * handle dragged far enough to the right became an edge swipe, the drawer
+     * opened, and the pill stayed behind over the sidebar.
+     */
+    LaunchedEffect(drawerState.isOpen) {
+        if (drawerState.isOpen) clearSelections()
+    }
     /** The question being rewritten in 编辑并重发. */
     var editTarget by remember { mutableStateOf<Item.Msg?>(null) }
     var modelPicker by remember { mutableStateOf(false) }
@@ -4240,7 +4267,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     }
                                 }
                             },
-                                            running = sessions.find { it.id == currentSession }?.running == true,
+                                            selecting = litMessage != null,
+                            running = sessions.find { it.id == currentSession }?.running == true,
                                             onPerm = ::respondPerm,
                                             onPermReason = ::respondPermReason,
                                             onAnswer = ::answerQuestion,
@@ -4347,6 +4375,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     }
                                 }
                             },
+                            selecting = litMessage != null,
                             running = sessions.find { it.id == currentSession }?.running == true,
                             onPerm = ::respondPerm,
                             onPermReason = ::respondPermReason,
@@ -6917,6 +6946,15 @@ fun Timeline(
      * objects and the arming would go nowhere.
      */
     share: (String) -> SelectionState = { SelectionState() },
+    /*
+     * Whether any reply is currently lit.
+     *
+     * The 回到底部 disc and a selection's right-hand handle occupy the same spot
+     * at the bottom of the transcript, and on the pad the disc was drawn over the
+     * handle - the reader could see a selection and still not grab its far end.
+     * The disc is told to stand down while this is true.
+     */
+    selecting: Boolean = false,
     running: Boolean = false,
     onPerm: (String, String) -> Unit = { _, _ -> },
     onPermReason: (String, String) -> Unit = { _, _ -> },
@@ -7862,8 +7900,14 @@ fun Timeline(
      * on screen (a card, or its 「拒绝并说明」 field open under it) the disc is a tap
      * that might approve or explain instead of scrolling, and it covered the
      * card's own buttons. It steps aside until the queue is clear.
+     *
+     * It steps aside for a live selection too. The disc sits exactly where a
+     * selection's own handles go - bottom centre, over the last line of the
+     * reply - and on the pad it covered the right-hand handle outright: the
+     * reader could see a selection and be unable to grab either end of it. A
+     * selection is a more specific mode than "scroll down", so the disc yields.
      */
-    if (!atEnd && items.none { it is Item.Perm }) {
+    if (!atEnd && items.none { it is Item.Perm } && !selecting) {
         Box(
             Modifier
                 .align(Alignment.BottomCenter)

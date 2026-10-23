@@ -546,7 +546,22 @@ fun MarkdownBody(
                     if (copied) "已复制" else "复制",
                     fontSize = 13.sp,
                     color = if (night) Color(0xFFF1E9EC) else Color(0xFF382F36),
-                    modifier = androidx.compose.ui.Modifier.clickable(enabled = !copied) {
+                    /*
+                     * No indication on the press.
+                     *
+                     * `clickable`'s default ripple renders as a grey rectangle
+                     * behind the word inside a `Popup` - the pill's own window has
+                     * no surface for the ripple to tint, so it drew a flat block
+                     * that is visible in the screenshot of 已复制 and belongs to
+                     * neither the reference nor this design. The pill answers a
+                     * press by changing its word instead, which is feedback
+                     * enough and is the answer the reference gives.
+                     */
+                    modifier = androidx.compose.ui.Modifier.clickable(
+                        enabled = !copied,
+                        indication = null,
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                    ) {
                         clipboard.setText(AnnotatedString(selectedText))
                         copied = true
                     },
@@ -557,7 +572,10 @@ fun MarkdownBody(
                         "全选",
                         fontSize = 13.sp,
                         color = if (night) Color(0xFFF1E9EC) else Color(0xFF382F36),
-                        modifier = androidx.compose.ui.Modifier.clickable {
+                        modifier = androidx.compose.ui.Modifier.clickable(
+                            indication = null,
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        ) {
                             /*
                              * Every line of the reply, from its first character
                              * to its last - the reference's 全选 lights the whole
@@ -1256,6 +1274,17 @@ private fun Modifier.selectable(
                 } else {
                     onHandle(sharedSelection, lineIndex, slice, laidNow, density, down.position)
                 }
+                /*
+                 * A grabbed press has to be consumed *now*, before the wait.
+                 *
+                 * Pulling a handle used to move the selection one line and then
+                 * hand the gesture to the transcript: the disk was grabbed, but
+                 * the down event was still unconsumed, so the parent's scroll
+                 * took over on the first move - the log showed SCROLL_EVENT and
+                 * the wash stopped growing while the finger kept going. Claiming
+                 * the event here is what keeps the drag ours.
+                 */
+                if (grab) down.consume()
                 val held = if (grab) down else awaitLongPressOrCancellation(down.id)
                 if (held == null) {
                     val cancelled = currentEvent.changes.any { it.isConsumed }
@@ -1672,8 +1701,37 @@ private fun wordAt(text: CharSequence, offset: Int): IntRange {
  * per run of characters the chip actually owns, so a wrapped chip is filled as
  * two pieces the way the reference draws it.
  */
+/**
+ * A selection range made safe for `getBoundingBox`, whose valid offsets are
+ * `0 ..< length`.
+ *
+ * A range's end is exclusive, so "through the last character" is `length` - one
+ * past the last offset the layout will answer for. 全选 produces exactly that,
+ * and the throw from `getBoundingBox` happens inside `drawBehind`, which took
+ * the whole app down the moment 全选 was pressed on the pad.
+ *
+ * Returns null when nothing can be drawn, so the caller can skip the frame
+ * rather than guard every use.
+ */
+internal fun clampToLayout(range: IntRange, length: Int): IntRange? {
+    if (length <= 0) return null
+    val last = length - 1
+    val from = range.first.coerceIn(0, last)
+    val to = range.last.coerceIn(0, last)
+    return if (to >= from) from..to else null
+}
+
 private fun chipBoxes(laid: androidx.compose.ui.text.TextLayoutResult, range: IntRange): List<androidx.compose.ui.geometry.Rect> {
-    if (range.isEmpty()) return emptyList()
+    /*
+     * Clamped to the text, because a range's end is exclusive.
+     *
+     * 全选 sets the moving end to the length of the last block - "through the
+     * last character" - and that length is one past the last valid offset.
+     * `getBoundingBox` throws `offset(103) is out of bounds [0, 103)` for it, and
+     * since this runs inside `drawBehind` the throw took the whole app down the
+     * moment 全选 was pressed.
+     */
+    val safe = clampToLayout(range, laid.layoutInput.text.length) ?: return emptyList()
     /*
      * Per character, merged along their line.
      *
@@ -1686,7 +1744,7 @@ private fun chipBoxes(laid: androidx.compose.ui.text.TextLayoutResult, range: In
     val out = mutableListOf<androidx.compose.ui.geometry.Rect>()
     var run: androidx.compose.ui.geometry.Rect? = null
     var runLine = -1
-    for (offset in range) {
+    for (offset in safe) {
         val line = laid.getLineForOffset(offset)
         val box = laid.getBoundingBox(offset)
         if (run == null || line != runLine) {

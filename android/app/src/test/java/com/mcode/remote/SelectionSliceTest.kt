@@ -461,4 +461,57 @@ class SelectionSliceTest {
     fun aZeroLineHeightDoesNotStep() {
         assertEquals(0, dragSteps(y = 999f, height = 100f, lineHeight = 0f))
     }
+
+    /* ------------------------------------------------------------------ */
+    /* Ranges handed to the layout                                         */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * The crash: 全选 on a 103-character block.
+     *
+     * The end of a range is exclusive, so "through the last character" is 103 -
+     * one past the last offset `getBoundingBox` accepts. It threw
+     * `offset(103) is out of bounds [0, 103)` inside `drawBehind`, which brought
+     * the app down. The clamp turns that into 102.
+     */
+    @Test
+    fun anEndAtTheLengthIsPulledBackToOneCharacter() {
+        assertEquals(0..102, clampToLayout(0 until 103, length = 103))
+    }
+
+    /** An ordinary range inside the text is untouched. */
+    @Test
+    fun anOrdinaryRangeIsUntouched() {
+        assertEquals(3..7, clampToLayout(3..7, length = 103))
+    }
+
+    /** A range running past the end stops at the last character. */
+    @Test
+    fun aRangePastTheEndStopsAtTheLastCharacter() {
+        assertEquals(90..102, clampToLayout(90..500, length = 103))
+    }
+
+    /** A single character in the middle stays one character. */
+    @Test
+    fun oneCharacter() {
+        assertEquals(5..5, clampToLayout(5..5, length = 103))
+    }
+
+    /** An empty layout has nothing to draw. */
+    @Test
+    fun anEmptyTextHasNothingToDraw() {
+        assertNull(clampToLayout(0..0, length = 0))
+    }
+
+    /** A backwards range draws nothing rather than throwing. */
+    @Test
+    fun aBackwardsRangeDrawsNothing() {
+        assertNull(clampToLayout(9..3, length = 103))
+    }
+
+    /** Everything past the end collapses to the last character, not to nothing. */
+    @Test
+    fun aRangeWhollyPastTheEndCollapses() {
+        assertEquals(102..102, clampToLayout(200..300, length = 103))
+    }
 }
