@@ -10388,15 +10388,31 @@ fun ArtifactsScreen(
                     color = LocalMuted.current,
                 )
                 Spacer(Modifier.height(16.dp))
-                // The search field: 36dp tall on the desktop, a hairline pill.
+                /*
+                 * The field is a 56 dp capsule, as the reference draws it.
+                 *
+                 * Measured on Claude's artifacts page: the box runs y
+                 * 262..401 px - 56.0 dp tall - from 16.0 dp in to 56.4 dp short
+                 * of the far edge, with fully rounded ends. This was a 36 dp
+                 * rounded rectangle at 8 dp, which read as a form control rather
+                 * than the page's one piece of furniture.
+                 */
                 OutlinedTextField(
                     query,
                     onQuery,
-                    Modifier.fillMaxWidth().heightIn(min = 36.dp),
-                    placeholder = { Text("搜索产物", fontSize = 13.sp, color = LocalMuted.current) },
-                    leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(15.dp)) },
-                    shape = RoundedCornerShape(8.dp),
-                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
+                    Modifier.fillMaxWidth().height(56.dp),
+                    placeholder = { Text("搜索 Artifacts", fontSize = 15.sp, color = LocalMuted.current) },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Outlined.Search,
+                            contentDescription = null,
+                            tint = LocalMuted.current,
+                            /* 22, because Material's glyph draws three quarters of its grid. */
+                            modifier = Modifier.size(22.dp),
+                        )
+                    },
+                    shape = RoundedCornerShape(28.dp),
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 15.sp),
                     colors = OutlinedTextFieldDefaults.colors(
                         unfocusedContainerColor = LocalField.current,
                         focusedContainerColor = LocalField.current,
