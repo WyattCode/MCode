@@ -44,6 +44,9 @@
   两处各算一遍必然漂移。
 - **`git commit -m` 里的反引号会被 bash 当命令替换执行**（内容静默丢失）。
   提交信息先写进 `.workbuddy/commitmsg.txt`，再 `git commit -F`。
+- **平板首选 USB 直连**：序号 `0A06049009983540`（M367FC，2272×3408，density 400），
+  `adb -s 0A06049009983540`。USB 下端口不变，比无线稳得多。
+  只有走无线时才需要注意下面这条。
 - **平板的 adb 端点不稳定，且 `KEYCODE_POWER` 会踢掉无线调试**：
   端点随开关无线调试/重启/息屏变化，旧端口报 `10061 目标计算机积极拒绝`
   —— 看起来像设备离线，其实 ping 得通。**别再用 `input keyevent KEYCODE_POWER` 唤醒**
@@ -51,6 +54,16 @@
   用 `.workbuddy/find-pad.py` 做 mDNS + 端口发现（只探测，不碰设备）。
 - **`hitsHandle(pressX, pressY, centreX, centreY, radius)` 是纯函数**，6 个测试锁住
   「视觉半径 12.6dp ≠ 触控半径 18dp」和「圆形而非方形命中区」。改手柄交互必跑。
+- **`clampToLayout(range, length)` 必须挡在 `getBoundingBox` 前面**：
+  区间终点是排他的，「到最后一个字符」= `length`，而 `getBoundingBox` 只收 `[0, length)`。
+  2026-10-23 全选直接把 `0 until length` 传进去 → `offset(103) is out of bounds`
+  → 在 `drawBehind` 里抛出 → **整个应用崩溃**。
+- **`Popup` 里的 `clickable` 默认 ripple 会渲染成灰矩形**（窗口没有 surface 给它着色）。
+  用 `indication = null`。
+- **`Popup` 不与内容联动**：它锚在写入时的 root 坐标上。抽屉/换会话导致内容位移时，
+  气泡会变成浮在别处的僵尸。凡是会移动内容的操作都要清选区。
+- **小截图会骗人**：1080 宽的缩略图上多次误判「没有色块」「气泡跑位」，
+  放大到原生 3408 宽后完全正常。**先放大再下结论。**
 
 ## 工作流
 
