@@ -76,8 +76,15 @@
 - **证明测试有效，前提是真的破坏了东西**。2026-10-23 试过两种「故意改坏」：
   第一种其实是等价改写（`a+=len; if(..)a+=1` → `a+=len+(if(..)1 else 0)`），
   测试全绿是对的，不是测试失效。必须区分「测试没用」和「改动无害」。
-- **侧栏会话标题没从内容生成**，十几条都显示「来自手机」，
-  导致无法从列表定位到特定历史会话（`info.json` 里其实有正确的 title）。待修。
+- **不要给 `session.create` 传 title**：服务端 `src/server/session/title.ts` 的规则是
+  「没有标题才自动命名」（首行 fallback → 后台模型命名）。传了标题就永远不生成。
+  2026-10-23 之前手机端硬编码 `"来自手机"`，十几天所有会话同名，侧栏无法区分。已修。
+- **新建会话必须带 `directory`**：不带则用服务端默认 `D://Apps//MCode`（安装目录），
+  而侧栏按目录过滤 → 新建的会话在列表里看不到。默认取当前会话的 directory。
+- **新建会话要立即插入侧栏**：`select()` 依赖 `session.get` 回来才 add，是异步的；
+  用 `session.create` 的返回直接 `sessions.add(0, row)`。
+- **`cockpit-html.ts` 由 `cockpit.html` 生成**，生成器是 `.workbuddy/gen-cockpit.py`
+  （原文件头写着「re-run the generator」但生成器从未提交）。改 HTML 后必须重跑。
 
 ## 工作流
 
