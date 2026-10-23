@@ -288,6 +288,18 @@ val LocalLine = staticCompositionLocalOf { CreamLine }
 /** The search field's fill and hairline: white on cream, #1A1A19 on #151515. */
 val LocalField = staticCompositionLocalOf { CreamSurface }
 val LocalFieldLine = staticCompositionLocalOf { FieldLine }
+/*
+ * A conversation's card in the sidebar.
+ *
+ * Measured off the pad at 400 dpi: the fill is #F9F9F7 against the page's
+ * #F7F7F5 and the hairline #E1E1DF - four levels apart in each channel, which
+ * is why a downscaled capture shows no card at all. The open conversation shares
+ * the fill and only the border marks it, which is what the reference does.
+ */
+val LocalCard = staticCompositionLocalOf { Color(0xFFF9F9F7) }
+val LocalCardOpen = staticCompositionLocalOf { Color(0xFFF9F9F7) }
+val LocalCardLine = staticCompositionLocalOf { Color(0xFFE1E1DF) }
+val LocalCardTile = staticCompositionLocalOf { Color(0xFFF5F5F3) }
 
 /* ------------------------------------------------------------------ */
 /* Model                                                               */
@@ -1161,7 +1173,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * real 24dp handle between the panes the difference showed as the list
      * being a millimetre narrow and the conversation starting early.
      */
-    var leftFraction by remember { mutableStateOf(0.2714f) }
+    var leftFraction by remember { mutableStateOf(0.2641f) }
     /** The window's width in pixels, which is what a drag's fraction divides by. */
     var paneWidthPx by remember { mutableStateOf(0) }
     /**
@@ -3572,7 +3584,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                  * and no rule runs between them; only the composer's white card
                  * marks where the conversation begins.
                  */
-                Column(Modifier.weight(leftFraction).fillMaxHeight().fillMaxWidth()) {
+                Column(Modifier.weight(leftFraction).fillMaxHeight()) {
                     Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
                     // The wide layout's own header, so both notices have to be
                     // hung here as well as under `AppTopBar`.
@@ -4124,7 +4136,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                      * was also the thing that blocked taps on the list whenever
                      * a drag was in flight.
                      */
-                    Column(Modifier.weight(1f - leftFraction).fillMaxHeight().fillMaxWidth()) {
+                    Column(Modifier.weight(1f - leftFraction).fillMaxHeight()) {
                         Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
                         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             /*
@@ -8485,7 +8497,30 @@ fun SessionList(
                          * empty part of a row did nothing at all. That is why a
                          * conversation could not be opened from the list.
                          */
-                        .height(if (compact) 41.6.dp else 62.6.dp)
+                        /*
+                         * A card, measured off the reference at 400 dpi.
+                         *
+                         * Claude's rows in the wide layout are white cards on the
+                         * page's own fill: 332 x 68 dp, 14 dp in from the column's
+                         * edge, 1 dp of #E1E1DF around them and about 12 dp of
+                         * corner. Earlier passes read them as bare rows on a
+                         * downscaled capture - the fill and the border are four
+                         * levels apart and vanish at half size - so the list drew
+                         * as a thread of text with nothing between the rows.
+                         *
+                         * The card is the click target, which is why the shape
+                         * comes before `combinedClickable`: a modifier after it
+                         * only shrinks what is drawn, not what can be tapped.
+                         */
+                        .padding(horizontal = if (compact) 6.dp else 14.dp, vertical = if (compact) 0.dp else 5.dp)
+                        .height(if (compact) 41.6.dp else 68.dp)
+                        .clip(RoundedCornerShape(if (compact) 8.dp else 12.dp))
+                        .background(if (s.id == current) LocalCardOpen.current else LocalCard.current)
+                        .border(
+                            width = if (compact) 0.dp else 1.dp,
+                            color = LocalCardLine.current,
+                            shape = RoundedCornerShape(if (compact) 8.dp else 12.dp),
+                        )
                         .combinedClickable(onClick = { onSelect(s.id) }, onLongClick = { onLongPress?.invoke(s) })
                         /*
                          * No fill on the open conversation.
@@ -8523,7 +8558,7 @@ fun SessionList(
                          * list: the drawer's glyph starts at 30.0, the list's
                          * at 26.0.
                          */
-                        .padding(horizontal = if (compact) 30.dp else 25.6.dp, vertical = 0.dp),
+                        .padding(horizontal = if (compact) 10.dp else 12.dp, vertical = 0.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     /*
@@ -8580,12 +8615,29 @@ fun SessionList(
                      * the title entirely - so the offset is the one that lands
                      * on the line.
                      */
+                    /*
+                     * A 36 dp tile behind the mark, measured off the reference.
+                     *
+                     * Claude's rows put the </> in its own rounded square of
+                     * #F5F5F3, 36 x 36, starting 32 dp into the card - the tile
+                     * is what gives the row something to sit against, and
+                     * without it the mark reads as a bullet beside the text. The
+                     * offsets below are the tile's, not the glyph's.
+                     */
                     Box(
                         Modifier
-                            .width(if (compact) 31.2.dp else 23.6.dp)
-                            .offset(y = (-6.4).dp),
-                        contentAlignment = Alignment.TopStart,
+                            .width(if (compact) 31.2.dp else 36.dp)
+                            .offset(y = if (compact) (-6.4).dp else 0.dp),
+                        contentAlignment = if (compact) Alignment.TopStart else Alignment.Center,
                     ) {
+                        if (!compact) {
+                            Box(
+                                Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(LocalCardTile.current),
+                            )
+                        }
                         /*
                          * The desktop's `convo-cell`: a conversation mark on
                          * every row (the path at Sidebar.vue:1288, 24 grid, 2
@@ -8621,7 +8673,8 @@ fun SessionList(
                             )
                         }
                     }
-                    Column(Modifier.weight(1f).padding(top = if (compact) 0.dp else 6.dp)) {
+                    if (!compact) Spacer(Modifier.width(17.6.dp))
+                    Column(Modifier.weight(1f).padding(top = if (compact) 0.dp else 0.dp)) {
                         /*
                          * 17sp of title over 14sp of time.
                          *
@@ -8638,7 +8691,39 @@ fun SessionList(
                          * being too narrow, and both lines now sit in the same
                          * column the way the reference's do.
                          */
-                        Text(
+                        /*
+                         * Title and time on one line in the wide layout.
+                         *
+                         * The reference puts 6 小时 at the card's top right, on
+                         * the title's own baseline, and leaves the second line
+                         * for the row's state - so the time is a sibling of the
+                         * title rather than the line under it. Stacked, the card
+                         * read as two lines of equal weight and said nothing
+                         * about when the conversation happened without reading
+                         * down to the second one.
+                         */
+                        if (!compact) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    s.title.ifEmpty { s.id }.take(26),
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    lineHeight = 20.sp,
+                                    color = LocalText.current,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                )
+                                Spacer(Modifier.weight(1f))
+                                Text(
+                                    relTime(s.updated),
+                                    fontSize = 12.sp,
+                                    lineHeight = 16.sp,
+                                    color = LocalMuted.current,
+                                )
+                            }
+                        }
+                        if (compact) Text(
                             s.title.ifEmpty { s.id }.take(if (compact) 34 else 26),
                             /*
                              * 12sp in the drawer, 17sp in the list.
@@ -8656,14 +8741,7 @@ fun SessionList(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        if (!compact) {
-                            Text(
-                                relTime(s.updated),
-                                fontSize = 14.sp,
-                                lineHeight = 19.sp,
-                                color = LocalMuted.current,
-                            )
-                        }
+
                     }
                     /*
                      * The desktop's three marks (`Sidebar.vue`, `statusOf`):
@@ -10993,7 +11071,18 @@ fun InputCapsule(
      * screen - measured on the rebuilt build - so what belongs here is the
      * difference.
      */
-    Box(modifier.fillMaxWidth().padding(start = 116.4.dp, end = 106.8.dp, top = 8.dp, bottom = 16.4.dp)) {
+    /*
+     * The card's own margins, measured off the reference rather than guessed.
+     *
+     * On the pad Claude's composer sits 10.4 dp from its pane's right edge and
+     * 12 dp from the left, and it is the whole width between them. This used to
+     * be 116.4 and 106.8 - figures read from a different window size - and they
+     * were applied inside the conversation pane after it had already been
+     * narrowed by the two-pane split, so the card lost 106.8 dp off a pane that
+     * was itself only 74% of the screen: it ended up 101.6 dp short of the right
+     * edge against the reference's 10.4.
+     */
+    Box(modifier.fillMaxWidth().padding(start = 12.dp, end = 16.dp, top = 8.dp, bottom = 16.4.dp)) {
         /*
          * The @ menu, over the box exactly where the slash menu sits: a file
          * named and chosen here goes into the words as its relative path, which
