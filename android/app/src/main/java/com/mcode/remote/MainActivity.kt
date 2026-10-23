@@ -2377,12 +2377,59 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     fun newSession(directory: String = "") {
         scope.launch {
             try {
-                val ask = JSONObject().put("type", "session.create").put("title", "来自手机")
-                if (directory.isNotBlank()) ask.put("directory", directory)
+                /*
+                 * In the folder the reader is looking at, not the app's default.
+                 *
+                 * Left blank, `session.create` uses the app's own `directory` -
+                 * which on this install is D:\Apps\MCode, the install folder,
+                 * while the drawer was showing a different project. So a new
+                 * conversation was created somewhere the list was not showing,
+                 * and the button read as broken: three sessions existed on disk
+                 * and none of them appeared. The open conversation's own folder
+                 * is the one the reader means, which is also what the drawer's
+                 * project filter is keyed on.
+                 */
+                val folder = directory.ifBlank {
+                    currentSession?.let { sid -> sessions.find { it.id == sid }?.directory }.orEmpty()
+                }
+                /*
+                 * No title, on purpose.
+                 *
+                 * This used to send "来自手机", and because the server only names
+                 * a conversation it has no title for, that name stuck forever -
+                 * every conversation started on the pad was called the same
+                 * thing, and the drawer became a list of identical rows that
+                 * could not be told apart or searched. The desktop sends no
+                 * title here either; the first prompt names the conversation,
+                 * immediately from its own first line and then properly from a
+                 * model in the background. Left out, the pad gets both.
+                 */
+                val ask = JSONObject().put("type", "session.create")
+                if (folder.isNotBlank()) ask.put("directory", folder)
                 val reply = rpc(ask)
-                val sid = reply.optJSONObject("data")?.optJSONObject("session")?.optString("id").orEmpty()
-                if (sid.isNotBlank()) select(sid)
-                else Toast.makeText(context, "新建会话失败", Toast.LENGTH_LONG).show()
+                val created = reply.optJSONObject("data")?.optJSONObject("session")
+                val sid = created?.optString("id").orEmpty()
+                if (sid.isNotBlank() && created != null) {
+                    /*
+                     * Put the new conversation in the drawer at once.
+                     *
+                     * `select` does add a row when `session.get` comes back with
+                     * one, but that is a round trip later and carries whatever
+                     * title the server has by then - empty, in practice, so the
+                     * row either appeared late or not at all. On the pad a new
+                     * conversation was simply not in the drawer afterwards:
+                     * the transcript was open and the list still showed the old
+                     * ones, which reads as the button having made nothing.
+                     *
+                     * The create reply already holds the whole session, so the
+                     * row is built from it here and the later refresh simply
+                     * updates the same row by id.
+                     */
+                    val existing = sessions.indexOfFirst { it.id == sid }
+                    val row = rowOf(created, running = false)
+                    if (existing >= 0) sessions[existing] = row else sessions.add(0, row)
+                    select(sid)
+                } else Toast.makeText(context, "新建会话失败", Toast.LENGTH_LONG).show()
             } catch (e: Exception) {
                 // A new conversation that does not appear looks like a dead
                 // button; the reason has to be said out loud.
