@@ -1157,6 +1157,30 @@ private fun handleCentres(
  * diameter, the minimum this platform recommends - so the handles are actually
  * grabbable without making them look larger than the reference's.
  */
+/**
+ * Whether a point falls inside a handle's touch region.
+ *
+ * Free of Compose so it can be tested: a disc that is drawn somewhere and
+ * grabbable somewhere else is the exact failure this whole arrangement exists to
+ * prevent, and "the disc looks right" on a screenshot says nothing about whether
+ * a fingertip 30 px away lands on it.
+ *
+ * @param centreX/centreY the disc's centre, in the same space as the press.
+ * @param radius the *touch* radius, which is deliberately larger than the disc's
+ *   own - see `HANDLE_REACH`.
+ */
+internal fun hitsHandle(
+    pressX: Float,
+    pressY: Float,
+    centreX: Float,
+    centreY: Float,
+    radius: Float,
+): Boolean {
+    val dx = pressX - centreX
+    val dy = pressY - centreY
+    return dx * dx + dy * dy <= radius * radius
+}
+
 private fun onHandle(
     shared: SelectionState,
     lineIndex: Int,
@@ -1168,7 +1192,7 @@ private fun onHandle(
     if (shared.isEmpty || slice == null) return false
     val reach = HANDLE_REACH * density
     return handleCentres(laid, shared, lineIndex, slice, density).any { centre ->
-        (centre - position).getDistance() <= reach
+        hitsHandle(position.x, position.y, centre.x, centre.y, reach)
     }
 }
 

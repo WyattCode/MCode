@@ -359,4 +359,54 @@ class SelectionSliceTest {
         assertFalse(nearerEndIsEnd(5, 90, 7, 4, line = 5, offset = 50))
         assertTrue(nearerEndIsEnd(5, 90, 7, 4, line = 7, offset = 20))
     }
+
+    /* ------------------------------------------------------------------ */
+    /* Grabbing a handle                                                   */
+    /* ------------------------------------------------------------------ */
+
+    /** A press dead on the disc grabs it. */
+    @Test
+    fun aPressOnTheCentreHits() {
+        assertTrue(hitsHandle(100f, 200f, 100f, 200f, radius = 45f))
+    }
+
+    /**
+     * The touch region is wider than the disc on purpose.
+     *
+     * The disc is 25.2 dp across - a 12.6 dp radius - but the region a press can
+     * land in is 18 dp, which is the 36 dp diameter the platform asks for. A hit
+     * test that used the drawn radius would make the handles feel broken on a
+     * real fingertip, which is why the two numbers are separate.
+     */
+    @Test
+    fun theTouchRegionIsWiderThanTheDisc() {
+        // 15 dp from the centre: outside a 12.6 dp disc, inside an 18 dp region.
+        assertTrue(hitsHandle(115f, 200f, 100f, 200f, radius = 18f))
+    }
+
+    /** Just inside the reach. */
+    @Test
+    fun justInsideTheReachHits() {
+        assertTrue(hitsHandle(100f, 217.9f, 100f, 200f, radius = 18f))
+    }
+
+    /** Just outside the reach does not. */
+    @Test
+    fun justOutsideTheReachMisses() {
+        assertFalse(hitsHandle(100f, 218.1f, 100f, 200f, radius = 18f))
+    }
+
+    /** The region is round, not square: a corner of the bounding box misses. */
+    @Test
+    fun theRegionIsRoundNotSquare() {
+        // 13,13 from the centre is 18.4 away - outside an 18 radius, though both
+        // components are individually inside it.
+        assertFalse(hitsHandle(113f, 213f, 100f, 200f, radius = 18f))
+    }
+
+    /** A press on the other side of the screen misses. */
+    @Test
+    fun aDistantPressMisses() {
+        assertFalse(hitsHandle(500f, 900f, 100f, 200f, radius = 45f))
+    }
 }
