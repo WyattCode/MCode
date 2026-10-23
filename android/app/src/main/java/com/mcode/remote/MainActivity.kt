@@ -3624,8 +3624,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          * the marks, not the word.
                          */
                         Text(
-                            if (leftMode == LeftMode.Artifacts) "产物中心" else "最近记录",
-                            fontSize = 16.sp,
+                            /*
+                             * "Code", not 「最近记录」.
+                             *
+                             * The reference's own header reads Code, centred,
+                             * over a list of conversations - the name of what
+                             * this pane is for, not a tally of what is in it.
+                             * 「最近记录」 made the header read as a section
+                             * heading inside a page that already had one.
+                             */
+                            if (leftMode == LeftMode.Artifacts) "产物中心" else "Code",
+                            fontSize = 18.sp,
                             fontWeight = FontWeight.Medium,
                             color = LocalText.current,
                             maxLines = 1,
@@ -3745,54 +3754,36 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          * checks are heavier and set in three rows, not in a
                          * circle.
                          */
-                        Box(Modifier.size(40.dp).clickable { runningOnly = !runningOnly }, contentAlignment = Alignment.Center) {
-                            MiIcon(
-                                /*
-                                 * Three vertical sliders: the left knob sits
-                                 * high, the middle one low, the right one high
-                                 * again - measured at x 288.0..303.6, y
-                                 * 57.6..71.6, three stems 4.8 apart.
-                                 *
-                                 * The grid is filled edge to edge, because a
-                                 * canvas scales the grid and not the ink: the
-                                 * first version of this path ran 6.6..20 inside
-                                 * 24 and drew 11.2 dp of mark in a 15.6 box.
-                                 *
-                                 * Each slider is one stem through the whole
-                                 * height with a 2.6-radius ring centred on it;
-                                 * the two arcs make the ring hollow so the stem
-                                 * shows as a gap rather than a bar across it.
-                                 */
-                                "M2.6 0.9v8.1M2.6 14.6v8.5M2.6 14.6a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 1 0 0 5.2" +
-                                    "M12 0.9v12.8M12 19.3v3.8M12 19.3a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 1 0 0 5.2" +
-                                    "M21.4 0.9v8.1M21.4 14.6v8.5M21.4 14.6a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 1 0 0 5.2",
-                                contentDescription = "筛选",
-                                modifier = Modifier.size(15.6.dp),
-                                viewBox = 24f,
-                                strokeWidth = 1.6f,
-                                tint = if (runningOnly) MaterialTheme.colorScheme.primary else LocalText.current,
-                            )
-                        }
                         /*
-                         * The second mark opens 定时任务, the third page the
-                         * drawer offers. It had no way in from this bar before,
-                         * which left the page reachable only from the drawer.
+                         * One clock, because that is what the reference has.
+                         *
+                         * Its list header ends with a single circular clock at
+                         * x 830..861 in the panel - no sliders and no checklist.
+                         * The two marks that stood here (筛选 and 定时任务) were
+                         * read off a different capture and never re-checked
+                         * against this one; kept, they made the header three
+                         * glyphs wide where the reference has one, which is the
+                         * most visible difference left in the whole sidebar.
+                         *
+                         * The clock keeps its 定时任务 home rather than becoming a
+                         * decoration: the page has to stay reachable, and this is
+                         * the one corner the reference leaves free for it.
                          */
                         Box(Modifier.size(40.dp).clickable { leftMode = LeftMode.Scheduled }, contentAlignment = Alignment.Center) {
-                            /*
-                             * Three checks, each followed by a rule, filling
-                             * the grid: ink measured 16.8 square at x 327.2,
-                             * y 56.4, with the checks 4.8 wide and the rules
-                             * starting 6.4 after them.
-                             */
                             MiIcon(
-                                "M0.9 6.4 3.4 8.9 7.7 3.4M0.9 12.4 3.4 14.9 7.7 9.4M0.9 18.4 3.4 20.9 7.7 15.4" +
-                                    "M12.2 6.4h10.9M12.2 12.4h10.9M12.2 18.4h10.9",
+                                /*
+                                 * A ring with two hands, on the 24 grid: the
+                                 * circle is drawn as an arc of 350 degrees so it
+                                 * closes without a seam, and the hands meet at
+                                 * the centre - 12 to 3, which is the reference's
+                                 * own pose.
+                                 */
+                                "M12 0.9a11.1 11.1 0 1 0 0.01 0M12 6.2v6.2l4 2.5",
                                 contentDescription = "定时任务",
-                                modifier = Modifier.size(16.8.dp),
+                                modifier = Modifier.size(18.4.dp),
                                 viewBox = 24f,
-                                strokeWidth = 1.7f,
-                                tint = if (leftMode == LeftMode.Scheduled) MaterialTheme.colorScheme.primary else LocalText.current,
+                                strokeWidth = 1.6f,
+                                tint = LocalMuted.current,
                             )
                         }
                     }
@@ -3838,7 +3829,71 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          * leaving this one in place put a 「搜索」 box above a
                          * page that does not search the conversations.
                          */
-                        if (leftMode == LeftMode.Sessions) Row(
+                        /*
+                         * 「会话」 over the list, 「全部 ∨」 at its right end -
+                         * and no field until the reader asks for one.
+                         *
+                         * The reference's list column opens with a heading row,
+                         * not a search box: 会话 sits at 28.8 dp and 全部 at
+                         * 295.2, both 11.6 dp of ink, and the magnifier in the
+                         * header is what brings a field in. This drew the field
+                         * permanently - the condition only checked which page
+                         * the column was on - so the first thing above every
+                         * conversation was an empty box that said nothing and
+                         * took a whole row.
+                         */
+                        if (leftMode == LeftMode.Sessions && !searching) Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(start = 28.8.dp, end = 20.4.dp, top = 12.dp, bottom = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            /*
+                             * The heading is also the way into the search.
+                             *
+                             * The reference's header carries a clock and no
+                             * magnifier, so its search is reached some other way
+                             * - and a field that covers nothing until asked for
+                             * still has to be askable. Tapping the heading is
+                             * the one place that costs no pixels: it is already
+                             * there, it already says what the column is, and a
+                             * reader looking for a conversation reaches for it
+                             * first.
+                             */
+                            Text(
+                                "会话",
+                                fontSize = 13.sp,
+                                color = LocalMuted.current,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { searching = true }
+                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                            )
+                            Spacer(Modifier.weight(1f))
+                            Row(
+                                Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { runningOnly = !runningOnly }
+                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    if (runningOnly) "运行中" else "全部",
+                                    fontSize = 13.sp,
+                                    color = LocalMuted.current,
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                MiIcon(
+                                    "M6 9.5L12 15.5L18 9.5",
+                                    contentDescription = "筛选会话",
+                                    modifier = Modifier.size(11.dp),
+                                    viewBox = 24f,
+                                    strokeWidth = 2f,
+                                    tint = LocalMuted.current,
+                                )
+                            }
+                        }
+                        if (leftMode == LeftMode.Sessions && searching) Row(
                             Modifier
                                 .fillMaxWidth()
                                 /*
@@ -3900,6 +3955,33 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, color = LocalText.current),
                                     cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
                                     modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                            /*
+                             * A way back out.
+                             *
+                             * The field is a mode now, and a mode with no exit is
+                             * a trap: before this it was permanent, so nothing
+                             * ever needed to close it. The cross clears what was
+                             * typed and puts the heading row back.
+                             */
+                            Box(
+                                Modifier
+                                    .size(28.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .clickable {
+                                        search = ""
+                                        searching = false
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                MiIcon(
+                                    "M6.4 6.4L17.6 17.6M17.6 6.4L6.4 17.6",
+                                    contentDescription = "关闭搜索",
+                                    modifier = Modifier.size(11.dp),
+                                    viewBox = 24f,
+                                    strokeWidth = 2f,
+                                    tint = LocalMuted.current,
                                 )
                             }
                         }
