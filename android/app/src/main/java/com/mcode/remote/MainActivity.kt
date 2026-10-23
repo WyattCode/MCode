@@ -10331,7 +10331,8 @@ fun ArtifactsScreen(
                 maxLines = 1,
                 softWrap = false,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                modifier = Modifier.fillMaxSize().wrapContentHeight().align(Alignment.Center).offset(x = (-5.2).dp),
+                /* +2.4, as the projects page: the row's end padding is asymmetric. */
+                modifier = Modifier.fillMaxSize().wrapContentHeight().align(Alignment.Center).offset(x = 2.4.dp),
             )
             Row(
                 Modifier.fillMaxWidth().height(63.2.dp).padding(start = 1.6.dp, end = 4.4.dp),
@@ -10352,10 +10353,20 @@ fun ArtifactsScreen(
                     Modifier.size(40.dp).clickable { grid = !grid },
                     contentAlignment = Alignment.Center,
                 ) {
+                    /*
+                     * The same three-stem slider as the projects page, because
+                     * the reference draws the same mark on both - measured at
+                     * x 328.0, 16.0 wide on this page, and x 328.0, 15.6 wide on
+                     * the projects one. This was the funnel again, so the two
+                     * pages disagreed with each other as well as with Claude.
+                     */
                     MiIcon(
-                        "M4 5.6h16M7 12h10M10 18.4h4",
+                        "M4.8 1.2V5.8M4.8 12.2V22.8M12 1.2V11.8M12 18.2V22.8M19.2 1.2V5.8M19.2 12.2V22.8" +
+                            "M2.4 9a2.4 2.4 0 1 0 4.8 0a2.4 2.4 0 1 0-4.8 0" +
+                            "M9.6 15a2.4 2.4 0 1 0 4.8 0a2.4 2.4 0 1 0-4.8 0" +
+                            "M16.8 9a2.4 2.4 0 1 0 4.8 0a2.4 2.4 0 1 0-4.8 0",
                         contentDescription = if (grid) "列表视图" else "网格视图",
-                        modifier = Modifier.size(16.8.dp),
+                        modifier = Modifier.size(22.6.dp),
                         viewBox = 24f,
                         strokeWidth = 1.8f,
                         tint = LocalText.current,
