@@ -4254,19 +4254,44 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                              * magnifier next to the list's own search.
                              */
                             /*
-                             * No title and no subtitle in the middle.
+                             * The conversation's name, centred, with what it is
+                             * attached to underneath - which the reference does
+                             * have.
                              *
-                             * Claude's chat screen has none: measured across
-                             * its header, the right pane carries only three
-                             * glyphs, all at its trailing end - a pair at
-                             * 1249.6 and 1290.0 (19.2 and 18.4 wide) and a
-                             * kebab at 1337.6. The conversation's name is in
-                             * the left column's list, where the row for it is
-                             * marked; repeating it here was this app's own
-                             * idea, and a centred heading with a folder path
-                             * under it read as a different screen.
+                             * An earlier pass decided it did not, and the header
+                             * shipped with an empty middle for several rounds.
+                             * Measured on this capture: "Main" runs x 2143..2225
+                             * at y 124..179 (22.4 dp of ink) and "Remote control"
+                             * sits under it at 176..199 in the muted colour.
+                             * That earlier reading counted glyphs from x 1249.6,
+                             * which is inside the left column's own width - the
+                             * measurement had drifted into the wrong pane and the
+                             * conclusion followed it.
                              */
-                            Spacer(Modifier.weight(1f))
+                            Column(
+                                Modifier.weight(1f),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                Text(
+                                    sessions.find { it.id == currentSession }?.title
+                                        ?.takeIf { it.isNotBlank() } ?: "New session",
+                                    fontSize = 17.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    lineHeight = 22.sp,
+                                    color = LocalText.current,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                )
+                                Text(
+                                    "Remote control",
+                                    fontSize = 11.sp,
+                                    lineHeight = 14.sp,
+                                    color = LocalMuted.current,
+                                    maxLines = 1,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                )
+                            }
                             /*
                              * While a turn is in flight Claude puts an amber ring
                              * beside the clock - 239,181,68, 16dp across - instead
