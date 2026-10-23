@@ -1,0 +1,18 @@
+MCode Remote: the project's files, readable from the phone
+
+The desktop keeps a whole right-hand rail - files, changes, review, subagents,
+terminal, version history - and the phone had none of it. A tablet has the room
+for the first of them, and it is the shortest way to answer "what is actually
+in this folder" without asking the model to list it.
+
+项目文件 in the conversation's overflow opens the folder one level at a time,
+with the path as a breadcrumb and a back arrow, directories first and files
+after. A file opens in its own sheet as monospaced text; the preview is a
+separate sheet because a bottom sheet measures its height on open and clipped
+anything added to it later.
+
+Both round trips use the screen's own `rpc`; the hand-rolled ticket that was
+tried first never resolved.
+
+Build: gradle assembleDebug, installed on the pad (M367FC); the folder listed
+and LICENSE.electron.txt read through in full.

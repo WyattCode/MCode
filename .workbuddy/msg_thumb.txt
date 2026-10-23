@@ -1,0 +1,8 @@
+MCode Remote: a sent picture is a picture, not an icon
+
+Claude draws a sent image at about 235px on the pad - 84dp at 400dpi - with
+12dp corners. This drew it at 64dp, which on a tablet reads as a clip rather
+than as the shot that was sent; the whole point of showing it above the bubble
+is that a picture can be recognised without opening it.
+
+Build: gradle assembleDebug, installed on the pad (M367FC).

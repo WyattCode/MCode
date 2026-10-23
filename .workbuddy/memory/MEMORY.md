@@ -44,6 +44,13 @@
   两处各算一遍必然漂移。
 - **`git commit -m` 里的反引号会被 bash 当命令替换执行**（内容静默丢失）。
   提交信息先写进 `.workbuddy/commitmsg.txt`，再 `git commit -F`。
+- **平板的 adb 端点不稳定，且 `KEYCODE_POWER` 会踢掉无线调试**：
+  端点随开关无线调试/重启/息屏变化，旧端口报 `10061 目标计算机积极拒绝`
+  —— 看起来像设备离线，其实 ping 得通。**别再用 `input keyevent KEYCODE_POWER` 唤醒**
+  （2026-10-23 实测：按一下就整台设备从 adb 消失，端口全扫不到，必须人工解锁）。
+  用 `.workbuddy/find-pad.py` 做 mDNS + 端口发现（只探测，不碰设备）。
+- **`hitsHandle(pressX, pressY, centreX, centreY, radius)` 是纯函数**，6 个测试锁住
+  「视觉半径 12.6dp ≠ 触控半径 18dp」和「圆形而非方形命中区」。改手柄交互必跑。
 
 ## 工作流
 

@@ -1,0 +1,15 @@
+MCode Remote: the changes rail, with its patch
+
+The desktop keeps the changed files beside the conversation and a coloured patch
+for the one being read. On the phone the only way to learn what a turn had
+touched was to ask the model, which is the one witness a reader should not have
+to trust about its own work.
+
+本次改动 in the overflow lists `git.status` - branch, then each changed file -
+and a tap opens that file's `git.diff` in its own sheet, additions green and
+removals red as the desktop colours them. Both are read through the screen's
+`rpc`, and the patch is a separate sheet for the reason the file preview is: a
+bottom sheet measures its height once.
+
+Build: gradle assembleDebug, installed on the pad (M367FC); the panel opened on
+a folder that is not a repository and said so plainly.

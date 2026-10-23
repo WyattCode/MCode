@@ -1,0 +1,97 @@
+{
+  "kind": "response",
+  "id": "r1",
+  "ok": true,
+  "data": {
+    "artifacts": [
+      {
+        "sessionID": "ses_01a0fd521dfa000057d129c46850",
+        "title": "读取最新交接文档。",
+        "directory": "D:\\Documents\\Claude Code\\X-SSH",
+        "updated": 1790962002146,
+        "files": [
+          {
+            "path": "C:/Users/Wyatt/AppData/Roaming/mcode/memory/sessions/ses_01a0fd521dfa000057d129c46850/notes.md",
+            "at": 1790962002146,
+            "exists": true,
+            "role": "deliverable",
+            "size": 3856,
+            "modified": 1790962002142.9458
+          },
+          {
+            "path": "src/main/connect.test.ts",
+            "at": 1790960849424,
+            "exists": true,
+            "role": "intermediate",
+            "size": 9507,
+            "modified": 1790966205803.1243
+          }
+        ]
+      },
+      {
+        "sessionID": "ses_01a0f81e20c00000954a1600b238",
+        "title": "读取最新交接文档",
+        "directory": "E:\\SAEE",
+        "updated": 1790873065597,
+        "files": [
+          {
+            "path": "testenv/rebuild_gmsv.sh",
+            "at": 1790873065597,
+            "exists": true,
+            "role": "intermediate",
+            "size": 2049,
+            "modified": 1791280413000
+          },
+          {
+            "path": "testenv/patch_util.py",
+            "at": 1790873050687,
+            "exists": true,
+            "role": "intermediate",
+            "size": 2606,
+            "modified": 1791469639842.1758
+          },
+          {
+            "path": "testenv/run_gmsv_gdb.sh",
+            "at": 1790872907137,
+            "exists": true,
+            "role": "intermediate",
+            "size": 845,
+            "modified": 1791469639842.1758
+          },
+          {
+            "path": "testenv/gdb_cmds.txt",
+            "at": 1790872902169,
+            "exists": true,
+            "role": "intermediate",
+            "size": 1281,
+            "modified": 1790872902000
+          },
+          {
+            "path": "testenv/patch_chattalk.py",
+            "at": 1790871967411,
+            "exists": true,
+            "role": "intermediate",
+            "size": 2345,
+            "modified": 1791469639842.1758
+          },
+          {
+            "path": "testenv/patch_ackick.py",
+            "at": 1790871383879,
+            "exists": true,
+            "role": "intermediate",
+            "size": 2063,
+            "modified": 1791469639842.1758
+          }
+        ]
+      }
+    ],
+    "nextCursor": "1790871383879:96",
+    "facets": {
+      "total": 19,
+      "doc": 5,
+      "app": 0,
+      "other": 14
+    },
+    "building": false
+  }
+}

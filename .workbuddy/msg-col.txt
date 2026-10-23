@@ -1,0 +1,32 @@
+MCode Remote: the transcript's column, and four small lies in the list
+
+The transcript was a third narrower than Claude's. Measured off its rendered
+text nodes on this pad:
+
+  first word starts  40px in from the pane  = 12.7dp   (was 28)
+  line of body text  64px                   = 20.3dp
+  body column        2368px wide            (was 2285)
+
+28dp either side cost 100px of line length on a 1368-wide pane, which is why
+our paragraphs wrapped earlier than the reference's and every reply ran longer
+down the screen.
+
+Three smaller corrections, each a line that said something untrue:
+
+  - 「没有匹配的会话」 was drawn for an empty list as well as an empty search. The
+    field is always on now, so that is the first thing a new install shows - it
+    has to say 「还没有对话」 when there is no filter to blame.
+
+  - The send disc carried `contentDescription = "语音输入"` in every state, so a
+    screen reader found two microphones side by side. It reads 停止 while a turn
+    runs and 语音输入 when the box is empty, which is what the disc does.
+
+  - The list glyph has been a closed rectangle under a stroke since it was
+    written (`M5 5h14v14H5z`), which renders as an empty box - every row showed
+    one. It is a `<>` now, and a speech bubble for a conversation outside a
+    folder.
+
+Bubble geometry is still not measured. Claude's app on this pad opens onto its
+Code remote-control screen rather than a chat transcript, so there is nothing
+to sample below the fold; the numbers above came from its text nodes, which are
+real, but radii and fills are still on the desktop stylesheet.

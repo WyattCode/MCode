@@ -1,0 +1,16 @@
+MCode Remote: the gap marker is a rule, not a wave
+
+The divider between sittings was drawn as a real sine - six quadratic humps
+across the pane at 1.5dp of stroke. Claude's is the plainest mark in its
+transcript: one hairline at the weakest text step, broken in the middle by the
+clock.
+
+Seen side by side, the wave was the loudest thing on a page that is otherwise
+all restraint, and the only element that made the phone's transcript look drawn
+by hand rather than set.
+
+No measurement is behind this one - I could not get the reference to show a
+gap marker on demand, since its chat pane only draws one when a conversation
+has been left and returned to. The change is from the shape being wrong rather
+than from a number being wrong: a sine at 1.5dp is not what any of these
+interfaces do, and 1px is what the rest of the page's rules use.

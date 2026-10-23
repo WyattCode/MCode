@@ -1,0 +1,1028 @@
+{
+  "kind": "response",
+  "id": "r1",
+  "ok": true,
+  "data": {
+    "providers": [
+      {
+        "id": "anthropic",
+        "name": "Anthropic",
+        "kind": "anthropic",
+        "description": "provider.desc.anthropic",
+        "recommended": true,
+        "order": 0,
+        "custom": false,
+        "keyURL": "https://console.anthropic.com/settings/keys",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": [
+          {
+            "id": "claude-opus-5",
+            "name": "Claude Opus 5",
+            "contextWindow": 1000000,
+            "maxOutput": 128000,
+            "reasoning": true,
+            "attachment": true,
+            "toolCall": true,
+            "temperature": false,
+            "inputs": {
+              "text": true,
+              "image": true,
+              "audio": false,
+              "video": false,
+              "pdf": true
+            },
+            "cost": {
+              "input": 5,
+              "output": 25
+            },
+            "variants": []
+          },
+          {
+            "id": "claude-sonnet-5",
+            "name": "Claude Sonnet 5",
+            "contextWindow": 1000000,
+            "maxOutput": 128000,
+            "reasoning": true,
+            "attachment": true,
+            "toolCall": true,
+            "temperature": false,
+            "inputs": {
+              "text": true,
+              "image": true,
+              "audio": false,
+              "video": false,
+              "pdf": true
+            },
+            "cost": {
+              "input": 2,
+              "output": 10
+            },
+            "variants": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          },
+          {
+            "id": "claude-opus-4-8",
+            "name": "Claude Opus 4.8",
+            "contextWindow": 1000000,
+            "maxOutput": 128000,
+            "reasoning": true,
+            "attachment": true,
+            "toolCall": true,
+            "temperature": false,
+            "inputs": {
+              "text": true,
+              "image": true,
+              "audio": false,
+              "video": false,
+              "pdf": true
+            },
+            "cost": {
+              "input": 5,
+              "output": 25
+            },
+            "variants": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          },
+          {
+            "id": "claude-opus-4-7",
+            "name": "Claude Opus 4.7",
+            "contextWindow": 1000000,
+            "maxOutput": 128000,
+            "reasoning": true,
+            "attachment": true,
+            "toolCall": true,
+            "temperature": false,
+            "inputs": {
+              "text": true,
+              "image": true,
+              "audio": false,
+              "video": false,
+              "pdf": true
+            },
+            "cost": {
+              "input": 5,
+              "output": 25
+            },
+            "variants": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          },
+          {
+            "id": "claude-opus-4-6",
+            "name": "Claude Opus 4.6",
+            "contextWindow": 1000000,
+            "maxOutput": 128000,
+            "reasoning": true,
+            "attachment": true,
+            "toolCall": true,
+            "temperature": true,
+            "inputs": {
+              "text": true,
+              "image": true,
+              "audio": false,
+              "video": false,
+              "pdf": true
+            },
+            "cost": {
+              "input": 5,
+              "output": 25
+            },
+            "variants": [
+              "low",
+              "medium",
+              "high",
+              "max"
+            ]
+          },
+          {
+            "id": "claude-sonnet-4-6",
+            "name": "Claude Sonnet 4.6",
+            "contextWindow": 1000000,
+            "maxOutput": 128000,
+            "reasoning": true,
+            "attachment": true,
+            "toolCall": true,
+            "temperature": true,
+            "inputs": {
+              "text": true,
+              "image": true,
+              "audio": false,
+              "video": false,
+              "pdf": true
+            },
+            "cost": {
+              "input": 3,
+              "output": 15
+            },
+            "variants": [
+              "low",
+              "medium",
+              "high",
+              "max"
+            ]
+          },
+          {
+            "id": "claude-haiku-4-5",
+            "name": "Claude Haiku 4.5",
+            "contextWindow": 200000,
+            "maxOutput": 64000,
+            "reasoning": true,
+            "attachment": true,
+            "toolCall": true,
+            "temperature": true,
+            "inputs": {
+              "text": true,
+              "image": true,
+              "audio": false,
+              "video": false,
+              "pdf": true
+            },
+            "cost": {
+              "input": 1,
+              "output": 5
+            },
+            "variants": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "openai",
+        "name": "OpenAI",
+        "kind": "openai-compatible",
+        "description": "provider.desc.openai",
+        "recommended": true,
+        "order": 1,
+        "group": "openai",
+        "groupName": "OpenAI",
+        "modeLabel": "mode.api",
+        "custom": false,
+        "baseURL": "https://api.openai.com/v1",
+        "keyURL": "https://platform.openai.com/api-keys",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [
+          "api-key"
+        ],
+        "models": []
+      },
+      {
+        "id": "chatgpt",
+        "name": "ChatGPT Pro/Plus",
+        "kind": "chatgpt",
+        "description": "provider.desc.chatgpt",
+        "recommended": true,
+        "order": 1,
+        "group": "openai",
+        "groupName": "OpenAI",
+        "modeLabel": "mode.subscription",
+        "custom": false,
+        "baseURL": "https://chatgpt.com/backend-api/codex",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [
+          "oauth-browser",
+          "oauth-headless"
+        ],
+        "models": [
+          {
+            "id": "gpt-5.6-sol",
+            "name": "GPT-5.6-Sol",
+            "contextWindow": 1050000,
+            "maxOutput": 128000,
+            "reasoning": true,
+            "attachment": true,
+            "toolCall": true,
+            "temperature": false,
+            "inputs": {
+              "text": true,
+              "image": true,
+              "audio": false,
+              "video": false,
+              "pdf": true
+            },
+            "cost": {
+              "input": 4,
+              "output": 20
+            },
+            "variants": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          },
+          {
+            "id": "gpt-5.6-terra",
+            "name": "GPT-5.6-Terra",
+            "contextWindow": 1050000,
+            "maxOutput": 128000,
+            "reasoning": true,
+            "attachment": true,
+            "toolCall": true,
+            "temperature": false,
+            "inputs": {
+              "text": true,
+              "image": true,
+              "audio": false,
+              "video": false,
+              "pdf": true
+            },
+            "cost": {
+              "input": 2,
+              "output": 12
+            },
+            "variants": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          },
+          {
+            "id": "gpt-5.6-luna",
+            "name": "GPT-5.6-Luna",
+            "contextWindow": 1050000,
+            "maxOutput": 128000,
+            "reasoning": true,
+            "attachment": true,
+            "toolCall": true,
+            "temperature": false,
+            "inputs": {
+              "text": true,
+              "image": true,
+              "audio": false,
+              "video": false,
+              "pdf": true
+            },
+            "cost": {
+              "input": 0.2,
+              "output": 1.2
+            },
+            "variants": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          },
+          {
+            "id": "gpt-5.5",
+            "name": "GPT-5.5",
+            "contextWindow": 1050000,
+            "maxOutput": 128000,
+            "reasoning": true,
+            "attachment": true,
+            "toolCall": true,
+            "temperature": false,
+            "inputs": {
+              "text": true,
+              "image": true,
+              "audio": false,
+              "video": false,
+              "pdf": true
+            },
+            "cost": {
+              "input": 5,
+              "output": 30
+            },
+            "variants": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ]
+          },
+          {
+            "id": "gpt-5.4",
+            "name": "GPT-5.4",
+            "contextWindow": 1050000,
+            "maxOutput": 128000,
+            "reasoning": true,
+            "attachment": true,
+            "toolCall": true,
+            "temperature": true,
+            "inputs": {
+              "text": true,
+              "image": true,
+              "audio": false,
+              "video": false,
+              "pdf": true
+            },
+            "cost": {
+              "input": 2.5,
+              "output": 15
+            },
+            "variants": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ]
+          },
+          {
+            "id": "gpt-5.4-mini",
+            "name": "GPT-5.4-Mini",
+            "contextWindow": 400000,
+            "maxOutput": 128000,
+            "reasoning": true,
+            "attachment": true,
+            "toolCall": true,
+            "temperature": true,
+            "inputs": {
+              "text": true,
+              "image": true,
+              "audio": false,
+              "video": false,
+              "pdf": false
+            },
+            "cost": {
+              "input": 0.75,
+              "output": 4.5
+            },
+            "variants": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ]
+          },
+          {
+            "id": "gpt-5.3-codex-spark",
+            "name": "GPT-5.3-Codex-Spark",
+            "contextWindow": 128000,
+            "maxOutput": 32000,
+            "reasoning": true,
+            "attachment": true,
+            "toolCall": true,
+            "temperature": false,
+            "inputs": {
+              "text": true,
+              "image": true,
+              "audio": false,
+              "video": false,
+              "pdf": true
+            },
+            "cost": {
+              "input": 1.75,
+              "output": 14
+            },
+            "variants": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "xiaomi",
+        "name": "Xiaomi MiMo API",
+        "kind": "openai-compatible",
+        "description": "provider.desc.xiaomi",
+        "recommended": true,
+        "order": 2,
+        "group": "xiaomi",
+        "groupName": "Xiaomi MiMo",
+        "modeLabel": "mode.api",
+        "custom": false,
+        "baseURL": "https://api.xiaomimimo.com/v1",
+        "keyURL": "https://mimo.mi.com/",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": [
+          {
+            "id": "mimo-v2.5-pro",
+            "name": "MiMo-V2.5-Pro",
+            "contextWindow": 1048576,
+            "maxOutput": 131072,
+            "reasoning": true,
+            "attachment": false,
+            "toolCall": true,
+            "temperature": true,
+            "inputs": {
+              "text": true,
+              "image": false,
+              "audio": false,
+              "video": false,
+              "pdf": false
+            },
+            "cost": {
+              "input": 0.435,
+              "output": 0.87
+            },
+            "variants": []
+          },
+          {
+            "id": "mimo-v2.5",
+            "name": "MiMo-V2.5",
+            "contextWindow": 1048576,
+            "maxOutput": 131072,
+            "reasoning": true,
+            "attachment": true,
+            "toolCall": true,
+            "temperature": true,
+            "inputs": {
+              "text": true,
+              "image": true,
+              "audio": true,
+              "video": true,
+              "pdf": false
+            },
+            "cost": {
+              "input": 0.14,
+              "output": 0.28
+            },
+            "variants": []
+          }
+        ]
+      },
+      {
+        "id": "xiaomi-plan",
+        "name": "MiMo Token Plan",
+        "kind": "openai-compatible",
+        "description": "provider.desc.xiaomiPlan",
+        "recommended": false,
+        "order": 3,
+        "group": "xiaomi",
+        "groupName": "Xiaomi MiMo",
+        "modeLabel": "mode.plan",
+        "custom": false,
+        "baseURL": "https://token-plan-cn.xiaomimimo.com/v1",
+        "keyURL": "https://mimo.mi.com/",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": [
+          {
+            "id": "mimo-v2.5-pro",
+            "name": "MiMo-V2.5-Pro",
+            "contextWindow": 1048576,
+            "maxOutput": 131072,
+            "reasoning": true,
+            "attachment": false,
+            "toolCall": true,
+            "temperature": true,
+            "inputs": {
+              "text": true,
+              "image": false,
+              "audio": false,
+              "video": false,
+              "pdf": false
+            },
+            "cost": {
+              "input": 0,
+              "output": 0
+            },
+            "variants": []
+          },
+          {
+            "id": "mimo-v2.5",
+            "name": "MiMo-V2.5",
+            "contextWindow": 1048576,
+            "maxOutput": 131072,
+            "reasoning": true,
+            "attachment": true,
+            "toolCall": true,
+            "temperature": true,
+            "inputs": {
+              "text": true,
+              "image": true,
+              "audio": true,
+              "video": true,
+              "pdf": false
+            },
+            "cost": {
+              "input": 0,
+              "output": 0
+            },
+            "variants": []
+          }
+        ]
+      },
+      {
+        "id": "google",
+        "name": "Google Gemini",
+        "kind": "openai-compatible",
+        "description": "provider.desc.google",
+        "recommended": false,
+        "order": 4,
+        "custom": false,
+        "baseURL": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "keyURL": "https://aistudio.google.com/apikey",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": []
+      },
+      {
+        "id": "openrouter",
+        "name": "OpenRouter",
+        "kind": "openai-compatible",
+        "description": "provider.desc.openrouter",
+        "recommended": false,
+        "order": 5,
+        "custom": false,
+        "baseURL": "https://openrouter.ai/api/v1",
+        "keyURL": "https://openrouter.ai/keys",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": []
+      },
+      {
+        "id": "deepseek",
+        "name": "DeepSeek",
+        "kind": "openai-compatible",
+        "description": "provider.desc.deepseek",
+        "recommended": false,
+        "order": 6,
+        "custom": false,
+        "baseURL": "https://api.deepseek.com/v1",
+        "keyURL": "https://platform.deepseek.com/api_keys",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": []
+      },
+      {
+        "id": "moonshot",
+        "name": "Kimi / Moonshot",
+        "kind": "openai-compatible",
+        "description": "provider.desc.moonshot",
+        "recommended": false,
+        "order": 7,
+        "custom": false,
+        "baseURL": "https://api.moonshot.cn/v1",
+        "keyURL": "https://platform.moonshot.cn/console/api-keys",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": []
+      },
+      {
+        "id": "zhipu",
+        "name": "Zhipu GLM",
+        "kind": "openai-compatible",
+        "description": "provider.desc.zhipu",
+        "recommended": false,
+        "order": 8,
+        "custom": false,
+        "baseURL": "https://open.bigmodel.cn/api/paas/v4",
+        "keyURL": "https://open.bigmodel.cn/usercenter/apikeys",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": []
+      },
+      {
+        "id": "dashscope",
+        "name": "Qwen",
+        "kind": "openai-compatible",
+        "description": "provider.desc.dashscope",
+        "recommended": false,
+        "order": 9,
+        "custom": false,
+        "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "keyURL": "https://bailian.console.aliyun.com/",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": []
+      },
+      {
+        "id": "xai",
+        "name": "xAI",
+        "kind": "openai-compatible",
+        "description": "provider.desc.xai",
+        "recommended": false,
+        "order": 26,
+        "custom": false,
+        "baseURL": "https://api.x.ai/v1",
+        "keyURL": "https://console.x.ai/",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": []
+      },
+      {
+        "id": "groq",
+        "name": "Groq",
+        "kind": "openai-compatible",
+        "description": "provider.desc.groq",
+        "recommended": false,
+        "order": 27,
+        "custom": false,
+        "baseURL": "https://api.groq.com/openai/v1",
+        "keyURL": "https://console.groq.com/keys",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": []
+      },
+      {
+        "id": "siliconflow",
+        "name": "SiliconFlow",
+        "kind": "openai-compatible",
+        "description": "provider.desc.siliconflow",
+        "recommended": false,
+        "order": 10,
+        "custom": false,
+        "baseURL": "https://api.siliconflow.cn/v1",
+        "keyURL": "https://cloud.siliconflow.cn/account/ak",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": []
+      },
+      {
+        "id": "volcengine",
+        "name": "Volcengine Ark",
+        "kind": "openai-compatible",
+        "description": "provider.desc.volcengine",
+        "recommended": false,
+        "order": 11,
+        "custom": false,
+        "baseURL": "https://ark.cn-beijing.volces.com/api/v3",
+        "keyURL": "https://console.volcengine.com/ark",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": []
+      },
+      {
+        "id": "minimax",
+        "name": "MiniMax",
+        "kind": "openai-compatible",
+        "description": "provider.desc.minimax",
+        "recommended": false,
+        "order": 12,
+        "custom": false,
+        "baseURL": "https://api.minimaxi.com/v1",
+        "keyURL": "https://platform.minimaxi.com/user-center/basic-information",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": []
+      },
+      {
+        "id": "stepfun",
+        "name": "StepFun",
+        "kind": "openai-compatible",
+        "description": "provider.desc.stepfun",
+        "recommended": false,
+        "order": 13,
+        "custom": false,
+        "baseURL": "https://api.stepfun.com/v1",
+        "keyURL": "https://platform.stepfun.com/",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": []
+      },
+      {
+        "id": "hunyuan",
+        "name": "Tencent Hunyuan",
+        "kind": "openai-compatible",
+        "description": "provider.desc.hunyuan",
+        "recommended": false,
+        "order": 14,
+        "custom": false,
+        "baseURL": "https://api.hunyuan.cloud.tencent.com/v1",
+        "keyURL": "https://console.cloud.tencent.com/hunyuan/api-key",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": []
+      },
+      {
+        "id": "qianfan",
+        "name": "Baidu Qianfan",
+        "kind": "openai-compatible",
+        "description": "provider.desc.qianfan",
+        "recommended": false,
+        "order": 15,
+        "custom": false,
+        "baseURL": "https://qianfan.baidubce.com/v2",
+        "keyURL": "https://console.bce.baidu.com/iam/#/iam/apikey/list",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": []
+      },
+      {
+        "id": "mistral",
+        "name": "Mistral AI",
+        "kind": "openai-compatible",
+        "description": "provider.desc.mistral",
+        "recommended": false,
+        "order": 20,
+        "custom": false,
+        "baseURL": "https://api.mistral.ai/v1",
+        "keyURL": "https://console.mistral.ai/api-keys",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": []
+      },
+      {
+        "id": "together",
+        "name": "Together AI",
+        "kind": "openai-compatible",
+        "description": "provider.desc.together",
+        "recommended": false,
+        "order": 21,
+        "custom": false,
+        "baseURL": "https://api.together.xyz/v1",
+        "keyURL": "https://api.together.ai/settings/api-keys",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": []
+      },
+      {
+        "id": "fireworks",
+        "name": "Fireworks AI",
+        "kind": "openai-compatible",
+        "description": "provider.desc.fireworks",
+        "recommended": false,
+        "order": 22,
+        "custom": false,
+        "baseURL": "https://api.fireworks.ai/inference/v1",
+        "keyURL": "https://fireworks.ai/account/api-keys",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": []
+      },
+      {
+        "id": "cerebras",
+        "name": "Cerebras",
+        "kind": "openai-compatible",
+        "description": "provider.desc.cerebras",
+        "recommended": false,
+        "order": 23,
+        "custom": false,
+        "baseURL": "https://api.cerebras.ai/v1",
+        "keyURL": "https://cloud.cerebras.ai/",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": []
+      },
+      {
+        "id": "perplexity",
+        "name": "Perplexity",
+        "kind": "openai-compatible",
+        "description": "provider.desc.perplexity",
+        "recommended": false,
+        "order": 24,
+        "custom": false,
+        "baseURL": "https://api.perplexity.ai",
+        "keyURL": "https://www.perplexity.ai/settings/api",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": []
+      },
+      {
+        "id": "nvidia",
+        "name": "NVIDIA NIM",
+        "kind": "openai-compatible",
+        "description": "provider.desc.nvidia",
+        "recommended": false,
+        "order": 25,
+        "custom": false,
+        "baseURL": "https://integrate.api.nvidia.com/v1",
+        "keyURL": "https://build.nvidia.com/",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [],
+        "models": []
+      },
+      {
+        "id": "lmstudio",
+        "name": "LM Studio",
+        "kind": "openai-compatible",
+        "description": "provider.desc.lmstudio",
+        "recommended": false,
+        "order": 40,
+        "custom": false,
+        "baseURL": "http://127.0.0.1:1234/v1",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [
+          "local"
+        ],
+        "models": []
+      },
+      {
+        "id": "vllm",
+        "name": "vLLM",
+        "kind": "openai-compatible",
+        "description": "provider.desc.vllm",
+        "recommended": false,
+        "order": 41,
+        "custom": false,
+        "baseURL": "http://192.168.10.212:8888/v1",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [
+          "local"
+        ],
+        "models": []
+      },
+      {
+        "id": "ollama",
+        "name": "Ollama",
+        "kind": "openai-compatible",
+        "description": "provider.desc.ollama",
+        "recommended": false,
+        "order": 42,
+        "custom": false,
+        "baseURL": "http://127.0.0.1:11434/v1",
+        "configured": false,
+        "authenticated": false,
+        "authMethods": [
+          "local"
+        ],
+        "models": []
+      },
+      {
+        "id": "qwen",
+        "name": "Qwen",
+        "kind": "openai-compatible",
+        "description": "provider.desc.custom",
+        "recommended": false,
+        "order": 100,
+        "custom": true,
+        "baseURL": "http://192.168.10.212:8080/v1",
+        "configured": true,
+        "authenticated": false,
+        "authMethods": [],
+        "models": [
+          {
+            "id": "qwen3.8-flash-next-iq3_s",
+            "name": "Qwen3.8-Flash-Next",
+            "contextWindow": 0,
+            "maxOutput": 32000,
+            "reasoning": true,
+            "attachment": false,
+            "toolCall": false,
+            "temperature": false,
+            "inputs": {
+              "text": true,
+              "image": false,
+              "audio": false,
+              "video": false,
+              "pdf": false
+            },
+            "cost": {
+              "input": 0,
+              "output": 0
+            },
+            "variants": []
+          }
+        ]
+      },
+      {
+        "id": "glm",
+        "name": "GLM",
+        "kind": "openai-compatible",
+        "description": "provider.desc.custom",
+        "recommended": false,
+        "order": 100,
+        "custom": true,
+        "baseURL": "http://192.168.10.124:8888/v1",
+        "configured": true,
+        "authenticated": false,
+        "authMethods": [],
+        "models": [
+          {
+            "id": "GLM-5.3-Flash-EXL3",
+            "name": "GLM-5.3-Flash",
+            "contextWindow": 0,
+            "maxOutput": 32000,
+            "reasoning": true,
+            "attachment": true,
+            "toolCall": false,
+            "temperature": false,
+            "inputs": {
+              "text": true,
+              "image": true,
+              "audio": false,
+              "video": false,
+              "pdf": false
+            },
+            "cost": {
+              "input": 0,
+              "output": 0
+            },
+            "variants": []
+          }
+        ]
+      },
+      {
+        "id": "ds",
+        "name": "DeepSeek",
+        "kind": "openai-compatible",
+        "description": "provider.desc.custom",
+        "recommended": false,
+        "order": 100,
+        "custom": true,
+        "baseURL": "http://192.168.10.233:8888/v1",
+        "configured": true,
+        "authenticated": false,
+        "authMethods": [],
+        "models": [
+          {
+            "id": "deepseek-v4.1-flash",
+            "name": "DeepSeek-V4.1-Flash",
+            "contextWindow": 1048576,
+            "maxOutput": 32000,
+            "reasoning": true,
+            "attachment": true,
+            "toolCall": false,
+            "temperature": false,
+            "inputs": {
+              "text": true,
+              "image": true,
+              "audio": true,
+              "video": true,
+              "pdf": false
+            },
+            "cost": {
+              "input": 0,
+              "output": 0
+            },
+            "variants": []
+          }
+        ]
+      }
+    ]
+  }
+}

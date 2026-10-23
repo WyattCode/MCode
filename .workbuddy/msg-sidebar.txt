@@ -1,0 +1,34 @@
+MCode Remote: the conversation list, measured off the app
+
+Same method as the composer, and it turned up the same class of error: every
+face in the list was a size small, and two pieces of the screen were not there
+at all.
+
+Measured off Claude's own list on this pad (3408x2272, 3.156 px per dp):
+
+  sidebar          900px = 285dp
+  search field     840 x 120px = 266 x 38dp, corner so round it is a capsule
+  conversation row 153px = 48.5dp   (was 138)
+  title glyphs     60px = 19dp      -> 16sp   (was 14)
+  timestamp        53px = 17dp      -> 14sp   (was 12)
+  top bar          242px = 77dp
+
+The two missing pieces:
+
+  - The search field is always on in Claude's list, under the title. The phone
+    hid it behind a magnifier, so reaching it was two gestures and the list
+    looked emptier than the reference. The magnifier is gone and the field is
+    always drawn; it takes no focus until tapped, so the keyboard does not
+    open on every visit.
+
+  - The open conversation had a grey slab behind it. Claude has no such fill -
+    its own open row is the page's colour edge to edge, marked by a dot at the
+    row's trailing end. Ours read as a menu with a selected item.
+
+One thing that broke and had to be undone: fixing the field to a 38dp height
+clipped its placeholder into an ellipsis, because Material's field needs 56 for
+its own padding at a 15sp face. It is a minimum now, not a height.
+
+Still off, and visible side by side: our rows start at 101px against the
+reference's 120 (a 6dp icon indent), and the row icons are a plain rounded
+square where Claude draws a speech bubble or a code mark.

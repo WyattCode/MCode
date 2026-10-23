@@ -1,0 +1,21 @@
+MCode Remote: the chat header, and the list's third emptiness
+
+Measured off Claude's own header on this pad:
+
+  title      53px of glyph = 16.8dp   -> 15sp on a 20 line   (was 16/-, too tall)
+  subtitle   46px           = 14.6dp   -> 13sp on a 17 line   (was 11, too short)
+
+The pair was a size apart in both directions, so the block read as a heading
+with a footnote rather than as two lines of one label - which is what Claude's
+is: 4dp between them, both centred, no rule.
+
+The header's left end carries the arrow and nothing else. Ours had a second
+magnifier there, opening the find field; Claude's bar is back, the two-line
+title, a ring and the overflow, measured straight across. The find field is
+still in the overflow menu, so nothing is lost except a duplicate mark beside
+the list's own search.
+
+Also fixed, found while the gateway was down: an empty list said 「还没有对话」
+when the link had dropped, which was wrong by eighteen conversations. It is a
+third state now - 「连接断开，暂时读不到会话」 - and `SessionList` takes `live` to
+know which emptiness it is looking at.

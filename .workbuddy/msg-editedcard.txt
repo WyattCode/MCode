@@ -1,0 +1,29 @@
+MCode Remote: the turn's edited files, as one card
+
+The card never appeared before because it was reading the wrong field:
+`state.output` carries a tool's one-line reply, while the change lives in
+`metadata.diff`. Measured over the eighteen conversations on this machine -
+1306 tool calls, 244 with a diff, none with a patch in their output.
+
+Now the patch is parsed the way `src/shared/unified-diff.ts` parses it. Hunks
+are read by their own line counts rather than by `+`/`-` prefixes, because a
+removed "-- x" is written "--- x" and with a "++ y" after it looks exactly
+like the next file's header.
+
+A turn's edits are gathered into one card, as `EditedFilesCard.vue` has them,
+and it goes under the row that ends the turn. Two things that took measuring
+to find:
+
+  - The row container was a Box, so the card stacked on top of the paragraph
+    it was meant to follow; 「起更新了。」 sat behind the card's edge.
+
+  - A gap or a failure could not be allowed to set the turn's end, or the
+    card landed after the failure notice and read as if the thing that broke
+    had edited the files.
+
+撤销 and 审阅 come with it: the revert asks first in the desktop's orange
+card, then reloads the conversation so the files and the card's reverted form
+both come from the server. Verified end to end on the pad - a turn that
+created `mcode-outside-probe.txt` answered {restored:0, removed:1} and the
+card took its 「已撤销 1 个文件的改动」 form. 审阅 opens the turn's own
+recorded patch.

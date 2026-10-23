@@ -1,0 +1,16 @@
+MCode Remote: the empty pane's mark, sized to what it draws
+
+The asterisk's ink spans 103px on the pad - 32.6dp - and a 32.6dp box drew
+only 85px of it. The gap is the drawing rather than the measurement: the twelve
+spokes are stroked lines that stop at the radius, so the round cap keeps half a
+stroke inside the box, and no spoke points along an axis.
+
+32.6 x 103/85 = 39.5, which draws 33.0dp of ink and lands its centre at 2195
+against the pane's 2199. An earlier pass had already corrected 40 to 32.6 by
+measuring the ink and trusting the box; this corrects the box to what the ink
+needs.
+
+Worth stating plainly because it is the third time this shape has fooled me:
+when a drawn mark measures small, the number to change is the box, not the
+drawing. Measuring the ink and then setting that same number as the size is a
+loop that never closes.

@@ -1,0 +1,33 @@
+MCode Remote: the composer measured against the app, not the stylesheet
+
+I had been following `Composer.vue`'s numbers, and they describe a different
+design at this size. Claude's own app is installed on this pad, so this is now
+measured off it - pixel by pixel, both screens at the same 3408x2272.
+
+Every number below is a measurement, not a reading:
+
+  box height        79.2dp      (was 93, then 109 twice while I corrected)
+  placeholder top   16.5dp      (was 24.1)
+  control row top   44.7dp      (was 79.9)
+  fill              #FEFEFE    (was #FFFFFF)
+  edge              1px #DCDCDC (was a 6% ink, then #DCDCDC again)
+
+The empty middle was the most visible thing: the card read as a blank panel
+with a toolbar pinned to its floor. Two causes - a card inset of 8 plus the
+writing area's own 16, and a 44dp control row where the reference's is 28.
+
+Three controls were the wrong shape as well, all sampled off the reference:
+
+  + and the microphone   24dp discs on #F0EFEC  (were 28 squares, no fill)
+  send                   28dp disc              (was a 28 square in a 44 target)
+  model and access pills capsule                (were 6dp corners)
+
+Getting here took eight builds because I kept reasoning about Compose's layout
+instead of measuring it. The useful part: box top and bottom are found by
+scanning one column for the two colour steps, and the rows inside by
+projecting dark pixels across the width - `[15.8, 44.0]` against the
+reference's `[16.5, 44.7]` is the whole comparison, and it costs one script.
+
+Not yet matched, and visible in a side-by-side: the reference's text field
+sits ~3dp higher, and its placeholder is lighter (#7B7974 here reads a shade
+darker on the pad). Both are single values away.
