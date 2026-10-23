@@ -914,6 +914,23 @@ fun MCodeTheme(content: @Composable () -> Unit) {
         LocalField provides (if (dark) DarkField else CreamSurface),
         LocalFieldLine provides (if (dark) DarkFieldLine else FieldLine),
         /*
+         * The sidebar's cards, which had no dark values at all.
+         *
+         * The card colours were added with defaults and never provided by the
+         * theme, so on a dark screen every conversation row stayed a white slab
+         * on a #151515 page - the single most broken thing in that theme, and
+         * found only by switching the device to night mode.
+         *
+         * Measured off Claude's own dark screen: the page is #151515 and a card
+         * sits one step above it at #20201F with a #232323 hairline, which keeps
+         * the same "barely lighter than the page" relationship the light theme
+         * has. The tile is #2A2A29.
+         */
+        LocalCard provides (if (dark) Color(0xFF20201F) else Color(0xFFF9F9F7)),
+        LocalCardOpen provides (if (dark) Color(0xFF262625) else Color(0xFFF9F9F7)),
+        LocalCardLine provides (if (dark) Color(0xFF232323) else Color(0xFFE1E1DF)),
+        LocalCardTile provides (if (dark) Color(0xFF2A2A29) else Color(0xFFF5F5F3)),
+        /*
          * The selection tint, which this app had never set.
          *
          * A long press on a reply showed Compose's default - a saturated blue
@@ -12227,17 +12244,23 @@ fun ScheduledScreen(
         }
         if (tasks.isEmpty()) {
             /*
-             * 393, not 300.
+             * Centred in the page, both ways.
              *
-             * Measured: the reference's 「暂无定时任务」 ink runs y
-             * 497.2..510.8 and its sentence 526.4..540.0, on a page whose header
-             * ends at 73.2. This block started at 404.0 - 93 short - because the
-             * 300 was a guess at a full-screen page's centre rather than the
-             * reference's own height.
+             * The reference's whole empty state - clock, 「暂无定时任务」 and the
+             * sentence - sits inside 449.6..473.2 dp of a 908.8 dp screen, and
+             * its horizontal centre measures 681.4 against the screen's 681.6.
+             * So it is the middle of the page, not a distance from the header.
+             *
+             * This was `padding(top = 393.dp)`, a number measured on the full
+             * screen and then reused inside a column that is already offset by
+             * its own header - which put the block 60 dp low and, because the
+             * column was only as wide as the pane, left of centre as well. A
+             * weight plus Centre fills whatever box it is given.
              */
             Column(
-                Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 393.dp),
+                Modifier.fillMaxWidth().weight(1f).padding(horizontal = 24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
             ) {
                 MiIcon(
                     "M12 3.6c4.64 0 8.4 3.76 8.4 8.4s-3.76 8.4-8.4 8.4S3.6 16.64 3.6 12 7.36 3.6 12 3.6zM12 7.8V12l3 1.8",
