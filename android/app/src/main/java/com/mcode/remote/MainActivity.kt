@@ -1331,6 +1331,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
     LaunchedEffect(drawerState.isOpen) {
         if (drawerState.isOpen) clearSelections()
     }
+    /*
+     * The message sheet moves the transcript too, and covers it.
+     *
+     * Its backdrop dims the reply while the pill - being a window of its own -
+     * stays bright and floating above it, which on the pad read as a stray
+     * control sitting on the sheet's own header. The sheet is about the reply as
+     * a whole, not about the words that happen to be lit, so the wash goes.
+     */
+    LaunchedEffect(messageTarget) {
+        if (messageTarget != null) clearSelections()
+    }
     /** The question being rewritten in 编辑并重发. */
     var editTarget by remember { mutableStateOf<Item.Msg?>(null) }
     var modelPicker by remember { mutableStateOf(false) }
