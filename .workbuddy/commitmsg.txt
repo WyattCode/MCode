@@ -1,0 +1,33 @@
+MCode Remote: settings was drawn and then painted over
+
+The page has been unreachable for as long as the two-pane layout has existed,
+and the cause was one word in a closing `return`.
+
+    if (leftMode == LeftMode.Settings) {
+        SettingsScreen(...)
+        if (widthSize < WindowWidthSizeClass.Expanded) return    // <- here
+    }
+    ...
+    if (wide) { Row { ... } }      // the split layout, which draws regardless
+
+Read as English the line says "narrow screens stop here"; read as Kotlin it also
+says "wide screens carry on". So on the pad the settings page was composed, laid
+out, and then the wide branch composed the conversation list and the chat pane
+over the top of it. Nothing crashed, nothing logged, the tap looked dead.
+
+It took a logcat line to see it: leftMode really was Settings on every
+recomposition, and tapping 设置 in the drawer really did fire onSettings. The
+state and the handler were both correct the whole time; only the drawing order
+was wrong. An earlier pass had decided the drawer's hit-testing was broken and
+that was wrong - the drawer is fine.
+
+The branch returns unconditionally now, which is what the other three pages
+already did. They can afford to be inside the wide layout because it draws them
+in the left column; settings is full-screen in both layouts, so it has to stop
+in both.
+
+The projects branch carried the same wrong guard and is fixed the same way -
+harmless there because the wide layout draws it anyway, but the same trap.
+
+Settings page content is unmeasured against any reference: this commit is about
+reaching it, not about matching it.
