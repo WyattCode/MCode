@@ -514,4 +514,113 @@ class SelectionSliceTest {
     fun aRangeWhollyPastTheEndCollapses() {
         assertEquals(102..102, clampToLayout(200..300, length = 103))
     }
+
+    /* ------------------------------------------------------------------ */
+    /* The invariant that ties a table's offsets to its own flat text      */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * Every cell's offset must cut exactly its own text out of the flat string.
+     *
+     * `tableCellStarts` and `blockText` compute the same layout by two separate
+     * routes - one walks rows, the other joins them - and if they ever disagree
+     * the wash lands a character to the left of the word it is meant to cover.
+     * Nothing in the compiler or the type system catches that, and on a device it
+     * looks like "selection is slightly broken" rather than like a bug in an
+     * offset table.
+     *
+     * This drives several shapes through both: the empty cell, the short row, the
+     * row that is longer than the head, and the CJK cell whose width is not the
+     * length.
+     */
+    @Test
+    fun everyCellAgreesWithItsOwnFlatText() {
+        val cases: List<Pair<List<String>, List<List<String>>>> = listOf(
+            // The smallest table there is.
+            listOf("A") to listOf(listOf("1")),
+            // A normal two-by-two.
+            listOf("名字", "值") to listOf(listOf("甲", "1"), listOf("乙", "2")),
+            // A short row: the second cell is missing entirely.
+            listOf("a", "b") to listOf(listOf("x")),
+            // A row longer than the head, which happens when a reply is malformed.
+            listOf("a") to listOf(listOf("x", "y")),
+            // Empty cells, which must contribute nothing rather than a space.
+            listOf("", "") to listOf(listOf("", "z")),
+            // Mixed widths.
+            listOf("id", "说明", "n") to listOf(
+                listOf("1", "第一项", "10"),
+                listOf("22", "二", "3"),
+            ),
+        )
+        for ((head, rows) in cases) {
+            // Columns come from the wider of the head and any row, as TableBox does.
+            val columns = maxOf(head.size, rows.maxOfOrNull { it.size } ?: 0)
+            // The flat text, built exactly as blockText builds it.
+            val flat = (listOf(head) + rows).joinToString("\n") { it.joinToString(" ") }
+            val starts = tableCellStarts(head, rows, columns)
+            assertEquals("one start row per table row", rows.size + 1, starts.size)
+            for (r in starts.indices) {
+                val cells: List<String> = if (r == 0) head else rows[r - 1]
+                for (c in cells.indices) {
+                    val from = starts[r][c]
+                    val cell = cells[c]
+                    assertEquals(
+                        "row $r col $c of $flat",
+                        cell,
+                        flat.substring(from, from + cell.length),
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Two cells are always one separator apart, never touching.
+     *
+     * If the separator were folded into a cell's length, a selection covering
+     * both cells would still cut a plausible-looking string - just the wrong one,
+     * shifted by a character. This asserts the gap directly.
+     */
+    @Test
+    fun adjacentCellsHaveExactlyOneSeparatorBetweenThem() {
+        val head = listOf("ab", "cd", "ef")
+        val flat = head.joinToString(" ")
+        val starts = tableCellStarts(head, emptyList(), columns = 3)
+        assertEquals("ab cd ef", flat)
+        for (c in 0 until 2) {
+            val endOfThis = starts[0][c] + head[c].length
+            assertEquals(' ', flat[endOfThis])
+            assertEquals(endOfThis + 1, starts[0][c + 1])
+        }
+    }
+
+    /** A table with no rows at all still lays out its head. */
+    @Test
+    fun aHeadOnlyTableLaysOut() {
+        val starts = tableCellStarts(listOf("a", "b"), emptyList(), columns = 2)
+        assertEquals(1, starts.size)
+        assertEquals(listOf(0, 2), starts[0].toList())
+    }
+
+    /** A table with no head and no rows has nothing to lay out. */
+    @Test
+    fun anEmptyTable() {
+        val starts = tableCellStarts(emptyList(), emptyList(), columns = 0)
+        assertEquals(1, starts.size)
+        assertEquals(0, starts[0].size)
+    }
+
+    /** A base offset shifts every cell by exactly that much. */
+    @Test
+    fun aBaseOffsetShiftsTheWholeTable() {
+        val head = listOf("a", "b")
+        val rows = listOf(listOf("cc"))
+        val plain = tableCellStarts(head, rows, columns = 2)
+        val shifted = tableCellStarts(head, rows, columns = 2, base = 100)
+        for (r in plain.indices) {
+            for (c in plain[r].indices) {
+                assertEquals(plain[r][c] + 100, shifted[r][c])
+            }
+        }
+    }
 }
