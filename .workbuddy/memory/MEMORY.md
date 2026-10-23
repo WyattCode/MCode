@@ -97,3 +97,18 @@
 - **平板已设永不锁屏**（用户 2026-10-21 要求）：`locksettings set-disabled true` + `screen_off_timeout=2147483647` + `stay_on_while_plugged_in=7` + screensaver off。封装为 `python .workbuddy/pad.py awake`（恢复：`locksettings set-disabled false`）。唤醒用 `pad.py wake`（KEYCODE_POWER，KEYCODE_WAKEUP 常被忽略）。
 - **网关启动**：沙箱里 run_in_background 启动可靠（别中断 turn）；分离进程（DETACHED_PROCESS）会被沙箱回收。防火墙已放行 node.exe 入站（规则名 MCodeGateway）——之前 app 连不上 156:7900 就是它拦的。完整命令：`node out/remote-server.mjs --host 0.0.0.0 --port 7900 --token mcode-fold-2026 --data-dir C:/Users/Wyatt/AppData/Roaming/mcode`。
 - **1:1 视觉对齐**（`1ce169b2`+`d907566f`）：对照 src/renderer 的 CSS 逐数字抄。正文列 764+28、气泡 16/9,13/500/78%、工具行 14/22.4/5/23（两处渲染都要改！ToolRow 和 Item.ToolRun 的 runSummary）、会话行 34+6+2、抽屉行 38/8/14、输入卡 10 圆角/13sp/44 条。会话行三态：旋转环/蓝点/待确认胶囊（新增 unseen 状态）。
+
+## 整屏对齐（2026-10-23 起，与选区模块分开记）
+
+- **填充色相差 4 阶在缩略图上不可见**：侧栏卡片 `#F9F9F7` vs 页面 `#F7F7F5`，
+  缩小后完全看不出。代码里曾有长注释论证「Claude 没有卡片」，就是这么错判的。
+  **一切颜色差异必须在原生分辨率采样。**
+- **`weight()` 与 `fillMaxWidth()` 互相打架**：Row 里给带 weight 的子项再加
+  fillMaxWidth，宽度分配会失效（实测左栏 27.1% 渲染成 17.6%）。weight 子项不要 fillMaxWidth。
+- **padding 值可能是在另一个窗宽下量的**：输入框 `start=116.4/end=106.8` 是双栏
+  切窄「之后」又扣一次，导致右侧差 101.6dp。跨布局复用 padding 前先确认坐标系。
+- 侧栏卡片实测（400dpi）：**332×68dp**，填充 `#F9F9F7`，边框 `#E1E1DF`，
+  图标方块 36×36 `#F5F5F3` 圆角 10，距卡左 18dp，标题起点 77.6dp，时间在标题同行右侧。
+- 输入框实测：右边距 **10.4dp**，左栏比例 **0.2641**（900/3408）。
+- **别用放大图判断字号**：双倍 NEAREST 放大后会觉得「标题偏大」，
+  实测两边墨迹都是 11.2dp。字号要以墨迹像素为准。
