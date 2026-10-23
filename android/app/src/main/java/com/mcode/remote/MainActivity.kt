@@ -8558,7 +8558,7 @@ fun SessionList(
                          * list: the drawer's glyph starts at 30.0, the list's
                          * at 26.0.
                          */
-                        .padding(horizontal = if (compact) 10.dp else 12.dp, vertical = 0.dp),
+                        .padding(start = if (compact) 10.dp else 18.dp, end = if (compact) 10.dp else 14.dp, top = 0.dp, bottom = 0.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     /*
@@ -8673,7 +8673,7 @@ fun SessionList(
                             )
                         }
                     }
-                    if (!compact) Spacer(Modifier.width(17.6.dp))
+                    if (!compact) Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f).padding(top = if (compact) 0.dp else 0.dp)) {
                         /*
                          * 17sp of title over 14sp of time.
