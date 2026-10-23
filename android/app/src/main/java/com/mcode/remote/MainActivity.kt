@@ -3016,6 +3016,53 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         )
     }
 
+    var usageSummary by remember { mutableStateOf<JSONObject?>(null) }
+    LaunchedEffect(leftMode) {
+        if (leftMode != LeftMode.Settings || usageSummary != null) return@LaunchedEffect
+        usageSummary = runCatching {
+            rpc(JSONObject().put("type", "usage.summary").put("days", 30), 30_000)
+        }.getOrNull()?.optJSONObject("data")
+    }
+    if (leftMode == LeftMode.Settings) {
+        SettingsScreen(
+            config = appConfig,
+            archived = sessions.filter { it.archived },
+            usage = usageSummary,
+            providers = providers,
+            servers = pluginServers.toList(),
+            onPatch = { patch ->
+                scope.launch {
+                    runCatching { rpc(JSONObject().put("type", "config.set").put("patch", patch)) }
+                    appConfig = runCatching { rpc(JSONObject().put("type", "config.get")) }
+                        .getOrNull()?.optJSONObject("data")?.optJSONObject("config")
+                    refreshCommandsTick++
+                }
+            },
+            onReopen = { id ->
+                scope.launch {
+                    runCatching {
+                        rpc(JSONObject().put("type", "session.archive").put("sessionID", id).put("archived", false))
+                    }
+                    leftMode = LeftMode.Sessions
+                    select(id)
+                }
+            },
+            onClose = { leftMode = LeftMode.Sessions },
+        )
+        /*
+         * Always return, wide or narrow.
+         *
+         * This was `if (widthSize < Expanded) return`, which reads as "narrow
+         * screens stop here, wide ones carry on to the split layout below" - and
+         * that is what happened: on the pad the settings page was drawn and then
+         * the wide branch painted the two-pane conversation straight over it.
+         * Tapping 设置 in the drawer looked like a dead control for weeks. The
+         * other pages stop unconditionally because the wide branch draws them
+         * inside the left column; settings is full-screen in both layouts.
+         */
+        return
+    }
+
     if (leftMode == LeftMode.Projects) {
         ProjectsScreen(
             rows = projectRows,
@@ -3106,52 +3153,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             },
         )
         /*
-         * Narrow screens keep the page full-screen; a wide one draws it inside
-         * the left column instead, so the conversation stays beside it - which
-         * is how the reference lays all four of these pages out.
+         * Always return, wide or narrow.
+         *
+         * This used to be `if (widthSize < Expanded) return`, which reads as
+         * "narrow screens stop here, wide ones carry on to the split layout
+         * below" - and that is what happened: on the pad the settings page was
+         * drawn and then the wide branch painted the two-pane conversation
+         * straight over it, so tapping 设置 in the drawer looked like a dead
+         * control. The other pages stop unconditionally because the wide branch
+         * draws them inside the left column; settings is full-screen in both
+         * layouts, so it has to stop in both.
          */
-        if (widthSize < WindowWidthSizeClass.Expanded) return
-    }
-
-    var usageSummary by remember { mutableStateOf<JSONObject?>(null) }
-    LaunchedEffect(leftMode) {
-        if (leftMode != LeftMode.Settings || usageSummary != null) return@LaunchedEffect
-        usageSummary = runCatching {
-            rpc(JSONObject().put("type", "usage.summary").put("days", 30), 30_000)
-        }.getOrNull()?.optJSONObject("data")
-    }
-    if (leftMode == LeftMode.Settings) {
-        SettingsScreen(
-            config = appConfig,
-            archived = sessions.filter { it.archived },
-            usage = usageSummary,
-            providers = providers,
-            servers = pluginServers.toList(),
-            onPatch = { patch ->
-                scope.launch {
-                    runCatching { rpc(JSONObject().put("type", "config.set").put("patch", patch)) }
-                    appConfig = runCatching { rpc(JSONObject().put("type", "config.get")) }
-                        .getOrNull()?.optJSONObject("data")?.optJSONObject("config")
-                    refreshCommandsTick++
-                }
-            },
-            onReopen = { id ->
-                scope.launch {
-                    runCatching {
-                        rpc(JSONObject().put("type", "session.archive").put("sessionID", id).put("archived", false))
-                    }
-                    leftMode = LeftMode.Sessions
-                    select(id)
-                }
-            },
-            onClose = { leftMode = LeftMode.Sessions },
-        )
-        /*
-         * Narrow screens keep the page full-screen; a wide one draws it inside
-         * the left column instead, so the conversation stays beside it - which
-         * is how the reference lays all four of these pages out.
-         */
-        if (widthSize < WindowWidthSizeClass.Expanded) return
+        return
     }
 
     if (leftMode == LeftMode.Scheduled) {
