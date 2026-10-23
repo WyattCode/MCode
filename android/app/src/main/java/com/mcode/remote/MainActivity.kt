@@ -12324,14 +12324,31 @@ fun ScheduledScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
             ) {
-                MiIcon(
-                    "M12 3.6c4.64 0 8.4 3.76 8.4 8.4s-3.76 8.4-8.4 8.4S3.6 16.64 3.6 12 7.36 3.6 12 3.6zM12 7.8V12l3 1.8",
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp),
-                    viewBox = 24f,
-                    strokeWidth = 1.7f,
-                    tint = LocalMuted.current,
-                )
+                /*
+                 * A 64 dp disc behind the clock, which the reference has and
+                 * this did not.
+                 *
+                 * Measured on Claude's own page: a filled circle of #F0EFEC,
+                 * 64 dp across, with the clock mark centred in it at 20 dp. Two
+                 * bare glyphs floating on the page read as decoration; the disc
+                 * is what makes the pair read as one object.
+                 */
+                Box(
+                    Modifier
+                        .size(64.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(if (LocalBg.current == DarkBg) Color(0xFF2A2A29) else Color(0xFFF0EFEC)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MiIcon(
+                        "M12 3.6c4.64 0 8.4 3.76 8.4 8.4s-3.76 8.4-8.4 8.4S3.6 16.64 3.6 12 7.36 3.6 12 3.6zM12 7.8V12l3 1.8",
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        viewBox = 24f,
+                        strokeWidth = 1.7f,
+                        tint = LocalMuted.current,
+                    )
+                }
                 Spacer(Modifier.height(14.dp))
                 Text("暂无定时任务", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
                 Spacer(Modifier.height(6.dp))
