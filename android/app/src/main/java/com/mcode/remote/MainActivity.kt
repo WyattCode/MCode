@@ -9748,12 +9748,18 @@ fun ProjectsScreen(
                 Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 168.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                // The tray, not a folder: the reference's empty mark is the same
-                // inbox its 项目 row wears, at 40.
+                /*
+                 * The tray, at 56 dp of ink.
+                 *
+                 * Measured on the reference's empty projects page: the mark runs
+                 * 56.0 wide by 29.2 tall. The path fills the 24 grid to 20, so a
+                 * declared 40 drew 33.3 - two thirds of it, and the empty page's
+                 * centrepiece came out smaller than the sentence under it.
+                 */
                 MiIcon(
                     "M2 2.6h20M2 8.2h20M3.6 12.4h16.8l-1.6 9.2H5.2z",
                     contentDescription = null,
-                    modifier = Modifier.size(40.dp),
+                    modifier = Modifier.size(67.2.dp),
                     viewBox = 24f,
                     strokeWidth = 1.6f,
                     tint = LocalMuted.current,
