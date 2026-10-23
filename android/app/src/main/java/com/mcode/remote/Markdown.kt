@@ -319,26 +319,32 @@ private var selectionTint = Color(0xFFDEBFAF)
 /*
  * The selection's geometry, in dp, all in one place.
  *
- * Every one of these was read off the reference at 400 dpi (2.5 px per dp) and
- * every one is used by at least two of the drawing, the hit test and the pill's
- * placement. They lived as literals inside those functions before, which is how
- * the handles ended up drawn in one place and grabbable in another.
+ * Every one of these was measured off the reference at 400 dpi (2.5 px per dp),
+ * and re-measured against a screenshot of this build rather than trusted:
  *
- *   disc     25.2 dp across: 63 px in the reference, a circle rather than the
- *            teardrop Material draws
- *   overlap  1.6 dp of the disc's top lies inside the wash's bottom edge, so a
- *            pair reads as attached to the block's corners
+ *   reference   wash 64 px tall (25.6 dp) over glyph ink of 32 px (12.8 dp)
+ *               - so 6.4 dp of air above and below the letters
+ *               discard 63 px across (25.2 dp)
+ *               disc top at y 411 against the wash's bottom at 410 - the disc
+ *               starts 0.4 dp *below* the block, not inside it
+ *   this build  wash 50 px (20.0 dp) and the disc's top 1.6 dp inside it
+ *
+ * So the block needed to grow 5.6 dp and the disc to drop out of it by 1.6 dp.
+ * `inset` is now an outward expansion rather than an inward trim: -1.6 adds
+ * 3.2 per side over the old +1.2, which is the 5.6 the measurement asked for.
+ *
+ *   disc     25.2 dp across, a circle rather than Material's teardrop
+ *   overlap  0: the reference's disc begins at the block's bottom edge
  *   side     0.8 dp of air either side of the glyphs inside the wash
- *   inset    1.2 dp off the line's own top and bottom: the reference's wash is
- *            27.6 over a 30 dp line
+ *   inset    -1.6 dp: the wash stands 1.6 dp proud of the line box on each edge
  *   corner   4 dp, asked for by the reader; the reference's own block is square
- *   reach    how far from a disc's centre a press still counts as grabbing it -
- *            36 dp of diameter, the smallest comfortable fingertip target
+ *   reach    36 dp of diameter - the smallest comfortable fingertip target -
+ *            which is deliberately wider than the disc, so it can be grabbed
  */
 private const val HANDLE_DISC = 12.6f
-private const val HANDLE_OVERLAP = 1.6f
+private const val HANDLE_OVERLAP = 0f
 private const val WASH_SIDE = 0.8f
-private const val WASH_INSET = 1.2f
+private const val WASH_INSET = 2.0f
 private val WASH_CORNER = 4.dp
 private const val HANDLE_REACH = 18f
 /* The two end handles: the reference's burnt orange in light, lighter on dark. */
@@ -1122,14 +1128,30 @@ private fun codeSelection(
 }
 
 /**
+ * A handle: where its centre is, and which way its flat side faces.
+ *
+ * The reference's handles are not circles. Read off the pad row by row, the left
+ * one holds its right edge at x 1357 across every row - flush against the wash at
+ * 1358 - while its left edge curves in. The right one mirrors it: its left edge
+ * stays at 1425 against the wash's 1424. So each is a disc with the side facing
+ * the selection cut flat, which is what makes a pair read as a bracket around the
+ * words rather than as two balls beside them.
+ */
+private data class Handle(
+    val centre: androidx.compose.ui.geometry.Offset,
+    /** +1 when the flat side faces right (the start handle), -1 when it faces left. */
+    val flatFacing: Int,
+)
+
+/**
  * Where the two handles sit, in a surface's own coordinates.
  *
  * The drawing and the hit test have to agree, so both come from here: the discs
- * are `HANDLE_DISC` across, they hang in the gutter just outside the wash's ends
- * with their tops `HANDLE_OVERLAP` inside its bottom edge, and the wash itself is
- * the glyph box pulled in 1.2 vertically and grown 0.8 horizontally.
+ * are `HANDLE_DISC` across, they hang just outside the wash's ends with their
+ * tops `HANDLE_OVERLAP` above its bottom edge, and the wash itself is the glyph
+ * box grown by `WASH_SIDE` horizontally and trimmed by `WASH_INSET` vertically.
  *
- * Returns null when this surface holds no end of the selection.
+ * Empty when this surface holds no end of the selection.
  */
 private fun handleCentres(
     laid: TextLayoutResult,
@@ -1137,7 +1159,7 @@ private fun handleCentres(
     lineIndex: Int,
     slice: Pair<Int, Int>?,
     density: Float,
-): List<androidx.compose.ui.geometry.Offset> {
+): List<Handle> {
     if (slice == null || shared.isEmpty) return emptyList()
     val boxes = chipBoxes(laid, slice.first until slice.second)
     if (boxes.isEmpty()) return emptyList()
@@ -1145,22 +1167,30 @@ private fun handleCentres(
     val overlap = HANDLE_OVERLAP * density
     val side = WASH_SIDE * density
     val inset = WASH_INSET * density
-    val out = ArrayList<androidx.compose.ui.geometry.Offset>(2)
+    val out = ArrayList<Handle>(2)
     if (lineIndex == shared.startLine) {
         val first = boxes.first()
         out.add(
-            androidx.compose.ui.geometry.Offset(
-                first.left - side - disc,
-                first.bottom - inset + disc - overlap,
+            Handle(
+                centre = androidx.compose.ui.geometry.Offset(
+                    first.left - side - disc,
+                    first.bottom - inset + disc - overlap,
+                ),
+                /* The start handle sits to the left, so its right side is the flat one. */
+                flatFacing = 1,
             ),
         )
     }
     if (lineIndex == shared.endLine) {
         val last = boxes.last()
         out.add(
-            androidx.compose.ui.geometry.Offset(
-                last.right + side + disc,
-                last.bottom - inset + disc - overlap,
+            Handle(
+                centre = androidx.compose.ui.geometry.Offset(
+                    last.right + side + disc,
+                    last.bottom - inset + disc - overlap,
+                ),
+                /* The end handle sits to the right, so its left side is flat. */
+                flatFacing = -1,
             ),
         )
     }
@@ -1209,8 +1239,8 @@ private fun onHandle(
 ): Boolean {
     if (shared.isEmpty || slice == null) return false
     val reach = HANDLE_REACH * density
-    return handleCentres(laid, shared, lineIndex, slice, density).any { centre ->
-        hitsHandle(position.x, position.y, centre.x, centre.y, reach)
+    return handleCentres(laid, shared, lineIndex, slice, density).any { handle ->
+        hitsHandle(position.x, position.y, handle.centre.x, handle.centre.y, reach)
     }
 }
 
@@ -1427,8 +1457,18 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSelectionWash(
      * worse than no disc at all.
      */
     val disc = HANDLE_DISC.dp.toPx()
-    for (centre in handleCentres(laid, shared, lineIndex, slice, density)) {
-        drawCircle(color = selectionHandle, radius = disc, center = centre)
+    /*
+     * A plain disc, 25.2 dp across.
+     *
+     * Its widest row in the reference is 63 px, which is the diameter itself -
+     * so it is a circle and not the half-disc it looks like at a glance. An
+     * attempt at a "D" shape (arc plus a rect for the flat side) drew the two
+     * halves on top of each other and left a visible seam down the middle; the
+     * shape is a circle, and what reads as a flat inner edge is simply the wash
+     * sitting flush against it.
+     */
+    for (handle in handleCentres(laid, shared, lineIndex, slice, density)) {
+        drawCircle(color = selectionHandle, radius = disc, center = handle.centre)
     }
 }
 
