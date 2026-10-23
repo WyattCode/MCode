@@ -1279,19 +1279,34 @@ private fun Modifier.selectable(
                 }
                 drag(down.id) { change ->
                     val current = laid ?: return@drag
-                    val h = current.size.height.toFloat().coerceAtLeast(1f)
+                    /*
+                     * Steps are counted in lines, not in blocks.
+                     *
+                     * `size.height` is the whole `Text`, so a three-line
+                     * paragraph used it as one step: dragging 40 dp past the top
+                     * moved the active end four *blocks* back instead of one
+                     * line, and dragging past the bottom of a tall paragraph did
+                     * nothing at all until the finger had travelled its entire
+                     * height again. The unit is a line of this surface, which is
+                     * what the finger is actually crossing.
+                     */
+                    val lineH = current.multiParagraph
+                        .let { runCatching { it.getLineBottom(0) - it.getLineTop(0) }.getOrNull() }
+                        ?.takeIf { it > 0f }
+                        ?: (HANDLE_DISC * 2f * density)
                     val y = change.position.y
-                    val steps = when {
-                        y < 0f -> -kotlin.math.ceil((-y) / h).toInt()
-                        y > h -> kotlin.math.floor(y / h).toInt()
-                        else -> 0
-                    }
+                    val steps = dragSteps(y, current.size.height.toFloat(), lineH)
                     if (steps != 0) {
                         val target = (lineIndex + steps)
                             .coerceIn(0, (sharedSelection.lineCount - 1).coerceAtLeast(0))
                         sharedSelection.activeLine = target
                         sharedSelection.activeOffset = if (target == lineIndex) {
-                            lineStart + current.getOffsetForPosition(change.position)
+                            lineStart + current.getOffsetForPosition(
+                                androidx.compose.ui.geometry.Offset(
+                                    change.position.x,
+                                    change.position.y.coerceIn(0f, current.size.height.toFloat()),
+                                ),
+                            )
                         } else if (steps > 0) 0 else Int.MAX_VALUE
                     } else {
                         sharedSelection.activeLine = lineIndex
@@ -1301,6 +1316,42 @@ private fun Modifier.selectable(
                 }
             }
         }
+}
+
+/**
+ * How many blocks a drag has travelled, given where the finger is.
+ *
+ * A drag that leaves a `Text` has to step to a neighbouring block, because each
+ * surface only knows its own string. The unit is a line of that surface, not its
+ * whole height: a three-line paragraph used to count as one step, so a drag of
+ * forty dp past its top jumped four blocks back, and a drag past its bottom did
+ * nothing until the finger had crossed the entire paragraph again.
+ *
+ * Below the surface the first step starts at the bottom edge itself, so a finger
+ * just under the last line is already one block further on rather than needing
+ * to clear a whole line first.
+ *
+ * Free of Compose and tested: the arithmetic is easy to get wrong in a way that
+ * only shows up under a real finger.
+ *
+ * @param y the finger's y, in the surface's coordinates.
+ * @param height the surface's own height.
+ * @param lineHeight the height of one line in it.
+ * @return 0 when the finger is still inside, positive downwards, negative up.
+ */
+internal fun dragSteps(y: Float, height: Float, lineHeight: Float): Int {
+    if (lineHeight <= 0f) return 0
+    return when {
+        /*
+         * `floor`, not `ceil`: leaving the edge is already one block, and the
+         * next block only starts counting once a full line of travel is behind
+         * it. `ceil` turned 40 of travel into two blocks when the finger had
+         * crossed one, which made a short pull overshoot.
+         */
+        y < 0f -> -(kotlin.math.floor(-y / lineHeight).toInt() + 1)
+        y > height -> kotlin.math.floor((y - height) / lineHeight).toInt() + 1
+        else -> 0
+    }
 }
 
 /**

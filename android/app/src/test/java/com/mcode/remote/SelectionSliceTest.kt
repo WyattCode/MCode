@@ -409,4 +409,56 @@ class SelectionSliceTest {
     fun aDistantPressMisses() {
         assertFalse(hitsHandle(500f, 900f, 100f, 200f, radius = 45f))
     }
+
+    /* ------------------------------------------------------------------ */
+    /* Stepping out of a surface while dragging                            */
+    /* ------------------------------------------------------------------ */
+
+    /** Inside the surface: no step, the offset comes from the position. */
+    @Test
+    fun insideTheSurfaceDoesNotStep() {
+        assertEquals(0, dragSteps(y = 50f, height = 100f, lineHeight = 30f))
+        assertEquals(0, dragSteps(y = 0f, height = 100f, lineHeight = 30f))
+        assertEquals(0, dragSteps(y = 100f, height = 100f, lineHeight = 30f))
+    }
+
+    /**
+     * The unit is a line, not the whole `Text`.
+     *
+     * A three-line paragraph is 90 tall in 30 lines. Pulling 40 above its top
+     * crosses one full line of travel past the edge, so two blocks: the edge
+     * itself is the first, and each further 30 is another. With the old unit -
+     * the whole 90-tall `Text` - the same pull would have jumped several blocks
+     * at once, and a short pull would have overshot.
+     */
+    @Test
+    fun aShortPullPastTheTopStepsOncePerLine() {
+        // 1 above the edge: still the first block back only.
+        assertEquals(-1, dragSteps(y = -1f, height = 90f, lineHeight = 30f))
+        // 30 above: one full line past the edge, so two.
+        assertEquals(-2, dragSteps(y = -30f, height = 90f, lineHeight = 30f))
+        assertEquals(-2, dragSteps(y = -40f, height = 90f, lineHeight = 30f))
+        assertEquals(-3, dragSteps(y = -75f, height = 90f, lineHeight = 30f))
+    }
+
+    /** Just past the bottom edge is already the next block. */
+    @Test
+    fun justPastTheBottomIsOneBlock() {
+        assertEquals(1, dragSteps(y = 101f, height = 100f, lineHeight = 30f))
+        // 30 past the edge is a full line of travel beyond the first block.
+        assertEquals(2, dragSteps(y = 130f, height = 100f, lineHeight = 30f))
+    }
+
+    /** Further down adds one per line of travel past the edge. */
+    @Test
+    fun furtherPastTheBottomAddsLines() {
+        assertEquals(2, dragSteps(y = 131f, height = 100f, lineHeight = 30f))
+        assertEquals(3, dragSteps(y = 161f, height = 100f, lineHeight = 30f))
+    }
+
+    /** A zero line height cannot be divided by; it must not step or throw. */
+    @Test
+    fun aZeroLineHeightDoesNotStep() {
+        assertEquals(0, dragSteps(y = 999f, height = 100f, lineHeight = 0f))
+    }
 }
