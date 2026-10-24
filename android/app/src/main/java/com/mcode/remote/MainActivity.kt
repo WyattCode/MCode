@@ -8845,7 +8845,47 @@ fun SessionList(
                          * a stroke reads as an empty box, which is exactly what
                          * every row showed.
                          */
-                        if (s.running || s.directory.isNotBlank()) {
+                        /*
+                         * A spinner while it runs, the mark otherwise.
+                         *
+                         * The reference's card for a live conversation shows a
+                         * half-arc turning inside a soft rounded square, not the
+                         * `</>` - measured on its own card at 400 dpi. This
+                         * branch tested `s.running || s.directory.isNotBlank()`,
+                         * so a running conversation in a project (which is most
+                         * of them) took the code mark and the spinner never
+                         * appeared. Running comes first now.
+                         */
+                        if (s.running) {
+                            val spin = rememberInfiniteTransition(label = "row-mark-spin")
+                            val angle by spin.animateFloat(
+                                initialValue = 0f,
+                                targetValue = 360f,
+                                animationSpec = infiniteRepeatable(
+                                    animation = tween(900, easing = LinearEasing),
+                                ),
+                                label = "row-mark-angle",
+                            )
+                            Box(
+                                Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(LocalCardTile.current),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Canvas(Modifier.size(18.dp)) {
+                                    withTransform({ rotate(angle) }) {
+                                        drawArc(
+                                            color = Color(0xFF9C9A93),
+                                            startAngle = 0f,
+                                            sweepAngle = 200f,
+                                            useCenter = false,
+                                            style = Stroke(width = 2.6f * density, cap = StrokeCap.Round),
+                                        )
+                                    }
+                                }
+                            }
+                        } else if (s.directory.isNotBlank()) {
                             MiIcon(
                                 // Fills the grid: `M9 7…M19 17` inside 24 drew
                                 // 7.2 of mark in an 11.6 box, where Claude's
@@ -8912,6 +8952,44 @@ fun SessionList(
                                     relTime(s.updated),
                                     fontSize = 12.sp,
                                     lineHeight = 16.sp,
+                                    color = LocalMuted.current,
+                                )
+                            }
+                            /*
+                             * The card's second line: what the conversation is
+                             * attached to and whether that link is up.
+                             *
+                             * The reference's own card carries 「已连接 · Remote
+                             * control」 here in #296118 with a small laptop mark
+                             * before it, 12.4 dp of ink starting at 78.0 - which
+                             * is the title's own left edge, so the line sits
+                             * under the title rather than under the tile. This
+                             * card left the space empty, so an 82 dp row had one
+                             * line of text floating in it.
+                             */
+                            Row(
+                                Modifier.padding(top = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                MiIcon(
+                                    "M5.6 7.4h12.8a1.2 1.2 0 0 1 1.2 1.2v7.4H4.4V8.6a1.2 1.2 0 0 1 1.2-1.2zM3.2 16h17.6v2a1 1 0 0 1-1 1H4.2a1 1 0 0 1-1-1z",
+                                    contentDescription = null,
+                                    modifier = Modifier.size(11.2.dp),
+                                    viewBox = 24f,
+                                    strokeWidth = 1.7f,
+                                    tint = if (live) Color(0xFF296118) else LocalMuted.current,
+                                )
+                                Spacer(Modifier.width(5.dp))
+                                Text(
+                                    if (live) "已连接" else "已断开",
+                                    fontSize = 12.sp,
+                                    lineHeight = 15.sp,
+                                    color = if (live) Color(0xFF296118) else LocalMuted.current,
+                                )
+                                Text(
+                                    " · Remote control",
+                                    fontSize = 12.sp,
+                                    lineHeight = 15.sp,
                                     color = LocalMuted.current,
                                 )
                             }
