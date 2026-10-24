@@ -299,6 +299,15 @@ val LocalFieldLine = staticCompositionLocalOf { FieldLine }
 val LocalCard = staticCompositionLocalOf { Color(0xFFF9F9F7) }
 val LocalCardOpen = staticCompositionLocalOf { Color(0xFFF9F9F7) }
 val LocalCardLine = staticCompositionLocalOf { Color(0xFFE1E1DF) }
+
+/**
+ * The conversation card's edge, which the reference draws one step off the page.
+ *
+ * Kept apart from [LocalCardLine] because the two are not the same colour: the
+ * card's is (248,248,246), the 添加设备 capsule's is (225,225,223). Sharing one
+ * token made the capsule lose its outline the moment the card's was corrected.
+ */
+val LocalCardHairline = staticCompositionLocalOf { Color(0xFFF8F8F6) }
 val LocalCardTile = staticCompositionLocalOf { Color(0xFFF5F5F3) }
 
 /* ------------------------------------------------------------------ */
@@ -929,15 +938,22 @@ fun MCodeTheme(content: @Composable () -> Unit) {
         LocalCard provides (if (dark) Color(0xFF20201F) else Color(0xFFF9F9F7)),
         LocalCardOpen provides (if (dark) Color(0xFF262625) else Color(0xFFF9F9F7)),
         /*
-         * The card's hairline is almost invisible: #F8F8F6 on a #F9F9F7 page.
+         * Two different hairlines, and they are not interchangeable.
          *
-         * Measured off the reference's own card, whose edge pixels read
-         * (248,248,246) against a (249,249,247) page - one step. Ours was
-         * #E1E1DF, twenty-four steps down, which is why the cards read as
-         * outlined boxes beside a reference that reads as soft panels with no
-         * outline at all. The shape says "card"; the colour should not.
+         * The conversation card's edge reads (248,248,246) on a (249,249,247)
+         * page - one step, which is why the reference's cards look like soft
+         * panels rather than outlined boxes. The 添加设备 capsule's edge reads
+         * (225,225,223), twenty-four steps down, a line you can actually see.
+         *
+         * An earlier pass changed this one value to #F8F8F6 for the card's
+         * sake and erased the capsule's outline along with it. The card now
+         * uses LocalCardHairline; this stays for anything that really is drawn.
          */
-        LocalCardLine provides (if (dark) Color(0xFF232323) else Color(0xFFF8F8F6)),
+        LocalCardLine provides (if (dark) Color(0xFF232323) else Color(0xFFE1E1DF)),
+        /*
+         * The card's near-invisible edge. See LocalCardLine above.
+         */
+        LocalCardHairline provides (if (dark) Color(0xFF2B2B2B) else Color(0xFFF8F8F6)),
         LocalCardTile provides (if (dark) Color(0xFF2A2A29) else Color(0xFFF5F5F3)),
         /*
          * The selection tint, which this app had never set.
@@ -3915,14 +3931,50 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             )
                             Row(
                                 Modifier
-                                    /* Reference: the capsule starts at x 30.0. */
+                                    /*
+                                     * Height first, then the plate, then the inset.
+                                     *
+                                     * `padding(start = 30.dp)` was the first
+                                     * modifier here, so everything after it -
+                                     * height, clip, border, background - sized
+                                     * and painted the area left over *inside*
+                                     * that 30 dp inset. The capsule's plate and
+                                     * its hairline were being drawn in a box
+                                     * whose left edge had already been pushed
+                                     * 30 in, and the row drew as bare text.
+                                     * The inset belongs at the end, where it
+                                     * moves the whole pill rather than resizing
+                                     * what sits behind it.
+                                     */
                                     .padding(start = 30.dp)
                                     .height(31.6.dp)
                                     .clip(RoundedCornerShape(15.8.dp))
+                                    /*
+                                     * No fill at all.
+                                     *
+                                     * Sampled inside the reference's pill at
+                                     * three points: (249,249,247) - the page's
+                                     * own colour. The capsule is an outline on
+                                     * the page, not a white plate on it. The
+                                     * thumbnail made it look filled; the pixels
+                                     * say otherwise, which is why this is
+                                     * measured rather than eyeballed.
+                                     */
                                     .border(1.dp, LocalCardLine.current, RoundedCornerShape(15.8.dp))
-                                    .background(LocalCard.current)
                                     .clickable { showConnect = true }
-                                    .padding(horizontal = 14.dp),
+                                    /*
+                                     * 9 in from the pill's edge, not 14.
+                                     *
+                                     * Measured: the reference's 添加设备 text
+                                     * starts at x 31.6 with the capsule's own
+                                     * edge at 22.0 - 9.6 in - and its ink is
+                                     * 14.0 dp tall, which is 14sp in this face.
+                                     * At 14 in and 13sp the label sat 15 dp too
+                                     * far right and read a step small, so the
+                                     * pill came out 101.6 wide against the
+                                     * reference's 73.6.
+                                     */
+                                    .padding(horizontal = 9.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 MiIcon(
@@ -3933,8 +3985,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     strokeWidth = 2.2f,
                                     tint = LocalText.current,
                                 )
-                                Spacer(Modifier.width(7.dp))
-                                Text("添加设备", fontSize = 13.sp, color = LocalText.current)
+                                /*
+                                 * 13.2 between the plus and the words.
+                                 *
+                                 * Measured inside the reference's pill: the plus
+                                 * runs 31.6..44.0, and 添加设备 starts at 57.2 -
+                                 * so 13.2 of air, not the 6 this had. With 6 the
+                                 * label crowded the mark and the whole pill came
+                                 * out one third narrower than the reference's.
+                                 */
+                                Spacer(Modifier.width(13.2.dp))
+                                Text("添加设备", fontSize = 14.sp, color = LocalText.current)
                             }
                         }
                         if (leftMode == LeftMode.Sessions && !searching) Row(
@@ -8749,7 +8810,7 @@ fun SessionList(
                             else Modifier
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(LocalCard.current)
-                                .border(1.dp, LocalCardLine.current, RoundedCornerShape(12.dp)),
+                                .border(1.dp, LocalCardHairline.current, RoundedCornerShape(12.dp)),
                         )
                         .combinedClickable(onClick = { onSelect(s.id) }, onLongClick = { onLongPress?.invoke(s) })
                         /*
