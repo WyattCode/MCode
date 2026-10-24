@@ -1,21 +1,28 @@
-MCode Remote: the drawer, counted and measured instead of recalled
+MCode Remote: 最近记录 exists, and it is not Code
 
-Photographed Claude's own drawer on the pad and measured it, which settled three
-things the code had been guessing at:
+Claude opens on a flat list of conversations called 最近记录, and Code - the one
+with the 设备 panel, the capsule and the cards - is a separate destination in the
+drawer. This app had one Sessions mode doing both, so the home list carried a
+device block, drew every row as a card, and said 已连接 · Remote control under
+every title where the reference says when it happened.
 
-最近使用 lists seven conversations, not three. The comment above the call said
-"Six, not three" while the code passed take(3) - two different guesses at a
-number that is simply visible in the picture: seven rows, first title at y 390.0,
-last at 711.2, pitch 28 to 31.
+Split: LeftMode.Recent is the new default and the drawer's first row. Code keeps
+LeftMode.Sessions and its cards. Both share the column's chrome through one
+isListPage flag; only the list's skin and the device block differ.
 
-Drawer rows start 30.0 in, with the glyph at 30.0..41.6 and the title at 61.2.
-The code passed 10 for the compact case while its own comment two lines above
-said "the drawer's glyph starts at 30.0" - so every row began 20 dp left of
-where the comment claimed and titles landed at 16.4 against 61.2. Now 30.0 /
-40.4 / 62.0, all three within 1.2 dp.
+Measured on the home list, then applied:
 
-Navigation pitch was already right: 项目 114.8, Code 171.2, Artifacts 228.0,
-定时任务 282.0 against the reference's 115.2 / 172.8 / 227.6 / 283.6, and
-最近使用 at 348.8 exactly in both.
+Search field is permanent there - 336 by 40, edge at x 12.0 - and absent from
+Code. It was rendered only once a search was set, so the home page drew no
+search at all.
 
-The drawer is 400.0 dp wide with the scrim at (169,169,168).
+Rows are flat: no plate, no hairline. The mark sits at 26.0..36.4 against the
+reference's 26.0..37.6, off a 1.6 row inset.
+
+Title is 18sp and the time is 14sp on its own line under it, both left aligned -
+the reference's title ink is 12.8 tall with the time 10.0 below it. The row drew
+15sp with the timestamp at the trailing end, and drew it twice once both paths
+ran.
+
+Icon column is 23.6 on the flat rows, not the cards' 36 - different pages'
+geometry, and the 36 put the home title at 77.6 when the reference has 49.6.

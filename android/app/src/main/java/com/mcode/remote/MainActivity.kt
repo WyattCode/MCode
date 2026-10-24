@@ -1222,7 +1222,22 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
      * What the left column is showing, as Claude's pane switches between them:
      * the conversation list, the projects, and the scheduled tasks.
      */
-    var leftMode by remember { mutableStateOf(LeftMode.Sessions) }
+    /*
+     * Recent, not Sessions.
+     *
+     * Opened fresh, Claude lands on 最近记录 - a flat list of conversations -
+     * and Code is a separate destination reached from the drawer. This used to
+     * start on Sessions, which is the Code page, so the first thing the app
+     * showed was a column headed 设备 with cards under it.
+     */
+    var leftMode by remember { mutableStateOf(LeftMode.Recent) }
+    /*
+     * Both list pages share the column's chrome - the drawer button, the header
+     * bar, the search field, the foot capsule. Only the list's own skin and the
+     * device block above it differ: 最近记录 is flat rows, Code is cards under a
+     * 设备 panel.
+     */
+    val isListPage = leftMode == LeftMode.Recent || leftMode == LeftMode.Sessions
     var projectAdding by remember { mutableStateOf(false) }
     /** Bumped to re-read the project list after one is added. */
     var refreshCommandsTick by remember { mutableStateOf(0) }
@@ -3610,6 +3625,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     onPlugins = { leftMode = LeftMode.Plugins; closeDrawer() },
                     onScheduled = { leftMode = LeftMode.Scheduled; closeDrawer() },
                     onProjects = { leftMode = LeftMode.Projects; closeDrawer() },
+                    onRecent = { leftMode = LeftMode.Recent; closeDrawer() },
                     onSessions = { leftMode = LeftMode.Sessions; closeDrawer() },
                     onSettings = { leftMode = LeftMode.Settings; closeDrawer() },
                     currentPage = leftMode,
@@ -3671,7 +3687,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                      * leaving this one up stacked two bars - 「最近记录」 over
                      * 「项目」 - which read as one page with two titles.
                      */
-                    if (leftMode == LeftMode.Sessions) Box(Modifier.fillMaxWidth().height(63.2.dp)) {
+                    if (isListPage) Box(Modifier.fillMaxWidth().height(63.2.dp)) {
                         /*
                          * The title goes in first, on the full column width;
                          * the marks row goes over it afterwards. Centring the
@@ -3689,7 +3705,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                              * 「最近记录」 made the header read as a section
                              * heading inside a page that already had one.
                              */
-                            if (leftMode == LeftMode.Artifacts) "产物中心" else "Code",
+                            /*
+                             * The header names the page.
+                             *
+                             * Claude's two list pages carry different words:
+                             * 最近记录 over the flat list, Code over the device
+                             * panel. This said Code for both, because both were
+                             * one mode.
+                             */
+                            if (leftMode == LeftMode.Recent) "最近记录"
+                            else if (leftMode == LeftMode.Artifacts) "产物中心"
+                            else "Code",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Medium,
                             color = LocalText.current,
@@ -3739,11 +3765,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          */
                         Box(
                             Modifier.size(44.dp).clickable {
-                                if (leftMode == LeftMode.Sessions) openDrawer() else leftMode = LeftMode.Sessions
+                                if (isListPage) openDrawer() else leftMode = LeftMode.Recent
                             },
                             contentAlignment = Alignment.Center,
                         ) {
-                            if (leftMode == LeftMode.Sessions) {
+                            if (isListPage) {
                                 MiIcon(
                                     /*
                                      * The path fills the 24 grid, because a
@@ -4074,7 +4100,17 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 )
                             }
                         }
-                        if (leftMode == LeftMode.Sessions && searching) Row(
+                        /*
+                         * Always there on 最近记录, only on demand on Code.
+                         *
+                         * Photographed: Claude's home list carries a white search
+                         * field under the header permanently - 336 by 40, edge at
+                         * x 12.0 - while its Code page has no field at all. This
+                         * showed the field only once `searching` was set, so the
+                         * home page drew no search and its first row sat at 126.4
+                         * where the reference's field runs 108.8..148.8.
+                         */
+                        if ((leftMode == LeftMode.Recent || searching) && isListPage) Row(
                             Modifier
                                 .fillMaxWidth()
                                 /*
@@ -4350,6 +4386,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 search,
                                 onSelect = { select(it) },
                                 compact = false,
+                                /*
+                                 * 最近记录 is the flat one: no plate, no hairline,
+                                 * just rows. Code is the page with cards.
+                                 */
+                                flat = leftMode == LeftMode.Recent,
                                 modifier = Modifier.weight(1f).fillMaxWidth(),
                                 onLongPress = { sheetTarget = it },
                                 unseen = unseen.toList(),
@@ -4364,7 +4405,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          * after the list so the list takes the space first and
                          * the capsule never covers a row.
                          */
-                        if (leftMode == LeftMode.Sessions) FootCapsule(
+                        if (isListPage) FootCapsule(
                             /*
                              * The desktop's capsule reads 新建任务 and makes a
                              * conversation wherever the list is showing; it is
@@ -8729,6 +8770,15 @@ fun SessionList(
     onSelect: (String) -> Unit,
     compact: Boolean,
     modifier: Modifier = Modifier,
+    /**
+     * No card: a flat row on the page.
+     *
+     * Claude's 最近记录 list is rows on the page - icon, title, and a time under
+     * it - with no plate and no hairline. Its Code page is the one that draws
+     * cards. Same component, two skins, because the rows are otherwise
+     * identical.
+     */
+    flat: Boolean = false,
     onLongPress: ((SessionRow) -> Unit)? = null,
     /** Rows whose turn finished out of sight, and rows parked on an answer. */
     unseen: List<String> = emptyList(),
@@ -8812,7 +8862,8 @@ fun SessionList(
                          * only shrinks what is drawn, not what can be tapped.
                          */
                         /* 12 either side, not 14: the reference's card spans x 12.0..347.6. */
-                        .padding(horizontal = if (compact) 6.dp else 12.dp, vertical = if (compact) 0.dp else 5.dp)
+                        /* 1.6 on the flat list: measured, the mark sits at 26.0 and the row draws its icon column inside this padding. */
+                        .padding(horizontal = if (compact) 6.dp else if (flat) 1.6.dp else 12.dp, vertical = if (compact) 0.dp else 5.dp)
                         .height(if (compact) 43.6.dp else 68.dp)
                         /*
                          * Cards in the list, plain lines in the drawer.
@@ -8827,7 +8878,7 @@ fun SessionList(
                          * slabs inside a panel that has no room for them.
                          */
                         .then(
-                            if (compact) Modifier
+                            if (compact || flat) Modifier
                             else Modifier
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(LocalCard.current)
@@ -8945,7 +8996,16 @@ fun SessionList(
                      */
                     Box(
                         Modifier
-                            .width(if (compact) 31.2.dp else 36.dp)
+                            /*
+                             * 23.6 on the flat list, 36 on the cards.
+                             *
+                             * Photographed: the home row's mark runs 26.0..37.6
+                             * and its title starts at 49.6 - a 23.6 column off
+                             * the row's 26.0 padding. The cards' 36 column is a
+                             * different page's geometry, and using it here put
+                             * the home title at 77.6 against 49.6.
+                             */
+                            .width(if (compact) 31.2.dp else if (flat) 23.6.dp else 36.dp)
                             .offset(y = if (compact) (-6.4).dp else 0.dp),
                         contentAlignment = if (compact) Alignment.TopStart else Alignment.Center,
                     ) {
@@ -9075,16 +9135,35 @@ fun SessionList(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
                                     s.title.ifEmpty { s.id }.take(26),
-                                    fontSize = 15.sp,
+                                    /*
+                                     * 18sp, which the comment here already said.
+                                     *
+                                     * "Measured: Main's cap height is 12.4 dp and
+                                     * the CJK title 15.2 - 18sp in this face,
+                                     * where the 16 here drew 14.4" - and the code
+                                     * then passed 15. Photographed against the
+                                     * home list, the title ink is 12.8 against
+                                     * this row's 11.2.
+                                     */
+                                    fontSize = if (flat) 18.sp else 15.sp,
                                     fontWeight = FontWeight.Medium,
-                                    lineHeight = 20.sp,
+                                    lineHeight = if (flat) 22.sp else 20.sp,
                                     color = LocalText.current,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f, fill = false),
                                 )
                                 Spacer(Modifier.weight(1f))
-                                Text(
+                                /*
+                                 * Cards put the time at the row's trailing end;
+                                 * flat rows put it under the title instead.
+                                 *
+                                 * Claude's 最近记录 has no time on the title
+                                 * line at all - it sits on the second line, left
+                                 * aligned with the title. Keeping both drew the
+                                 * word twice, once at each end.
+                                 */
+                                if (!flat) Text(
                                     relTime(s.updated),
                                     fontSize = 12.sp,
                                     lineHeight = 16.sp,
@@ -9103,7 +9182,30 @@ fun SessionList(
                              * card left the space empty, so an 82 dp row had one
                              * line of text floating in it.
                              */
-                            Row(
+                            /*
+                             * Flat rows carry the time here; cards carry the link.
+                             *
+                             * Photographed, Claude's 最近记录 puts a grey 「4分钟前」
+                             * under the title, aligned to the title's own left
+                             * edge, and says nothing about connections - the
+                             * 已连接 • Remote control line belongs to its Code
+                             * page's cards. Drawing the connection line on both
+                             * made the home list a column of status readouts.
+                             */
+                            if (flat) {
+                                /*
+                                 * 14sp, 10.0 above: the reference's title ink
+                                 * ends at 186.4 and its time ink starts at
+                                 * 196.4.
+                                 */
+                                Text(
+                                    relTime(s.updated),
+                                    fontSize = 14.sp,
+                                    lineHeight = 17.sp,
+                                    color = LocalMuted.current,
+                                    modifier = Modifier.padding(top = 6.dp),
+                                )
+                            } else Row(
                                 Modifier.padding(top = 3.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
@@ -9246,6 +9348,8 @@ fun DrawerContent(
     onProjects: () -> Unit = {},
     /** The Code row: the conversation list, which is this app's own Code page. */
     onSessions: () -> Unit = {},
+    /** The 最近记录 row: the flat conversation list Claude opens on. */
+    onRecent: () -> Unit = {},
     onSettings: () -> Unit = {},
     /** Which column page is open, so the drawer can mark the row for it. */
     currentPage: LeftMode = LeftMode.Sessions,
@@ -9361,6 +9465,24 @@ fun DrawerContent(
                  */
                 path = "M2 2.6h20M2 8.2h20M3.6 12.4h16.8l-1.6 9.2H5.2z",
             ) { onProjects() }
+            /*
+             * 最近记录, the reference's first row.
+             *
+             * Claude's drawer opens with four destinations - 项目, 最近记录,
+             * Code, Artifacts, 定时任务 in that order once 最近记录 is counted -
+             * and this rail had three: 项目, Code, Artifacts, 定时任务. The
+             * missing one was the page the app opens on, so the rail had no row
+             * for the screen the reader is looking at, and 最近记录 / Code were
+             * fused into a single Sessions mode that carried a device panel the
+             * home list should not have.
+             */
+            DrawerItem(
+                Icons.Outlined.Schedule,
+                "最近记录",
+                active = currentPage == LeftMode.Recent,
+                path = "M3.4 11.4a8.6 8.6 0 1 1 2.6 6.2M3.4 7.2v4.4h4.4M12 8v4.6l3.2 2",
+                pathStroke = 1.8f,
+            ) { onRecent() }
             /*
              * 「Code」, opening the conversation list - the reference's own
              * second row.
@@ -10325,7 +10447,7 @@ fun ProjectsScreen(
 }
 
 /** Which page the left column is showing. Claude switches between them in place. */
-enum class LeftMode { Sessions, Projects, Artifacts, Scheduled, Plugins, Settings }
+enum class LeftMode { Recent, Sessions, Projects, Artifacts, Scheduled, Plugins, Settings }
 
 /**
  * The black capsule at the foot of the column.
