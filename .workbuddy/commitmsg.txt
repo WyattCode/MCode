@@ -1,16 +1,16 @@
-MCode Remote: the card's second line, and a spinner that never showed
+MCode Remote: the reading column is 40 in from the pane, not 137.6
 
-The reference's conversation card carries 「已连接 · Remote control」 under its
-title, in #296118 with a small laptop mark before it - 12.4 dp of ink starting at
-78.0, which is the title's own left edge. Ours left that half of an 82 dp card
-empty, so the row was one line of text floating in a tall frame. The line is in
-now, and it says 已断开 in the muted colour when the link is down.
+A_claude.png is the reference Code pane, which is the layout this app mirrors -
+device block, conversation list, conversation beside it. Measured on it, both
+prose and the tool row start at x 400.0 with the pane edge at 360.0: 40.0 dp of
+inset, the two of them aligned with each other.
 
-The mark at the card's start is a turning half-arc for a live conversation, not
-the `</>`. That branch existed but tested `s.running || s.directory.isNotBlank()`,
-so a running conversation that works in a project - which is most of them - took
-the code mark and the spinner could never appear. Running is checked first now.
+The 137.6/124 here came from the reference chat pane, whose text starts 99.5 dp
+in from a 775 dp pane. That is a different page with a different measure, and the
+comment above the line said so - it had already noticed it was reading the wrong
+pane and kept the number anyway. On this pane it put the text 97 dp too far in
+and left the transcript narrower than the reference by twice that.
 
-Both are visible side by side against A_claude.png: this column's Code title, 设备
-label, 添加设备 capsule, 会话 heading and status-carrying card now sit where the
-reference puts them.
+40 either side now. Vertified by measurement, not by eye: no device was attached
+when this was written, so the check is the reference value against the code, and
+the screenshot above it is the one this was measured from.
