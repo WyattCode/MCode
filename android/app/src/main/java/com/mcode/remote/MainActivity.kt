@@ -928,7 +928,16 @@ fun MCodeTheme(content: @Composable () -> Unit) {
          */
         LocalCard provides (if (dark) Color(0xFF20201F) else Color(0xFFF9F9F7)),
         LocalCardOpen provides (if (dark) Color(0xFF262625) else Color(0xFFF9F9F7)),
-        LocalCardLine provides (if (dark) Color(0xFF232323) else Color(0xFFE1E1DF)),
+        /*
+         * The card's hairline is almost invisible: #F8F8F6 on a #F9F9F7 page.
+         *
+         * Measured off the reference's own card, whose edge pixels read
+         * (248,248,246) against a (249,249,247) page - one step. Ours was
+         * #E1E1DF, twenty-four steps down, which is why the cards read as
+         * outlined boxes beside a reference that reads as soft panels with no
+         * outline at all. The shape says "card"; the colour should not.
+         */
+        LocalCardLine provides (if (dark) Color(0xFF232323) else Color(0xFFF8F8F6)),
         LocalCardTile provides (if (dark) Color(0xFF2A2A29) else Color(0xFFF5F5F3)),
         /*
          * The selection tint, which this app had never set.
@@ -8720,7 +8729,8 @@ fun SessionList(
                          * comes before `combinedClickable`: a modifier after it
                          * only shrinks what is drawn, not what can be tapped.
                          */
-                        .padding(horizontal = if (compact) 6.dp else 14.dp, vertical = if (compact) 0.dp else 5.dp)
+                        /* 12 either side, not 14: the reference's card spans x 12.0..347.6. */
+                        .padding(horizontal = if (compact) 6.dp else 12.dp, vertical = if (compact) 0.dp else 5.dp)
                         .height(if (compact) 43.6.dp else 68.dp)
                         /*
                          * Cards in the list, plain lines in the drawer.
@@ -8900,14 +8910,24 @@ fun SessionList(
                                     .background(LocalCardTile.current),
                                 contentAlignment = Alignment.Center,
                             ) {
-                                Canvas(Modifier.size(18.dp)) {
+                                /*
+                                 * 20 dp, and a heavy arc.
+                                 *
+                                 * Measured on the reference's own running card:
+                                 * the ring's ink runs 20.0 dp wide by 14.0 tall -
+                                 * it is an open arc, taller than a half circle
+                                 * would be, and its stroke is thick relative to
+                                 * its size. 18 dp at 2.6 read as a hairline hoop
+                                 * beside a 36 dp tile.
+                                 */
+                                Canvas(Modifier.size(20.dp)) {
                                     withTransform({ rotate(angle) }) {
                                         drawArc(
                                             color = Color(0xFF9C9A93),
                                             startAngle = 0f,
-                                            sweepAngle = 200f,
+                                            sweepAngle = 220f,
                                             useCenter = false,
-                                            style = Stroke(width = 2.6f * density, cap = StrokeCap.Round),
+                                            style = Stroke(width = 3.2f * density, cap = StrokeCap.Round),
                                         )
                                     }
                                 }
@@ -9014,7 +9034,15 @@ fun SessionList(
                                     color = if (live) Color(0xFF296118) else LocalMuted.current,
                                 )
                                 Text(
-                                    " · Remote control",
+                                    /*
+                                     * A bullet, not a middot.
+                                     *
+                                     * The reference's separator is a filled dot at
+                                     * mid-height - U+2022 - where this used U+00B7,
+                                     * which sits on the baseline of a Latin face
+                                     * and reads as a full stop between two words.
+                                     */
+                                    " • Remote control",
                                     fontSize = 12.sp,
                                     lineHeight = 15.sp,
                                     color = LocalMuted.current,
