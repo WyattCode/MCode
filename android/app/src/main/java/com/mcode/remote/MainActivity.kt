@@ -3891,11 +3891,23 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 "设备",
                                 fontSize = 12.sp,
                                 color = LocalMuted.current,
-                                modifier = Modifier.padding(start = 14.8.dp, top = 10.dp, bottom = 6.dp),
+                                /*
+                                 * 28.8 in, 41.6 under the header's ink.
+                                 *
+                                 * Measured on the reference: 设备 starts at x
+                                 * 28.8 and its top is 41.6 below the header
+                                 * block's bottom; the capsule under it is 36.8
+                                 * below the label's own bottom. This sat at 14.8
+                                 * with 10/6, which pulled the label left against
+                                 * the column edge and stacked everything under it
+                                 * 14 dp too high - the whole block drifted up.
+                                 */
+                                modifier = Modifier.padding(start = 28.8.dp, top = 13.2.dp, bottom = 22.8.dp),
                             )
                             Row(
                                 Modifier
-                                    .padding(start = 14.8.dp)
+                                    /* Reference: the capsule starts at x 30.0. */
+                                    .padding(start = 30.dp)
                                     .height(31.6.dp)
                                     .clip(RoundedCornerShape(15.8.dp))
                                     .border(1.dp, LocalCardLine.current, RoundedCornerShape(15.8.dp))
@@ -3919,7 +3931,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                         if (leftMode == LeftMode.Sessions && !searching) Row(
                             Modifier
                                 .fillMaxWidth()
-                                .padding(start = 28.8.dp, end = 20.4.dp, top = 12.dp, bottom = 4.dp),
+                                /*
+                                 * 44.0 above, measured: the capsule's bottom is
+                                 * at 178.0 and 会话's ink starts at 222.4.
+                                 */
+                                .padding(start = 28.8.dp, end = 20.4.dp, top = 26.dp, bottom = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             /*
@@ -4265,15 +4281,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                              */
                             label = "+ 新建会话",
                             /*
-                             * Against the column's right edge, not centred.
+                             * Against the column's right edge, 16.4 off it.
                              *
-                             * Measured: the capsule runs x=552..859 in a column
-                             * that ends at 925, so it sits 26.4 dp off the seam
-                             * and 220.8 off the left edge. Centred put it 105 dp
-                             * too far left and made the column read as empty on
-                             * the side the thumb reaches for.
+                             * Re-measured on the reference's own column, which is
+                             * 900 px wide, not 925: its capsule runs
+                             * x 552.0..859.0, i.e. 16.4 dp from the seam. The
+                             * 26.4 here came from measuring against 925 - a
+                             * width this column never has - and put the button
+                             * 10 dp inboard of where the reference sits.
                              */
-                            modifier = Modifier.align(Alignment.End).padding(end = 26.4.dp),
+                            modifier = Modifier.align(Alignment.End).padding(end = 16.4.dp),
                             onClick = { newSession() },
                         )
                     }
