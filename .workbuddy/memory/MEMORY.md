@@ -310,3 +310,15 @@
   用两行 logcat 就分开了：`onSettings fired` + `leftMode=Settings` 都正常，
   只有绘制顺序错。**先打日志，再猜坐标。**
 - 设置页已可进入，左导航 12 项 + 右内容面板，可交互。**无参考件，视觉未校准。**
+- **动手前先扫一遍全部截图**（2026-10-24 大教训）：我断定「没有抽屉/Code 页参考件」，
+  于是自己造布局 + 写长注释论证。实际 `claude_code.png`（抽屉）和
+  `A_claude.png`（Code 页）一直躺在 `.workbuddy/shots/`（748 张可用）。
+  先用缩略图总览扫（`SHEET*.png` 范例），别靠推断。
+- **参考件事实**：抽屉四项 = 项目/Code/Artifacts/定时任务，Code 配 `</>`；
+  「最近使用」3 行 + 查看全部；抽屉会话行**无卡片**（`#F3F3F0` 通铺）。
+  Code 页左栏 = 设备(+添加设备胶囊 117.6×31.6) + 会话 + 卡片(高82.4)。
+  卡片第二行 `已连接 · Remote control` 绿 `#296118`。
+- **`if (a || b)` 里 a 是「运行中」时要留意**：`s.running || s.directory.isNotBlank()`
+  让旋转环分支永远不显示。**布尔或里，特殊态要单独优先判断。**
+- **Compose**：`DrawScope` 里转角度用 `withTransform({ rotate(angle) }) { }`，
+  直接 `rotate()` 不是可用扩展。
