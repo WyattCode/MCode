@@ -1,22 +1,19 @@
-MCode Remote: one hairline token was serving two different lines
+MCode Remote: there was no tile behind the mark
 
-The 添加设备 capsule lost its outline when the card hairline was corrected last
-pass, because both drew from LocalCardLine. They are not the same colour: the
-card edge reads (248,248,246) on a (249,249,247) page - one step, invisible on
-purpose - while the capsule edge reads (225,225,223), which you can see. The
-token is split: LocalCardHairline for the card, LocalCardLine for anything that
-is meant to be a line.
+Sampled the reference card at the mark's own position: (249,249,247) the whole
+way through - the page colour. There is no grey square there. This drew a 36 dp
+rounded square first and the glyph on top of it, which is why the column read as
+a list of tiles beside a reference that reads as a list of lines.
 
-The capsule itself was also wrong in three ways, all measured:
+Removed from both branches: the empty decorative Box that drew the square, and
+the spinner's own plate.
 
-Its content sat at 14 dp inset with 13 sp text and a 6 dp gap after the plus,
-against the reference 9.6 inset, 14 sp and 13.2 gap - which is why it came out
-101.6 wide where the reference is 73.6.
+Verified after the change: the mark position now samples (249,249,247), matching
+the reference exactly, and the card height reads 81.6 dp against the reference's
+83.2.
 
-And it has no fill at all. Sampled at three points inside the reference pill:
-(249,249,247), the page colour. I had read it as a white plate off the
-thumbnail - the pixels say it is an outline on the page and nothing else.
-
-Pill width, height and fill are now the reference's numbers. The fill change is
-the only one of these that was not photographed: the pad locked itself and adb
-cannot light it on battery, five attempts in a row.
+One thing I nearly got wrong: the reference's one card shows a turning arc, not
+the code mark, so I started to replace the code mark with an arc. That card is
+running - the arc is the running state, which this already has. A still
+conversation has no sample in the reference to compare against, so the code mark
+stays.
