@@ -1,19 +1,27 @@
-MCode Remote: there was no tile behind the mark
+MCode Remote: the Code column, matched to a photographed Claude
 
-Sampled the reference card at the mark's own position: (249,249,247) the whole
-way through - the page colour. There is no grey square there. This drew a 36 dp
-rounded square first and the glyph on top of it, which is why the column read as
-a list of tiles beside a reference that reads as a list of lines.
+Claude is installed on the pad, so this is now measured against the real thing
+rather than a remembered screenshot - com.anthropic.claude launches with am
+start, and the shots are in .workbuddy/shots/CLAUDE-*.png.
 
-Removed from both branches: the empty decorative Box that drew the square, and
-the spinner's own plate.
+Two of these were wrong in ways no amount of arithmetic would have found:
 
-Verified after the change: the mark position now samples (249,249,247), matching
-the reference exactly, and the card height reads 81.6 dp against the reference's
-83.2.
+The 添加设备 capsule started at x 30 where the reference starts at 16. The 30
+came from a pass that measured the text inside the pill and treated that as the
+pill's own left edge, so the control began where its content should have.
+Photographed, the pill's border is at 16.0 and its plus mark at 31.6 - 15.6 of
+padding inside, not 9. Now measured identically: left 16.0, right 130.8, width
+115.2, all three equal to the reference.
 
-One thing I nearly got wrong: the reference's one card shows a turning arc, not
-the code mark, so I started to replace the code mark with an arc. That card is
-running - the arc is the running state, which this already has. A still
-conversation has no sample in the reference to compare against, so the code mark
-stays.
+会话 started at 32.8 against the reference's 28.8. Its row already began at
+28.8; the heading's own 4 dp touch inset pushed the word off that line, so the
+heading was the one element in the block out of line with 设备 above it and the
+cards below. Inset removed from the padding and kept as a touch area.
+
+Everything else on this column is within a dp of the reference - header 55.6,
+设备 116.0/28.8, 会话 222.4/28.8, first card 282.4.
+
+Also corrected a belief from last pass: the card hairline is #F8F8F6 after all.
+The #E1E1DF reading came from sampling a row that crossed the pill's border
+rather than the card's; at a row through the card's flat side both samples are
+(248,248,246).

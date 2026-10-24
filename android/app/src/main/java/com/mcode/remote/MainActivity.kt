@@ -3946,7 +3946,19 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                      * moves the whole pill rather than resizing
                                      * what sits behind it.
                                      */
-                                    .padding(start = 30.dp)
+                                    /*
+                                     * 16 from the column edge, not 30.
+                                     *
+                                     * Photographed on Claude's Code page: the
+                                     * capsule's left border sits at x 16.0 and
+                                     * its plus mark at 31.6 - so 15.6 of padding
+                                     * inside the pill, not 9. The 30 that was
+                                     * here came from a pass that measured the
+                                     * text's start and called it the pill's edge,
+                                     * which made the whole capsule start where
+                                     * its content should.
+                                     */
+                                    .padding(start = 16.dp)
                                     .height(31.6.dp)
                                     .clip(RoundedCornerShape(15.8.dp))
                                     /*
@@ -3974,13 +3986,13 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                      * pill came out 101.6 wide against the
                                      * reference's 73.6.
                                      */
-                                    .padding(horizontal = 9.dp),
+                                    .padding(horizontal = 15.6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 MiIcon(
                                     "M12 5v14M5 12h14",
                                     contentDescription = null,
-                                    modifier = Modifier.size(13.dp),
+                                    modifier = Modifier.size(12.8.dp),
                                     viewBox = 24f,
                                     strokeWidth = 2.2f,
                                     tint = LocalText.current,
@@ -4024,10 +4036,19 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 "会话",
                                 fontSize = 13.sp,
                                 color = LocalMuted.current,
+                                /*
+                                 * No 4 dp inset of its own.
+                                 *
+                                 * The row already starts at 28.8, which is where
+                                 * the reference's 会话 sits; the touch target's
+                                 * own 4 pushed the word to 32.8 and made the
+                                 * heading the only element in the block out of
+                                 * line with 设备 above it and the cards below.
+                                 */
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(6.dp))
                                     .clickable { searching = true }
-                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                    .padding(vertical = 2.dp),
                             )
                             Spacer(Modifier.weight(1f))
                             Row(

@@ -24,7 +24,7 @@ def bands(path, x0, x1, y0, y1, thr=150, gap=10):
              max(rows[y][1] for y in g)/DPI) for g in gs]
 
 ref = bands(".workbuddy/shots/CLAUDE-CODE.png", 10, 880, 80, 1500)
-mine = bands(".workbuddy/shots/MINE-CODE.png", 10, 880, 80, 1500)
+mine = bands(".workbuddy/shots/M3.png", 10, 880, 80, 1500)
 
 print("CLAUDE Code 页左栏（y起, y止, x起, x止）")
 for b in ref[:10]:
