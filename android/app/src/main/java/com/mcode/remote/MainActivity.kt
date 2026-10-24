@@ -3873,6 +3873,49 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          * conversation was an empty box that said nothing and
                          * took a whole row.
                          */
+                        /*
+                         * 设备 over 添加设备, as the reference's Code page has it.
+                         *
+                         * Measured on its own column: the 设备 label sits at
+                         * y 121.6 and the white capsule under it runs
+                         * 117.6 x 31.6 dp from 14.8 dp in. Above 会话, this is
+                         * the block that says what the list below is a list of -
+                         * the machines the conversations are attached to.
+                         *
+                         * In MCode the machine is the one the gateway is
+                         * connected to, so the capsule offers a new connection
+                         * rather than a device picker.
+                         */
+                        if (leftMode == LeftMode.Sessions && !searching) {
+                            Text(
+                                "设备",
+                                fontSize = 12.sp,
+                                color = LocalMuted.current,
+                                modifier = Modifier.padding(start = 14.8.dp, top = 10.dp, bottom = 6.dp),
+                            )
+                            Row(
+                                Modifier
+                                    .padding(start = 14.8.dp)
+                                    .height(31.6.dp)
+                                    .clip(RoundedCornerShape(15.8.dp))
+                                    .border(1.dp, LocalCardLine.current, RoundedCornerShape(15.8.dp))
+                                    .background(LocalCard.current)
+                                    .clickable { showConnect = true }
+                                    .padding(horizontal = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                MiIcon(
+                                    "M12 5v14M5 12h14",
+                                    contentDescription = null,
+                                    modifier = Modifier.size(13.dp),
+                                    viewBox = 24f,
+                                    strokeWidth = 2.2f,
+                                    tint = LocalText.current,
+                                )
+                                Spacer(Modifier.width(7.dp))
+                                Text("添加设备", fontSize = 13.sp, color = LocalText.current)
+                            }
+                        }
                         if (leftMode == LeftMode.Sessions && !searching) Row(
                             Modifier
                                 .fillMaxWidth()
