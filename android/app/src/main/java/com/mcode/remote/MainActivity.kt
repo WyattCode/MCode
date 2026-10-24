@@ -8921,14 +8921,17 @@ fun SessionList(
                             .offset(y = if (compact) (-6.4).dp else 0.dp),
                         contentAlignment = if (compact) Alignment.TopStart else Alignment.Center,
                     ) {
-                        if (!compact) {
-                            Box(
-                                Modifier
-                                    .size(36.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(LocalCardTile.current),
-                            )
-                        }
+                        /*
+                         * No tile behind the mark.
+                         *
+                         * Sampled the reference's card at the mark's own
+                         * position: (249,249,247) - the page's colour, all the
+                         * way through. There is no grey square there, only the
+                         * mark itself and whatever the mark is made of. This
+                         * drew a 36 dp rounded square first and then the glyph on
+                         * top, which is why the column read as a list of tiles
+                         * beside a reference that reads as a list of lines.
+                         */
                         /*
                          * The desktop's `convo-cell`: a conversation mark on
                          * every row (the path at Sidebar.vue:1288, 24 grid, 2
@@ -8965,10 +8968,7 @@ fun SessionList(
                                 label = "row-mark-angle",
                             )
                             Box(
-                                Modifier
-                                    .size(36.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(LocalCardTile.current),
+                                Modifier.size(36.dp),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 /*
