@@ -1,22 +1,25 @@
-MCode Remote: the composer and the list indent, both measured
+MCode Remote: three colours and two sizes, read off the reference side by side
 
-Composer: verified on the pad at 37.6 / 14.4 dp against the reference 36.8 /
-13.2, the difference being the hairline and its antialiasing. It was 8.0 / 329.2
-before the fix, i.e. running the pane edge to edge.
+Putting the two columns next to each other at last, at the same scale, showed
+four things that no measurement had caught:
 
-List indent: 8.8 for the first level, 20.4 for each one under it. Measured off
-A_claude.png, whose top-level bullet starts at 48.8 dp and whose nested ring at
-69.2 against a prose edge of 40.0 - so 8.8 and 29.2, and 8.8 + 20.4 = 29.2. The
-old depth * 16 put the first level flush with the prose (a list looked like more
-paragraphs) and stacked each level only 16 in.
+The card hairline was #E1E1DF - twenty-four steps below the page. The
+reference edge pixels read (248,248,246) on a (249,249,247) page: one step. Its
+cards are soft panels whose shape carries the separation; ours were outlined
+boxes. That single colour is most of why the two columns read differently even
+where every number matched.
 
-The nesting itself could not be seen on glass: the pad has no conversation
-containing a nested list, and adb input text does not reach a Compose field, so
-the reply could not be provoked. The two numbers above are the reference measured
-at both levels, and the arithmetic is checked against both.
+The card spans x 12.0..347.6 in the reference and 14.0..345.6 here - two dp
+narrow on both sides.
 
-Also set on the device, because a sleeping pad costs a round trip every time:
-screen_off_timeout maxed, lockscreen.disabled 1, lock_screen_lock_after_timeout
-maxed, screensaver off. It runs on battery, so Android still sleeps it - that
-needs power, which stay_on_while_plugged_in cannot substitute for - and
-.workbuddy/keepawake.py nudges it awake on a loop instead.
+The separator between 已连接 and Remote control was U+00B7, which sits on the
+baseline of a Latin face; the reference uses U+2022, a filled dot at mid-height.
+
+The running card's mark is a 20.0 x 14.0 open arc, not the 18 dp hairline hoop
+this drew.
+
+All four are changed. Only the ones before this batch were photographed on glass:
+the pad sleeps within seconds on battery and adb cannot wake it (KEYCODE_WAKEUP,
+am start, swipe, stayon - all report success, panel stays black, eight retries).
+So the four above are reference measurements and the build compiles, and that is
+the whole of what can honestly be claimed for them right now.

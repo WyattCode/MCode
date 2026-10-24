@@ -1,0 +1,10 @@
+from PIL import Image
+r = Image.open(".workbuddy/shots/A_claude.png").convert("RGB").crop((520, 2050, 900, 2220))
+m = Image.open(".workbuddy/shots/NOW.png").convert("RGB").crop((520, 2050, 900, 2220))
+r = r.resize((760, 340), Image.NEAREST)
+m = m.resize((760, 340), Image.NEAREST)
+out = Image.new("RGB", (760, 340 * 2 + 10), (200, 60, 60))
+out.paste(r, (0, 0))
+out.paste(m, (0, 350))
+out.save(".workbuddy/shots/BTN-ZOOM.png")
+print("top = Claude, bottom = mine")
