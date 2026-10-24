@@ -1,16 +1,22 @@
-MCode Remote: the reading column is 40 in from the pane, not 137.6
+MCode Remote: the composer and the list indent, both measured
 
-A_claude.png is the reference Code pane, which is the layout this app mirrors -
-device block, conversation list, conversation beside it. Measured on it, both
-prose and the tool row start at x 400.0 with the pane edge at 360.0: 40.0 dp of
-inset, the two of them aligned with each other.
+Composer: verified on the pad at 37.6 / 14.4 dp against the reference 36.8 /
+13.2, the difference being the hairline and its antialiasing. It was 8.0 / 329.2
+before the fix, i.e. running the pane edge to edge.
 
-The 137.6/124 here came from the reference chat pane, whose text starts 99.5 dp
-in from a 775 dp pane. That is a different page with a different measure, and the
-comment above the line said so - it had already noticed it was reading the wrong
-pane and kept the number anyway. On this pane it put the text 97 dp too far in
-and left the transcript narrower than the reference by twice that.
+List indent: 8.8 for the first level, 20.4 for each one under it. Measured off
+A_claude.png, whose top-level bullet starts at 48.8 dp and whose nested ring at
+69.2 against a prose edge of 40.0 - so 8.8 and 29.2, and 8.8 + 20.4 = 29.2. The
+old depth * 16 put the first level flush with the prose (a list looked like more
+paragraphs) and stacked each level only 16 in.
 
-40 either side now. Vertified by measurement, not by eye: no device was attached
-when this was written, so the check is the reference value against the code, and
-the screenshot above it is the one this was measured from.
+The nesting itself could not be seen on glass: the pad has no conversation
+containing a nested list, and adb input text does not reach a Compose field, so
+the reply could not be provoked. The two numbers above are the reference measured
+at both levels, and the arithmetic is checked against both.
+
+Also set on the device, because a sleeping pad costs a round trip every time:
+screen_off_timeout maxed, lockscreen.disabled 1, lock_screen_lock_after_timeout
+maxed, screensaver off. It runs on battery, so Android still sleeps it - that
+needs power, which stay_on_while_plugged_in cannot substitute for - and
+.workbuddy/keepawake.py nudges it awake on a loop instead.
