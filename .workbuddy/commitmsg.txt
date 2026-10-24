@@ -1,27 +1,21 @@
-MCode Remote: the Code column, matched to a photographed Claude
+MCode Remote: the drawer, counted and measured instead of recalled
 
-Claude is installed on the pad, so this is now measured against the real thing
-rather than a remembered screenshot - com.anthropic.claude launches with am
-start, and the shots are in .workbuddy/shots/CLAUDE-*.png.
+Photographed Claude's own drawer on the pad and measured it, which settled three
+things the code had been guessing at:
 
-Two of these were wrong in ways no amount of arithmetic would have found:
+最近使用 lists seven conversations, not three. The comment above the call said
+"Six, not three" while the code passed take(3) - two different guesses at a
+number that is simply visible in the picture: seven rows, first title at y 390.0,
+last at 711.2, pitch 28 to 31.
 
-The 添加设备 capsule started at x 30 where the reference starts at 16. The 30
-came from a pass that measured the text inside the pill and treated that as the
-pill's own left edge, so the control began where its content should have.
-Photographed, the pill's border is at 16.0 and its plus mark at 31.6 - 15.6 of
-padding inside, not 9. Now measured identically: left 16.0, right 130.8, width
-115.2, all three equal to the reference.
+Drawer rows start 30.0 in, with the glyph at 30.0..41.6 and the title at 61.2.
+The code passed 10 for the compact case while its own comment two lines above
+said "the drawer's glyph starts at 30.0" - so every row began 20 dp left of
+where the comment claimed and titles landed at 16.4 against 61.2. Now 30.0 /
+40.4 / 62.0, all three within 1.2 dp.
 
-会话 started at 32.8 against the reference's 28.8. Its row already began at
-28.8; the heading's own 4 dp touch inset pushed the word off that line, so the
-heading was the one element in the block out of line with 设备 above it and the
-cards below. Inset removed from the padding and kept as a touch area.
+Navigation pitch was already right: 项目 114.8, Code 171.2, Artifacts 228.0,
+定时任务 282.0 against the reference's 115.2 / 172.8 / 227.6 / 283.6, and
+最近使用 at 348.8 exactly in both.
 
-Everything else on this column is within a dp of the reference - header 55.6,
-设备 116.0/28.8, 会话 222.4/28.8, first card 282.4.
-
-Also corrected a belief from last pass: the card hairline is #F8F8F6 after all.
-The #E1E1DF reading came from sampling a row that crossed the pill's border
-rather than the card's; at a row through the card's flat side both samples are
-(248,248,246).
+The drawer is 400.0 dp wide with the scrim at (169,169,168).
