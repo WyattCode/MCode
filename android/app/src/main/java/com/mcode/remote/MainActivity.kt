@@ -3585,6 +3585,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     onPlugins = { leftMode = LeftMode.Plugins; closeDrawer() },
                     onScheduled = { leftMode = LeftMode.Scheduled; closeDrawer() },
                     onProjects = { leftMode = LeftMode.Projects; closeDrawer() },
+                    onSessions = { leftMode = LeftMode.Sessions; closeDrawer() },
                     onSettings = { leftMode = LeftMode.Settings; closeDrawer() },
                     currentPage = leftMode,
                     onLongPress = { sheetTarget = it },
@@ -8650,13 +8651,25 @@ fun SessionList(
                          * only shrinks what is drawn, not what can be tapped.
                          */
                         .padding(horizontal = if (compact) 6.dp else 14.dp, vertical = if (compact) 0.dp else 5.dp)
-                        .height(if (compact) 41.6.dp else 68.dp)
-                        .clip(RoundedCornerShape(if (compact) 8.dp else 12.dp))
-                        .background(if (s.id == current) LocalCardOpen.current else LocalCard.current)
-                        .border(
-                            width = if (compact) 0.dp else 1.dp,
-                            color = LocalCardLine.current,
-                            shape = RoundedCornerShape(if (compact) 8.dp else 12.dp),
+                        .height(if (compact) 43.6.dp else 68.dp)
+                        /*
+                         * Cards in the list, plain lines in the drawer.
+                         *
+                         * Claude's open drawer (claude_code.png) is #F3F3F0 edge to
+                         * edge and its conversation rows carry no fill and no border
+                         * - a </> mark, a title, at most a grey dot at the trailing
+                         * end. The cards belong to the wide list, where the pane is
+                         * white and a card sits a step above it.
+                         *
+                         * This applied the card to both, so the drawer drew bordered
+                         * slabs inside a panel that has no room for them.
+                         */
+                        .then(
+                            if (compact) Modifier
+                            else Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(LocalCard.current)
+                                .border(1.dp, LocalCardLine.current, RoundedCornerShape(12.dp)),
                         )
                         .combinedClickable(onClick = { onSelect(s.id) }, onLongClick = { onLongPress?.invoke(s) })
                         /*
@@ -8966,6 +8979,8 @@ fun DrawerContent(
     onPlugins: () -> Unit = {},
     onScheduled: () -> Unit = {},
     onProjects: () -> Unit = {},
+    /** The Code row: the conversation list, which is this app's own Code page. */
+    onSessions: () -> Unit = {},
     onSettings: () -> Unit = {},
     /** Which column page is open, so the drawer can mark the row for it. */
     currentPage: LeftMode = LeftMode.Sessions,
@@ -9082,27 +9097,27 @@ fun DrawerContent(
                 path = "M2 2.6h20M2 8.2h20M3.6 12.4h16.8l-1.6 9.2H5.2z",
             ) { onProjects() }
             /*
-             * 设置, not 「Code」.
+             * 「Code」, opening the conversation list - the reference's own
+             * second row.
              *
-             * Claude's Code row opens a page this app does not have: an
-             * 设备 block with 添加设备, a 会话 block with an 全部 filter, and a
-             * card per conversation carrying its connection state (「已断开连接
-             * · 在您的电脑上重新连接」). MCode's rail has no counterpart for
-             * any of that - sessions live in the column beside it - so the
-             * row here opens Settings, which is what MCode actually offers.
+             * Claude's Code page is a device panel this app has no counterpart
+             * for, so an earlier pass relabelled this row 设置 and pointed it at
+             * the settings screen. The label left the drawer one row short of
+             * the reference and put an unrelated destination in the slot a
+             * reader reaches for first. In MCode the conversations are the
+             * column beside this rail, so that slot goes back to them, wearing
+             * the reference's own `</>` mark.
              *
-             * Keeping Claude's word over MCode's page was the worst of both:
-             * a reader tapping 「Code」 landed on 设置 and had no way to know
-             * the label was borrowed scenery. The reference's four rows are
-             * copied only where the destination matches.
+             * Settings keeps its own way in: the header's laptop glyph on the
+             * chat pane, and the bottom of this drawer.
              */
             DrawerItem(
-                Icons.Outlined.Settings,
-                "设置",
-                active = currentPage == LeftMode.Settings,
-                path = "M12 8.4a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2zM19.4 12a7.4 7.4 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-2-1.2L14.5 3h-4l-.4 2.6a7.4 7.4 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 2 1.2l.4 2.6h4l.4-2.6a7.4 7.4 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z",
-                pathStroke = 1.6f,
-            ) { onSettings() }
+                Icons.Outlined.Code,
+                "Code",
+                active = currentPage == LeftMode.Sessions,
+                path = "M6.4 5.2 1.6 12l4.8 6.8M17.6 5.2 22.4 12l-4.8 6.8M15.6 3.6 8.4 20.4",
+                pathStroke = 2.2f,
+            ) { onSessions() }
             DrawerItem(
                 Icons.AutoMirrored.Outlined.Article,
                 "Artifacts",
@@ -9190,7 +9205,7 @@ fun DrawerContent(
                  * pitch - with 查看全部 under them at 650.8. Three was this
                  * app's own guess and left the block half empty.
                  */
-                sessions.take(6),
+                sessions.take(3),
                 null,
                 "",
                 onSelect,
@@ -9217,6 +9232,32 @@ fun DrawerContent(
                     Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = LocalMuted.current, modifier = Modifier.size(16.dp))
                 }
             }
+        }
+        /*
+         * Settings lives at the foot of the drawer now.
+         *
+         * Its old home was the second row, where the reference has Code; that
+         * slot is Code again, so this is where 设置 goes - out of the reading
+         * path, above the account, which is where a settings entry belongs in
+         * a rail whose top four rows are the pages you actually work in.
+         */
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable { onSettings() }
+                .padding(start = 24.8.dp, end = 18.dp, top = 2.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MiIcon(
+                "M12 8.4a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2zM19.4 12a7.4 7.4 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-2-1.2L14.5 3h-4l-.4 2.6a7.4 7.4 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 2 1.2l.4 2.6h4l.4-2.6a7.4 7.4 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z",
+                contentDescription = null,
+                modifier = Modifier.size(15.2.dp),
+                viewBox = 24f,
+                strokeWidth = 1.6f,
+                tint = LocalMuted.current,
+            )
+            Spacer(Modifier.width(11.6.dp))
+            Text("设置", fontSize = 14.sp, color = LocalMuted.current)
         }
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             /*
