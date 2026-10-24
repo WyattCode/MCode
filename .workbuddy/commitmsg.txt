@@ -1,25 +1,22 @@
-MCode Remote: three colours and two sizes, read off the reference side by side
+MCode Remote: one hairline token was serving two different lines
 
-Putting the two columns next to each other at last, at the same scale, showed
-four things that no measurement had caught:
+The 添加设备 capsule lost its outline when the card hairline was corrected last
+pass, because both drew from LocalCardLine. They are not the same colour: the
+card edge reads (248,248,246) on a (249,249,247) page - one step, invisible on
+purpose - while the capsule edge reads (225,225,223), which you can see. The
+token is split: LocalCardHairline for the card, LocalCardLine for anything that
+is meant to be a line.
 
-The card hairline was #E1E1DF - twenty-four steps below the page. The
-reference edge pixels read (248,248,246) on a (249,249,247) page: one step. Its
-cards are soft panels whose shape carries the separation; ours were outlined
-boxes. That single colour is most of why the two columns read differently even
-where every number matched.
+The capsule itself was also wrong in three ways, all measured:
 
-The card spans x 12.0..347.6 in the reference and 14.0..345.6 here - two dp
-narrow on both sides.
+Its content sat at 14 dp inset with 13 sp text and a 6 dp gap after the plus,
+against the reference 9.6 inset, 14 sp and 13.2 gap - which is why it came out
+101.6 wide where the reference is 73.6.
 
-The separator between 已连接 and Remote control was U+00B7, which sits on the
-baseline of a Latin face; the reference uses U+2022, a filled dot at mid-height.
+And it has no fill at all. Sampled at three points inside the reference pill:
+(249,249,247), the page colour. I had read it as a white plate off the
+thumbnail - the pixels say it is an outline on the page and nothing else.
 
-The running card's mark is a 20.0 x 14.0 open arc, not the 18 dp hairline hoop
-this drew.
-
-All four are changed. Only the ones before this batch were photographed on glass:
-the pad sleeps within seconds on battery and adb cannot wake it (KEYCODE_WAKEUP,
-am start, swipe, stayon - all report success, panel stays black, eight retries).
-So the four above are reference measurements and the build compiles, and that is
-the whole of what can honestly be claimed for them right now.
+Pill width, height and fill are now the reference's numbers. The fill change is
+the only one of these that was not photographed: the pad locked itself and adb
+cannot light it on battery, five attempts in a row.

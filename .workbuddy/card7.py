@@ -1,6 +1,6 @@
 from PIL import Image
 DPI = 2.5
-for name, path in (("Claude", ".workbuddy/shots/A_claude.png"), ("Mine", ".workbuddy/shots/V1.png")):
+for name, path in (("Claude", ".workbuddy/shots/A_claude.png"), ("Mine", ".workbuddy/shots/C0.png")):
     im = Image.open(path).convert("RGB")
     px = im.load()
     for y in (700, 760, 330, 420):
