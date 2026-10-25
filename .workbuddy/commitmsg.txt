@@ -1,28 +1,15 @@
-MCode Remote: a class cast that killed the app on launch, and the rows it hid
+MCode Remote: the empty projects page, 25.6 and 16.4 apart
 
-The `as Alignment` I added two passes ago to satisfy the compiler was wrong and
-fatal: Alignment.Top and Alignment.TopStart are different classes, and the cast
-threw ClassCastException on the first frame - so the app crashed on launch and
-never got as far as drawing anything. Every screenshot I took afterwards was of
-Claude or of the launcher, and I read their pixels as if they were this app's.
+Measured Claude's own empty 项目 page: its tray mark ends at 394.8, 暂无项目 runs
+420.4..435.6, and the line under it starts at 452.0. This had 14 and 8 in those
+two gaps, which packed the mark and both lines into one block that read as a
+single paragraph rather than as a heading over a hint.
 
-The cause was mine: an if/else chain over Alignment was inferred as Any, and
-rather than restructure I cast it. The right answer was a `when` whose branches
-are all the same type, and Alignment.TopStart does the job Alignment.Top was
-wanted for - top and left, which is where the mark hangs.
+Also added .workbuddy/measure_all.py, which walks every Claude reference shot and
+prints the same table - the left column of 最近记录, Code, the drawer, and the
+empty projects page - so the next pass measures from one place instead of
+re-deriving the same numbers per element.
 
-With the crash gone, the home list measures:
-
-  顶栏      55.2  against 56.4
-  搜索框    122.0 against 119.2
-  first title 175.2 against 174.0
-  title ink 14.0 against 12.8
-  time ink  12.4 against 13.6
-
-and the row pitch was the remaining fault: 80.4 between titles where the
-reference runs 60.0, because the flat rows were wearing the cards' 68 dp height.
-Now 60.0, with the time 3 dp under the title instead of 6.
-
-Also: sub-page 返回 now goes to 最近记录, not to Code. Nine onClose/onNew sites
-pointed at Sessions from when the two pages were one; a page opened from the home
-list closed into the device panel.
+Not verified on glass: the pad re-locks within seconds on battery and adb cannot
+clear a keyguard with a PIN, so the two gaps above are reference measurements and
+a successful compile, not a screenshot.

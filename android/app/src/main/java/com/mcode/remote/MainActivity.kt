@@ -10247,9 +10247,15 @@ fun ProjectsScreen(
                     strokeWidth = 1.6f,
                     tint = LocalMuted.current,
                 )
-                Spacer(Modifier.height(14.dp))
+                /*
+                 * 25.6 and 16.4, measured off the reference's own empty 项目 page:
+                 * its mark ends at 394.8, 暂无项目 runs 420.4..435.6 and the line
+                 * under it starts at 452.0. The 14 and 8 here pulled the three
+                 * lines into a tight block that read as one paragraph.
+                 */
+                Spacer(Modifier.height(25.6.dp))
                 Text("暂无项目", fontSize = 17.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(16.4.dp))
                 Text(
                     "您创建或加入的项目将显示在此处。",
                     fontSize = 13.sp,
