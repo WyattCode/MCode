@@ -12090,7 +12090,13 @@ fun InputCapsule(
              */
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 130.4.dp, end = 106.8.dp),
+                /*
+                 * 78.4 / 78.0, not 130.4 / 106.8: a second inset already sits
+                 * between the pane and this card - measured, the card landed at
+                 * 182.4 from the seam against the reference's 130.4, so 52 of
+                 * the intended inset was being applied twice.
+                 */
+                .padding(start = 78.4.dp, end = 78.dp),
         ) {
             /*
              * 8 of inset at each side, 7.6 under the control row.

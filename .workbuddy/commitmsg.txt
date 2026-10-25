@@ -1,21 +1,20 @@
-MCode Remote: the filter and list marks, drawn from 5x crops
+MCode Remote: the composer is narrow, and the inset was being applied twice
 
-Both of the home header's trailing marks were wrong shapes, and neither is
-readable at thumbnail scale.
+The reference's composer card is 766.4 wide inside a 1003.2 pane - 130.4 from the
+left seam, 106.8 from the right. This filled the pane minus 12 of padding, so the
+card ran 951.6 with its right edge 14.4 from the seam, and the transcript read as
+a wall rather than a column.
 
-The filter is not a funnel. At 5x it is three full-height rules, each carrying a
-hollow ring, the rings stepping high, low, middle left to right, with the rule
-stopping at each rim rather than running through. Drawing one continuous rule and
-an arc over it made a figure-eight at every ring - the mark read as three
-mysterious beads. The rules are split around the circles now, in the reference's
-own #383835 rather than the muted grey inherited from the clock this replaced:
-measured, its ink is (56,56,53), 16.0 x 13.6.
+The inset goes on the composer's own Surface, which is where the fillMaxWidth
+actually was. A first attempt put it on a Column two hundred lines above and
+changed nothing - the same shape of mistake as the drawer rows: two composables
+both plausibly "the composer", and the one edited was not the one drawn.
 
-The list mark is ticks beside rules, not bullets. Enlarged, each row opens with a
-three-stroke tick.
+Then the numbers: 130.4 of inset produced a card at 182.4, because a second inset
+already sits between the pane and the card. Measured off the build, 78.4 and 78.0
+are what land the card on the reference's 490.4..1256.4.
 
-Composer width. The reference's card is 766.4 inside a 1003.2 pane - 130.4 left,
-106.8 right - and this filled the pane minus 12 of padding, so the card ran 951.6
-with its right edge 14.4 from the seam. The inset goes on the card's own Surface,
-which is where the fillMaxWidth actually was; a first attempt put it on a Column
-two hundred lines above and changed nothing.
+Verified as far as the build: the card measured 685.2 wide after the first
+number, which is 81.2 short of 766.4 - the 52 of double-inset on one side and 29
+on the other. The correcting build was not photographed; the pad locks within
+seconds on battery and adb cannot clear a keyguard with a PIN.
