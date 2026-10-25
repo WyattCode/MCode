@@ -1,26 +1,22 @@
-MCode Remote: the projects header draws all four of its parts
+MCode Remote: the empty pane lands on the reference's line, and a size I got wrong
 
-The header showed its burger and nothing else - no title, no magnifier, no
-filter - and card rows began at y 152 where the reference begins them at 282.
+The mark is 39.5 again. Last pass I raised it to 49.9 on the reasoning that a
+39.5 box drew only 32.6 of ink - "a stroked star stops at the radius". Measured
+off that build: 49.9 draws 52.0 of ink, which scales back to 41.2 at 39.5, the
+reference's exact figure. The 32.6 had been read off a half-drawn star, not a
+small one, and I had built a scaling factor on it.
 
-Found by painting the header red: the Box measured its full 360 by 63.2 at
-y 32.8..95.6, exactly right, and inside it only the burger's ink appeared. Three
-faults stacked:
+With the size right, the block sat 6.1 low - mark centre 399.6 against the
+reference's 393.5 - so the bottom pad goes from 135.8 to 147.0. Verified on the
+build: the mark's ink now runs y 373.2..414.8, 41.6 across, against the
+reference's 373.2..414.0 at 41.2.
 
-1. `if (leftMode == LeftMode.Projects)` near the top of App had no width guard,
-   so on the pad it painted a full-screen copy of the page - with its own
-   status-bar spacer, which pushed everything 32.8 down - and then the wide
-   branch painted the real page over the top. The copy underneath is what ate the
-   space. It is guarded to Compact now, the way 设置 already was.
+Also checked dark mode for the first time. The page is #151515 and the composer
+card #202020, and this app already matches both - the colours were right and only
+the geometry was off.
 
-2. The title was `fillMaxSize().wrapContentHeight()`, which in a fixed-height Box
-   measures to no height at all. Same fault as the home header two passes ago,
-   in three more places; all four state their height now.
-
-3. `horizontalArrangement = SpaceBetween` spread the burger and the two marks
-   evenly across the bar, which put the magnifier on top of the title's last
-   character - the build read 「项(放大镜)目」. A weight before the marks keeps them
-   at the trailing edge, where the reference has them.
-
-Measured after: 项目 runs x 168.8..196.0 against the reference's 164.0..194.0,
-magnifier and filter at the right, burger at x 15.6..31.6.
+Note for the record: the gap from mark to greeting is 18, which now puts the
+greeting at 435.6 against 432.0. The reference's own 18 is measured from its
+mark's foot at 414.0 to its greeting's ink at 432.0; this app's mark ends at 414.8
+and its greeting's ink begins 3.6 later than a straight 18 would allow, so the
+spacer is a few tenths short. Left as measured rather than guessed again.
