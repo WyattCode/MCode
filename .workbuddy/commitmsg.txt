@@ -1,22 +1,21 @@
-MCode Remote: the empty pane lands on the reference's line, and a size I got wrong
+MCode Remote: the embedded size guard, and a page whose geometry I have not cracked
 
-The mark is 39.5 again. Last pass I raised it to 49.9 on the reasoning that a
-39.5 box drew only 32.6 of ink - "a stroked star stops at the radius". Measured
-off that build: 49.9 draws 52.0 of ink, which scales back to 41.2 at 39.5, the
-reference's exact figure. The 32.6 had been read off a half-drawn star, not a
-small one, and I had built a scaling factor on it.
+The 定时任务 page's empty block centres at y 250 where the reference centres it at
+454, so its clock lands at 243.2 instead of 449.6. The block's Column has
+`weight(1f)` and `Arrangement.Center` and is given `Modifier.weight(1f)` by the
+caller, which is exactly the shape that works on the other pages, and two
+attempts at its size modifier - fillMaxWidth when embedded, then fillMaxSize with
+the background made conditional - measured identically at 243.2 afterwards. The
+height the column actually receives is about half the pane; I have not found where
+the other half goes.
 
-With the size right, the block sat 6.1 low - mark centre 399.6 against the
-reference's 393.5 - so the bottom pad goes from 135.8 to 147.0. Verified on the
-build: the mark's ink now runs y 373.2..414.8, 41.6 across, against the
-reference's 373.2..414.0 at 41.2.
+Recorded rather than papered over: the page renders correctly in every other
+respect (header, disc, two lines of copy), and its ink positions are identical
+across two builds, which is what makes me think the constraint is coming from
+outside this composable.
 
-Also checked dark mode for the first time. The page is #151515 and the composer
-card #202020, and this app already matches both - the colours were right and only
-the geometry was off.
-
-Note for the record: the gap from mark to greeting is 18, which now puts the
-greeting at 435.6 against 432.0. The reference's own 18 is measured from its
-mark's foot at 414.0 to its greeting's ink at 432.0; this app's mark ends at 414.8
-and its greeting's ink begins 3.6 later than a straight 18 would allow, so the
-spacer is a few tenths short. Left as measured rather than guessed again.
+Also verified this pass: dark mode matches. Page #151515, composer card #202020,
+and every colour CompositionLocal already carries its own dark branch - the
+"white slate on a #151515 page" fault recorded earlier is fixed. The empty pane's
+mark measures 41.6 across against the reference's 41.2, at y 373.2..414.8 against
+373.2..414.0.

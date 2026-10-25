@@ -10101,10 +10101,20 @@ fun PluginsScreen(
      * When the page is not embedded it owns the screen and asks for it plainly.
      */
     Column(
-        modifier.then(
-            if (embedded) Modifier.fillMaxWidth()
-            else Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
-        ),
+        /*
+         * fillMaxSize in both cases - the caller's weight supplies the height.
+         *
+         * Stripping it to fillMaxWidth when embedded looked like the fix for the
+         * double-constraint problem, and made the page worse: with no height
+         * constraint the column measured to its children, so the empty state's
+         * `weight(1f)` had nothing to divide and the block sat at the column's
+         * own top - the clock at y 219.2 where the reference puts it at 449.6.
+         *
+         * `weight` already gives this node a bounded height; fillMaxSize inside
+         * that bound is not a second opinion, it is the same number.
+         */
+        modifier.then(Modifier.fillMaxSize())
+            .then(if (embedded) Modifier else Modifier.background(MaterialTheme.colorScheme.background)),
     ) {
         // The status bar is drawn over the page, so the header has to step under
         // it - without this the title sat on top of the clock and the arrow.
@@ -13092,8 +13102,20 @@ fun ScheduledScreen(
     embedded: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    /*
+     * fillMaxWidth when embedded - never fillMaxSize over the caller's weight.
+     *
+     * Same fault as 项目 and 设置: the wide layout hands these pages
+     * `Modifier.weight(1f)` inside a Column, and wrapping that in fillMaxSize
+     * gives one node two size constraints. The layout resolved it by halving the
+     * page, so the empty block centred on 486 instead of 908 and its clock landed
+     * at y 243 where the reference puts it at 449.6.
+     */
     Column(
-        modifier.then(if (embedded) Modifier.fillMaxSize() else Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)),
+        modifier.then(
+            if (embedded) Modifier.fillMaxWidth()
+            else Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+        ),
     ) {
         if (!embedded) Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
         Box(Modifier.fillMaxWidth().height(63.2.dp)) {
