@@ -4642,7 +4642,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             val stopHere: (String) -> Unit = { sid ->
                                 request(JSONObject().put("type", "session.abort").put("sessionID", sid))
                             }
-                            Box(Modifier.size(44.dp).clickable { openDrawer() }, contentAlignment = Alignment.Center) {
+                            /*
+                             * The back arrow starts 40.8 in, not 19.6.
+                             *
+                             * Measured on the reference's own conversation header:
+                             * its arrow's ink runs x 400.8..414.8, which inside a
+                             * 360 dp-wide pane is 40.8 from the seam. This drew at
+                             * 379.6..392.4 - 21.2 left, tucked against the divider
+                             * instead of standing off it.
+                             */
+                            Box(Modifier.size(44.dp).offset(x = 21.2.dp).clickable { openDrawer() }, contentAlignment = Alignment.Center) {
                                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = LocalText.current, modifier = Modifier.size(20.dp))
                             }
                             /*
@@ -4681,7 +4690,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 Text(
                                     sessions.find { it.id == currentSession }?.title
                                         ?.takeIf { it.isNotBlank() } ?: "New session",
-                                    fontSize = 17.sp,
+                                    /*
+                                     * 19.1, measured. The reference's title runs
+                                     * 90.8 wide in its own header; this drew 80.8
+                                     * at 17sp, and 90.8/80.8 scales it up.
+                                     */
+                                    fontSize = 19.1.sp,
                                     fontWeight = FontWeight.Medium,
                                     lineHeight = 22.sp,
                                     color = LocalText.current,
@@ -4750,27 +4764,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                             // composable, so `Local…current` cannot be called in it.
                             val bubbleInk = LocalText.current
                             val bubbleFg = LocalBg.current
-                            Box(Modifier.size(40.dp).clickable { newSession() }, contentAlignment = Alignment.Center) {
-                                Canvas(Modifier.size(18.4.dp)) {
-                                    val c = size.minDimension / 2f
-                                    val ink = bubbleInk
-                                    drawCircle(ink, radius = c, center = androidx.compose.ui.geometry.Offset(c, c * 0.92f))
-                                    // Its tail, at the lower left.
-                                    val path = androidx.compose.ui.graphics.Path().apply {
-                                        moveTo(c * 0.46f, size.height * 0.90f)
-                                        lineTo(c * 0.34f, size.height)
-                                        lineTo(c * 1.02f, size.height * 0.90f)
-                                        close()
-                                    }
-                                    drawPath(path, ink)
-                                    // The plus, in paper.
-                                    val fg = bubbleFg
-                                    val w = c * 0.30f
-                                    val t = c * 0.11f
-                                    drawLine(fg, androidx.compose.ui.geometry.Offset(c - w, c * 0.92f), androidx.compose.ui.geometry.Offset(c + w, c * 0.92f), strokeWidth = t, cap = androidx.compose.ui.graphics.StrokeCap.Round)
-                                    drawLine(fg, androidx.compose.ui.geometry.Offset(c, c * 0.92f - w), androidx.compose.ui.geometry.Offset(c, c * 0.92f + w), strokeWidth = t, cap = androidx.compose.ui.graphics.StrokeCap.Round)
-                                }
-                            }
+                            /*
+                             * No new-conversation mark here.
+                             *
+                             * Measured on the reference's own conversation header:
+                             * it holds three things - back at x 400.8..414.8, the
+                             * title at 828.0..918.8, and the overflow at
+                             * 1290.4..1308.0. Nothing to the right of the overflow.
+                             * This drew a speech-bubble button at 1337.6..1340.4,
+                             * past the bar's own end, where it read as a fourth
+                             * element the reference does not have. The way in is
+                             * the left column's 新建会话 capsule.
+                             */
                             var headerMenu by remember { mutableStateOf(false) }
                             Box(Modifier.size(40.dp).clickable { headerMenu = true }, contentAlignment = Alignment.Center) {
                                 Icon(Icons.Outlined.MoreVert, contentDescription = "更多", tint = LocalText.current, modifier = Modifier.size(20.dp))

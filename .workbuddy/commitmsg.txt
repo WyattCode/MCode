@@ -1,22 +1,23 @@
-MCode Remote: the right pane on the pages that own the left column
+MCode Remote: the conversation header's three parts, measured against a real thread
 
-The 项目, 定时任务, 产物 and 插件 screens each fill the left column, and the
-reference leaves its right pane blank on all four - plain page, no header. This
-drew the conversation header regardless, so a back arrow sat at x 379.6..392.4 on
-a page with no conversation to go back from. Tapping it went somewhere the reader
-had not asked to go.
+Got a real conversation with content on the reference at last - left column 项目,
+right column a long thread - which is the benchmark the empty pane could not give.
 
-Both the header and the transcript are inside the guard now. Verified: the right
-pane draws no ink above y 88 on 项目, and the home screen still shows its arrow at
-the same 379.6..392.4, which is where the reference has one.
+Its header holds exactly three things: back at x 400.8..414.8, the title at
+828.0..918.8, and the overflow at 1290.4..1308.0.
 
-Reported after photographing, not from the thumbnail: on the small view the
-filter mark's three stems compress into something that reads as a left arrow at the
-bar's right end. That misreading cost three passes on the home header, which has
-always been correct. The bar holds the burger, the title, the filter at
-278.8..292.0 and the list mark at 318.4..332.4, and nothing else.
+Two faults against that. The back arrow drew at 379.6..392.4, tucked against the
+divider instead of standing 40.8 off it; +21.2 puts it at 400.8..413.6. And a
+speech-bubble button sat at 1337.6..1340.4, past the bar's own end - a fourth
+element the reference does not have, duplicating the left column's 新建会话
+capsule. Removed.
 
-The 项目 empty-state mark is redrawn from three widths rather than two: the rules
-are 41.2 and 55.6 wide over a 67.6 tray, not two rules of equal width over a tray.
-Not yet photographed - this pad's six real projects mean the empty state needs a
-search that returns nothing, and the search field did not take the injected text.
+The title is set to 19.1sp from the reference's 90.8 width against this app's
+80.8 at 17sp. Not yet verified: the pad dropped off adb between the build and the
+photograph.
+
+Also worth recording, because it changes an earlier conclusion: the reference's
+项目 page is the left column beside a conversation, not a full-screen page. The
+screenshot I had read as "full width" was the small-screen layout with no thread
+open. Its header's marks sit at 1289.6 and 1331.2 there because that layout has no
+left column - the same three marks, at the edges of whatever the page is given.
