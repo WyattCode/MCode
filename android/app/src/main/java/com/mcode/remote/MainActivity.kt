@@ -23,6 +23,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -3777,9 +3778,25 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          * own mark, which Material's glyph cannot draw.
                          */
                         Box(
-                            Modifier.size(44.dp).clickable {
-                                if (isListPage) openDrawer() else leftMode = LeftMode.Recent
-                            },
+                            Modifier
+                                .size(44.dp)
+                                /*
+                                 * No ripple plate.
+                                 *
+                                 * A clickable Box with no surface behind it
+                                 * renders the ripple as a flat grey rectangle
+                                 * the size of the whole 44 dp target - sampled
+                                 * at (224,224,222) across the full box, where
+                                 * the reference's corner is the page's own
+                                 * (249,249,247). The header's marks are drawn,
+                                 * not plated.
+                                 */
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                ) {
+                                    if (isListPage) openDrawer() else leftMode = LeftMode.Recent
+                                },
                             contentAlignment = Alignment.Center,
                         ) {
                             if (isListPage) {
@@ -3864,22 +3881,96 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                          * decoration: the page has to stay reachable, and this is
                          * the one corner the reference leaves free for it.
                          */
-                        Box(Modifier.size(40.dp).clickable { leftMode = LeftMode.Scheduled }, contentAlignment = Alignment.Center) {
-                            MiIcon(
+                        /*
+                         * The trailing corner carries what the page needs.
+                         *
+                         * Photographed: 最近记录 puts a filter and a list there -
+                         * glyphs at x 280.0..295.6 and 327.2..344.0, 31.6 apart -
+                         * and Code puts a clock on its own. This drew the clock
+                         * on both, so the home list offered 定时任务 where the
+                         * reference offers a way to narrow and re-order the list
+                         * in front of you.
+                         */
+                        if (leftMode == LeftMode.Recent) {
+                            Box(
+                                Modifier.size(40.dp).clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                ) { runningOnly = !runningOnly },
+                                contentAlignment = Alignment.Center,
+                            ) {
                                 /*
-                                 * A ring with two hands, on the 24 grid: the
-                                 * circle is drawn as an arc of 350 degrees so it
-                                 * closes without a seam, and the hands meet at
-                                 * the centre - 12 to 3, which is the reference's
-                                 * own pose.
+                                 * Three verticals with a ring on each - not a
+                                 * funnel.
+                                 *
+                                 * Enlarged from the reference's own bar: the mark
+                                 * is three 2 dp rules running the full height,
+                                 * each carrying a hollow ring, the rings stepping
+                                 * high, low, middle left to right. A funnel reads
+                                 * as "narrow this down"; this reads as sliders,
+                                 * which is what the mark actually is.
                                  */
-                                "M12 0.9a11.1 11.1 0 1 0 0.01 0M12 6.2v6.2l4 2.5",
-                                contentDescription = "定时任务",
-                                modifier = Modifier.size(18.4.dp),
-                                viewBox = 24f,
-                                strokeWidth = 1.6f,
-                                tint = LocalMuted.current,
-                            )
+                                MiIcon(
+                                    "M4.4 2.6v18.8M12 2.6v18.8M19.6 2.6v18.8" +
+                                        "M4.4 8.2a2.6 2.6 0 1 0 0.01 0" +
+                                        "M12 15.4a2.6 2.6 0 1 0 0.01 0" +
+                                        "M19.6 11.8a2.6 2.6 0 1 0 0.01 0",
+                                    contentDescription = "筛选会话",
+                                    modifier = Modifier.size(15.6.dp),
+                                    viewBox = 24f,
+                                    strokeWidth = 1.9f,
+                                    tint = LocalMuted.current,
+                                )
+                            }
+                            Box(
+                                Modifier.size(40.dp).clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                ) { },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                /*
+                                 * Checks beside rules - a checklist, not bullets.
+                                 *
+                                 * Enlarged, the reference's rows open with a tick
+                                 * (three strokes meeting at a point) rather than a
+                                 * dot, which makes the mark read as "rows of a
+                                 * list" instead of "items selected".
+                                 */
+                                MiIcon(
+                                    "M2.8 5.4l1.9 1.9 3-3.6M11 5.6h10.2" +
+                                        "M2.8 12.2l1.9 1.9 3-3.6M11 12.4h10.2" +
+                                        "M2.8 19l1.9 1.9 3-3.6M11 19.2h10.2",
+                                    contentDescription = "列表视图",
+                                    modifier = Modifier.size(16.8.dp),
+                                    viewBox = 24f,
+                                    strokeWidth = 1.9f,
+                                    tint = LocalMuted.current,
+                                )
+                            }
+                        } else {
+                            Box(
+                                Modifier.size(40.dp).clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                ) { leftMode = LeftMode.Scheduled },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                MiIcon(
+                                    /*
+                                     * A ring with two hands, on the 24 grid: the
+                                     * circle is drawn as an arc of 350 degrees so
+                                     * it closes without a seam, and the hands meet
+                                     * at the centre - 12 to 3, the reference's pose.
+                                     */
+                                    "M12 0.9a11.1 11.1 0 1 0 0.01 0M12 6.2v6.2l4 2.5",
+                                    contentDescription = "定时任务",
+                                    modifier = Modifier.size(18.4.dp),
+                                    viewBox = 24f,
+                                    strokeWidth = 1.6f,
+                                    tint = LocalMuted.current,
+                                )
+                            }
                         }
                     }
                 }
@@ -4195,11 +4286,24 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                              * ever needed to close it. The cross clears what was
                              * typed and puts the heading row back.
                              */
-                            Box(
+                            /*
+                             * Only where the field had to be asked for.
+                             *
+                             * Claude's 最近记录 carries a plain field with nothing
+                             * at its trailing end - sampled, the right side of
+                             * the box is empty - because there the field is
+                             * always there and has nothing to exit. The cross
+                             * belongs to the Code page, where the field is a mode
+                             * and a mode without an exit is a trap.
+                             */
+                            if (leftMode != LeftMode.Recent) Box(
                                 Modifier
                                     .size(28.dp)
                                     .clip(RoundedCornerShape(14.dp))
-                                    .clickable {
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                    ) {
                                         search = ""
                                         searching = false
                                     },
@@ -8848,8 +8952,20 @@ fun SessionList(
     // its own breathing room at the bottom, not a reservation for the pill.
     LazyColumn(
         modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 6.dp),
+        /*
+         * No gap on the flat list: the reference's rows butt against each other
+         * at a 60.0 pitch, so a 2 dp arrangement made every row 62.0 and every
+         * title 2 low by the tenth.
+         *
+         * The 6.8 top is the other half of that measurement: with the rows at
+         * their own height the first title landed at 167.2 where the reference
+         * puts it at 174.0.
+         */
+        verticalArrangement = Arrangement.spacedBy(if (flat) 0.dp else 2.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+            top = if (flat) 6.8.dp else 0.dp,
+            bottom = 6.dp,
+        ),
     ) {
         for (s in filtered) {
             item(key = s.id) {
@@ -8886,18 +9002,20 @@ fun SessionList(
                          * only shrinks what is drawn, not what can be tapped.
                          */
                         /* 12 either side, not 14: the reference's card spans x 12.0..347.6. */
-                        /* 1.6 on the flat list: measured, the mark sits at 26.0 and the row draws its icon column inside this padding. */
-                        .padding(horizontal = if (compact) 6.dp else if (flat) 1.6.dp else 12.dp, vertical = if (compact) 0.dp else 5.dp)
                         /*
-                         * 60.0 on the flat list.
+                         * Height before inset.
                          *
-                         * Measured: one row of Claude's 最近记录 runs from its
-                         * title's ink at 174.0 to the next title's at 234.0.
-                         * The 68 here is the cards' height, and on the flat rows
-                         * it left 80.4 between titles - the home list read as
-                         * half as long as the reference's.
+                         * `height` sizes what it wraps, so with the vertical
+                         * padding applied first the row measured 60 + 5 + 5 = 70
+                         * and the titles ran 72.4 apart where the reference's
+                         * run 60.0. Stated first, the 60 is the row's own.
                          */
                         .height(if (compact) 43.6.dp else if (flat) 60.dp else 68.dp)
+                        /*
+                         * 1.6 on the flat list: measured, the mark sits at 26.0
+                         * and the row draws its icon column inside this inset.
+                         */
+                        .padding(horizontal = if (compact) 6.dp else if (flat) 1.6.dp else 12.dp, vertical = if (compact) 0.dp else 5.dp)
                         /*
                          * Cards in the list, plain lines in the drawer.
                          *
@@ -9039,7 +9157,24 @@ fun SessionList(
                              * the home title at 77.6 against 49.6.
                              */
                             .width(if (compact) 31.2.dp else if (flat) 23.6.dp else 36.dp)
-                            .offset(y = if (compact) (-6.4).dp else 0.dp),
+                            /*
+                             * The flat row's mark sits 6 right and 13.6 up.
+                             *
+                             * Measured against the reference's own first row: its
+                             * mark's ink runs x 26.0..37.6 with the row's first
+                             * line at y 174.0. This drew it at 20.0 and 187.6 -
+                             * left of the title's own left edge and a line low,
+                             * which read as a bullet beside the text rather than
+                             * a mark on it.
+                             */
+                            .offset(
+                                x = if (flat) 6.dp else 0.dp,
+                                y = when {
+                                    compact -> (-6.4).dp
+                                    flat -> (-13.6).dp
+                                    else -> 0.dp
+                                },
+                            ),
                         /*
                          * Top on the flat rows.
                          *
