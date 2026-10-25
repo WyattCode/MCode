@@ -1,26 +1,21 @@
-MCode Remote: the home list, matched row for row
+MCode Remote: the filter and list marks, drawn from 5x crops
 
-Measured against Claude's own 最近记录 and brought into line:
+Both of the home header's trailing marks were wrong shapes, and neither is
+readable at thumbnail scale.
 
-Row pitch. The rows carry height before inset now: `height(60)` with the
-vertical padding applied first measured 70, so titles ran 72.4 apart where the
-reference runs 60.0. The LazyColumn's 2 dp arrangement was the other 2 of that,
-and the flat list carries none. With both fixed the first title sits at 174.0 and
-the second at 234.0 - the reference's own two numbers.
+The filter is not a funnel. At 5x it is three full-height rules, each carrying a
+hollow ring, the rings stepping high, low, middle left to right, with the rule
+stopping at each rim rather than running through. Drawing one continuous rule and
+an arc over it made a figure-eight at every ring - the mark read as three
+mysterious beads. The rules are split around the circles now, in the reference's
+own #383835 rather than the muted grey inherited from the clock this replaced:
+measured, its ink is (56,56,53), 16.0 x 13.6.
 
-The mark. It was drawing at x 20.0 and y 187.6, left of the title's own left edge
-and a line low, so it read as a bullet beside the text. 6 right and 13.6 up puts
-its ink at 26.0..36.4 on the title's first line at 174.0, against 26.0..37.6.
+The list mark is ticks beside rules, not bullets. Enlarged, each row opens with a
+three-stroke tick.
 
-The trailing corner. 最近记录 carries a filter and a list where Code carries a
-clock; this drew the clock on both, so the home list offered 定时任务 where the
-reference offers a way to narrow what is in front of you. Both marks are drawn
-from enlarged crops: three verticals each carrying a hollow ring that steps high,
-low, middle, and three ticks beside three rules.
-
-The header's marks had no ripple plate: a clickable Box with no surface behind it
-draws the ripple as a flat grey rectangle over its whole 44 dp target - sampled
-at (224,224,222) where the reference is the page's (249,249,247).
-
-The search field's cross is gone from this page. The reference's field is empty on
-its right; the cross belongs to Code, where the field is a mode.
+Composer width. The reference's card is 766.4 inside a 1003.2 pane - 130.4 left,
+106.8 right - and this filled the pane minus 12 of padding, so the card ran 951.6
+with its right edge 14.4 from the seam. The inset goes on the card's own Surface,
+which is where the fillMaxWidth actually was; a first attempt put it on a Column
+two hundred lines above and changed nothing.

@@ -3910,16 +3910,39 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                  * as "narrow this down"; this reads as sliders,
                                  * which is what the mark actually is.
                                  */
+                                /*
+                                 * Rings, not beads on a string.
+                                 *
+                                 * Enlarged to 5x, the reference's rings are open
+                                 * circles with the rule stopping at each rim - the
+                                 * axis does not run through them. Drawing one rule
+                                 * and an arc over it made a figure-eight at every
+                                 * ring. The rules are split around the circles now,
+                                 * the circles are the reference's 4.4 dp across, and
+                                 * the ink is the reference's own #383835 rather
+                                 * than the muted grey this inherited from the
+                                 * clock it replaced - the mark reads a step faint
+                                 * beside the title.
+                                 *
+                                 * Measured: 16.0 x 13.6 of ink, x 280.0..295.6, and
+                                 * the rings step high (3.4), low (6.6), middle (5.0).
+                                 */
                                 MiIcon(
-                                    "M4.4 2.6v18.8M12 2.6v18.8M19.6 2.6v18.8" +
-                                        "M4.4 8.2a2.6 2.6 0 1 0 0.01 0" +
-                                        "M12 15.4a2.6 2.6 0 1 0 0.01 0" +
-                                        "M19.6 11.8a2.6 2.6 0 1 0 0.01 0",
+                                    // left rule, split by its ring at 7.4
+                                    "M5 1.6V5.2M5 9.6v12.8" +
+                                        // middle rule, split by its ring at 14.2
+                                        "M12 1.6v10.2M12 18.2v4.2" +
+                                        // right rule, split by its ring at 10.8
+                                        "M19 1.6v6.8M19 14.8v7.6" +
+                                        // the three rings
+                                        "M5 5.2a2.2 2.2 0 1 0 0.01 0" +
+                                        "M12 14.2a2.2 2.2 0 1 0 0.01 0" +
+                                        "M19 10.8a2.2 2.2 0 1 0 0.01 0",
                                     contentDescription = "筛选会话",
-                                    modifier = Modifier.size(15.6.dp),
+                                    modifier = Modifier.size(16.dp),
                                     viewBox = 24f,
                                     strokeWidth = 1.9f,
-                                    tint = LocalMuted.current,
+                                    tint = Color(0xFF383835),
                                 )
                             }
                             Box(
@@ -3945,7 +3968,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     modifier = Modifier.size(16.8.dp),
                                     viewBox = 24f,
                                     strokeWidth = 1.9f,
-                                    tint = LocalMuted.current,
+                                    tint = Color(0xFF383835),
                                 )
                             }
                         } else {
@@ -12054,7 +12077,20 @@ fun InputCapsule(
              * that only goes down.
              */
             shadowElevation = if (LocalBg.current == DarkBg) 2.dp else 4.dp,
-            modifier = Modifier.fillMaxWidth(),
+            /*
+             * 766.4 inside a 1003.2 pane, centred: 130.4 left, 106.8 right.
+             *
+             * Measured on the reference's own conversation - its composer's
+             * white card runs x 490.4..1256.4. This filled the pane minus 12 of
+             * padding, so the card ran 951.6 wide with its right edge 14.4 from
+             * the seam where the reference leaves a tenth of the screen empty.
+             * The composer's width is what makes the transcript read as a column
+             * rather than as a wall, and it is the last thing on the page to
+             * look wrong when everything else has been matched.
+             */
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 130.4.dp, end = 106.8.dp),
         ) {
             /*
              * 8 of inset at each side, 7.6 under the control row.
