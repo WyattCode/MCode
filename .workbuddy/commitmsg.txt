@@ -1,17 +1,28 @@
-MCode Remote: the mark sits on the title's line, not centred in its column
+MCode Remote: a class cast that killed the app on launch, and the rows it hid
 
-On the flat 最近记录 rows the mark was centred in its 23.6 dp column while the
-title began at the column's top, which put the glyph's ink at y 190.0 and the
-title's at 175.2 - a 15 dp gap between a mark and the text it belongs to. It
-aligns Top now on those rows; Centre stays for the cards, where the mark faces a
-two-line block and centring is right.
+The `as Alignment` I added two passes ago to satisfy the compiler was wrong and
+fatal: Alignment.Top and Alignment.TopStart are different classes, and the cast
+threw ClassCastException on the first frame - so the app crashed on launch and
+never got as far as drawing anything. Every screenshot I took afterwards was of
+Claude or of the launcher, and I read their pixels as if they were this app's.
 
-Also removed a drawer row I had added on assumption: 最近记录 is not a
-destination. Photographed, Claude's drawer holds exactly four rows - 项目, Code,
-Artifacts, 定时任务 - and the home list is reached by backing out of a page, not
-by choosing it. The fifth row pushed every real row 57.6 down and claimed a
-destination the reference does not offer.
+The cause was mine: an if/else chain over Alignment was inferred as Any, and
+rather than restructure I cast it. The right answer was a `when` whose branches
+are all the same type, and Alignment.TopStart does the job Alignment.Top was
+wanted for - top and left, which is where the mark hangs.
 
-One correction to the record from two passes ago: the drawer holds four rows, not
-five; the ordering I described in that commit message was arithmetic on a list I
-had not counted.
+With the crash gone, the home list measures:
+
+  顶栏      55.2  against 56.4
+  搜索框    122.0 against 119.2
+  first title 175.2 against 174.0
+  title ink 14.0 against 12.8
+  time ink  12.4 against 13.6
+
+and the row pitch was the remaining fault: 80.4 between titles where the
+reference runs 60.0, because the flat rows were wearing the cards' 68 dp height.
+Now 60.0, with the time 3 dp under the title instead of 6.
+
+Also: sub-page 返回 now goes to 最近记录, not to Code. Nine onClose/onNew sites
+pointed at Sessions from when the two pages were one; a page opened from the home
+list closed into the device panel.

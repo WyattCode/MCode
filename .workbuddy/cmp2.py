@@ -22,4 +22,4 @@ def bands(path, name, y0=80, y1=1250):
     return out
 
 bands(".workbuddy/shots/CLAUDE-1.png", "CLAUDE 主页")
-bands(".workbuddy/shots/H2.png", "MINE 主页")
+bands(".workbuddy/shots/N2.png", "MINE 主页")
