@@ -38,15 +38,17 @@ Its trailing mark is a clock; 最近记录 carries filter + list.
 ## Drawer — matched
 
 400.0 wide, scrim (169,169,168). Four rows only: 项目 115.2, Code 172.8,
-Artifacts 227.6, 定时任务 283.6. 最近使用 at 348.8 with **seven** rows,
-first title y 390.0, mark x 30.0..41.6, title x 61.2.
-Foot capsule y 832.8, x 16.0..343.6, 44.0 tall.
+Artifacts 227.6, 定时任务 283.6. 最近使用 at 348.8 with **six** rows at a 43.4
+pitch (390.0, 432.4, 476.0, 519.6, 564.4, 606.8), 查看全部 at 654.4,
+mark x 30.0..41.6, title x 61.2.
+Foot: purple W avatar at the left, black 新建会话 capsule y 832.8,
+x 16.0..343.6, 44.0 tall.
 
 ## Conversation pane
 
 | element | reference | this app |
 |---|---|---|
-| composer width | 766.4 (x 490.4..1256.4) | 685.2 → *unverified* at 78.4/78 |
+| composer width | 766.4 (x 490.4..1256.4) | **766.0, same edges** |
 | composer card | 84.0 tall, fill (254,254,254) | — |
 | empty mark | 41.2×40.8, y 373.2 | 49.9 box → *unverified* |
 | empty greeting | y 432.0, ink 23.2 | 18sp → *unverified* |
@@ -58,6 +60,7 @@ Empty block centre is 43.3% of the pane, not 50% — already implemented as
 ## Not yet compared
 
 - Artifacts page (the shot filed as CL-ART.png was actually Code — the tap missed)
+- The purple W avatar in the drawer's foot corner
 - 定时任务 page
 - A conversation with messages: bubbles, tool rows, code blocks
 - Dark theme on every page
