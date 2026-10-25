@@ -1,23 +1,21 @@
-MCode Remote: the conversation header's three parts, measured against a real thread
+MCode Remote: the conversation header holds three marks, and the reference's own three
 
-Got a real conversation with content on the reference at last - left column 项目,
-right column a long thread - which is the benchmark the empty pane could not give.
+Measured against a real thread on the reference - left column 项目, right column a
+long conversation - the header carries back at 400.8..414.8, a centred title, and a
+single horizontal ⋯ at 1290.4..1308.0, with nothing after it.
 
-Its header holds exactly three things: back at x 400.8..414.8, the title at
-828.0..918.8, and the overflow at 1290.4..1308.0.
+This carried four things: the back arrow at 379.6 (21.2 left, tucked against the
+divider), the title, a laptop glyph at 1291.6, and a vertical ⋮ at 1337.6. Now:
+arrow at 400.8..413.6, ⋯ at 1290.4..1302.8, and no laptop.
 
-Two faults against that. The back arrow drew at 379.6..392.4, tucked against the
-divider instead of standing 40.8 off it; +21.2 puts it at 400.8..413.6. And a
-speech-bubble button sat at 1337.6..1340.4, past the bar's own end - a fourth
-element the reference does not have, duplicating the left column's 新建会话
-capsule. Removed.
+Two corrections along the way that are worth naming. The trailing mark was ⋮ where
+the reference draws ⋯ - three dots in a row, not a column; at 12 dp of ink the
+difference is the whole character of the bar's right end. And moving it with
+`padding(end = 42.4)` squeezed the Canvas to 3.6 of ink, because padding shrinks
+the space a child measures into; `offset(x = -42.4)` moves it without resizing it.
 
-The title is set to 19.1sp from the reference's 90.8 width against this app's
-80.8 at 17sp. Not yet verified: the pad dropped off adb between the build and the
-photograph.
-
-Also worth recording, because it changes an earlier conclusion: the reference's
-项目 page is the left column beside a conversation, not a full-screen page. The
-screenshot I had read as "full width" was the small-screen layout with no thread
-open. Its header's marks sit at 1289.6 and 1331.2 there because that layout has no
-left column - the same three marks, at the edges of whatever the page is given.
+The title's font size is back at 17sp. I had raised it to 19.1 on the reference's
+title measuring 90.8 against this app's 80.8 - but those are different strings
+(交换机固件 against Greeting), so their widths were never comparable. The measure
+that is: the two header lines together run 31.2 of ink on the reference and 30.8
+here.

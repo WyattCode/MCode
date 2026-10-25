@@ -4691,11 +4691,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                     sessions.find { it.id == currentSession }?.title
                                         ?.takeIf { it.isNotBlank() } ?: "New session",
                                     /*
-                                     * 19.1, measured. The reference's title runs
-                                     * 90.8 wide in its own header; this drew 80.8
-                                     * at 17sp, and 90.8/80.8 scales it up.
+                                     * 17sp, and the width comparison was invalid.
+                                     *
+                                     * I raised this to 19.1 on the reference's title
+                                     * measuring 90.8 against this app's 80.8. But the
+                                     * two strings are different - the reference reads
+                                     * 交换机固件, five Han characters, and this reads
+                                     * Greeting - so their widths were never
+                                     * comparable. The measure that is comparable is
+                                     * the ink height: 31.2 for the two lines together
+                                     * against 30.8 here.
                                      */
-                                    fontSize = 19.1.sp,
+                                    fontSize = 17.sp,
                                     fontWeight = FontWeight.Medium,
                                     lineHeight = 22.sp,
                                     color = LocalText.current,
@@ -4750,16 +4757,16 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                              * the bubble starts a conversation, which are the
                              * two things those marks do on the reference.
                              */
-                            Box(Modifier.size(40.dp).clickable { leftMode = LeftMode.Settings }, contentAlignment = Alignment.Center) {
-                                MiIcon(
-                                    "M5.6 7.4h12.8a1.2 1.2 0 0 1 1.2 1.2v7.4H4.4V8.6a1.2 1.2 0 0 1 1.2-1.2zM3.2 16h17.6v2a1 1 0 0 1-1 1H4.2a1 1 0 0 1-1-1z",
-                                    contentDescription = "Code",
-                                    modifier = Modifier.size(19.2.dp),
-                                    viewBox = 24f,
-                                    strokeWidth = 1.7f,
-                                    tint = LocalText.current,
-                                )
-                            }
+                            /*
+                             * One trailing mark, as the reference has.
+                             *
+                             * Its conversation header's right end holds a single
+                             * ⋯ at x 1290.4..1308.0 and nothing after it. This
+                             * carried two: a laptop glyph at 1291.6 (the way into
+                             * settings) and a ⋮ at 1337.6. Settings keeps its route
+                             * through the drawer; the header does not need a second
+                             * mark competing with the overflow.
+                             */
                             // Read outside the draw scope: a Canvas lambda is not
                             // composable, so `Local…current` cannot be called in it.
                             val bubbleInk = LocalText.current
@@ -4777,8 +4784,32 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                              * the left column's 新建会话 capsule.
                              */
                             var headerMenu by remember { mutableStateOf(false) }
-                            Box(Modifier.size(40.dp).clickable { headerMenu = true }, contentAlignment = Alignment.Center) {
-                                Icon(Icons.Outlined.MoreVert, contentDescription = "更多", tint = LocalText.current, modifier = Modifier.size(20.dp))
+                            /*
+                             * 42.4 further in, measured.
+                             *
+                             * The reference's ⋯ sits at 1290.4..1308.0, which is
+                             * 72.8 from the pane's right edge (1363.2); this drew
+                             * at 1332.8, only 30.4 in. With the laptop glyph gone
+                             * the mark moved right into the space it had occupied.
+                             */
+                            Box(Modifier.size(40.dp).offset(x = (-42.4).dp).clickable { headerMenu = true }, contentAlignment = Alignment.Center) {
+                                /*
+                                 * Horizontal dots, not vertical.
+                                 *
+                                 * Enlarged from the reference's header: its mark
+                                 * is three dots in a row, ⋯, at 1290.4..1308.0.
+                                 * This drew ⋮ - the same menu, a different glyph,
+                                 * and the only visible difference at this size
+                                 * between the two headers' right ends.
+                                 */
+                                Canvas(Modifier.size(18.4.dp)) {
+                                    val r = 1.9f * density
+                                    val cy = size.height / 2f
+                                    val gap = size.width / 4f
+                                    drawCircle(Color(0xFF1F1E1C), radius = r, center = androidx.compose.ui.geometry.Offset(gap, cy))
+                                    drawCircle(Color(0xFF1F1E1C), radius = r, center = androidx.compose.ui.geometry.Offset(gap * 2f, cy))
+                                    drawCircle(Color(0xFF1F1E1C), radius = r, center = androidx.compose.ui.geometry.Offset(gap * 3f, cy))
+                                }
                                 DropdownMenu(expanded = headerMenu, onDismissRequest = { headerMenu = false }) {
                                     MenuRow(
                                         label = if (infoOpen) "关闭对话信息" else "对话信息",
