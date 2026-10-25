@@ -1,19 +1,17 @@
-MCode Remote: the foot capsule belongs to Code, not to the home list
+MCode Remote: the mark sits on the title's line, not centred in its column
 
-Last pass widened the capsule's condition from Sessions to isListPage while
-splitting the two pages, which put a button on 最近记录 where Claude has none -
-its home list simply ends after the last conversation - and drew it wrong there
-too: 286.8 by 56.8 against the 123.2 by 44.0 it measures on Code, because the
-same composable sits in a different container and got stretched by the list's
-weight instead of being sized by its own content.
+On the flat 最近记录 rows the mark was centred in its 23.6 dp column while the
+title began at the column's top, which put the glyph's ink at y 190.0 and the
+title's at 175.2 - a 15 dp gap between a mark and the text it belongs to. It
+aligns Top now on those rows; Centre stays for the cards, where the mark faces a
+two-line block and centring is right.
 
-Back to Sessions-only. On Code the capsule still measures 123.2 x 44.0 with its
-right edge 16.4 from the seam, which is the reference's own.
+Also removed a drawer row I had added on assumption: 最近记录 is not a
+destination. Photographed, Claude's drawer holds exactly four rows - 项目, Code,
+Artifacts, 定时任务 - and the home list is reached by backing out of a page, not
+by choosing it. The fifth row pushed every real row 57.6 down and claimed a
+destination the reference does not offer.
 
-Verified on the pad after the change: the home list's foot is empty, matching
-Claude's.
-
-Two things I had wrong about this button and checked rather than assumed: it has
-no shadow - sampling one dp outside its edge returns the page colour, so the
-apparent glow in a downscaled crop was the thumbnail's own softening - and its
-fill is flat black with no gradient.
+One correction to the record from two passes ago: the drawer holds four rows, not
+five; the ordering I described in that commit message was arithmetic on a list I
+had not counted.
