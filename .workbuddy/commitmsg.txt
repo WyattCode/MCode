@@ -1,21 +1,23 @@
-MCode Remote: the embedded size guard, and a page whose geometry I have not cracked
+MCode Remote: the scheduled page's height, narrowed to the size modifier
 
-The 定时任务 page's empty block centres at y 250 where the reference centres it at
-454, so its clock lands at 243.2 instead of 449.6. The block's Column has
-`weight(1f)` and `Arrangement.Center` and is given `Modifier.weight(1f)` by the
-caller, which is exactly the shape that works on the other pages, and two
-attempts at its size modifier - fillMaxWidth when embedded, then fillMaxSize with
-the background made conditional - measured identically at 243.2 afterwards. The
-height the column actually receives is about half the pane; I have not found where
-the other half goes.
+A marker proved the embedded branch runs: drawn in magenta, it appeared at
+y 51.2 with 1460 lit pixels. So the empty block's 200 dp of drift is not a wrong
+render path, and my earlier conclusion - that the branch never ran - was wrong;
+the green wash I tried first had simply been painted over by the page's own
+header.
 
-Recorded rather than papered over: the page renders correctly in every other
-respect (header, disc, two lines of copy), and its ink positions are identical
-across two builds, which is what makes me think the constraint is coming from
-outside this composable.
+With the path confirmed, the fault is the size modifier. This had been reduced to
+`fillMaxWidth()` when embedded, which leaves the column with no height constraint:
+the caller's `weight(1f)` allocates the space, the column then measures to its
+children, and the empty state's own `weight(1f)` finds nothing left to divide. Its
+block centred at 486 on a page whose ink runs to 880 - it believed the page was
+972 tall.
 
-Also verified this pass: dark mode matches. Page #151515, composer card #202020,
-and every colour CompositionLocal already carries its own dark branch - the
-"white slate on a #151515 page" fault recorded earlier is fixed. The empty pane's
-mark measures 41.6 across against the reference's 41.2, at y 373.2..414.8 against
-373.2..414.0.
+`fillMaxHeight()` asks for the height the weight already granted without claiming
+a second one. Built clean; the verifying screenshot did not happen, because adb
+dropped this pad four times in a row and the daemon restarted underneath it.
+
+Also seen while trying to reach the page: the home screen now carries a trailing
+back arrow it should not have, and the drawer's burger did not open the drawer on
+three taps at two coordinates. Both need checking once the link is stable - the
+arrow and the burger may be the same fault.
