@@ -3083,11 +3083,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     runCatching {
                         rpc(JSONObject().put("type", "session.archive").put("sessionID", id).put("archived", false))
                     }
-                    leftMode = LeftMode.Sessions
+                    leftMode = LeftMode.Recent
                     select(id)
                 }
             },
-            onClose = { leftMode = LeftMode.Sessions },
+            onClose = { leftMode = LeftMode.Recent },
         )
         /*
          * Always return, wide or narrow.
@@ -3108,9 +3108,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             rows = projectRows,
             onOpen = {
                 projectFilter = it
-                leftMode = LeftMode.Sessions
+                leftMode = LeftMode.Recent
             },
-            onClose = { leftMode = LeftMode.Sessions },
+            onClose = { leftMode = LeftMode.Recent },
             onCreateBlank = { name ->
                 scope.launch {
                     /*
@@ -3224,8 +3224,8 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
          */
         ScheduledScreen(
             tasks = automations.toList(),
-            onNew = { newSession(); leftMode = LeftMode.Sessions },
-            onClose = { leftMode = LeftMode.Sessions },
+            onNew = { newSession(); leftMode = LeftMode.Recent },
+            onClose = { leftMode = LeftMode.Recent },
         )
         /*
          * Narrow screens keep the page full-screen; a wide one draws it inside
@@ -3264,7 +3264,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                     refreshPlugins++
                 }
             },
-            onClose = { leftMode = LeftMode.Sessions },
+            onClose = { leftMode = LeftMode.Recent },
         )
         /*
          * Narrow screens keep the page full-screen; a wide one draws it inside
@@ -3286,7 +3286,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             onCategory = { artCategory = it },
             onRefresh = { refreshArtifacts++ },
             onOpen = { root, rel -> openArtifact(root, rel) },
-            onClose = { leftMode = LeftMode.Sessions },
+            onClose = { leftMode = LeftMode.Recent },
         )
         /*
          * Narrow screens keep the page full-screen; a wide one draws it inside
@@ -3713,9 +3713,11 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                              * panel. This said Code for both, because both were
                              * one mode.
                              */
-                            if (leftMode == LeftMode.Recent) "最近记录"
-                            else if (leftMode == LeftMode.Artifacts) "产物中心"
-                            else "Code",
+                            (
+                                if (leftMode == LeftMode.Recent) "最近记录"
+                                else if (leftMode == LeftMode.Artifacts) "产物中心"
+                                else "Code"
+                            ) as String,
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Medium,
                             color = LocalText.current,
@@ -3733,10 +3735,21 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                              * puts the ink back on the column's centre rather
                              * than fighting the padding above.
                              */
+                            /*
+                             * A height, not `fillMaxSize().wrapContentHeight()`.
+                             *
+                             * Those two fight: fillMaxSize claims the Box's whole
+                             * 63.2 and wrapContentHeight then asks the text for
+                             * its own, which in a Box this size resolved to no
+                             * height at all - the header drew nothing while the
+                             * burger beside it drew fine. The bar's height is
+                             * known, so it is stated.
+                             */
                             modifier = Modifier
-                                .fillMaxSize()
-                                .wrapContentHeight()
+                                .fillMaxWidth()
+                                .height(63.2.dp)
                                 .align(Alignment.Center)
+                                .wrapContentHeight(Alignment.CenterVertically)
                                 .offset(x = (-5.2).dp),
                         )
                         Row(
@@ -4306,9 +4319,9 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 rows = projectRows,
                                 onOpen = {
                                     projectFilter = it
-                                    leftMode = LeftMode.Sessions
+                                    leftMode = LeftMode.Recent
                                 },
-                                onClose = { leftMode = LeftMode.Sessions },
+                                onClose = { leftMode = LeftMode.Recent },
                                 onCreateBlank = { name ->
                                     scope.launch {
                                         val made = runCatching {
@@ -4345,14 +4358,14 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 onCategory = { artCategory = it },
                                 onRefresh = { refreshArtifacts++ },
                                 onOpen = { root, rel -> openArtifact(root, rel) },
-                                onClose = { leftMode = LeftMode.Sessions },
+                                onClose = { leftMode = LeftMode.Recent },
                                 embedded = true,
                                 modifier = Modifier.weight(1f).fillMaxWidth(),
                             )
                             LeftMode.Scheduled -> ScheduledScreen(
                                 tasks = automations.toList(),
-                                onNew = { newSession(); leftMode = LeftMode.Sessions },
-                                onClose = { leftMode = LeftMode.Sessions },
+                                onNew = { newSession(); leftMode = LeftMode.Recent },
+                                onClose = { leftMode = LeftMode.Recent },
                                 embedded = true,
                                 modifier = Modifier.weight(1f).fillMaxWidth(),
                             )
@@ -4376,7 +4389,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                         refreshPlugins++
                                     }
                                 },
-                                onClose = { leftMode = LeftMode.Sessions },
+                                onClose = { leftMode = LeftMode.Recent },
                                 embedded = true,
                                 modifier = Modifier.weight(1f).fillMaxWidth(),
                             )
@@ -8875,7 +8888,16 @@ fun SessionList(
                         /* 12 either side, not 14: the reference's card spans x 12.0..347.6. */
                         /* 1.6 on the flat list: measured, the mark sits at 26.0 and the row draws its icon column inside this padding. */
                         .padding(horizontal = if (compact) 6.dp else if (flat) 1.6.dp else 12.dp, vertical = if (compact) 0.dp else 5.dp)
-                        .height(if (compact) 43.6.dp else 68.dp)
+                        /*
+                         * 60.0 on the flat list.
+                         *
+                         * Measured: one row of Claude's 最近记录 runs from its
+                         * title's ink at 174.0 to the next title's at 234.0.
+                         * The 68 here is the cards' height, and on the flat rows
+                         * it left 80.4 between titles - the home list read as
+                         * half as long as the reference's.
+                         */
+                        .height(if (compact) 43.6.dp else if (flat) 60.dp else 68.dp)
                         /*
                          * Cards in the list, plain lines in the drawer.
                          *
@@ -9027,11 +9049,11 @@ fun SessionList(
                          * began at 175.2. Centre is right for the cards, where
                          * the mark sits against a two-line block.
                          */
-                        contentAlignment = (
-                            if (compact) Alignment.TopStart
-                            else if (flat) Alignment.Top
-                            else Alignment.Center
-                        ) as Alignment,
+                        contentAlignment = when {
+                            compact -> Alignment.TopStart
+                            flat -> Alignment.TopStart
+                            else -> Alignment.Center
+                        },
                     ) {
                         /*
                          * No tile behind the mark.
@@ -9225,9 +9247,9 @@ fun SessionList(
                                 Text(
                                     relTime(s.updated),
                                     fontSize = 14.sp,
-                                    lineHeight = 17.sp,
+                                    lineHeight = 16.sp,
                                     color = LocalMuted.current,
-                                    modifier = Modifier.padding(top = 6.dp),
+                                    modifier = Modifier.padding(top = 3.dp),
                                 )
                             } else Row(
                                 Modifier.padding(top = 3.dp),
