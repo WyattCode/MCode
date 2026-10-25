@@ -1,17 +1,22 @@
-MCode Remote: the composer lands on the reference's own edges, and the drawer holds six
+MCode Remote: the drawer's six rows and the mark that says which one is open
 
-Composer, verified on glass: the card now measures x 490.4..1256.4, width 766.0,
-against the reference's 766.4 on the same two edges. It was 951.6 before, with
-the right edge 14.4 from the seam. Two corrections got there - the inset belonged
-on the card's own Surface rather than a Column above it, and 130.4 of inset
-produced 182.4 because a second inset already sits between the pane and the card.
-78.4 and 78.0 are the numbers that land it.
+The drawer's 最近使用 lists six conversations, at a 43.4 pitch - measured, titles
+at y 390.0, 432.4, 476.0, 519.6, 564.4, 606.8 with 查看全部 at 654.4. The rows were
+at 45.6 because 43.6 was taken from that 43.4 mean rather than from the spacing
+that produces it; the drawer's rows are 41.4 now and the list lands on 390.4,
+434.0, 477.6, 521.2, 564.8, 608.4. The flat list keeps its own 60 and is
+unaffected - the two share that height expression, which is how the drawer's
+number got set from the home list's measurement in the first place.
 
-The drawer's 最近使用 holds six rows, not seven. Counted off this pass's
-screenshot: titles at y 390.0, 432.4, 476.0, 519.6, 564.4, 606.8 with 查看全部 at
-654.4, a 43.4 pitch. My earlier note claimed seven at a 28-to-31 pitch - I had
-counted through a window that cut off the fifth row and then inferred the rest.
-43.6 is already the compact row height, so only the count changed.
+The row mark means "the conversation you are reading", not "a conversation in a
+project". Classified from the drawer: Main, the open one, carries `</>`; every
+other row carries a speech bubble, whether or not it has a directory. This tested
+`directory.isNotBlank()`, so a project conversation wore the code mark and a plain
+one wore a bubble, and the mark answered a question nobody was asking.
 
-The empty pane's mark and gap (49.9 box, 18 between mark and greeting) remain
-unverified: the pane on screen holds a conversation, not the empty state.
+The bubble itself is round - a circle with a short straight tail at its lower
+left - not the 1.6-cornered rectangle this drew, which read as a chat panel.
+
+Not changed: 设置 sits above the account in this drawer and the reference has no
+such row there. It is the only way into the settings pages, so it stays until
+there is another, but it is a difference and it is listed as one.

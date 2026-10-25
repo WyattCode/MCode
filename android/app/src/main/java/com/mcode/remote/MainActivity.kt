@@ -9042,7 +9042,23 @@ fun SessionList(
                          * and the titles ran 72.4 apart where the reference's
                          * run 60.0. Stated first, the 60 is the row's own.
                          */
-                        .height(if (compact) 43.6.dp else if (flat) 60.dp else 68.dp)
+                        /*
+                         * 41.4 for the drawer, 43.6 elsewhere-compact.
+                         *
+                         * Measured on this build: the drawer's titles ran 45.6
+                         * apart where the reference's run 42.4, 43.6, 43.6,
+                         * 44.8, 42.4 - a 43.4 mean. The 43.6 here was set from
+                         * the mean rather than from the spacing that produces
+                         * it, so every row carried 2.2 of extra height. The flat
+                         * list keeps its own 60 and is unaffected.
+                         */
+                        .height(
+                            when {
+                                compact -> 41.4.dp
+                                flat -> 60.dp
+                                else -> 68.dp
+                            }
+                        )
                         /*
                          * 1.6 on the flat list: measured, the mark sits at 26.0
                          * and the row draws its icon column inside this inset.
@@ -9294,11 +9310,24 @@ fun SessionList(
                                     }
                                 }
                             }
-                        } else if (s.directory.isNotBlank()) {
+                        } else if (s.id == current) {
+                            /*
+                             * `</>` marks the conversation you are reading.
+                             *
+                             * Photographed in the drawer: Main - the open one -
+                             * carries a code mark, and every other row carries a
+                             * speech bubble, whether or not that conversation has
+                             * a directory. This tested `directory.isNotBlank()`,
+                             * so a project conversation wore the code mark and a
+                             * plain one wore a bubble, and the mark said where a
+                             * conversation lived rather than which one is on
+                             * screen.
+                             *
+                             * Fills the grid: `M9 7…M19 17` inside 24 drew 7.2 of
+                             * mark in an 11.6 box, where Claude's `</>` ink is
+                             * 11.6 x 10.0.
+                             */
                             MiIcon(
-                                // Fills the grid: `M9 7…M19 17` inside 24 drew
-                                // 7.2 of mark in an 11.6 box, where Claude's
-                                // `</>` ink is 11.6 x 10.0.
                                 "M6.4 5.2 1.6 12l4.8 6.8M17.6 5.2 22.4 12l-4.8 6.8M15.6 3.6 8.4 20.4",
                                 modifier = Modifier.size(11.6.dp),
                                 viewBox = 24f,
@@ -9307,7 +9336,17 @@ fun SessionList(
                             )
                         } else {
                             MiIcon(
-                                "M4.6 5.4h14.8a1.6 1.6 0 0 1 1.6 1.6v8.2a1.6 1.6 0 0 1-1.6 1.6H10.4L6.2 20v-3.2H4.6A1.6 1.6 0 0 1 3 15.2V7a1.6 1.6 0 0 1 1.6-1.6Z",
+                                /*
+                                 * Round, not a rounded rectangle.
+                                 *
+                                 * Enlarged from the drawer, the reference's mark
+                                 * is a circle with a short tail at its lower
+                                 * left - the tail is a straight notch, not a
+                                 * second lobe. The 1.6-cornered rectangle this
+                                 * drew read as a chat panel next to the
+                                 * reference's round one.
+                                 */
+                                "M12 3.4a8.6 8.6 0 1 0-4.6 15.9L6 21.4l4.6-2.4a8.6 8.6 0 0 0 1.4 0A8.6 8.6 0 0 0 12 3.4Z",
                                 modifier = Modifier.size(11.6.dp),
                                 viewBox = 24f,
                                 strokeWidth = 1.9f,
