@@ -4610,6 +4610,22 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                      */
                     Column(Modifier.weight(1f - leftFraction).fillMaxHeight()) {
                         Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+                        /*
+                         * The pane is blank on the pages that own the left column.
+                         *
+                         * Photographed on the reference's 项目, 定时任务 and
+                         * 产物 screens: the right pane is empty page - not a
+                         * conversation header over nothing. This drew the
+                         * header regardless, so a back arrow floated at
+                         * x 379.6..392.4 on a page that has no conversation to
+                         * go back from, and a reader tapping it went somewhere
+                         * they had not asked for.
+                         */
+                        if (leftMode != LeftMode.Projects &&
+                            leftMode != LeftMode.Scheduled &&
+                            leftMode != LeftMode.Artifacts &&
+                            leftMode != LeftMode.Plugins
+                        ) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             /*
                              * Claude's conversation header: a back arrow at the
@@ -4887,6 +4903,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 }
                             }
                         }
+                        }  // end conversational pane
                     }
                 }
         } else {
@@ -10535,10 +10552,28 @@ fun ProjectsScreen(
                  * declared 40 drew 33.3 - two thirds of it, and the empty page's
                  * centrepiece came out smaller than the sentence under it.
                  */
+                /*
+                 * Three parts of three different widths, not two rules and a tray.
+                 *
+                 * Measured on the reference's empty 项目 page at 400 dpi:
+                 *
+                 *   upper rule   y 321.6..326.0   x 159.2..200.4   41.2 wide
+                 *   lower rule   y 335.2..340.0   x 152.0..207.6   55.6 wide
+                 *   tray         y 348.8..394.8   x 146.0..213.6   67.6 wide, 46 tall
+                 *
+                 * So the rules widen downward and the tray is widest - a hopper
+                 * seen from the front, which is what the reference draws. This
+                 * had `M2 2.6h20M2 8.2h20` - two rules of equal width - and read
+                 * as a menu glyph rather than a container.
+                 *
+                 * Scaled to a 24 grid on the tray's 67.6: the rules are 14.6 and
+                 * 19.7 wide, centred on 12; the tray spans 2.3..21.7 and is 16.3
+                 * tall with 3.7 of taper.
+                 */
                 MiIcon(
-                    "M2 2.6h20M2 8.2h20M3.6 12.4h16.8l-1.6 9.2H5.2z",
+                    "M4.7 1.6h14.6M2.2 6.4h19.7M2.3 12h19.4l-3.5 10.4H5.8z",
                     contentDescription = null,
-                    modifier = Modifier.size(67.2.dp),
+                    modifier = Modifier.size(67.6.dp),
                     viewBox = 24f,
                     strokeWidth = 1.6f,
                     tint = LocalMuted.current,

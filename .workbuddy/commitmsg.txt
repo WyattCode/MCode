@@ -1,14 +1,22 @@
-MCode Remote: 定时任务 gets its way in
+MCode Remote: the right pane on the pages that own the left column
 
-The page had no control of its own: to make an automation you had to leave for
-the conversation list first. The reference puts a 「+ 新建任务」 capsule at its
-foot, y 832.8, x 220.8..343.6 - 122.8 wide, on the same right edge as the list
-pages' 新建会话.
+The 项目, 定时任务, 产物 and 插件 screens each fill the left column, and the
+reference leaves its right pane blank on all four - plain page, no header. This
+drew the conversation header regardless, so a back arrow sat at x 379.6..392.4 on
+a page with no conversation to go back from. Tapping it went somewhere the reader
+had not asked to go.
 
-Drawn on the build at x 232.8..343.2, y 838.4..882.4: right edge within 0.4, six
-of height and twelve of width from the reference. The twelve come from the Box
-wrapper's end pad eating into the stated 122.8; two corrections to that pad
-measured identically, so the squeeze is not in the number I was changing. Left at
-110.4 rather than guessing a third time - the capsule reads correctly and its
-right edge, which is what the eye lines up against the list pages, is already
-right.
+Both the header and the transcript are inside the guard now. Verified: the right
+pane draws no ink above y 88 on 项目, and the home screen still shows its arrow at
+the same 379.6..392.4, which is where the reference has one.
+
+Reported after photographing, not from the thumbnail: on the small view the
+filter mark's three stems compress into something that reads as a left arrow at the
+bar's right end. That misreading cost three passes on the home header, which has
+always been correct. The bar holds the burger, the title, the filter at
+278.8..292.0 and the list mark at 318.4..332.4, and nothing else.
+
+The 项目 empty-state mark is redrawn from three widths rather than two: the rules
+are 41.2 and 55.6 wide over a 67.6 tray, not two rules of equal width over a tray.
+Not yet photographed - this pad's six real projects mean the empty state needs a
+search that returns nothing, and the search field did not take the injected text.
