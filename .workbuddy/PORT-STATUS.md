@@ -44,6 +44,12 @@ mark x 30.0..41.6, title x 61.2.
 Foot: purple W avatar at the left, black 新建会话 capsule y 832.8,
 x 16.0..343.6, 44.0 tall.
 
+Row mark means "the open conversation": `</>` on that one, a round speech bubble
+on every other. Row height 41.4 produces the reference's 43.4 pitch.
+
+Known difference: this drawer carries a 设置 row above the account and the
+reference does not. It is the only route into the settings pages.
+
 ## Conversation pane
 
 | element | reference | this app |
@@ -60,7 +66,6 @@ Empty block centre is 43.3% of the pane, not 50% — already implemented as
 ## Not yet compared
 
 - Artifacts page (the shot filed as CL-ART.png was actually Code — the tap missed)
-- The purple W avatar in the drawer's foot corner
 - 定时任务 page
 - A conversation with messages: bubbles, tool rows, code blocks
 - Dark theme on every page
