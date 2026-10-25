@@ -50,25 +50,53 @@ on every other. Row height 41.4 produces the reference's 43.4 pitch.
 Known difference: this drawer carries a 设置 row above the account and the
 reference does not. It is the only route into the settings pages.
 
-## Conversation pane
+## Conversation pane — matched
+
+Measured against a real thread on the reference (drawer → Main), which is the only
+benchmark that shows the header over a conversation.
 
 | element | reference | this app |
 |---|---|---|
+| back arrow | x 400.8..414.8 | **400.8..413.6** |
+| title | centred, 17sp | 17sp |
+| trailing mark | ⋯ at 1290.4..1308.0 | **⋯ at 1290.4..1302.8** |
+| after the ⋯ | nothing | nothing |
 | composer width | 766.4 (x 490.4..1256.4) | **766.0, same edges** |
 | composer card | 84.0 tall, fill (254,254,254) | — |
-| empty mark | 41.2×40.8, y 373.2 | 49.9 box → *unverified* |
-| empty greeting | y 432.0, ink 23.2 | 18sp → *unverified* |
+| empty mark | 41.2×40.8, y 373.2 | **41.6 at 373.2..414.8** |
+| empty greeting | y 432.0, ink 23.2 | 435.6 |
 | mark-to-greeting | 18.0 | 18.0 |
+| offline block | y 776..881.6 | **792..878.8** |
+| input row | y 899.2 | **898.4** |
 
-Empty block centre is 43.3% of the pane, not 50% — already implemented as
-`padding(bottom = 135.8)`.
+The header carries exactly three marks. It used to carry four: a laptop glyph into
+settings at 1291.6 and a vertical ⋮ at 1337.6. The reference has neither — settings
+is reached from the drawer, and its menu glyph is three dots in a row, not a
+column.
+
+## 定时任务 — matched
+
+| element | reference | this app |
+|---|---|---|
+| empty mark | 23.6 of ink, y 449.6 | **449.6** |
+| 暂无定时任务 | y 497.2 | 498.8 |
+| caption | y 526.4 | 528.8 |
+| foot capsule | y 832.8, x 220.8..343.6 | 838.4, x 232.8..343.2 |
+
+The page also had no way in at all until this pass; it has a 「+ 新建任务」 capsule
+now, on the same right edge as the list pages' 新建会话.
+
+## Dark theme — matched
+
+Page #151515, composer card #202020, and every colour CompositionLocal carries its
+own dark branch.
 
 ## Not yet compared
 
 - Artifacts page (the shot filed as CL-ART.png was actually Code — the tap missed)
-- 定时任务 page
-- A conversation with messages: bubbles, tool rows, code blocks
-- Dark theme on every page
+- Rich message bodies: tool rows, code blocks, the diff and delivery cards
+- The 定时任务 foot capsule is 110.4 wide against 122.8, and the twelve come from a
+  squeeze I have not located
 
 ## Recurring obstacles
 
