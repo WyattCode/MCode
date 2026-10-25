@@ -9006,7 +9006,7 @@ fun SessionList(
                      * offsets below are the tile's, not the glyph's.
                      */
                     Box(
-                        Modifier
+                        modifier = Modifier
                             /*
                              * 23.6 on the flat list, 36 on the cards.
                              *
@@ -9018,7 +9018,20 @@ fun SessionList(
                              */
                             .width(if (compact) 31.2.dp else if (flat) 23.6.dp else 36.dp)
                             .offset(y = if (compact) (-6.4).dp else 0.dp),
-                        contentAlignment = if (compact) Alignment.TopStart else Alignment.Center,
+                        /*
+                         * Top on the flat rows.
+                         *
+                         * The mark hangs at the start of the title's line; a
+                         * centred box put it 15 dp below the text it belongs to
+                         * - measured, the mark's ink at y 190.0 while the title
+                         * began at 175.2. Centre is right for the cards, where
+                         * the mark sits against a two-line block.
+                         */
+                        contentAlignment = (
+                            if (compact) Alignment.TopStart
+                            else if (flat) Alignment.Top
+                            else Alignment.Center
+                        ) as Alignment,
                     ) {
                         /*
                          * No tile behind the mark.
@@ -9477,23 +9490,16 @@ fun DrawerContent(
                 path = "M2 2.6h20M2 8.2h20M3.6 12.4h16.8l-1.6 9.2H5.2z",
             ) { onProjects() }
             /*
-             * 最近记录, the reference's first row.
+             * 最近记录 is not a drawer row.
              *
-             * Claude's drawer opens with four destinations - 项目, 最近记录,
-             * Code, Artifacts, 定时任务 in that order once 最近记录 is counted -
-             * and this rail had three: 项目, Code, Artifacts, 定时任务. The
-             * missing one was the page the app opens on, so the rail had no row
-             * for the screen the reader is looking at, and 最近记录 / Code were
-             * fused into a single Sessions mode that carried a device panel the
-             * home list should not have.
+             * I added one last pass on the assumption that the home list must be
+             * a destination like the others. Photographed, Claude's drawer has
+             * exactly four rows - 项目, Code, Artifacts, 定时任务 - and 最近记录
+             * appears in none of them: it is where the app opens, reached by
+             * pressing back out of a page rather than by choosing it. A fifth
+             * row would have pushed every real row down by 57.6 and made the
+             * drawer claim a destination the reference does not offer.
              */
-            DrawerItem(
-                Icons.Outlined.Schedule,
-                "最近记录",
-                active = currentPage == LeftMode.Recent,
-                path = "M3.4 11.4a8.6 8.6 0 1 1 2.6 6.2M3.4 7.2v4.4h4.4M12 8v4.6l3.2 2",
-                pathStroke = 1.8f,
-            ) { onRecent() }
             /*
              * 「Code」, opening the conversation list - the reference's own
              * second row.
