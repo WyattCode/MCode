@@ -1,28 +1,14 @@
-MCode Remote: the home title, and the scheduled page's empty block
+MCode Remote: 定时任务 gets its way in
 
-The home title was 18sp and ran 70.8 wide where the reference's runs 65.2 - the
-same four characters, so 16.6sp. Its centre was 5 left of the column's 180.0, and
-the -5.2 offset that was supposed to fix that had the sign backwards: +5.0 pushed
-it to 185.6 and the right number is -0.8. Verified: 147.2..212.0 at 64.8 across,
-centre 179.6, against 147.2..212.4 at 65.2, centre 179.8.
+The page had no control of its own: to make an automation you had to leave for
+the conversation list first. The reference puts a 「+ 新建任务」 capsule at its
+foot, y 832.8, x 220.8..343.6 - 122.8 wide, on the same right edge as the list
+pages' 新建会话.
 
-The scheduled page's empty block sat 206 above its line. Three attempts at the
-size modifier - fillMaxWidth, fillMaxHeight, fillMaxSize - left the block at the
-identical y 243.2, so whatever constrains that column is upstream of it and not
-something I was going to find by changing its own modifier again. The block is
-placed by a stated top pad instead: 327.8, from the reference's disc topping at
-429.4 with the header ending at 95.6. Verified: 449.6, 498.8, 528.8 against
-449.6, 497.2, 526.4.
-
-Two sizes inside the block were also wrong and are now measured rather than
-guessed. The clock's ink ran 14.8 in a 20 dp box; the reference's is 23.6, so the
-box is 31.9 - a stroked ring stops at its radius, so the box has to be larger than
-the mark. And the spacer under the disc was 14 where the reference leaves 3.8
-between the disc's foot and the title's ink; it is 0 now, with the disc's own
-64 dp carrying the rest.
-
-Also corrected a measurement of my own from the last pass: I reported a stray back
-arrow in the home header. There is none. Scanned across, the bar holds the burger
-at 15.6..31.6, the title, the filter at 278.8..292.0 and the list mark at
-318.4..332.4 - I had read the list mark's three ticks as an arrow at thumbnail
-scale.
+Drawn on the build at x 232.8..343.2, y 838.4..882.4: right edge within 0.4, six
+of height and twelve of width from the reference. The twelve come from the Box
+wrapper's end pad eating into the stated 122.8; two corrections to that pad
+measured identically, so the squeeze is not in the number I was changing. Left at
+110.4 rather than guessing a third time - the capsule reads correctly and its
+right edge, which is what the eye lines up against the list pages, is already
+right.
