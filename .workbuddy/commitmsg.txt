@@ -1,13 +1,17 @@
-MCode Remote: the wide empty pane's mark and its gap
+MCode Remote: the composer lands on the reference's own edges, and the drawer holds six
 
-Measured Claude's own empty conversation pane: the star's ink runs
-852.8..894.0 by 373.2..414.0 - 41.2 by 40.8 - and the greeting's ink begins at
-432.0, so there is 18.0 between the mark's foot and the words.
+Composer, verified on glass: the card now measures x 490.4..1256.4, width 766.0,
+against the reference's 766.4 on the same two edges. It was 951.6 before, with
+the right edge 14.4 from the seam. Two corrections got there - the inset belonged
+on the card's own Surface rather than a Column above it, and 130.4 of inset
+produced 182.4 because a second inset already sits between the pane and the card.
+78.4 and 78.0 are the numbers that land it.
 
-At 39.5 the mark drew 32.6 of ink, not 39.5: a stroked star stops at the radius
-and no spoke runs along an axis, so the corners of the box stay empty. 39.5 x
-41.2/32.6 is 49.9, and the gap goes from 14 to 18.
+The drawer's 最近使用 holds six rows, not seven. Counted off this pass's
+screenshot: titles at y 390.0, 432.4, 476.0, 519.6, 564.4, 606.8 with 查看全部 at
+654.4, a 43.4 pitch. My earlier note claimed seven at a 28-to-31 pitch - I had
+counted through a window that cut off the fifth row and then inferred the rest.
+43.6 is already the compact row height, so only the count changed.
 
-The greeting's own size is left alone pending a screenshot: its ink measures 23.2
-tall, which 18sp may or may not draw in this face, and guessing at type size is
-how the drawer rows ended up two sizes out.
+The empty pane's mark and gap (49.9 box, 18 between mark and greeting) remain
+unverified: the pane on screen holds a conversation, not the empty state.
