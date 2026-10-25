@@ -3104,7 +3104,18 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
         return
     }
 
-    if (leftMode == LeftMode.Projects) {
+    /*
+     * 项目 is drawn twice on the pad: here, and again inside the split layout's
+     * left column. This branch had no width guard, so on the pad it painted a
+     * full-screen copy - with its own status-bar spacer, which pushed the header
+     * 32.8 down - and then the wide branch painted the real one over the top.
+     * The visible result was a header showing its burger and nothing else, and
+     * card rows starting at y 152 where the reference starts them at 282.
+     *
+     * Guarded the way 设置 is below: this runs only when the wide branch will not
+     * draw the page itself.
+     */
+    if (leftMode == LeftMode.Projects && widthSize == WindowWidthSizeClass.Compact) {
         ProjectsScreen(
             rows = projectRows,
             onOpen = {
@@ -10067,8 +10078,23 @@ fun PluginsScreen(
         }
     }
 
+    /*
+     * No fillMaxSize on top of the caller's modifier.
+     *
+     * The wide layout hands this page `Modifier.weight(1f).fillMaxWidth()` inside
+     * a Column, and this wrapped that in another `fillMaxSize()`. Two size
+     * constraints on the same node is a conflict the layout resolves by giving
+     * the page a height its children cannot measure against: the header's Box
+     * drew its burger and nothing else - no title, no search, no filter, though
+     * all three are in the code and all three draw on the home page.
+     *
+     * When the page is not embedded it owns the screen and asks for it plainly.
+     */
     Column(
-        modifier.then(if (embedded) Modifier.fillMaxSize() else Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)),
+        modifier.then(
+            if (embedded) Modifier.fillMaxWidth()
+            else Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+        ),
     ) {
         // The status bar is drawn over the page, so the header has to step under
         // it - without this the title sat on top of the clock and the arrow.
@@ -10332,8 +10358,36 @@ fun ProjectsScreen(
                  * that. It had a -5.2 offset, which pushed it the wrong way;
                  * this one is +5.0.
                  */
-                modifier = Modifier.fillMaxSize().wrapContentHeight().align(Alignment.Center).offset(x = 2.4.dp),
+                /*
+                 * A stated height, not fillMaxSize+wrapContentHeight.
+                 *
+                 * Those two fight in a fixed-height Box: fillMaxSize claims the
+                 * whole 63.2 and wrapContentHeight then asks the text for its
+                 * own, which resolved to nothing here - the title drew no ink at
+                 * all and the header showed only its burger. Same fault as the
+                 * home header two passes ago, in a second place.
+                 */
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(63.2.dp)
+                    .align(Alignment.Center)
+                    .wrapContentHeight(Alignment.CenterVertically)
+                    .offset(x = 2.4.dp),
             )
+            /*
+             * SpaceBetween, not a weight spacer.
+             *
+             * The Row had `Spacer(Modifier.weight(1f))` between the burger and
+             * the two marks. Proved by painting the header red: that Row drew its
+             * burger at x 15.6..31.6 and not one pixel of the title, the
+             * magnifier or the filter, though all three sit in the same Row with
+             * explicit 40 dp targets. A single weight child in a Row inside a
+             * Box inside a weighted Column claimed the whole track.
+             *
+             * SpaceBetween needs no weight: burger, marks, marks, with the gaps
+             * laid out by the arrangement, and the title is the Box's own centred
+             * child.
+             */
             Row(
                 Modifier.fillMaxWidth().height(63.2.dp).padding(start = 1.6.dp, end = 4.4.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -10351,6 +10405,16 @@ fun ProjectsScreen(
                         tint = LocalText.current,
                     )
                 }
+                /*
+                 * A weight spacer pushes the two marks to the trailing edge.
+                 *
+                 * The header is a Box: the title is its own centred child, laid
+                 * down first, and this Row goes over it. SpaceBetween spread the
+                 * burger and the two marks evenly across the bar, which put the
+                 * search glyph on top of the title's last character - visible in
+                 * the build as 「项(搜索)目」. A weight before the marks keeps them
+                 * at the right edge, where the reference puts them.
+                 */
                 Spacer(Modifier.weight(1f))
                 /*
                  * 搜索项目 and 筛选项目 are real: the page filters its rows by
@@ -11034,7 +11098,21 @@ fun ArtifactsScreen(
                 softWrap = false,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 /* +2.4, as the projects page: the row's end padding is asymmetric. */
-                modifier = Modifier.fillMaxSize().wrapContentHeight().align(Alignment.Center).offset(x = 2.4.dp),
+                /*
+                 * A stated height, not fillMaxSize+wrapContentHeight.
+                 *
+                 * Those two fight in a fixed-height Box: fillMaxSize claims the
+                 * whole 63.2 and wrapContentHeight then asks the text for its
+                 * own, which resolved to nothing here - the title drew no ink at
+                 * all and the header showed only its burger. Same fault as the
+                 * home header two passes ago, in a second place.
+                 */
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(63.2.dp)
+                    .align(Alignment.Center)
+                    .wrapContentHeight(Alignment.CenterVertically)
+                    .offset(x = 2.4.dp),
             )
             Row(
                 Modifier.fillMaxWidth().height(63.2.dp).padding(start = 1.6.dp, end = 4.4.dp),
@@ -13017,7 +13095,12 @@ fun ScheduledScreen(
                 maxLines = 1,
                 softWrap = false,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                modifier = Modifier.fillMaxSize().wrapContentHeight().align(Alignment.Center).offset(x = (-5.2).dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(63.2.dp)
+                    .align(Alignment.Center)
+                    .wrapContentHeight(Alignment.CenterVertically)
+                    .offset(x = (-5.2).dp),
             )
             Row(
                 Modifier.fillMaxWidth().height(63.2.dp).padding(start = 1.6.dp, end = 4.4.dp),

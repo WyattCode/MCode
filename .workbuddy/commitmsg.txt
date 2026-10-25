@@ -1,22 +1,26 @@
-MCode Remote: the drawer's six rows and the mark that says which one is open
+MCode Remote: the projects header draws all four of its parts
 
-The drawer's 最近使用 lists six conversations, at a 43.4 pitch - measured, titles
-at y 390.0, 432.4, 476.0, 519.6, 564.4, 606.8 with 查看全部 at 654.4. The rows were
-at 45.6 because 43.6 was taken from that 43.4 mean rather than from the spacing
-that produces it; the drawer's rows are 41.4 now and the list lands on 390.4,
-434.0, 477.6, 521.2, 564.8, 608.4. The flat list keeps its own 60 and is
-unaffected - the two share that height expression, which is how the drawer's
-number got set from the home list's measurement in the first place.
+The header showed its burger and nothing else - no title, no magnifier, no
+filter - and card rows began at y 152 where the reference begins them at 282.
 
-The row mark means "the conversation you are reading", not "a conversation in a
-project". Classified from the drawer: Main, the open one, carries `</>`; every
-other row carries a speech bubble, whether or not it has a directory. This tested
-`directory.isNotBlank()`, so a project conversation wore the code mark and a plain
-one wore a bubble, and the mark answered a question nobody was asking.
+Found by painting the header red: the Box measured its full 360 by 63.2 at
+y 32.8..95.6, exactly right, and inside it only the burger's ink appeared. Three
+faults stacked:
 
-The bubble itself is round - a circle with a short straight tail at its lower
-left - not the 1.6-cornered rectangle this drew, which read as a chat panel.
+1. `if (leftMode == LeftMode.Projects)` near the top of App had no width guard,
+   so on the pad it painted a full-screen copy of the page - with its own
+   status-bar spacer, which pushed everything 32.8 down - and then the wide
+   branch painted the real page over the top. The copy underneath is what ate the
+   space. It is guarded to Compact now, the way 设置 already was.
 
-Not changed: 设置 sits above the account in this drawer and the reference has no
-such row there. It is the only way into the settings pages, so it stays until
-there is another, but it is a difference and it is listed as one.
+2. The title was `fillMaxSize().wrapContentHeight()`, which in a fixed-height Box
+   measures to no height at all. Same fault as the home header two passes ago,
+   in three more places; all four state their height now.
+
+3. `horizontalArrangement = SpaceBetween` spread the burger and the two marks
+   evenly across the bar, which put the magnifier on top of the title's last
+   character - the build read 「项(放大镜)目」. A weight before the marks keeps them
+   at the trailing edge, where the reference has them.
+
+Measured after: 项目 runs x 168.8..196.0 against the reference's 164.0..194.0,
+magnifier and filter at the right, burger at x 15.6..31.6.
