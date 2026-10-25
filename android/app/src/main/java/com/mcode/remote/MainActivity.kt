@@ -6107,8 +6107,17 @@ fun WelcomePane(withInput: Boolean, inputBar: @Composable () -> Unit, inputAtBot
              * radius, so the round cap keeps half a stroke inside the box, and
              * no spoke points exactly along an axis. 32.6 x 103/85 = 39.5.
              */
-            SparkMark(Modifier.size(39.5.dp))
-            Spacer(Modifier.height(14.dp))
+            /*
+             * 49.9 and 18, measured off the reference's own wide empty pane.
+             *
+             * Its mark's ink runs 852.8..894.0 x 373.2..414.0 - 41.2 by 40.8 -
+             * and the greeting's ink starts at 432.0, 18.0 below the mark's
+             * foot. At 39.5 this drew 32.6 of ink, because a stroked star stops
+             * at the radius and no spoke runs along an axis; 39.5 x 41.2/32.6
+             * is 49.9.
+             */
+            SparkMark(Modifier.size(49.9.dp))
+            Spacer(Modifier.height(18.dp))
             Text(greeting(), fontSize = 18.sp, fontWeight = FontWeight.Normal, color = LocalText.current)
         } else {
             SparkMark(Modifier.size(39.5.dp))

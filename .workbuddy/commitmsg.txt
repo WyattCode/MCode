@@ -1,20 +1,13 @@
-MCode Remote: the composer is narrow, and the inset was being applied twice
+MCode Remote: the wide empty pane's mark and its gap
 
-The reference's composer card is 766.4 wide inside a 1003.2 pane - 130.4 from the
-left seam, 106.8 from the right. This filled the pane minus 12 of padding, so the
-card ran 951.6 with its right edge 14.4 from the seam, and the transcript read as
-a wall rather than a column.
+Measured Claude's own empty conversation pane: the star's ink runs
+852.8..894.0 by 373.2..414.0 - 41.2 by 40.8 - and the greeting's ink begins at
+432.0, so there is 18.0 between the mark's foot and the words.
 
-The inset goes on the composer's own Surface, which is where the fillMaxWidth
-actually was. A first attempt put it on a Column two hundred lines above and
-changed nothing - the same shape of mistake as the drawer rows: two composables
-both plausibly "the composer", and the one edited was not the one drawn.
+At 39.5 the mark drew 32.6 of ink, not 39.5: a stroked star stops at the radius
+and no spoke runs along an axis, so the corners of the box stay empty. 39.5 x
+41.2/32.6 is 49.9, and the gap goes from 14 to 18.
 
-Then the numbers: 130.4 of inset produced a card at 182.4, because a second inset
-already sits between the pane and the card. Measured off the build, 78.4 and 78.0
-are what land the card on the reference's 490.4..1256.4.
-
-Verified as far as the build: the card measured 685.2 wide after the first
-number, which is 81.2 short of 766.4 - the 52 of double-inset on one side and 29
-on the other. The correcting build was not photographed; the pad locks within
-seconds on battery and adb cannot clear a keyguard with a PIN.
+The greeting's own size is left alone pending a screenshot: its ink measures 23.2
+tall, which 18sp may or may not draw in this face, and guessing at type size is
+how the drawer rows ended up two sizes out.
