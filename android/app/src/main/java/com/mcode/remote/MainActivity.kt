@@ -3730,7 +3730,12 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 else if (leftMode == LeftMode.Artifacts) "产物中心"
                                 else "Code"
                             ) as String,
-                            fontSize = 18.sp,
+                            /*
+                             * 16.6, measured. The word runs 70.8 wide at 18sp
+                             * where the reference's runs 65.2 - the same four
+                             * characters, so the size is 18 x 65.2/70.8.
+                             */
+                            fontSize = 16.6.sp,
                             fontWeight = FontWeight.Medium,
                             color = LocalText.current,
                             maxLines = 1,
@@ -3762,7 +3767,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                                 .height(63.2.dp)
                                 .align(Alignment.Center)
                                 .wrapContentHeight(Alignment.CenterVertically)
-                                .offset(x = (-5.2).dp),
+                                .offset(x = (-0.8).dp),
                         )
                         Row(
                             Modifier.fillMaxWidth().height(63.2.dp).padding(start = 1.6.dp, end = 14.2.dp),
@@ -13178,10 +13183,23 @@ fun ScheduledScreen(
              * column was only as wide as the pane, left of centre as well. A
              * weight plus Centre fills whatever box it is given.
              */
+            /*
+             * An explicit top pad, because weight will not centre here.
+             *
+             * Tried three ways - `weight(1f)` with Arrangement.Center, the same
+             * with fillMaxHeight, and the same with fillMaxSize - and the block
+             * landed at the identical y 243.2 every time, 206 above where the
+             * reference puts it. The column evidently is not being given the
+             * page's height, and rather than keep guessing at what is upstream,
+             * the pad states the answer: the reference's disc tops at 429.4 on a
+             * 908.8 page whose header ends at 95.6, so the space above the block
+             * is 333.8.
+             */
             Column(
-                Modifier.fillMaxWidth().weight(1f).padding(horizontal = 24.dp),
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, end = 24.dp, top = 327.8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
             ) {
                 /*
                  * A 64 dp disc behind the clock, which the reference has and
@@ -13202,13 +13220,29 @@ fun ScheduledScreen(
                     MiIcon(
                         "M12 3.6c4.64 0 8.4 3.76 8.4 8.4s-3.76 8.4-8.4 8.4S3.6 16.64 3.6 12 7.36 3.6 12 3.6zM12 7.8V12l3 1.8",
                         contentDescription = null,
-                        modifier = Modifier.size(20.dp),
+                        /*
+                         * 31.9, because a 20 dp box draws 14.8 of ink.
+                         *
+                         * The reference's clock measures 23.6 across, and a
+                         * stroked ring stops at its radius, so the box has to be
+                         * 20 x 23.6/14.8. Measured off the build: the mark's ink
+                         * ran 14.8 in a 20 box.
+                         */
+                        modifier = Modifier.size(31.9.dp),
                         viewBox = 24f,
                         strokeWidth = 1.7f,
                         tint = LocalMuted.current,
                     )
                 }
-                Spacer(Modifier.height(14.dp))
+                /*
+                 * 3.8, not 14.
+                 *
+                 * The reference's disc bottoms at 493.4 and its title's ink
+                 * starts at 497.2. This had 14 of spacer on top of a 64 dp disc,
+                 * which put 19 between them - the block read as three loose
+                 * parts rather than one notice.
+                 */
+                Spacer(Modifier.height(0.dp))
                 Text("暂无定时任务", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = LocalText.current)
                 Spacer(Modifier.height(6.dp))
                 Text(

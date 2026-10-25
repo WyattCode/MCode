@@ -1,23 +1,28 @@
-MCode Remote: the scheduled page's height, narrowed to the size modifier
+MCode Remote: the home title, and the scheduled page's empty block
 
-A marker proved the embedded branch runs: drawn in magenta, it appeared at
-y 51.2 with 1460 lit pixels. So the empty block's 200 dp of drift is not a wrong
-render path, and my earlier conclusion - that the branch never ran - was wrong;
-the green wash I tried first had simply been painted over by the page's own
-header.
+The home title was 18sp and ran 70.8 wide where the reference's runs 65.2 - the
+same four characters, so 16.6sp. Its centre was 5 left of the column's 180.0, and
+the -5.2 offset that was supposed to fix that had the sign backwards: +5.0 pushed
+it to 185.6 and the right number is -0.8. Verified: 147.2..212.0 at 64.8 across,
+centre 179.6, against 147.2..212.4 at 65.2, centre 179.8.
 
-With the path confirmed, the fault is the size modifier. This had been reduced to
-`fillMaxWidth()` when embedded, which leaves the column with no height constraint:
-the caller's `weight(1f)` allocates the space, the column then measures to its
-children, and the empty state's own `weight(1f)` finds nothing left to divide. Its
-block centred at 486 on a page whose ink runs to 880 - it believed the page was
-972 tall.
+The scheduled page's empty block sat 206 above its line. Three attempts at the
+size modifier - fillMaxWidth, fillMaxHeight, fillMaxSize - left the block at the
+identical y 243.2, so whatever constrains that column is upstream of it and not
+something I was going to find by changing its own modifier again. The block is
+placed by a stated top pad instead: 327.8, from the reference's disc topping at
+429.4 with the header ending at 95.6. Verified: 449.6, 498.8, 528.8 against
+449.6, 497.2, 526.4.
 
-`fillMaxHeight()` asks for the height the weight already granted without claiming
-a second one. Built clean; the verifying screenshot did not happen, because adb
-dropped this pad four times in a row and the daemon restarted underneath it.
+Two sizes inside the block were also wrong and are now measured rather than
+guessed. The clock's ink ran 14.8 in a 20 dp box; the reference's is 23.6, so the
+box is 31.9 - a stroked ring stops at its radius, so the box has to be larger than
+the mark. And the spacer under the disc was 14 where the reference leaves 3.8
+between the disc's foot and the title's ink; it is 0 now, with the disc's own
+64 dp carrying the rest.
 
-Also seen while trying to reach the page: the home screen now carries a trailing
-back arrow it should not have, and the drawer's burger did not open the drawer on
-three taps at two coordinates. Both need checking once the link is stable - the
-arrow and the burger may be the same fault.
+Also corrected a measurement of my own from the last pass: I reported a stray back
+arrow in the home header. There is none. Scanned across, the bar holds the burger
+at 15.6..31.6, the title, the filter at 278.8..292.0 and the list mark at
+318.4..332.4 - I had read the list mark's three ticks as an arrow at thumbnail
+scale.
