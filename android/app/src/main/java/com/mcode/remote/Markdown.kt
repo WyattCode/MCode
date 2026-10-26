@@ -2052,19 +2052,27 @@ private fun ListBox(
             val here = at
             at += item.text.length + 1
             /*
-             * 8.8 for the first level, 20.4 for each one under it.
+             * 0 for the first level, 20.4 for each one under it.
              *
-             * Measured on A_claude.png: the top-level `•` starts at 48.8 dp and
-             * the nested `○` at 69.2, against a prose edge of 40.0 - so 8.8 and
-             * 29.2, which is 8.8 + 20.4. The old `depth * 16` put the first
-             * level flush with the prose and stacked the second only 16 in, so a
-             * nested list read as the same list continued rather than as a
-             * level under it.
+             * Re-measured on A_claude.png by cutting the left edge of seven
+             * consecutive lines and stacking them into one strip, which is what
+             * it took to read the glyphs rather than guess at them. In that
+             * reference prose starts at 408.8 and so does a top-level `•` - the
+             * bullet sits *in* the prose column, not inset from it - while a
+             * nested `○` starts at 429.2, 20.4 further in.
+             *
+             * This carried 8.8 + depth x 20.4, from an earlier reading of the
+             * same image as "bullet at 48.8 against a prose edge of 40.0". Both
+             * halves of that reading were wrong: 48.8 was not the bullet's
+             * position and 40.0 was the Code pane's edge, not the conversation
+             * pane's 48.8. The 8.8 inset put every top-level bullet a step right
+             * of the prose it belongs to, and the 20.4 step then compounded it,
+             * so a nested item landed 29.2 in where the reference has 20.4.
              */
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(start = (8.8 + item.depth * 20.4).dp, bottom = 6.dp),
+                    .padding(start = (item.depth * 20.4).dp, bottom = 6.dp),
             ) {
                 Text(
                     marker,
