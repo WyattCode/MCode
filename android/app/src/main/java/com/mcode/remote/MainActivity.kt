@@ -5362,7 +5362,7 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
                  * read the diff but not close it out is half the rail.
                  */
                 if (changedFiles.isNotEmpty()) {
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(10.dp))
                     val message = commitMessage
                     OutlinedTextField(
                         message,
@@ -11252,18 +11252,25 @@ fun ArtifactsScreen(
         }
         LazyColumn(
             Modifier.fillMaxWidth().weight(1f),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 40.dp, end = 40.dp, top = 14.dp, bottom = 40.dp),
+            /*
+             * 16 either side, as the reference: its field and card both run
+             * x 16.0..343.6. This used 40, which is where the 40.0 x-start of
+             * every row came from.
+             */
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 16.dp, top = 2.8.dp, bottom = 40.dp),
         ) {
             item {
-                Text("产物中心", fontSize = 24.sp, lineHeight = 30.sp, color = LocalText.current)
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "这里汇总了你在 MCode 里生成过的全部产物，可预览、下载或回到对话继续",
-                    fontSize = 13.sp,
-                    lineHeight = 20.sp,
-                    color = LocalMuted.current,
-                )
-                Spacer(Modifier.height(16.dp))
+                /*
+                 * No page heading and no blurb.
+                 *
+                 * Photographed on the reference's artifacts page with a real
+                 * artifact in it: the bar says Artifacts, and the page goes
+                 * straight to the search field at y 104.8 - no 「产物中心」, no
+                 * sentence under it. This opened with a 24sp heading and two
+                 * lines of explanation, which pushed the field from 104.8 to
+                 * 210.4 and made the page read as a marketing screen rather than
+                 * a shelf.
+                 */
                 /*
                  * The field is a 56 dp capsule, as the reference draws it.
                  *
@@ -11298,40 +11305,16 @@ fun ArtifactsScreen(
                     singleLine = true,
                 )
                 Spacer(Modifier.height(12.dp))
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        for ((key, label, count) in listOf(
-                            Triple("", "全部", facets?.optInt("total") ?: 0),
-                            Triple("doc", "文档", facets?.optInt("doc") ?: 0),
-                            Triple("app", "应用", facets?.optInt("app") ?: 0),
-                            Triple("other", "其他", facets?.optInt("other") ?: 0),
-                        )) {
-                            val on = category == key
-                            Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = if (on) LocalPill.current else Color.Transparent,
-                                modifier = Modifier.clickable { onCategory(key) },
-                            ) {
-                                Row(Modifier.padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(label, fontSize = 14.sp, color = if (on) LocalText.current else LocalMuted.current)
-                                    if (!loading) {
-                                        Spacer(Modifier.width(5.dp))
-                                        Text("$count", fontSize = 12.sp, color = LocalMuted.current)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    // MiMo's two layouts, at the end of the filter row.
-                    Box(Modifier.size(30.dp).clickable { grid = !grid }, contentAlignment = Alignment.Center) {
-                        Icon(
-                            if (grid) Icons.AutoMirrored.Outlined.Article else Icons.Outlined.Folder,
-                            contentDescription = if (grid) "列表视图" else "网格视图",
-                            tint = LocalMuted.current,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                }
+                /*
+                 * No filter row and no layout toggle.
+                 *
+                 * The reference's artifacts page holds the search field and then
+                 * its cards - measured, the field ends at 160.4 and the first
+                 * card starts at 180.8, with nothing between. This put a row of
+                 * category pills (全部 19 / 文档 5 / 应用 0 / 其他 …) and a
+                 * grid-or-list switch in that 20 dp. Neither exists on the
+                 * reference; the pills also cost a row of height on every visit.
+                 */
                 Spacer(Modifier.height(10.dp))
             }
             if (failed) {

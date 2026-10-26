@@ -1,21 +1,25 @@
-MCode Remote: the conversation header holds three marks, and the reference's own three
+MCode Remote: the artifacts page has less on it than I had put there
 
-Measured against a real thread on the reference - left column 项目, right column a
-long conversation - the header carries back at 400.8..414.8, a centred title, and a
-single horizontal ⋯ at 1290.4..1308.0, with nothing after it.
+Photographed the reference's artifacts page with a real artifact in it - the shot
+I had been working from was its empty state, which is why the page looked
+unmatched.
 
-This carried four things: the back arrow at 379.6 (21.2 left, tucked against the
-divider), the title, a laptop glyph at 1291.6, and a vertical ⋮ at 1337.6. Now:
-arrow at 400.8..413.6, ⋯ at 1290.4..1302.8, and no laptop.
+Its whole top is a bar reading Artifacts, then the search field at y 104.8, then
+whatever cards there are starting at 180.8. Nothing between.
 
-Two corrections along the way that are worth naming. The trailing mark was ⋮ where
-the reference draws ⋯ - three dots in a row, not a column; at 12 dp of ink the
-difference is the whole character of the bar's right end. And moving it with
-`padding(end = 42.4)` squeezed the Canvas to 3.6 of ink, because padding shrinks
-the space a child measures into; `offset(x = -42.4)` moves it without resizing it.
+This page opened with a 24sp 「产物中心」 heading, two lines of explanation under
+it, and a row of category pills (全部 19 / 文档 5 / 应用 0 / 其他 0) with a
+grid-or-list switch at the row's end. None of that is on the reference. The
+heading and blurb pushed the field from 104.8 to 210.4; the pills took the 20 dp
+between the field and the cards.
 
-The title's font size is back at 17sp. I had raised it to 19.1 on the reference's
-title measuring 90.8 against this app's 80.8 - but those are different strings
-(交换机固件 against Greeting), so their widths were never comparable. The measure
-that is: the two header lines together run 31.2 of ink on the reference and 30.8
-here.
+Removed, with the side padding going from 40 to 16 - the reference's field and
+card both run x 16.0..343.6. Verified: the field now measures y 104.8..160.4 and
+x 16.0..343.6, exactly the reference's numbers, with the first card at 182.8
+against its 180.8.
+
+Still to do on this page: the record's own layout. The reference draws one
+horizontal card - a 124.8-wide thumbnail on the left carrying a violet brush
+badge at its lower corner, and three lines beside it (title, a lock with
+仅您可见, 编辑于 3 天前). This draws a three-across grid of square cards. That is
+a bigger change than the page's chrome and is not attempted here.
