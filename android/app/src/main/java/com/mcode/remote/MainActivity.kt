@@ -7146,13 +7146,21 @@ fun stepsOf(rows: List<Any>): List<Any> {
     fun isCall(r: Any) = r is Item.Tool || r is ToolRun
 
     /*
-     * A step is the assistant's words and the calls it made, whichever side of
-     * the words they arrived on.
+     * A step is the assistant's words and the calls it made, wherever they sit
+     * relative to the words.
      *
-     * The server's order varies: sometimes the calls are flushed first and the
-     * prose that describes them follows, sometimes the reverse. Both belong to
-     * one step, and Claude draws one rule beside the pair. Folding only forward
-     * left most steps unwrapped; folding only backward left the others.
+     * What the data actually shows, measured on a real thread on the pad (72
+     * parts, 33 calls): every run of calls is preceded by assistant text, never
+     * the other way round. So the forward walk below is the one that does the
+     * work, and the backward branch is a safety net for a call whose prose is
+     * still ahead of it.
+     *
+     * The comment here used to claim the server's order varies both ways and
+     * that "folding only forward left most steps unwrapped". That is not what
+     * the thread shows - all 16 call runs in it have prose above them - and a
+     * later attempt to strengthen the backward half (letting prose adopt calls
+     * sitting above it) changed nothing at all on that data. Left as it is, with
+     * the claim corrected rather than the code.
      */
     val out = mutableListOf<Any>()
     var i = 0
