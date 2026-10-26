@@ -91,12 +91,38 @@ now, on the same right edge as the list pages' 新建会话.
 Page #151515, composer card #202020, and every colour CompositionLocal carries its
 own dark branch.
 
+## Artifacts — matched
+
+Measured against the reference with a real artifact in it. Its empty state is a
+different page and cost several passes: the populated one is a bar, a search
+field, then records, with nothing in between.
+
+| element | reference | this app |
+|---|---|---|
+| search field | y 104.8..160.4, h 55.6 | **104.8..160.4** |
+| search / card x | 16.0..343.6 | **16.0..343.6** |
+| card | y 180.8..279.2, h 98.4 | 180.8..279.6, h 98.8 |
+| card fill | (249,249,247) — page colour | **same** |
+| thumbnail well | x 28.0..140.0, y 192.8..267.6, 112×74.8 | same size |
+| well fill | (237,237,235) | **same** |
+| palette sticker | 23.6 square, x 28.0..51.6 | 23.2, x 28.0..51.2 |
+| title | y 197.6, x 152.8 | **197.6, x 153.6** |
+| 仅您可见 | y 221.6 | **221.6** |
+| 编辑于 | y 252.0 | **252.0** |
+
+The page had a 24sp heading, two lines of blurb, a category-pill row and a
+layout toggle; none of that is on the reference and all of it is gone. The card
+was a three-across grid of square tiles; it is now the reference's horizontal
+record.
+
 ## Not yet compared
 
-- Artifacts page (the shot filed as CL-ART.png was actually Code — the tap missed)
 - Rich message bodies: tool rows, code blocks, the diff and delivery cards
 - The 定时任务 foot capsule is 110.4 wide against 122.8, and the twelve come from a
   squeeze I have not located
+- The artifacts well carries the kind's mark where the reference shows a real
+  preview thumbnail — correct for a record with nothing to render, unverified
+  for one that has
 
 ## Recurring obstacles
 
