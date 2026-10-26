@@ -848,7 +848,15 @@ private fun MdLine(
      * difference in the transcript: a paragraph of the same words was a third
      * taller here than in the reference.
      */
-    size: androidx.compose.ui.unit.TextUnit = 18.sp,
+    /*
+     * 17.4, not 18.
+     *
+     * Measured on the reference's own long reply (CL-MAIN): its prose ink is
+     * 16.8 to 17.2 across three lines, 17.0 on average; this drew 18.0, 17.6 on
+     * average, at 18sp. So 18 x 17.0/17.6. The line pitch is already right -
+     * the reference's 30.0 and 29.2 against this file's 30sp.
+     */
+    size: androidx.compose.ui.unit.TextUnit = 17.4.sp,
     weight: FontWeight? = null,
     /*
      * 29.8dp of line, measured at the pad's real 2.5 px per dp.
@@ -2068,7 +2076,7 @@ private fun ListBox(
                      * came out a step under the body it sits in rather than
                      * level with it. `MdLine`'s own 18/30 is the truth.
                      */
-                    fontSize = 18.sp,
+                    fontSize = 17.4.sp,
                     lineHeight = 30.sp,
                     color = if (item.task && !item.checked) LocalMuted.current else color,
                     modifier = Modifier.width(if (block.ordered) 24.dp else 16.dp),

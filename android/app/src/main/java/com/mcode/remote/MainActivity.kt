@@ -7823,7 +7823,21 @@ fun Timeline(
          * starts 40.0 dp in: 「美容师功能这一轮的实测进展：」 at x 400.0, pane edge
          * at 360.0. Reading the wrong pane cost 97 dp of measure.
          */
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 40.dp, end = 40.dp, top = 10.dp, bottom = 6.dp),
+        /*
+         * 48.8 left, 21.6 right - and they are not equal.
+         *
+         * Measured on the reference's own conversation with a long reply in it
+         * (CL-MAIN), not on its Code pane: prose runs x 408.8..1341.6 against a
+         * pane from 360.0 to 1363.2, so 48.8 in and 21.6 off the far edge. The
+         * 40/40 that stood here came from A_claude.png, which turned out to be
+         * the Code screen - a different column geometry, and reading it cost
+         * 8.0 on the left and 22.4 on the right.
+         *
+         * The asymmetry is the reference's own: its prose is narrower on the
+         * right so a long line does not run into the pane's edge, where a
+         * gesture strip lives.
+         */
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 48.8.dp, end = 21.6.dp, top = 10.dp, bottom = 6.dp),
     ) {
         for (rowAt in rows.indices) {
             val item = rows[rowAt]
