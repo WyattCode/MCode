@@ -1,25 +1,29 @@
-MCode Remote: the artifacts page has less on it than I had put there
+MCode Remote: the artifact record, measured properly this time
 
-Photographed the reference's artifacts page with a real artifact in it - the shot
-I had been working from was its empty state, which is why the page looked
-unmatched.
+The card is now the reference's record rather than a guess at one: a 1 dp outline
+on the page's own colour, a 112 x 74.8 thumbnail well in #EDEDEB, a violet brush
+badge at the well's lower-left, and three lines of text.
 
-Its whole top is a bar reading Artifacts, then the search field at y 104.8, then
-whatever cards there are starting at 180.8. Nothing between.
+Verified against the reference at 400 dpi:
 
-This page opened with a 24sp 「产物中心」 heading, two lines of explanation under
-it, and a row of category pills (全部 19 / 文档 5 / 应用 0 / 其他 0) with a
-grid-or-list switch at the row's end. None of that is on the reference. The
-heading and blurb pushed the field from 104.8 to 210.4; the pills took the 20 dp
-between the field and the cards.
+  card     180.8..279.6        against 180.8..279.2
+  title    197.6, x 153.6      against 197.6, x 152.8
+  仅您可见 221.6               against 221.6
+  编辑于   252.0               against 252.0
+  card fill (249,249,247)      against (249,249,247)
+  well fill (237,237,235)      against (237,237,235)
 
-Removed, with the side padding going from 40 to 16 - the reference's field and
-card both run x 16.0..343.6. Verified: the field now measures y 104.8..160.4 and
-x 16.0..343.6, exactly the reference's numbers, with the first card at 182.8
-against its 180.8.
+Two numbers I had recorded were wrong, and both came from scanning in the wrong
+place. The well is 112 x 74.8, not 155.2 x 86.4 - a vertical scan at x = 80 dp puts
+its fill from 192.8 to 267.6 and a horizontal one at y = 224 puts its edges at 28.0
+and 140.0. And the card's inset is 12, from 16.0 to 28.0 and from 180.8 to 192.8,
+not 8. Between them those two errors drew a card 14.4 taller than the reference's.
 
-Still to do on this page: the record's own layout. The reference draws one
-horizontal card - a 124.8-wide thumbnail on the left carrying a violet brush
-badge at its lower corner, and three lines beside it (title, a lock with
-仅您可见, 编辑于 3 天前). This draws a three-across grid of square cards. That is
-a bigger change than the page's chrome and is not attempted here.
+The colours were the bigger fault. This filled the card with `surface`
+(254,254,254), which made every record read as a white tile floating over a grey
+page; the reference's card is the page colour exactly, and the only thing darker
+on it is the well. Sampled at x 200 y 224 inside the reference's card: (249,249,247).
+
+The three text lines are placed off their own ink positions - 24.0 then 30.4 apart,
+the title 4.8 under the well's top - rather than stacked with equal spacers, which
+had put them at 34.4 and 36.0.
