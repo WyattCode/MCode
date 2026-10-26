@@ -1,25 +1,39 @@
-MCode Remote: the list bullet sits in the prose column, not inset from it
+MCode Remote: tests for what a reply parses into, and a claim I could not back
 
-Re-read A_claude.png for how a list is set, and the earlier numbers were wrong in
-a way that only a stacked strip made visible: I cut the left 30 dp of seven
-consecutive lines and joined them into one column, so the glyphs could be read
-instead of guessed at.
+Three test classes, all answerable without a device, because the pad has been off
+adb for most of a night.
 
-    prose          408.8
-    top-level •    408.8
-    nested ○       429.2
+MarkdownBlocksTest (9) pins the block dispatch against a transcript that is
+actually on the shelf - heading, two bullets, a nested bullet, an ordered list, a
+quote, a table, a bare link line and a rule. It checks each block's kind in
+order, the heading's level, that the bullets and the numbered list stay separate
+with the second starting at 1, that the nested item is depth 1 and has lost its
+indent, that the table keeps its header and cells, that a fence keeps its language
+and body verbatim, and that an unclosed fence still counts as code. The depth is
+the one worth having: it is exactly what the list's indentation is computed from
+now that it reads `depth * 20.4`.
 
-So a bullet shares the prose column's left edge - zero inset - and each level
-below it steps 20.4.
+StepFoldTest (13) and StepFoldRealThreadTest (3) cover how the flat transcript
+folds into steps. The real-thread one replays the shape of a thread on the pad
+verbatim - 72 parts, 33 calls, "AATTAATT..." - and asserts that every user turn
+keeps its own row, that every call is still somewhere, and that no call is
+attached to the reader's own turn.
 
-This had `8.8 + depth x 20.4`, and its comment cites the reading it came from:
-"the top-level • starts at 48.8 dp and the nested ○ at 69.2, against a prose edge
-of 40.0". Both halves of that were wrong. 48.8 was not where the bullet sat, and
-40.0 was the reference's Code pane edge - the conversation pane's is 48.8, which I
-corrected earlier this session. The 8.8 inset put every top-level bullet a step
-right of the prose it belongs to, and the 20.4 step compounded it, landing a
-nested item 29.2 in where the reference has 20.4.
+That last class is where this pass earned its keep, by disproving something I had
+already written down. I had claimed, in a code comment and in a commit message,
+that the server's order varies and that calls sometimes arrive before the prose
+that explains them, so that "folding only forward left most steps unwrapped". The
+replayed thread says otherwise: all 16 runs of calls in it are preceded by
+assistant text, every one. I built the stronger backward fold on the strength of
+that claim, and it changed the output by nothing at all - 16 steps before, 16
+after. So the code is back to what it was, and what changed is the comment, which
+now says what the data shows instead of what I had assumed.
 
-Built clean. Not photographed: the pad dropped off both its USB and its wireless
-link between the previous build and this one, and the only devices adb can still
-reach are the two the user has said not to install on.
+Two of these tests were also written wrong first and are left with the correction
+in them: one asserted seven blocks where the parse gives eight - the bare
+`[链接]` line is its own paragraph, which is right and which I had folded into the
+rule by eye - and one asserted three folded rows for an input whose parts number
+three but whose rows number two. Both now assert what the code does, with a note
+saying what I had counted.
+
+81 tests pass, 0 failures.

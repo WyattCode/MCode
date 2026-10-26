@@ -145,6 +145,25 @@ record.
 - The artifacts well carries the kind's mark where the reference shows a real
   preview thumbnail — correct for a record with nothing to render, unverified
   for one that has
+- Inline-code chip geometry and colour (see the conversation pane above)
+
+## Locked by tests instead of by eye
+
+81 unit tests run as part of `build.py`, all of them answerable without a device:
+
+| class | n | what it holds down |
+|---|---|---|
+| `SelectionSliceTest` | 56 | the selection's offset arithmetic and hit testing |
+| `MarkdownBlocksTest` | 9 | the eight block kinds and their order, list depth, table cells, fence language and body |
+| `StepFoldTest` | 13 | `rowsOf` merging, `stepsOf` ownership, user turns never wrapping |
+| `StepFoldRealThreadTest` | 3 | the fold replayed over a real thread's exact shape (72 parts, 33 calls) |
+
+The last of these corrected a claim rather than confirming one. The code said the
+server sometimes sends calls before the prose that explains them, and that
+"folding only forward left most steps unwrapped". Replaying the real thread shows
+every one of its 16 call runs is preceded by assistant text; a stronger backward
+fold built on that claim changed the output by nothing. The code is back to what
+it was and the comment now says what the data shows.
 
 ## Recurring obstacles
 
