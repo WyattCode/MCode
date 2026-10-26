@@ -68,11 +68,33 @@ benchmark that shows the header over a conversation.
 | mark-to-greeting | 18.0 | 18.0 |
 | offline block | y 776..881.6 | **792..878.8** |
 | input row | y 899.2 | **898.4** |
+| prose column | x 408.8..1341.6 | **409.6..1336.8** |
+| prose ink | 16.8 / 17.0 / 17.2 | **16.8 / 17.2 / 17.2** |
+| prose line pitch | 30.0, 29.2 | 30.0 |
+| top-level • | x 408.8 — in the prose column | **same** |
+| nested ○ | x 429.2, +20.4 | **same** |
 
 The header carries exactly three marks. It used to carry four: a laptop glyph into
 settings at 1291.6 and a vertical ⋮ at 1337.6. The reference has neither — settings
 is reached from the drawer, and its menu glyph is three dots in a row, not a
 column.
+
+The prose column is **not symmetric**: 48.8 in from the pane's left edge, 21.6 off
+its right. Its old 40/40 came from A_claude.png, which is the reference's Code
+pane, and reading that cost 8.0 on the left and 22.4 on the right.
+
+Two numbers were re-measured this pass by cutting the left edge of seven
+consecutive lines into one stacked strip, because reading glyphs one crop at a
+time kept misidentifying them:
+
+- a top-level bullet starts **at** the prose edge (408.8), not 8.8 in from it as
+  the code had it, and a nested one steps 20.4;
+- the body is 17.4sp, not 18 — its ink measures 17.0 against this app's 17.6.
+
+Not yet compared on this pane: inline-code chip geometry and colour. The
+reference's chips are close enough to the page colour that a pixel scan cannot
+separate them from text antialiasing, so the file's existing 29.6-tall reading
+stands unverified rather than re-guessed.
 
 ## 定时任务 — matched
 

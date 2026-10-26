@@ -1,15 +1,25 @@
-MCode Remote: the badge is a palette, not a brush
+MCode Remote: the list bullet sits in the prose column, not inset from it
 
-Side by side with the reference, the only remaining difference on the artifacts
-card was the mark at the thumbnail's corner. I had drawn a brush on a circle
-overhanging the corner; enlarged 6x, the reference's is a palette - a rounded body
-with a notch bitten out at its lower right and four dots on its face - on a 23.6
-square that sits flush with the well's left edge and stands on its bottom edge
-(x 28.0..51.6, y 243.6..267.2 against a well running to 267.6).
+Re-read A_claude.png for how a list is set, and the earlier numbers were wrong in
+a way that only a stacked strip made visible: I cut the left 30 dp of seven
+consecutive lines and joined them into one column, so the glyphs could be read
+instead of guessed at.
 
-Verified: the sticker now measures x 28.0..51.2, y 242.8..266.0 - 23.2 square
-against 23.6 - in #DEDBFA with #5C50AC strokes.
+    prose          408.8
+    top-level •    408.8
+    nested ○       429.2
 
-The dots took two passes. The first put the upper row at 0.40 of the height, which
-is exactly where the outline runs, so they read as notches cut out of the stroke
-rather than marks on the face. At 0.44 with a 1.15 radius they float.
+So a bullet shares the prose column's left edge - zero inset - and each level
+below it steps 20.4.
+
+This had `8.8 + depth x 20.4`, and its comment cites the reading it came from:
+"the top-level • starts at 48.8 dp and the nested ○ at 69.2, against a prose edge
+of 40.0". Both halves of that were wrong. 48.8 was not where the bullet sat, and
+40.0 was the reference's Code pane edge - the conversation pane's is 48.8, which I
+corrected earlier this session. The 8.8 inset put every top-level bullet a step
+right of the prose it belongs to, and the 20.4 step compounded it, landing a
+nested item 29.2 in where the reference has 20.4.
+
+Built clean. Not photographed: the pad dropped off both its USB and its wireless
+link between the previous build and this one, and the only devices adb can still
+reach are the two the user has said not to install on.
