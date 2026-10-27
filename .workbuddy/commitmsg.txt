@@ -1,33 +1,31 @@
-fix(android): one capsule on 定时任务, and the 110.4 puzzle answered
+fix(android): put the step's rail back, outside the prose column
 
-The page carried **two** 「+ 新建任务」 pills and the build drew both: one under
-the notice at y 1373, one on the page's floor at 2121. `ScheduledScreen` had a
-capsule inside its empty branch *and* another at its own foot.
+A previous pass removed the rail from every step. That was wrong, and this
+restores it with the geometry the reference actually has.
 
-The reference has exactly one, and it is the one at the foot. The inner one is
-deleted; its own comment already said the capsule belongs on the column's floor,
-which the `Spacer(weight(1f))` below it enforces.
+The removal was argued from CX2 and CL-MAIN, which both measured clean down
+x 375..405 - but neither capture contained a **step**. One that does, the
+reference's own 「Main」 thread, shows the rule plainly: x 370.0..373.6, so 3.6
+wide, in (216,216,214), running from its bold 「我要做的」 heading down through the
+numbered list beneath it. The figure was honest; the sample was not.
 
-That also closes the 110.4-against-122.8 note this file has carried for several
-passes as "a squeeze I have not located". Nothing was squeezing anything: the two
-readings were taken off different renders of a page that had two pills on it, and
-the surviving one measures 110.8 because it spends its width differently — the
-reference types its plus as a character in 「+ 新建任务」, this app draws a 15 dp
-`Add` mark and a 6 gap. The width is now stated at 122.8 with a 43.6 height, so
-the two cannot drift apart again, and on the pad it measures **121.6** against
-122.8 — the 1.2 being the corner's antialiasing.
+That is the same width and the same colour the deleted code already had (a 3.5
+stroke in #D8D8D6). What was wrong with it was only its position: it sat 1.8 in
+from the content's own edge with a 14 inset after it, so the line ran *inside*
+the text block and every word of a step started 14 to the right of a plain
+reply's word.
 
-Also in this pass: 定时任务 and 设置 now both `return` unconditionally after their
-full-screen branch. 定时任务 still tested `widthSize < Expanded`, so on a wide
-screen it built the page here and again inside the left column; 设置's own note
-records the same fault.
+Measured against the reference in one frame that holds both kinds of paragraph:
+rail at 370.0, the step's bold heading at 400.8, its prose at 408.8, a plain
+reply's prose also at 408.8. So the rail hangs 38.8 to the *left* of the prose,
+out in the pane's margin, and the words do not move in for it at all. The rail
+now draws at -37 from the content edge, and on the pad the line measures
+**x 373.2 in (216,216,214)** - inside the reference's own 370.0..373.6.
 
-The projects page name is 16.8sp, and the step that got there ran backwards
-first. It sat at 17.2 and drew 17.2 of ink against the reference's 15.2, so it
-was dropped to 15.2 — on two figures that were not comparable. The reference's
-row reads 「如何使用 Claude」, where the CJK glyphs set the ink; the rows here
-read 「X-SSH」, 「MCode」 and 「Test」, all Latin and the first with no descender.
-Compared on the one pair both sides carry — its 「Claude」 at 12.8 and this app's
-「MCode」 at 11.6 from 15.2sp — the answer is 16.8, and at 16.8 the name now
-measures **12.8**. This is the second time in this port that two ink heights from
-different glyph sets were subtracted from each other.
+Also confirmed against the same frame: the reference's rail covers only the part
+of the turn that has calls under it (one segment, 47.6 long, from the heading
+through the list), not the whole step. The shape here matches.
+
+The lesson is in the comment: absence measured in two captures is not absence in
+the product, and both of those captures were single replies without a single
+tool call in them.

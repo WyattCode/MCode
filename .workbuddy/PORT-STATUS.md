@@ -249,14 +249,30 @@ A run of calls folds into one summary line, and opening it gives one row per cal
 Both were put beside the reference's own thread on the pad (CX2, and the sheet its
 summary opens) and four things were wrong at once.
 
-### The step had a rail it should not have
+### The step's rail — removed on bad evidence, then restored
+
+*(Corrected. An earlier pass deleted the rail outright; the paragraph below records
+what it was replaced with, and why that reading was wrong.)*
 
 A grey rule ran down the left of every step with its content inset 14, so a step's
-prose started right of a plain reply's and the two paragraphs of one turn sat in
-different columns. The reference has no rule at all. Tested by counting dark pixels
-down every column between x 375 and 405 in both reference threads: no column stays
-lit for the height of a step. What reads as a rule in a downscaled crop is the left
-side bearing of the text.
+prose started 14 right of a plain reply's. Two things were wrong there, and only
+one of them was the rule.
+
+The reference **does** have the rail: its 「Main」 thread measures one at
+x 370.0..373.6, 3.6 wide, in (216,216,214) — the same width and colour the code
+already had. What the earlier pass measured was CX2 and CL-MAIN, both scanned
+clean down x 375..405; neither of those captures contains a single tool call, so
+neither contains a step. The figure was right and the sample was empty.
+
+What *was* wrong is where the rail sat. In one reference frame holding both a step
+and a plain reply: rail 370.0, the step's bold heading 400.8, its prose 408.8, the
+reply's prose also 408.8. The rail hangs 38.8 to the **left** of the prose, out in
+the pane's margin, and the words do not move in for it. The code had it 1.8 in from
+the content edge with a 14 inset after it — inside the text block, pushing every
+word of a step to the right of a reply's.
+
+It now draws at -37 from the content edge, measuring x 373.2 in (216,216,214) on
+the pad.
 
 The summary line carried a 23 indent as well, on a note pointing at the desktop's
 `.hstep.indent` — which applies to a call nested *under* a summary, not to the
