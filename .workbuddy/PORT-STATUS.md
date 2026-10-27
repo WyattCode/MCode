@@ -149,8 +149,6 @@ record.
   preview thumbnail — correct for a record with nothing to render, unverified
   for one that has
 - Inline-code chip geometry and colour (see the conversation pane above)
-- The short connector between two rows of one expanded group: the reference draws
-  one, this app has a plain gap
 - The summary's *opening* gesture: the reference lifts a bottom sheet with a title,
   a close button and the calls inside; this app expands in place
 
@@ -195,6 +193,16 @@ slot is 15.6 with a 16 gap now, and its ink measures 11.6 high — the reference
 own number. Its width still reads 11.6 against 15.6 because the glyphs differ: a
 round magnifier for a search here, a wide fork for a shell call there. Each is the
 right mark for its family, so the width is left alone.
+
+### The connector
+
+Two rows of one group are joined by a 0.8 hairline at x 395.2..396.0 in
+(216,216,214) — and 395.4 is the *mark's* centre (it spans 387.6..403.2), so the
+line drops out of the icon rather than occupying a column of its own. It now does
+the same here: drawn in the row's `drawBehind` at half the 15.6 slot, from below
+the mark's ink to the row's bottom, skipped on a group's last row and on any row
+that is not `indent`ed. On the pad it measures x 439.2..440.0 in exactly
+(216,216,214).
 
 ### The words were already right
 

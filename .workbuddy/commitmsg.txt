@@ -1,30 +1,22 @@
-fix(android): a tool row's three greys, and its mark at the right size
+feat(android): join the rows of one expanded group with the reference's hairline
 
-The row was all one colour and its icon was a third too small, so a list of
-calls read as a flat wall of grey with a dot in front.
+Opening a folded group gave a stack of rows with no thread between them, so a
+list of calls read as separate entries rather than as one step.
 
-Sampled the reference's own expanded rows and it uses three weights on one
-line: the mark at (56,56,53), the verb 「已运行」 at (19,19,19) - the body
-text colour - and what the call acted on at (123,121,116). The summary line
-above them is darker than the muted grey too, at (83,82,79) against this
-app's `InkMuted` of (107,104,99).
+Measured the reference's connector between two of its expanded rows: a 0.8 rule
+at x 395.2..396.0 in (216,216,214). Its mark spans 387.6..403.2, so 395.4 is
+that mark's own centre - the line is not a column of its own but drops out of
+the icon, which is what makes it read as one list.
 
-Now measured on the pad, on the same four points:
+Drawn in the row's `drawBehind`, at 7.8 from the column's edge (half the 15.6
+slot) and from below the mark's ink to the row's bottom, so the next row's line
+picks it up without a seam. `linked` is false on the group's last row, and the
+line is only drawn for rows that carry `indent` - a lone call has nothing to be
+joined to.
 
-  summary     (83,82,79)   reference (83,82,79)
-  mark        (56,56,53)   reference (56,56,53)
-  verb        (31,30,28)   reference (19,19,19)
-  target      (123,121,116) reference (123,121,116)
+On the pad it lands at x 439.2..440.0 in exactly (216,216,214).
 
-The verb lands on this app's ink rather than the reference's literal 19
-because those are the same weight in two themes; the smallest pixel in an
-antialiased CJK glyph differs by a few levels either way.
-
-The mark grows from a 14 box with a 6 gap to 15.6 with 16, which puts its
-ink at 11.6 high - the reference's own measurement - against the 10.4 it
-drew before. Its width still reads narrower, 11.6 against 15.6: that is the
-glyph, a round magnifier here and a wide fork for a shell call there, and
-each is the right mark for its own tool family.
-
-The verb keeps carrying the state colour when a call failed or is still
-running, since that is the part a reader scans for.
+The one gesture still not matched is the summary's own: the reference lifts a
+bottom sheet with a title, a close button and the calls inside it, where this
+app expands in place. That is an interaction change rather than a metric, so it
+is recorded in PORT-STATUS and left for its own round.
