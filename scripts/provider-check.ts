@@ -138,6 +138,44 @@ async function main(): Promise<void> {
       codex("gpt-5.3-codex-spark"),
     )
 
+    section("A refreshed model list keeps what a person typed into a custom model")
+    {
+      const home = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-provider-thinking-"))
+      const own = new Config(new Storage(home), new Bus(), path.join(home, "credentials.json"))
+      await own.load()
+      await own.set({
+        customProviders: [
+          {
+            id: "lan",
+            name: "LAN",
+            baseURL: "https://example.test/v1",
+            models: [
+              { id: "thinker", name: "Thinker", limit: { context: 1048576, output: 32000 }, thinking: { efforts: ["low", "high"], canOff: true, default: "high" } },
+              { id: "plain", name: "Plain" },
+            ],
+          },
+        ],
+      })
+      const levels = () => own.providers().find((row) => row.id === "lan")?.models.find((row) => row.id === "thinker")
+      note("before a refresh the menu is the model's own", levels()?.variants.join() === "none,low,high", levels()?.variants)
+
+      // What 刷新模型列表 stores: the server's ids, with nothing but the id known.
+      await own.setDiscovered(
+        "lan",
+        ["thinker", "plain"].map((id) => ({ id, name: id, contextWindow: 0, input: 0, output: 0 })),
+      )
+      note("after a refresh the menu is still there", levels()?.variants.join() === "none,low,high", levels()?.variants)
+      note("and so is its default", levels()?.defaultEffort === "high", levels()?.defaultEffort)
+      note(
+        "the turn is clamped against that menu as well, so a level is still sent",
+        own.menu({ provider: "lan", model: "thinker" }).levels.join() === "none,low,high",
+        own.menu({ provider: "lan", model: "thinker" }),
+      )
+      note("a model that named no thinking still has no menu", own.menu({ provider: "lan", model: "plain" }).levels.length === 0)
+      note("the limit typed in is not replaced by the 0 of a bare id", levels()?.contextWindow === 1048576, levels()?.contextWindow)
+      await fs.rm(home, { recursive: true, force: true })
+    }
+
     section("Removal disables a custom provider rather than deleting it")
     {
       /*
