@@ -1,22 +1,35 @@
-feat(android): join the rows of one expanded group with the reference's hairline
+refactor(android): the settings list takes the reference's rhythm and its marks
 
-Opening a folded group gave a stack of rows with no thread between them, so a
-list of calls read as separate entries rather than as one step.
+The twelve page names were a dense column of words: 14sp at a 42.4 pitch, no
+icons, one continuous black list on a white field. The reference's settings
+pane is not that - it is twelve separate plates, each led by a glyph.
 
-Measured the reference's connector between two of its expanded rows: a 0.8 rule
-at x 395.2..396.0 in (216,216,214). Its mark spans 387.6..403.2, so 395.4 is
-that mark's own centre - the line is not a column of its own but drops out of
-the icon, which is what makes it read as one list.
+Measured off the reference (its settings pane, opened from the drawer's
+account row):
 
-Drawn in the row's `drawBehind`, at 7.8 from the column's edge (half the 15.6
-slot) and from below the mark's ink to the row's bottom, so the next row's line
-picks it up without a seam. `linked` is false on the group's last row, and the
-line is only drawn for rows that carry `indent` - a lone call has nothing to be
-joined to.
+| | reference | before | after |
+|---|---|---|---|
+| label ink | 15.2 | 12.4 | **15.2 .. 15.6** |
+| row pitch | 58.0 | 42.4 | **58.0 .. 58.8** |
+| mark | 18.0 wide at x 26.8..44.8 | none | **18.0 at x 27.6..45.6** |
+| row ground | (255,255,255) | transparent | **white** |
+| gap between rows | 1.6, page ground | none | **1.6, page ground** |
+| corner | 13.6 | 8 | **13.6** |
 
-On the pad it lands at x 439.2..440.0 in exactly (216,216,214).
+The label grows 17.2sp, which is 14 x 15.2/12.4, and 17.0 of vertical padding
+carries the rest of the pitch. The marks are a `markOf` function rather than an
+enum property: `Icons.Outlined.*` resolves through Compose's lazy vector cache,
+which is not available while an enum's constants are being initialised.
 
-The one gesture still not matched is the summary's own: the reference lifts a
-bottom sheet with a title, a close button and the calls inside it, where this
-app expands in place. That is an interaction change rather than a metric, so it
-is recorded in PORT-STATUS and left for its own round.
+An idle plate is `Color.White` and not `LocalSurface` - the latter is #FEFEFE,
+one level off the #F9F9F7 ground, and with it the 1.6 gaps disappear.
+
+Two things this round did *not* change, both recorded in PORT-STATUS:
+the settings surface is still a full-screen two-column page where the reference
+slides a panel over the conversation, and the twelve names are this app's own
+rather than the reference's. Both are product decisions, not measurements.
+
+Also removed, because the file had not compiled since the origin/main merge: a
+`reconnect` Runnable naming a `reconnectUrl`, a `reconnectToken` and a `dial`
+that do not exist anywhere. Nothing referenced it either - the comment above it
+says retries are driven by the UI loop calling `connect()` again.

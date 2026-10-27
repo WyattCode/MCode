@@ -138,7 +138,31 @@ layout toggle; none of that is on the reference and all of it is gone. The card
 was a three-across grid of square tiles; it is now the reference's horizontal
 record.
 
-## 设置 — reference captured, this app still a full-screen two-column
+## 设置 — list matched; surface and names still differ
+
+The list itself now carries the reference's rhythm and its marks. Measured on
+the pad after the change, against the reference's own pane:
+
+| | reference | this app |
+|---|---|---|
+| label ink | 15.2 | **15.2..15.6** |
+| row pitch | 58.0 | **58.0..58.8** |
+| mark | 18.0 wide, x 26.8..44.8 | **18.0, x 27.6..45.6** |
+| idle plate | (255,255,255) | **white** |
+| gap between plates | 1.6, page ground | **1.6, page ground** |
+| corner | 13.6 | **13.6** |
+
+Two structural differences are deliberately left, because both are product
+decisions rather than measurements: this app's settings is a full-screen
+two-column page where the reference slides a panel over the conversation, and
+its twelve names are its own rather than the reference's.
+
+### What the reference's pane actually is
+
+*Below:* the original reading, kept because it is what the numbers above were
+taken from.
+
+
 
 `CP-设置.png` (S3) is the reference's settings pane, captured this pass. It is
 **not** a page: it is a panel that slides over the left of the conversation, which
