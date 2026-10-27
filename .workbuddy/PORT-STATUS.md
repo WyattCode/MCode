@@ -71,8 +71,9 @@ benchmark that shows the header over a conversation.
 | prose column | x 408.8..1341.6 | **409.6..1336.8** |
 | prose ink | 16.8 / 17.0 / 17.2 | **16.8 / 17.2 / 17.2** |
 | prose line pitch | 30.0, 29.2 | 30.0 |
-| top-level • | x 408.8 — in the prose column | **same** |
-| nested ○ | x 429.2, +20.4 | **same** |
+| top-level • | ink 408.8..415.2, words at 421.2 | **408.8..413.6, words at 421.2** |
+| nested ○ | glyph `○` at 429.2, words at 441.6 | **`○` at 429.2, words at 441.6** |
+| code block | label, syntax colour, rounded plate, copy/share/more | **same shape** (positions not compared — no reference block) |
 
 The header carries exactly three marks. It used to carry four: a laptop glyph into
 settings at 1291.6 and a vertical ⋮ at 1337.6. The reference has neither — settings
@@ -139,13 +140,22 @@ record.
 
 ## Not yet compared
 
-- Rich message bodies: tool rows, code blocks, the diff and delivery cards
+- Rich message bodies: tool rows, the diff and delivery cards
+- Code-block geometry (the reference thread has no fenced block; only its shape is
+  confirmed here — label, syntax colour, plate, copy/share/more)
 - The 定时任务 foot capsule is 110.4 wide against 122.8, and the twelve come from a
   squeeze I have not located
 - The artifacts well carries the kind's mark where the reference shows a real
   preview thumbnail — correct for a record with nothing to render, unverified
   for one that has
 - Inline-code chip geometry and colour (see the conversation pane above)
+
+## Known defect, not fixed
+
+The thread `ses_01a1505e372a` holds 105 messages in storage and renders **one row**
+in this app: it opens, the header names it, one user bubble appears, and nothing
+follows. That is a data fault rather than a cosmetic one — the gateway's payload
+and what the phone keeps need comparing before anything is changed.
 
 ## Locked by tests instead of by eye
 
