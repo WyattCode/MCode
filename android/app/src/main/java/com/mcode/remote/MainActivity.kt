@@ -99,6 +99,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.core.graphics.PathParser
@@ -7988,9 +7989,10 @@ fun Timeline(
                          */
                         Column(Modifier.fillMaxWidth()) {
                             (item.body as? Item.Msg)?.let { StepBody(it) }
-                            for (call in item.calls) {
+                            item.calls.forEachIndexed { i, call ->
+                                val last = i == item.calls.lastIndex
                                 when (call) {
-                                    is Item.Tool -> ToolRow(call, indent = true)
+                                    is Item.Tool -> ToolRow(call, indent = true, linked = !last)
                                     is ToolRun -> RunRow(call)
                                 }
                             }
@@ -8475,7 +8477,9 @@ fun Timeline(
                             if (open) {
                                 // The run opens in place: each call keeps the row
                                 // it would have had on its own.
-                                for (call in item.items) ToolRow(call, indent = true)
+                                item.items.forEachIndexed { i, call ->
+                                    ToolRow(call, indent = true, linked = i < item.items.lastIndex)
+                                }
                             }
                         }
                     }
@@ -13246,7 +13250,11 @@ private fun RunRow(item: ToolRun) {
                 modifier = Modifier.size(14.dp).graphicsLayer { rotationZ = if (open) 90f else 0f },
             )
         }
-        if (open) for (call in item.items) ToolRow(call, indent = true)
+        if (open) {
+            item.items.forEachIndexed { i, call ->
+                ToolRow(call, indent = true, linked = i < item.items.lastIndex)
+            }
+        }
     }
 }
 
@@ -13262,6 +13270,16 @@ fun ToolRow(
     root: String = "",
     /** True when this row hangs under a group's summary - see the padding below. */
     indent: Boolean = false,
+    /*
+     * True when another row of the same group follows, which the reference
+     * joins with a short rule down the mark's centre line.
+     *
+     * Measured: the rule sits at x 395.2..396.0 - the mark runs 387.6..403.2, so
+     * the rule is its centre, not a column of its own - in (216,216,214), the
+     * same hairline as `CreamLine`. Only inside a group: a lone call has nothing
+     * to be joined to, and a group's last row stops the line where it starts.
+     */
+    linked: Boolean = false,
 ) {
     var open by remember { mutableStateOf(false) }
     // A call that is still going and one that broke read differently from one
@@ -13291,7 +13309,40 @@ fun ToolRow(
      * left a transcript of identical rows where the reference lets a reader
      * find the three file reads at a glance.
      */
-    Column(if (indent) Modifier.padding(start = 23.dp) else Modifier) {
+    /*
+     * The connector's colour, read where a composable is allowed to and handed
+     * to `drawBehind` as a plain value.
+     */
+    val linkTint = if (LocalBg.current == DarkBg) Color(0xFF3A3A38) else Color(0xFFD8D8D6)
+    Column(
+        if (indent) {
+            Modifier
+                .padding(start = 23.dp)
+                .drawBehind {
+                    if (!linked) return@drawBehind
+                    /*
+                     * The connector, on the mark's own centre line.
+                     *
+                     * Column-local, so x is 7.8 - half the 15.6 slot - and the
+                     * line starts below the mark's ink and runs off the row's
+                     * bottom, where the next row's own line picks it up. The
+                     * reference's is (216,216,214) and 0.8 wide, measured at
+                     * x 395.2..396.0 between two expanded rows: its mark spans
+                     * 387.6..403.2, so 395.4 is that mark's centre, not a
+                     * column of its own.
+                     */
+                    val x = 7.8.dp.toPx()
+                    drawLine(
+                        color = linkTint,
+                        start = androidx.compose.ui.geometry.Offset(x, 15.6.dp.toPx()),
+                        end = androidx.compose.ui.geometry.Offset(x, size.height),
+                        strokeWidth = 0.8.dp.toPx(),
+                    )
+                }
+        } else {
+            Modifier
+        },
+    ) {
         Row(
             Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
