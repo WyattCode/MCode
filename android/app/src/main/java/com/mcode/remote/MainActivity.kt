@@ -7200,24 +7200,84 @@ fun stepsOf(rows: List<Any>): List<Any> {
 }
 
 
-/** Claude's summary of a run: what was run, how much of it broke, what was read. */
-fun runSummary(run: ToolRun): String {
-    val commands = run.items.count { it.name == "bash" || it.name == "exec_command" || it.name == "execute" }
-    val reads = run.items.count { it.name == "read" || it.name == "list" || it.name == "grep" || it.name == "glob" }
-    val writings = run.items.count { it.name == "edit" || it.name == "write" || it.name == "patch" || it.name == "apply_patch" }
-    val failed = run.items.count { it.status == "error" || it.status == "failed" }
-    val parts = mutableListOf<String>()
-    if (commands > 0) parts.add("已运行 $commands 条命令")
-    val others = run.items.size - commands - reads - writings
-    if (others > 0) {
-        val failedNote = if (failed > 0) "（$failed 个失败）" else ""
-        parts.add("已使用 ${others + writings} 个工具$failedNote")
-    } else if (writings > 0) {
-        val failedNote = if (failed > 0) "（$failed 个失败）" else ""
-        parts.add("已编辑 $writings 个文件$failedNote")
+/**
+ * Which count a call adds to in a run's summary - the desktop's `bucketOf`,
+ * name for name, in `lib/tool-meta.ts`.
+ *
+ * Five buckets, and the split matters: a search is not a read. `glob` and
+ * `grep` used to land in the read count here, so a run of two searches and one
+ * read said 「读取了 3 个文件」 when it had opened one file and looked for
+ * patterns twice. The desktop keeps `search` apart and words it 「已搜索 N 次」.
+ */
+private enum class ToolBucket { Read, Edit, Run, Search, Other }
+
+private fun bucketOf(name: String): ToolBucket = when (name) {
+    "read" -> ToolBucket.Read
+    "edit", "write", "apply_patch", "patch" -> ToolBucket.Edit
+    "bash", "exec_command" -> ToolBucket.Run
+    "grep", "glob", "list", "codesearch", "websearch", "webfetch" -> ToolBucket.Search
+    else -> ToolBucket.Other
+}
+
+/**
+ * The path a call touched, for the buckets that count *files* rather than calls.
+ *
+ * Two reads of the same file are one file read. The desktop does this by
+ * collecting `stepTitle` per bucket into a `Set` and counting its size
+ * (`groupSummary` in `lib/step-rows.ts`); this returns the same string
+ * `stepTitle` would, and only for read and edit, which is exactly where that
+ * source applies it. A call with no path falls back to counting as a call.
+ */
+private fun touchedPathOf(tool: Item.Tool): String {
+    val input = tool.raw.optJSONObject("input")
+    return when (tool.name) {
+        "read", "edit", "write" -> input?.optString("path").orEmpty()
+            .ifBlank { input?.optString("filePath").orEmpty() }
+            .ifBlank { input?.optString("file_path").orEmpty() }
+            .ifBlank { tool.raw.optString("title") }
+        else -> ""
     }
-    if (reads > 0) parts.add("读取了 $reads 个文件")
-    return parts.joinToString(", ").ifBlank { "已使用 ${run.items.size} 个工具" }
+}
+
+/**
+ * A run's summary line, in the desktop's own words and its own order.
+ *
+ * Mirrors `groupSummary` + `ToolGroup.vue`: buckets in first-appearance order,
+ * joined with 「 · 」, each worded from `buildWorkDisplay.*` in `lib/i18n.ts`
+ * rather than assembled here. This used to say 「读取了 N 个文件」 in a comma-
+ * joined list, counted searches as reads, and folded edits into a generic
+ * 「已使用 N 个工具」 - four separate drifts from what the desktop says.
+ *
+ * The failure count is not part of the summary: the desktop marks a failed
+ * group with an icon on the line (`groupFailed`), and appending 「（N 个失败）」
+ * here put a second, different signal on the same row.
+ */
+fun runSummary(run: ToolRun): String {
+    if (run.items.isEmpty()) return ""
+    val order = mutableListOf<ToolBucket>()
+    val calls = mutableMapOf<ToolBucket, Int>()
+    val paths = mutableMapOf<ToolBucket, MutableSet<String>>()
+    for (tool in run.items) {
+        val bucket = bucketOf(tool.name)
+        if (bucket !in order) order.add(bucket)
+        val path = if (bucket == ToolBucket.Read || bucket == ToolBucket.Edit) touchedPathOf(tool) else ""
+        if (path.isNotBlank()) {
+            paths.getOrPut(bucket) { mutableSetOf() }.add(path)
+        } else {
+            calls[bucket] = (calls[bucket] ?: 0) + 1
+        }
+    }
+    return order.mapNotNull { bucket ->
+        val count = (paths[bucket]?.size ?: 0) + (calls[bucket] ?: 0)
+        if (count <= 0) return@mapNotNull null
+        when (bucket) {
+            ToolBucket.Read -> "已读取 $count 个文件"
+            ToolBucket.Edit -> "已编辑 $count 个文件"
+            ToolBucket.Run -> "已运行 $count 条命令"
+            ToolBucket.Search -> "已搜索 $count 次"
+            ToolBucket.Other -> "已执行 $count 个操作"
+        }
+    }.joinToString(" · ")
 }
 
 /**

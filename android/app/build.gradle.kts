@@ -41,6 +41,19 @@ android {
     packaging {
         resources.excludes += "META-INF/*"
     }
+    /*
+     * `org.json` is stubbed out in the JVM test classpath: every method throws
+     * "not mocked" unless something replaces it. `returnDefaultValues = true`
+     * is the usual answer and the wrong one here, because it makes `optString`
+     * answer "" and `optJSONObject` answer null - a test asserting on parsed
+     * JSON would then be asserting on the stub, and would pass whether or not
+     * the real code looked at the field at all. `RunSummaryTest` counts distinct
+     * paths out of `input.path`, so it needs a JSONObject that actually holds
+     * values; the dependency below supplies the reference implementation.
+     */
+    testOptions {
+        unitTests.isReturnDefaultValues = false
+    }
 }
 
 dependencies {
@@ -74,4 +87,10 @@ dependencies {
      * out that two numbers were added in the wrong space.
      */
     testImplementation("junit:junit:4.13.2")
+    /*
+     * A working `org.json` for the JVM tests. Android ships one on the device but
+     * only stubs it for unit tests, so anything parsing the protocol needs the
+     * reference implementation on this classpath. See the note in `android { }`.
+     */
+    testImplementation("org.json:json:20240303")
 }
