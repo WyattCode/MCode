@@ -138,6 +138,34 @@ layout toggle; none of that is on the reference and all of it is gone. The card
 was a three-across grid of square tiles; it is now the reference's horizontal
 record.
 
+## 设置 — reference captured, this app still a full-screen two-column
+
+`CP-设置.png` (S3) is the reference's settings pane, captured this pass. It is
+**not** a page: it is a panel that slides over the left of the conversation, which
+stays visible on the right.
+
+| | reference | this app |
+|---|---|---|
+| panel | white, x 12.0..347.6 (w 335.6), y 108.8 → bottom, rounded at the top only | full-screen two columns |
+| page ground | (249,249,247) behind the panel | — |
+| header | 设置 centred on the panel, back arrow at 15.6..32.0 | 设置 at start, no back button |
+| account row | email at x 24.4, plan chip (Max) at 270.8 | none |
+| rows | **12**: 个人资料 / 账单 / 用量 / 功能 / Claude Code / 连接器 / 权限 / 颜色模式 / 字体样式 / 语音 / 通知 / 时间与专注 | 12, **different names and order** |
+| row icon | x 26.4..45.2 (≈18 wide), words at 58.8 | none — text only |
+| row text | 58.8, ink 18.0 | 14sp, x varies |
+| row pitch | 58.0 plain; 60.0 after a subtitle; 73.2 when the row below carries one | 9 vertical padding per row |
+| subtitle | 已启用 4 项 at y 396.0 under 功能 | only some rows |
+| divider | (221,221,221) at 165.6, under the account row | a 1 wide hairline column |
+
+Two things this changes beyond numbers: the reference's settings **overlays** rather
+than replacing the conversation, and every row carries an icon. Neither is true
+here, so matching the metrics alone would still look wrong.
+
+Row names are the reference's own; the app's 12 (`常规 / 使用情况 / 外观 / 配置 /
+模型 / 个性化 / 键盘快捷键 / MCP 服务器 / 环境 / 实验室功能 / 已归档对话 /
+应用更新`) are a different set from a different product surface. Mapping them is a
+product decision, not a measurement.
+
 ## Not yet compared
 
 - The diff card and the delivery card
