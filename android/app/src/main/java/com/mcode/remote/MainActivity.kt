@@ -3303,11 +3303,22 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             onClose = { leftMode = LeftMode.Recent },
         )
         /*
-         * Narrow screens keep the page full-screen; a wide one draws it inside
-         * the left column instead, so the conversation stays beside it - which
-         * is how the reference lays all four of these pages out.
+         * Return unconditionally, the way 设置 does.
+         *
+         * This read `if (widthSize < Expanded) return` - narrow screens stop
+         * here, wide ones carry on to the split layout below - and the wide
+         * branch draws 定时任务 inside the left column as well. So on the pad the
+         * page was built twice: once full-screen here, once embedded there, and
+         * because both draw the same empty state with its 「+ 新建任务」 at the
+         * foot, the screenshot showed **two** capsules - one under the notice at
+         * y 1373 and one at the bottom at y 2121 - and the page's own dump
+         * carried two copies of every string at x 119 and at x 3156.
+         *
+         * The note on the settings branch above says the same thing: the other
+         * pages stop unconditionally because the wide branch is the only place
+         * that draws them.
          */
-        if (widthSize < WindowWidthSizeClass.Expanded) return
+        return
     }
 
     if (leftMode == LeftMode.Plugins) {
@@ -13875,28 +13886,19 @@ fun ScheduledScreen(
              * list first, which is a door out of a page that had none in.
              */
             /*
-             * 122.8 and 38 as measured: this landed 110.4 wide at y 838.4, so
-             * the box was being squeezed and sat 5.6 low. The end pad drops to
-             * 16.4 - 12 = 4.4 and the bottom pad to 32.4 - 5.6.
+             * No capsule inside the empty branch.
+             *
+             * One stood here, 122.8 by 43.6, and the function draws another at
+             * its own foot - so the page carried two 「+ 新建任务」 pills and the
+             * build showed both: one under the notice at y 1373, one on the
+             * page's floor at 2121. The reference has exactly one, and it is the
+             * one at the foot; the note on the spacer below already says the
+             * capsule belongs on the column's own floor.
+             *
+             * Deleting this one also answers the old 110.4-against-122.8 puzzle
+             * this file used to carry: the two were never the same box, and the
+             * narrower reading was taken off a render where both were present.
              */
-            Box(Modifier.fillMaxWidth().padding(end = 4.4.dp, bottom = 26.8.dp), contentAlignment = Alignment.CenterEnd) {
-                Row(
-                    Modifier
-                        .width(122.8.dp)
-                        .height(43.6.dp)
-                        .clip(RoundedCornerShape(21.8.dp))
-                        .background(if (LocalBg.current == DarkBg) Color(0xFF2A2A29) else Color(0xFF1A1A19))
-                        .clickable { onNew() },
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        "+ 新建任务",
-                        fontSize = 13.6.sp,
-                        color = if (LocalBg.current == DarkBg) Color(0xFFF9F9F7) else Color(0xFFF9F9F7),
-                    )
-                }
-            }
         } else {
             LazyColumn(
                 Modifier.fillMaxWidth().weight(1f),
@@ -13957,12 +13959,25 @@ fun ScheduledScreen(
             Modifier.fillMaxWidth().padding(start = 18.dp, end = 16.4.dp, top = 10.dp, bottom = 10.dp),
             horizontalArrangement = Arrangement.End,
         ) {
+            /*
+             * 122.8 fixed, not pads around an icon.
+             *
+             * This read 110.8 against the reference's 122.8, and the 12 was not
+             * a squeeze: the reference draws its plus as a *character* in
+             * 「+ 新建任务」, where this drew a 15 dp `Add` mark and a 6 gap -
+             * two different ways of spending the same space. The width is now
+             * stated so the two cannot drift apart again, and the mark stays
+             * because a drawn plus sits on the text's own optical centre and a
+             * typed one does not.
+             */
             Row(
                 Modifier
-                    .clip(RoundedCornerShape(20.dp))
+                    .width(122.8.dp)
+                    .height(43.6.dp)
+                    .clip(RoundedCornerShape(21.8.dp))
                     .background(LocalText.current)
-                    .clickable { onNew() }
-                    .padding(horizontal = 16.dp, vertical = 10.5.dp),
+                    .clickable { onNew() },
+                horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(Icons.Filled.Add, contentDescription = null, tint = LocalBg.current, modifier = Modifier.size(15.dp))
