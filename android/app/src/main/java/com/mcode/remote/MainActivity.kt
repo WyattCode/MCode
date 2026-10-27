@@ -3303,11 +3303,22 @@ fun App(widthSize: WindowWidthSizeClass, autoUrl: String, autoToken: String, las
             onClose = { leftMode = LeftMode.Recent },
         )
         /*
-         * Narrow screens keep the page full-screen; a wide one draws it inside
-         * the left column instead, so the conversation stays beside it - which
-         * is how the reference lays all four of these pages out.
+         * Return unconditionally, the way 设置 does.
+         *
+         * This read `if (widthSize < Expanded) return` - narrow screens stop
+         * here, wide ones carry on to the split layout below - and the wide
+         * branch draws 定时任务 inside the left column as well. So on the pad the
+         * page was built twice: once full-screen here, once embedded there, and
+         * because both draw the same empty state with its 「+ 新建任务」 at the
+         * foot, the screenshot showed **two** capsules - one under the notice at
+         * y 1373 and one at the bottom at y 2121 - and the page's own dump
+         * carried two copies of every string at x 119 and at x 3156.
+         *
+         * The note on the settings branch above says the same thing: the other
+         * pages stop unconditionally because the wide branch is the only place
+         * that draws them.
          */
-        if (widthSize < WindowWidthSizeClass.Expanded) return
+        return
     }
 
     if (leftMode == LeftMode.Plugins) {
@@ -6328,6 +6339,32 @@ enum class SetPage(val label: String) {
 }
 
 /**
+ * A page's mark, as the reference's rows each carry one.
+ *
+ * Its twelve rows all lead with an 18 by 16 glyph at x 26.4..45.2, so a reader
+ * scans the icons rather than reading twelve labels. This list was words only,
+ * which at a 58 pitch reads as a column with no landmarks in it.
+ *
+ * A function rather than an enum property: `Icons.Outlined.*` resolves through
+ * Compose's lazy vector cache, which cannot be touched from an enum constant's
+ * initialiser - the class loads before that cache exists.
+ */
+private fun markOf(page: SetPage) = when (page) {
+    SetPage.General -> Icons.Outlined.Tune
+    SetPage.Usage -> Icons.AutoMirrored.Outlined.Article
+    SetPage.Appearance -> Icons.Outlined.Build
+    SetPage.Config -> Icons.Outlined.Code
+    SetPage.Models -> Icons.Outlined.Checklist
+    SetPage.Personal -> Icons.Outlined.Edit
+    SetPage.Keys -> Icons.Outlined.Checklist
+    SetPage.Mcp -> Icons.AutoMirrored.Outlined.CallSplit
+    SetPage.Environment -> Icons.Outlined.FolderOpen
+    SetPage.Lab -> Icons.Outlined.Search
+    SetPage.Archive -> Icons.Outlined.Folder
+    SetPage.Updates -> Icons.Outlined.Refresh
+}
+
+/**
  * The settings page: the desktop's two columns - a navigation strip and the
  * page beside it.
  *
@@ -6373,15 +6410,68 @@ fun SettingsScreen(
                 items(SetPage.entries.size) { index ->
                     val entry = SetPage.entries[index]
                     val active = entry == page
+                    /*
+                     * Each row is its own card.
+                     *
+                     * The reference's twelve rows are twelve white plates on the
+                     * (249,249,247) ground, 1.6 apart - a scan down the gaps
+                     * finds the row boundaries with no rules needed. This drew
+                     * one continuous column with a transparent background, so
+                     * every row ran into the next.
+                     *
+                     * 13.6 corner on a 56 tall card, and the page's own surface
+                     * rather than the pill for an idle row; the pill is what
+                     * marks the page that is showing.
+                     */
                     Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 8.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (active) LocalPill.current else Color.Transparent)
+                        Modifier.fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 0.8.dp)
+                            .clip(RoundedCornerShape(13.6.dp))
+                            /*
+                             * Pure white for an idle row, not `LocalSurface`:
+                             * the reference's plates are (255,255,255) on the
+                             * (249,249,247) ground, a clear step. `LocalSurface`
+                             * is #FEFEFE, one level off the ground, and the gaps
+                             * between cards all but vanish.
+                             */
+                            .background(
+                                if (active) LocalPill.current
+                                else if (LocalBg.current == DarkBg) DarkSurface
+                                else Color.White,
+                            )
                             .clickable { page = entry }
-                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                            /*
+                             * 17.2 over a 58.0 pitch, off the reference's own
+                             * settings pane.
+                             *
+                             * Its row labels measure 15.2 of ink at a 58.0 pitch;
+                             * these drew 12.4 at 42.4 from 14sp with 9 of vertical
+                             * padding, so the list read as a dense index rather
+                             * than as the reference's roomy one. 14 x 15.2/12.4 is
+                             * 17.2, and the padding below is what carries the rest
+                             * of the pitch.
+                             */
+                            .padding(start = 16.8.dp, end = 12.dp, top = 17.0.dp, bottom = 17.0.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(entry.label, fontSize = 14.sp,
+                        /*
+                         * The mark column, then the words.
+                         *
+                         * Reference: glyph ink at x 26.4..45.2, label at 58.8 -
+                         * so an 18 slot with 13.6 after it, against the 12 of
+                         * row padding already applied. The icon takes the muted
+                         * grey, and the ink when its page is the one showing, so
+                         * the current page is marked twice over: by the pill
+                         * behind it and by the mark in front.
+                         */
+                        Icon(
+                            markOf(entry),
+                            contentDescription = null,
+                            tint = if (active) ink else muted,
+                            modifier = Modifier.size(23.8.dp),
+                        )
+                        Spacer(Modifier.width(8.8.dp))
+                        Text(entry.label, fontSize = 17.2.sp,
                             fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
                             color = if (active) ink else muted)
                     }
@@ -10805,34 +10895,94 @@ fun ProjectsScreen(
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 20.dp)) {
             items(visible.size) { index ->
                 val row = visible[index]
-                Box(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                /*
+                 * Two lines of words on the page, not a card.
+                 *
+                 * The reference's project row is text and nothing else: a name in
+                 * (19,19,19) and 「编辑于 …」 in (123,121,116), sitting straight
+                 * on the (249,249,247) ground. Scanned every column of that page
+                 * between the search field and the foot capsule - there is no
+                 * fill and no border anywhere, so the rows are separated by
+                 * whitespace alone. This drew a bordered white card with a folder
+                 * mark, a path and a session count, which turned a list of names
+                 * into a stack of objects.
+                 *
+                 * Measured off the reference: name ink 15.2 starting x 24.8,
+                 * second line 11.6 at the same x, 22.8 between their tops. The
+                 * second line here keeps the folder path rather than the
+                 * reference's edit date - this app has no such field - and the
+                 * count moves to the right of it.
+                 */
+                Box(Modifier.fillMaxWidth()) {
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.surface)
-                            .border(1.dp, if (LocalBg.current == DarkBg) Color(0xFF2C2C2B) else Color(0xFFE4E1D8), RoundedCornerShape(12.dp))
                             .clickable { onOpen(row.directory) }
-                            .padding(start = 12.dp, end = 2.dp, top = 11.dp, bottom = 11.dp),
+                            .padding(start = 6.8.dp, end = 2.dp, top = 8.4.dp, bottom = 8.4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(Icons.Outlined.Folder, contentDescription = null, tint = Ember, modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(row.name, fontSize = 14.sp, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Spacer(Modifier.height(1.dp))
+                            /*
+                             * Two stated line heights rather than the defaults.
+                             *
+                             * The reference's name and its second line are 22.8
+                             * apart, top to top - closer than 17.2sp and 13.2sp
+                             * set their own leading, which came to 39.6 and left
+                             * the pair reading as one tall block of ink. 20.4 and
+                             * 16.4 add up to 22.8 with 2.8 between their boxes,
+                             * which is where the reference's 7.6 of clear space
+                             * comes from.
+                             */
+                            /*
+                             * 16.8, and the number that got it here is a warning.
+                             *
+                             * This sat at 17.2 and drew 17.2 of ink against the
+                             * reference's 15.2, so it was dropped to 15.2 - and
+                             * that was the wrong direction. The two figures were
+                             * not comparable: the reference's row reads
+                             * 「如何使用 Claude」, whose ink is set by the CJK
+                             * glyphs, while the rows here read 「X-SSH」, 「MCode」
+                             * and 「Test」 - all Latin, with no descenders in the
+                             * first. A CJK square and a Latin cap-height are
+                             * different measures of the same point size.
+                             *
+                             * Compared instead on the one pair of glyphs both
+                             * sides have: the reference's 「Claude」 draws 12.8
+                             * of ink, and this one's 「MCode」 draws 11.6 at
+                             * 15.2sp, so 15.2 x 12.8/11.6 = 16.8.
+                             */
+                            Text(
+                                row.name,
+                                fontSize = 16.8.sp,
+                                lineHeight = 19.2.sp,
+                                color = ink,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Spacer(Modifier.height(1.2.dp))
                             Text(
                                 row.directory,
-                                fontSize = 11.sp,
-                                color = muted,
+                                fontSize = 13.2.sp,
+                                lineHeight = 16.4.sp,
+                                color = if (LocalBg.current == DarkBg) DarkToolWhat else ToolWhat,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
+                        Spacer(Modifier.width(12.dp))
+                        /*
+                         * The count sits on the second line, not between the two.
+                         *
+                         * It is centred against the row, which put it halfway up
+                         * the name and read as belonging to neither line. Aligned
+                         * to the bottom of the column it lines up with the path
+                         * it describes - the count of that folder's threads.
+                         */
                         Text(
                             if (row.sessions == 1) "1 个会话" else "${row.sessions} 个会话",
-                            fontSize = 11.sp,
+                            fontSize = 13.2.sp,
                             color = muted,
+                            modifier = Modifier.align(Alignment.Bottom),
                         )
                         Spacer(Modifier.width(2.dp))
                         Box(
@@ -13736,28 +13886,19 @@ fun ScheduledScreen(
              * list first, which is a door out of a page that had none in.
              */
             /*
-             * 122.8 and 38 as measured: this landed 110.4 wide at y 838.4, so
-             * the box was being squeezed and sat 5.6 low. The end pad drops to
-             * 16.4 - 12 = 4.4 and the bottom pad to 32.4 - 5.6.
+             * No capsule inside the empty branch.
+             *
+             * One stood here, 122.8 by 43.6, and the function draws another at
+             * its own foot - so the page carried two 「+ 新建任务」 pills and the
+             * build showed both: one under the notice at y 1373, one on the
+             * page's floor at 2121. The reference has exactly one, and it is the
+             * one at the foot; the note on the spacer below already says the
+             * capsule belongs on the column's own floor.
+             *
+             * Deleting this one also answers the old 110.4-against-122.8 puzzle
+             * this file used to carry: the two were never the same box, and the
+             * narrower reading was taken off a render where both were present.
              */
-            Box(Modifier.fillMaxWidth().padding(end = 4.4.dp, bottom = 26.8.dp), contentAlignment = Alignment.CenterEnd) {
-                Row(
-                    Modifier
-                        .width(122.8.dp)
-                        .height(43.6.dp)
-                        .clip(RoundedCornerShape(21.8.dp))
-                        .background(if (LocalBg.current == DarkBg) Color(0xFF2A2A29) else Color(0xFF1A1A19))
-                        .clickable { onNew() },
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        "+ 新建任务",
-                        fontSize = 13.6.sp,
-                        color = if (LocalBg.current == DarkBg) Color(0xFFF9F9F7) else Color(0xFFF9F9F7),
-                    )
-                }
-            }
         } else {
             LazyColumn(
                 Modifier.fillMaxWidth().weight(1f),
@@ -13818,12 +13959,25 @@ fun ScheduledScreen(
             Modifier.fillMaxWidth().padding(start = 18.dp, end = 16.4.dp, top = 10.dp, bottom = 10.dp),
             horizontalArrangement = Arrangement.End,
         ) {
+            /*
+             * 122.8 fixed, not pads around an icon.
+             *
+             * This read 110.8 against the reference's 122.8, and the 12 was not
+             * a squeeze: the reference draws its plus as a *character* in
+             * 「+ 新建任务」, where this drew a 15 dp `Add` mark and a 6 gap -
+             * two different ways of spending the same space. The width is now
+             * stated so the two cannot drift apart again, and the mark stays
+             * because a drawn plus sits on the text's own optical centre and a
+             * typed one does not.
+             */
             Row(
                 Modifier
-                    .clip(RoundedCornerShape(20.dp))
+                    .width(122.8.dp)
+                    .height(43.6.dp)
+                    .clip(RoundedCornerShape(21.8.dp))
                     .background(LocalText.current)
-                    .clickable { onNew() }
-                    .padding(horizontal = 16.dp, vertical = 10.5.dp),
+                    .clickable { onNew() },
+                horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(Icons.Filled.Add, contentDescription = null, tint = LocalBg.current, modifier = Modifier.size(15.dp))

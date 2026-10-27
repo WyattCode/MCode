@@ -138,7 +138,7 @@ async function main(): Promise<void> {
       codex("gpt-5.3-codex-spark"),
     )
 
-    section("A refreshed model list keeps what a person typed into a custom model")
+    section("A fetched model list does not override what a person typed into a custom provider")
     {
       const home = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-provider-thinking-"))
       const own = new Config(new Storage(home), new Bus(), path.join(home, "credentials.json"))
@@ -173,6 +173,29 @@ async function main(): Promise<void> {
       )
       note("a model that named no thinking still has no menu", own.menu({ provider: "lan", model: "plain" }).levels.length === 0)
       note("the limit typed in is not replaced by the 0 of a bare id", levels()?.contextWindow === 1048576, levels()?.contextWindow)
+
+      // A model typed in after the list was last fetched is still the person's model.
+      await own.set({
+        customProviders: [
+          {
+            id: "lan",
+            name: "LAN",
+            baseURL: "https://example.test/v1",
+            models: [
+              { id: "thinker", name: "Thinker", thinking: { efforts: ["low", "high"], canOff: true, default: "high" } },
+              { id: "added-later", name: "Added later", thinking: { efforts: ["low", "high"] } },
+            ],
+          },
+        ],
+      })
+      const ids = () => own.providers().find((row) => row.id === "lan")?.models.map((row) => row.id).join()
+      note("a model typed in after a refresh is offered", ids()?.split(",").includes("added-later") === true, ids())
+      note("and the ones the server listed still are", ids()?.split(",").includes("thinker") === true, ids())
+      note("a model taken out of the form is no longer offered, whatever the stale list says", ids()?.split(",").includes("plain") === false, ids())
+      note(
+        "with its own levels",
+        own.providers().find((row) => row.id === "lan")?.models.find((row) => row.id === "added-later")?.variants.join() === "low,high",
+      )
       await fs.rm(home, { recursive: true, force: true })
     }
 

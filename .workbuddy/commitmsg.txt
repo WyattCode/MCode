@@ -1,22 +1,33 @@
-feat(android): join the rows of one expanded group with the reference's hairline
+fix(android): one capsule on 定时任务, and the 110.4 puzzle answered
 
-Opening a folded group gave a stack of rows with no thread between them, so a
-list of calls read as separate entries rather than as one step.
+The page carried **two** 「+ 新建任务」 pills and the build drew both: one under
+the notice at y 1373, one on the page's floor at 2121. `ScheduledScreen` had a
+capsule inside its empty branch *and* another at its own foot.
 
-Measured the reference's connector between two of its expanded rows: a 0.8 rule
-at x 395.2..396.0 in (216,216,214). Its mark spans 387.6..403.2, so 395.4 is
-that mark's own centre - the line is not a column of its own but drops out of
-the icon, which is what makes it read as one list.
+The reference has exactly one, and it is the one at the foot. The inner one is
+deleted; its own comment already said the capsule belongs on the column's floor,
+which the `Spacer(weight(1f))` below it enforces.
 
-Drawn in the row's `drawBehind`, at 7.8 from the column's edge (half the 15.6
-slot) and from below the mark's ink to the row's bottom, so the next row's line
-picks it up without a seam. `linked` is false on the group's last row, and the
-line is only drawn for rows that carry `indent` - a lone call has nothing to be
-joined to.
+That also closes the 110.4-against-122.8 note this file has carried for several
+passes as "a squeeze I have not located". Nothing was squeezing anything: the two
+readings were taken off different renders of a page that had two pills on it, and
+the surviving one measures 110.8 because it spends its width differently — the
+reference types its plus as a character in 「+ 新建任务」, this app draws a 15 dp
+`Add` mark and a 6 gap. The width is now stated at 122.8 with a 43.6 height, so
+the two cannot drift apart again, and on the pad it measures **121.6** against
+122.8 — the 1.2 being the corner's antialiasing.
 
-On the pad it lands at x 439.2..440.0 in exactly (216,216,214).
+Also in this pass: 定时任务 and 设置 now both `return` unconditionally after their
+full-screen branch. 定时任务 still tested `widthSize < Expanded`, so on a wide
+screen it built the page here and again inside the left column; 设置's own note
+records the same fault.
 
-The one gesture still not matched is the summary's own: the reference lifts a
-bottom sheet with a title, a close button and the calls inside it, where this
-app expands in place. That is an interaction change rather than a metric, so it
-is recorded in PORT-STATUS and left for its own round.
+The projects page name is 16.8sp, and the step that got there ran backwards
+first. It sat at 17.2 and drew 17.2 of ink against the reference's 15.2, so it
+was dropped to 15.2 — on two figures that were not comparable. The reference's
+row reads 「如何使用 Claude」, where the CJK glyphs set the ink; the rows here
+read 「X-SSH」, 「MCode」 and 「Test」, all Latin and the first with no descender.
+Compared on the one pair both sides carry — its 「Claude」 at 12.8 and this app's
+「MCode」 at 11.6 from 15.2sp — the answer is 16.8, and at 16.8 the name now
+measures **12.8**. This is the second time in this port that two ink heights from
+different glyph sets were subtracted from each other.

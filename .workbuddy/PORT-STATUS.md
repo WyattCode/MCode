@@ -138,7 +138,31 @@ layout toggle; none of that is on the reference and all of it is gone. The card
 was a three-across grid of square tiles; it is now the reference's horizontal
 record.
 
-## 设置 — reference captured, this app still a full-screen two-column
+## 设置 — list matched; surface and names still differ
+
+The list itself now carries the reference's rhythm and its marks. Measured on
+the pad after the change, against the reference's own pane:
+
+| | reference | this app |
+|---|---|---|
+| label ink | 15.2 | **15.2..15.6** |
+| row pitch | 58.0 | **58.0..58.8** |
+| mark | 18.0 wide, x 26.8..44.8 | **18.0, x 27.6..45.6** |
+| idle plate | (255,255,255) | **white** |
+| gap between plates | 1.6, page ground | **1.6, page ground** |
+| corner | 13.6 | **13.6** |
+
+Two structural differences are deliberately left, because both are product
+decisions rather than measurements: this app's settings is a full-screen
+two-column page where the reference slides a panel over the conversation, and
+its twelve names are its own rather than the reference's.
+
+### What the reference's pane actually is
+
+*Below:* the original reading, kept because it is what the numbers above were
+taken from.
+
+
 
 `CP-设置.png` (S3) is the reference's settings pane, captured this pass. It is
 **not** a page: it is a panel that slides over the left of the conversation, which
@@ -166,13 +190,52 @@ Row names are the reference's own; the app's 12 (`常规 / 使用情况 / 外观
 应用更新`) are a different set from a different product surface. Mapping them is a
 product decision, not a measurement.
 
+## 项目 — matched
+
+Its rows were bordered white plates with a folder mark, a path in 11sp and a
+count on the same line. The reference's page is a list of names on the page.
+
+Checked first: every column between the search field and the foot capsule was
+scanned for a fill or a border, and there is neither - the rows are separated by
+whitespace alone. Name ink 15.2 at x 24.8, second line 11.6 at the same x, the
+two 22.8 apart top to top.
+
+| | reference | before | after |
+|---|---|---|---|
+| name ink | 15.2 @ x 24.8 | 12.4 @ x 32.0 | **15.2 @ x 25.2** |
+| second line | 11.6 @ x 24.8 | 10.0 @ x 32.0 | **11.2 @ x 25.2** |
+| plate | none | white, 1dp border, 12 corner | **none** |
+| folder mark | none | Ember, 20dp | **none** |
+
+The second line carries the folder path where the reference puts an edit date it
+does not expose, and the count and its menu stay because this app has data the
+reference's row does not. Two line heights are stated (20.4 and 16.4) because the
+defaults put 39.6 between the two tops where the reference has 22.8.
+
+## 插件 and 连接 — no reference, so not gaps
+
+The reference's drawer carries exactly four entries - 项目, Code, Artifacts,
+定时任务 - and no plugins page. Its twelve-row settings pane has no such item
+either. So this app's plugins page is **its own**, and listing it as an
+uncompared screen was wrong: there is nothing on the reference to compare it to.
+
+连接 is the same case for a different reason: it is the screen that pairs this
+phone with a local MCode gateway (「连接本机的 MCode 后…」), a capability Claude's
+app has no equivalent for. Neither page is scored, because neither has a
+reference to be measured against.
+
 ## Not yet compared
+
+
 
 - The diff card and the delivery card
 - Code-block geometry (the reference thread has no fenced block; only its shape is
   confirmed here — label, syntax colour, plate, copy/share/more)
-- The 定时任务 foot capsule is 110.4 wide against 122.8, and the twelve come from a
-  squeeze I have not located
+- (closed) The 定时任务 foot capsule read 110.4 against 122.8. Nothing was
+  squeezing it: the page carried **two** capsules - one inside the empty branch,
+  one at the function's foot - and both readings came off renders of that page.
+  The inner one is gone, and the survivor states 122.8 by 43.6, measuring 121.6
+  on the pad.
 - The artifacts well carries the kind's mark where the reference shows a real
   preview thumbnail — correct for a record with nothing to render, unverified
   for one that has
