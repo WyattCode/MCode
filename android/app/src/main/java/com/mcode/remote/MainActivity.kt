@@ -7946,30 +7946,29 @@ fun Timeline(
                      */
                     is Step -> {
                         /*
-                         * The rule is drawn behind the content, not beside it:
-                         * a Box in a Row sizes to its own content, and a rule
-                         * with no content of its own measured zero - which is
-                         * why the first attempt showed nothing at all.
+                         * No rail, and no inset.
+                         *
+                         * This drew a 3.5 wide rounded rule at x 1.8 and indented
+                         * everything after it by 14, so a step's words sat right
+                         * of a plain reply's and the two paragraphs of one turn
+                         * started in different columns. Checked against the
+                         * reference twice, by counting dark pixels down every
+                         * column between x 375 and 405 in both reference threads
+                         * (CX2 and CL-MAIN): there is no column that stays lit
+                         * the height of a step. What looked like a rule in a
+                         * downscaled crop is the left side bearing of the text.
+                         *
+                         * The summary row and the words therefore both land on
+                         * the prose column, which is what the reference shows:
+                         * 「已运行 2 条命令」 at x 401.6 and the paragraph under it
+                         * at x 401.6.
                          */
-                        val rail = if (LocalBg.current == DarkBg) Color(0xFF3A3A38) else Color(0xFFD8D8D6)
-                        Box(Modifier.fillMaxWidth()) {
-                            Canvas(Modifier.matchParentSize()) {
-                                val x = 1.8.dp.toPx()
-                                drawLine(
-                                    color = rail,
-                                    start = androidx.compose.ui.geometry.Offset(x, 4.dp.toPx()),
-                                    end = androidx.compose.ui.geometry.Offset(x, size.height - 4.dp.toPx()),
-                                    strokeWidth = 3.5.dp.toPx(),
-                                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
-                                )
-                            }
-                            Column(Modifier.fillMaxWidth().padding(start = 14.dp)) {
-                                (item.body as? Item.Msg)?.let { StepBody(it) }
-                                for (call in item.calls) {
-                                    when (call) {
-                                        is Item.Tool -> ToolRow(call, indent = true)
-                                        is ToolRun -> RunRow(call)
-                                    }
+                        Column(Modifier.fillMaxWidth()) {
+                            (item.body as? Item.Msg)?.let { StepBody(it) }
+                            for (call in item.calls) {
+                                when (call) {
+                                    is Item.Tool -> ToolRow(call, indent = true)
+                                    is ToolRun -> RunRow(call)
                                 }
                             }
                         }
@@ -8398,8 +8397,26 @@ fun Timeline(
                     }
                     is ToolRun -> {
                         var open by remember { mutableStateOf(false) }
-                        // `.hstep`'s indent and rhythm, as ToolRow below has it.
-                        Column(Modifier.padding(start = 23.dp)) {
+                        /*
+                         * No indent, and no mark: the summary line sits in the
+                         * prose column and is words plus a chevron, nothing else.
+                         *
+                         * This carried `padding(start = 23)` on a note pointing at
+                         * the desktop's `.hstep`, which is MiMo's sheet, not this
+                         * app's reference. Read off the phone's own thread instead
+                         * (CX2): its summary 「已运行 2 条命令」 starts at x 401.6
+                         * against prose at 408.8 and a bold heading at 400.8 - the
+                         * same column, the 7 held entirely by the glyph's left
+                         * side bearing on the Latin K opening that prose line. The
+                         * chevron follows the words; a 4x crop of the row's left
+                         * edge shows blank page before the first character, so
+                         * there is no icon slot here either.
+                         *
+                         * The 23 does belong one level down: a call that opens
+                         * under this summary is indented, which is what `ToolRow`
+                         * takes through `indent` below.
+                         */
+                        Column {
                             Row(
                                 Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 5.dp),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -13169,8 +13186,18 @@ private fun StepBody(item: Item.Msg) {
 @Composable
 private fun RunRow(item: ToolRun) {
     var open by remember { mutableStateOf(false) }
-    // `.hstep`, as ToolRow wears it: 23 in, 5 above and below, 14 over 22.4.
-    Column(Modifier.padding(start = 23.dp)) {
+    /*
+     * The summary sits in the prose column: no indent, no icon, words and a
+     * chevron. The 23 that stood here came from the desktop's `.hstep.indent`,
+     * which also applies to rows nested under a summary - not to the summary
+     * itself.
+     *
+     * Read off the phone's own thread (CX2): 「已运行 2 条命令」 starts at x 401.6
+     * with prose at 408.8 and a bold heading at 400.8, so all three share a
+     * column. Only a call that opens under the summary is indented, which is
+     * what `ToolRow(call, indent = true)` does below.
+     */
+    Column {
         Row(
             Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
