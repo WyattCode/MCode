@@ -1,28 +1,32 @@
-feat(android): a patch card says how much it is not showing
+feat(android): the +/- counter is one capsule with two halves
 
-`DiffLines` drew at most 80 lines and dropped the rest without a word. Across the
-47 patches in this machine's transcripts the median is 15 lines - but the longest
-runs to 99, so a reader could reach the bottom of a card with a third of the
-change behind the fold and no way to tell.
+The reference's edited-files row ends with a single object: a green half for the
+lines added and a pink half for the lines removed, meeting at a hard edge with no
+gap and no divider between them. Sampled off its own thread - 17.6 tall, halves
+(210,230,212) and (234,206,215), text (76,156,73) and (212,136,160).
 
-It now ends with 「…还有 19 行」 when there is more. The count is the one thing a
-reader cannot infer from what is on screen.
+This app drew two bare monospace labels six apart in #1A7F37 / #E5484D. Two
+unrelated figures, rather than one change with a size - which is what the row is
+reporting.
 
-The arithmetic lives in `diffSlice(diff, maxLines) -> (shown, hidden)`, split out
-of the composable so it can be tested without a device, and it reads only
-`maxLines + 1` lines to decide: the first version of this fix materialised the
-whole patch to count it, which a pathological diff would have paid for.
+`DiffCounter(add, del)` now draws the plate, with only its outer corners rounded
+so the shape reads as one object. Both call sites use it: the turn's edited-files
+summary and each file's own row. Dark gets its own four values rather than
+reusing the light ones, since a #D2E6D4 fill would glare on the near-black page.
 
-Nine tests hold it (`DiffSliceTest`), 100 in the suite:
+Confirmed on the pad in a thread that really has edits: 「已编辑 2 个文件」 ends in a
+green +12 plate, and each file row with a +6.
 
-- a short patch is drawn whole, and 80 of 80 is not a cut either;
-- one line past the limit reports exactly one hidden;
-- the 99-line maximum on this machine reports 19;
-- a patch with no trailing newline still counts its last line;
-- order is preserved and a real unified diff keeps its hunk header.
+Two things this pass did **not** settle, both now recorded:
 
-Not done, and recorded as such: the card's *colours* - added `#20A923`, removed
-`#E5351C`, `@@` in the muted grey - are still taken from the desktop's diff
-component, not measured off the phone. The reference thread that carries a step
-turned out to hold no file edits, so there was nothing to sample them from this
-pass; guessing at them again would repeat the mistake the rail made.
+- The **diff line colours** inside an expanded patch (#20A923 added, #E5351C
+  removed) are still the desktop's. Every patch in the reference thread on this
+  machine is reached through a collapsed group, and opening one to read line
+  colours needs a tap I did not get to land.
+- The reference's counter carries a **chevron** after it, opening the file list.
+  This app shows the list inline instead, so there is no chevron to draw.
+
+Also learned the hard way, and now in the notes: `input text` will not take
+spaces across separate calls on this device — it strips them and welds the words
+together. One call with `%s` for each space works, and old text has to be cleared
+from the end first or it prepends.

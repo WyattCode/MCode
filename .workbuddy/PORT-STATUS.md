@@ -324,6 +324,23 @@ then 「已读取 resources/skills/visualizer/SKILL.md」 where the old code sai
 「读取了 2 个文件」. Ten tests hold it (`RunSummaryTest`), and they need a real
 `org.json`: the JVM test classpath stubs it.
 
+## The +/- counter — matched
+
+The reference's edited-files row ends in **one** object, not two labels: a green
+half for additions and a pink half for deletions, meeting at a hard edge with no
+gap and no divider. Sampled: 17.6 tall, halves (210,230,212) and (234,206,215),
+text (76,156,73) and (212,136,160).
+
+This app drew two bare monospace labels 6 apart in #1A7F37 / #E5484D — two
+unrelated figures instead of one change with a size. `DiffCounter(add, del)` now
+draws the plate with only its outer corners rounded, at both call sites (the
+turn's summary and each file's row). Confirmed on the pad: 「已编辑 2 个文件」
+ends in a green +12 plate.
+
+Not settled here: the reference follows its counter with a **chevron** that opens
+the file list, where this app shows that list inline. And the patch's own line
+colours are still unmeasured — see below.
+
 ## The diff card — truncation fixed, colours still unmeasured
 
 `DiffLines` drew 80 lines and dropped the rest silently. On this machine the 47
