@@ -140,7 +140,7 @@ record.
 
 ## Not yet compared
 
-- Rich message bodies: tool rows, the diff and delivery cards
+- The diff card and the delivery card (the tool summary line is done, below)
 - Code-block geometry (the reference thread has no fenced block; only its shape is
   confirmed here — label, syntax colour, plate, copy/share/more)
 - The 定时任务 foot capsule is 110.4 wide against 122.8, and the twelve come from a
@@ -149,17 +149,53 @@ record.
   preview thumbnail — correct for a record with nothing to render, unverified
   for one that has
 - Inline-code chip geometry and colour (see the conversation pane above)
+- The tool summary row's own metrics: the words are now the desktop's, but its
+  indent, icon and font size were never put beside the reference's line
 
-## Known defect, not fixed
+## The tool summary row — words matched, metrics not
 
-The thread `ses_01a1505e372a` holds 105 messages in storage and renders **one row**
-in this app: it opens, the header names it, one user bubble appears, and nothing
-follows. That is a data fault rather than a cosmetic one — the gateway's payload
-and what the phone keeps need comparing before anything is changed.
+A run of calls folds into one line and the line had four drifts from the desktop
+at once, all of them in the *counting* rather than the drawing:
+
+| | was | now |
+|---|---|---|
+| `glob` / `grep` | counted as reads | own bucket, 「已搜索 N 次」 |
+| read bucket | 「读取了」 | 「已读取」 (the desktop's word) |
+| read/edit count | calls | distinct paths |
+| edits | folded into 「已使用 N 个工具」 | 「已编辑 N 个文件」 |
+| failure | 「（N 个失败）」 appended | not in the text; the desktop marks it with an icon |
+| separator | `, ` | 「 · 」 |
+
+Verified against a live turn on the pad — two globs then one read, prompted over
+the socket rather than typed, because `input text` drops characters — which now
+reads 「已搜索 2 次」 then 「已读取 resources/skills/visualizer/SKILL.md」. The old
+code called the first line 「读取了 2 个文件」.
+
+Ten tests hold it (`RunSummaryTest`). They need a real `org.json`: the JVM test
+classpath stubs it, and `returnDefaultValues = true` would have made every
+assertion pass against the stub instead of against parsed JSON.
+
+## A "defect" that was my own miscount
+
+For part of one round this file recorded that `ses_01a1505e372a` — 105 messages on
+disk — rendered a single row, and called it a data fault. It is not one. Walking
+the protocol against the running gateway (`session.get`) returns all 105, in order,
+43 user and 62 assistant, and replaying that payload through the row rules gives
+138 visible elements: 103 message rows, 33 tool rows, 2 error cards.
+
+What happened is that the drawer held **two conversations with the same title**,
+「来自手机 (分支)」, from consecutive days: 105 messages on 10-20 and one on 10-19.
+I mapped the row I meant onto the wrong y, opened the one-message thread, and read
+its single bubble as a broken transcript. The highlighted row in that screenshot is
+the ninth, and the 105-message thread is the seventh.
+
+The lesson is not about rendering: **same-titled siblings are the trap, and the
+title is not what identifies a row.** Sort by `updated`, count from the top, and
+match against the session id before concluding anything from what the pane shows.
 
 ## Locked by tests instead of by eye
 
-81 unit tests run as part of `build.py`, all of them answerable without a device:
+91 unit tests run as part of `build.py`, all of them answerable without a device:
 
 | class | n | what it holds down |
 |---|---|---|
@@ -167,6 +203,7 @@ and what the phone keeps need comparing before anything is changed.
 | `MarkdownBlocksTest` | 9 | the eight block kinds and their order, list depth, table cells, fence language and body |
 | `StepFoldTest` | 13 | `rowsOf` merging, `stepsOf` ownership, user turns never wrapping |
 | `StepFoldRealThreadTest` | 3 | the fold replayed over a real thread's exact shape (72 parts, 33 calls) |
+| `RunSummaryTest` | 10 | the summary line's five buckets, path deduplication, wording and separator |
 
 The last of these corrected a claim rather than confirming one. The code said the
 server sometimes sends calls before the prose that explains them, and that
