@@ -1,28 +1,33 @@
-refactor(android): a project is a name and a line of text, not a card
+fix(android): one capsule on 定时任务, and the 110.4 puzzle answered
 
-Each project was a bordered white plate with a folder mark, a path in 11sp and
-a session count on the same line - a stack of objects. The reference's projects
-page is a list of names on the page itself.
+The page carried **two** 「+ 新建任务」 pills and the build drew both: one under
+the notice at y 1373, one on the page's floor at 2121. `ScheduledScreen` had a
+capsule inside its empty branch *and* another at its own foot.
 
-Checked before changing anything: scanned every column of the reference's page
-between the search field and the foot capsule for a fill or a border and found
-neither, so its rows are separated by whitespace alone. Its name measures 15.2
-of ink at x 24.8, its second line 11.6 at the same x, and the two are 22.8 apart
-top to top.
+The reference has exactly one, and it is the one at the foot. The inner one is
+deleted; its own comment already said the capsule belongs on the column's floor,
+which the `Spacer(weight(1f))` below it enforces.
 
-Now:
+That also closes the 110.4-against-122.8 note this file has carried for several
+passes as "a squeeze I have not located". Nothing was squeezing anything: the two
+readings were taken off different renders of a page that had two pills on it, and
+the surviving one measures 110.8 because it spends its width differently — the
+reference types its plus as a character in 「+ 新建任务」, this app draws a 15 dp
+`Add` mark and a 6 gap. The width is now stated at 122.8 with a 43.6 height, so
+the two cannot drift apart again, and on the pad it measures **121.6** against
+122.8 — the 1.2 being the corner's antialiasing.
 
-| | reference | before | after |
-|---|---|---|---|
-| name ink | 15.2 @ x 24.8 | 12.4 @ x 32.0 | **15.2 @ x 25.2** |
-| second line ink | 11.6 @ x 24.8 | 10.0 @ x 32.0 | **11.2 @ x 25.2** |
-| plate | none | white, 1dp border, 12 corner | **none** |
-| folder mark | none | Ember, 20dp | **none** |
+Also in this pass: 定时任务 and 设置 now both `return` unconditionally after their
+full-screen branch. 定时任务 still tested `widthSize < Expanded`, so on a wide
+screen it built the page here and again inside the left column; 设置's own note
+records the same fault.
 
-Two line heights are stated, 20.4 and 16.4, because 17.2sp and 13.2sp set their
-own leading to 39.6 together and the pair then read as one tall block.
-
-Kept, because this app has data the reference's row does not: the folder path on
-the second line stands where the reference puts an edit date it does not expose,
-and the session count and its menu stay, the count now bottom-aligned so it sits
-on the path's line rather than floating between the two.
+The projects page name is 16.8sp, and the step that got there ran backwards
+first. It sat at 17.2 and drew 17.2 of ink against the reference's 15.2, so it
+was dropped to 15.2 — on two figures that were not comparable. The reference's
+row reads 「如何使用 Claude」, where the CJK glyphs set the ink; the rows here
+read 「X-SSH」, 「MCode」 and 「Test」, all Latin and the first with no descender.
+Compared on the one pair both sides carry — its 「Claude」 at 12.8 and this app's
+「MCode」 at 11.6 from 15.2sp — the answer is 16.8, and at 16.8 the name now
+measures **12.8**. This is the second time in this port that two ink heights from
+different glyph sets were subtracted from each other.

@@ -212,12 +212,17 @@ does not expose, and the count and its menu stay because this app has data the
 reference's row does not. Two line heights are stated (20.4 and 16.4) because the
 defaults put 39.6 between the two tops where the reference has 22.8.
 
-## 插件 — no reference, so not a gap
+## 插件 and 连接 — no reference, so not gaps
 
 The reference's drawer carries exactly four entries - 项目, Code, Artifacts,
 定时任务 - and no plugins page. Its twelve-row settings pane has no such item
 either. So this app's plugins page is **its own**, and listing it as an
 uncompared screen was wrong: there is nothing on the reference to compare it to.
+
+连接 is the same case for a different reason: it is the screen that pairs this
+phone with a local MCode gateway (「连接本机的 MCode 后…」), a capability Claude's
+app has no equivalent for. Neither page is scored, because neither has a
+reference to be measured against.
 
 ## Not yet compared
 
@@ -226,8 +231,11 @@ uncompared screen was wrong: there is nothing on the reference to compare it to.
 - The diff card and the delivery card
 - Code-block geometry (the reference thread has no fenced block; only its shape is
   confirmed here — label, syntax colour, plate, copy/share/more)
-- The 定时任务 foot capsule is 110.4 wide against 122.8, and the twelve come from a
-  squeeze I have not located
+- (closed) The 定时任务 foot capsule read 110.4 against 122.8. Nothing was
+  squeezing it: the page carried **two** capsules - one inside the empty branch,
+  one at the function's foot - and both readings came off renders of that page.
+  The inner one is gone, and the survivor states 122.8 by 43.6, measuring 121.6
+  on the pad.
 - The artifacts well carries the kind's mark where the reference shows a real
   preview thumbnail — correct for a record with nothing to render, unverified
   for one that has
