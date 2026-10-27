@@ -6328,6 +6328,32 @@ enum class SetPage(val label: String) {
 }
 
 /**
+ * A page's mark, as the reference's rows each carry one.
+ *
+ * Its twelve rows all lead with an 18 by 16 glyph at x 26.4..45.2, so a reader
+ * scans the icons rather than reading twelve labels. This list was words only,
+ * which at a 58 pitch reads as a column with no landmarks in it.
+ *
+ * A function rather than an enum property: `Icons.Outlined.*` resolves through
+ * Compose's lazy vector cache, which cannot be touched from an enum constant's
+ * initialiser - the class loads before that cache exists.
+ */
+private fun markOf(page: SetPage) = when (page) {
+    SetPage.General -> Icons.Outlined.Tune
+    SetPage.Usage -> Icons.AutoMirrored.Outlined.Article
+    SetPage.Appearance -> Icons.Outlined.Build
+    SetPage.Config -> Icons.Outlined.Code
+    SetPage.Models -> Icons.Outlined.Checklist
+    SetPage.Personal -> Icons.Outlined.Edit
+    SetPage.Keys -> Icons.Outlined.Checklist
+    SetPage.Mcp -> Icons.AutoMirrored.Outlined.CallSplit
+    SetPage.Environment -> Icons.Outlined.FolderOpen
+    SetPage.Lab -> Icons.Outlined.Search
+    SetPage.Archive -> Icons.Outlined.Folder
+    SetPage.Updates -> Icons.Outlined.Refresh
+}
+
+/**
  * The settings page: the desktop's two columns - a navigation strip and the
  * page beside it.
  *
@@ -6373,15 +6399,68 @@ fun SettingsScreen(
                 items(SetPage.entries.size) { index ->
                     val entry = SetPage.entries[index]
                     val active = entry == page
+                    /*
+                     * Each row is its own card.
+                     *
+                     * The reference's twelve rows are twelve white plates on the
+                     * (249,249,247) ground, 1.6 apart - a scan down the gaps
+                     * finds the row boundaries with no rules needed. This drew
+                     * one continuous column with a transparent background, so
+                     * every row ran into the next.
+                     *
+                     * 13.6 corner on a 56 tall card, and the page's own surface
+                     * rather than the pill for an idle row; the pill is what
+                     * marks the page that is showing.
+                     */
                     Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 8.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (active) LocalPill.current else Color.Transparent)
+                        Modifier.fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 0.8.dp)
+                            .clip(RoundedCornerShape(13.6.dp))
+                            /*
+                             * Pure white for an idle row, not `LocalSurface`:
+                             * the reference's plates are (255,255,255) on the
+                             * (249,249,247) ground, a clear step. `LocalSurface`
+                             * is #FEFEFE, one level off the ground, and the gaps
+                             * between cards all but vanish.
+                             */
+                            .background(
+                                if (active) LocalPill.current
+                                else if (LocalBg.current == DarkBg) DarkSurface
+                                else Color.White,
+                            )
                             .clickable { page = entry }
-                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                            /*
+                             * 17.2 over a 58.0 pitch, off the reference's own
+                             * settings pane.
+                             *
+                             * Its row labels measure 15.2 of ink at a 58.0 pitch;
+                             * these drew 12.4 at 42.4 from 14sp with 9 of vertical
+                             * padding, so the list read as a dense index rather
+                             * than as the reference's roomy one. 14 x 15.2/12.4 is
+                             * 17.2, and the padding below is what carries the rest
+                             * of the pitch.
+                             */
+                            .padding(start = 16.8.dp, end = 12.dp, top = 17.0.dp, bottom = 17.0.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(entry.label, fontSize = 14.sp,
+                        /*
+                         * The mark column, then the words.
+                         *
+                         * Reference: glyph ink at x 26.4..45.2, label at 58.8 -
+                         * so an 18 slot with 13.6 after it, against the 12 of
+                         * row padding already applied. The icon takes the muted
+                         * grey, and the ink when its page is the one showing, so
+                         * the current page is marked twice over: by the pill
+                         * behind it and by the mark in front.
+                         */
+                        Icon(
+                            markOf(entry),
+                            contentDescription = null,
+                            tint = if (active) ink else muted,
+                            modifier = Modifier.size(23.8.dp),
+                        )
+                        Spacer(Modifier.width(8.8.dp))
+                        Text(entry.label, fontSize = 17.2.sp,
                             fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
                             color = if (active) ink else muted)
                     }
