@@ -140,7 +140,7 @@ record.
 
 ## Not yet compared
 
-- The diff card and the delivery card (the tool summary line is done, below)
+- The diff card and the delivery card
 - Code-block geometry (the reference thread has no fenced block; only its shape is
   confirmed here — label, syntax colour, plate, copy/share/more)
 - The 定时任务 foot capsule is 110.4 wide against 122.8, and the twelve come from a
@@ -149,31 +149,61 @@ record.
   preview thumbnail — correct for a record with nothing to render, unverified
   for one that has
 - Inline-code chip geometry and colour (see the conversation pane above)
-- The tool summary row's own metrics: the words are now the desktop's, but its
-  indent, icon and font size were never put beside the reference's line
+- The short connector between two rows of one expanded group: the reference draws
+  one, this app has a plain gap
+- The summary's *opening* gesture: the reference lifts a bottom sheet with a title,
+  a close button and the calls inside; this app expands in place
 
-## The tool summary row — words matched, metrics not
+## The tool row — matched
 
-A run of calls folds into one line and the line had four drifts from the desktop
-at once, all of them in the *counting* rather than the drawing:
+A run of calls folds into one summary line, and opening it gives one row per call.
+Both were put beside the reference's own thread on the pad (CX2, and the sheet its
+summary opens) and four things were wrong at once.
 
-| | was | now |
+### The step had a rail it should not have
+
+A grey rule ran down the left of every step with its content inset 14, so a step's
+prose started right of a plain reply's and the two paragraphs of one turn sat in
+different columns. The reference has no rule at all. Tested by counting dark pixels
+down every column between x 375 and 405 in both reference threads: no column stays
+lit for the height of a step. What reads as a rule in a downscaled crop is the left
+side bearing of the text.
+
+The summary line carried a 23 indent as well, on a note pointing at the desktop's
+`.hstep.indent` — which applies to a call nested *under* a summary, not to the
+summary itself. Measured: the reference's 「已运行 2 条命令」 starts at x 401.6 with
+the paragraph under it at 401.6 and a bold heading at 400.8, so all three share a
+column. Ours after the change: summary 410.4, prose 410.8.
+
+### One row, three greys
+
+| | reference | this app |
 |---|---|---|
-| `glob` / `grep` | counted as reads | own bucket, 「已搜索 N 次」 |
-| read bucket | 「读取了」 | 「已读取」 (the desktop's word) |
-| read/edit count | calls | distinct paths |
-| edits | folded into 「已使用 N 个工具」 | 「已编辑 N 个文件」 |
-| failure | 「（N 个失败）」 appended | not in the text; the desktop marks it with an icon |
-| separator | `, ` | 「 · 」 |
+| summary | (83,82,79) | **(83,82,79)** |
+| mark | (56,56,53) | **(56,56,53)** |
+| verb 「已运行」 | (19,19,19) | (31,30,28) |
+| target 「Read mission…」 | (123,121,116) | **(123,121,116)** |
 
-Verified against a live turn on the pad — two globs then one read, prompted over
-the socket rather than typed, because `input text` drops characters — which now
-reads 「已搜索 2 次」 then 「已读取 resources/skills/visualizer/SKILL.md」. The old
-code called the first line 「读取了 2 个文件」.
+Every part was one muted grey, so a dozen calls read as a wall. The verb now takes
+the body ink, the target a new `ToolWhat`, the mark a new `ToolMark`, and the
+summary a `ToolSummary` a step darker than `InkMuted`.
 
-Ten tests hold it (`RunSummaryTest`). They need a real `org.json`: the JVM test
-classpath stubs it, and `returnDefaultValues = true` would have made every
-assertion pass against the stub instead of against parsed JSON.
+### The mark was a third too small
+
+Reference ink 15.6 by 11.6; this drew 10.4 by 10.4 from a 14 box with a 6 gap. The
+slot is 15.6 with a 16 gap now, and its ink measures 11.6 high — the reference's
+own number. Its width still reads 11.6 against 15.6 because the glyphs differ: a
+round magnifier for a search here, a wide fork for a shell call there. Each is the
+right mark for its family, so the width is left alone.
+
+### The words were already right
+
+The counting drift was fixed in an earlier round and holds: `glob`/`grep` in their
+own bucket, 「已搜索 N 次」, distinct paths for reads and edits, 「 · 」 between
+clauses. Verified on a live turn — two globs then a read now reads 「已搜索 2 次」
+then 「已读取 resources/skills/visualizer/SKILL.md」 where the old code said
+「读取了 2 个文件」. Ten tests hold it (`RunSummaryTest`), and they need a real
+`org.json`: the JVM test classpath stubs it.
 
 ## A "defect" that was my own miscount
 

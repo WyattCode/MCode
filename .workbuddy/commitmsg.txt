@@ -1,36 +1,30 @@
-android: the run summary counts like the desktop does
+fix(android): a tool row's three greys, and its mark at the right size
 
-A run of calls folds into one line - 「已读取 2 个文件 · 已运行 1 条命令」 - and
-that line had drifted from the desktop in four separate ways at once:
+The row was all one colour and its icon was a third too small, so a list of
+calls read as a flat wall of grey with a dot in front.
 
-  - `glob` and `grep` counted as reads. A run of two searches and one read said
-    「读取了 3 个文件」 when one file had been opened and two patterns looked for.
-  - The desktop splits reads, edits, commands, searches and everything else into
-    five buckets (bucketOf in lib/tool-meta.ts) and words each from
-    buildWorkDisplay.* in lib/i18n.ts. This assembled its own wording, so the
-    read bucket came out 「读取了」 against the desktop's 「已读取」.
-  - Reads and edits counted calls, not files: the desktop collects each call's
-    path into a set and counts its size (groupSummary in lib/step-rows.ts), so
-    one file opened twice is one file. This said two.
-  - Edits were folded into a generic 「已使用 N 个工具」, and a failure count was
-    appended to the line - a second, differently-worded signal for something the
-    desktop marks with an icon.
+Sampled the reference's own expanded rows and it uses three weights on one
+line: the mark at (56,56,53), the verb 「已运行」 at (19,19,19) - the body
+text colour - and what the call acted on at (123,121,116). The summary line
+above them is darker than the muted grey too, at (83,82,79) against this
+app's `InkMuted` of (107,104,99).
 
-Rewritten to the desktop's rules: five buckets in first-appearance order, joined
-with 「 · 」, paths deduplicated for read and edit, no failure note in the text.
+Now measured on the pad, on the same four points:
 
-Verified on the pad against a live turn - two globs then one read - which now
-reads 「已搜索 2 次」 then 「已读取 resources/skills/visualizer/SKILL.md」. Under the
-old code the first line said 「读取了 2 个文件」.
+  summary     (83,82,79)   reference (83,82,79)
+  mark        (56,56,53)   reference (56,56,53)
+  verb        (31,30,28)   reference (19,19,19)
+  target      (123,121,116) reference (123,121,116)
 
-Ten tests hold it (RunSummaryTest). They needed a real org.json: the JVM test
-classpath stubs it out, and `returnDefaultValues = true` would have made every
-assertion pass against the stub rather than against parsed JSON, so the
-reference implementation is on the test classpath instead.
+The verb lands on this app's ink rather than the reference's literal 19
+because those are the same weight in two themes; the smallest pixel in an
+antialiased CJK glyph differs by a few levels either way.
 
-Also corrects a "known defect" this file carried for a round. I had recorded that
-a 105-message thread rendered a single row. It renders all 105: `session.get`
-returns them, and replaying that payload through the row rules gives 138 visible
-elements. The drawer held two conversations with the same title from consecutive
-days, and I mapped the row I meant onto the wrong y and opened the one-message
-sibling. PORT-STATUS now says so.
+The mark grows from a 14 box with a 6 gap to 15.6 with 16, which puts its
+ink at 11.6 high - the reference's own measurement - against the 10.4 it
+drew before. Its width still reads narrower, 11.6 against 15.6: that is the
+glyph, a round magnifier here and a wide fork for a shell call there, and
+each is the right mark for its own tool family.
+
+The verb keeps carrying the state colour when a call failed or is still
+running, since that is the part a reader scans for.
