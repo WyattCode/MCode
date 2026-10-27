@@ -788,12 +788,6 @@ class RemoteClient {
         waiters.remove(id)
     }
 
-    private val reconnect = Runnable {
-        val url = reconnectUrl
-        val token = reconnectToken
-        if (url != null && token != null) dial(url, token)
-    }
-
     /** Connects; an unparseable address reports down instead of crashing the caller. */
     fun connect(url: String, token: String) {
         val mine = ++generation
