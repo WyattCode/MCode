@@ -228,7 +228,11 @@ reference to be measured against.
 
 
 
-- The diff card and the delivery card
+- The diff card's **colours** (added #20A923, removed #E5351C, `@@` muted):
+  still the desktop's, never sampled off the phone. The one reference thread
+  that carries a step holds no file edits, so this pass had nothing to measure.
+  Its **truncation** is done and tested — see below.
+- The delivery card
 - Code-block geometry (the reference thread has no fenced block; only its shape is
   confirmed here — label, syntax colour, plate, copy/share/more)
 - (closed) The 定时任务 foot capsule read 110.4 against 122.8. Nothing was
@@ -319,6 +323,18 @@ clauses. Verified on a live turn — two globs then a read now reads 「已搜�
 then 「已读取 resources/skills/visualizer/SKILL.md」 where the old code said
 「读取了 2 个文件」. Ten tests hold it (`RunSummaryTest`), and they need a real
 `org.json`: the JVM test classpath stubs it.
+
+## The diff card — truncation fixed, colours still unmeasured
+
+`DiffLines` drew 80 lines and dropped the rest silently. On this machine the 47
+patches in the transcripts have a median of 15 lines but a maximum of 99, so a
+reader could reach the bottom of a card with a third of the change behind the
+fold and no sign of it. It now ends with 「…还有 N 行」.
+
+The arithmetic is `diffSlice(diff, maxLines) -> (shown, hidden)`, a plain function
+rather than part of the composable so it can be tested without a device. It reads
+only `maxLines + 1` lines to decide — the first cut materialised the whole patch
+just to count it. Nine tests hold it, including the 99-line case reporting 19.
 
 ## A "defect" that was my own miscount
 

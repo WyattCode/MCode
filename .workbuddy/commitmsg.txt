@@ -1,31 +1,28 @@
-fix(android): put the step's rail back, outside the prose column
+feat(android): a patch card says how much it is not showing
 
-A previous pass removed the rail from every step. That was wrong, and this
-restores it with the geometry the reference actually has.
+`DiffLines` drew at most 80 lines and dropped the rest without a word. Across the
+47 patches in this machine's transcripts the median is 15 lines - but the longest
+runs to 99, so a reader could reach the bottom of a card with a third of the
+change behind the fold and no way to tell.
 
-The removal was argued from CX2 and CL-MAIN, which both measured clean down
-x 375..405 - but neither capture contained a **step**. One that does, the
-reference's own 「Main」 thread, shows the rule plainly: x 370.0..373.6, so 3.6
-wide, in (216,216,214), running from its bold 「我要做的」 heading down through the
-numbered list beneath it. The figure was honest; the sample was not.
+It now ends with 「…还有 19 行」 when there is more. The count is the one thing a
+reader cannot infer from what is on screen.
 
-That is the same width and the same colour the deleted code already had (a 3.5
-stroke in #D8D8D6). What was wrong with it was only its position: it sat 1.8 in
-from the content's own edge with a 14 inset after it, so the line ran *inside*
-the text block and every word of a step started 14 to the right of a plain
-reply's word.
+The arithmetic lives in `diffSlice(diff, maxLines) -> (shown, hidden)`, split out
+of the composable so it can be tested without a device, and it reads only
+`maxLines + 1` lines to decide: the first version of this fix materialised the
+whole patch to count it, which a pathological diff would have paid for.
 
-Measured against the reference in one frame that holds both kinds of paragraph:
-rail at 370.0, the step's bold heading at 400.8, its prose at 408.8, a plain
-reply's prose also at 408.8. So the rail hangs 38.8 to the *left* of the prose,
-out in the pane's margin, and the words do not move in for it at all. The rail
-now draws at -37 from the content edge, and on the pad the line measures
-**x 373.2 in (216,216,214)** - inside the reference's own 370.0..373.6.
+Nine tests hold it (`DiffSliceTest`), 100 in the suite:
 
-Also confirmed against the same frame: the reference's rail covers only the part
-of the turn that has calls under it (one segment, 47.6 long, from the heading
-through the list), not the whole step. The shape here matches.
+- a short patch is drawn whole, and 80 of 80 is not a cut either;
+- one line past the limit reports exactly one hidden;
+- the 99-line maximum on this machine reports 19;
+- a patch with no trailing newline still counts its last line;
+- order is preserved and a real unified diff keeps its hunk header.
 
-The lesson is in the comment: absence measured in two captures is not absence in
-the product, and both of those captures were single replies without a single
-tool call in them.
+Not done, and recorded as such: the card's *colours* - added `#20A923`, removed
+`#E5351C`, `@@` in the muted grey - are still taken from the desktop's diff
+component, not measured off the phone. The reference thread that carries a step
+turned out to hold no file edits, so there was nothing to sample them from this
+pass; guessing at them again would repeat the mistake the rail made.
