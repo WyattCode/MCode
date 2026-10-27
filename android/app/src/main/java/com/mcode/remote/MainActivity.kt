@@ -8099,24 +8099,63 @@ fun Timeline(
                      */
                     is Step -> {
                         /*
-                         * No rail, and no inset.
+                         * The rail is real, and removing it was a mistake.
                          *
-                         * This drew a 3.5 wide rounded rule at x 1.8 and indented
-                         * everything after it by 14, so a step's words sat right
-                         * of a plain reply's and the two paragraphs of one turn
-                         * started in different columns. Checked against the
-                         * reference twice, by counting dark pixels down every
-                         * column between x 375 and 405 in both reference threads
-                         * (CX2 and CL-MAIN): there is no column that stays lit
-                         * the height of a step. What looked like a rule in a
-                         * downscaled crop is the left side bearing of the text.
+                         * An earlier pass took it out after counting dark pixels
+                         * down x 375..405 in CX2 and CL-MAIN and finding no lit
+                         * column - but neither of those captures held a step.
+                         * One that does (the reference's 「Main」 thread) shows a
+                         * rule plainly: x 370.0..373.6, so 3.6 wide, in
+                         * (216,216,214), running the height of the block from
+                         * 「我要做的」 down through its numbered list.
                          *
-                         * The summary row and the words therefore both land on
-                         * the prose column, which is what the reference shows:
-                         * 「已运行 2 条命令」 at x 401.6 and the paragraph under it
-                         * at x 401.6.
+                         * That is the exact geometry this code already had - a
+                         * 3.5 stroke at x 1.8 in #D8D8D6 = (216,216,214). The
+                         * reading was the fault, not the drawing.
+                         *
+                         * The lesson: absence measured in two captures is not
+                         * absence in the product. Both of those captures were
+                         * single replies; a step is what a turn looks like when
+                         * the assistant also called something, and the rail is
+                         * the only mark that says the words and the calls under
+                         * them belong together.
                          */
-                        Column(Modifier.fillMaxWidth()) {
+                        /*
+                         * The rail hangs outside the prose column, not inside it.
+                         *
+                         * Measured on the reference's 「Main」 thread, one frame
+                         * holding both a step and plain replies: the rule runs
+                         * x 370.0..373.6 in (216,216,214), the step's bold
+                         * heading starts at 400.8 and its prose at 408.8. So the
+                         * rail sits 38.8 to the *left* of the prose - out in the
+                         * pane's margin - and the words do not move inward for
+                         * it at all. A step's paragraph and a plain reply's
+                         * paragraph therefore share the same column, which is
+                         * exactly what the reference shows.
+                         *
+                         * This drew the rule at 1.8 from the content's own edge
+                         * with a 14 inset after it, which put the line *inside*
+                         * the text block and pushed every word of a step 14 to
+                         * the right of a reply's. The mark belongs to the turn,
+                         * not to its text: it says these words and the calls
+                         * under them are one thing.
+                         */
+                        val rail = if (LocalBg.current == DarkBg) Color(0xFF3A3A38) else Color(0xFFD8D8D6)
+                        Box(Modifier.fillMaxWidth()) {
+                            Canvas(
+                                Modifier
+                                    .matchParentSize()
+                                    .offset(x = (-37.0).dp),
+                            ) {
+                                drawLine(
+                                    color = rail,
+                                    start = androidx.compose.ui.geometry.Offset(1.8.dp.toPx(), 4.dp.toPx()),
+                                    end = androidx.compose.ui.geometry.Offset(1.8.dp.toPx(), size.height - 4.dp.toPx()),
+                                    strokeWidth = 3.5.dp.toPx(),
+                                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                )
+                            }
+                            Column(Modifier.fillMaxWidth()) {
                             (item.body as? Item.Msg)?.let { StepBody(it) }
                             item.calls.forEachIndexed { i, call ->
                                 val last = i == item.calls.lastIndex
@@ -8124,6 +8163,7 @@ fun Timeline(
                                     is Item.Tool -> ToolRow(call, indent = true, linked = !last)
                                     is ToolRun -> RunRow(call)
                                 }
+                            }
                             }
                         }
                     }
