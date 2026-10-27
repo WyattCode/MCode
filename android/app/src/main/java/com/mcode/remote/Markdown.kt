@@ -2044,10 +2044,23 @@ private fun ListBox(
         var number = block.start
         var at = lineStart
         for (item in block.items) {
+            /*
+             * The marker steps down with depth, as the reference does: a filled
+             * bullet at the top level, a hollow circle one level in, a square
+             * under that. Measured off A_claude.png, where the first level's ink
+             * is a solid `•` at 408.8 and the level below it a hollow `○` at
+             * 429.2 - two different glyphs, not one repeated.
+             *
+             * This drew `•` at every depth, so a nested item was told apart only
+             * by its indent. The indent is right and stays; the glyph is what
+             * says "this belongs under the line above" at a glance.
+             */
             val marker = when {
                 item.task -> if (item.checked) "✓" else "○"
                 block.ordered -> "${number++}."
-                else -> "•"
+                item.depth == 0 -> "•"
+                item.depth == 1 -> "○"
+                else -> "▪"
             }
             val here = at
             at += item.text.length + 1
